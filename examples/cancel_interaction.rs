@@ -77,7 +77,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
                 // Demonstrate that you can still get info about the cancelled interaction
                 println!("\nRetrieving interaction details after cancellation...");
-                let retrieved = client.get_interaction(interaction_id).await?;
+                let retrieved = client.get_interaction(interaction_id, false).await?;
                 println!("Retrieved status: {:?}", retrieved.status);
                 println!("Output count: {} items", retrieved.outputs.len());
             }

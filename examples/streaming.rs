@@ -206,6 +206,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  // let resumed_stream = client.get_interaction_stream(");
     println!("  //     &interaction_id,");
     println!("  //     Some(&last_event_id),");
+    println!("  //     false, // set to true to include original input");
     println!("  // );");
 
     Ok(())

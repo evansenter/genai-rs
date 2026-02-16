@@ -212,7 +212,7 @@ async fn poll_for_completion(
         poll_count += 1;
 
         // Query the interaction status
-        let response = client.get_interaction(interaction_id).await?;
+        let response = client.get_interaction(interaction_id, false).await?;
 
         println!(
             "  Poll #{}: status={:?} (elapsed: {:.1}s)",

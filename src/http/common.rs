@@ -37,6 +37,8 @@ pub enum Endpoint<'a> {
         stream: bool,
         /// Resume streaming from this event ID (only valid when stream=true)
         last_event_id: Option<&'a str>,
+        /// Include the original input in the response
+        include_input: bool,
     },
     /// Delete an interaction by ID
     DeleteInteraction { id: &'a str },
@@ -80,10 +82,26 @@ impl Endpoint<'_> {
     fn query_params(&self) -> Option<String> {
         match self {
             Self::GetInteraction {
-                stream: true,
-                last_event_id: Some(event_id),
+                stream,
+                last_event_id,
+                include_input,
                 ..
-            } => Some(format!("last_event_id={}", urlencoding::encode(event_id))),
+            } => {
+                let mut params = Vec::new();
+                if *stream
+                    && let Some(event_id) = last_event_id
+                {
+                    params.push(format!("last_event_id={}", urlencoding::encode(event_id)));
+                }
+                if *include_input {
+                    params.push("include_input=true".to_string());
+                }
+                if params.is_empty() {
+                    None
+                } else {
+                    Some(params.join("&"))
+                }
+            }
             _ => None,
         }
     }
@@ -159,6 +177,7 @@ mod tests {
             id: "interaction-123",
             stream: false,
             last_event_id: None,
+            include_input: false,
         };
         let url = construct_endpoint_url(endpoint);
 
@@ -177,6 +196,7 @@ mod tests {
             id: "interaction-123",
             stream: true,
             last_event_id: None,
+            include_input: false,
         };
         let url = construct_endpoint_url(endpoint);
 
@@ -194,6 +214,7 @@ mod tests {
             id: "interaction-123",
             stream: true,
             last_event_id: Some("evt_abc123"),
+            include_input: false,
         };
         let url = construct_endpoint_url(endpoint);
 
@@ -212,6 +233,7 @@ mod tests {
             id: "interaction-123",
             stream: true,
             last_event_id: Some("evt+abc&123=test"),
+            include_input: false,
         };
         let url = construct_endpoint_url(endpoint);
 
@@ -227,6 +249,7 @@ mod tests {
             id: "interaction-123",
             stream: false,
             last_event_id: Some("evt_should_be_ignored"),
+            include_input: false,
         };
         let url = construct_endpoint_url(endpoint);
 
@@ -239,6 +262,57 @@ mod tests {
         assert!(!url.contains("evt_should_be_ignored"));
         // Also verify no SSE params
         assert!(!url.contains("alt=sse"));
+    }
+
+    #[test]
+    fn test_endpoint_get_interaction_with_include_input() {
+        let endpoint = Endpoint::GetInteraction {
+            id: "interaction-123",
+            stream: false,
+            last_event_id: None,
+            include_input: true,
+        };
+        let url = construct_endpoint_url(endpoint);
+
+        assert_eq!(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/interactions/interaction-123?include_input=true"
+        );
+        assert!(url.contains("include_input=true"));
+        assert!(!url.contains("alt=sse"));
+    }
+
+    #[test]
+    fn test_endpoint_get_interaction_streaming_with_include_input() {
+        let endpoint = Endpoint::GetInteraction {
+            id: "interaction-123",
+            stream: true,
+            last_event_id: None,
+            include_input: true,
+        };
+        let url = construct_endpoint_url(endpoint);
+
+        assert_eq!(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/interactions/interaction-123?alt=sse&include_input=true"
+        );
+        assert!(url.contains("alt=sse"));
+        assert!(url.contains("include_input=true"));
+    }
+
+    #[test]
+    fn test_endpoint_get_interaction_streaming_with_resume_and_include_input() {
+        let endpoint = Endpoint::GetInteraction {
+            id: "interaction-123",
+            stream: true,
+            last_event_id: Some("evt_abc123"),
+            include_input: true,
+        };
+        let url = construct_endpoint_url(endpoint);
+
+        assert!(url.contains("alt=sse"));
+        assert!(url.contains("last_event_id=evt_abc123"));
+        assert!(url.contains("include_input=true"));
     }
 
     #[test]
@@ -270,7 +344,8 @@ mod tests {
             Endpoint::GetInteraction {
                 id: "test",
                 stream: true,
-                last_event_id: None
+                last_event_id: None,
+                include_input: false,
             }
             .requires_sse()
         );
@@ -278,7 +353,8 @@ mod tests {
             !Endpoint::GetInteraction {
                 id: "test",
                 stream: false,
-                last_event_id: None
+                last_event_id: None,
+                include_input: false,
             }
             .requires_sse()
         );
@@ -302,11 +378,13 @@ mod tests {
             id: "test-id",
             stream: false,
             last_event_id: None,
+            include_input: false,
         };
         let endpoint4 = Endpoint::GetInteraction {
             id: "test-id",
             stream: false,
             last_event_id: None,
+            include_input: false,
         };
         assert_eq!(endpoint3, endpoint4);
 
@@ -314,6 +392,7 @@ mod tests {
             id: "different-id",
             stream: false,
             last_event_id: None,
+            include_input: false,
         };
         assert_ne!(endpoint3, endpoint5);
 
@@ -322,6 +401,7 @@ mod tests {
             id: "test-id",
             stream: true,
             last_event_id: Some("evt_123"),
+            include_input: false,
         };
         assert_ne!(endpoint3, endpoint6);
     }

@@ -142,7 +142,7 @@ async fn test_get_interaction_stream() {
     let interaction_id = response.id.as_ref().expect("Should have ID");
 
     // Now stream the completed interaction using get_interaction_stream
-    let mut stream = client.get_interaction_stream(interaction_id, None);
+    let mut stream = client.get_interaction_stream(interaction_id, None, false);
 
     let mut delta_count = 0;
     let mut collected_text = String::new();
@@ -294,7 +294,7 @@ async fn test_stream_resume_with_last_event_id() {
     let interaction_id = response.id.as_ref().expect("Should have ID");
 
     // First, stream the entire interaction to capture all event_ids
-    let mut full_stream = client.get_interaction_stream(interaction_id, None);
+    let mut full_stream = client.get_interaction_stream(interaction_id, None, false);
 
     let mut all_event_ids: Vec<String> = Vec::new();
     let mut full_text = String::new();
@@ -334,7 +334,8 @@ async fn test_stream_resume_with_last_event_id() {
     println!("Resume event_id: {}", resume_event_id);
 
     // Now stream with last_event_id to resume
-    let mut resumed_stream = client.get_interaction_stream(interaction_id, Some(resume_event_id));
+    let mut resumed_stream =
+        client.get_interaction_stream(interaction_id, Some(resume_event_id), false);
 
     let mut resumed_event_ids: Vec<String> = Vec::new();
     let mut resumed_text = String::new();

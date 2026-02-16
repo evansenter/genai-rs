@@ -434,9 +434,13 @@ impl Client {
     /// Useful for checking the status of long-running interactions or agents,
     /// or for retrieving the full conversation history.
     ///
+    /// By default, only the model's outputs are returned. Set `include_input`
+    /// to `true` to also include the original normalized input in the response.
+    ///
     /// # Arguments
     ///
     /// * `interaction_id` - The unique identifier of the interaction to retrieve.
+    /// * `include_input` - Whether to include the original input in the response.
     ///
     /// # Errors
     ///
@@ -447,13 +451,15 @@ impl Client {
     pub async fn get_interaction(
         &self,
         interaction_id: &str,
+        include_input: bool,
     ) -> Result<crate::InteractionResponse, GenaiError> {
-        tracing::debug!("Getting interaction: ID={interaction_id}");
+        tracing::debug!("Getting interaction: ID={interaction_id}, include_input={include_input}");
 
         let response = crate::http::interactions::get_interaction(
             &self.http_client,
             &self.api_key,
             interaction_id,
+            include_input,
         )
         .await?;
 
@@ -472,11 +478,15 @@ impl Client {
     /// Each event includes an `event_id` that can be used to resume the stream
     /// from that point if the connection is interrupted.
     ///
+    /// By default, only the model's outputs are streamed. Set `include_input`
+    /// to `true` to also include the original normalized input in the response.
+    ///
     /// # Arguments
     ///
     /// * `interaction_id` - The unique identifier of the interaction to stream.
     /// * `last_event_id` - Optional event ID to resume from. Pass the last received
     ///   event's `event_id` to continue from where you left off.
+    /// * `include_input` - Whether to include the original input in the response.
     ///
     /// # Returns
     /// A boxed stream that yields `StreamEvent` items.
@@ -492,7 +502,7 @@ impl Client {
     ///
     /// // Resume a stream from a previous event
     /// let last_event_id = Some("evt_abc123");
-    /// let mut stream = client.get_interaction_stream(interaction_id, last_event_id);
+    /// let mut stream = client.get_interaction_stream(interaction_id, last_event_id, false);
     ///
     /// while let Some(result) = stream.next().await {
     ///     let event = result?;
@@ -516,13 +526,15 @@ impl Client {
         &'a self,
         interaction_id: &'a str,
         last_event_id: Option<&'a str>,
+        include_input: bool,
     ) -> futures_util::stream::BoxStream<'a, Result<crate::StreamEvent, GenaiError>> {
         use futures_util::StreamExt;
 
         tracing::debug!(
-            "Getting interaction stream: ID={}, resume_from={:?}",
+            "Getting interaction stream: ID={}, resume_from={:?}, include_input={}",
             interaction_id,
-            last_event_id
+            last_event_id,
+            include_input,
         );
 
         let stream = crate::http::interactions::get_interaction_stream(
@@ -530,6 +542,7 @@ impl Client {
             &self.api_key,
             interaction_id,
             last_event_id,
+            include_input,
         );
 
         stream

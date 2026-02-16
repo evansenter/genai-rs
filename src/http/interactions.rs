@@ -315,11 +315,13 @@ pub async fn get_interaction(
     http_client: &ReqwestClient,
     api_key: &str,
     interaction_id: &str,
+    include_input: bool,
 ) -> Result<InteractionResponse, GenaiError> {
     let endpoint = Endpoint::GetInteraction {
         id: interaction_id,
         stream: false,
         last_event_id: None,
+        include_input,
     };
     let url = construct_endpoint_url(endpoint);
 
@@ -364,11 +366,12 @@ pub async fn get_interaction(
 /// * `api_key` - The Gemini API key
 /// * `interaction_id` - The ID of the interaction to stream
 /// * `last_event_id` - Optional event ID to resume from (for stream resumption)
+/// * `include_input` - Whether to include the original input in the response
 ///
 /// # Example
 /// ```ignore
 /// // Resume a stream after interruption
-/// let mut stream = get_interaction_stream(&client, &api_key, &id, Some("evt_abc123"));
+/// let mut stream = get_interaction_stream(&client, &api_key, &id, Some("evt_abc123"), false);
 /// while let Some(event) = stream.next().await {
 ///     let event = event?;
 ///     println!("Received chunk: {:?}", event.chunk);
@@ -383,11 +386,13 @@ pub fn get_interaction_stream<'a>(
     api_key: &'a str,
     interaction_id: &'a str,
     last_event_id: Option<&'a str>,
+    include_input: bool,
 ) -> impl Stream<Item = Result<StreamEvent, GenaiError>> + Send + 'a {
     let endpoint = Endpoint::GetInteraction {
         id: interaction_id,
         stream: true,
         last_event_id,
+        include_input,
     };
     let url = construct_endpoint_url(endpoint);
 
@@ -633,6 +638,7 @@ mod tests {
             id: "test_id_123",
             stream: false,
             last_event_id: None,
+            include_input: false,
         };
         let url = construct_endpoint_url(endpoint_get);
         assert!(url.contains("/v1beta/interactions/test_id_123"));

@@ -418,7 +418,7 @@ pub async fn poll_until_complete(
             delay = (delay * 2).min(MAX_DELAY);
         }
 
-        let response = client.get_interaction(interaction_id).await?;
+        let response = client.get_interaction(interaction_id, false).await?;
         println!(
             "Poll after {:?}: status={:?}",
             start.elapsed(),

@@ -515,7 +515,7 @@ impl<'de> Deserialize<'de> for StreamChunk {
 /// }
 ///
 /// // If interrupted, resume from last_event_id:
-/// let resumed_stream = client.get_interaction_stream(&interaction_id, last_event_id.as_deref());
+/// let resumed_stream = client.get_interaction_stream(&interaction_id, last_event_id.as_deref(), false);
 /// ```
 #[derive(Clone, Debug)]
 #[non_exhaustive]

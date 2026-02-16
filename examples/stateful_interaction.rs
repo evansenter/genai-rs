@@ -101,7 +101,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // === Demonstrate retrieval ===
     println!("\n=== RETRIEVING FIRST INTERACTION ===\n");
 
-    match client.get_interaction(&interaction_id).await {
+    match client.get_interaction(&interaction_id, false).await {
         Ok(retrieved) => {
             println!("Retrieved Interaction ID: {:?}", retrieved.id);
             println!("Status: {:?}", retrieved.status);
