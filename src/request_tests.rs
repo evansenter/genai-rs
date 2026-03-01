@@ -42,6 +42,7 @@ fn test_generation_config_serialization() {
         thinking_summaries: None,
         tool_choice: None,
         speech_config: None,
+        stream_function_call_arguments: None,
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -65,6 +66,7 @@ fn test_generation_config_new_fields_serialization() {
         thinking_summaries: Some(ThinkingSummaries::Auto),
         tool_choice: None,
         speech_config: None,
+        stream_function_call_arguments: None,
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -91,6 +93,7 @@ fn test_generation_config_roundtrip() {
         thinking_summaries: Some(ThinkingSummaries::None),
         tool_choice: None,
         speech_config: None,
+        stream_function_call_arguments: None,
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -553,4 +556,49 @@ fn test_interaction_request_roundtrip() {
         format!("{:?}", original.system_instruction),
         format!("{:?}", deserialized.system_instruction)
     );
+}
+
+#[test]
+fn test_stream_function_call_arguments_serialization() {
+    let config = GenerationConfig {
+        stream_function_call_arguments: Some(true),
+        ..Default::default()
+    };
+
+    let json = serde_json::to_string(&config).expect("Serialization should succeed");
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(value["streamFunctionCallArguments"], true);
+}
+
+#[test]
+fn test_stream_function_call_arguments_none_omitted() {
+    let config = GenerationConfig {
+        stream_function_call_arguments: None,
+        ..Default::default()
+    };
+
+    let json = serde_json::to_string(&config).expect("Serialization should succeed");
+    assert!(!json.contains("streamFunctionCallArguments"));
+}
+
+#[test]
+fn test_stream_function_call_arguments_deserialization() {
+    let json = r#"{"streamFunctionCallArguments": true}"#;
+    let config: GenerationConfig = serde_json::from_str(json).expect("Should deserialize");
+    assert_eq!(config.stream_function_call_arguments, Some(true));
+}
+
+#[test]
+fn test_stream_function_call_arguments_roundtrip() {
+    let config = GenerationConfig {
+        temperature: Some(0.7),
+        stream_function_call_arguments: Some(true),
+        ..Default::default()
+    };
+
+    let json = serde_json::to_string(&config).expect("Serialization should succeed");
+    let parsed: GenerationConfig = serde_json::from_str(&json).expect("Should deserialize");
+    assert_eq!(parsed.stream_function_call_arguments, Some(true));
+    assert_eq!(parsed.temperature, Some(0.7));
 }

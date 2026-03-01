@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Streaming function call arguments**: New `PartialArg` type and `stream_function_call_arguments` field in `GenerationConfig` for streaming function call arguments incrementally. When enabled, `Content::FunctionCall` delta events include `partial_args` (with JSONPath-addressed value fragments) and `will_continue` fields. Requires Gemini 3 Pro or later models.
+- `InteractionBuilder::with_stream_function_call_arguments()` builder method to enable the feature.
+- `Content::FunctionCall` now includes optional `partial_args: Option<Vec<PartialArg>>` and `will_continue: Option<bool>` fields for streaming mode.
+
+### Changed
+
+- **BREAKING**: `Content::FunctionCall` variant now has two additional fields (`partial_args` and `will_continue`). Pattern matches using named fields must add `..` or match the new fields explicitly. Struct literal construction must include `partial_args: None, will_continue: None` (or use the `Content::function_call()` / `Content::function_call_with_id()` constructors which handle this automatically).
+
 ## [0.7.2] - 2026-01-17
 
 ### Changed

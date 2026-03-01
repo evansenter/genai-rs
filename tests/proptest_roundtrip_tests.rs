@@ -214,7 +214,15 @@ fn arb_interaction_content() -> impl Strategy<Value = Content> {
             arb_identifier(),
             arb_json_value(),
         )
-            .prop_map(|(id, name, args)| { Content::FunctionCall { id, name, args } }),
+            .prop_map(|(id, name, args)| {
+                Content::FunctionCall {
+                    id,
+                    name,
+                    args,
+                    partial_args: None,
+                    will_continue: None,
+                }
+            }),
     ]
 }
 

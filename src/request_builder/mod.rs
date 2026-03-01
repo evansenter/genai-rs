@@ -1572,6 +1572,39 @@ impl<'a> InteractionBuilder<'a> {
         self
     }
 
+    /// Enables streaming of function call arguments.
+    ///
+    /// When enabled, function call arguments are streamed incrementally via
+    /// [`PartialArg`](crate::PartialArg) fragments in streaming delta events,
+    /// reducing perceived latency for function calling.
+    ///
+    /// **Note:** Requires Gemini 3 Pro or later models and streaming mode.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use genai_rs::Client;
+    /// # use futures_util::StreamExt;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::builder("api-key".to_string()).build()?;
+    /// let mut stream = client
+    ///     .interaction()
+    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_text("Get the weather in Tokyo")
+    ///     .with_stream_function_call_arguments(true)
+    ///     .create_stream();
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_stream_function_call_arguments(mut self, enabled: bool) -> Self {
+        let config = self
+            .generation_config
+            .get_or_insert_with(GenerationConfig::default);
+        config.stream_function_call_arguments = Some(enabled);
+        self
+    }
+
     /// Sets the response MIME type for structured output.
     ///
     /// Required when using `with_response_format()` with a JSON schema.

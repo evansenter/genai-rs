@@ -135,6 +135,48 @@ Used in `generationConfig.toolChoice`.
 | `FunctionCallingMode::None` | `"NONE"` |
 | `FunctionCallingMode::Validated` | `"VALIDATED"` |
 
+### Streaming Function Call Arguments (generation_config)
+
+Used in `generationConfig.streamFunctionCallArguments`. When `true`, function call arguments are
+streamed incrementally via `partial_args` in `Content::FunctionCall` delta events.
+
+```json
+{
+  "generationConfig": {
+    "streamFunctionCallArguments": true
+  }
+}
+```
+
+Response delta wire format (function_call with partial_args):
+```json
+{
+  "type": "function_call",
+  "name": "get_weather",
+  "arguments": {},
+  "partial_args": [
+    {
+      "json_path": "$.location",
+      "string_value": "San Fran",
+      "will_continue": true
+    }
+  ],
+  "will_continue": true
+}
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `partial_args[].json_path` | string | JSONPath (RFC 9535) to the argument |
+| `partial_args[].string_value` | string | Present when value is a string |
+| `partial_args[].number_value` | number | Present when value is a number |
+| `partial_args[].bool_value` | bool | Present when value is a boolean |
+| `partial_args[].null_value` | string | Present when value is null (`"NULL_VALUE"`) |
+| `partial_args[].will_continue` | bool | More chunks for this specific argument? |
+| `will_continue` (top-level) | bool | More partial_args coming for this function call? |
+
+**Note:** This feature requires Gemini 3 Pro or later models. **UNVERIFIED** on Interactions API — documented wire format is from Vertex AI `streamGenerateContent`. Verify with `LOUD_WIRE=1`.
+
 ### InteractionStatus (response)
 
 Returned in API responses - we only deserialize, never serialize.

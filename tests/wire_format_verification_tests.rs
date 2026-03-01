@@ -393,6 +393,8 @@ mod interaction_content {
             id: Some("call_123".to_string()),
             name: "test".to_string(),
             args: json!({}),
+            partial_args: None,
+            will_continue: None,
         };
         let json = serde_json::to_value(&content).unwrap();
         assert_eq!(json["type"], "function_call");

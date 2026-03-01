@@ -259,6 +259,124 @@ impl UrlContextResultItem {
 }
 
 // =============================================================================
+// Partial Argument (Streaming Function Call Arguments)
+// =============================================================================
+
+/// A partial argument fragment from a streaming function call.
+///
+/// When `stream_function_call_arguments` is enabled in the request, the API
+/// streams function call arguments incrementally. Each `PartialArg` represents
+/// a single fragment, identified by its [`json_path`](PartialArg::json_path)
+/// within the function's parameters object.
+///
+/// # Wire Format
+///
+/// Each partial arg has a JSONPath (RFC 9535) identifying the parameter being
+/// streamed, exactly one value field (`string_value`, `number_value`,
+/// `bool_value`, or `null_value`), and a `will_continue` flag indicating
+/// whether more chunks are expected for this specific argument.
+///
+/// # Example
+///
+/// ```
+/// use genai_rs::PartialArg;
+///
+/// let arg = PartialArg {
+///     json_path: "$.location".to_string(),
+///     string_value: Some("San Fran".to_string()),
+///     number_value: None,
+///     bool_value: None,
+///     null_value: None,
+///     will_continue: Some(true), // more chunks coming for this arg
+/// };
+///
+/// assert_eq!(arg.json_path, "$.location");
+/// assert!(arg.is_string());
+/// assert!(arg.will_continue());
+/// ```
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub struct PartialArg {
+    /// JSONPath (RFC 9535) identifying the parameter within the function's arguments.
+    ///
+    /// Examples: `"$.location"`, `"$.location.latitude"`, `"$.items[0].name"`
+    pub json_path: String,
+
+    /// String value fragment (present when the argument value is a string).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub string_value: Option<String>,
+
+    /// Numeric value (present when the argument value is a number).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub number_value: Option<f64>,
+
+    /// Boolean value (present when the argument value is a boolean).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bool_value: Option<bool>,
+
+    /// Null value marker (present when the argument value is null).
+    ///
+    /// When this field is `Some("NULL_VALUE")`, the argument value is JSON null.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub null_value: Option<String>,
+
+    /// Whether more chunks are expected for this specific argument.
+    ///
+    /// Only meaningful for `string_value` fragments: when `true`, the string is
+    /// being streamed in chunks and more chunks will follow for this argument.
+    /// When `false` or absent, this is the final chunk for this argument.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub will_continue: Option<bool>,
+}
+
+impl PartialArg {
+    /// Returns `true` if more chunks are expected for this argument.
+    #[must_use]
+    pub fn will_continue(&self) -> bool {
+        self.will_continue.unwrap_or(false)
+    }
+
+    /// Returns `true` if this is a string value fragment.
+    #[must_use]
+    pub fn is_string(&self) -> bool {
+        self.string_value.is_some()
+    }
+
+    /// Returns `true` if this is a number value.
+    #[must_use]
+    pub fn is_number(&self) -> bool {
+        self.number_value.is_some()
+    }
+
+    /// Returns `true` if this is a boolean value.
+    #[must_use]
+    pub fn is_bool(&self) -> bool {
+        self.bool_value.is_some()
+    }
+
+    /// Returns `true` if this is a null value.
+    #[must_use]
+    pub fn is_null(&self) -> bool {
+        self.null_value.is_some()
+    }
+
+    /// Returns the value as a [`serde_json::Value`], regardless of which type it is.
+    #[must_use]
+    pub fn value(&self) -> serde_json::Value {
+        if let Some(s) = &self.string_value {
+            serde_json::Value::String(s.clone())
+        } else if let Some(n) = self.number_value {
+            serde_json::json!(n)
+        } else if let Some(b) = self.bool_value {
+            serde_json::Value::Bool(b)
+        } else {
+            serde_json::Value::Null
+        }
+    }
+}
+
+// =============================================================================
 // File Search Result Item
 // =============================================================================
 
@@ -733,11 +851,25 @@ pub enum Content {
         mime_type: Option<String>,
     },
     /// Function call (output from model)
+    ///
+    /// When `stream_function_call_arguments` is enabled, streaming responses will
+    /// include `partial_args` with incremental argument fragments and `will_continue`
+    /// indicating whether more fragments are expected.
     FunctionCall {
         /// Unique identifier for this function call
         id: Option<String>,
         name: String,
         args: serde_json::Value,
+        /// Partial argument fragments streamed incrementally.
+        ///
+        /// Only present when `stream_function_call_arguments` is enabled
+        /// in the request and the response is being streamed.
+        partial_args: Option<Vec<PartialArg>>,
+        /// Whether more partial args are expected for this function call.
+        ///
+        /// When `true`, more `partial_args` will arrive in subsequent delta events.
+        /// When `false` or absent, this is the final streamed chunk for this call.
+        will_continue: Option<bool>,
     },
     /// Function result (input to model with execution result)
     FunctionResult {
@@ -1157,7 +1289,13 @@ impl Serialize for Content {
                 }
                 map.end()
             }
-            Self::FunctionCall { id, name, args } => {
+            Self::FunctionCall {
+                id,
+                name,
+                args,
+                partial_args,
+                will_continue,
+            } => {
                 let mut map = serializer.serialize_map(None)?;
                 map.serialize_entry("type", "function_call")?;
                 if let Some(i) = id {
@@ -1165,6 +1303,12 @@ impl Serialize for Content {
                 }
                 map.serialize_entry("name", name)?;
                 map.serialize_entry("arguments", args)?;
+                if let Some(pa) = partial_args {
+                    map.serialize_entry("partial_args", pa)?;
+                }
+                if let Some(wc) = will_continue {
+                    map.serialize_entry("will_continue", wc)?;
+                }
                 map.end()
             }
             Self::FunctionResult {
@@ -1556,6 +1700,8 @@ impl Content {
             id: id.map(|s| s.into()),
             name: name.into(),
             args,
+            partial_args: None,
+            will_continue: None,
         }
     }
 
@@ -2291,6 +2437,10 @@ impl<'de> Deserialize<'de> for Content {
                 name: Option<String>,
                 #[serde(rename = "arguments", default)]
                 args: serde_json::Value,
+                #[serde(default)]
+                partial_args: Option<Vec<PartialArg>>,
+                #[serde(default)]
+                will_continue: Option<bool>,
             },
             FunctionResult {
                 name: Option<String>,
@@ -2409,13 +2559,21 @@ impl<'de> Deserialize<'de> for Content {
                     uri,
                     mime_type,
                 },
-                KnownContent::FunctionCall { id, name, args } => {
+                KnownContent::FunctionCall {
+                    id,
+                    name,
+                    args,
+                    partial_args,
+                    will_continue,
+                } => {
                     // In streaming, content.start may not include name yet;
                     // deltas will fill it in. Use empty string as placeholder.
                     Content::FunctionCall {
                         id,
                         name: name.unwrap_or_default(),
                         args,
+                        partial_args,
+                        will_continue,
                     }
                 }
                 KnownContent::FunctionResult {

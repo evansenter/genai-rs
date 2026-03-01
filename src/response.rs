@@ -1488,7 +1488,7 @@ impl InteractionResponse {
         self.outputs
             .iter()
             .filter_map(|content| {
-                if let Content::FunctionCall { id, name, args } = content {
+                if let Content::FunctionCall { id, name, args, .. } = content {
                     Some(FunctionCallInfo {
                         id: id.as_ref().map(|s| s.as_str()),
                         name: name.as_str(),

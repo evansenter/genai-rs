@@ -427,7 +427,7 @@ mod tests {
             json!({"city": "Tokyo"}),
         );
         match content {
-            Content::FunctionCall { id, name, args } => {
+            Content::FunctionCall { id, name, args, .. } => {
                 assert_eq!(id, Some("call_abc".to_string()));
                 assert_eq!(name, "get_weather");
                 assert_eq!(args, json!({"city": "Tokyo"}));

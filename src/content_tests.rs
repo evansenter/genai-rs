@@ -43,7 +43,7 @@ fn test_deserialize_function_call_streaming_start() {
     let content: Content = serde_json::from_str(content_json).expect("Deserialization failed");
 
     match content {
-        Content::FunctionCall { id, name, args } => {
+        Content::FunctionCall { id, name, args, .. } => {
             assert_eq!(id.as_deref(), Some("call-abc123"));
             // Name defaults to empty string when not provided
             assert_eq!(name, "");
@@ -220,6 +220,8 @@ fn test_serialize_known_variant_with_none_fields() {
         id: None,
         name: "test_fn".to_string(),
         args: serde_json::json!({"arg": "value"}),
+        partial_args: None,
+        will_continue: None,
     };
     let json = serde_json::to_string(&fc).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -1793,7 +1795,7 @@ fn test_new_thought_with_empty_string() {
 fn test_new_function_call_creates_correct_variant() {
     let content = Content::function_call("get_weather", serde_json::json!({"location": "SF"}));
     match &content {
-        Content::FunctionCall { id, name, args } => {
+        Content::FunctionCall { id, name, args, .. } => {
             assert!(id.is_none());
             assert_eq!(name, "get_weather");
             assert_eq!(args["location"], "SF");
@@ -1811,7 +1813,7 @@ fn test_new_function_call_with_id_creates_correct_variant() {
         serde_json::json!({"location": "San Francisco"}),
     );
     match content {
-        Content::FunctionCall { id, name, args } => {
+        Content::FunctionCall { id, name, args, .. } => {
             assert_eq!(id, Some("call_123".to_string()));
             assert_eq!(name, "get_weather");
             assert_eq!(args["location"], "San Francisco");
@@ -2465,5 +2467,260 @@ fn test_from_uri_and_mime_preserves_values() {
             assert_eq!(mime_type, Some("image/png".to_string()));
         }
         _ => panic!("Expected Image variant"),
+    }
+}
+
+// =============================================================================
+// PartialArg Tests
+// =============================================================================
+
+#[test]
+fn test_partial_arg_string_value() {
+    let arg = PartialArg {
+        json_path: "$.location".to_string(),
+        string_value: Some("San Francisco".to_string()),
+        number_value: None,
+        bool_value: None,
+        null_value: None,
+        will_continue: Some(true),
+    };
+
+    assert!(arg.is_string());
+    assert!(!arg.is_number());
+    assert!(!arg.is_bool());
+    assert!(!arg.is_null());
+    assert!(arg.will_continue());
+    assert_eq!(
+        arg.value(),
+        serde_json::Value::String("San Francisco".to_string())
+    );
+}
+
+#[test]
+fn test_partial_arg_number_value() {
+    let arg = PartialArg {
+        json_path: "$.temperature".to_string(),
+        string_value: None,
+        number_value: Some(72.5),
+        bool_value: None,
+        null_value: None,
+        will_continue: None,
+    };
+
+    assert!(arg.is_number());
+    assert!(!arg.is_string());
+    assert!(!arg.will_continue());
+    assert_eq!(arg.value(), serde_json::json!(72.5));
+}
+
+#[test]
+fn test_partial_arg_bool_value() {
+    let arg = PartialArg {
+        json_path: "$.verbose".to_string(),
+        string_value: None,
+        number_value: None,
+        bool_value: Some(true),
+        null_value: None,
+        will_continue: None,
+    };
+
+    assert!(arg.is_bool());
+    assert_eq!(arg.value(), serde_json::Value::Bool(true));
+}
+
+#[test]
+fn test_partial_arg_null_value() {
+    let arg = PartialArg {
+        json_path: "$.optional_field".to_string(),
+        string_value: None,
+        number_value: None,
+        bool_value: None,
+        null_value: Some("NULL_VALUE".to_string()),
+        will_continue: None,
+    };
+
+    assert!(arg.is_null());
+    assert_eq!(arg.value(), serde_json::Value::Null);
+}
+
+#[test]
+fn test_partial_arg_serialization_roundtrip() {
+    let arg = PartialArg {
+        json_path: "$.location".to_string(),
+        string_value: Some("Tokyo".to_string()),
+        number_value: None,
+        bool_value: None,
+        null_value: None,
+        will_continue: Some(true),
+    };
+
+    let json = serde_json::to_string(&arg).expect("Serialization should succeed");
+    assert!(json.contains("json_path"));
+    assert!(json.contains("$.location"));
+    assert!(json.contains("string_value"));
+    assert!(json.contains("Tokyo"));
+    assert!(json.contains("will_continue"));
+
+    // None fields should be skipped
+    assert!(!json.contains("number_value"));
+    assert!(!json.contains("bool_value"));
+    assert!(!json.contains("null_value"));
+
+    let deserialized: PartialArg =
+        serde_json::from_str(&json).expect("Deserialization should succeed");
+    assert_eq!(arg, deserialized);
+}
+
+#[test]
+fn test_partial_arg_deserialization_from_wire() {
+    // Simulate the wire format from the API
+    let wire_json = r#"{
+        "json_path": "$.city",
+        "string_value": "San Fran",
+        "will_continue": true
+    }"#;
+
+    let arg: PartialArg = serde_json::from_str(wire_json).expect("Should deserialize");
+    assert_eq!(arg.json_path, "$.city");
+    assert_eq!(arg.string_value, Some("San Fran".to_string()));
+    assert!(arg.will_continue());
+}
+
+// =============================================================================
+// Content::FunctionCall with partial_args Tests
+// =============================================================================
+
+#[test]
+fn test_function_call_with_partial_args_serialization() {
+    let content = Content::FunctionCall {
+        id: Some("call_123".to_string()),
+        name: "get_weather".to_string(),
+        args: serde_json::Value::Null,
+        partial_args: Some(vec![PartialArg {
+            json_path: "$.location".to_string(),
+            string_value: Some("Tokyo".to_string()),
+            number_value: None,
+            bool_value: None,
+            null_value: None,
+            will_continue: Some(false),
+        }]),
+        will_continue: Some(true),
+    };
+
+    let json = serde_json::to_string(&content).expect("Serialization should succeed");
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(value["type"], "function_call");
+    assert_eq!(value["id"], "call_123");
+    assert_eq!(value["name"], "get_weather");
+    assert!(value["partial_args"].is_array());
+    assert_eq!(value["partial_args"][0]["json_path"], "$.location");
+    assert_eq!(value["partial_args"][0]["string_value"], "Tokyo");
+    assert_eq!(value["will_continue"], true);
+}
+
+#[test]
+fn test_function_call_without_partial_args_no_extra_fields() {
+    // Normal function calls should not include partial_args or will_continue
+    let content = Content::function_call("test_fn", serde_json::json!({"key": "value"}));
+
+    let json = serde_json::to_string(&content).expect("Serialization should succeed");
+    assert!(!json.contains("partial_args"));
+    assert!(!json.contains("will_continue"));
+}
+
+#[test]
+fn test_function_call_with_partial_args_deserialization() {
+    let wire_json = r#"{
+        "type": "function_call",
+        "id": "call_abc",
+        "name": "search",
+        "arguments": {},
+        "partial_args": [
+            {
+                "json_path": "$.query",
+                "string_value": "weather in ",
+                "will_continue": true
+            },
+            {
+                "json_path": "$.limit",
+                "number_value": 10
+            }
+        ],
+        "will_continue": true
+    }"#;
+
+    let content: Content = serde_json::from_str(wire_json).expect("Should deserialize");
+    match content {
+        Content::FunctionCall {
+            id,
+            name,
+            partial_args,
+            will_continue,
+            ..
+        } => {
+            assert_eq!(id, Some("call_abc".to_string()));
+            assert_eq!(name, "search");
+            let pa = partial_args.expect("Should have partial_args");
+            assert_eq!(pa.len(), 2);
+            assert_eq!(pa[0].json_path, "$.query");
+            assert_eq!(pa[0].string_value, Some("weather in ".to_string()));
+            assert!(pa[0].will_continue());
+            assert_eq!(pa[1].json_path, "$.limit");
+            assert_eq!(pa[1].number_value, Some(10.0));
+            assert!(!pa[1].will_continue());
+            assert_eq!(will_continue, Some(true));
+        }
+        _ => panic!("Expected FunctionCall variant"),
+    }
+}
+
+#[test]
+fn test_function_call_streaming_first_chunk() {
+    // First chunk: has function name and will_continue, but no partial_args
+    let wire_json = r#"{
+        "type": "function_call",
+        "name": "get_weather",
+        "arguments": {},
+        "will_continue": true
+    }"#;
+
+    let content: Content = serde_json::from_str(wire_json).expect("Should deserialize");
+    match content {
+        Content::FunctionCall {
+            name,
+            partial_args,
+            will_continue,
+            ..
+        } => {
+            assert_eq!(name, "get_weather");
+            assert!(partial_args.is_none());
+            assert_eq!(will_continue, Some(true));
+        }
+        _ => panic!("Expected FunctionCall variant"),
+    }
+}
+
+#[test]
+fn test_function_call_streaming_final_chunk() {
+    // Final chunk: empty function call, will_continue is false/absent
+    let wire_json = r#"{
+        "type": "function_call",
+        "arguments": {}
+    }"#;
+
+    let content: Content = serde_json::from_str(wire_json).expect("Should deserialize");
+    match content {
+        Content::FunctionCall {
+            name,
+            partial_args,
+            will_continue,
+            ..
+        } => {
+            assert!(name.is_empty()); // Default empty string
+            assert!(partial_args.is_none());
+            assert!(will_continue.is_none());
+        }
+        _ => panic!("Expected FunctionCall variant"),
     }
 }

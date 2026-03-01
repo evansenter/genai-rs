@@ -523,6 +523,19 @@ pub struct GenerationConfig {
     /// Required when using `AUDIO` response modality.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speech_config: Option<SpeechConfig>,
+
+    /// Enable streaming of function call arguments.
+    ///
+    /// When `true` and streaming is enabled, function call arguments will be
+    /// streamed incrementally via [`crate::PartialArg`] fragments
+    /// in `Content::FunctionCall` delta events,
+    /// rather than arriving all at once in the complete response.
+    ///
+    /// This reduces perceived latency for function calling in streaming mode.
+    ///
+    /// **Note:** This feature requires Gemini 3 Pro or later models.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_function_call_arguments: Option<bool>,
 }
 
 /// Speech configuration for text-to-speech audio output.
