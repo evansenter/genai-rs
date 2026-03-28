@@ -66,6 +66,7 @@ Methods follow a consistent naming pattern based on their behavior:
 | ~~`with_file_search_config()`~~ | — | — | **Removed** — use `add_tool(FileSearchConfig::new(stores))` |
 | **Generation Config** |
 | `with_allowed_tools(Vec<String>)` | with | replaces | Restricts model to named tools |
+| `with_image_config(ImageConfig)` | with | replaces | Image generation aspect ratio and size |
 | `with_function_calling_mode()` | with | replaces | Auto/Any/None/Validated |
 | `with_thinking_level()` | with | replaces | Chain-of-thought reasoning level |
 | `with_seed()` | with | replaces | Deterministic output |

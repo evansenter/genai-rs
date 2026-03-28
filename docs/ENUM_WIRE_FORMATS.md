@@ -25,6 +25,7 @@ All types below implement graceful handling of unrecognized values via an `Unkno
 | 13 | `UrlRetrievalStatus` | src/response.rs | `status_type` | URL fetch status |
 | 14 | `ImageAspectRatio` | src/request.rs | `ratio_type` | Image aspect ratios (14 values) |
 | 15 | `ImageSize` | src/request.rs | `size_type` | Image resolution (512/1K/2K/4K) |
+| 16 | `SearchType` | src/tools.rs | `search_type` | Google Search types (web_search/image_search) |
 
 ### Unknown Variant Pattern
 
