@@ -460,7 +460,7 @@ async fn with_model_fallback(
 ) -> Result<String, GenaiError> {
     let models = [
         "gemini-3-flash-preview",
-        "gemini-3-pro-preview",
+        "gemini-3.1-pro-preview",
     ];
 
     for model in models {

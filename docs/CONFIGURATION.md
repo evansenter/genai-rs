@@ -148,7 +148,7 @@ let config = GenerationConfig {
 | Model | Default Max | Absolute Max |
 |-------|-------------|--------------|
 | gemini-3-flash-preview | 8192 | 8192 |
-| gemini-3-pro-preview | 8192 | 8192 |
+| gemini-3.1-pro-preview | 8192 | 8192 |
 
 Note: Actual limits vary by model version. Check [Google's documentation](https://ai.google.dev/models/gemini) for current values.
 
