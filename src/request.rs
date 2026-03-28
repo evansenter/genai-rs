@@ -523,6 +523,11 @@ pub struct GenerationConfig {
     /// Required when using `AUDIO` response modality.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speech_config: Option<SpeechConfig>,
+    /// Image generation configuration.
+    ///
+    /// Controls aspect ratio and size for image generation output.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_config: Option<ImageConfig>,
 }
 
 /// Speech configuration for text-to-speech audio output.
@@ -586,6 +591,295 @@ impl SpeechConfig {
             voice: Some(voice.into()),
             language: Some(language.into()),
             ..Default::default()
+        }
+    }
+}
+
+/// Configuration for image generation output.
+///
+/// Controls aspect ratio and size when generating images.
+///
+/// # Example
+///
+/// ```
+/// use genai_rs::{ImageConfig, ImageAspectRatio, ImageSize};
+///
+/// let config = ImageConfig {
+///     aspect_ratio: Some(ImageAspectRatio::Square),
+///     image_size: Some(ImageSize::Hd1k),
+/// };
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ImageConfig {
+    /// The aspect ratio for generated images.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aspect_ratio: Option<ImageAspectRatio>,
+    /// The size/resolution for generated images.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_size: Option<ImageSize>,
+}
+
+/// Aspect ratio for image generation output.
+///
+/// This enum is marked `#[non_exhaustive]` for forward compatibility.
+/// New aspect ratios may be added in future API versions.
+///
+/// # Evergreen Pattern
+///
+/// Unknown values from the API deserialize into the `Unknown` variant, preserving
+/// the original data for debugging and roundtrip serialization.
+///
+/// # Wire Format
+///
+/// Values serialize as string ratios: `"1:1"`, `"16:9"`, etc.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ImageAspectRatio {
+    /// 1:1 square
+    Square,
+    /// 2:3 portrait
+    Portrait2x3,
+    /// 3:2 landscape
+    Landscape3x2,
+    /// 3:4 portrait
+    Portrait3x4,
+    /// 4:3 landscape
+    Landscape4x3,
+    /// 4:5 portrait
+    Portrait4x5,
+    /// 5:4 landscape
+    Landscape5x4,
+    /// 9:16 tall portrait
+    Portrait9x16,
+    /// 16:9 widescreen
+    Widescreen16x9,
+    /// 21:9 ultrawide
+    Ultrawide21x9,
+    /// 1:8 very tall
+    Tall1x8,
+    /// 8:1 very wide
+    Wide8x1,
+    /// 1:4 tall
+    Tall1x4,
+    /// 4:1 wide
+    Wide4x1,
+    /// Unknown variant for forward compatibility (Evergreen pattern)
+    Unknown {
+        /// The unrecognized ratio type from the API
+        ratio_type: String,
+        /// The full JSON data, preserved for debugging and roundtrip serialization
+        data: serde_json::Value,
+    },
+}
+
+impl ImageAspectRatio {
+    /// Returns true if this is an unknown aspect ratio.
+    #[must_use]
+    pub const fn is_unknown(&self) -> bool {
+        matches!(self, Self::Unknown { .. })
+    }
+
+    /// Returns the ratio type name if this is an unknown aspect ratio.
+    #[must_use]
+    pub fn unknown_ratio_type(&self) -> Option<&str> {
+        match self {
+            Self::Unknown { ratio_type, .. } => Some(ratio_type),
+            _ => None,
+        }
+    }
+
+    /// Returns the preserved data if this is an unknown aspect ratio.
+    #[must_use]
+    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::Unknown { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for ImageAspectRatio {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Square => serializer.serialize_str("1:1"),
+            Self::Portrait2x3 => serializer.serialize_str("2:3"),
+            Self::Landscape3x2 => serializer.serialize_str("3:2"),
+            Self::Portrait3x4 => serializer.serialize_str("3:4"),
+            Self::Landscape4x3 => serializer.serialize_str("4:3"),
+            Self::Portrait4x5 => serializer.serialize_str("4:5"),
+            Self::Landscape5x4 => serializer.serialize_str("5:4"),
+            Self::Portrait9x16 => serializer.serialize_str("9:16"),
+            Self::Widescreen16x9 => serializer.serialize_str("16:9"),
+            Self::Ultrawide21x9 => serializer.serialize_str("21:9"),
+            Self::Tall1x8 => serializer.serialize_str("1:8"),
+            Self::Wide8x1 => serializer.serialize_str("8:1"),
+            Self::Tall1x4 => serializer.serialize_str("1:4"),
+            Self::Wide4x1 => serializer.serialize_str("4:1"),
+            Self::Unknown { ratio_type, .. } => serializer.serialize_str(ratio_type),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ImageAspectRatio {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value.as_str() {
+            Some("1:1") => Ok(Self::Square),
+            Some("2:3") => Ok(Self::Portrait2x3),
+            Some("3:2") => Ok(Self::Landscape3x2),
+            Some("3:4") => Ok(Self::Portrait3x4),
+            Some("4:3") => Ok(Self::Landscape4x3),
+            Some("4:5") => Ok(Self::Portrait4x5),
+            Some("5:4") => Ok(Self::Landscape5x4),
+            Some("9:16") => Ok(Self::Portrait9x16),
+            Some("16:9") => Ok(Self::Widescreen16x9),
+            Some("21:9") => Ok(Self::Ultrawide21x9),
+            Some("1:8") => Ok(Self::Tall1x8),
+            Some("8:1") => Ok(Self::Wide8x1),
+            Some("1:4") => Ok(Self::Tall1x4),
+            Some("4:1") => Ok(Self::Wide4x1),
+            Some(other) => {
+                tracing::warn!(
+                    "Encountered unknown ImageAspectRatio '{}'. \
+                     Preserving in Unknown variant.",
+                    other
+                );
+                Ok(Self::Unknown {
+                    ratio_type: other.to_string(),
+                    data: value,
+                })
+            }
+            None => {
+                let ratio_type = format!("<non-string: {}>", value);
+                tracing::warn!(
+                    "ImageAspectRatio received non-string value: {}. \
+                     Preserving in Unknown variant.",
+                    value
+                );
+                Ok(Self::Unknown {
+                    ratio_type,
+                    data: value,
+                })
+            }
+        }
+    }
+}
+
+/// Image size/resolution for image generation output.
+///
+/// This enum is marked `#[non_exhaustive]` for forward compatibility.
+/// New sizes may be added in future API versions.
+///
+/// # Evergreen Pattern
+///
+/// Unknown values from the API deserialize into the `Unknown` variant, preserving
+/// the original data for debugging and roundtrip serialization.
+///
+/// # Wire Format
+///
+/// Values serialize as strings: `"512"`, `"1K"`, `"2K"`, `"4K"`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ImageSize {
+    /// 512px resolution
+    Sd512,
+    /// 1K resolution
+    Hd1k,
+    /// 2K resolution
+    Hd2k,
+    /// 4K resolution
+    Uhd4k,
+    /// Unknown variant for forward compatibility (Evergreen pattern)
+    Unknown {
+        /// The unrecognized size type from the API
+        size_type: String,
+        /// The full JSON data, preserved for debugging and roundtrip serialization
+        data: serde_json::Value,
+    },
+}
+
+impl ImageSize {
+    /// Returns true if this is an unknown image size.
+    #[must_use]
+    pub const fn is_unknown(&self) -> bool {
+        matches!(self, Self::Unknown { .. })
+    }
+
+    /// Returns the size type name if this is an unknown image size.
+    #[must_use]
+    pub fn unknown_size_type(&self) -> Option<&str> {
+        match self {
+            Self::Unknown { size_type, .. } => Some(size_type),
+            _ => None,
+        }
+    }
+
+    /// Returns the preserved data if this is an unknown image size.
+    #[must_use]
+    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::Unknown { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for ImageSize {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Sd512 => serializer.serialize_str("512"),
+            Self::Hd1k => serializer.serialize_str("1K"),
+            Self::Hd2k => serializer.serialize_str("2K"),
+            Self::Uhd4k => serializer.serialize_str("4K"),
+            Self::Unknown { size_type, .. } => serializer.serialize_str(size_type),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ImageSize {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value.as_str() {
+            Some("512") => Ok(Self::Sd512),
+            Some("1K") => Ok(Self::Hd1k),
+            Some("2K") => Ok(Self::Hd2k),
+            Some("4K") => Ok(Self::Uhd4k),
+            Some(other) => {
+                tracing::warn!(
+                    "Encountered unknown ImageSize '{}'. \
+                     Preserving in Unknown variant.",
+                    other
+                );
+                Ok(Self::Unknown {
+                    size_type: other.to_string(),
+                    data: value,
+                })
+            }
+            None => {
+                let size_type = format!("<non-string: {}>", value);
+                tracing::warn!(
+                    "ImageSize received non-string value: {}. \
+                     Preserving in Unknown variant.",
+                    value
+                );
+                Ok(Self::Unknown {
+                    size_type,
+                    data: value,
+                })
+            }
         }
     }
 }
@@ -1217,5 +1511,227 @@ mod tests {
         assert_eq!(config.voice, None);
         assert_eq!(config.language, None);
         assert_eq!(config.speaker, None);
+    }
+
+    // =========================================================================
+    // ImageAspectRatio Tests
+    // =========================================================================
+
+    #[test]
+    fn test_image_aspect_ratio_serialization() {
+        assert_eq!(
+            serde_json::to_string(&ImageAspectRatio::Square).unwrap(),
+            "\"1:1\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ImageAspectRatio::Portrait2x3).unwrap(),
+            "\"2:3\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ImageAspectRatio::Landscape3x2).unwrap(),
+            "\"3:2\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ImageAspectRatio::Portrait3x4).unwrap(),
+            "\"3:4\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ImageAspectRatio::Landscape4x3).unwrap(),
+            "\"4:3\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ImageAspectRatio::Portrait4x5).unwrap(),
+            "\"4:5\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ImageAspectRatio::Landscape5x4).unwrap(),
+            "\"5:4\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ImageAspectRatio::Portrait9x16).unwrap(),
+            "\"9:16\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ImageAspectRatio::Widescreen16x9).unwrap(),
+            "\"16:9\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ImageAspectRatio::Ultrawide21x9).unwrap(),
+            "\"21:9\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ImageAspectRatio::Tall1x8).unwrap(),
+            "\"1:8\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ImageAspectRatio::Wide8x1).unwrap(),
+            "\"8:1\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ImageAspectRatio::Tall1x4).unwrap(),
+            "\"1:4\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ImageAspectRatio::Wide4x1).unwrap(),
+            "\"4:1\""
+        );
+    }
+
+    #[test]
+    fn test_image_aspect_ratio_deserialization_roundtrip() {
+        let ratios = vec![
+            ("\"1:1\"", ImageAspectRatio::Square),
+            ("\"2:3\"", ImageAspectRatio::Portrait2x3),
+            ("\"3:2\"", ImageAspectRatio::Landscape3x2),
+            ("\"3:4\"", ImageAspectRatio::Portrait3x4),
+            ("\"4:3\"", ImageAspectRatio::Landscape4x3),
+            ("\"4:5\"", ImageAspectRatio::Portrait4x5),
+            ("\"5:4\"", ImageAspectRatio::Landscape5x4),
+            ("\"9:16\"", ImageAspectRatio::Portrait9x16),
+            ("\"16:9\"", ImageAspectRatio::Widescreen16x9),
+            ("\"21:9\"", ImageAspectRatio::Ultrawide21x9),
+            ("\"1:8\"", ImageAspectRatio::Tall1x8),
+            ("\"8:1\"", ImageAspectRatio::Wide8x1),
+            ("\"1:4\"", ImageAspectRatio::Tall1x4),
+            ("\"4:1\"", ImageAspectRatio::Wide4x1),
+        ];
+
+        for (json, expected) in ratios {
+            let parsed: ImageAspectRatio = serde_json::from_str(json).unwrap();
+            assert_eq!(parsed, expected);
+
+            // Roundtrip
+            let serialized = serde_json::to_string(&parsed).unwrap();
+            assert_eq!(serialized, json);
+        }
+    }
+
+    #[test]
+    fn test_image_aspect_ratio_unknown_roundtrip() {
+        let unknown: ImageAspectRatio = serde_json::from_str("\"7:3\"").unwrap();
+        assert!(unknown.is_unknown());
+        assert_eq!(unknown.unknown_ratio_type(), Some("7:3"));
+        assert!(unknown.unknown_data().is_some());
+
+        // Roundtrip preserves the unknown value
+        let json = serde_json::to_string(&unknown).unwrap();
+        assert_eq!(json, "\"7:3\"");
+    }
+
+    #[test]
+    fn test_image_aspect_ratio_known_not_unknown() {
+        assert!(!ImageAspectRatio::Square.is_unknown());
+        assert_eq!(ImageAspectRatio::Widescreen16x9.unknown_ratio_type(), None);
+        assert_eq!(ImageAspectRatio::Portrait2x3.unknown_data(), None);
+    }
+
+    // =========================================================================
+    // ImageSize Tests
+    // =========================================================================
+
+    #[test]
+    fn test_image_size_serialization() {
+        assert_eq!(serde_json::to_string(&ImageSize::Sd512).unwrap(), "\"512\"");
+        assert_eq!(serde_json::to_string(&ImageSize::Hd1k).unwrap(), "\"1K\"");
+        assert_eq!(serde_json::to_string(&ImageSize::Hd2k).unwrap(), "\"2K\"");
+        assert_eq!(serde_json::to_string(&ImageSize::Uhd4k).unwrap(), "\"4K\"");
+    }
+
+    #[test]
+    fn test_image_size_deserialization_roundtrip() {
+        let sizes = vec![
+            ("\"512\"", ImageSize::Sd512),
+            ("\"1K\"", ImageSize::Hd1k),
+            ("\"2K\"", ImageSize::Hd2k),
+            ("\"4K\"", ImageSize::Uhd4k),
+        ];
+
+        for (json, expected) in sizes {
+            let parsed: ImageSize = serde_json::from_str(json).unwrap();
+            assert_eq!(parsed, expected);
+
+            let serialized = serde_json::to_string(&parsed).unwrap();
+            assert_eq!(serialized, json);
+        }
+    }
+
+    #[test]
+    fn test_image_size_unknown_roundtrip() {
+        let unknown: ImageSize = serde_json::from_str("\"8K\"").unwrap();
+        assert!(unknown.is_unknown());
+        assert_eq!(unknown.unknown_size_type(), Some("8K"));
+        assert!(unknown.unknown_data().is_some());
+
+        let json = serde_json::to_string(&unknown).unwrap();
+        assert_eq!(json, "\"8K\"");
+    }
+
+    #[test]
+    fn test_image_size_known_not_unknown() {
+        assert!(!ImageSize::Sd512.is_unknown());
+        assert_eq!(ImageSize::Hd1k.unknown_size_type(), None);
+        assert_eq!(ImageSize::Uhd4k.unknown_data(), None);
+    }
+
+    // =========================================================================
+    // ImageConfig Tests
+    // =========================================================================
+
+    #[test]
+    fn test_image_config_serialization_roundtrip() {
+        let config = ImageConfig {
+            aspect_ratio: Some(ImageAspectRatio::Widescreen16x9),
+            image_size: Some(ImageSize::Hd2k),
+        };
+
+        let json = serde_json::to_string(&config).expect("Serialization failed");
+        let parsed: ImageConfig = serde_json::from_str(&json).expect("Deserialization failed");
+
+        assert_eq!(config, parsed);
+    }
+
+    #[test]
+    fn test_image_config_default() {
+        let config = ImageConfig::default();
+        assert_eq!(config.aspect_ratio, None);
+        assert_eq!(config.image_size, None);
+    }
+
+    #[test]
+    fn test_image_config_partial_fields() {
+        let config = ImageConfig {
+            aspect_ratio: Some(ImageAspectRatio::Square),
+            image_size: None,
+        };
+
+        let json = serde_json::to_string(&config).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(value["aspectRatio"], "1:1");
+        assert!(value.get("imageSize").is_none());
+    }
+
+    #[test]
+    fn test_image_config_skip_serializing_none() {
+        let config = ImageConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        assert_eq!(json, "{}");
+    }
+
+    #[test]
+    fn test_generation_config_with_image_config() {
+        let config = GenerationConfig {
+            image_config: Some(ImageConfig {
+                aspect_ratio: Some(ImageAspectRatio::Portrait9x16),
+                image_size: Some(ImageSize::Uhd4k),
+            }),
+            ..Default::default()
+        };
+
+        let json = serde_json::to_string(&config).expect("Serialization failed");
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(value["imageConfig"]["aspectRatio"], "9:16");
+        assert_eq!(value["imageConfig"]["imageSize"], "4K");
     }
 }

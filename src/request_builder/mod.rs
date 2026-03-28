@@ -11,7 +11,7 @@ use tracing::debug;
 
 use crate::{
     AgentConfig, Content, DeepResearchConfig, FunctionCallingMode, FunctionDeclaration,
-    GenerationConfig, InteractionInput, InteractionRequest, InteractionResponse, Role,
+    GenerationConfig, ImageConfig, InteractionInput, InteractionRequest, InteractionResponse, Role,
     SpeechConfig, StreamEvent, ThinkingLevel, ThinkingSummaries, Tool as InternalTool, Turn,
     TurnContent,
 };
@@ -1070,6 +1070,43 @@ impl<'a> InteractionBuilder<'a> {
     #[must_use]
     pub fn with_speech_config(mut self, config: SpeechConfig) -> Self {
         self.speech_config = Some(config);
+        self
+    }
+
+    /// Sets the image generation configuration.
+    ///
+    /// Controls aspect ratio and size for image generation output.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{Client, ImageConfig, ImageAspectRatio, ImageSize};
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::new("api-key".to_string());
+    ///
+    /// let config = ImageConfig {
+    ///     aspect_ratio: Some(ImageAspectRatio::Widescreen16x9),
+    ///     image_size: Some(ImageSize::Hd2k),
+    /// };
+    ///
+    /// let response = client
+    ///     .interaction()
+    ///     .with_model("gemini-3-pro-image-preview")
+    ///     .with_text("Generate a landscape photo")
+    ///     .with_image_config(config)
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_image_config(mut self, config: ImageConfig) -> Self {
+        let gen_config = self
+            .generation_config
+            .get_or_insert_with(GenerationConfig::default);
+        gen_config.image_config = Some(config);
         self
     }
 

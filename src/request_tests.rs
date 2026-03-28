@@ -42,6 +42,7 @@ fn test_generation_config_serialization() {
         thinking_summaries: None,
         tool_choice: None,
         speech_config: None,
+        image_config: None,
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -65,6 +66,7 @@ fn test_generation_config_new_fields_serialization() {
         thinking_summaries: Some(ThinkingSummaries::Auto),
         tool_choice: None,
         speech_config: None,
+        image_config: None,
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -91,6 +93,7 @@ fn test_generation_config_roundtrip() {
         thinking_summaries: Some(ThinkingSummaries::None),
         tool_choice: None,
         speech_config: None,
+        image_config: None,
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");

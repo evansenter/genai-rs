@@ -2,7 +2,10 @@
 
 use super::*;
 use crate::Tool;
-use crate::{Client, FileSearchConfig, FunctionDeclaration, McpServerConfig};
+use crate::{
+    Client, FileSearchConfig, FunctionDeclaration, ImageAspectRatio, ImageConfig, ImageSize,
+    McpServerConfig,
+};
 use serde_json::json;
 
 fn create_test_client() -> Client {
@@ -1207,4 +1210,52 @@ fn test_interaction_builder_with_file_search_single_store() {
         }
         _ => panic!("Expected Tool::FileSearch variant"),
     }
+}
+
+#[test]
+fn test_with_image_config() {
+    let client = create_test_client();
+    let config = ImageConfig {
+        aspect_ratio: Some(ImageAspectRatio::Widescreen16x9),
+        image_size: Some(ImageSize::Hd2k),
+    };
+
+    let builder = client
+        .interaction()
+        .with_model("gemini-3-pro-image-preview")
+        .with_text("Generate a landscape")
+        .with_image_config(config);
+
+    let gen_config = builder.generation_config.as_ref().unwrap();
+    let image_config = gen_config.image_config.as_ref().unwrap();
+    assert_eq!(
+        image_config.aspect_ratio,
+        Some(ImageAspectRatio::Widescreen16x9)
+    );
+    assert_eq!(image_config.image_size, Some(ImageSize::Hd2k));
+}
+
+#[test]
+fn test_with_image_config_merges_with_existing_generation_config() {
+    let client = create_test_client();
+    let config = ImageConfig {
+        aspect_ratio: Some(ImageAspectRatio::Square),
+        image_size: None,
+    };
+
+    let builder = client
+        .interaction()
+        .with_model("gemini-3-pro-image-preview")
+        .with_text("Generate an image")
+        .with_thinking_level(crate::ThinkingLevel::Low)
+        .with_image_config(config);
+
+    let gen_config = builder.generation_config.as_ref().unwrap();
+    // Both thinking_level and image_config should be present
+    assert!(gen_config.thinking_level.is_some());
+    assert!(gen_config.image_config.is_some());
+    assert_eq!(
+        gen_config.image_config.as_ref().unwrap().aspect_ratio,
+        Some(ImageAspectRatio::Square)
+    );
 }

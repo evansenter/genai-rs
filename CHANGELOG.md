@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `InteractionStatus::Incomplete` variant for interactions that end before completion
+- `ImageConfig` with `ImageAspectRatio` and `ImageSize` enums for image generation configuration
 - Google Maps built-in tool support (`Tool::GoogleMaps`, `GoogleMapsConfig`, `GoogleMapsCall`, `GoogleMapsResult` content types)
 - `SearchType` enum for Google Search `search_types` configuration
 - `allowed_tools` and `headers` optional fields on `Tool::McpServer`
