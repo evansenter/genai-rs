@@ -454,8 +454,7 @@ mod streaming {
             error_result.final_response.is_some()
         );
 
-        if error_result.final_response.is_some() {
-            let response = error_result.final_response.as_ref().unwrap();
+        if let Some(response) = &error_result.final_response {
             println!("Final response status: {:?}", response.status);
         }
 
@@ -981,11 +980,11 @@ mod function_calling {
             println!("  ID: {:?}", call.id);
             println!("  Args: {:?}", call.args);
 
-            if call.id.is_some() {
+            if let Some(call_id_ref) = &call.id {
                 println!("\n✓ Function call has valid ID");
 
                 let prev_id = response.id.clone().expect("id should exist");
-                let call_id = call.id.expect("call_id exists").to_string();
+                let call_id = call_id_ref.to_string();
 
                 let result = retry_request!([client, prev_id, call_id, get_weather] => {
                     interaction_builder(&client)
@@ -1393,10 +1392,8 @@ mod store {
 
         match result {
             Ok(response) => {
-                if response.id.is_some() {
-                    let get_result = client
-                        .get_interaction(response.id.as_ref().expect("id should exist"))
-                        .await;
+                if let Some(id) = &response.id {
+                    let get_result = client.get_interaction(id).await;
                     assert!(
                         get_result.is_err(),
                         "Stored=false interaction should not be retrievable"
