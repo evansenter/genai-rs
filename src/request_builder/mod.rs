@@ -1425,6 +1425,35 @@ impl<'a> InteractionBuilder<'a> {
         self
     }
 
+    /// Restricts the model to only calling the named tools.
+    ///
+    /// When set, the model can only call functions whose names appear in
+    /// the provided list, even if other tools are declared.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use genai_rs::Client;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::builder("api-key".to_string()).build()?;
+    /// let response = client
+    ///     .interaction()
+    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_text("Get weather in Tokyo")
+    ///     .with_allowed_tools(vec!["get_weather".to_string()])
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_allowed_tools(mut self, tool_names: Vec<String>) -> Self {
+        let config = self
+            .generation_config
+            .get_or_insert_with(GenerationConfig::default);
+        config.allowed_tools = Some(tool_names);
+        self
+    }
+
     /// Sets the response MIME type for structured output.
     ///
     /// Required when using `with_response_format()` with a JSON schema.

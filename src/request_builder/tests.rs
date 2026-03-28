@@ -1259,3 +1259,19 @@ fn test_with_image_config_merges_with_existing_generation_config() {
         Some(ImageAspectRatio::Square)
     );
 }
+
+#[test]
+fn test_interaction_builder_with_allowed_tools() {
+    let client = create_test_client();
+    let builder = client
+        .interaction()
+        .with_model("gemini-3-flash-preview")
+        .with_text("Get weather")
+        .with_allowed_tools(vec!["get_weather".to_string(), "get_time".to_string()]);
+
+    let config = builder.generation_config.as_ref().unwrap();
+    assert_eq!(
+        config.allowed_tools,
+        Some(vec!["get_weather".to_string(), "get_time".to_string()])
+    );
+}

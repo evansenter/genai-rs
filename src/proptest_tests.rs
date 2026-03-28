@@ -11,8 +11,9 @@ use super::content::{
     GoogleSearchResultItem, Place, Resolution, UrlContextResultItem,
 };
 use super::request::{
-    AgentConfig, DeepResearchConfig, DynamicConfig, ImageAspectRatio, ImageConfig, ImageSize, Role,
-    ThinkingLevel, ThinkingSummaries, Turn, TurnContent,
+    AgentConfig, DeepResearchConfig, DynamicConfig, GenerationConfig, ImageAspectRatio,
+    ImageConfig, ImageSize, Role, SpeechConfig, ThinkingLevel, ThinkingSummaries, Turn,
+    TurnContent,
 };
 use super::response::{
     GroundingChunk, GroundingMetadata, InteractionResponse, InteractionStatus, ModalityTokens,
@@ -470,6 +471,69 @@ fn arb_thinking_summaries() -> impl Strategy<Value = ThinkingSummaries> {
             data: serde_json::Value::String(summaries_type),
         }),
     ]
+}
+
+// =============================================================================
+// GenerationConfig Strategies
+// =============================================================================
+
+fn arb_speech_config() -> impl Strategy<Value = SpeechConfig> {
+    (
+        proptest::option::of(arb_identifier()),
+        proptest::option::of(arb_identifier()),
+        proptest::option::of(arb_identifier()),
+    )
+        .prop_map(|(voice, language, speaker)| SpeechConfig {
+            voice,
+            language,
+            speaker,
+        })
+}
+
+fn arb_generation_config() -> impl Strategy<Value = GenerationConfig> {
+    (
+        proptest::option::of(arb_clean_float().prop_map(|v| v.as_f64().unwrap() as f32)),
+        proptest::option::of(1..10000i32),
+        proptest::option::of(arb_clean_float().prop_map(|v| v.as_f64().unwrap() as f32)),
+        proptest::option::of(1..100i32),
+        proptest::option::of(arb_thinking_level()),
+        proptest::option::of(1..1000i64),
+        proptest::option::of(proptest::collection::vec(arb_identifier(), 0..3)),
+        proptest::option::of(arb_thinking_summaries()),
+        proptest::option::of(arb_function_calling_mode()),
+        proptest::option::of(proptest::collection::vec(arb_identifier(), 0..3)),
+        proptest::option::of(arb_speech_config()),
+    )
+        .prop_map(
+            |(
+                temperature,
+                max_output_tokens,
+                top_p,
+                top_k,
+                thinking_level,
+                seed,
+                stop_sequences,
+                thinking_summaries,
+                tool_choice,
+                allowed_tools,
+                speech_config,
+            )| {
+                GenerationConfig {
+                    temperature,
+                    max_output_tokens,
+                    top_p,
+                    top_k,
+                    thinking_level,
+                    seed,
+                    stop_sequences,
+                    thinking_summaries,
+                    tool_choice,
+                    allowed_tools,
+                    image_config: None,
+                    speech_config,
+                }
+            },
+        )
 }
 
 // =============================================================================
@@ -1310,6 +1374,24 @@ proptest! {
         let restored_json = serde_json::to_string(&restored).expect("Re-serialization should succeed");
         let restored_value: serde_json::Value = serde_json::from_str(&restored_json).expect("Parse restored JSON");
         prop_assert_eq!(original_value, restored_value);
+    }
+}
+
+// =============================================================================
+// GenerationConfig Tests
+// =============================================================================
+
+proptest! {
+    /// Test that GenerationConfig roundtrips correctly through JSON.
+    /// Uses Value comparison since GenerationConfig doesn't derive PartialEq (contains floats).
+    #[test]
+    fn generation_config_roundtrip(config in arb_generation_config()) {
+        let json = serde_json::to_string(&config).expect("Serialization should succeed");
+        let value1: serde_json::Value = serde_json::from_str(&json).expect("Should parse as Value");
+        let restored: GenerationConfig = serde_json::from_str(&json).expect("Deserialization should succeed");
+        let json2 = serde_json::to_string(&restored).expect("Re-serialization should succeed");
+        let value2: serde_json::Value = serde_json::from_str(&json2).expect("Should parse as Value");
+        prop_assert_eq!(value1, value2);
     }
 }
 

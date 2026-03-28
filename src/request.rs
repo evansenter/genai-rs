@@ -518,6 +518,10 @@ pub struct GenerationConfig {
     /// - `Validated`: Ensures schema adherence for both function calls and natural language
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<FunctionCallingMode>,
+    /// Optional list of specific tool names the model is allowed to call.
+    /// When set, restricts the model to only calling the named tools.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_tools: Option<Vec<String>>,
     /// Speech configuration for text-to-speech audio output.
     ///
     /// Required when using `AUDIO` response modality.
@@ -1733,5 +1737,41 @@ mod tests {
 
         assert_eq!(value["imageConfig"]["aspectRatio"], "9:16");
         assert_eq!(value["imageConfig"]["imageSize"], "4K");
+    }
+
+    // =========================================================================
+    // GenerationConfig allowed_tools Tests
+    // =========================================================================
+
+    #[test]
+    fn test_generation_config_allowed_tools_serializes() {
+        let config = GenerationConfig {
+            allowed_tools: Some(vec!["get_weather".to_string(), "get_time".to_string()]),
+            ..Default::default()
+        };
+
+        let json = serde_json::to_string(&config).expect("Serialization failed");
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        let tools = value["allowedTools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0], "get_weather");
+        assert_eq!(tools[1], "get_time");
+    }
+
+    #[test]
+    fn test_generation_config_allowed_tools_omitted_when_none() {
+        let config = GenerationConfig {
+            allowed_tools: None,
+            ..Default::default()
+        };
+
+        let json = serde_json::to_string(&config).expect("Serialization failed");
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert!(
+            value.get("allowedTools").is_none(),
+            "allowedTools should be omitted when None"
+        );
     }
 }

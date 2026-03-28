@@ -41,6 +41,7 @@ fn test_generation_config_serialization() {
         stop_sequences: None,
         thinking_summaries: None,
         tool_choice: None,
+        allowed_tools: None,
         speech_config: None,
         image_config: None,
     };
@@ -65,6 +66,7 @@ fn test_generation_config_new_fields_serialization() {
         stop_sequences: Some(vec!["END".to_string(), "---".to_string()]),
         thinking_summaries: Some(ThinkingSummaries::Auto),
         tool_choice: None,
+        allowed_tools: None,
         speech_config: None,
         image_config: None,
     };
@@ -92,6 +94,7 @@ fn test_generation_config_roundtrip() {
         stop_sequences: Some(vec!["STOP".to_string()]),
         thinking_summaries: Some(ThinkingSummaries::None),
         tool_choice: None,
+        allowed_tools: None,
         speech_config: None,
         image_config: None,
     };

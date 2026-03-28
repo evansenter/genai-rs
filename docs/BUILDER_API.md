@@ -64,6 +64,12 @@ Methods follow a consistent naming pattern based on their behavior:
 | ~~`add_mcp_server()`~~ | — | — | **Removed** — use `add_tool(McpServerConfig::new(name, url))` |
 | ~~`with_file_search()`~~ | — | — | **Removed** — use `add_tool(FileSearchConfig::new(stores))` |
 | ~~`with_file_search_config()`~~ | — | — | **Removed** — use `add_tool(FileSearchConfig::new(stores))` |
+| **Generation Config** |
+| `with_allowed_tools(Vec<String>)` | with | replaces | Restricts model to named tools |
+| `with_function_calling_mode()` | with | replaces | Auto/Any/None/Validated |
+| `with_thinking_level()` | with | replaces | Chain-of-thought reasoning level |
+| `with_seed()` | with | replaces | Deterministic output |
+| `with_stop_sequences()` | with | replaces | Halt generation on sequences |
 
 ### Tool Configuration Structs
 
