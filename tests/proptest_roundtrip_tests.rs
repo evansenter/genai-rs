@@ -108,6 +108,7 @@ fn arb_interaction_status() -> impl Strategy<Value = InteractionStatus> {
         Just(InteractionStatus::RequiresAction),
         Just(InteractionStatus::Failed),
         Just(InteractionStatus::Cancelled),
+        Just(InteractionStatus::Incomplete),
     ]
 }
 
@@ -625,6 +626,7 @@ fn arb_interaction_status_with_unknown() -> impl Strategy<Value = InteractionSta
         Just(InteractionStatus::RequiresAction),
         Just(InteractionStatus::Failed),
         Just(InteractionStatus::Cancelled),
+        Just(InteractionStatus::Incomplete),
         // Unknown variant via JSON deserialization
         arb_unknown_type_string().prop_map(|type_str| {
             serde_json::from_value::<InteractionStatus>(serde_json::json!(type_str))
