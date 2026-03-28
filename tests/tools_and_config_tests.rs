@@ -629,7 +629,6 @@ mod url_context {
 }
 
 // =============================================================================
-// =============================================================================
 // Google Maps
 // =============================================================================
 
@@ -651,71 +650,44 @@ mod google_maps {
             .create()
             .await;
 
-        match result {
-            Ok(response) => {
-                println!("Status: {:?}", response.status);
+        let response = result.expect("Google Maps interaction should succeed");
 
-                // Check for Google Maps calls
-                let maps_calls: Vec<_> = response
-                    .outputs
-                    .iter()
-                    .filter(|c| c.is_google_maps_call())
-                    .collect();
-                if !maps_calls.is_empty() {
-                    println!("Google Maps calls found: {}", maps_calls.len());
-                    for call in &maps_calls {
-                        if let genai_rs::Content::GoogleMapsCall {
-                            id,
-                            queries,
-                            signature,
-                        } = call
-                        {
-                            println!("  Call ID: {}, queries: {:?}", id, queries);
-                            if signature.is_some() {
-                                println!("  Has signature");
-                            }
-                        }
+        // Verify completed status
+        assert!(
+            matches!(response.status, genai_rs::InteractionStatus::Completed),
+            "Expected Completed status, got {:?}",
+            response.status
+        );
+
+        // Verify Google Maps results are present
+        assert!(
+            response.has_google_maps_results(),
+            "Response should contain Google Maps results"
+        );
+
+        let results = response.google_maps_results();
+        println!("Google Maps results found: {}", results.len());
+        for result in &results {
+            println!("  Call ID: {}", result.call_id);
+            for item in result.items {
+                if let Some(places) = &item.places {
+                    for place in places {
+                        println!(
+                            "    Place: {}",
+                            place.name.as_deref().unwrap_or("(unnamed)")
+                        );
                     }
                 }
-
-                // Check for Google Maps results
-                if response.has_google_maps_results() {
-                    let results = response.google_maps_results();
-                    println!("Google Maps results found: {}", results.len());
-                    for result in &results {
-                        println!("  Call ID: {}", result.call_id);
-                        for item in result.items {
-                            if let Some(places) = &item.places {
-                                for place in places {
-                                    println!(
-                                        "    Place: {}",
-                                        place.name.as_deref().unwrap_or("(unnamed)")
-                                    );
-                                }
-                            }
-                            if let Some(token) = &item.widget_context_token {
-                                println!("    Widget token: {}...", &token[..20.min(token.len())]);
-                            }
-                        }
-                    }
-                } else {
-                    println!("No Google Maps results in response");
-                }
-
-                // Verify response has text output
-                if response.has_text() {
-                    let text = response.as_text().unwrap();
-                    println!("Response text length: {}", text.len());
-                }
-
-                // Check content summary
-                let summary = response.content_summary();
-                println!("Content summary: {}", summary);
-            }
-            Err(e) => {
-                println!("Google Maps test error (may be expected): {:?}", e);
             }
         }
+
+        // Verify content summary reflects maps content
+        let summary = response.content_summary();
+        println!("Content summary: {}", summary);
+        assert!(
+            summary.google_maps_result_count > 0,
+            "Content summary should count Google Maps results"
+        );
     }
 }
 

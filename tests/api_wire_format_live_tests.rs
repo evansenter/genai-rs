@@ -332,6 +332,9 @@ fn canary_builtin_tools_are_known() {
     // Test all known built-in tools (using enum variants directly)
     let tools = vec![
         Tool::GoogleSearch { search_types: None },
+        Tool::GoogleMaps {
+            enable_widget: None,
+        },
         Tool::CodeExecution,
         Tool::UrlContext,
     ];

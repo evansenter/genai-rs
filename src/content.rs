@@ -925,10 +925,6 @@ pub enum Content {
         /// Search results with extracted text and source information
         result: Vec<FileSearchResultItem>,
     },
-    /// Google Maps result (location data from the Maps tool)
-    ///
-    /// Contains the results returned by the `GoogleMaps` built-in tool.
-    /// Each result includes places with location details and an optional widget token.
     /// Google Maps call (model requesting location data)
     ///
     /// Appears when the model initiates a Google Maps query via the `GoogleMaps` tool.
