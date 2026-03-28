@@ -470,7 +470,7 @@ let mut stream = client.interaction().create_stream();
 
 3. **Use appropriate model:**
 ```rust,ignore
-// gemini-3-flash-preview is faster than gemini-3-pro-preview
+// gemini-3-flash-preview is faster than gemini-3.1-pro-preview
 ```
 
 ### High Token Usage
