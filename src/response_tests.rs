@@ -1601,7 +1601,10 @@ fn test_interaction_response_complex_roundtrip() {
             total_tool_use_tokens: Some(20),
             ..Default::default()
         }),
-        tools: Some(vec![crate::Tool::GoogleSearch, crate::Tool::CodeExecution]),
+        tools: Some(vec![
+            crate::Tool::GoogleSearch { search_types: None },
+            crate::Tool::CodeExecution,
+        ]),
         previous_interaction_id: Some("previous-interaction-abc".to_string()),
         grounding_metadata: Some(GroundingMetadata {
             grounding_chunks: vec![GroundingChunk {
@@ -1741,7 +1744,7 @@ fn test_interaction_response_complex_roundtrip() {
     // Verify tools
     let tools = deserialized.tools.expect("Should have tools");
     assert_eq!(tools.len(), 2);
-    assert!(matches!(tools[0], crate::Tool::GoogleSearch));
+    assert!(matches!(tools[0], crate::Tool::GoogleSearch { .. }));
     assert!(matches!(tools[1], crate::Tool::CodeExecution));
 }
 

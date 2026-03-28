@@ -428,7 +428,7 @@ mod tools {
         assert!(request.tools.is_some());
         let tools = request.tools.unwrap();
         assert_eq!(tools.len(), 1);
-        assert!(matches!(tools[0], Tool::GoogleSearch));
+        assert!(matches!(tools[0], Tool::GoogleSearch { .. }));
     }
 
     #[test]
@@ -457,7 +457,7 @@ mod tools {
         let tools = request.tools.unwrap();
         assert_eq!(tools.len(), 2);
         assert!(matches!(tools[0], Tool::Function { .. }));
-        assert!(matches!(tools[1], Tool::GoogleSearch));
+        assert!(matches!(tools[1], Tool::GoogleSearch { .. }));
     }
 
     #[test]
@@ -505,7 +505,7 @@ mod tools {
         let tools = request.tools.unwrap();
         assert_eq!(tools.len(), 2);
         assert!(matches!(tools[0], Tool::CodeExecution));
-        assert!(matches!(tools[1], Tool::GoogleSearch));
+        assert!(matches!(tools[1], Tool::GoogleSearch { .. }));
     }
 
     #[test]
@@ -580,7 +580,7 @@ mod tools {
 
         let tools = request.tools.unwrap();
         assert_eq!(tools.len(), 3);
-        assert!(matches!(tools[0], Tool::GoogleSearch));
+        assert!(matches!(tools[0], Tool::GoogleSearch { .. }));
         assert!(matches!(tools[1], Tool::CodeExecution));
         assert!(matches!(tools[2], Tool::UrlContext));
     }
@@ -1044,7 +1044,7 @@ mod multimodal {
         let tools = request.tools.unwrap();
         assert_eq!(tools.len(), 2);
         assert!(matches!(tools[0], Tool::Function { .. }));
-        assert!(matches!(tools[1], Tool::GoogleSearch));
+        assert!(matches!(tools[1], Tool::GoogleSearch { .. }));
 
         // Verify generation config
         assert!(request.generation_config.is_some());

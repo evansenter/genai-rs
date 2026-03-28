@@ -7,8 +7,8 @@ use chrono::{DateTime, TimeZone, Utc};
 use proptest::prelude::*;
 
 use super::content::{
-    Annotation, CodeExecutionLanguage, Content, FileSearchResultItem, GoogleSearchResultItem,
-    Resolution, UrlContextResultItem,
+    Annotation, CodeExecutionLanguage, Content, FileSearchResultItem, GoogleMapsResultItem,
+    GoogleSearchResultItem, Place, Resolution, UrlContextResultItem,
 };
 use super::request::{
     AgentConfig, DeepResearchConfig, DynamicConfig, Role, ThinkingLevel, ThinkingSummaries, Turn,
@@ -19,7 +19,7 @@ use super::response::{
     OwnedFunctionCallInfo, UrlContextMetadata, UrlMetadataEntry, UrlRetrievalStatus, UsageMetadata,
     WebSource,
 };
-use super::tools::{FunctionCallingMode, FunctionParameters, Tool};
+use super::tools::{FunctionCallingMode, FunctionParameters, SearchType, Tool};
 use super::wire_streaming::StreamChunk;
 
 // =============================================================================
@@ -139,6 +139,41 @@ fn arb_google_search_result_item() -> impl Strategy<Value = GoogleSearchResultIt
             rendered_content,
         },
     )
+}
+
+/// Strategy for generating Place objects.
+/// Uses only simple fields to avoid f64 NaN comparison issues.
+fn arb_place() -> impl Strategy<Value = Place> {
+    (
+        proptest::option::of(arb_text()),
+        proptest::option::of(arb_text()),
+        proptest::option::of(arb_text()),
+    )
+        .prop_map(|(name, formatted_address, place_id)| Place {
+            name,
+            formatted_address,
+            place_id,
+            lat: None,
+            lng: None,
+            types: None,
+            rating: None,
+            user_ratings_total: None,
+            website: None,
+            phone_number: None,
+            extra: serde_json::Map::new(),
+        })
+}
+
+/// Strategy for generating GoogleMapsResultItem objects.
+fn arb_google_maps_result_item() -> impl Strategy<Value = GoogleMapsResultItem> {
+    (
+        proptest::option::of(proptest::collection::vec(arb_place(), 0..3)),
+        proptest::option::of(arb_text()),
+    )
+        .prop_map(|(places, widget_context_token)| GoogleMapsResultItem {
+            places,
+            widget_context_token,
+        })
 }
 
 /// Strategy for generating FileSearchResultItem objects.
@@ -593,6 +628,17 @@ fn arb_known_interaction_content() -> impl Strategy<Value = Content> {
         // GoogleSearchCall content
         (arb_text(), proptest::collection::vec(arb_text(), 0..3))
             .prop_map(|(id, queries)| Content::GoogleSearchCall { id, queries }),
+        // GoogleMapsCall content
+        (
+            arb_text(),
+            proptest::collection::vec(arb_text(), 0..3),
+            proptest::option::of(arb_text())
+        )
+            .prop_map(|(id, queries, signature)| Content::GoogleMapsCall {
+                id,
+                queries,
+                signature
+            }),
         // GoogleSearchResult content
         (
             arb_text(),
@@ -614,6 +660,17 @@ fn arb_known_interaction_content() -> impl Strategy<Value = Content> {
             proptest::collection::vec(arb_file_search_result_item(), 0..3)
         )
             .prop_map(|(call_id, result)| Content::FileSearchResult { call_id, result }),
+        // GoogleMapsResult content
+        (
+            arb_text(),
+            proptest::collection::vec(arb_google_maps_result_item(), 0..3),
+            proptest::option::of(arb_text())
+        )
+            .prop_map(|(call_id, result, signature)| Content::GoogleMapsResult {
+                call_id,
+                result,
+                signature
+            }),
     ]
 }
 
@@ -733,7 +790,13 @@ fn arb_known_tool() -> impl Strategy<Value = Tool> {
             }
         ),
         // Built-in tools
-        Just(Tool::GoogleSearch),
+        proptest::option::of(proptest::collection::vec(
+            prop_oneof![Just(SearchType::WebSearch), Just(SearchType::ImageSearch),],
+            1..3,
+        ))
+        .prop_map(|search_types| Tool::GoogleSearch { search_types }),
+        proptest::option::of(any::<bool>())
+            .prop_map(|enable_widget| Tool::GoogleMaps { enable_widget }),
         Just(Tool::CodeExecution),
         Just(Tool::UrlContext),
         // FileSearch tool
@@ -749,8 +812,23 @@ fn arb_known_tool() -> impl Strategy<Value = Tool> {
                     metadata_filter,
                 }
             }),
-        // MCP Server
-        (arb_identifier(), arb_text()).prop_map(|(name, url)| Tool::McpServer { name, url }),
+        // MCP Server (use BTreeMap for deterministic JSON key ordering in roundtrip tests)
+        (
+            arb_identifier(),
+            arb_text(),
+            proptest::option::of(proptest::collection::vec(arb_identifier(), 1..4)),
+            proptest::option::of(proptest::collection::btree_map(
+                arb_identifier(),
+                arb_text(),
+                1..3
+            )),
+        )
+            .prop_map(|(name, url, allowed_tools, headers)| Tool::McpServer {
+                name,
+                url,
+                allowed_tools,
+                headers: headers.map(|m| m.into_iter().collect()),
+            }),
     ]
 }
 
@@ -1041,9 +1119,12 @@ proptest! {
         let json = serde_json::to_string(&tool).expect("Serialization should succeed");
         let restored: Tool = serde_json::from_str(&json).expect("Deserialization should succeed");
 
-        // Tool doesn't derive PartialEq, so we verify roundtrip by comparing JSON strings
+        // Tool doesn't derive PartialEq, so we verify roundtrip by comparing JSON values
+        // (not strings, since HashMap key ordering is non-deterministic)
+        let original_value: serde_json::Value = serde_json::from_str(&json).expect("Parse original JSON");
         let restored_json = serde_json::to_string(&restored).expect("Re-serialization should succeed");
-        prop_assert_eq!(json, restored_json);
+        let restored_value: serde_json::Value = serde_json::from_str(&restored_json).expect("Parse restored JSON");
+        prop_assert_eq!(original_value, restored_value);
     }
 
     /// Test that Content roundtrips correctly through JSON.
@@ -1087,9 +1168,11 @@ proptest! {
         prop_assert_eq!(&response.created, &restored.created);
         prop_assert_eq!(&response.updated, &restored.updated);
 
-        // Verify the full JSON roundtrip is stable
+        // Verify the full JSON roundtrip is stable (compare as Value for HashMap key order independence)
+        let original_value: serde_json::Value = serde_json::from_str(&json).expect("Parse original JSON");
         let restored_json = serde_json::to_string(&restored).expect("Re-serialization should succeed");
-        prop_assert_eq!(json, restored_json);
+        let restored_value: serde_json::Value = serde_json::from_str(&restored_json).expect("Parse restored JSON");
+        prop_assert_eq!(original_value, restored_value);
     }
 
     /// Test that StreamChunk roundtrips correctly through JSON.
@@ -1098,9 +1181,11 @@ proptest! {
         let json = serde_json::to_string(&chunk).expect("Serialization should succeed");
         let restored: StreamChunk = serde_json::from_str(&json).expect("Deserialization should succeed");
 
-        // StreamChunk doesn't derive PartialEq, so we verify roundtrip by comparing JSON strings
+        // Compare as Value for HashMap key order independence
+        let original_value: serde_json::Value = serde_json::from_str(&json).expect("Parse original JSON");
         let restored_json = serde_json::to_string(&restored).expect("Re-serialization should succeed");
-        prop_assert_eq!(json, restored_json);
+        let restored_value: serde_json::Value = serde_json::from_str(&restored_json).expect("Parse restored JSON");
+        prop_assert_eq!(original_value, restored_value);
     }
 }
 

@@ -1,6 +1,7 @@
 // Shared types used by the Interactions API
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Represents a tool that can be used by the model (Interactions API format).
 ///
@@ -27,7 +28,18 @@ pub enum Tool {
         parameters: FunctionParameters,
     },
     /// Built-in Google Search tool
-    GoogleSearch,
+    ///
+    /// Optionally configure `search_types` to enable web and/or image search.
+    GoogleSearch {
+        /// Types of search to perform (e.g., web search, image search).
+        /// When `None`, the API defaults to web search only.
+        search_types: Option<Vec<SearchType>>,
+    },
+    /// Built-in Google Maps tool for location-grounded responses
+    GoogleMaps {
+        /// Whether to enable the widget context token in the response
+        enable_widget: Option<bool>,
+    },
     /// Built-in code execution tool
     CodeExecution,
     /// Built-in URL context tool
@@ -50,7 +62,14 @@ pub enum Tool {
         excluded_predefined_functions: Vec<String>,
     },
     /// Model Context Protocol (MCP) server
-    McpServer { name: String, url: String },
+    McpServer {
+        name: String,
+        url: String,
+        /// Optional list of allowed tool names to restrict which tools the model can call
+        allowed_tools: Option<Vec<String>>,
+        /// Optional headers for authentication or configuration
+        headers: Option<HashMap<String, String>>,
+    },
     /// Built-in file search tool for semantic retrieval over document stores
     FileSearch {
         /// Names of file search stores to query (wire: `file_search_store_names`)
@@ -98,9 +117,22 @@ impl Serialize for Tool {
                 map.serialize_entry("parameters", parameters)?;
                 map.end()
             }
-            Self::GoogleSearch => {
+            Self::GoogleSearch { search_types } => {
                 let mut map = serializer.serialize_map(None)?;
                 map.serialize_entry("type", "google_search")?;
+                if let Some(types) = search_types
+                    && !types.is_empty()
+                {
+                    map.serialize_entry("search_types", types)?;
+                }
+                map.end()
+            }
+            Self::GoogleMaps { enable_widget } => {
+                let mut map = serializer.serialize_map(None)?;
+                map.serialize_entry("type", "google_maps")?;
+                if let Some(ew) = enable_widget {
+                    map.serialize_entry("enable_widget", ew)?;
+                }
                 map.end()
             }
             Self::CodeExecution => {
@@ -128,11 +160,26 @@ impl Serialize for Tool {
                 }
                 map.end()
             }
-            Self::McpServer { name, url } => {
+            Self::McpServer {
+                name,
+                url,
+                allowed_tools,
+                headers,
+            } => {
                 let mut map = serializer.serialize_map(None)?;
                 map.serialize_entry("type", "mcp_server")?;
                 map.serialize_entry("name", name)?;
                 map.serialize_entry("url", url)?;
+                if let Some(tools) = allowed_tools
+                    && !tools.is_empty()
+                {
+                    map.serialize_entry("allowed_tools", tools)?;
+                }
+                if let Some(hdrs) = headers
+                    && !hdrs.is_empty()
+                {
+                    map.serialize_entry("headers", hdrs)?;
+                }
                 map.end()
             }
             Self::FileSearch {
@@ -191,7 +238,15 @@ impl<'de> Deserialize<'de> for Tool {
                 parameters: FunctionParameters,
             },
             #[serde(rename = "google_search")]
-            GoogleSearch,
+            GoogleSearch {
+                #[serde(default)]
+                search_types: Option<Vec<SearchType>>,
+            },
+            #[serde(rename = "google_maps")]
+            GoogleMaps {
+                #[serde(default)]
+                enable_widget: Option<bool>,
+            },
             #[serde(rename = "code_execution")]
             CodeExecution,
             #[serde(rename = "url_context")]
@@ -203,7 +258,14 @@ impl<'de> Deserialize<'de> for Tool {
                 excluded_predefined_functions: Vec<String>,
             },
             #[serde(rename = "mcp_server")]
-            McpServer { name: String, url: String },
+            McpServer {
+                name: String,
+                url: String,
+                #[serde(default)]
+                allowed_tools: Option<Vec<String>>,
+                #[serde(default)]
+                headers: Option<HashMap<String, String>>,
+            },
             #[serde(rename = "file_search")]
             FileSearch {
                 #[serde(rename = "file_search_store_names")]
@@ -227,7 +289,8 @@ impl<'de> Deserialize<'de> for Tool {
                     description,
                     parameters,
                 },
-                KnownTool::GoogleSearch => Tool::GoogleSearch,
+                KnownTool::GoogleSearch { search_types } => Tool::GoogleSearch { search_types },
+                KnownTool::GoogleMaps { enable_widget } => Tool::GoogleMaps { enable_widget },
                 KnownTool::CodeExecution => Tool::CodeExecution,
                 KnownTool::UrlContext => Tool::UrlContext,
                 KnownTool::ComputerUse {
@@ -237,7 +300,17 @@ impl<'de> Deserialize<'de> for Tool {
                     environment,
                     excluded_predefined_functions,
                 },
-                KnownTool::McpServer { name, url } => Tool::McpServer { name, url },
+                KnownTool::McpServer {
+                    name,
+                    url,
+                    allowed_tools,
+                    headers,
+                } => Tool::McpServer {
+                    name,
+                    url,
+                    allowed_tools,
+                    headers,
+                },
                 KnownTool::FileSearch {
                     store_names,
                     top_k,
@@ -624,6 +697,360 @@ impl<'de> Deserialize<'de> for FunctionCallingMode {
     }
 }
 
+/// Types of search to perform with the Google Search tool.
+///
+/// This enum is marked `#[non_exhaustive]` for forward compatibility.
+///
+/// # Wire Format
+///
+/// Values serialize as snake_case strings: `"web_search"`, `"image_search"`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SearchType {
+    /// Web search
+    WebSearch,
+    /// Image search (only available for specific models like `gemini-3.1-flash-image-preview`)
+    ImageSearch,
+    /// Unknown search type for forward compatibility
+    Unknown {
+        /// The unrecognized search type string from the API
+        search_type: String,
+        /// The raw JSON value, preserved for debugging
+        data: serde_json::Value,
+    },
+}
+
+impl SearchType {
+    /// Check if this is an unknown search type.
+    #[must_use]
+    pub const fn is_unknown(&self) -> bool {
+        matches!(self, Self::Unknown { .. })
+    }
+
+    /// Returns the search type name if this is an unknown type.
+    #[must_use]
+    pub fn unknown_search_type(&self) -> Option<&str> {
+        match self {
+            Self::Unknown { search_type, .. } => Some(search_type),
+            _ => None,
+        }
+    }
+
+    /// Returns the raw JSON data if this is an unknown search type.
+    #[must_use]
+    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::Unknown { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for SearchType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::WebSearch => serializer.serialize_str("web_search"),
+            Self::ImageSearch => serializer.serialize_str("image_search"),
+            Self::Unknown { search_type, .. } => serializer.serialize_str(search_type),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for SearchType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value.as_str() {
+            Some("web_search") => Ok(Self::WebSearch),
+            Some("image_search") => Ok(Self::ImageSearch),
+            Some(other) => {
+                tracing::warn!(
+                    "Encountered unknown SearchType '{}'. \
+                     Preserving in Unknown variant.",
+                    other
+                );
+                Ok(Self::Unknown {
+                    search_type: other.to_string(),
+                    data: value,
+                })
+            }
+            None => {
+                let search_type = format!("<non-string: {}>", value);
+                tracing::warn!(
+                    "SearchType received non-string value: {}. \
+                     Preserving in Unknown variant.",
+                    value
+                );
+                Ok(Self::Unknown {
+                    search_type,
+                    data: value,
+                })
+            }
+        }
+    }
+}
+
+// --- Tool Configuration Structs ---
+//
+// These provide ergonomic builders for constructing Tool variants with optional fields.
+// Each implements `From<Config> for Tool` so they can be passed to `InteractionBuilder::add_tool()`.
+
+/// Configuration for the Google Search built-in tool.
+///
+/// # Example
+///
+/// ```no_run
+/// use genai_rs::{GoogleSearchConfig, SearchType};
+///
+/// // Default (web search only)
+/// let config = GoogleSearchConfig::new();
+///
+/// // With image search enabled
+/// let config = GoogleSearchConfig::new()
+///     .with_search_types(vec![SearchType::WebSearch, SearchType::ImageSearch]);
+/// ```
+#[derive(Clone, Debug, Default)]
+pub struct GoogleSearchConfig {
+    search_types: Option<Vec<SearchType>>,
+}
+
+impl GoogleSearchConfig {
+    /// Creates a new `GoogleSearchConfig` with default settings.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the search types to perform.
+    #[must_use]
+    pub fn with_search_types(mut self, search_types: Vec<SearchType>) -> Self {
+        self.search_types = Some(search_types);
+        self
+    }
+}
+
+impl From<GoogleSearchConfig> for Tool {
+    fn from(config: GoogleSearchConfig) -> Self {
+        Tool::GoogleSearch {
+            search_types: config.search_types,
+        }
+    }
+}
+
+/// Configuration for the Google Maps built-in tool.
+///
+/// # Example
+///
+/// ```no_run
+/// use genai_rs::GoogleMapsConfig;
+///
+/// // Default
+/// let config = GoogleMapsConfig::new();
+///
+/// // With widget enabled
+/// let config = GoogleMapsConfig::new().with_widget();
+/// ```
+#[derive(Clone, Debug, Default)]
+pub struct GoogleMapsConfig {
+    enable_widget: Option<bool>,
+}
+
+impl GoogleMapsConfig {
+    /// Creates a new `GoogleMapsConfig` with default settings.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Enables the widget context token in the response.
+    #[must_use]
+    pub fn with_widget(mut self) -> Self {
+        self.enable_widget = Some(true);
+        self
+    }
+}
+
+impl From<GoogleMapsConfig> for Tool {
+    fn from(config: GoogleMapsConfig) -> Self {
+        Tool::GoogleMaps {
+            enable_widget: config.enable_widget,
+        }
+    }
+}
+
+/// Configuration for an MCP (Model Context Protocol) server tool.
+///
+/// # Example
+///
+/// ```no_run
+/// use genai_rs::McpServerConfig;
+/// use std::collections::HashMap;
+///
+/// let config = McpServerConfig::new("filesystem", "https://mcp.example.com/fs")
+///     .with_allowed_tools(vec!["read_file".to_string(), "list_dir".to_string()])
+///     .with_headers(HashMap::from([
+///         ("Authorization".to_string(), "Bearer token".to_string()),
+///     ]));
+/// ```
+#[derive(Clone, Debug)]
+pub struct McpServerConfig {
+    name: String,
+    url: String,
+    allowed_tools: Option<Vec<String>>,
+    headers: Option<HashMap<String, String>>,
+}
+
+impl McpServerConfig {
+    /// Creates a new `McpServerConfig` with the given name and URL.
+    #[must_use]
+    pub fn new(name: impl Into<String>, url: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            url: url.into(),
+            allowed_tools: None,
+            headers: None,
+        }
+    }
+
+    /// Sets the list of allowed tool names.
+    #[must_use]
+    pub fn with_allowed_tools(mut self, allowed_tools: Vec<String>) -> Self {
+        self.allowed_tools = Some(allowed_tools);
+        self
+    }
+
+    /// Sets authentication/configuration headers.
+    #[must_use]
+    pub fn with_headers(mut self, headers: HashMap<String, String>) -> Self {
+        self.headers = Some(headers);
+        self
+    }
+}
+
+impl From<McpServerConfig> for Tool {
+    fn from(config: McpServerConfig) -> Self {
+        Tool::McpServer {
+            name: config.name,
+            url: config.url,
+            allowed_tools: config.allowed_tools,
+            headers: config.headers,
+        }
+    }
+}
+
+/// Configuration for the Computer Use built-in tool.
+///
+/// # Security Warning
+///
+/// Computer use allows the model to control a real browser. Use
+/// [`ComputerUseConfig::excluding`] to restrict dangerous actions.
+///
+/// # Example
+///
+/// ```no_run
+/// use genai_rs::ComputerUseConfig;
+///
+/// let config = ComputerUseConfig::new()
+///     .excluding(vec!["submit_form".to_string(), "download_file".to_string()]);
+/// ```
+#[derive(Clone, Debug)]
+pub struct ComputerUseConfig {
+    environment: String,
+    excluded_predefined_functions: Vec<String>,
+}
+
+impl ComputerUseConfig {
+    /// Creates a new `ComputerUseConfig` targeting the browser environment.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            environment: "browser".to_string(),
+            excluded_predefined_functions: Vec::new(),
+        }
+    }
+
+    /// Excludes specific predefined browser functions from model access.
+    #[must_use]
+    pub fn excluding(mut self, functions: Vec<String>) -> Self {
+        self.excluded_predefined_functions = functions;
+        self
+    }
+}
+
+impl Default for ComputerUseConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl From<ComputerUseConfig> for Tool {
+    fn from(config: ComputerUseConfig) -> Self {
+        Tool::ComputerUse {
+            environment: config.environment,
+            excluded_predefined_functions: config.excluded_predefined_functions,
+        }
+    }
+}
+
+/// Configuration for the File Search built-in tool.
+///
+/// # Example
+///
+/// ```no_run
+/// use genai_rs::FileSearchConfig;
+///
+/// let config = FileSearchConfig::new(vec!["my-store".to_string()])
+///     .with_top_k(10)
+///     .with_metadata_filter("category:technical");
+/// ```
+#[derive(Clone, Debug)]
+pub struct FileSearchConfig {
+    store_names: Vec<String>,
+    top_k: Option<i32>,
+    metadata_filter: Option<String>,
+}
+
+impl FileSearchConfig {
+    /// Creates a new `FileSearchConfig` with the given store names.
+    #[must_use]
+    pub fn new(store_names: Vec<String>) -> Self {
+        Self {
+            store_names,
+            top_k: None,
+            metadata_filter: None,
+        }
+    }
+
+    /// Sets the maximum number of semantic retrieval chunks to return.
+    #[must_use]
+    pub fn with_top_k(mut self, top_k: i32) -> Self {
+        self.top_k = Some(top_k);
+        self
+    }
+
+    /// Sets a metadata filter expression for document filtering.
+    #[must_use]
+    pub fn with_metadata_filter(mut self, filter: impl Into<String>) -> Self {
+        self.metadata_filter = Some(filter.into());
+        self
+    }
+}
+
+impl From<FileSearchConfig> for Tool {
+    fn from(config: FileSearchConfig) -> Self {
+        Tool::FileSearch {
+            store_names: config.store_names,
+            top_k: config.top_k,
+            metadata_filter: config.metadata_filter,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -724,12 +1151,66 @@ mod tests {
 
     #[test]
     fn test_tool_google_search_roundtrip() {
-        let tool = Tool::GoogleSearch;
+        let tool = Tool::GoogleSearch { search_types: None };
         let json = serde_json::to_string(&tool).expect("Serialization failed");
         assert!(json.contains("\"type\":\"google_search\""));
+        assert!(!json.contains("search_types"));
 
         let parsed: Tool = serde_json::from_str(&json).expect("Deserialization failed");
-        assert!(matches!(parsed, Tool::GoogleSearch));
+        assert!(matches!(parsed, Tool::GoogleSearch { .. }));
+    }
+
+    #[test]
+    fn test_tool_google_search_with_search_types_roundtrip() {
+        let tool = Tool::GoogleSearch {
+            search_types: Some(vec![SearchType::WebSearch, SearchType::ImageSearch]),
+        };
+        let json = serde_json::to_string(&tool).expect("Serialization failed");
+        assert!(json.contains("\"search_types\""));
+        assert!(json.contains("\"web_search\""));
+        assert!(json.contains("\"image_search\""));
+
+        let parsed: Tool = serde_json::from_str(&json).expect("Deserialization failed");
+        match parsed {
+            Tool::GoogleSearch { search_types } => {
+                let types = search_types.expect("Should have search_types");
+                assert_eq!(types.len(), 2);
+                assert_eq!(types[0], SearchType::WebSearch);
+                assert_eq!(types[1], SearchType::ImageSearch);
+            }
+            other => panic!("Expected GoogleSearch variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_tool_google_maps_roundtrip() {
+        let tool = Tool::GoogleMaps {
+            enable_widget: None,
+        };
+        let json = serde_json::to_string(&tool).expect("Serialization failed");
+        assert!(json.contains("\"type\":\"google_maps\""));
+        assert!(!json.contains("enable_widget"));
+
+        let parsed: Tool = serde_json::from_str(&json).expect("Deserialization failed");
+        match parsed {
+            Tool::GoogleMaps { enable_widget } => assert_eq!(enable_widget, None),
+            other => panic!("Expected GoogleMaps variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_tool_google_maps_with_widget_roundtrip() {
+        let tool = Tool::GoogleMaps {
+            enable_widget: Some(true),
+        };
+        let json = serde_json::to_string(&tool).expect("Serialization failed");
+        assert!(json.contains("\"enable_widget\":true"));
+
+        let parsed: Tool = serde_json::from_str(&json).expect("Deserialization failed");
+        match parsed {
+            Tool::GoogleMaps { enable_widget } => assert_eq!(enable_widget, Some(true)),
+            other => panic!("Expected GoogleMaps variant, got {:?}", other),
+        }
     }
 
     #[test]
@@ -757,17 +1238,59 @@ mod tests {
         let tool = Tool::McpServer {
             name: "my-server".to_string(),
             url: "https://mcp.example.com/api".to_string(),
+            allowed_tools: None,
+            headers: None,
         };
         let json = serde_json::to_string(&tool).expect("Serialization failed");
         assert!(json.contains("\"type\":\"mcp_server\""));
         assert!(json.contains("\"name\":\"my-server\""));
         assert!(json.contains("\"url\":\"https://mcp.example.com/api\""));
+        assert!(!json.contains("allowed_tools"));
+        assert!(!json.contains("headers"));
 
         let parsed: Tool = serde_json::from_str(&json).expect("Deserialization failed");
         match parsed {
-            Tool::McpServer { name, url } => {
+            Tool::McpServer {
+                name,
+                url,
+                allowed_tools,
+                headers,
+            } => {
                 assert_eq!(name, "my-server");
                 assert_eq!(url, "https://mcp.example.com/api");
+                assert_eq!(allowed_tools, None);
+                assert_eq!(headers, None);
+            }
+            other => panic!("Expected McpServer variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_tool_mcp_server_with_optional_fields_roundtrip() {
+        let tool = Tool::McpServer {
+            name: "my-server".to_string(),
+            url: "https://mcp.example.com/api".to_string(),
+            allowed_tools: Some(vec!["read_file".to_string(), "list_dir".to_string()]),
+            headers: Some(HashMap::from([(
+                "Authorization".to_string(),
+                "Bearer token".to_string(),
+            )])),
+        };
+        let json = serde_json::to_string(&tool).expect("Serialization failed");
+        assert!(json.contains("\"allowed_tools\""));
+        assert!(json.contains("\"headers\""));
+
+        let parsed: Tool = serde_json::from_str(&json).expect("Deserialization failed");
+        match parsed {
+            Tool::McpServer {
+                allowed_tools,
+                headers,
+                ..
+            } => {
+                let tools = allowed_tools.expect("Should have allowed_tools");
+                assert_eq!(tools.len(), 2);
+                let hdrs = headers.expect("Should have headers");
+                assert_eq!(hdrs.get("Authorization").unwrap(), "Bearer token");
             }
             other => panic!("Expected McpServer variant, got {:?}", other),
         }
@@ -874,10 +1397,17 @@ mod tests {
     #[test]
     fn test_tool_known_types_helper_methods() {
         // Test known types return None for unknown helpers
-        let google_search = Tool::GoogleSearch;
+        let google_search = Tool::GoogleSearch { search_types: None };
         assert!(!google_search.is_unknown());
         assert_eq!(google_search.unknown_tool_type(), None);
         assert_eq!(google_search.unknown_data(), None);
+
+        let google_maps = Tool::GoogleMaps {
+            enable_widget: None,
+        };
+        assert!(!google_maps.is_unknown());
+        assert_eq!(google_maps.unknown_tool_type(), None);
+        assert_eq!(google_maps.unknown_data(), None);
 
         let code_execution = Tool::CodeExecution;
         assert!(!code_execution.is_unknown());
@@ -979,5 +1509,133 @@ mod tests {
         assert!(!file_search.is_unknown());
         assert_eq!(file_search.unknown_tool_type(), None);
         assert_eq!(file_search.unknown_data(), None);
+    }
+
+    #[test]
+    fn test_search_type_roundtrip() {
+        let types = vec![SearchType::WebSearch, SearchType::ImageSearch];
+        let json = serde_json::to_string(&types).expect("Serialization failed");
+        assert_eq!(json, r#"["web_search","image_search"]"#);
+
+        let parsed: Vec<SearchType> = serde_json::from_str(&json).expect("Deserialization failed");
+        assert_eq!(parsed, types);
+    }
+
+    #[test]
+    fn test_search_type_unknown_roundtrip() {
+        let json = r#""future_search""#;
+        let parsed: SearchType = serde_json::from_str(json).expect("Deserialization failed");
+        assert!(parsed.is_unknown());
+        assert_eq!(parsed.unknown_search_type(), Some("future_search"));
+        assert_eq!(
+            parsed.unknown_data(),
+            Some(&serde_json::Value::String("future_search".to_string()))
+        );
+
+        let reserialized = serde_json::to_string(&parsed).expect("Serialization failed");
+        assert_eq!(reserialized, json);
+    }
+
+    #[test]
+    fn test_google_search_config_into_tool() {
+        let tool: Tool = GoogleSearchConfig::new().into();
+        assert!(matches!(tool, Tool::GoogleSearch { search_types: None }));
+
+        let tool: Tool = GoogleSearchConfig::new()
+            .with_search_types(vec![SearchType::ImageSearch])
+            .into();
+        match tool {
+            Tool::GoogleSearch { search_types } => {
+                let types = search_types.expect("Should have search_types");
+                assert_eq!(types, vec![SearchType::ImageSearch]);
+            }
+            other => panic!("Expected GoogleSearch, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_google_maps_config_into_tool() {
+        let tool: Tool = GoogleMapsConfig::new().into();
+        assert!(matches!(
+            tool,
+            Tool::GoogleMaps {
+                enable_widget: None
+            }
+        ));
+
+        let tool: Tool = GoogleMapsConfig::new().with_widget().into();
+        assert!(matches!(
+            tool,
+            Tool::GoogleMaps {
+                enable_widget: Some(true)
+            }
+        ));
+    }
+
+    #[test]
+    fn test_mcp_server_config_into_tool() {
+        let tool: Tool = McpServerConfig::new("server", "https://example.com").into();
+        match tool {
+            Tool::McpServer {
+                name,
+                url,
+                allowed_tools,
+                headers,
+            } => {
+                assert_eq!(name, "server");
+                assert_eq!(url, "https://example.com");
+                assert_eq!(allowed_tools, None);
+                assert_eq!(headers, None);
+            }
+            other => panic!("Expected McpServer, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_computer_use_config_into_tool() {
+        let tool: Tool = ComputerUseConfig::new().into();
+        match tool {
+            Tool::ComputerUse {
+                environment,
+                excluded_predefined_functions,
+            } => {
+                assert_eq!(environment, "browser");
+                assert!(excluded_predefined_functions.is_empty());
+            }
+            other => panic!("Expected ComputerUse, got {:?}", other),
+        }
+
+        let tool: Tool = ComputerUseConfig::new()
+            .excluding(vec!["download".to_string()])
+            .into();
+        match tool {
+            Tool::ComputerUse {
+                excluded_predefined_functions,
+                ..
+            } => {
+                assert_eq!(excluded_predefined_functions, vec!["download"]);
+            }
+            other => panic!("Expected ComputerUse, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_file_search_config_into_tool() {
+        let tool: Tool = FileSearchConfig::new(vec!["store".to_string()])
+            .with_top_k(5)
+            .with_metadata_filter("cat:tech")
+            .into();
+        match tool {
+            Tool::FileSearch {
+                store_names,
+                top_k,
+                metadata_filter,
+            } => {
+                assert_eq!(store_names, vec!["store"]);
+                assert_eq!(top_k, Some(5));
+                assert_eq!(metadata_filter, Some("cat:tech".to_string()));
+            }
+            other => panic!("Expected FileSearch, got {:?}", other),
+        }
     }
 }

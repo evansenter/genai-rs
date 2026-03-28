@@ -1052,6 +1052,21 @@ pub struct UrlContextResultInfo<'a> {
     pub items: &'a [crate::UrlContextResultItem],
 }
 
+/// Information about a Google Maps result.
+///
+/// Returned by [`InteractionResponse::google_maps_results()`] for convenient access
+/// to Google Maps results with place data.
+///
+/// This is a **view type** that borrows data from the underlying [`InteractionResponse`].
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[non_exhaustive]
+pub struct GoogleMapsResultInfo<'a> {
+    /// The ID of the corresponding Google Maps call
+    pub call_id: &'a str,
+    /// The result items containing place data
+    pub items: &'a [crate::GoogleMapsResultItem],
+}
+
 /// Response from creating or retrieving an interaction
 #[derive(Clone, Deserialize, Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -2213,6 +2228,42 @@ impl InteractionResponse {
     }
 
     // =========================================================================
+    // Google Maps Results
+    // =========================================================================
+
+    /// Returns `true` if the response contains Google Maps results.
+    #[must_use]
+    pub fn has_google_maps_results(&self) -> bool {
+        self.outputs
+            .iter()
+            .any(|c| matches!(c, Content::GoogleMapsResult { .. }))
+    }
+
+    /// Extract Google Maps results from outputs.
+    ///
+    /// Returns a vector of [`GoogleMapsResultInfo`] structs with call ID and
+    /// place data for each Google Maps result in the response.
+    #[must_use]
+    pub fn google_maps_results(&self) -> Vec<GoogleMapsResultInfo<'_>> {
+        self.outputs
+            .iter()
+            .filter_map(|content| {
+                if let Content::GoogleMapsResult {
+                    call_id, result, ..
+                } = content
+                {
+                    Some(GoogleMapsResultInfo {
+                        call_id: call_id.as_str(),
+                        items: result,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    // =========================================================================
     // Summary and Diagnostics
     // =========================================================================
 
@@ -2260,6 +2311,8 @@ impl InteractionResponse {
                 Content::UrlContextCall { .. } => summary.url_context_call_count += 1,
                 Content::UrlContextResult { .. } => summary.url_context_result_count += 1,
                 Content::FileSearchResult { .. } => summary.file_search_result_count += 1,
+                Content::GoogleMapsCall { .. } => summary.google_maps_call_count += 1,
+                Content::GoogleMapsResult { .. } => summary.google_maps_result_count += 1,
                 Content::ComputerUseCall { .. } => summary.computer_use_call_count += 1,
                 Content::ComputerUseResult { .. } => summary.computer_use_result_count += 1,
                 Content::Unknown { content_type, .. } => {
@@ -2535,6 +2588,10 @@ pub struct ContentSummary {
     pub url_context_result_count: usize,
     /// Number of file search result content items
     pub file_search_result_count: usize,
+    /// Number of Google Maps call content items
+    pub google_maps_call_count: usize,
+    /// Number of Google Maps result content items
+    pub google_maps_result_count: usize,
     /// Number of computer use call content items
     pub computer_use_call_count: usize,
     /// Number of computer use result content items
@@ -2607,6 +2664,15 @@ impl fmt::Display for ContentSummary {
             parts.push(format!(
                 "{} file_search_result",
                 self.file_search_result_count
+            ));
+        }
+        if self.google_maps_call_count > 0 {
+            parts.push(format!("{} google_maps_call", self.google_maps_call_count));
+        }
+        if self.google_maps_result_count > 0 {
+            parts.push(format!(
+                "{} google_maps_result",
+                self.google_maps_result_count
             ));
         }
         if self.computer_use_call_count > 0 {

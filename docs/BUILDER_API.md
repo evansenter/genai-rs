@@ -54,12 +54,30 @@ Methods follow a consistent naming pattern based on their behavior:
 | `add_functions()` | add | accumulates | Multiple function declarations |
 | `with_tool_service()` | with | replaces | Dependency-injected tools |
 | **Server-Side Tools (enable capabilities)** |
+| `add_tool(impl Into<Tool>)` | add | accumulates | Unified tool entry point (see [Tool Configuration Structs](#tool-configuration-structs)) |
 | `with_google_search()` | with | accumulates | Enables Google Search |
+| `with_google_maps()` | with | accumulates | Enables Google Maps |
 | `with_code_execution()` | with | accumulates | Enables code execution |
 | `with_url_context()` | with | accumulates | Enables URL fetching |
-| `with_computer_use()` | with | accumulates | Enables computer use |
-| `add_mcp_server()` | add | accumulates | Adds MCP server |
-| `with_file_search()` | with | accumulates | Enables file search |
+| ~~`with_computer_use()`~~ | — | — | **Removed** — use `add_tool(ComputerUseConfig::new())` |
+| ~~`with_computer_use_excluding()`~~ | — | — | **Removed** — use `add_tool(ComputerUseConfig::new().excluding(...))` |
+| ~~`add_mcp_server()`~~ | — | — | **Removed** — use `add_tool(McpServerConfig::new(name, url))` |
+| ~~`with_file_search()`~~ | — | — | **Removed** — use `add_tool(FileSearchConfig::new(stores))` |
+| ~~`with_file_search_config()`~~ | — | — | **Removed** — use `add_tool(FileSearchConfig::new(stores))` |
+
+### Tool Configuration Structs
+
+For tools with optional configuration, use a config struct with `add_tool()`:
+
+| Config Struct | Required Fields | Optional Methods |
+|---|---|---|
+| `GoogleSearchConfig` | (none) | `.with_search_types(Vec<SearchType>)` |
+| `GoogleMapsConfig` | (none) | `.with_widget()` |
+| `McpServerConfig` | `name`, `url` | `.with_allowed_tools(...)`, `.with_headers(...)` |
+| `ComputerUseConfig` | (none) | `.excluding(Vec<String>)` |
+| `FileSearchConfig` | `store_names` | `.with_top_k(i32)`, `.with_metadata_filter(String)` |
+
+**Convention**: Prefer struct variants with optional fields over unit variants when the API has configuration options. This avoids breaking changes when adding fields later.
 
 ## Input Methods
 

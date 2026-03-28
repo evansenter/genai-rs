@@ -13,7 +13,7 @@
 //!
 //! Run with: cargo run --example file_search
 
-use genai_rs::Client;
+use genai_rs::{Client, FileSearchConfig};
 use std::env;
 use std::error::Error;
 
@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .interaction()
         .with_model(model_name)
         .with_text(prompt)
-        .with_file_search(store_names.clone())
+        .add_tool(FileSearchConfig::new(store_names.clone()))
         .with_store_enabled()
         .create()
         .await;
@@ -87,10 +87,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .interaction()
         .with_model(model_name)
         .with_text("Find technical documentation about async/await")
-        .with_file_search_config(
-            store_names.clone(),
-            Some(5),                                    // top_k: limit to 5 results
-            Some("category = 'technical'".to_string()), // metadata filter
+        .add_tool(
+            FileSearchConfig::new(store_names.clone())
+                .with_top_k(5) // top_k: limit to 5 results
+                .with_metadata_filter("category = 'technical'"), // metadata filter
         )
         .with_store_enabled()
         .create()
@@ -115,7 +115,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .interaction()
         .with_model(model_name)
         .with_text("Compare my documentation with current Rust best practices")
-        .with_file_search(store_names)
+        .add_tool(FileSearchConfig::new(store_names))
         .with_google_search() // Add web search for comparison
         .with_store_enabled()
         .create()

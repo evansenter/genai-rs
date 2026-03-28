@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::Tool;
-use crate::{Client, FunctionDeclaration};
+use crate::{Client, FileSearchConfig, FunctionDeclaration, McpServerConfig};
 use serde_json::json;
 
 fn create_test_client() -> Client {
@@ -159,14 +159,17 @@ fn test_interaction_builder_add_mcp_server() {
         .interaction()
         .with_model("gemini-3-flash-preview")
         .with_text("Use MCP server")
-        .add_mcp_server("my-server", "https://mcp.example.com/api");
+        .add_tool(McpServerConfig::new(
+            "my-server",
+            "https://mcp.example.com/api",
+        ));
 
     assert!(builder.tools.is_some());
     let tools = builder.tools.as_ref().unwrap();
     assert_eq!(tools.len(), 1);
 
     match &tools[0] {
-        Tool::McpServer { name, url } => {
+        Tool::McpServer { name, url, .. } => {
             assert_eq!(name, "my-server");
             assert_eq!(url, "https://mcp.example.com/api");
         }
@@ -181,8 +184,8 @@ fn test_interaction_builder_with_multiple_mcp_servers() {
         .interaction()
         .with_model("gemini-3-flash-preview")
         .with_text("Use multiple MCP servers")
-        .add_mcp_server("server-1", "https://mcp1.example.com")
-        .add_mcp_server("server-2", "https://mcp2.example.com");
+        .add_tool(McpServerConfig::new("server-1", "https://mcp1.example.com"))
+        .add_tool(McpServerConfig::new("server-2", "https://mcp2.example.com"));
 
     assert!(builder.tools.is_some());
     let tools = builder.tools.as_ref().unwrap();
@@ -200,13 +203,59 @@ fn test_interaction_builder_add_mcp_server_and_other_tools() {
         .interaction()
         .with_model("gemini-3-flash-preview")
         .with_text("Use MCP and other tools")
-        .add_mcp_server("my-server", "https://mcp.example.com")
+        .add_tool(McpServerConfig::new("my-server", "https://mcp.example.com"))
         .with_google_search()
         .add_function(func);
 
     assert!(builder.tools.is_some());
     let tools = builder.tools.as_ref().unwrap();
     assert_eq!(tools.len(), 3);
+}
+
+#[test]
+fn test_interaction_builder_with_google_maps() {
+    let client = create_test_client();
+    let builder = client
+        .interaction()
+        .with_model("gemini-3-flash-preview")
+        .with_text("Find coffee shops")
+        .with_google_maps();
+
+    let tools = builder.tools.as_ref().unwrap();
+    assert_eq!(tools.len(), 1);
+    assert!(matches!(
+        tools[0],
+        Tool::GoogleMaps {
+            enable_widget: None
+        }
+    ));
+}
+
+#[test]
+fn test_interaction_builder_add_tool_with_configs() {
+    use crate::{ComputerUseConfig, FileSearchConfig, GoogleMapsConfig, GoogleSearchConfig};
+
+    let client = create_test_client();
+    let builder = client
+        .interaction()
+        .with_model("gemini-3-flash-preview")
+        .with_text("Test all configs")
+        .add_tool(GoogleSearchConfig::new().with_search_types(vec![crate::SearchType::WebSearch]))
+        .add_tool(GoogleMapsConfig::new().with_widget())
+        .add_tool(ComputerUseConfig::new().excluding(vec!["download".to_string()]))
+        .add_tool(FileSearchConfig::new(vec!["store".to_string()]).with_top_k(5));
+
+    let tools = builder.tools.as_ref().unwrap();
+    assert_eq!(tools.len(), 4);
+    assert!(matches!(tools[0], Tool::GoogleSearch { .. }));
+    assert!(matches!(
+        tools[1],
+        Tool::GoogleMaps {
+            enable_widget: Some(true)
+        }
+    ));
+    assert!(matches!(tools[2], Tool::ComputerUse { .. }));
+    assert!(matches!(tools[3], Tool::FileSearch { .. }));
 }
 
 #[test]
@@ -1060,10 +1109,10 @@ fn test_interaction_builder_with_file_search() {
         .interaction()
         .with_model("gemini-3-flash-preview")
         .with_text("Search my documents")
-        .with_file_search(vec![
+        .add_tool(FileSearchConfig::new(vec![
             "stores/store-123".to_string(),
             "stores/store-456".to_string(),
-        ]);
+        ]));
 
     assert!(builder.tools.is_some());
     let tools = builder.tools.as_ref().unwrap();
@@ -1090,10 +1139,10 @@ fn test_interaction_builder_with_file_search_config() {
         .interaction()
         .with_model("gemini-3-flash-preview")
         .with_text("Search with config")
-        .with_file_search_config(
-            vec!["stores/my-docs".to_string()],
-            Some(10),
-            Some("category = 'technical'".to_string()),
+        .add_tool(
+            FileSearchConfig::new(vec!["stores/my-docs".to_string()])
+                .with_top_k(10)
+                .with_metadata_filter("category = 'technical'"),
         );
 
     assert!(builder.tools.is_some());
@@ -1125,7 +1174,7 @@ fn test_interaction_builder_with_file_search_and_other_tools() {
         .interaction()
         .with_model("gemini-3-flash-preview")
         .with_text("Search and process")
-        .with_file_search(vec!["stores/docs".to_string()])
+        .add_tool(FileSearchConfig::new(vec!["stores/docs".to_string()]))
         .with_google_search()
         .add_function(func);
 
@@ -1136,7 +1185,7 @@ fn test_interaction_builder_with_file_search_and_other_tools() {
     // Verify FileSearch is present
     assert!(tools.iter().any(|t| matches!(t, Tool::FileSearch { .. })));
     // Verify GoogleSearch is present
-    assert!(tools.iter().any(|t| matches!(t, Tool::GoogleSearch)));
+    assert!(tools.iter().any(|t| matches!(t, Tool::GoogleSearch { .. })));
     // Verify Function is present
     assert!(tools.iter().any(|t| matches!(t, Tool::Function { .. })));
 }
@@ -1148,7 +1197,7 @@ fn test_interaction_builder_with_file_search_single_store() {
         .interaction()
         .with_model("gemini-3-flash-preview")
         .with_text("Search single store")
-        .with_file_search(vec!["stores/single".to_string()]);
+        .add_tool(FileSearchConfig::new(vec!["stores/single".to_string()]));
 
     let tools = builder.tools.as_ref().unwrap();
     match &tools[0] {

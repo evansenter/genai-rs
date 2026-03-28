@@ -629,6 +629,68 @@ mod url_context {
 }
 
 // =============================================================================
+// Google Maps
+// =============================================================================
+
+mod google_maps {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_google_maps() {
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        let result = stateful_builder(&client)
+            .with_text("Find popular coffee shops near Times Square, New York City")
+            .with_google_maps()
+            .with_store_enabled()
+            .create()
+            .await;
+
+        let response = result.expect("Google Maps interaction should succeed");
+
+        // Verify completed status
+        assert!(
+            matches!(response.status, genai_rs::InteractionStatus::Completed),
+            "Expected Completed status, got {:?}",
+            response.status
+        );
+
+        // Verify Google Maps results are present
+        assert!(
+            response.has_google_maps_results(),
+            "Response should contain Google Maps results"
+        );
+
+        let results = response.google_maps_results();
+        println!("Google Maps results found: {}", results.len());
+        for result in &results {
+            println!("  Call ID: {}", result.call_id);
+            for item in result.items {
+                if let Some(places) = &item.places {
+                    for place in places {
+                        println!(
+                            "    Place: {}",
+                            place.name.as_deref().unwrap_or("(unnamed)")
+                        );
+                    }
+                }
+            }
+        }
+
+        // Verify content summary reflects maps content
+        let summary = response.content_summary();
+        println!("Content summary: {}", summary);
+        assert!(
+            summary.google_maps_result_count > 0,
+            "Content summary should count Google Maps results"
+        );
+    }
+}
+
 // Response Formats: Structured Output
 // =============================================================================
 

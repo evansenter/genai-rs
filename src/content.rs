@@ -202,6 +202,68 @@ impl GoogleSearchResultItem {
 }
 
 // =============================================================================
+// Google Maps Result Types
+// =============================================================================
+
+/// Place data returned by the Google Maps tool.
+///
+/// Contains location details like name, address, coordinates, and other
+/// place metadata. Unknown fields from future API additions are preserved
+/// via the `extra` field for Evergreen forward compatibility.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Place {
+    /// Name of the place
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Formatted address of the place
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub formatted_address: Option<String>,
+    /// Unique identifier for this place
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub place_id: Option<String>,
+    /// Latitude coordinate
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lat: Option<f64>,
+    /// Longitude coordinate
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lng: Option<f64>,
+    /// Place type categories
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub types: Option<Vec<String>>,
+    /// Average user rating
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rating: Option<f64>,
+    /// Total number of user ratings
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_ratings_total: Option<u32>,
+    /// Website URL
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub website: Option<String>,
+    /// Phone number
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phone_number: Option<String>,
+    /// Additional fields not yet modeled (Evergreen forward compatibility)
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// A single result item from a Google Maps tool response.
+///
+/// Contains place data and an optional widget context token for rendering
+/// interactive map widgets.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GoogleMapsResultItem {
+    /// Place data returned by the Maps tool
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub places: Option<Vec<Place>>,
+    /// Widget context token for rendering interactive map widgets
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub widget_context_token: Option<String>,
+}
+
+// =============================================================================
 // URL Context Result Item
 // =============================================================================
 
@@ -863,6 +925,29 @@ pub enum Content {
         /// Search results with extracted text and source information
         result: Vec<FileSearchResultItem>,
     },
+    /// Google Maps call (model requesting location data)
+    ///
+    /// Appears when the model initiates a Google Maps query via the `GoogleMaps` tool.
+    GoogleMapsCall {
+        /// Unique identifier for this maps call (used to match with result)
+        id: String,
+        /// Location queries executed by the model
+        queries: Vec<String>,
+        /// Signature for backend validation (opaque, pass through unchanged)
+        signature: Option<String>,
+    },
+    /// Google Maps result (location data from the Maps tool)
+    ///
+    /// Contains the results returned by the `GoogleMaps` built-in tool.
+    /// Each result includes places with location details and an optional widget token.
+    GoogleMapsResult {
+        /// ID of the corresponding Google Maps call
+        call_id: String,
+        /// Maps results with place information
+        result: Vec<GoogleMapsResultItem>,
+        /// Signature for backend validation (opaque, pass through unchanged)
+        signature: Option<String>,
+    },
     /// Computer use call (model requesting browser interaction)
     ///
     /// Appears when the model initiates browser automation via the `ComputerUse` tool.
@@ -1222,6 +1307,22 @@ impl Serialize for Content {
                 map.serialize_entry("arguments", &arguments)?;
                 map.end()
             }
+            Self::GoogleMapsCall {
+                id,
+                queries,
+                signature,
+            } => {
+                let mut map = serializer.serialize_map(None)?;
+                map.serialize_entry("type", "google_maps_call")?;
+                map.serialize_entry("id", id)?;
+                // Serialize as nested arguments.queries to match API format
+                let arguments = serde_json::json!({ "queries": queries });
+                map.serialize_entry("arguments", &arguments)?;
+                if let Some(sig) = signature {
+                    map.serialize_entry("signature", sig)?;
+                }
+                map.end()
+            }
             Self::GoogleSearchResult { call_id, result } => {
                 let mut map = serializer.serialize_map(None)?;
                 map.serialize_entry("type", "google_search_result")?;
@@ -1250,6 +1351,20 @@ impl Serialize for Content {
                 map.serialize_entry("type", "file_search_result")?;
                 map.serialize_entry("call_id", call_id)?;
                 map.serialize_entry("result", result)?;
+                map.end()
+            }
+            Self::GoogleMapsResult {
+                call_id,
+                result,
+                signature,
+            } => {
+                let mut map = serializer.serialize_map(None)?;
+                map.serialize_entry("type", "google_maps_result")?;
+                map.serialize_entry("call_id", call_id)?;
+                map.serialize_entry("result", result)?;
+                if let Some(sig) = signature {
+                    map.serialize_entry("signature", sig)?;
+                }
                 map.end()
             }
             Self::ComputerUseCall {
@@ -1434,6 +1549,18 @@ impl Content {
     #[must_use]
     pub const fn is_file_search_result(&self) -> bool {
         matches!(self, Self::FileSearchResult { .. })
+    }
+
+    /// Check if this is a GoogleMapsCall content type.
+    #[must_use]
+    pub const fn is_google_maps_call(&self) -> bool {
+        matches!(self, Self::GoogleMapsCall { .. })
+    }
+
+    /// Check if this is a GoogleMapsResult content type.
+    #[must_use]
+    pub const fn is_google_maps_result(&self) -> bool {
+        matches!(self, Self::GoogleMapsResult { .. })
     }
 
     /// Check if this is a UrlContextCall content type.
@@ -2343,6 +2470,20 @@ impl<'de> Deserialize<'de> for Content {
                 #[serde(default)]
                 result: Vec<FileSearchResultItem>,
             },
+            GoogleMapsCall {
+                id: String,
+                #[serde(default)]
+                arguments: Option<serde_json::Value>,
+                #[serde(default)]
+                signature: Option<String>,
+            },
+            GoogleMapsResult {
+                call_id: String,
+                #[serde(default)]
+                result: Vec<GoogleMapsResultItem>,
+                #[serde(default)]
+                signature: Option<String>,
+            },
             ComputerUseCall {
                 id: String,
                 action: String,
@@ -2550,6 +2691,38 @@ impl<'de> Deserialize<'de> for Content {
                 KnownContent::FileSearchResult { call_id, result } => {
                     Content::FileSearchResult { call_id, result }
                 }
+                KnownContent::GoogleMapsCall {
+                    id,
+                    arguments,
+                    signature,
+                } => {
+                    // Extract queries from arguments.queries (same as GoogleSearchCall)
+                    let queries = arguments
+                        .as_ref()
+                        .and_then(|args| args.get("queries"))
+                        .and_then(|q| q.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
+                    Content::GoogleMapsCall {
+                        id,
+                        queries,
+                        signature,
+                    }
+                }
+                KnownContent::GoogleMapsResult {
+                    call_id,
+                    result,
+                    signature,
+                } => Content::GoogleMapsResult {
+                    call_id,
+                    result,
+                    signature,
+                },
                 KnownContent::ComputerUseCall {
                     id,
                     action,

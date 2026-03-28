@@ -10,7 +10,7 @@
 //!
 //! Run with: cargo run --example computer_use
 
-use genai_rs::{Client, GenaiError};
+use genai_rs::{Client, ComputerUseConfig, GenaiError};
 use std::env;
 use std::error::Error;
 
@@ -34,7 +34,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .interaction()
         .with_model(model_name)
         .with_text(prompt)
-        .with_computer_use() // Enable browser automation
+        .add_tool(ComputerUseConfig::new()) // Enable browser automation
         .create()
         .await
     {
@@ -75,7 +75,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .interaction()
         .with_model(model_name)
         .with_text(prompt2)
-        .with_computer_use_excluding(vec!["submit_form".to_string(), "download".to_string()])
+        .add_tool(
+            ComputerUseConfig::new()
+                .excluding(vec!["submit_form".to_string(), "download".to_string()]),
+        )
         .create()
         .await
     {
@@ -103,8 +106,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("\n=== Computer Use Demo Complete ===\n");
 
     println!("--- Key Takeaways ---");
-    println!("  with_computer_use() enables server-side browser automation");
-    println!("  with_computer_use_excluding() restricts specific browser actions");
+    println!("  add_tool(ComputerUseConfig::new()) enables server-side browser automation");
+    println!("  ComputerUseConfig::new().excluding(...) restricts specific browser actions");
     println!("  is_computer_use_call() checks if model requested a browser action");
     println!("  is_computer_use_result() checks for action results");
     println!("  content_summary() shows computer_use_call/result counts\n");
@@ -117,7 +120,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     println!("--- Production Considerations ---");
     println!("  SECURITY: Review all browser actions before execution");
-    println!("  SECURITY: Use with_computer_use_excluding() to block dangerous actions");
+    println!("  SECURITY: Use ComputerUseConfig::new().excluding() to block dangerous actions");
     println!("  SECURITY: Never expose computer use to untrusted user input");
     println!("  AUDIT: Log all computer use activities for compliance");
     println!("  AVAILABILITY: Feature may require specific model/account access");

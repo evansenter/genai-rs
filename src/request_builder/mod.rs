@@ -623,9 +623,47 @@ impl<'a> InteractionBuilder<'a> {
         }
     }
 
-    /// Internal helper to add a tool to the tools list.
-    fn add_tool(&mut self, tool: InternalTool) {
+    /// Internal helper to push a tool to the tools list.
+    fn push_tool(&mut self, tool: InternalTool) {
         self.tools.get_or_insert_with(Vec::new).push(tool);
+    }
+
+    /// Adds any tool that implements `Into<Tool>` to the interaction.
+    ///
+    /// This is the unified entry point for configurable tools. Use the corresponding
+    /// config struct to construct the tool:
+    ///
+    /// - [`GoogleSearchConfig`](crate::GoogleSearchConfig) for Google Search with search types
+    /// - [`GoogleMapsConfig`](crate::GoogleMapsConfig) for Google Maps
+    /// - [`McpServerConfig`](crate::McpServerConfig) for MCP servers
+    /// - [`ComputerUseConfig`](crate::ComputerUseConfig) for browser automation
+    /// - [`FileSearchConfig`](crate::FileSearchConfig) for file search
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{Client, ComputerUseConfig, FileSearchConfig, McpServerConfig};
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::new("api-key".to_string());
+    ///
+    /// let response = client
+    ///     .interaction()
+    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_text("Hello")
+    ///     .add_tool(ComputerUseConfig::new().excluding(vec!["download_file".to_string()]))
+    ///     .add_tool(FileSearchConfig::new(vec!["docs".to_string()]).with_top_k(5))
+    ///     .add_tool(McpServerConfig::new("fs", "https://mcp.example.com/fs"))
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn add_tool(mut self, tool: impl Into<InternalTool>) -> Self {
+        self.push_tool(tool.into());
+        self
     }
 
     /// Sets the tools for function calling, replacing any existing tools.
@@ -664,7 +702,7 @@ impl<'a> InteractionBuilder<'a> {
     /// ```
     #[must_use]
     pub fn add_function(mut self, function: FunctionDeclaration) -> Self {
-        self.add_tool(function.into_tool());
+        self.push_tool(function.into_tool());
         self
     }
 
@@ -695,7 +733,7 @@ impl<'a> InteractionBuilder<'a> {
     #[must_use]
     pub fn add_functions(mut self, functions: Vec<FunctionDeclaration>) -> Self {
         for func in functions {
-            self.add_tool(func.into_tool());
+            self.push_tool(func.into_tool());
         }
         self
     }
@@ -776,7 +814,39 @@ impl<'a> InteractionBuilder<'a> {
     /// [`InteractionResponse::google_search_metadata`]: crate::InteractionResponse::google_search_metadata
     #[must_use]
     pub fn with_google_search(mut self) -> Self {
-        self.add_tool(InternalTool::GoogleSearch);
+        self.push_tool(InternalTool::GoogleSearch { search_types: None });
+        self
+    }
+
+    /// Enables the Google Maps built-in tool for location-grounded responses.
+    ///
+    /// For configuration options (e.g., widget support), use
+    /// `.add_tool(GoogleMapsConfig::new().with_widget())`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::Client;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::new("api-key".to_string());
+    ///
+    /// let response = client
+    ///     .interaction()
+    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_text("Find coffee shops near Times Square")
+    ///     .with_google_maps()
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_google_maps(mut self) -> Self {
+        self.push_tool(InternalTool::GoogleMaps {
+            enable_widget: None,
+        });
         self
     }
 
@@ -822,7 +892,7 @@ impl<'a> InteractionBuilder<'a> {
     /// ```
     #[must_use]
     pub fn with_code_execution(mut self) -> Self {
-        self.add_tool(InternalTool::CodeExecution);
+        self.push_tool(InternalTool::CodeExecution);
         self
     }
 
@@ -872,261 +942,7 @@ impl<'a> InteractionBuilder<'a> {
     /// [`InteractionResponse::url_context_metadata`]: crate::InteractionResponse::url_context_metadata
     #[must_use]
     pub fn with_url_context(mut self) -> Self {
-        self.add_tool(InternalTool::UrlContext);
-        self
-    }
-
-    /// Enables computer use (browser automation) for this interaction.
-    ///
-    /// Computer use allows the model to control a browser environment to complete
-    /// tasks. The model can navigate pages, click elements, type text, take
-    /// screenshots, and perform other browser actions.
-    ///
-    /// # Security Warning
-    ///
-    /// **Browser automation is a powerful capability that requires careful consideration:**
-    ///
-    /// - The model will have access to a real browser environment
-    /// - Actions are executed server-side by the API, not in your application
-    /// - Consider using [`with_computer_use_excluding`] to restrict dangerous actions
-    /// - Monitor and log computer use activities for audit purposes
-    /// - Never expose to untrusted user input without safeguards
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use genai_rs::Client;
-    ///
-    /// # #[tokio::main]
-    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = Client::new("api-key".to_string());
-    ///
-    /// let response = client
-    ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
-    ///     .with_text("Go to example.com and take a screenshot")
-    ///     .with_computer_use()
-    ///     .create()
-    ///     .await?;
-    ///
-    /// // Check for computer use results in the response
-    /// for content in &response.outputs {
-    ///     if content.is_computer_use_result() {
-    ///         println!("Computer use action completed");
-    ///     }
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    ///
-    /// [`with_computer_use_excluding`]: Self::with_computer_use_excluding
-    #[must_use]
-    pub fn with_computer_use(mut self) -> Self {
-        self.add_tool(InternalTool::ComputerUse {
-            environment: "browser".to_string(),
-            excluded_predefined_functions: Vec::new(),
-        });
-        self
-    }
-
-    /// Enables computer use (browser automation) with specific functions excluded.
-    ///
-    /// This method allows you to restrict which browser actions the model can perform.
-    /// Use this to prevent potentially dangerous or unwanted operations.
-    ///
-    /// # Security Warning
-    ///
-    /// **Browser automation is a powerful capability that requires careful consideration:**
-    ///
-    /// - Review the available actions and exclude any that pose risks for your use case
-    /// - Common exclusions: `"submit_form"`, `"download_file"`, `"execute_script"`
-    /// - Consider logging all computer use calls for security audits
-    /// - Test thoroughly with exclusions before production use
-    ///
-    /// # Arguments
-    ///
-    /// * `excluded_functions` - List of function names to exclude from computer use
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use genai_rs::Client;
-    ///
-    /// # #[tokio::main]
-    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = Client::new("api-key".to_string());
-    ///
-    /// // Restrict computer use to prevent form submissions and downloads
-    /// let response = client
-    ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
-    ///     .with_text("Navigate to example.com and describe what you see")
-    ///     .with_computer_use_excluding(vec![
-    ///         "submit_form".to_string(),
-    ///         "download_file".to_string(),
-    ///     ])
-    ///     .create()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[must_use]
-    pub fn with_computer_use_excluding(mut self, excluded_functions: Vec<String>) -> Self {
-        self.add_tool(InternalTool::ComputerUse {
-            environment: "browser".to_string(),
-            excluded_predefined_functions: excluded_functions,
-        });
-        self
-    }
-
-    /// Adds an MCP (Model Context Protocol) server as a tool.
-    ///
-    /// MCP servers provide a standardized way to expose external tools and
-    /// capabilities to the model. When configured, the model can call tools
-    /// exposed by the MCP server to access external data, services, or actions.
-    ///
-    /// This method can be called multiple times to add multiple MCP servers.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use genai_rs::Client;
-    ///
-    /// # #[tokio::main]
-    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = Client::new("api-key".to_string());
-    ///
-    /// let response = client
-    ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
-    ///     .with_text("What files are in my project?")
-    ///     .add_mcp_server("filesystem", "https://mcp.example.com/fs")
-    ///     .create()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    ///
-    /// # Multiple Servers
-    ///
-    /// ```no_run
-    /// use genai_rs::Client;
-    ///
-    /// # #[tokio::main]
-    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = Client::new("api-key".to_string());
-    ///
-    /// let response = client
-    ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
-    ///     .with_text("Search the database and format the results")
-    ///     .add_mcp_server("database", "https://mcp.example.com/db")
-    ///     .add_mcp_server("formatter", "https://mcp.example.com/fmt")
-    ///     .create()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[must_use]
-    pub fn add_mcp_server(mut self, name: impl Into<String>, url: impl Into<String>) -> Self {
-        self.add_tool(InternalTool::McpServer {
-            name: name.into(),
-            url: url.into(),
-        });
-        self
-    }
-
-    /// Enables file search for semantic retrieval over document stores.
-    ///
-    /// This adds the built-in `FileSearch` tool which allows the model to
-    /// query file search stores for semantically relevant content from uploaded
-    /// documents. Results are available via [`InteractionResponse::file_search_results`].
-    ///
-    /// # Arguments
-    ///
-    /// * `store_names` - Names of the file search stores to query
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use genai_rs::Client;
-    ///
-    /// # #[tokio::main]
-    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = Client::new("api-key".to_string());
-    ///
-    /// let response = client
-    ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
-    ///     .with_text("What does the documentation say about authentication?")
-    ///     .with_file_search(vec!["my-docs-store".to_string()])
-    ///     .create()
-    ///     .await?;
-    ///
-    /// for result in response.file_search_results() {
-    ///     println!("{}: {}", result.title, result.text);
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    ///
-    /// [`InteractionResponse::file_search_results`]: crate::InteractionResponse::file_search_results
-    #[must_use]
-    pub fn with_file_search(mut self, store_names: Vec<String>) -> Self {
-        self.add_tool(InternalTool::FileSearch {
-            store_names,
-            top_k: None,
-            metadata_filter: None,
-        });
-        self
-    }
-
-    /// Enables file search with full configuration options.
-    ///
-    /// This is the extended version of [`with_file_search`](Self::with_file_search)
-    /// that allows specifying result count and metadata filtering.
-    ///
-    /// # Arguments
-    ///
-    /// * `store_names` - Names of the file search stores to query
-    /// * `top_k` - Maximum number of semantic retrieval chunks to return
-    /// * `metadata_filter` - Metadata filter string for document filtering
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use genai_rs::Client;
-    ///
-    /// # #[tokio::main]
-    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = Client::new("api-key".to_string());
-    ///
-    /// let response = client
-    ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
-    ///     .with_text("Find technical documentation about APIs")
-    ///     .with_file_search_config(
-    ///         vec!["docs-store".to_string()],
-    ///         Some(10),  // Return up to 10 results
-    ///         Some("category:technical".to_string()),  // Only technical docs
-    ///     )
-    ///     .create()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[must_use]
-    pub fn with_file_search_config(
-        mut self,
-        store_names: Vec<String>,
-        top_k: Option<i32>,
-        metadata_filter: Option<String>,
-    ) -> Self {
-        self.add_tool(InternalTool::FileSearch {
-            store_names,
-            top_k,
-            metadata_filter,
-        });
+        self.push_tool(InternalTool::UrlContext);
         self
     }
 

@@ -58,6 +58,11 @@ Helper methods on each type:
 | `Resolution` | snake_case | `"low"`, `"medium"`, `"high"`, `"ultra_high"` | Image/video content |
 | `Tool::FileSearch` | snake_case object | `{"type": "file_search", ...}` | Rust: `store_names`, Wire: `file_search_store_names` |
 | `FileSearchResult` | snake_case | `{"type": "file_search_result", "call_id": ...}` | Rust: `store`, Wire: `file_search_store` |
+| `Content::GoogleMapsCall` | snake_case + arguments object | `{"type": "google_maps_call", "id": "...", "arguments": {"queries": [...]}}` |
+| `Content::GoogleMapsResult` | snake_case + result array | `{"type": "google_maps_result", "call_id": "...", "result": [...]}` |
+| `Tool::GoogleSearch` | snake_case + optional array | `{"type": "google_search", "search_types": ["web_search"]}` |
+| `Tool::GoogleMaps` | snake_case + optional field | `{"type": "google_maps", "enable_widget": true}` |
+| `SearchType` | snake_case string | `"web_search"`, `"image_search"` |
 | `Tool::ComputerUse` | snake_case | `"computer_use"` | **UNVERIFIED** - from docs |
 | `Content::ComputerUseCall` | snake_case | `"computer_use_call"` | **UNVERIFIED** - from docs |
 | `Content::ComputerUseResult` | snake_case | `"computer_use_result"` | **UNVERIFIED** - from docs |
@@ -223,6 +228,44 @@ Returned when the model retrieves documents from file search stores.
 | `result[].store` | `file_search_store` | snake_case in JSON |
 
 **Added**: 2026-01-05 - Response format based on API documentation. Response cannot be verified without configured file search stores.
+
+### GoogleMapsCall (response content)
+
+Wire type: `"google_maps_call"`
+
+| Rust field | Wire field | Notes |
+|-----------|-----------|-------|
+| `id` | `id` | Unique call identifier |
+| `queries` | `arguments.queries` | Nested inside `arguments` object |
+| `signature` | `signature` | Optional, opaque backend validation |
+
+Example wire format:
+```json
+{
+  "type": "google_maps_call",
+  "id": "qs19a0jm",
+  "arguments": { "queries": ["coffee shops near Times Square"] },
+  "signature": "ErIE..."
+}
+```
+
+**Status**: Verified via `LOUD_WIRE=1` integration test — confirmed wire format matches.
+
+### GoogleMapsResult (response content)
+
+Wire type: `"google_maps_result"`
+
+| Rust field | Wire field | Notes |
+|-----------|-----------|-------|
+| `call_id` | `call_id` | Maps call ID |
+| `result` | `result` | Array of `GoogleMapsResultItem` |
+| `signature` | `signature` | Optional, opaque backend validation |
+
+Each `GoogleMapsResultItem` contains:
+- `places`: Optional array of `Place` objects (with `name`, `formatted_address`, `place_id`, `lat`, `lng`, etc.)
+- `widget_context_token`: Optional string for widget rendering
+
+**Status**: Verified via `LOUD_WIRE=1` integration test — confirmed wire format matches.
 
 ### Computer Use (tool and content types)
 

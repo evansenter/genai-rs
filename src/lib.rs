@@ -68,8 +68,8 @@ pub use errors::GenaiError;
 // Content types (Content and related)
 pub mod content;
 pub use content::{
-    Annotation, CodeExecutionLanguage, Content, FileSearchResultItem, GoogleSearchResultItem,
-    Resolution, UrlContextResultItem,
+    Annotation, CodeExecutionLanguage, Content, FileSearchResultItem, GoogleMapsResultItem,
+    GoogleSearchResultItem, Place, Resolution, UrlContextResultItem,
 };
 
 // Request types (includes agent configuration)
@@ -83,15 +83,18 @@ pub use request::{
 pub mod response;
 pub use response::{
     AudioInfo, CodeExecutionCallInfo, CodeExecutionResultInfo, ContentSummary, FunctionCallInfo,
-    FunctionResultInfo, GroundingChunk, GroundingMetadata, ImageInfo, InteractionResponse,
-    InteractionStatus, ModalityTokens, OwnedFunctionCallInfo, UrlContextMetadata,
-    UrlContextResultInfo, UrlMetadataEntry, UrlRetrievalStatus, UsageMetadata, WebSource,
+    FunctionResultInfo, GoogleMapsResultInfo, GroundingChunk, GroundingMetadata, ImageInfo,
+    InteractionResponse, InteractionStatus, ModalityTokens, OwnedFunctionCallInfo,
+    UrlContextMetadata, UrlContextResultInfo, UrlMetadataEntry, UrlRetrievalStatus, UsageMetadata,
+    WebSource,
 };
 
 // Tool types (function declarations, built-in tools)
 pub mod tools;
 pub use tools::{
-    FunctionCallingMode, FunctionDeclaration, FunctionDeclarationBuilder, FunctionParameters, Tool,
+    ComputerUseConfig, FileSearchConfig, FunctionCallingMode, FunctionDeclaration,
+    FunctionDeclarationBuilder, FunctionParameters, GoogleMapsConfig, GoogleSearchConfig,
+    McpServerConfig, SearchType, Tool,
 };
 
 // Wire streaming types (from API)
