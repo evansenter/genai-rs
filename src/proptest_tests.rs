@@ -342,7 +342,7 @@ fn arb_image_aspect_ratio() -> impl Strategy<Value = ImageAspectRatio> {
         Just(ImageAspectRatio::Tall1x4),
         Just(ImageAspectRatio::Wide4x1),
         // Unknown variant with preserved data
-        "[a-z0-9:]{1,10}".prop_map(|ratio_type| ImageAspectRatio::Unknown {
+        "unknown_[a-z0-9]{1,10}".prop_map(|ratio_type| ImageAspectRatio::Unknown {
             ratio_type: ratio_type.clone(),
             data: serde_json::Value::String(ratio_type),
         }),
@@ -373,7 +373,7 @@ fn arb_image_size() -> impl Strategy<Value = ImageSize> {
         Just(ImageSize::Hd2k),
         Just(ImageSize::Uhd4k),
         // Unknown variant with preserved data
-        "[a-zA-Z0-9]{1,10}".prop_map(|size_type| ImageSize::Unknown {
+        "unknown_[a-z0-9]{1,10}".prop_map(|size_type| ImageSize::Unknown {
             size_type: size_type.clone(),
             data: serde_json::Value::String(size_type),
         }),
@@ -502,6 +502,7 @@ fn arb_generation_config() -> impl Strategy<Value = GenerationConfig> {
         proptest::option::of(arb_thinking_summaries()),
         proptest::option::of(arb_function_calling_mode()),
         proptest::option::of(proptest::collection::vec(arb_identifier(), 0..3)),
+        proptest::option::of(arb_image_config()),
         proptest::option::of(arb_speech_config()),
     )
         .prop_map(
@@ -516,6 +517,7 @@ fn arb_generation_config() -> impl Strategy<Value = GenerationConfig> {
                 thinking_summaries,
                 tool_choice,
                 allowed_tools,
+                image_config,
                 speech_config,
             )| {
                 GenerationConfig {
@@ -529,7 +531,7 @@ fn arb_generation_config() -> impl Strategy<Value = GenerationConfig> {
                     thinking_summaries,
                     tool_choice,
                     allowed_tools,
-                    image_config: None,
+                    image_config,
                     speech_config,
                 }
             },
