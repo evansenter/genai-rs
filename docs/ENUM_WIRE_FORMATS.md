@@ -249,7 +249,7 @@ Example wire format:
 }
 ```
 
-**Status**: UNVERIFIED — wire format inferred from GoogleSearchCall pattern, pending LOUD_WIRE=1 verification.
+**Status**: Verified via `LOUD_WIRE=1` integration test — confirmed wire format matches.
 
 ### GoogleMapsResult (response content)
 
@@ -265,7 +265,7 @@ Each `GoogleMapsResultItem` contains:
 - `places`: Optional array of `Place` objects (with `name`, `formatted_address`, `place_id`, `lat`, `lng`, etc.)
 - `widget_context_token`: Optional string for widget rendering
 
-**Status**: UNVERIFIED — wire format inferred from Python SDK, pending LOUD_WIRE=1 verification.
+**Status**: Verified via `LOUD_WIRE=1` integration test — confirmed wire format matches.
 
 ### Computer Use (tool and content types)
 
