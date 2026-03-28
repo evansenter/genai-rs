@@ -23,6 +23,8 @@ All types below implement graceful handling of unrecognized values via an `Unkno
 | 11 | `InteractionStatus` | src/response.rs | `status_type` | Response status |
 | 12 | `CodeExecutionLanguage` | src/content.rs | `language_type` | Programming language |
 | 13 | `UrlRetrievalStatus` | src/response.rs | `status_type` | URL fetch status |
+| 14 | `ImageAspectRatio` | src/request.rs | `ratio_type` | Image aspect ratios (14 values) |
+| 15 | `ImageSize` | src/request.rs | `size_type` | Image resolution (512/1K/2K/4K) |
 
 ### Unknown Variant Pattern
 
@@ -79,6 +81,8 @@ Helper methods on each type:
 | `Content::CodeExecutionResult` | snake_case + is_error/result | `{"type": "code_execution_result", "call_id": "...", "is_error": false, "result": "..."}` | Verified 2026-01-13 - no signature field |
 | `CodeExecutionLanguage` | SCREAMING_SNAKE_CASE | `"PYTHON"` | Currently only Python supported |
 | `UrlRetrievalStatus` | SCREAMING_SNAKE_CASE | `"URL_RETRIEVAL_STATUS_SUCCESS"` | URL fetch result status |
+| `ImageAspectRatio` | ratio string | `"1:1"`, `"16:9"`, `"9:16"` | 14 aspect ratios |
+| `ImageSize` | size string | `"512"`, `"1K"`, `"2K"`, `"4K"` | Image resolution |
 
 ## Details
 
@@ -151,6 +155,7 @@ Returned in API responses - we only deserialize, never serialize.
 | `InteractionStatus::RequiresAction` | `"requires_action"` |
 | `InteractionStatus::Failed` | `"failed"` |
 | `InteractionStatus::Cancelled` | `"cancelled"` |
+| `InteractionStatus::Incomplete` | `"incomplete"` | SDK-sourced, not yet in official API docs |
 
 ### Resolution (content)
 

@@ -11,7 +11,8 @@ use super::content::{
     GoogleSearchResultItem, Place, Resolution, UrlContextResultItem,
 };
 use super::request::{
-    AgentConfig, DeepResearchConfig, DynamicConfig, Role, ThinkingLevel, ThinkingSummaries, Turn,
+    AgentConfig, DeepResearchConfig, DynamicConfig, GenerationConfig, ImageAspectRatio,
+    ImageConfig, ImageSize, Role, SpeechConfig, ThinkingLevel, ThinkingSummaries, Turn,
     TurnContent,
 };
 use super::response::{
@@ -208,6 +209,7 @@ fn arb_interaction_status() -> impl Strategy<Value = InteractionStatus> {
         Just(InteractionStatus::RequiresAction),
         Just(InteractionStatus::Failed),
         Just(InteractionStatus::Cancelled),
+        Just(InteractionStatus::Incomplete),
     ]
 }
 
@@ -221,6 +223,7 @@ fn arb_interaction_status() -> impl Strategy<Value = InteractionStatus> {
         Just(InteractionStatus::RequiresAction),
         Just(InteractionStatus::Failed),
         Just(InteractionStatus::Cancelled),
+        Just(InteractionStatus::Incomplete),
         // Unknown variant with preserved data
         arb_identifier().prop_map(|status_type| InteractionStatus::Unknown {
             status_type: status_type.clone(),
@@ -293,6 +296,104 @@ fn arb_thinking_level() -> impl Strategy<Value = ThinkingLevel> {
             data: serde_json::Value::String(level_type),
         }),
     ]
+}
+
+// =============================================================================
+// ImageAspectRatio Strategies
+// =============================================================================
+
+/// Strategy for known ImageAspectRatio variants only.
+#[cfg(feature = "strict-unknown")]
+fn arb_image_aspect_ratio() -> impl Strategy<Value = ImageAspectRatio> {
+    prop_oneof![
+        Just(ImageAspectRatio::Square),
+        Just(ImageAspectRatio::Portrait2x3),
+        Just(ImageAspectRatio::Landscape3x2),
+        Just(ImageAspectRatio::Portrait3x4),
+        Just(ImageAspectRatio::Landscape4x3),
+        Just(ImageAspectRatio::Portrait4x5),
+        Just(ImageAspectRatio::Landscape5x4),
+        Just(ImageAspectRatio::Portrait9x16),
+        Just(ImageAspectRatio::Widescreen16x9),
+        Just(ImageAspectRatio::Ultrawide21x9),
+        Just(ImageAspectRatio::Tall1x8),
+        Just(ImageAspectRatio::Wide8x1),
+        Just(ImageAspectRatio::Tall1x4),
+        Just(ImageAspectRatio::Wide4x1),
+    ]
+}
+
+/// Strategy for all ImageAspectRatio variants including Unknown.
+#[cfg(not(feature = "strict-unknown"))]
+fn arb_image_aspect_ratio() -> impl Strategy<Value = ImageAspectRatio> {
+    prop_oneof![
+        Just(ImageAspectRatio::Square),
+        Just(ImageAspectRatio::Portrait2x3),
+        Just(ImageAspectRatio::Landscape3x2),
+        Just(ImageAspectRatio::Portrait3x4),
+        Just(ImageAspectRatio::Landscape4x3),
+        Just(ImageAspectRatio::Portrait4x5),
+        Just(ImageAspectRatio::Landscape5x4),
+        Just(ImageAspectRatio::Portrait9x16),
+        Just(ImageAspectRatio::Widescreen16x9),
+        Just(ImageAspectRatio::Ultrawide21x9),
+        Just(ImageAspectRatio::Tall1x8),
+        Just(ImageAspectRatio::Wide8x1),
+        Just(ImageAspectRatio::Tall1x4),
+        Just(ImageAspectRatio::Wide4x1),
+        // Unknown variant with preserved data
+        "unknown_[a-z0-9]{1,10}".prop_map(|ratio_type| ImageAspectRatio::Unknown {
+            ratio_type: ratio_type.clone(),
+            data: serde_json::Value::String(ratio_type),
+        }),
+    ]
+}
+
+// =============================================================================
+// ImageSize Strategies
+// =============================================================================
+
+/// Strategy for known ImageSize variants only.
+#[cfg(feature = "strict-unknown")]
+fn arb_image_size() -> impl Strategy<Value = ImageSize> {
+    prop_oneof![
+        Just(ImageSize::Sd512),
+        Just(ImageSize::Hd1k),
+        Just(ImageSize::Hd2k),
+        Just(ImageSize::Uhd4k),
+    ]
+}
+
+/// Strategy for all ImageSize variants including Unknown.
+#[cfg(not(feature = "strict-unknown"))]
+fn arb_image_size() -> impl Strategy<Value = ImageSize> {
+    prop_oneof![
+        Just(ImageSize::Sd512),
+        Just(ImageSize::Hd1k),
+        Just(ImageSize::Hd2k),
+        Just(ImageSize::Uhd4k),
+        // Unknown variant with preserved data
+        "unknown_[a-z0-9]{1,10}".prop_map(|size_type| ImageSize::Unknown {
+            size_type: size_type.clone(),
+            data: serde_json::Value::String(size_type),
+        }),
+    ]
+}
+
+// =============================================================================
+// ImageConfig Strategies
+// =============================================================================
+
+/// Strategy for generating arbitrary ImageConfig values.
+fn arb_image_config() -> impl Strategy<Value = ImageConfig> {
+    (
+        proptest::option::of(arb_image_aspect_ratio()),
+        proptest::option::of(arb_image_size()),
+    )
+        .prop_map(|(aspect_ratio, image_size)| ImageConfig {
+            aspect_ratio,
+            image_size,
+        })
 }
 
 // =============================================================================
@@ -370,6 +471,71 @@ fn arb_thinking_summaries() -> impl Strategy<Value = ThinkingSummaries> {
             data: serde_json::Value::String(summaries_type),
         }),
     ]
+}
+
+// =============================================================================
+// GenerationConfig Strategies
+// =============================================================================
+
+fn arb_speech_config() -> impl Strategy<Value = SpeechConfig> {
+    (
+        proptest::option::of(arb_identifier()),
+        proptest::option::of(arb_identifier()),
+        proptest::option::of(arb_identifier()),
+    )
+        .prop_map(|(voice, language, speaker)| SpeechConfig {
+            voice,
+            language,
+            speaker,
+        })
+}
+
+fn arb_generation_config() -> impl Strategy<Value = GenerationConfig> {
+    (
+        proptest::option::of(arb_clean_float().prop_map(|v| v.as_f64().unwrap() as f32)),
+        proptest::option::of(1..10000i32),
+        proptest::option::of(arb_clean_float().prop_map(|v| v.as_f64().unwrap() as f32)),
+        proptest::option::of(1..100i32),
+        proptest::option::of(arb_thinking_level()),
+        proptest::option::of(1..1000i64),
+        proptest::option::of(proptest::collection::vec(arb_identifier(), 0..3)),
+        proptest::option::of(arb_thinking_summaries()),
+        proptest::option::of(arb_function_calling_mode()),
+        proptest::option::of(proptest::collection::vec(arb_identifier(), 0..3)),
+        proptest::option::of(arb_image_config()),
+        proptest::option::of(arb_speech_config()),
+    )
+        .prop_map(
+            |(
+                temperature,
+                max_output_tokens,
+                top_p,
+                top_k,
+                thinking_level,
+                seed,
+                stop_sequences,
+                thinking_summaries,
+                tool_choice,
+                allowed_tools,
+                image_config,
+                speech_config,
+            )| {
+                GenerationConfig {
+                    temperature,
+                    max_output_tokens,
+                    top_p,
+                    top_k,
+                    thinking_level,
+                    seed,
+                    stop_sequences,
+                    thinking_summaries,
+                    tool_choice,
+                    allowed_tools,
+                    image_config,
+                    speech_config,
+                }
+            },
+        )
 }
 
 // =============================================================================
@@ -1024,6 +1190,30 @@ proptest! {
         prop_assert_eq!(json, restored_json);
     }
 
+    /// Test that ImageAspectRatio roundtrips correctly through JSON.
+    #[test]
+    fn image_aspect_ratio_roundtrip(ratio in arb_image_aspect_ratio()) {
+        let json = serde_json::to_string(&ratio).expect("Serialization should succeed");
+        let restored: ImageAspectRatio = serde_json::from_str(&json).expect("Deserialization should succeed");
+        prop_assert_eq!(ratio, restored);
+    }
+
+    /// Test that ImageSize roundtrips correctly through JSON.
+    #[test]
+    fn image_size_roundtrip(size in arb_image_size()) {
+        let json = serde_json::to_string(&size).expect("Serialization should succeed");
+        let restored: ImageSize = serde_json::from_str(&json).expect("Deserialization should succeed");
+        prop_assert_eq!(size, restored);
+    }
+
+    /// Test that ImageConfig roundtrips correctly through JSON.
+    #[test]
+    fn image_config_roundtrip(config in arb_image_config()) {
+        let json = serde_json::to_string(&config).expect("Serialization should succeed");
+        let restored: ImageConfig = serde_json::from_str(&json).expect("Deserialization should succeed");
+        prop_assert_eq!(config, restored);
+    }
+
     /// Test that Role roundtrips correctly through JSON.
     #[test]
     fn role_roundtrip(role in arb_role()) {
@@ -1186,6 +1376,24 @@ proptest! {
         let restored_json = serde_json::to_string(&restored).expect("Re-serialization should succeed");
         let restored_value: serde_json::Value = serde_json::from_str(&restored_json).expect("Parse restored JSON");
         prop_assert_eq!(original_value, restored_value);
+    }
+}
+
+// =============================================================================
+// GenerationConfig Tests
+// =============================================================================
+
+proptest! {
+    /// Test that GenerationConfig roundtrips correctly through JSON.
+    /// Uses Value comparison since GenerationConfig doesn't derive PartialEq (contains floats).
+    #[test]
+    fn generation_config_roundtrip(config in arb_generation_config()) {
+        let json = serde_json::to_string(&config).expect("Serialization should succeed");
+        let value1: serde_json::Value = serde_json::from_str(&json).expect("Should parse as Value");
+        let restored: GenerationConfig = serde_json::from_str(&json).expect("Deserialization should succeed");
+        let json2 = serde_json::to_string(&restored).expect("Re-serialization should succeed");
+        let value2: serde_json::Value = serde_json::from_str(&json2).expect("Should parse as Value");
+        prop_assert_eq!(value1, value2);
     }
 }
 
