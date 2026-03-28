@@ -88,6 +88,8 @@ pub enum InteractionStatus {
     RequiresAction,
     Failed,
     Cancelled,
+    /// Interaction ended before completion (e.g., token limit reached).
+    Incomplete,
     /// Unknown status (for forward compatibility).
     ///
     /// This variant captures any unrecognized status values from the API,
@@ -144,6 +146,7 @@ impl Serialize for InteractionStatus {
             Self::RequiresAction => serializer.serialize_str("requires_action"),
             Self::Failed => serializer.serialize_str("failed"),
             Self::Cancelled => serializer.serialize_str("cancelled"),
+            Self::Incomplete => serializer.serialize_str("incomplete"),
             Self::Unknown { status_type, .. } => serializer.serialize_str(status_type),
         }
     }
@@ -162,6 +165,7 @@ impl<'de> Deserialize<'de> for InteractionStatus {
             Some("requires_action") => Ok(Self::RequiresAction),
             Some("failed") => Ok(Self::Failed),
             Some("cancelled") => Ok(Self::Cancelled),
+            Some("incomplete") => Ok(Self::Incomplete),
             Some(other) => {
                 tracing::warn!(
                     "Encountered unknown InteractionStatus '{}'. \
@@ -3381,5 +3385,25 @@ mod tests {
 
         // Should saturate at u32::MAX, not wrap around
         assert_eq!(usage1.total_input_tokens, Some(u32::MAX));
+    }
+
+    // =========================================================================
+    // InteractionStatus Tests
+    // =========================================================================
+
+    #[test]
+    fn test_interaction_status_incomplete_roundtrip() {
+        // Deserialize from wire format
+        let json = r#""incomplete""#;
+        let status: InteractionStatus = serde_json::from_str(json).unwrap();
+        assert_eq!(status, InteractionStatus::Incomplete);
+
+        // Serialize back to wire format
+        let serialized = serde_json::to_string(&status).unwrap();
+        assert_eq!(serialized, r#""incomplete""#);
+
+        // Roundtrip
+        let roundtripped: InteractionStatus = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(roundtripped, InteractionStatus::Incomplete);
     }
 }

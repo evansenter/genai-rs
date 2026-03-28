@@ -151,6 +151,7 @@ Returned in API responses - we only deserialize, never serialize.
 | `InteractionStatus::RequiresAction` | `"requires_action"` |
 | `InteractionStatus::Failed` | `"failed"` |
 | `InteractionStatus::Cancelled` | `"cancelled"` |
+| `InteractionStatus::Incomplete` | `"incomplete"` | SDK-sourced, not yet in official API docs |
 
 ### Resolution (content)
 

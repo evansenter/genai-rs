@@ -208,6 +208,7 @@ fn arb_interaction_status() -> impl Strategy<Value = InteractionStatus> {
         Just(InteractionStatus::RequiresAction),
         Just(InteractionStatus::Failed),
         Just(InteractionStatus::Cancelled),
+        Just(InteractionStatus::Incomplete),
     ]
 }
 
@@ -221,6 +222,7 @@ fn arb_interaction_status() -> impl Strategy<Value = InteractionStatus> {
         Just(InteractionStatus::RequiresAction),
         Just(InteractionStatus::Failed),
         Just(InteractionStatus::Cancelled),
+        Just(InteractionStatus::Incomplete),
         // Unknown variant with preserved data
         arb_identifier().prop_map(|status_type| InteractionStatus::Unknown {
             status_type: status_type.clone(),
