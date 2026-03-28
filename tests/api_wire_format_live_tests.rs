@@ -330,7 +330,11 @@ fn canary_builtin_tools_are_known() {
     use genai_rs::Tool;
 
     // Test all known built-in tools (using enum variants directly)
-    let tools = vec![Tool::GoogleSearch, Tool::CodeExecution, Tool::UrlContext];
+    let tools = vec![
+        Tool::GoogleSearch { search_types: None },
+        Tool::CodeExecution,
+        Tool::UrlContext,
+    ];
 
     for tool in tools {
         assert!(

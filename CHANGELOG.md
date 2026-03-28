@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Google Maps built-in tool support (`Tool::GoogleMaps`, `GoogleMapsConfig`, `GoogleMapsCall`, `GoogleMapsResult` content types)
+- `SearchType` enum for Google Search `search_types` configuration
+- `allowed_tools` and `headers` optional fields on `Tool::McpServer`
+- Unified `add_tool(impl Into<Tool>)` method on `InteractionBuilder`
+- Tool configuration structs: `GoogleMapsConfig`, `GoogleSearchConfig`, `McpServerConfig`, `ComputerUseConfig`, `FileSearchConfig`
+- `with_google_maps()` shorthand on `InteractionBuilder`
+- `Place` struct with Evergreen forward-compatible `extra` field
+- `GoogleMapsResultInfo` view type and response accessors (`has_google_maps_results()`, `google_maps_results()`)
+
+### Changed
+
+- `Tool::GoogleSearch` is now a struct variant with optional `search_types` field (was unit variant)
+- `Tool::McpServer` has additional optional fields `allowed_tools` and `headers`
+- Proptest roundtrip comparisons use `serde_json::Value` for HashMap key order independence
+
+### Removed
+
+- `with_computer_use()` and `with_computer_use_excluding()` — use `add_tool(ComputerUseConfig::new())`
+- `add_mcp_server()` — use `add_tool(McpServerConfig::new(name, url))`
+- `with_file_search()` and `with_file_search_config()` — use `add_tool(FileSearchConfig::new(stores))`
+
 ## [0.7.2] - 2026-01-17
 
 ### Changed

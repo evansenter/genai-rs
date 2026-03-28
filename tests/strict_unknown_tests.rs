@@ -386,6 +386,27 @@ mod common {
         }))
         .unwrap();
 
+        // GoogleMapsCall
+        let _: Content = serde_json::from_value(json!({
+            "type": "google_maps_call",
+            "id": "maps-call-123",
+            "arguments": {"queries": ["coffee shops near Times Square"]},
+            "signature": "ErIE..."
+        }))
+        .unwrap();
+
+        // GoogleMapsResult
+        let _: Content = serde_json::from_value(json!({
+            "type": "google_maps_result",
+            "call_id": "maps-123",
+            "result": [{
+                "places": [{"name": "Central Park", "place_id": "abc123"}],
+                "widget_context_token": "token456"
+            }],
+            "signature": "SigABC..."
+        }))
+        .unwrap();
+
         // UrlContextCall (wire format has id + arguments.urls)
         let _: Content = serde_json::from_value(json!({
             "type": "url_context_call",
