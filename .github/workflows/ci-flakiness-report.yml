@@ -159,7 +159,7 @@ jobs:
               --argjson failures "${TEST_FAILURES[$test_name]}" \
               --arg category "${TEST_CATEGORIES[$test_name]:-unknown}" \
               --arg file "${TEST_FILES[$test_name]:-unknown}" \
-              '{name: $name, failures: $failures, category: $category, file: $file}')
+              '{name: $name, failures: $failures, category: $category, file: $file}') || continue
             jq --argjson new "$ITEM_JSON" '. + [$new]' tests.json > tests.json.tmp \
               && mv tests.json.tmp tests.json
           done
