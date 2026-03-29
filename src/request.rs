@@ -982,6 +982,7 @@ pub struct InteractionRequest {
     pub response_modalities: Option<Vec<String>>,
 
     /// JSON schema for structured output
+    #[serde(rename = "response_format")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_format: Option<serde_json::Value>,
 

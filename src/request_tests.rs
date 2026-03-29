@@ -560,3 +560,43 @@ fn test_interaction_request_roundtrip() {
         format!("{:?}", deserialized.system_instruction)
     );
 }
+
+#[test]
+fn test_response_format_serializes_as_snake_case() {
+    let request = InteractionRequest {
+        model: Some("gemini-3-flash-preview".to_string()),
+        agent: None,
+        agent_config: None,
+        input: InteractionInput::Text("test".to_string()),
+        previous_interaction_id: None,
+        tools: None,
+        response_modalities: None,
+        response_format: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" }
+            }
+        })),
+        response_mime_type: None,
+        generation_config: None,
+        stream: None,
+        background: None,
+        store: None,
+        system_instruction: None,
+    };
+
+    let json = serde_json::to_string(&request).expect("Serialization failed");
+
+    // The Gemini Interactions API requires snake_case for response_format.
+    // The struct-level rename_all = "camelCase" would produce "responseFormat",
+    // which the API silently misinterprets. The field-level #[serde(rename)]
+    // override ensures we send the correct wire format.
+    assert!(
+        json.contains("\"response_format\""),
+        "Expected snake_case 'response_format' in JSON, got: {json}"
+    );
+    assert!(
+        !json.contains("\"responseFormat\""),
+        "Must NOT contain camelCase 'responseFormat' in JSON, got: {json}"
+    );
+}
