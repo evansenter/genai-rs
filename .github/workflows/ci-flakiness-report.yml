@@ -154,13 +154,13 @@ jobs:
           # Write tests JSON for report generation (using jq for safe construction)
           echo "[]" > tests.json
           for test_name in "${!TEST_FAILURES[@]}"; do
-            jq -n \
+            ITEM_JSON=$(jq -n \
               --arg name "$test_name" \
               --argjson failures "${TEST_FAILURES[$test_name]}" \
               --arg category "${TEST_CATEGORIES[$test_name]:-unknown}" \
               --arg file "${TEST_FILES[$test_name]:-unknown}" \
-              '{name: $name, failures: $failures, category: $category, file: $file}' \
-              | jq -s '.[0] as $new | input + [$new]' tests.json - > tests.json.tmp \
+              '{name: $name, failures: $failures, category: $category, file: $file}')
+            jq --argjson new "$ITEM_JSON" '. + [$new]' tests.json > tests.json.tmp \
               && mv tests.json.tmp tests.json
           done
 
