@@ -1508,9 +1508,11 @@ mod sampling {
         };
 
         // Note: Excluding top_k since it's not supported in Interactions API
+        // Use a generous max_output_tokens to avoid Incomplete status when
+        // thinking tokens consume part of the budget.
         let config = GenerationConfig {
             temperature: Some(0.5),
-            max_output_tokens: Some(200),
+            max_output_tokens: Some(2048),
             top_p: Some(0.9),
             thinking_level: Some(ThinkingLevel::Medium),
             ..Default::default()
