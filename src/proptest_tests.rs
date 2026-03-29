@@ -980,7 +980,7 @@ fn arb_known_tool() -> impl Strategy<Value = Tool> {
             }),
         // ComputerUse tool
         (
-            Just("browser".to_string()),
+            prop_oneof![Just("browser".to_string()), arb_identifier()],
             proptest::collection::vec(arb_identifier(), 0..3),
         )
             .prop_map(|(environment, excluded)| Tool::ComputerUse {
