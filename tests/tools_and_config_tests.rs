@@ -1619,22 +1619,16 @@ mod config_fields {
         let text = response.as_text().expect("Should have text response");
         println!("Stop sequence response: {}", text);
 
-        // The response should NOT contain numbers after 5 since we stopped there
-        // It may or may not include 5 itself (stop sequences may or may not be included)
-        let has_six_or_higher = text.contains("6")
-            || text.contains("7")
-            || text.contains("8")
-            || text.contains("9")
-            || text.contains("10");
-
-        if !has_six_or_higher {
-            println!("✓ Stop sequence correctly halted generation before 6-10");
-        } else {
-            println!(
-                "Note: Stop sequence may not have halted as expected (API behavior may vary): {}",
-                text
-            );
-        }
+        // The response should be shorter than a full 1-10 count.
+        // Stop sequences halt generation, so we expect fewer numbers.
+        // We verify the response doesn't contain the later numbers (8, 9, 10)
+        // which would indicate the stop sequence had no effect at all.
+        let has_late_numbers = text.contains("8") || text.contains("9") || text.contains("10");
+        assert!(
+            !has_late_numbers,
+            "Stop sequence '5' should have halted generation before 8-10, got: {}",
+            text
+        );
     }
 
     /// Test response_mime_type with structured output.

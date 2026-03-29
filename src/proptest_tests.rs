@@ -978,6 +978,15 @@ fn arb_known_tool() -> impl Strategy<Value = Tool> {
                     metadata_filter,
                 }
             }),
+        // ComputerUse tool
+        (
+            prop_oneof![Just("browser".to_string()), arb_identifier()],
+            proptest::collection::vec(arb_identifier(), 0..3),
+        )
+            .prop_map(|(environment, excluded)| Tool::ComputerUse {
+                environment,
+                excluded_predefined_functions: excluded,
+            }),
         // MCP Server (use BTreeMap for deterministic JSON key ordering in roundtrip tests)
         (
             arb_identifier(),

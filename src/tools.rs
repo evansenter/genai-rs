@@ -436,6 +436,7 @@ impl FunctionDeclaration {
     }
 
     /// Converts this FunctionDeclaration into a Tool for API requests
+    #[must_use]
     pub fn into_tool(self) -> Tool {
         Tool::Function {
             name: self.name,

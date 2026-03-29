@@ -704,6 +704,92 @@ fn test_interaction_response_url_context_helpers() {
     assert!(url_results[0].items[0].is_success());
 }
 
+#[test]
+fn test_interaction_response_google_maps_helpers() {
+    use super::content::{GoogleMapsResultItem, Place};
+
+    let response = InteractionResponse {
+        id: Some("test_id".to_string()),
+        model: Some("gemini-3-flash-preview".to_string()),
+        agent: None,
+        input: vec![],
+        outputs: vec![
+            Content::GoogleMapsResult {
+                call_id: "maps_123".to_string(),
+                signature: None,
+                result: vec![GoogleMapsResultItem {
+                    places: Some(vec![Place {
+                        name: Some("Eiffel Tower".to_string()),
+                        formatted_address: Some("Paris, France".to_string()),
+                        place_id: Some("ChIJLU7jZClu5kcR".to_string()),
+                        lat: Some(48.8584),
+                        lng: Some(2.2945),
+                        types: None,
+                        rating: None,
+                        user_ratings_total: None,
+                        website: None,
+                        phone_number: None,
+                        extra: serde_json::Map::new(),
+                    }]),
+                    widget_context_token: Some("token123".to_string()),
+                }],
+            },
+            Content::Text {
+                text: Some("Here are the maps results.".to_string()),
+                annotations: None,
+            },
+        ],
+        status: InteractionStatus::Completed,
+        usage: None,
+        tools: None,
+        previous_interaction_id: None,
+        grounding_metadata: None,
+        url_context_metadata: None,
+        created: None,
+        updated: None,
+    };
+
+    assert!(response.has_google_maps_results());
+
+    let maps_results = response.google_maps_results();
+    assert_eq!(maps_results.len(), 1);
+    assert_eq!(maps_results[0].call_id, "maps_123");
+    assert_eq!(maps_results[0].items.len(), 1);
+
+    let places = maps_results[0].items[0].places.as_ref().unwrap();
+    assert_eq!(places.len(), 1);
+    assert_eq!(places[0].name.as_deref(), Some("Eiffel Tower"));
+    assert_eq!(
+        places[0].formatted_address.as_deref(),
+        Some("Paris, France")
+    );
+}
+
+#[test]
+fn test_interaction_response_google_maps_helpers_empty() {
+    let response = InteractionResponse {
+        id: Some("test_id".to_string()),
+        model: Some("gemini-3-flash-preview".to_string()),
+        agent: None,
+        input: vec![],
+        outputs: vec![Content::Text {
+            text: Some("No maps here.".to_string()),
+            annotations: None,
+        }],
+        status: InteractionStatus::Completed,
+        usage: None,
+        tools: None,
+        previous_interaction_id: None,
+        grounding_metadata: None,
+        url_context_metadata: None,
+        created: None,
+        updated: None,
+    };
+
+    assert!(!response.has_google_maps_results());
+    assert!(response.google_maps_results().is_empty());
+}
+
 // --- URL Context Metadata Tests ---
 
 #[test]

@@ -70,15 +70,6 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings # Lint
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items  # Docs
 ```
 
-### Examples
-
-All require `GEMINI_API_KEY`. Key examples:
-- `cargo run --example simple_interaction` - Basic usage
-- `cargo run --example auto_function_calling` - Function calling
-- `cargo run --example streaming` - SSE streaming
-
-See `examples/` for full list (multimodal, thinking, files API, image generation, etc.)
-
 ## Architecture
 
 ### Layered Design
@@ -98,7 +89,7 @@ See `examples/` for full list (multimodal, thinking, files API, image generation
 | Category | Tools | Who Executes |
 |----------|-------|--------------|
 | Client-Side | `#[tool]` macro, `ToolService`, Manual | YOUR code |
-| Server-Side | Google Search, Code Execution, URL Context | API |
+| Server-Side | Google Search, Code Execution, URL Context, Google Maps | API |
 
 **Choosing Client-Side Approach**:
 | Approach | Registration | State | Best For |
@@ -222,21 +213,7 @@ GitHub Actions runs: check, test, test-strict-unknown, test-integration (5 matri
 | `with_*` | **Configures** a setting (replaces if called twice) | `with_model()`, `with_text()` |
 | `add_*` | **Accumulates** items to a collection | `add_function()`, `add_tool()` |
 
-**Getter patterns**:
-
-| Pattern | Purpose | Example |
-|---------|---------|---------|
-| `as_*()` | Extract enum variant as borrowed reference | `as_text()`, `as_parts()` |
-| `into_*()` | Extract enum variant, consuming self | `into_text()` |
-| `is_*()` | Check if value matches a variant/condition | `is_unknown()`, `is_empty()` |
-
-**Method suffixes**:
-
-| Suffix | Meaning | Example |
-|--------|---------|---------|
-| `*_stream()` | Returns `Stream<Item>` for async iteration | `create_stream()` |
-| `*_chunked()` | Uses chunked I/O internally, returns single result | `upload_file_chunked()` |
-| `*_with_auto_functions()` | Automatically executes functions in a loop | `create_stream_with_auto_functions()` |
+**Method suffix**: `*_with_auto_functions()` automatically executes functions in a loop with timeout/storage semantics — see `docs/MULTI_TURN_FUNCTION_CALLING.md`.
 
 ### #[must_use] Annotation
 

@@ -1281,7 +1281,7 @@ impl InteractionResponse {
                 let bytes = base64::engine::general_purpose::STANDARD
                     .decode(base64_data)
                     .map_err(|e| {
-                        GenaiError::InvalidInput(format!("Invalid base64 image data: {}", e))
+                        GenaiError::MalformedResponse(format!("Invalid base64 image data: {}", e))
                     })?;
                 return Ok(Some(bytes));
             }
