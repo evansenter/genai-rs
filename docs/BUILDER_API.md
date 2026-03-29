@@ -33,7 +33,7 @@ Methods follow a consistent naming pattern based on their behavior:
 | Prefix | Behavior | Example |
 |--------|----------|---------|
 | `with_*` | **Configures** a setting (replaces if called twice) | `with_model()`, `with_text()`, `with_content()` |
-| `add_*` | **Accumulates** items to a collection | `add_function()`, `add_mcp_server()` |
+| `add_*` | **Accumulates** items to a collection | `add_function()`, `add_tool()` |
 
 ### Complete Method Reference
 
