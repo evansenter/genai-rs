@@ -2343,28 +2343,26 @@ mod multiturn {
         let functions = vec![get_weather_function()];
 
         // Turn 1: Initial request with functions
-        let result1 = client
-            .interaction()
-            .with_model("gemini-3-flash-preview")
-            .with_text("Remember: I'm interested in weather data.")
-            .add_functions(functions)
-            .with_store_enabled()
-            .create()
-            .await
-            .expect("Turn 1 should succeed");
+        let result1 = retry_request!([client, functions] => {
+            stateful_builder(&client)
+                .with_text("Remember: I'm interested in weather data.")
+                .add_functions(functions)
+                .create()
+                .await
+        })
+        .expect("Turn 1 should succeed");
 
         let turn1_id = result1.id.clone().expect("Turn 1 should have ID");
 
         // Turn 2: Follow-up WITHOUT resending tools
-        let result2 = client
-            .interaction()
-            .with_model("gemini-3-flash-preview")
-            .with_text("What's the weather in Paris?")
-            .with_store_enabled()
-            .with_previous_interaction(&turn1_id)
-            .create()
-            .await
-            .expect("Turn 2 should succeed");
+        let result2 = retry_request!([client, turn1_id] => {
+            stateful_builder(&client)
+                .with_text("What's the weather in Paris?")
+                .with_previous_interaction(&turn1_id)
+                .create()
+                .await
+        })
+        .expect("Turn 2 should succeed");
 
         // Model should NOT have any function calls since we didn't provide tools
         let function_calls = result2.function_calls();
