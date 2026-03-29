@@ -1751,7 +1751,7 @@ mod function_calling_modes {
         };
         let json = serde_json::to_value(&config).unwrap();
         assert_eq!(
-            json["toolChoice"],
+            json["tool_choice"],
             serde_json::Value::String("AUTO".to_string())
         );
 
@@ -1762,7 +1762,7 @@ mod function_calling_modes {
         };
         let json = serde_json::to_value(&config).unwrap();
         assert_eq!(
-            json["toolChoice"],
+            json["tool_choice"],
             serde_json::Value::String("ANY".to_string())
         );
 
@@ -1773,7 +1773,7 @@ mod function_calling_modes {
         };
         let json = serde_json::to_value(&config).unwrap();
         assert_eq!(
-            json["toolChoice"],
+            json["tool_choice"],
             serde_json::Value::String("NONE".to_string())
         );
 
@@ -1784,7 +1784,7 @@ mod function_calling_modes {
         };
         let json = serde_json::to_value(&config).unwrap();
         assert_eq!(
-            json["toolChoice"],
+            json["tool_choice"],
             serde_json::Value::String("VALIDATED".to_string())
         );
 
