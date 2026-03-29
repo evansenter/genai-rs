@@ -47,12 +47,17 @@ pub const DEFAULT_MAX_RETRIES: u32 = 3;
 #[allow(dead_code)]
 pub fn is_transient_error(err: &GenaiError) -> bool {
     match err {
-        GenaiError::Api { message, .. } => {
+        GenaiError::Api {
+            status_code,
+            message,
+            ..
+        } => {
+            let lower = message.to_lowercase();
             // Spanner UTF-8 errors are transient backend issues
             // See: https://github.com/evansenter/genai-rs/issues/60
-            // Check for both "spanner" and "utf-8" to avoid false positives
-            let lower = message.to_lowercase();
-            lower.contains("spanner") && lower.contains("utf-8")
+            (lower.contains("spanner") && lower.contains("utf-8"))
+                // Model occasionally generates invalid JSON — transient API-side issue
+                || (*status_code == 400 && lower.contains("invalid json syntax"))
         }
         _ => false,
     }
