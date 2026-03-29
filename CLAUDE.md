@@ -220,7 +220,7 @@ GitHub Actions runs: check, test, test-strict-unknown, test-integration (5 matri
 | Prefix | Behavior | Example |
 |--------|----------|---------|
 | `with_*` | **Configures** a setting (replaces if called twice) | `with_model()`, `with_text()` |
-| `add_*` | **Accumulates** items to a collection | `add_function()`, `add_mcp_server()` |
+| `add_*` | **Accumulates** items to a collection | `add_function()`, `add_tool()` |
 
 **Getter patterns**:
 
