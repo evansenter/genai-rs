@@ -1285,8 +1285,8 @@ mod text_to_speech {
         };
 
         let mut request_json = serde_json::to_value(&request).expect("Serialize request");
-        request_json["generationConfig"] = json!({
-            "speechConfig": nested_speech_config
+        request_json["generation_config"] = json!({
+            "speech_config": nested_speech_config
         });
 
         let nested_response = http_client
