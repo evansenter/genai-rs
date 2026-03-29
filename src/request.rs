@@ -480,7 +480,6 @@ impl<'de> Visitor<'de> for ThinkingLevelVisitor {
 
 /// Generation configuration for model behavior
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
-#[serde(rename_all = "camelCase")]
 pub struct GenerationConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
@@ -556,7 +555,6 @@ pub struct GenerationConfig {
 /// See [Google's TTS documentation](https://ai.google.dev/gemini-api/docs/text-generation)
 /// for the full list of available voices.
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
-#[serde(rename_all = "camelCase")]
 pub struct SpeechConfig {
     /// The voice to use for speech synthesis.
     ///
@@ -614,7 +612,7 @@ impl SpeechConfig {
 /// };
 /// ```
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
+#[serde(default)]
 pub struct ImageConfig {
     /// The aspect ratio for generated images.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -952,7 +950,6 @@ impl<'de> Deserialize<'de> for ImageSize {
 /// # }
 /// ```
 #[derive(Clone, Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
 pub struct InteractionRequest {
     /// Model name (e.g., "gemini-3-flash-preview") - mutually exclusive with agent
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1711,8 +1708,8 @@ mod tests {
         let json = serde_json::to_string(&config).unwrap();
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(value["aspectRatio"], "1:1");
-        assert!(value.get("imageSize").is_none());
+        assert_eq!(value["aspect_ratio"], "1:1");
+        assert!(value.get("image_size").is_none());
     }
 
     #[test]
@@ -1735,8 +1732,8 @@ mod tests {
         let json = serde_json::to_string(&config).expect("Serialization failed");
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(value["imageConfig"]["aspectRatio"], "9:16");
-        assert_eq!(value["imageConfig"]["imageSize"], "4K");
+        assert_eq!(value["image_config"]["aspect_ratio"], "9:16");
+        assert_eq!(value["image_config"]["image_size"], "4K");
     }
 
     // =========================================================================
@@ -1753,7 +1750,7 @@ mod tests {
         let json = serde_json::to_string(&config).expect("Serialization failed");
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-        let tools = value["allowedTools"].as_array().unwrap();
+        let tools = value["allowed_tools"].as_array().unwrap();
         assert_eq!(tools.len(), 2);
         assert_eq!(tools[0], "get_weather");
         assert_eq!(tools[1], "get_time");
@@ -1770,8 +1767,8 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
 
         assert!(
-            value.get("allowedTools").is_none(),
-            "allowedTools should be omitted when None"
+            value.get("allowed_tools").is_none(),
+            "allowed_tools should be omitted when None"
         );
     }
 }

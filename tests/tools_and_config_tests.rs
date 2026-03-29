@@ -1508,9 +1508,11 @@ mod sampling {
         };
 
         // Note: Excluding top_k since it's not supported in Interactions API
+        // Use a generous max_output_tokens to avoid Incomplete status when
+        // thinking tokens consume part of the budget.
         let config = GenerationConfig {
             temperature: Some(0.5),
-            max_output_tokens: Some(200),
+            max_output_tokens: Some(2048),
             top_p: Some(0.9),
             thinking_level: Some(ThinkingLevel::Medium),
             ..Default::default()
@@ -1749,7 +1751,7 @@ mod function_calling_modes {
         };
         let json = serde_json::to_value(&config).unwrap();
         assert_eq!(
-            json["toolChoice"],
+            json["tool_choice"],
             serde_json::Value::String("AUTO".to_string())
         );
 
@@ -1760,7 +1762,7 @@ mod function_calling_modes {
         };
         let json = serde_json::to_value(&config).unwrap();
         assert_eq!(
-            json["toolChoice"],
+            json["tool_choice"],
             serde_json::Value::String("ANY".to_string())
         );
 
@@ -1771,7 +1773,7 @@ mod function_calling_modes {
         };
         let json = serde_json::to_value(&config).unwrap();
         assert_eq!(
-            json["toolChoice"],
+            json["tool_choice"],
             serde_json::Value::String("NONE".to_string())
         );
 
@@ -1782,7 +1784,7 @@ mod function_calling_modes {
         };
         let json = serde_json::to_value(&config).unwrap();
         assert_eq!(
-            json["toolChoice"],
+            json["tool_choice"],
             serde_json::Value::String("VALIDATED".to_string())
         );
 

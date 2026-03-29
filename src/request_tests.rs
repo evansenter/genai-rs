@@ -50,8 +50,8 @@ fn test_generation_config_serialization() {
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
 
     assert_eq!(value["temperature"], 0.7);
-    assert_eq!(value["maxOutputTokens"], 500);
-    assert_eq!(value["thinkingLevel"], "medium");
+    assert_eq!(value["max_output_tokens"], 500);
+    assert_eq!(value["thinking_level"], "medium");
 }
 
 #[test]
@@ -75,11 +75,10 @@ fn test_generation_config_new_fields_serialization() {
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
 
     assert_eq!(value["seed"], 42);
-    assert_eq!(value["stopSequences"][0], "END");
-    assert_eq!(value["stopSequences"][1], "---");
-    // GenerationConfig uses lowercase format for thinkingSummaries
-    assert_eq!(value["thinkingSummaries"], "auto");
-    assert_eq!(value["thinkingLevel"], "high");
+    assert_eq!(value["stop_sequences"][0], "END");
+    assert_eq!(value["stop_sequences"][1], "---");
+    assert_eq!(value["thinking_summaries"], "auto");
+    assert_eq!(value["thinking_level"], "high");
 }
 
 #[test]
@@ -267,9 +266,9 @@ fn test_generation_config_partial_fields() {
 
     // Only set fields should be present
     assert_eq!(value["seed"], 42);
-    assert_eq!(value["stopSequences"][0], "DONE");
+    assert_eq!(value["stop_sequences"][0], "DONE");
     assert!(value.get("temperature").is_none());
-    assert!(value.get("thinkingLevel").is_none());
+    assert!(value.get("thinking_level").is_none());
 }
 
 #[test]
@@ -462,8 +461,7 @@ fn test_create_interaction_request_with_agent_config() {
 /// - `thinking_summaries` key uses snake_case per API documentation
 /// - Values use SCREAMING_SNAKE_CASE: "THINKING_SUMMARIES_AUTO", "THINKING_SUMMARIES_NONE"
 ///
-/// Note: The Gemini Interactions API uses snake_case for field names, which differs from
-/// the camelCase used in GenerationConfig (which has `#[serde(rename_all = "camelCase")]`).
+/// Note: The Gemini Interactions API uses snake_case for field names.
 #[test]
 fn test_agent_config_field_naming_conventions() {
     // Verify the exact JSON structure matches API expectations
@@ -558,5 +556,53 @@ fn test_interaction_request_roundtrip() {
     assert_eq!(
         format!("{:?}", original.system_instruction),
         format!("{:?}", deserialized.system_instruction)
+    );
+}
+
+#[test]
+fn test_response_format_serializes_as_snake_case() {
+    let request = InteractionRequest {
+        model: Some("gemini-3-flash-preview".to_string()),
+        agent: None,
+        agent_config: None,
+        input: InteractionInput::Text("test".to_string()),
+        previous_interaction_id: None,
+        tools: None,
+        response_modalities: None,
+        response_format: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" }
+            }
+        })),
+        response_mime_type: None,
+        generation_config: None,
+        stream: None,
+        background: None,
+        store: None,
+        system_instruction: None,
+    };
+
+    let json = serde_json::to_string(&request).expect("Serialization failed");
+
+    // The Gemini Interactions API requires snake_case for response_format.
+    // Verify the struct serializes field names as snake_case (matching Rust field names).
+    assert!(
+        json.contains("\"response_format\""),
+        "Expected snake_case 'response_format' in JSON, got: {json}"
+    );
+    assert!(
+        !json.contains("\"responseFormat\""),
+        "Must NOT contain camelCase 'responseFormat' in JSON, got: {json}"
+    );
+
+    // Verify deserialization also uses snake_case key.
+    // This guards against regressions where removing the rename would cause
+    // incoming JSON with "response_format" to silently drop the field.
+    let roundtripped: InteractionRequest =
+        serde_json::from_str(&json).expect("Deserialization failed");
+    assert!(
+        roundtripped.response_format.is_some(),
+        "response_format should survive serialization roundtrip"
     );
 }
