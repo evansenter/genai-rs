@@ -11,9 +11,9 @@
 //! - **structured_output**: JSON schema enforcement
 //! - **image_generation**: Image output modalities
 //! - **thinking**: Thinking level configuration
-//! - **sampling**: Top-p, top-k, and combined sampling
+//! - **sampling**: Top-p and combined sampling
 //! - **config_fields**: Seed, stop sequences, MIME types, thinking summaries
-//! - **function_calling_modes**: AUTO, ANY, NONE, VALIDATED modes
+//! - **function_calling_modes**: auto, any, none, validated modes
 //!
 //! # Running Tests
 //!
@@ -82,19 +82,18 @@ mod google_search {
                     assert!(is_valid, "Response should mention weather-related content");
                 }
 
-                // Verify grounding metadata is available
-                if let Some(metadata) = response.google_search_metadata() {
-                    println!("Grounding metadata found:");
-                    println!("  Search queries: {:?}", metadata.web_search_queries);
-                    println!("  Grounding chunks: {}", metadata.grounding_chunks.len());
-                    for chunk in &metadata.grounding_chunks {
-                        println!(
-                            "    - {} [{}] ({})",
-                            chunk.web.title, chunk.web.domain, chunk.web.uri
-                        );
+                // Verify grounding data is available via search steps
+                let queries = response.google_search_calls();
+                let search_results = response.google_search_results();
+                if !queries.is_empty() || !search_results.is_empty() {
+                    println!("Google Search steps found:");
+                    println!("  Search queries: {:?}", queries);
+                    println!("  Result items: {}", search_results.len());
+                    for item in &search_results {
+                        println!("    - {} ({})", item.title, item.url);
                     }
                 } else {
-                    println!("Note: No grounding metadata returned (may vary by API response)");
+                    println!("Note: No Google Search steps returned (may vary by API response)");
                 }
             }
             Err(e) => {
@@ -133,17 +132,16 @@ mod google_search {
                 Ok(event) => {
                     chunk_count += 1;
                     match event.chunk {
-                        StreamChunk::Delta(content) => {
-                            println!("Delta chunk {}: {:?}", chunk_count, content);
+                        StreamChunk::StepDelta { index, delta } => {
+                            println!("Delta chunk {} (step {}): {:?}", chunk_count, index, delta);
                         }
-                        StreamChunk::Complete(response) => {
+                        StreamChunk::Completed(response) => {
                             println!("Complete response received");
-                            // Check for grounding metadata in the final response
-                            if let Some(metadata) = response.google_search_metadata() {
-                                println!("Streaming grounding metadata:");
-                                println!("  Search queries: {:?}", metadata.web_search_queries);
-                                println!("  Chunks: {}", metadata.grounding_chunks.len());
-                            }
+                            // Check for grounding steps in the final response
+                            let queries = response.google_search_calls();
+                            let search_results = response.google_search_results();
+                            println!("Streaming search queries: {:?}", queries);
+                            println!("Streaming search result items: {}", search_results.len());
                             final_response = Some(response);
                         }
                         _ => {} // Handle unknown variants
@@ -200,17 +198,18 @@ mod google_search {
                         for (i, annotation) in annotations.iter().enumerate() {
                             let span = annotation.extract_span(text).unwrap_or("<invalid span>");
                             println!(
-                                "  [{}: bytes {}..{}] \"{}\" -> {:?}",
+                                "  [{}: bytes {:?}..{:?}] \"{}\" -> {:?}",
                                 i,
-                                annotation.start_index,
-                                annotation.end_index,
+                                annotation.start_index(),
+                                annotation.end_index(),
                                 span,
-                                annotation.source
+                                annotation.source()
                             );
                         }
 
                         // Verify at least one annotation has a source
-                        let has_sourced_annotation = annotations.iter().any(|a| a.source.is_some());
+                        let has_sourced_annotation =
+                            annotations.iter().any(|a| a.source().is_some());
                         if has_sourced_annotation {
                             println!("✓ Found annotations with source attributions");
                         } else {
@@ -224,12 +223,13 @@ mod google_search {
                     }
                 }
 
-                // Also check grounding metadata for completeness
-                if let Some(metadata) = response.google_search_metadata() {
+                // Also check grounding steps for completeness
+                let search_results = response.google_search_results();
+                if !search_results.is_empty() {
                     println!(
-                        "Grounding metadata: {} chunks, {:?} queries",
-                        metadata.grounding_chunks.len(),
-                        metadata.web_search_queries
+                        "Grounding steps: {} result items, {:?} queries",
+                        search_results.len(),
+                        response.google_search_calls()
                     );
                 }
             }
@@ -254,8 +254,7 @@ mod google_search {
 mod code_execution {
     use super::*;
     use futures_util::StreamExt;
-    use genai_rs::Content;
-    use genai_rs::StreamChunk;
+    use genai_rs::{Step, StepDelta, StreamChunk};
 
     #[tokio::test]
     #[ignore = "Requires API key"]
@@ -286,10 +285,10 @@ mod code_execution {
                     );
                 }
 
-                // Check for typed built-in tool content using new helpers
-                let summary = response.content_summary();
+                // Check for typed built-in tool steps using new helpers
+                let summary = response.step_summary();
                 println!(
-                    "Content summary: {} text, {} code_execution_call, {} code_execution_result, {} unknown",
+                    "Step summary: {} text, {} code_execution_call, {} code_execution_result, {} unknown",
                     summary.text_count,
                     summary.code_execution_call_count,
                     summary.code_execution_result_count,
@@ -299,7 +298,7 @@ mod code_execution {
                 // Test the new typed helper methods
                 for call in response.code_execution_calls() {
                     println!(
-                        "Executed {} code (id: {:?}): {}",
+                        "Executed {} code (id: {}): {}",
                         call.language,
                         call.id,
                         &call.code[..call.code.len().min(100)]
@@ -308,7 +307,7 @@ mod code_execution {
 
                 for result in response.code_execution_results() {
                     println!(
-                        "is_error: {} (success: {}, call_id: {:?})",
+                        "is_error: {} (success: {}, call_id: {})",
                         result.is_error, !result.is_error, result.call_id
                     );
                     println!("Result: {}", &result.result[..result.result.len().min(100)]);
@@ -334,7 +333,7 @@ mod code_execution {
                     );
                 }
 
-                // Verify the response doesn't contain unknown content types for code execution
+                // Verify the response doesn't contain unknown step types for code execution
                 // (they should all be recognized as known types now)
                 if !summary.unknown_types.is_empty() {
                     println!("Unknown types found: {:?}", summary.unknown_types);
@@ -414,28 +413,42 @@ mod code_execution {
                 Ok(event) => {
                     chunk_count += 1;
                     match event.chunk {
-                        StreamChunk::Delta(content) => {
-                            println!("Delta chunk {}: {:?}", chunk_count, content);
-                            // Track code execution content in deltas.
-                            // NOTE: In streaming mode, built-in tool content (code execution,
-                            // Google Search, URL context) arrives via delta chunks, not in the
-                            // Complete response. The Complete event is a lifecycle signal that
-                            // may arrive before all content is streamed.
-                            if matches!(content, Content::CodeExecutionCall { .. }) {
+                        StreamChunk::StepStart { index, step } => {
+                            println!("Step start {} (step {}): {:?}", chunk_count, index, step);
+                            // Code execution arrives as dedicated steps in the
+                            // 2026-05-20 SSE lifecycle (step.start / step.delta).
+                            if matches!(step, Step::CodeExecutionCall { .. }) {
                                 has_code_execution_call = true;
                             }
-                            if matches!(content, Content::CodeExecutionResult { .. }) {
+                            if matches!(step, Step::CodeExecutionResult { .. }) {
                                 has_code_execution_result = true;
                             }
                         }
-                        StreamChunk::Complete(response) => {
+                        StreamChunk::StepDelta { index, delta } => {
+                            println!("Delta chunk {} (step {}): {:?}", chunk_count, index, delta);
+                            if matches!(delta, StepDelta::CodeExecutionCall { .. }) {
+                                has_code_execution_call = true;
+                            }
+                            if matches!(delta, StepDelta::CodeExecutionResult { .. }) {
+                                has_code_execution_result = true;
+                            }
+                        }
+                        StreamChunk::Completed(response) => {
                             println!("Complete response received");
-                            let summary = response.content_summary();
+                            // The HTTP layer accumulates streamed steps into the
+                            // final response, so the summary reflects code execution too.
+                            let summary = response.step_summary();
                             println!(
                                 "Complete response code execution: {} calls, {} results",
                                 summary.code_execution_call_count,
                                 summary.code_execution_result_count
                             );
+                            if summary.code_execution_call_count > 0 {
+                                has_code_execution_call = true;
+                            }
+                            if summary.code_execution_result_count > 0 {
+                                has_code_execution_result = true;
+                            }
                             has_complete = true;
                         }
                         _ => {} // Handle unknown variants
@@ -461,11 +474,11 @@ mod code_execution {
         assert!(chunk_count > 0, "Should receive at least one chunk");
         assert!(has_complete, "Should receive complete response");
 
-        // Verify code execution happened - check delta chunks since that's where
-        // code execution content arrives in streaming mode.
+        // Verify code execution happened - check streamed steps and the
+        // accumulated final response.
         // We expect BOTH call and result for a successful code execution.
         println!(
-            "Code execution in deltas: call={}, result={}",
+            "Code execution in stream: call={}, result={}",
             has_code_execution_call, has_code_execution_result
         );
 
@@ -519,19 +532,19 @@ mod url_context {
             Ok(response) => {
                 println!("Status: {:?}", response.status);
 
-                // Check for URL context metadata
-                if let Some(metadata) = response.url_context_metadata() {
-                    println!("URL Context metadata found:");
-                    for entry in &metadata.url_metadata {
-                        println!(
-                            "  URL: {} - Status: {:?}",
-                            entry.retrieved_url, entry.url_retrieval_status
-                        );
-                    }
-                } else {
+                // Check for URL context result steps
+                let url_results = response.url_context_results();
+                if url_results.is_empty() {
                     println!(
-                        "No URL context metadata in response (may be normal for some responses)"
+                        "No URL context results in response (may be normal for some responses)"
                     );
+                } else {
+                    println!("URL Context results found:");
+                    for result in &url_results {
+                        for item in result.items {
+                            println!("  URL: {} - Status: {}", item.url, item.status);
+                        }
+                    }
                 }
 
                 if response.has_text() {
@@ -584,15 +597,16 @@ mod url_context {
                 Ok(event) => {
                     chunk_count += 1;
                     match event.chunk {
-                        StreamChunk::Delta(content) => {
-                            println!("Delta chunk {}: {:?}", chunk_count, content);
+                        StreamChunk::StepDelta { index, delta } => {
+                            println!("Delta chunk {} (step {}): {:?}", chunk_count, index, delta);
                         }
-                        StreamChunk::Complete(response) => {
+                        StreamChunk::Completed(response) => {
                             println!("Complete response received");
-                            // Check for URL context metadata
-                            if let Some(metadata) = response.url_context_metadata() {
-                                println!("URL metadata entries: {}", metadata.url_metadata.len());
-                            }
+                            // Check for URL context result steps
+                            println!(
+                                "URL context result entries: {}",
+                                response.url_context_results().len()
+                            );
                             final_response = Some(response);
                         }
                         _ => {} // Handle unknown variants
@@ -616,13 +630,14 @@ mod url_context {
 
         assert!(chunk_count > 0, "Should receive at least one chunk");
 
-        // Verify URL context metadata is present
+        // Verify URL context results are present
         let response = final_response.expect("Should have final response");
-        if let Some(metadata) = response.url_context_metadata() {
-            println!("URL metadata entries: {}", metadata.url_metadata.len());
+        let url_results = response.url_context_results();
+        if !url_results.is_empty() {
+            println!("URL context result entries: {}", url_results.len());
             assert!(
-                !metadata.url_metadata.is_empty(),
-                "Should have URL metadata entries in streaming response"
+                url_results.iter().any(|r| !r.items.is_empty()),
+                "Should have URL metadata items in streaming response"
             );
         }
     }
@@ -681,12 +696,12 @@ mod google_maps {
             }
         }
 
-        // Verify content summary reflects maps content
-        let summary = response.content_summary();
-        println!("Content summary: {}", summary);
+        // Verify step summary reflects maps steps
+        let summary = response.step_summary();
+        println!("Step summary: {}", summary);
         assert!(
             summary.google_maps_result_count > 0,
-            "Content summary should count Google Maps results"
+            "Step summary should count Google Maps results"
         );
     }
 }
@@ -860,9 +875,10 @@ mod structured_output {
         // Verify required field exists
         assert!(json.get("answer").is_some(), "Should have answer field");
 
-        // Verify grounding metadata is present (Google Search was used)
-        if let Some(metadata) = response.google_search_metadata() {
-            println!("Grounding chunks: {:?}", metadata.grounding_chunks.len());
+        // Verify grounding steps are present (Google Search was used)
+        let search_results = response.google_search_results();
+        if !search_results.is_empty() {
+            println!("Grounding result items: {}", search_results.len());
         }
     }
 
@@ -918,9 +934,10 @@ mod structured_output {
             "Should have description field"
         );
 
-        // Verify URL context metadata is present
-        if let Some(metadata) = response.url_context_metadata() {
-            println!("URL metadata entries: {:?}", metadata.url_metadata.len());
+        // Verify URL context result steps are present
+        let url_results = response.url_context_results();
+        if !url_results.is_empty() {
+            println!("URL context result entries: {}", url_results.len());
         }
     }
 
@@ -1039,13 +1056,13 @@ mod structured_output {
                 Ok(event) => {
                     chunk_count += 1;
                     match event.chunk {
-                        StreamChunk::Delta(content) => {
-                            if let Some(text) = content.as_text() {
+                        StreamChunk::StepDelta { index, delta } => {
+                            if let Some(text) = delta.as_text() {
                                 collected_text.push_str(text);
                             }
-                            println!("Delta chunk {}: {:?}", chunk_count, content);
+                            println!("Delta chunk {} (step {}): {:?}", chunk_count, index, delta);
                         }
-                        StreamChunk::Complete(response) => {
+                        StreamChunk::Completed(response) => {
                             println!("Complete response received");
                             final_response = Some(response);
                         }
@@ -1246,18 +1263,15 @@ mod image_generation {
                     .await?;
 
                 println!("Status: {:?}", response.status);
-                println!("Outputs count: {}", response.outputs.len());
+                println!("Steps count: {}", response.steps.len());
 
-                // Check for image content in outputs
-                for (i, output) in response.outputs.iter().enumerate() {
-                    println!("Output {}: {:?}", i, output);
+                // Check for image content in output steps
+                for (i, content) in response.output_contents().enumerate() {
+                    println!("Output content {}: {:?}", i, content);
                 }
 
                 // Image generation should return image content
-                let has_image = response
-                    .outputs
-                    .iter()
-                    .any(|o| matches!(o, genai_rs::Content::Image { .. }));
+                let has_image = response.has_images();
 
                 if has_image {
                     println!("Has image output: true");
@@ -1396,7 +1410,7 @@ mod thinking {
 }
 
 // =============================================================================
-// Generation Config: Top-p and Top-k
+// Generation Config: Top-p and Combined Sampling
 // =============================================================================
 
 mod sampling {
@@ -1442,63 +1456,9 @@ mod sampling {
         assert!(is_valid, "Should answer Paris");
     }
 
-    /// Test top_k generation config parameter.
-    /// Note: The Interactions API may not support top_k in GenerationConfig.
-    #[tokio::test]
-    #[ignore = "Requires API key"]
-    async fn test_generation_config_top_k() {
-        let Some(client) = get_client() else {
-            println!("Skipping: GEMINI_API_KEY not set");
-            return;
-        };
-
-        // Low top_k = only consider top k tokens
-        let config = GenerationConfig {
-            temperature: Some(1.0),
-            max_output_tokens: Some(100),
-            top_k: Some(5), // Only top 5 tokens
-            ..Default::default()
-        };
-
-        let result = stateful_builder(&client)
-            .with_text("What is 10 + 5? Answer with just the number.")
-            .with_generation_config(config)
-            .create()
-            .await;
-
-        match result {
-            Ok(response) => {
-                assert_eq!(response.status, InteractionStatus::Completed);
-                assert!(response.has_text(), "Should have text response");
-
-                let text = response.as_text().unwrap();
-                println!("Top-k response: {}", text);
-
-                // Deterministic math - use .contains() per CLAUDE.md guidance
-                assert!(
-                    text.contains("15") || text.contains("fifteen"),
-                    "Should contain 15. Got: {}",
-                    text
-                );
-            }
-            Err(e) => {
-                let error_str = format!("{:?}", e);
-                if error_str.contains("top_k")
-                    || error_str.contains("invalid JSON")
-                    || error_str.contains("GenerationConfig")
-                {
-                    println!(
-                        "Note: top_k parameter not supported in GenerationConfig for Interactions API. This is expected."
-                    );
-                } else {
-                    panic!("Unexpected error: {:?}", e);
-                }
-            }
-        }
-    }
-
     /// Test combining multiple generation config options.
-    /// Note: top_k is excluded since the Interactions API may not support it.
+    /// Note: top_k is not part of GenerationConfig in the Interactions API
+    /// (removed in API revision 2026-05-20).
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_generation_config_combined() {
@@ -1507,7 +1467,6 @@ mod sampling {
             return;
         };
 
-        // Note: Excluding top_k since it's not supported in Interactions API
         // Use a generous max_output_tokens to avoid Incomplete status when
         // thinking tokens consume part of the budget.
         let config = GenerationConfig {
@@ -1633,10 +1592,11 @@ mod config_fields {
 
     /// Test response_mime_type with structured output.
     ///
-    /// The response_mime_type field is used with response_format to specify
-    /// the output format, typically "application/json".
+    /// The response_mime_type field is deprecated in favor of response_format,
+    /// but should still work when combined with it.
     #[tokio::test]
     #[ignore = "Requires API key"]
+    #[allow(deprecated)]
     async fn test_generation_config_response_mime_type() {
         let Some(client) = get_client() else {
             println!("Skipping: GEMINI_API_KEY not set");
@@ -1683,6 +1643,7 @@ mod config_fields {
     /// This test uses seed, stop_sequences, and response_mime_type together.
     #[tokio::test]
     #[ignore = "Requires API key"]
+    #[allow(deprecated)]
     async fn test_generation_config_new_fields_combined() {
         let Some(client) = get_client() else {
             println!("Skipping: GEMINI_API_KEY not set");
@@ -1731,58 +1692,49 @@ mod config_fields {
 
 mod function_calling_modes {
     use super::*;
+    use genai_rs::ToolChoice;
 
-    /// Test that FunctionCallingMode serializes correctly in GenerationConfig.
+    /// Test that ToolChoice serializes correctly in GenerationConfig.
     ///
     /// Validates that tool_choice in generation_config serializes correctly
-    /// for each function calling mode.
+    /// for each function calling mode (lowercase wire format) and for the
+    /// allowed_tools union shape.
     #[test]
     fn test_generation_config_tool_choice_serialization() {
-        // Test AUTO mode serialization
+        // Mode variants serialize as plain lowercase strings
+        let cases = [
+            (FunctionCallingMode::Auto, "auto"),
+            (FunctionCallingMode::Any, "any"),
+            (FunctionCallingMode::None, "none"),
+            (FunctionCallingMode::Validated, "validated"),
+        ];
+        for (mode, expected) in cases {
+            let config = GenerationConfig {
+                tool_choice: Some(ToolChoice::Mode(mode)),
+                ..Default::default()
+            };
+            let json = serde_json::to_value(&config).unwrap();
+            assert_eq!(
+                json["tool_choice"],
+                serde_json::Value::String(expected.to_string())
+            );
+        }
+
+        // AllowedTools variant serializes as an object union
         let config = GenerationConfig {
-            tool_choice: Some(FunctionCallingMode::Auto),
+            tool_choice: Some(ToolChoice::allowed_tools(
+                Some(FunctionCallingMode::Any),
+                vec!["get_weather".to_string()],
+            )),
             ..Default::default()
         };
         let json = serde_json::to_value(&config).unwrap();
         assert_eq!(
             json["tool_choice"],
-            serde_json::Value::String("AUTO".to_string())
+            json!({"allowed_tools": {"mode": "any", "tools": ["get_weather"]}})
         );
 
-        // Test ANY mode serialization
-        let config = GenerationConfig {
-            tool_choice: Some(FunctionCallingMode::Any),
-            ..Default::default()
-        };
-        let json = serde_json::to_value(&config).unwrap();
-        assert_eq!(
-            json["tool_choice"],
-            serde_json::Value::String("ANY".to_string())
-        );
-
-        // Test NONE mode serialization
-        let config = GenerationConfig {
-            tool_choice: Some(FunctionCallingMode::None),
-            ..Default::default()
-        };
-        let json = serde_json::to_value(&config).unwrap();
-        assert_eq!(
-            json["tool_choice"],
-            serde_json::Value::String("NONE".to_string())
-        );
-
-        // Test VALIDATED mode serialization
-        let config = GenerationConfig {
-            tool_choice: Some(FunctionCallingMode::Validated),
-            ..Default::default()
-        };
-        let json = serde_json::to_value(&config).unwrap();
-        assert_eq!(
-            json["tool_choice"],
-            serde_json::Value::String("VALIDATED".to_string())
-        );
-
-        println!("✓ All function calling modes serialize correctly in GenerationConfig");
+        println!("✓ All tool_choice shapes serialize correctly in GenerationConfig");
     }
 
     /// Test Unknown function calling mode roundtrip.
@@ -1807,10 +1759,10 @@ mod function_calling_modes {
         println!("✓ Unknown mode roundtrip works correctly");
     }
 
-    /// Test VALIDATED mode with function calling (API integration).
+    /// Test validated mode with function calling (API integration).
     ///
-    /// This test verifies that the VALIDATED mode can be sent to the API.
-    /// Note: VALIDATED mode may not yet be supported by all models, so we
+    /// This test verifies that the validated mode can be sent to the API.
+    /// Note: validated mode may not yet be supported by all models, so we
     /// handle potential API errors gracefully.
     #[tokio::test]
     #[ignore = "Requires API key"]
@@ -1839,35 +1791,36 @@ mod function_calling_modes {
 
         match result {
             Ok(response) => {
-                println!("VALIDATED mode response status: {:?}", response.status);
+                println!("Validated mode response status: {:?}", response.status);
                 println!("Response has text: {}", response.has_text());
                 println!(
                     "Response has function calls: {}",
                     !response.function_calls().is_empty()
                 );
 
-                // With VALIDATED mode, the model should either:
+                // With validated mode, the model should either:
                 // - Call the function (with schema-adherent output), or
                 // - Provide a natural language response (also schema-adherent)
                 let has_output = response.has_text() || !response.function_calls().is_empty();
                 assert!(
                     has_output,
-                    "VALIDATED mode should produce either text or function calls"
+                    "Validated mode should produce either text or function calls"
                 );
 
-                println!("✓ VALIDATED mode works with API");
+                println!("✓ Validated mode works with API");
             }
             Err(e) => {
                 let error_str = format!("{:?}", e);
-                println!("VALIDATED mode error: {}", error_str);
+                println!("Validated mode error: {}", error_str);
 
-                // VALIDATED mode may not yet be supported
-                if error_str.contains("VALIDATED")
+                // Validated mode may not yet be supported
+                if error_str.contains("validated")
+                    || error_str.contains("VALIDATED")
                     || error_str.contains("not supported")
                     || error_str.contains("invalid")
                     || error_str.contains("mode")
                 {
-                    println!("Note: VALIDATED mode may not be supported yet - skipping");
+                    println!("Note: validated mode may not be supported yet - skipping");
                 } else {
                     panic!("Unexpected error: {:?}", e);
                 }
@@ -1878,7 +1831,7 @@ mod function_calling_modes {
     /// Test with_function_calling_mode() builder method (API integration).
     ///
     /// Verifies that the function calling mode is correctly sent to the API
-    /// via generation_config.tool_choice. Uses ANY mode which requires the
+    /// via generation_config.tool_choice. Uses any mode which requires the
     /// model to call a function.
     #[tokio::test]
     #[ignore = "Requires API key"]
@@ -1898,7 +1851,7 @@ mod function_calling_modes {
             .required(vec!["name".to_string()])
             .build();
 
-        // Use ANY mode - model MUST call a function
+        // Use any mode - model MUST call a function
         let response = interaction_builder(&client)
             .with_text("Please greet Alice")
             .add_functions(vec![greet_fn])
@@ -1909,7 +1862,7 @@ mod function_calling_modes {
 
         println!("Response status: {:?}", response.status);
 
-        // With ANY mode, the model MUST call a function
+        // With any mode, the model MUST call a function
         let function_calls = response.function_calls();
         println!("Function calls: {:?}", function_calls.len());
 

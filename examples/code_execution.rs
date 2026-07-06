@@ -74,9 +74,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 println!("First successful output: {output}");
             }
 
-            // 8. Show content summary
-            let summary = response.content_summary();
-            println!("\n--- Content Summary ---");
+            // 8. Show step summary
+            let summary = response.step_summary();
+            println!("\n--- Step Summary ---");
             println!("  Text blocks: {}", summary.text_count);
             println!(
                 "  Code execution calls: {}",
@@ -142,13 +142,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     while let Some(result) = stream.next().await {
         match result {
             Ok(event) => match event.chunk {
-                StreamChunk::Delta(content) => {
-                    if let Some(text) = content.as_text() {
+                StreamChunk::StepDelta { delta, .. } => {
+                    if let Some(text) = delta.as_text() {
                         print!("{}", text);
                         stdout().flush()?;
                     }
                 }
-                StreamChunk::Complete(response) => {
+                StreamChunk::Completed(response) => {
                     println!("\n");
                     final_response = Some(response);
                 }
@@ -184,10 +184,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("--- What You'll See with LOUD_WIRE=1 ---");
     println!("Non-streaming:");
     println!("  [REQ#1] POST with input + codeExecution tool");
-    println!("  [RES#1] completed: text + executableCode + codeExecutionResult\n");
+    println!(
+        "  [RES#1] completed: code_execution_call + code_execution_result + model_output steps\n"
+    );
     println!("Streaming:");
     println!("  [REQ#2] POST streaming with input + codeExecution tool");
-    println!("  [RES#2] SSE stream: text/code deltas → completed with results\n");
+    println!("  [RES#2] SSE stream: step deltas (code + text) → completed with results\n");
 
     println!("--- Production Considerations ---");
     println!("• Code execution has a 30-second timeout (DeadlineExceeded)");

@@ -1,10 +1,10 @@
-//! Explicit multi-turn conversation using Turn arrays.
+//! Explicit multi-turn conversation using Step arrays.
 //!
 //! This example demonstrates two ways to have multi-turn conversations without
 //! relying on server-side storage (`previous_interaction_id`):
 //!
 //! 1. **ConversationBuilder** - Fluent API for inline conversation construction
-//! 2. **with_history()** - Direct array of Turn objects for external history
+//! 2. **with_history()** - Direct array of Step objects for external history
 //!
 //! Use these approaches when you need:
 //! - Stateless deployments where interaction storage isn't used
@@ -12,7 +12,7 @@
 //! - Migration from other providers with existing conversation history
 //! - Testing with controlled conversation states
 
-use genai_rs::{Client, Turn};
+use genai_rs::{Client, Step};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -44,15 +44,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== with_history() Example ===\n");
 
     let history = vec![
-        Turn::user("I'm planning a trip to Paris."),
-        Turn::model(
+        Step::user_text("I'm planning a trip to Paris."),
+        Step::model_text(
             "Paris is a wonderful destination! The city offers incredible art, cuisine, and architecture. What aspects of Paris are you most interested in exploring?",
         ),
-        Turn::user("I love museums and good food."),
-        Turn::model(
+        Step::user_text("I love museums and good food."),
+        Step::model_text(
             "Perfect! For museums, I'd recommend the Louvre, Musée d'Orsay, and Centre Pompidou. For food, try Le Marais for falafel, Saint-Germain for classic bistros, and don't miss the bakeries everywhere for croissants and pain au chocolat.",
         ),
-        Turn::user("What's one thing I absolutely shouldn't miss?"),
+        Step::user_text("What's one thing I absolutely shouldn't miss?"),
     ];
 
     let response = client
@@ -68,10 +68,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Approach 3: Building history dynamically
-    // Useful for chatbot applications that manage their own history
+    // Useful for chatbot applications that manage their own history.
+    // Note: response.output_steps() returns ALL output steps (thoughts,
+    // function calls, model output) so signatures and tool state are replayed.
     println!("=== Dynamic History Example ===\n");
 
-    let mut history: Vec<Turn> = Vec::new();
+    let mut history: Vec<Step> = Vec::new();
 
     // Simulating a conversation loop
     let user_messages = [
@@ -84,7 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("User: {}", user_msg);
 
         // Add user message to history
-        history.push(Turn::user(user_msg));
+        history.push(Step::user_text(user_msg));
 
         // Send full conversation history
         let response = client
@@ -94,37 +96,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .create()
             .await?;
 
-        let model_response = response.as_text().unwrap_or("No response");
-        println!("Model: {}\n", model_response);
+        println!("Model: {}\n", response.as_text().unwrap_or("No response"));
 
-        // Add model response to history for next turn
-        history.push(Turn::model(model_response));
+        // Add the model's output steps to history for the next turn.
+        // This preserves thoughts and signatures, not just the text.
+        history.extend(response.output_steps());
     }
 
     println!("=== Done ===\n");
 
     println!("--- What You'll See with LOUD_WIRE=1 ---");
     println!("Example 1: ConversationBuilder");
-    println!("  [REQ#1] POST with input as turns array [{{user, model, user}}]");
+    println!("  [REQ#1] POST with input as steps array [{{user_input, model_output, user_input}}]");
     println!("  [RES#1] completed: text response\n");
     println!("Example 2: with_history()");
-    println!("  [REQ#2] POST with input as turns array [{{user, model, user, model, user}}]");
+    println!(
+        "  [REQ#2] POST with input as steps array [{{user_input, model_output, user_input, model_output, user_input}}]"
+    );
     println!("  [RES#2] completed: text response\n");
     println!("Example 3: Dynamic history loop");
-    println!("  [REQ#3] POST with input as turns array [{{user}}]");
+    println!("  [REQ#3] POST with input as steps array [{{user_input}}]");
     println!("  [RES#3] completed: text response");
-    println!("  [REQ#4] POST with input as turns array [{{user, model, user}}]");
+    println!(
+        "  [REQ#4] POST with input as steps array [{{user_input, ...output steps, user_input}}]"
+    );
     println!("  [RES#4] completed: text response");
-    println!("  [REQ#5] POST with input as turns array [{{user, model, user, model, user}}]");
+    println!("  [REQ#5] POST with input as steps array [{{...previous steps, user_input}}]");
     println!("  [RES#5] completed: text response\n");
 
     println!("--- Production Considerations ---");
     println!("• Use with_history() for stateless deployments or custom history management");
     println!("• ConversationBuilder is syntactic sugar - both produce the same wire format");
+    println!("• Extend history with response.output_steps() to preserve thoughts/signatures");
     println!("• Clone history before passing to with_history() if you need to reuse it");
-    println!("• No validation of turn alternation - API handles invalid sequences");
+    println!("• No validation of step alternation - API handles invalid sequences");
     println!("• For very long conversations, consider sliding window or summarization");
-    println!("• Turn arrays work with all features: streaming, function calling, thinking");
+    println!("• Step arrays work with all features: streaming, function calling, thinking");
 
     Ok(())
 }

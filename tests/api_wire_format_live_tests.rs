@@ -67,16 +67,16 @@ async fn canary_basic_interaction_no_unknown_content() {
         .await
         .expect("API call should succeed");
 
-    // Check for Unknown content types in outputs
-    for (i, content) in response.outputs.iter().enumerate() {
+    // Check for Unknown step types in steps
+    for (i, step) in response.steps.iter().enumerate() {
         assert!(
-            !content.is_unknown(),
-            "Unknown content type detected at output index {}: {:?}. \
-             This indicates API drift - update Content enum. \
+            !step.is_unknown(),
+            "Unknown step type detected at step index {}: {:?}. \
+             This indicates API drift - update Step enum. \
              Unknown type: {:?}",
             i,
-            content.unknown_content_type(),
-            content.unknown_data()
+            step.unknown_step_type(),
+            step.unknown_data()
         );
     }
 
@@ -150,14 +150,14 @@ async fn canary_function_calling_no_unknown_content() {
         .await
         .expect("API call should succeed");
 
-    // Check all output content types
-    for (i, content) in response.outputs.iter().enumerate() {
+    // Check all output step types
+    for (i, step) in response.steps.iter().enumerate() {
         assert!(
-            !content.is_unknown(),
-            "Unknown content type in function calling response at index {}: {:?}. Data: {:?}",
+            !step.is_unknown(),
+            "Unknown step type in function calling response at index {}: {:?}. Data: {:?}",
             i,
-            content.unknown_content_type(),
-            content.unknown_data()
+            step.unknown_step_type(),
+            step.unknown_data()
         );
     }
 }
@@ -186,14 +186,14 @@ async fn canary_thinking_mode_no_unknown_content() {
         .await
         .expect("API call should succeed");
 
-    // Check all output content types including thoughts
-    for (i, content) in response.outputs.iter().enumerate() {
+    // Check all output step types including thoughts
+    for (i, step) in response.steps.iter().enumerate() {
         assert!(
-            !content.is_unknown(),
-            "Unknown content type in thinking response at index {}: {:?}. \
-             This may be a new thinking-related content type.",
+            !step.is_unknown(),
+            "Unknown step type in thinking response at index {}: {:?}. \
+             This may be a new thinking-related step type.",
             i,
-            content.unknown_content_type()
+            step.unknown_step_type()
         );
     }
 }
@@ -259,14 +259,14 @@ async fn canary_google_search_no_unknown_content() {
         .await
         .expect("API call should succeed");
 
-    // Check all output content types
-    for (i, content) in response.outputs.iter().enumerate() {
+    // Check all output step types
+    for (i, step) in response.steps.iter().enumerate() {
         assert!(
-            !content.is_unknown(),
-            "Unknown content type in Google Search response at index {}: {:?}. \
-             This may be a new search-related content type.",
+            !step.is_unknown(),
+            "Unknown step type in Google Search response at index {}: {:?}. \
+             This may be a new search-related step type.",
             i,
-            content.unknown_content_type()
+            step.unknown_step_type()
         );
     }
 }
@@ -295,14 +295,14 @@ async fn canary_code_execution_no_unknown_content() {
 
     match result {
         Ok(Ok(response)) => {
-            // Check all output content types
-            for (i, content) in response.outputs.iter().enumerate() {
+            // Check all output step types
+            for (i, step) in response.steps.iter().enumerate() {
                 assert!(
-                    !content.is_unknown(),
-                    "Unknown content type in code execution response at index {}: {:?}. \
-                     This may be a new code execution content type.",
+                    !step.is_unknown(),
+                    "Unknown step type in code execution response at index {}: {:?}. \
+                     This may be a new code execution step type.",
                     i,
-                    content.unknown_content_type()
+                    step.unknown_step_type()
                 );
             }
         }
@@ -334,6 +334,8 @@ fn canary_builtin_tools_are_known() {
         Tool::GoogleSearch { search_types: None },
         Tool::GoogleMaps {
             enable_widget: None,
+            latitude: None,
+            longitude: None,
         },
         Tool::CodeExecution,
         Tool::UrlContext,
@@ -377,21 +379,14 @@ async fn canary_comprehensive_response_check() {
         response.status.unknown_status_type()
     );
 
-    // Check input content (echoed back in some cases)
-    for content in &response.input {
+    // Check output steps
+    // (Input is only populated via `get_interaction_with_input`, so there is
+    // nothing to check on a freshly created interaction.)
+    for step in &response.steps {
         assert!(
-            !content.is_unknown(),
-            "Unknown input content: {:?}",
-            content.unknown_content_type()
-        );
-    }
-
-    // Check output content
-    for content in &response.outputs {
-        assert!(
-            !content.is_unknown(),
-            "Unknown output content: {:?}",
-            content.unknown_content_type()
+            !step.is_unknown(),
+            "Unknown output step: {:?}",
+            step.unknown_step_type()
         );
     }
 
@@ -407,8 +402,8 @@ async fn canary_comprehensive_response_check() {
     }
 
     println!(
-        "Comprehensive canary passed: status={:?}, outputs={}",
+        "Comprehensive canary passed: status={:?}, steps={}",
         response.status,
-        response.outputs.len()
+        response.steps.len()
     );
 }

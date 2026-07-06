@@ -33,15 +33,15 @@ use genai_rs::InteractionInput;
 /// Model used for all canary tests - update if model availability changes
 const CANARY_MODEL: &str = "gemini-3-flash-preview";
 
-/// Helper to check a response for unknown content types and panic with details if found
-fn assert_no_unknown_content(response: &genai_rs::InteractionResponse, context: &str) {
+/// Helper to check a response for unknown step types and panic with details if found
+fn assert_no_unknown_steps(response: &genai_rs::InteractionResponse, context: &str) {
     if response.has_unknown() {
-        let summary = response.content_summary();
+        let summary = response.step_summary();
         panic!(
-            "API returned unknown content types in {context}!\n\
+            "API returned unknown step types in {context}!\n\
              Unknown types: {:?}\n\
              Full summary: {summary}\n\n\
-             Action required: Add support for these content types in \
+             Action required: Add support for these step types in \
              src/",
             summary.unknown_types
         );
@@ -65,7 +65,7 @@ async fn canary_basic_text_interaction() {
         .await
         .expect("API call should succeed");
 
-    assert_no_unknown_content(&response, "basic text interaction");
+    assert_no_unknown_steps(&response, "basic text interaction");
 }
 
 /// Canary test for streaming interaction
@@ -89,15 +89,15 @@ async fn canary_streaming_interaction() {
         chunk_count += 1;
         let event = result.expect("Stream event should be valid");
         match event.chunk {
-            genai_rs::StreamChunk::Delta(content) => {
-                if let genai_rs::Content::Unknown { content_type, .. } = &content
-                    && !unknown_types_found.contains(content_type)
+            genai_rs::StreamChunk::StepDelta { delta, .. } => {
+                if let genai_rs::StepDelta::Unknown { delta_type, .. } = &delta
+                    && !unknown_types_found.contains(delta_type)
                 {
-                    unknown_types_found.push(content_type.clone());
+                    unknown_types_found.push(delta_type.clone());
                 }
             }
-            genai_rs::StreamChunk::Complete(response) => {
-                assert_no_unknown_content(&response, "streaming complete response");
+            genai_rs::StreamChunk::Completed(response) => {
+                assert_no_unknown_steps(&response, "streaming completed response");
             }
             _ => {} // Handle unknown variants
         }
@@ -107,9 +107,9 @@ async fn canary_streaming_interaction() {
 
     if !unknown_types_found.is_empty() {
         panic!(
-            "API returned unknown content types in streaming deltas!\n\
+            "API returned unknown delta types in streaming deltas!\n\
              Unknown types: {:?}\n\n\
-             Action required: Add support for these content types in \
+             Action required: Add support for these delta types in \
              src/",
             unknown_types_found
         );
@@ -141,7 +141,7 @@ async fn canary_function_calling_interaction() {
         .await
         .expect("API call should succeed");
 
-    assert_no_unknown_content(&response, "function calling interaction");
+    assert_no_unknown_steps(&response, "function calling interaction");
 
     // Also check the follow-up response after providing function results.
     // This tests for unknown types in the model's response to function results,
@@ -149,14 +149,13 @@ async fn canary_function_calling_interaction() {
     if !response.function_calls().is_empty() {
         let call = &response.function_calls()[0];
 
-        use genai_rs::Content;
+        use genai_rs::Step;
 
         // Build conversation history with the function call and result
-        let call_id = call.id.unwrap_or("call_1");
-        let history = InteractionInput::Content(vec![
-            Content::text("What time is it?"),
-            Content::function_call(call.name, json!({})),
-            Content::function_result(call.name, call_id, json!({"time": "12:00 PM"})),
+        let history = InteractionInput::Steps(vec![
+            Step::user_text("What time is it?"),
+            Step::function_call(call.id, call.name, call.args.clone()),
+            Step::function_result(call.name, call.id, json!({"time": "12:00 PM"})),
         ]);
 
         let followup = client
@@ -167,7 +166,7 @@ async fn canary_function_calling_interaction() {
             .await
             .expect("Follow-up API call should succeed");
 
-        assert_no_unknown_content(&followup, "function calling follow-up");
+        assert_no_unknown_steps(&followup, "function calling follow-up");
     }
 }
 
@@ -196,7 +195,7 @@ async fn canary_code_execution_interaction() {
 
     match result {
         Ok(Ok(response)) => {
-            assert_no_unknown_content(&response, "code execution interaction");
+            assert_no_unknown_steps(&response, "code execution interaction");
         }
         Ok(Err(e)) => {
             // API error - log and skip (code execution can be temporarily unavailable)
@@ -233,7 +232,7 @@ async fn canary_multimodal_interaction() {
         .await
         .expect("API call should succeed");
 
-    assert_no_unknown_content(&response, "multimodal interaction");
+    assert_no_unknown_steps(&response, "multimodal interaction");
 }
 
 /// Canary test for thinking/reasoning models
@@ -261,5 +260,5 @@ async fn canary_thinking_model_interaction() {
         .await
         .expect("API call should succeed");
 
-    assert_no_unknown_content(&response, "thinking model interaction");
+    assert_no_unknown_steps(&response, "thinking model interaction");
 }

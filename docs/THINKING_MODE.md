@@ -12,6 +12,7 @@ This guide covers Gemini's thinking capabilities, which expose the model's chain
 - [Streaming with Thinking](#streaming-with-thinking)
 - [Cost and Performance](#cost-and-performance)
 - [Best Practices](#best-practices)
+- [Thought Signatures](#thought-signatures)
 
 ## Overview
 
@@ -23,17 +24,21 @@ Thinking mode enables the model to "think out loud" before responding, showing i
 - Debugging model behavior
 - Understanding how the model reaches conclusions
 
+Under API revision 2026-05-20, thinking appears in `response.steps` as `Step::Thought { signature, summary }`:
+
+- `signature`: an opaque cryptographic signature validating the reasoning (not readable text)
+- `summary`: human-readable summary content blocks, populated when thinking summaries are enabled
+
 ## Thinking Levels
 
 | Level | Description | Token Cost | Use Case |
 |-------|-------------|------------|----------|
-| `Off` | No reasoning exposed | Lowest | Simple queries |
 | `Minimal` | Minimal reasoning | Low | Quick checks |
 | `Low` | Light reasoning | Moderate | Simple problems |
 | `Medium` | Balanced reasoning | Higher | Moderate complexity |
 | `High` | Extensive reasoning | Highest | Complex problems |
 
-Higher levels produce more detailed reasoning but consume more tokens.
+Higher levels produce more detailed reasoning but consume more tokens. To skip thinking entirely, simply omit `with_thinking_level()`.
 
 ## Basic Usage
 
@@ -61,14 +66,14 @@ if response.has_thoughts() {
 
 ## Accessing Thoughts
 
-> **Note**: Thought blocks contain cryptographic signatures for verification, not human-readable reasoning text. See [Thought Signatures](#thought-signatures) for details.
+> **Note**: Thought steps carry cryptographic signatures for verification, not human-readable reasoning text. Enable [thinking summaries](#thinking-summaries) to get readable summaries. See [Thought Signatures](#thought-signatures) for details.
 
 ### Check for Thoughts
 
 ```rust,ignore
 // Check if model used reasoning
 if response.has_thoughts() {
-    println!("Model used {} thought blocks", response.thought_signatures().count());
+    println!("Model used {} thought steps", response.thought_signatures().count());
 }
 ```
 
@@ -77,7 +82,7 @@ if response.has_thoughts() {
 ```rust,ignore
 // Iterate over thought signatures (cryptographic proofs, not readable text)
 for signature in response.thought_signatures() {
-    // Signatures are for verification, not display
+    // Signatures are for verification/replay, not display
     println!("Thought signature present");
 }
 
@@ -87,29 +92,30 @@ if let Some(text) = response.as_text() {
 }
 ```
 
-### Content Summary
+### Step Summary
 
 ```rust,ignore
-let summary = response.content_summary();
-println!("Thought blocks: {}", summary.thought_count);
+let summary = response.step_summary();
+println!("Thought steps: {}", summary.thought_count);
 println!("Text blocks: {}", summary.text_count);
 ```
 
-### Reasoning Token Usage
+### Thought Token Usage
 
 ```rust,ignore
-if let Some(reasoning_tokens) = response
-    .usage
-    .as_ref()
-    .and_then(|u| u.total_reasoning_tokens)
-{
-    println!("Tokens used for reasoning: {}", reasoning_tokens);
+if let Some(thought_tokens) = response.thought_tokens() {
+    println!("Tokens used for reasoning: {}", thought_tokens);
+}
+
+// Equivalent, via the usage struct:
+if let Some(thought_tokens) = response.usage.as_ref().and_then(|u| u.total_thought_tokens) {
+    println!("Tokens used for reasoning: {}", thought_tokens);
 }
 ```
 
 ## Thinking Summaries
 
-Request a summary of the reasoning process:
+Request human-readable summaries of the reasoning process:
 
 ```rust,ignore
 use genai_rs::{ThinkingLevel, ThinkingSummaries};
@@ -122,50 +128,63 @@ let response = client
     .with_thinking_summaries(ThinkingSummaries::Auto)
     .create()
     .await?;
+
+// Read the summaries (Content blocks inside Step::Thought)
+for content in response.thought_summaries() {
+    if let Some(text) = content.as_text() {
+        println!("Reasoning summary: {}", text);
+    }
+}
 ```
 
 ### ThinkingSummaries Options
 
 | Option | Behavior |
 |--------|----------|
-| `Auto` | API decides whether to include summary |
+| `Auto` | Include thinking summaries (default when thinking is enabled) |
 | `None` | No summary included |
 
 ## Streaming with Thinking
 
-Thoughts stream before the final response:
+Thought summaries and signatures stream before the final response as dedicated `StepDelta` variants:
 
 ```rust,ignore
 use futures_util::StreamExt;
-use genai_rs::StreamChunk;
+use genai_rs::{StepDelta, StreamChunk, ThinkingLevel, ThinkingSummaries};
 
 let mut stream = client
     .interaction()
     .with_model("gemini-3-flash-preview")
     .with_text("Solve: What is 15% of 240?")
     .with_thinking_level(ThinkingLevel::Medium)
+    .with_thinking_summaries(ThinkingSummaries::Auto)
     .create_stream();
 
 let mut in_thought = false;
 
 while let Some(Ok(event)) = stream.next().await {
-    if let StreamChunk::Delta(delta) = event.chunk {
-        if delta.is_thought() {
-            if !in_thought {
-                println!("=== Thinking ===");
-                in_thought = true;
+    if let StreamChunk::StepDelta { delta, .. } = event.chunk {
+        match delta {
+            StepDelta::ThoughtSummary { content } => {
+                if !in_thought {
+                    println!("=== Thinking ===");
+                    in_thought = true;
+                }
+                if let Some(text) = content.as_ref().and_then(|c| c.as_text()) {
+                    print!("{}", text);
+                }
             }
-            if let Some(text) = delta.as_text() {
+            StepDelta::ThoughtSignature { .. } => {
+                // Opaque signature fragment; keep for replay, nothing to display
+            }
+            StepDelta::Text { text } => {
+                if in_thought {
+                    println!("\n=== Response ===");
+                    in_thought = false;
+                }
                 print!("{}", text);
             }
-        } else if delta.is_text() {
-            if in_thought {
-                println!("\n=== Response ===");
-                in_thought = false;
-            }
-            if let Some(text) = delta.as_text() {
-                print!("{}", text);
-            }
+            _ => {}
         }
     }
 }
@@ -179,7 +198,7 @@ Thinking increases token usage significantly:
 
 | Level | Typical Overhead |
 |-------|------------------|
-| Off | Baseline |
+| (none) | Baseline |
 | Minimal | +10-20% |
 | Low | +20-50% |
 | Medium | +50-100% |
@@ -193,7 +212,7 @@ Actual overhead varies based on query complexity.
 // Simple factual query - no thinking needed
 client.interaction()
     .with_text("What is the capital of France?")
-    // No with_thinking_level() - defaults to Off
+    // No with_thinking_level() - thinking not requested
 
 // Math problem - medium thinking
 client.interaction()
@@ -210,9 +229,9 @@ client.interaction()
 
 ```rust,ignore
 if let Some(usage) = &response.usage {
-    println!("Input tokens: {:?}", usage.input_tokens);
-    println!("Output tokens: {:?}", usage.output_tokens);
-    println!("Reasoning tokens: {:?}", usage.total_reasoning_tokens);
+    println!("Input tokens: {:?}", usage.total_input_tokens);
+    println!("Output tokens: {:?}", usage.total_output_tokens);
+    println!("Thought tokens: {:?}", usage.total_thought_tokens);
 
     if let Some(total) = usage.total_tokens {
         println!("Total tokens: {}", total);
@@ -257,27 +276,28 @@ let prompts = [
 // Check for thought presence (signatures are cryptographic, not readable)
 if response.has_thoughts() {
     let sig_count = response.thought_signatures().count();
-    println!("Model used {} thought blocks for reasoning", sig_count);
+    println!("Model used {} thought steps for reasoning", sig_count);
 } else {
-    println!("No thought blocks in response");
+    println!("No thought steps in response");
 }
 ```
 
 ### 4. Use for Debugging Model Behavior
 
 ```rust,ignore
-// Enable thinking to understand why model gave unexpected answer
+// Enable thinking + summaries to understand why the model gave an unexpected answer
 let response = client.interaction()
     .with_text(&problematic_prompt)
     .with_thinking_level(ThinkingLevel::High)
+    .with_thinking_summaries(ThinkingSummaries::Auto)
     .create().await?;
 
-// Check if model used reasoning (signatures are cryptographic, not readable)
-if response.has_thoughts() {
-    println!("DEBUG - Model used {} thought blocks", response.thought_signatures().count());
+for content in response.thought_summaries() {
+    if let Some(text) = content.as_text() {
+        println!("DEBUG - Reasoning: {}", text);
+    }
 }
 
-// Actual reasoning is reflected in the final response text
 if let Some(text) = response.as_text() {
     println!("DEBUG - Model response: {}", text);
 }
@@ -306,11 +326,45 @@ let response = client.interaction()
 
 Thought signatures provide cryptographic verification of model reasoning. See [Google's documentation](https://ai.google.dev/gemini-api/docs/thought-signatures.md.txt) for details.
 
+Signatures live on `Step::Thought { signature, .. }`; server-tool call/result steps (`Step::CodeExecutionCall`, `Step::GoogleSearchCall`, ...) also carry an optional `signature` field.
+
+### Replaying Signatures in Stateless Multi-Turn
+
+When managing conversation history yourself (stateless mode), include the model's output steps unchanged in the next request so thought signatures are replayed. `response.output_steps()` returns the steps ready for `with_history()`:
+
 ```rust,ignore
-// Check for thought signatures in streaming
-if let StreamChunk::Delta(delta) = event.chunk {
-    if delta.is_thought_signature() {
-        // Handle signature verification
+// Turn 1
+let response = client
+    .interaction()
+    .with_model("gemini-3-flash-preview")
+    .with_text("Think about the fastest route from A to B")
+    .with_thinking_level(ThinkingLevel::Medium)
+    .create()
+    .await?;
+
+// Build history: prior turns + this response's steps (thought signatures included)
+let mut history = vec![genai_rs::Step::user_text("Think about the fastest route from A to B")];
+history.extend(response.output_steps());
+
+// Turn 2 - signatures replay automatically via the history
+let followup = client
+    .interaction()
+    .with_model("gemini-3-flash-preview")
+    .with_history(history)
+    .with_text("Now assume road B2 is closed")
+    .create()
+    .await?;
+```
+
+### Streaming Signatures
+
+```rust,ignore
+use genai_rs::{StepDelta, StreamChunk};
+
+// Thought signatures arrive as dedicated deltas in streaming
+if let StreamChunk::StepDelta { delta, .. } = event.chunk {
+    if let StepDelta::ThoughtSignature { signature } = delta {
+        // Opaque fragment; the accumulated final response carries the full signature
     }
 }
 ```

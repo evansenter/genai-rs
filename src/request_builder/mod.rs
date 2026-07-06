@@ -11,9 +11,9 @@ use tracing::debug;
 
 use crate::{
     AgentConfig, Content, DeepResearchConfig, FunctionCallingMode, FunctionDeclaration,
-    GenerationConfig, ImageConfig, InteractionInput, InteractionRequest, InteractionResponse, Role,
-    SpeechConfig, StreamEvent, ThinkingLevel, ThinkingSummaries, Tool as InternalTool, Turn,
-    TurnContent,
+    GenerationConfig, ImageConfig, InteractionInput, InteractionRequest, InteractionResponse,
+    ServiceTier, SpeechConfig, Step, StreamEvent, ThinkingLevel, ThinkingSummaries,
+    Tool as InternalTool, ToolChoice,
 };
 use futures_util::{StreamExt, stream::BoxStream};
 
@@ -78,8 +78,8 @@ pub struct InteractionBuilder<'a> {
     model: Option<String>,
     agent: Option<String>,
     agent_config: Option<AgentConfig>,
-    /// Conversation history (set by `with_history()`)
-    history: Vec<Turn>,
+    /// Conversation history as steps (set by `with_history()`)
+    history: Vec<Step>,
     /// Current user message (set by `with_text()`)
     current_message: Option<String>,
     /// Content input for function results (set by `with_content()`)
@@ -93,7 +93,9 @@ pub struct InteractionBuilder<'a> {
     speech_config: Option<SpeechConfig>,
     background: Option<bool>,
     store: Option<bool>,
-    system_instruction: Option<InteractionInput>,
+    system_instruction: Option<String>,
+    service_tier: Option<ServiceTier>,
+    cached_content: Option<String>,
     /// Maximum iterations for auto function calling loop
     max_function_call_loops: usize,
     /// Tool service for dependency-injected functions
@@ -153,6 +155,8 @@ impl<'a> InteractionBuilder<'a> {
             background: None,
             store: None,
             system_instruction: None,
+            service_tier: None,
+            cached_content: None,
             max_function_call_loops: DEFAULT_MAX_FUNCTION_CALL_LOOPS,
             tool_service: None,
             timeout: None,
@@ -386,7 +390,7 @@ impl<'a> InteractionBuilder<'a> {
     /// This is a convenience method that dispatches to the appropriate setter:
     /// - `InteractionInput::Text(text)` → `with_text(text)`
     /// - `InteractionInput::Content(content)` → `with_content(content)`
-    /// - `InteractionInput::Turns(turns)` → `with_history(turns)`
+    /// - `InteractionInput::Steps(steps)` → `with_history(steps)`
     ///
     /// For direct usage, prefer the specific methods (`with_text()`, `with_content()`,
     /// `with_history()`) for clarity.
@@ -399,8 +403,8 @@ impl<'a> InteractionBuilder<'a> {
             InteractionInput::Content(content) => {
                 self.content_input = Some(content);
             }
-            InteractionInput::Turns(turns) => {
-                self.history = turns;
+            InteractionInput::Steps(steps) => {
+                self.history = steps;
             }
         }
         self
@@ -413,12 +417,12 @@ impl<'a> InteractionBuilder<'a> {
     /// - `with_text()` sets the current user message to append
     ///
     /// The order doesn't matter - at build time, the history and current message
-    /// are composed into `[...history, Turn::user(current_message)]`.
+    /// are composed into `[...history, Step::user_text(current_message)]`.
     ///
     /// # Example
     ///
     /// ```no_run
-    /// # use genai_rs::{Client, Turn};
+    /// # use genai_rs::{Client, Step};
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::new("api-key".to_string());
@@ -432,13 +436,13 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// // With conversation history - both orders are equivalent
     /// let history = vec![
-    ///     Turn::user("What is 2+2?"),
-    ///     Turn::model("4"),
+    ///     Step::user_text("What is 2+2?"),
+    ///     Step::model_text("4"),
     /// ];
     /// let response = client.interaction()
     ///     .with_model("gemini-3-flash-preview")
     ///     .with_history(history)
-    ///     .with_text("And times 3?")  // Appended as final user turn
+    ///     .with_text("And times 3?")  // Appended as final user_input step
     ///     .create()
     ///     .await?;
     /// # Ok(())
@@ -483,7 +487,7 @@ impl<'a> InteractionBuilder<'a> {
     /// ```
     #[must_use]
     pub fn with_system_instruction(mut self, instruction: impl Into<String>) -> Self {
-        self.system_instruction = Some(InteractionInput::Text(instruction.into()));
+        self.system_instruction = Some(instruction.into());
         self
     }
 
@@ -494,22 +498,24 @@ impl<'a> InteractionBuilder<'a> {
     /// # Panics / Errors
     ///
     /// Calling `build()` will return an error if `with_content()` is combined with
-    /// `with_history()`. If you need to combine function results with conversation
-    /// history, include them in the history via [`Turn`] objects instead.
+    /// `with_history()`. To combine multimodal content with conversation
+    /// history, wrap the content in a [`Step::user_input`] and use
+    /// [`with_history()`](Self::with_history) instead. For function results,
+    /// use `with_history(vec![Step::function_result(...)])`.
     ///
     /// # Example
     /// ```no_run
     /// # use genai_rs::{Client, Content};
-    /// # use serde_json::json;
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::builder("api_key".to_string()).build()?;
     ///
-    /// let result = Content::function_result("my_func", "call_123", json!({"data": "result"}));
-    ///
     /// let response = client.interaction()
     ///     .with_model("gemini-3-flash-preview")
-    ///     .with_content(vec![result])
+    ///     .with_content(vec![
+    ///         Content::text("Describe this image"),
+    ///         Content::image_uri("files/abc", "image/png"),
+    ///     ])
     ///     .create()
     ///     .await?;
     /// # Ok(())
@@ -521,14 +527,14 @@ impl<'a> InteractionBuilder<'a> {
         self
     }
 
-    /// Sets the conversation history from an explicit array of turns.
+    /// Sets the conversation history from an explicit array of steps.
     ///
     /// This can be combined with [`with_text()`](Self::with_text) to build a conversation:
-    /// - `with_history()` sets the conversation history (previous turns)
+    /// - `with_history()` sets the conversation history (previous steps)
     /// - `with_text()` sets the current user message to append
     ///
     /// The order doesn't matter - at build time, the history and current message
-    /// are composed into `[...history, Turn::user(current_message)]`.
+    /// are composed into `[...history, Step::user_text(current_message)]`.
     ///
     /// This enables multi-turn conversations without relying on server-side
     /// storage via `previous_interaction_id`. Useful for:
@@ -537,36 +543,28 @@ impl<'a> InteractionBuilder<'a> {
     /// - Custom history management (e.g., sliding window, summarization)
     /// - Testing with controlled conversation states
     ///
+    /// Steps from a previous response (including `thought` steps whose
+    /// signatures validate the reasoning chain) can be replayed directly via
+    /// [`InteractionResponse::output_steps()`](crate::InteractionResponse::output_steps).
+    ///
     /// # Example
     ///
     /// ```no_run
-    /// use genai_rs::{Client, Turn};
+    /// use genai_rs::{Client, Step};
     ///
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::new("api-key".to_string());
     ///
-    /// // History-only (last turn must be a user message)
+    /// // History-only (last step should be a user message)
     /// let history = vec![
-    ///     Turn::user("What is 2+2?"),
-    ///     Turn::model("2+2 equals 4."),
-    ///     Turn::user("And what's that times 3?"),
+    ///     Step::user_text("What is 2+2?"),
+    ///     Step::model_text("2+2 equals 4."),
+    ///     Step::user_text("And what's that times 3?"),
     /// ];
     /// let response = client.interaction()
     ///     .with_model("gemini-3-flash-preview")
     ///     .with_history(history)
-    ///     .create()
-    ///     .await?;
-    ///
-    /// // History + current message (order doesn't matter)
-    /// let history = vec![
-    ///     Turn::user("What is 2+2?"),
-    ///     Turn::model("4"),
-    /// ];
-    /// let response = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
-    ///     .with_history(history)
-    ///     .with_text("And times 3?")  // Appended as final user turn
     ///     .create()
     ///     .await?;
     ///
@@ -575,8 +573,8 @@ impl<'a> InteractionBuilder<'a> {
     /// # }
     /// ```
     #[must_use]
-    pub fn with_history(mut self, turns: Vec<Turn>) -> Self {
-        self.history = turns;
+    pub fn with_history(mut self, steps: Vec<Step>) -> Self {
+        self.history = steps;
         self
     }
 
@@ -619,7 +617,7 @@ impl<'a> InteractionBuilder<'a> {
     pub fn conversation(self) -> ConversationBuilder<'a> {
         ConversationBuilder {
             parent: self,
-            turns: Vec::new(),
+            steps: Vec::new(),
         }
     }
 
@@ -781,7 +779,7 @@ impl<'a> InteractionBuilder<'a> {
     /// This adds the built-in `GoogleSearch` tool which allows the model to
     /// search the web and ground its responses in real-time information.
     /// Grounding metadata will be available in the response via
-    /// [`InteractionResponse::google_search_metadata`].
+    /// [`InteractionResponse::google_search_results`].
     ///
     /// # Example
     ///
@@ -800,18 +798,18 @@ impl<'a> InteractionBuilder<'a> {
     ///     .create()
     ///     .await?;
     ///
-    /// // Access grounding metadata
-    /// if let Some(metadata) = response.google_search_metadata() {
-    ///     println!("Search queries: {:?}", metadata.web_search_queries);
-    ///     for chunk in &metadata.grounding_chunks {
-    ///         println!("Source: {}", chunk.web.uri);
-    ///     }
+    /// // Access grounding data from steps
+    /// for query in response.google_search_calls() {
+    ///     println!("Search query: {}", query);
+    /// }
+    /// for result in response.google_search_results() {
+    ///     println!("Source: {} - {}", result.title, result.url);
     /// }
     /// # Ok(())
     /// # }
     /// ```
     ///
-    /// [`InteractionResponse::google_search_metadata`]: crate::InteractionResponse::google_search_metadata
+    /// [`InteractionResponse::google_search_results`]: crate::InteractionResponse::google_search_results
     #[must_use]
     pub fn with_google_search(mut self) -> Self {
         self.push_tool(InternalTool::GoogleSearch { search_types: None });
@@ -845,6 +843,8 @@ impl<'a> InteractionBuilder<'a> {
     #[must_use]
     pub fn with_google_maps(mut self) -> Self {
         self.push_tool(InternalTool::GoogleMaps {
+            latitude: None,
+            longitude: None,
             enable_widget: None,
         });
         self
@@ -901,7 +901,7 @@ impl<'a> InteractionBuilder<'a> {
     /// This adds the built-in `UrlContext` tool which allows the model to
     /// fetch and analyze content from URLs provided in the prompt.
     /// URL context metadata will be available in the response via
-    /// [`InteractionResponse::url_context_metadata`].
+    /// [`InteractionResponse::url_context_results`].
     ///
     /// # Limitations
     ///
@@ -927,19 +927,17 @@ impl<'a> InteractionBuilder<'a> {
     ///     .create()
     ///     .await?;
     ///
-    /// // Access URL context metadata
-    /// if let Some(metadata) = response.url_context_metadata() {
-    ///     for entry in &metadata.url_metadata {
-    ///         println!("URL: {} - Status: {:?}",
-    ///             entry.retrieved_url,
-    ///             entry.url_retrieval_status);
+    /// // Access URL context results from steps
+    /// for result in response.url_context_results() {
+    ///     for item in result.items {
+    ///         println!("URL: {} - Status: {}", item.url, item.status);
     ///     }
     /// }
     /// # Ok(())
     /// # }
     /// ```
     ///
-    /// [`InteractionResponse::url_context_metadata`]: crate::InteractionResponse::url_context_metadata
+    /// [`InteractionResponse::url_context_results`]: crate::InteractionResponse::url_context_results
     #[must_use]
     pub fn with_url_context(mut self) -> Self {
         self.push_tool(InternalTool::UrlContext);
@@ -1421,7 +1419,22 @@ impl<'a> InteractionBuilder<'a> {
         let config = self
             .generation_config
             .get_or_insert_with(GenerationConfig::default);
-        config.tool_choice = Some(mode);
+        config.tool_choice = Some(ToolChoice::Mode(mode));
+        self
+    }
+
+    /// Sets the full `tool_choice` union directly.
+    ///
+    /// Prefer [`with_function_calling_mode()`](Self::with_function_calling_mode)
+    /// for the plain-mode form and [`with_allowed_tools()`](Self::with_allowed_tools)
+    /// for the restriction form; this method is the escape hatch for custom
+    /// shapes.
+    #[must_use]
+    pub fn with_tool_choice(mut self, tool_choice: ToolChoice) -> Self {
+        let config = self
+            .generation_config
+            .get_or_insert_with(GenerationConfig::default);
+        config.tool_choice = Some(tool_choice);
         self
     }
 
@@ -1450,7 +1463,83 @@ impl<'a> InteractionBuilder<'a> {
         let config = self
             .generation_config
             .get_or_insert_with(GenerationConfig::default);
-        config.allowed_tools = Some(tool_names);
+        // Preserve any previously-set mode when upgrading to the object form.
+        let mode = match config.tool_choice.take() {
+            Some(ToolChoice::Mode(mode)) => Some(mode),
+            Some(ToolChoice::AllowedTools(allowed)) => allowed.mode,
+            _ => None,
+        };
+        config.tool_choice = Some(ToolChoice::allowed_tools(mode, tool_names));
+        self
+    }
+
+    /// Sets the latency/priority service tier for this request.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use genai_rs::{Client, ServiceTier};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let client = Client::new("key".to_string());
+    /// let response = client.interaction()
+    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_text("Hello")
+    ///     .with_service_tier(ServiceTier::Flex)
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_service_tier(mut self, tier: ServiceTier) -> Self {
+        self.service_tier = Some(tier);
+        self
+    }
+
+    /// References an explicit context cache for this request.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use genai_rs::Client;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let client = Client::new("key".to_string());
+    /// let response = client.interaction()
+    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_text("Summarize the cached document")
+    ///     .with_cached_content("cachedContents/xyz")
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_cached_content(mut self, cached_content: impl Into<String>) -> Self {
+        self.cached_content = Some(cached_content.into());
+        self
+    }
+
+    /// Sets the presence penalty (range [-2.0, 2.0]).
+    ///
+    /// Positive values penalize tokens that already appeared in the text,
+    /// increasing the likelihood of new topics.
+    #[must_use]
+    pub fn with_presence_penalty(mut self, penalty: f32) -> Self {
+        let config = self
+            .generation_config
+            .get_or_insert_with(GenerationConfig::default);
+        config.presence_penalty = Some(penalty);
+        self
+    }
+
+    /// Sets the frequency penalty (range [-2.0, 2.0]).
+    ///
+    /// Positive values penalize tokens proportionally to their frequency in
+    /// the text so far, reducing repetition.
+    #[must_use]
+    pub fn with_frequency_penalty(mut self, penalty: f32) -> Self {
+        let config = self
+            .generation_config
+            .get_or_insert_with(GenerationConfig::default);
+        config.frequency_penalty = Some(penalty);
         self
     }
 
@@ -1483,6 +1572,10 @@ impl<'a> InteractionBuilder<'a> {
     /// # }
     /// ```
     #[must_use]
+    #[deprecated(
+        since = "0.8.0",
+        note = "The API deprecated response_mime_type; use with_response_format() instead"
+    )]
     pub fn with_response_mime_type(mut self, mime_type: impl Into<String>) -> Self {
         self.response_mime_type = Some(mime_type.into());
         self
@@ -1616,8 +1709,9 @@ impl<'a> InteractionBuilder<'a> {
     /// Creates a streaming interaction that yields chunks as they arrive.
     ///
     /// Returns a stream of `StreamChunk` items:
-    /// - `StreamChunk::Delta`: Incremental content (text or thought)
-    /// - `StreamChunk::Complete`: The final complete interaction response
+    /// - `StreamChunk::StepDelta`: Incremental step payload (text, thought
+    ///   signatures, streaming function-call arguments, ...)
+    /// - `StreamChunk::Completed`: The final complete interaction response
     ///
     /// # Timeout Behavior
     ///
@@ -1678,12 +1772,12 @@ impl<'a> InteractionBuilder<'a> {
     ///     let event = event?;
     ///     // event.event_id can be saved for stream resumption
     ///     match &event.chunk {
-    ///         StreamChunk::Delta(delta) => {
+    ///         StreamChunk::StepDelta { delta, .. } => {
     ///             if let Some(text) = delta.as_text() {
     ///                 print!("{}", text);
     ///             }
     ///         }
-    ///         StreamChunk::Complete(response) => {
+    ///         StreamChunk::Completed(response) => {
     ///             println!("\nFinal response ID: {:?}", response.id);
     ///         }
     ///         _ => {} // Handle unknown future variants
@@ -1774,8 +1868,8 @@ impl<'a> InteractionBuilder<'a> {
         if self.content_input.is_some() && !self.history.is_empty() {
             return Err(GenaiError::InvalidInput(
                 "Content input (with_content()) cannot be combined with with_history(). \
-                 For multimodal multi-turn conversations, build Turn objects with content arrays \
-                 instead."
+                 For multimodal multi-turn conversations, wrap the content in \
+                 Step::user_input(...) and include it in the history instead."
                     .to_string(),
             ));
         }
@@ -1792,7 +1886,7 @@ impl<'a> InteractionBuilder<'a> {
         // Compose input from the separate fields
         // Priority: content_input > history > current_message
         // - content_input + current_message: merge (text prepended to content)
-        // - history + current_message: merge (text appended as user turn)
+        // - history + current_message: merge (text appended as user_input step)
         let input = if let Some(mut content) = self.content_input {
             // Content input mode (single-turn multimodal)
             // If there's also a current_message, prepend it as text content
@@ -1809,12 +1903,12 @@ impl<'a> InteractionBuilder<'a> {
                     ));
                 }
                 (true, Some(msg)) => InteractionInput::Text(msg),
-                (false, None) => InteractionInput::Turns(self.history),
+                (false, None) => InteractionInput::Steps(self.history),
                 (false, Some(msg)) => {
-                    // Compose: history + current message as final user turn
-                    let mut turns = self.history;
-                    turns.push(Turn::user(msg));
-                    InteractionInput::Turns(turns)
+                    // Compose: history + current message as final user_input step
+                    let mut steps = self.history;
+                    steps.push(Step::user_text(msg));
+                    InteractionInput::Steps(steps)
                 }
             }
         };
@@ -1848,6 +1942,7 @@ impl<'a> InteractionBuilder<'a> {
             (config, None) => config,
         };
 
+        #[allow(deprecated)]
         Ok(InteractionRequest {
             model: self.model,
             agent: self.agent,
@@ -1863,6 +1958,8 @@ impl<'a> InteractionBuilder<'a> {
             background: self.background,
             store: self.store,
             system_instruction: self.system_instruction,
+            service_tier: self.service_tier,
+            cached_content: self.cached_content,
         })
     }
 }
@@ -1901,13 +1998,13 @@ impl<'a> InteractionBuilder<'a> {
 /// ```
 pub struct ConversationBuilder<'a> {
     parent: InteractionBuilder<'a>,
-    turns: Vec<Turn>,
+    steps: Vec<Step>,
 }
 
 impl<'a> ConversationBuilder<'a> {
     /// Adds a user message to the conversation.
     ///
-    /// Accepts any type that can be converted to [`TurnContent`], including:
+    /// Accepts any type that can be converted to [`TurnContent`](crate::TurnContent), including:
     /// - `&str` or `String` for text content
     /// - `Vec<Content>` for multimodal content
     ///
@@ -1932,8 +2029,11 @@ impl<'a> ConversationBuilder<'a> {
     /// # }
     /// ```
     #[must_use]
-    pub fn user(mut self, content: impl Into<TurnContent>) -> Self {
-        self.turns.push(Turn::user(content));
+    pub fn user(mut self, content: impl Into<crate::TurnContent>) -> Self {
+        self.steps.push(match content.into() {
+            crate::TurnContent::Text(text) => Step::user_text(text),
+            crate::TurnContent::Parts(parts) => Step::user_input(parts),
+        });
         self
     }
 
@@ -1942,7 +2042,7 @@ impl<'a> ConversationBuilder<'a> {
     /// Use this to include previous model responses in the conversation history.
     /// The model will use this context when generating its next response.
     ///
-    /// Accepts any type that can be converted to [`TurnContent`], including:
+    /// Accepts any type that can be converted to [`TurnContent`](crate::TurnContent), including:
     /// - `&str` or `String` for text content
     /// - `Vec<Content>` for multimodal content
     ///
@@ -1969,8 +2069,11 @@ impl<'a> ConversationBuilder<'a> {
     /// # }
     /// ```
     #[must_use]
-    pub fn model(mut self, content: impl Into<TurnContent>) -> Self {
-        self.turns.push(Turn::model(content));
+    pub fn model(mut self, content: impl Into<crate::TurnContent>) -> Self {
+        self.steps.push(match content.into() {
+            crate::TurnContent::Text(text) => Step::model_text(text),
+            crate::TurnContent::Parts(parts) => Step::model_output(parts),
+        });
         self
     }
 
@@ -2002,14 +2105,18 @@ impl<'a> ConversationBuilder<'a> {
     /// # }
     /// ```
     #[must_use]
-    pub fn turn(mut self, role: Role, content: impl Into<TurnContent>) -> Self {
-        self.turns.push(Turn::new(role, content));
-        self
+    pub fn turn(self, role: crate::Role, content: impl Into<crate::TurnContent>) -> Self {
+        match role {
+            crate::Role::Model => self.model(content),
+            // User and unknown roles are treated as user input; the wire has
+            // no role field on steps, only the step type.
+            _ => self.user(content),
+        }
     }
 
     /// Finishes building the conversation and returns to the parent [`InteractionBuilder`].
     ///
-    /// The accumulated turns are set as the input for the interaction.
+    /// The accumulated steps are set as the input for the interaction.
     ///
     /// # Example
     ///
@@ -2034,7 +2141,7 @@ impl<'a> ConversationBuilder<'a> {
     #[must_use]
     pub fn done(self) -> InteractionBuilder<'a> {
         let mut parent = self.parent;
-        parent.history = self.turns;
+        parent.history = self.steps;
         parent
     }
 }

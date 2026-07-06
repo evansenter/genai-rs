@@ -35,7 +35,7 @@ use common::{
 };
 use genai_rs::{
     CallableFunction, Client, Content, FunctionDeclaration, GenaiError, GenerationConfig,
-    InteractionInput, InteractionRequest, InteractionStatus,
+    InteractionInput, InteractionRequest, InteractionStatus, Step,
 };
 use genai_rs_macros::tool;
 use serde_json::json;
@@ -85,7 +85,7 @@ mod basic {
 
         assert!(response.id.is_some(), "Interaction ID should be present");
         assert_eq!(response.status, InteractionStatus::Completed);
-        assert!(!response.outputs.is_empty(), "Outputs are empty");
+        assert!(!response.steps.is_empty(), "Steps are empty");
 
         assert!(response.has_text(), "Should have text response");
         let text = response.as_text().unwrap();
@@ -167,7 +167,7 @@ mod basic {
 
         assert_eq!(retrieved.id, response.id);
         assert_eq!(retrieved.status, InteractionStatus::Completed);
-        assert!(!retrieved.outputs.is_empty(), "Outputs are empty");
+        assert!(!retrieved.steps.is_empty(), "Steps are empty");
     }
 
     #[tokio::test]
@@ -313,14 +313,14 @@ mod streaming {
             while let Some(result) = stream.next().await {
                 match result {
                     Ok(event) => match event.chunk {
-                        StreamChunk::Delta(delta) => {
+                        StreamChunk::StepDelta { delta, .. } => {
                             delta_count += 1;
                             if let Some(text) = delta.as_text() {
                                 println!("Delta #{}: {:?} (len={})", delta_count, text, text.len());
                                 delta_texts.push(text.to_string());
                             }
                         }
-                        StreamChunk::Complete(response) => {
+                        StreamChunk::Completed(response) => {
                             println!("\n--- Complete ---");
                             println!("Interaction ID: {:?}", response.id);
                             if let Some(final_text) = response.as_text() {
@@ -382,6 +382,7 @@ mod streaming {
         };
 
         with_timeout(test_timeout(), async {
+            #[allow(deprecated)]
             let request = InteractionRequest {
                 model: Some("gemini-3-flash-preview".to_string()),
                 agent: None,
@@ -397,6 +398,8 @@ mod streaming {
                 background: None,
                 store: Some(true),
                 system_instruction: None,
+                service_tier: None,
+                cached_content: None,
             };
 
             let stream = client.execute_stream(request);
@@ -491,7 +494,7 @@ mod function_calling {
                 .await
                 .expect("Interaction failed");
 
-            println!("Response outputs: {:?}", response.outputs);
+            println!("Response steps: {:?}", response.steps);
 
             let function_calls = response.function_calls();
 
@@ -503,7 +506,7 @@ mod function_calling {
             for call in function_calls {
                 println!("Function call: {} has call_id: {:?}", call.name, call.id);
                 assert!(
-                    call.id.is_some(),
+                    !call.id.is_empty(),
                     "Function call '{}' must have an id field",
                     call.name
                 );
@@ -549,11 +552,11 @@ mod function_calling {
                     call.name, "get_weather",
                     "Expected get_weather function call"
                 );
-                assert!(call.id.is_some(), "Function call must have an id field");
+                assert!(!call.id.is_empty(),"Function call must have an id field");
 
-                let call_id = call.id.expect("call_id should exist");
+                let call_id = call.id;
 
-                let function_result = Content::function_result(
+                let function_result = Step::function_result(
                     "get_weather",
                     call_id,
                     json!({"temperature": "72°F", "conditions": "sunny"}),
@@ -561,7 +564,7 @@ mod function_calling {
 
                 let second_response = interaction_builder(&client)
                     .with_previous_interaction(response.id.as_ref().expect("id should exist"))
-                    .with_content(vec![function_result])
+                    .with_history(vec![function_result])
                     .add_function(get_weather)
                     .create()
                     .await
@@ -623,9 +626,9 @@ mod function_calling {
                     );
 
                     let function_calls = response.function_calls();
-                    let call_id = function_calls[0].id.expect("call_id should exist");
+                    let call_id = function_calls[0].id;
 
-                    let function_result = Content::function_result(
+                    let function_result = Step::function_result(
                         "get_current_time",
                         call_id,
                         json!({"time": "14:30:00", "timezone": "UTC"}),
@@ -633,7 +636,7 @@ mod function_calling {
 
                     let response2 = interaction_builder(&client)
                         .with_previous_interaction(response.id.as_ref().expect("id should exist"))
-                        .with_content(vec![function_result])
+                        .with_history(vec![function_result])
                         .add_function(get_time)
                         .create()
                         .await
@@ -781,10 +784,10 @@ mod function_calling {
                 let call = &function_calls[0];
                 println!("Function call: {} (id: {:?})", call.name, call.id);
 
-                assert!(call.id.is_some(), "Function call must have an id");
-                let call_id = call.id.expect("call_id should exist");
+                assert!(!call.id.is_empty(),"Function call must have an id");
+                let call_id = call.id;
 
-                let function_result = Content::function_result(
+                let function_result = Step::function_result(
                     "get_weather",
                     call_id,
                     json!({"temperature": "18°C", "conditions": "rainy", "precipitation": "80%"}),
@@ -792,7 +795,7 @@ mod function_calling {
 
                 let response2 = interaction_builder(&client)
                     .with_previous_interaction(response1.id.as_ref().expect("id should exist"))
-                    .with_content(vec![function_result])
+                    .with_history(vec![function_result])
                     .add_function(get_weather)
                     .create()
                     .await
@@ -858,7 +861,7 @@ mod function_calling {
 
             for call in &function_calls {
                 println!("  - {} (id: {:?}, args: {})", call.name, call.id, call.args);
-                assert!(call.id.is_some(), "Each function call must have an id");
+                assert!(!call.id.is_empty(), "Each function call must have an id");
             }
         }
     }
@@ -908,12 +911,12 @@ mod function_calling {
             println!("  Function: {} with args: {:?}", call.name, call.args);
 
             let prev_id = response1.id.clone().expect("id should exist");
-            let call_id = call.id.expect("call_id exists").to_string();
+            let call_id = call.id.to_string();
 
             let response2 = retry_request!([client, prev_id, call_id, get_info] => {
                 interaction_builder(&client)
                     .with_previous_interaction(&prev_id)
-                    .with_content(vec![Content::function_result(
+                    .with_history(vec![Step::function_result(
                         "get_info",
                         call_id,
                         json!({"info": "The weather is sunny and warm, about 25°C with clear skies."}),
@@ -980,16 +983,16 @@ mod function_calling {
             println!("  ID: {:?}", call.id);
             println!("  Args: {:?}", call.args);
 
-            if let Some(call_id_ref) = &call.id {
+            if !call.id.is_empty() {
                 println!("\n✓ Function call has valid ID");
 
                 let prev_id = response.id.clone().expect("id should exist");
-                let call_id = call_id_ref.to_string();
+                let call_id = call.id.to_string();
 
                 let result = retry_request!([client, prev_id, call_id, get_weather] => {
                     interaction_builder(&client)
                         .with_previous_interaction(&prev_id)
-                        .with_content(vec![Content::function_result(
+                        .with_history(vec![Step::function_result(
                             "get_weather",
                             call_id,
                             json!({"temperature": "22°C", "conditions": "sunny"}),
@@ -1039,7 +1042,6 @@ mod generation_config {
             temperature: Some(0.0),
             max_output_tokens: Some(100),
             top_p: None,
-            top_k: None,
             thinking_level: None,
             ..Default::default()
         };
@@ -1078,7 +1080,6 @@ mod generation_config {
             temperature: Some(0.7),
             max_output_tokens: Some(50),
             top_p: None,
-            top_k: None,
             thinking_level: None,
             ..Default::default()
         };
@@ -1511,15 +1512,15 @@ mod conversations {
         );
 
         let history = vec![
-            Content::text(initial_prompt),
-            Content::text(answer1),
-            Content::text("Now divide that result by 5"),
+            Step::user_text(initial_prompt),
+            Step::model_text(answer1),
+            Step::user_text("Now divide that result by 5"),
         ];
 
         println!("\nTurn 2 prompt: Now divide that result by 5");
 
         let response2 = interaction_builder(&client)
-            .with_input(InteractionInput::Content(history))
+            .with_history(history)
             .with_thinking_level(ThinkingLevel::Low)
             .with_store_enabled()
             .create()
@@ -1628,7 +1629,7 @@ mod multimodal {
                     return Err(format!("Unexpected status: {:?}", response.status).into());
                 }
 
-                for output in &response.outputs {
+                for output in response.output_contents() {
                     if let Content::Image {
                         data: Some(base64_data),
                         mime_type,

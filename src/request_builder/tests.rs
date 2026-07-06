@@ -105,10 +105,11 @@ fn test_interaction_builder_with_system_instruction() {
         .with_text("Hello")
         .with_system_instruction("You are a helpful assistant");
 
-    assert!(matches!(
-        builder.system_instruction,
-        Some(crate::InteractionInput::Text(_))
-    ));
+    // System instruction is a plain string per the 2026-05-20 API revision
+    assert_eq!(
+        builder.system_instruction.as_deref(),
+        Some("You are a helpful assistant")
+    );
 }
 
 #[test]
@@ -118,7 +119,6 @@ fn test_interaction_builder_with_generation_config() {
         temperature: Some(0.7),
         max_output_tokens: Some(1000),
         top_p: Some(0.9),
-        top_k: Some(40),
         thinking_level: Some(ThinkingLevel::Medium),
         ..Default::default()
     };
@@ -229,7 +229,9 @@ fn test_interaction_builder_with_google_maps() {
     assert!(matches!(
         tools[0],
         Tool::GoogleMaps {
-            enable_widget: None
+            enable_widget: None,
+            latitude: None,
+            longitude: None,
         }
     ));
 }
@@ -254,7 +256,8 @@ fn test_interaction_builder_add_tool_with_configs() {
     assert!(matches!(
         tools[1],
         Tool::GoogleMaps {
-            enable_widget: Some(true)
+            enable_widget: Some(true),
+            ..
         }
     ));
     assert!(matches!(tools[2], Tool::ComputerUse { .. }));
@@ -627,62 +630,62 @@ async fn test_auto_functions_allows_store_default() {
     );
 }
 
-// --- Turn Array Input Tests ---
+// --- Step Array Input Tests ---
 
 #[test]
 fn test_interaction_builder_with_history() {
-    use crate::Turn;
+    use crate::Step;
 
     let client = create_test_client();
-    let turns = vec![
-        Turn::user("What is 2+2?"),
-        Turn::model("2+2 equals 4."),
-        Turn::user("And what's that times 3?"),
+    let steps = vec![
+        Step::user_text("What is 2+2?"),
+        Step::model_text("2+2 equals 4."),
+        Step::user_text("And what's that times 3?"),
     ];
 
     let builder = client
         .interaction()
         .with_model("gemini-3-flash-preview")
-        .with_history(turns);
+        .with_history(steps);
 
     assert_eq!(builder.history.len(), 3);
 }
 
 #[test]
 fn test_interaction_builder_build_with_history() {
-    use crate::Turn;
+    use crate::Step;
 
     let client = create_test_client();
-    let turns = vec![
-        Turn::user("Hello"),
-        Turn::model("Hi there!"),
-        Turn::user("How are you?"),
+    let steps = vec![
+        Step::user_text("Hello"),
+        Step::model_text("Hi there!"),
+        Step::user_text("How are you?"),
     ];
 
     let builder = client
         .interaction()
         .with_model("gemini-3-flash-preview")
-        .with_history(turns);
+        .with_history(steps);
 
     let result = builder.build();
     assert!(result.is_ok());
 
     let request = result.unwrap();
     assert_eq!(request.model.as_deref(), Some("gemini-3-flash-preview"));
-    assert!(matches!(request.input, crate::InteractionInput::Turns(_)));
+    assert!(matches!(request.input, crate::InteractionInput::Steps(_)));
 }
 
 #[test]
-fn test_interaction_builder_with_single_turn() {
-    use crate::Turn;
+fn test_interaction_builder_with_single_step() {
+    use crate::Step;
 
     let client = create_test_client();
-    let turns = vec![Turn::user("Hello")];
+    let steps = vec![Step::user_text("Hello")];
 
     let builder = client
         .interaction()
         .with_model("gemini-3-flash-preview")
-        .with_history(turns);
+        .with_history(steps);
 
     let result = builder.build();
     assert!(result.is_ok());
@@ -692,10 +695,10 @@ fn test_interaction_builder_with_single_turn() {
 
 #[test]
 fn test_with_history_then_with_text_composes_correctly() {
-    use crate::{InteractionInput, Role, Turn};
+    use crate::{InteractionInput, Step};
 
     let client = create_test_client();
-    let history = vec![Turn::user("Hello"), Turn::model("Hi there!")];
+    let history = vec![Step::user_text("Hello"), Step::model_text("Hi there!")];
 
     let builder = client
         .interaction()
@@ -706,24 +709,24 @@ fn test_with_history_then_with_text_composes_correctly() {
     // Build should compose history + current_message
     let request = builder.build().expect("Build should succeed");
 
-    // Verify the input is Turns with 3 items
+    // Verify the input is Steps with 3 items
     match &request.input {
-        InteractionInput::Turns(turns) => {
-            assert_eq!(turns.len(), 3, "Should have 3 turns");
-            assert_eq!(*turns[0].role(), Role::User);
-            assert_eq!(*turns[1].role(), Role::Model);
-            assert_eq!(*turns[2].role(), Role::User);
+        InteractionInput::Steps(steps) => {
+            assert_eq!(steps.len(), 3, "Should have 3 steps");
+            assert!(matches!(steps[0], Step::UserInput { .. }));
+            assert!(matches!(steps[1], Step::ModelOutput { .. }));
+            assert!(matches!(steps[2], Step::UserInput { .. }));
         }
-        _ => panic!("Expected Turns input"),
+        _ => panic!("Expected Steps input"),
     }
 }
 
 #[test]
 fn test_with_text_then_with_history_composes_correctly() {
-    use crate::{InteractionInput, Role, Turn};
+    use crate::{InteractionInput, Step};
 
     let client = create_test_client();
-    let history = vec![Turn::user("Hello"), Turn::model("Hi there!")];
+    let history = vec![Step::user_text("Hello"), Step::model_text("Hi there!")];
 
     // Order reversed - should produce same result
     let builder = client
@@ -734,24 +737,24 @@ fn test_with_text_then_with_history_composes_correctly() {
 
     let request = builder.build().expect("Build should succeed");
 
-    // Verify the input is Turns with 3 items (history + current)
+    // Verify the input is Steps with 3 items (history + current)
     match &request.input {
-        InteractionInput::Turns(turns) => {
-            assert_eq!(turns.len(), 3, "Should have 3 turns");
-            assert_eq!(*turns[0].role(), Role::User);
-            assert_eq!(*turns[1].role(), Role::Model);
-            assert_eq!(*turns[2].role(), Role::User); // Current message appended
+        InteractionInput::Steps(steps) => {
+            assert_eq!(steps.len(), 3, "Should have 3 steps");
+            assert!(matches!(steps[0], Step::UserInput { .. }));
+            assert!(matches!(steps[1], Step::ModelOutput { .. }));
+            assert!(matches!(steps[2], Step::UserInput { .. })); // Current message appended
         }
-        _ => panic!("Expected Turns input"),
+        _ => panic!("Expected Steps input"),
     }
 }
 
 #[test]
 fn test_history_and_text_order_independent() {
-    use crate::Turn;
+    use crate::Step;
 
     let client = create_test_client();
-    let history = vec![Turn::user("First"), Turn::model("Response")];
+    let history = vec![Step::user_text("First"), Step::model_text("Response")];
 
     // Build in one order
     let req1 = client
@@ -779,7 +782,7 @@ fn test_history_and_text_order_independent() {
 
 #[test]
 fn test_conversation_builder_then_with_text() {
-    use crate::{InteractionInput, Role};
+    use crate::{InteractionInput, Step};
 
     let client = create_test_client();
 
@@ -794,15 +797,15 @@ fn test_conversation_builder_then_with_text() {
 
     let request = builder.build().expect("Build should succeed");
 
-    // Should have 3 turns: original 2 + appended current message
+    // Should have 3 steps: original 2 + appended current message
     match &request.input {
-        InteractionInput::Turns(turns) => {
-            assert_eq!(turns.len(), 3, "Should have 3 turns");
-            assert_eq!(*turns[0].role(), Role::User);
-            assert_eq!(*turns[1].role(), Role::Model);
-            assert_eq!(*turns[2].role(), Role::User);
+        InteractionInput::Steps(steps) => {
+            assert_eq!(steps.len(), 3, "Should have 3 steps");
+            assert!(matches!(steps[0], Step::UserInput { .. }));
+            assert!(matches!(steps[1], Step::ModelOutput { .. }));
+            assert!(matches!(steps[2], Step::UserInput { .. }));
         }
-        _ => panic!("Expected Turns input"),
+        _ => panic!("Expected Steps input"),
     }
 }
 
@@ -828,11 +831,11 @@ fn test_with_text_only_produces_text_input() {
 }
 
 #[test]
-fn test_with_history_only_produces_turns_input() {
-    use crate::{InteractionInput, Turn};
+fn test_with_history_only_produces_steps_input() {
+    use crate::{InteractionInput, Step};
 
     let client = create_test_client();
-    let history = vec![Turn::user("Hello"), Turn::model("Hi!")];
+    let history = vec![Step::user_text("Hello"), Step::model_text("Hi!")];
 
     let request = client
         .interaction()
@@ -841,21 +844,21 @@ fn test_with_history_only_produces_turns_input() {
         .build()
         .expect("Build should succeed");
 
-    // Should produce Turns input
+    // Should produce Steps input
     match &request.input {
-        InteractionInput::Turns(turns) => {
-            assert_eq!(turns.len(), 2);
+        InteractionInput::Steps(steps) => {
+            assert_eq!(steps.len(), 2);
         }
-        _ => panic!("Expected Turns input"),
+        _ => panic!("Expected Steps input"),
     }
 }
 
 #[test]
 fn test_chained_preserves_history_and_current_message() {
-    use crate::Turn;
+    use crate::Step;
 
     let client = create_test_client();
-    let history = vec![Turn::user("Hello"), Turn::model("Hi!")];
+    let history = vec![Step::user_text("Hello"), Step::model_text("Hi!")];
 
     let builder = client
         .interaction()
@@ -872,10 +875,10 @@ fn test_chained_preserves_history_and_current_message() {
 
 #[test]
 fn test_store_disabled_preserves_history_and_current_message() {
-    use crate::Turn;
+    use crate::Step;
 
     let client = create_test_client();
-    let history = vec![Turn::user("Hello"), Turn::model("Hi!")];
+    let history = vec![Step::user_text("Hello"), Step::model_text("Hi!")];
 
     let builder = client
         .interaction()
@@ -892,10 +895,10 @@ fn test_store_disabled_preserves_history_and_current_message() {
 
 #[test]
 fn test_with_content_cannot_combine_with_history() {
-    use crate::{Content, Turn};
+    use crate::{Content, Step};
 
     let client = create_test_client();
-    let history = vec![Turn::user("Hello"), Turn::model("Hi!")];
+    let history = vec![Step::user_text("Hello"), Step::model_text("Hi!")];
     let content = vec![Content::Text {
         text: Some("test".to_string()),
         annotations: None,
@@ -1004,7 +1007,7 @@ fn test_with_content_alone_works() {
 
 #[test]
 fn test_conversation_builder_fluent_api() {
-    use crate::Role;
+    use crate::Step;
 
     let client = create_test_client();
     let builder = client
@@ -1016,16 +1019,16 @@ fn test_conversation_builder_fluent_api() {
         .user("And what's that times 3?")
         .done();
 
-    // Verify the history has correct length and roles
+    // Verify the history has correct length and step types
     assert_eq!(builder.history.len(), 3);
-    assert_eq!(*builder.history[0].role(), Role::User);
-    assert_eq!(*builder.history[1].role(), Role::Model);
-    assert_eq!(*builder.history[2].role(), Role::User);
+    assert!(matches!(builder.history[0], Step::UserInput { .. }));
+    assert!(matches!(builder.history[1], Step::ModelOutput { .. }));
+    assert!(matches!(builder.history[2], Step::UserInput { .. }));
 }
 
 #[test]
 fn test_conversation_builder_with_parts_content() {
-    use crate::{Content, TurnContent};
+    use crate::{Content, Step, TurnContent};
 
     let client = create_test_client();
     let parts = vec![Content::Text {
@@ -1040,9 +1043,14 @@ fn test_conversation_builder_with_parts_content() {
         .user(TurnContent::Parts(parts))
         .done();
 
-    // Verify the history has 1 turn with parts content
+    // Verify the history has 1 user_input step wrapping the parts
     assert_eq!(builder.history.len(), 1);
-    assert!(builder.history[0].content().is_parts());
+    assert!(matches!(builder.history[0], Step::UserInput { .. }));
+    let content = builder.history[0]
+        .content()
+        .expect("user_input step should expose content");
+    assert_eq!(content.len(), 1);
+    assert_eq!(content[0].as_text(), Some("What is in this image?"));
 }
 
 #[test]
@@ -1262,6 +1270,8 @@ fn test_with_image_config_merges_with_existing_generation_config() {
 
 #[test]
 fn test_interaction_builder_with_allowed_tools() {
+    use crate::ToolChoice;
+
     let client = create_test_client();
     let builder = client
         .interaction()
@@ -1269,9 +1279,36 @@ fn test_interaction_builder_with_allowed_tools() {
         .with_text("Get weather")
         .with_allowed_tools(vec!["get_weather".to_string(), "get_time".to_string()]);
 
+    // with_allowed_tools() now populates generation_config.tool_choice
     let config = builder.generation_config.as_ref().unwrap();
     assert_eq!(
-        config.allowed_tools,
-        Some(vec!["get_weather".to_string(), "get_time".to_string()])
+        config.tool_choice,
+        Some(ToolChoice::allowed_tools(
+            None,
+            vec!["get_weather".to_string(), "get_time".to_string()]
+        ))
+    );
+}
+
+#[test]
+fn test_interaction_builder_with_allowed_tools_preserves_mode() {
+    use crate::{FunctionCallingMode, ToolChoice};
+
+    let client = create_test_client();
+    let builder = client
+        .interaction()
+        .with_model("gemini-3-flash-preview")
+        .with_text("Get weather")
+        .with_tool_choice(ToolChoice::Mode(FunctionCallingMode::Any))
+        .with_allowed_tools(vec!["get_weather".to_string()]);
+
+    // A previously-set mode is preserved when upgrading to the object form
+    let config = builder.generation_config.as_ref().unwrap();
+    assert_eq!(
+        config.tool_choice,
+        Some(ToolChoice::allowed_tools(
+            Some(FunctionCallingMode::Any),
+            vec!["get_weather".to_string()]
+        ))
     );
 }

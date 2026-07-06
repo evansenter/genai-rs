@@ -39,6 +39,10 @@ pub enum Tool {
     GoogleMaps {
         /// Whether to enable the widget context token in the response
         enable_widget: Option<bool>,
+        /// Latitude bias for location grounding
+        latitude: Option<f64>,
+        /// Longitude bias for location grounding
+        longitude: Option<f64>,
     },
     /// Built-in code execution tool
     CodeExecution,
@@ -48,25 +52,27 @@ pub enum Tool {
     ///
     /// **Security Warning**: This tool allows the model to interact with web browsers
     /// on your behalf. Only use with trusted models and carefully review excluded functions.
-    ///
-    /// # Fields
-    ///
-    /// - `environment`: The operating environment (currently only "browser" supported)
-    /// - `excluded_predefined_functions`: List of predefined functions to exclude from model access
     ComputerUse {
-        /// The environment being operated (currently only "browser" supported)
+        /// The environment being operated. Known values: `browser`, `mobile`, `desktop`.
         environment: String,
-        /// List of predefined functions to exclude from model access.
-        ///
-        /// Note: This field name follows the API's `excludedPredefinedFunctions` camelCase naming.
+        /// List of predefined functions to exclude from model access
+        /// (wire: `excluded_predefined_functions`).
         excluded_predefined_functions: Vec<String>,
+        /// Whether to enable prompt injection detection for this request.
+        enable_prompt_injection_detection: Option<bool>,
+        /// Safety policies to disable. Known values include
+        /// `financial_transactions`, `sensitive_data_modification`,
+        /// `communication_tool`, `account_creation`, `data_modification`,
+        /// `user_consent_management`, `legal_terms_and_agreements`.
+        disabled_safety_policies: Vec<String>,
     },
     /// Model Context Protocol (MCP) server
     McpServer {
         name: String,
         url: String,
-        /// Optional list of allowed tool names to restrict which tools the model can call
-        allowed_tools: Option<Vec<String>>,
+        /// Optional per-mode restrictions on which server tools the model may
+        /// call (wire: `allowed_tools: [{mode, tools}]`).
+        allowed_tools: Option<Vec<AllowedTools>>,
         /// Optional headers for authentication or configuration
         headers: Option<HashMap<String, String>>,
     },
@@ -127,11 +133,21 @@ impl Serialize for Tool {
                 }
                 map.end()
             }
-            Self::GoogleMaps { enable_widget } => {
+            Self::GoogleMaps {
+                enable_widget,
+                latitude,
+                longitude,
+            } => {
                 let mut map = serializer.serialize_map(None)?;
                 map.serialize_entry("type", "google_maps")?;
                 if let Some(ew) = enable_widget {
                     map.serialize_entry("enable_widget", ew)?;
+                }
+                if let Some(lat) = latitude {
+                    map.serialize_entry("latitude", lat)?;
+                }
+                if let Some(lng) = longitude {
+                    map.serialize_entry("longitude", lng)?;
                 }
                 map.end()
             }
@@ -148,15 +164,23 @@ impl Serialize for Tool {
             Self::ComputerUse {
                 environment,
                 excluded_predefined_functions,
+                enable_prompt_injection_detection,
+                disabled_safety_policies,
             } => {
                 let mut map = serializer.serialize_map(None)?;
                 map.serialize_entry("type", "computer_use")?;
                 map.serialize_entry("environment", environment)?;
                 if !excluded_predefined_functions.is_empty() {
                     map.serialize_entry(
-                        "excludedPredefinedFunctions",
+                        "excluded_predefined_functions",
                         excluded_predefined_functions,
                     )?;
+                }
+                if let Some(detect) = enable_prompt_injection_detection {
+                    map.serialize_entry("enable_prompt_injection_detection", detect)?;
+                }
+                if !disabled_safety_policies.is_empty() {
+                    map.serialize_entry("disabled_safety_policies", disabled_safety_policies)?;
                 }
                 map.end()
             }
@@ -246,6 +270,10 @@ impl<'de> Deserialize<'de> for Tool {
             GoogleMaps {
                 #[serde(default)]
                 enable_widget: Option<bool>,
+                #[serde(default)]
+                latitude: Option<f64>,
+                #[serde(default)]
+                longitude: Option<f64>,
             },
             #[serde(rename = "code_execution")]
             CodeExecution,
@@ -254,15 +282,21 @@ impl<'de> Deserialize<'de> for Tool {
             #[serde(rename = "computer_use")]
             ComputerUse {
                 environment: String,
-                #[serde(rename = "excludedPredefinedFunctions", default)]
+                // Spec wire format is snake_case; accept the legacy camelCase
+                // alias for pre-revision payloads.
+                #[serde(default, alias = "excludedPredefinedFunctions")]
                 excluded_predefined_functions: Vec<String>,
+                #[serde(default)]
+                enable_prompt_injection_detection: Option<bool>,
+                #[serde(default)]
+                disabled_safety_policies: Vec<String>,
             },
             #[serde(rename = "mcp_server")]
             McpServer {
                 name: String,
                 url: String,
                 #[serde(default)]
-                allowed_tools: Option<Vec<String>>,
+                allowed_tools: Option<Vec<AllowedTools>>,
                 #[serde(default)]
                 headers: Option<HashMap<String, String>>,
             },
@@ -290,15 +324,27 @@ impl<'de> Deserialize<'de> for Tool {
                     parameters,
                 },
                 KnownTool::GoogleSearch { search_types } => Tool::GoogleSearch { search_types },
-                KnownTool::GoogleMaps { enable_widget } => Tool::GoogleMaps { enable_widget },
+                KnownTool::GoogleMaps {
+                    enable_widget,
+                    latitude,
+                    longitude,
+                } => Tool::GoogleMaps {
+                    enable_widget,
+                    latitude,
+                    longitude,
+                },
                 KnownTool::CodeExecution => Tool::CodeExecution,
                 KnownTool::UrlContext => Tool::UrlContext,
                 KnownTool::ComputerUse {
                     environment,
                     excluded_predefined_functions,
+                    enable_prompt_injection_detection,
+                    disabled_safety_policies,
                 } => Tool::ComputerUse {
                     environment,
                     excluded_predefined_functions,
+                    enable_prompt_injection_detection,
+                    disabled_safety_policies,
                 },
                 KnownTool::McpServer {
                     name,
@@ -647,11 +693,12 @@ impl Serialize for FunctionCallingMode {
     where
         S: serde::Serializer,
     {
+        // Wire format is lowercase per API revision 2026-05-20.
         match self {
-            Self::Auto => serializer.serialize_str("AUTO"),
-            Self::Any => serializer.serialize_str("ANY"),
-            Self::None => serializer.serialize_str("NONE"),
-            Self::Validated => serializer.serialize_str("VALIDATED"),
+            Self::Auto => serializer.serialize_str("auto"),
+            Self::Any => serializer.serialize_str("any"),
+            Self::None => serializer.serialize_str("none"),
+            Self::Validated => serializer.serialize_str("validated"),
             Self::Unknown { mode_type, .. } => serializer.serialize_str(mode_type),
         }
     }
@@ -665,10 +712,11 @@ impl<'de> Deserialize<'de> for FunctionCallingMode {
         let value = serde_json::Value::deserialize(deserializer)?;
 
         match value.as_str() {
-            Some("AUTO") => Ok(Self::Auto),
-            Some("ANY") => Ok(Self::Any),
-            Some("NONE") => Ok(Self::None),
-            Some("VALIDATED") => Ok(Self::Validated),
+            // Spec wire format is lowercase; accept legacy UPPERCASE too.
+            Some("auto") | Some("AUTO") => Ok(Self::Auto),
+            Some("any") | Some("ANY") => Ok(Self::Any),
+            Some("none") | Some("NONE") => Ok(Self::None),
+            Some("validated") | Some("VALIDATED") => Ok(Self::Validated),
             Some(other) => {
                 tracing::warn!(
                     "Encountered unknown FunctionCallingMode '{}'. \
@@ -698,13 +746,189 @@ impl<'de> Deserialize<'de> for FunctionCallingMode {
     }
 }
 
+/// Restriction on which tools the model may call.
+///
+/// Used both as the object form of [`ToolChoice`]
+/// (`{"allowed_tools": {"mode": ..., "tools": [...]}}`) and as the element
+/// type of the MCP server tool's `allowed_tools` list.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AllowedTools {
+    /// Function calling mode applied to the listed tools.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<FunctionCallingMode>,
+    /// Names of the tools the model is allowed to call.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
+}
+
+impl AllowedTools {
+    /// Creates a new tool restriction over the given tool names.
+    #[must_use]
+    pub fn new(tools: Vec<String>) -> Self {
+        Self { mode: None, tools }
+    }
+
+    /// Sets the function calling mode for the listed tools.
+    #[must_use]
+    pub fn with_mode(mut self, mode: FunctionCallingMode) -> Self {
+        self.mode = Some(mode);
+        self
+    }
+}
+
+/// The `generation_config.tool_choice` union.
+///
+/// Either a plain mode string (`"auto" | "any" | "none" | "validated"`) or an
+/// object restricting the model to a named set of tools:
+/// `{"allowed_tools": {"mode": ..., "tools": [...]}}`.
+///
+/// # Forward Compatibility
+///
+/// `#[non_exhaustive]`; unrecognized shapes deserialize into
+/// [`ToolChoice::Unknown`] with the data preserved.
+///
+/// # Example
+///
+/// ```
+/// use genai_rs::{FunctionCallingMode, ToolChoice};
+///
+/// // Plain mode
+/// let choice = ToolChoice::Mode(FunctionCallingMode::Any);
+/// assert_eq!(serde_json::to_string(&choice).unwrap(), "\"any\"");
+///
+/// // Restricted tool set
+/// let choice = ToolChoice::allowed_tools(
+///     Some(FunctionCallingMode::Any),
+///     vec!["get_weather".to_string()],
+/// );
+/// ```
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum ToolChoice {
+    /// A plain function calling mode.
+    Mode(FunctionCallingMode),
+    /// Restriction to a named set of tools (wire: `{"allowed_tools": {...}}`).
+    AllowedTools(AllowedTools),
+    /// Unknown tool choice shape for forward compatibility.
+    Unknown {
+        /// A short description of the unrecognized shape (the string value or
+        /// object key encountered).
+        choice_type: String,
+        /// The raw JSON value, preserved for debugging and roundtrip.
+        data: serde_json::Value,
+    },
+}
+
+impl ToolChoice {
+    /// Creates a tool restriction choice from a mode and tool names.
+    #[must_use]
+    pub fn allowed_tools(mode: Option<FunctionCallingMode>, tools: Vec<String>) -> Self {
+        Self::AllowedTools(AllowedTools { mode, tools })
+    }
+
+    /// Check if this is an unknown tool choice shape.
+    #[must_use]
+    pub const fn is_unknown(&self) -> bool {
+        matches!(self, Self::Unknown { .. })
+    }
+
+    /// Returns the choice type descriptor if this is an unknown tool choice.
+    #[must_use]
+    pub fn unknown_choice_type(&self) -> Option<&str> {
+        match self {
+            Self::Unknown { choice_type, .. } => Some(choice_type),
+            _ => None,
+        }
+    }
+
+    /// Returns the raw JSON data if this is an unknown tool choice.
+    #[must_use]
+    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::Unknown { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+}
+
+impl From<FunctionCallingMode> for ToolChoice {
+    fn from(mode: FunctionCallingMode) -> Self {
+        Self::Mode(mode)
+    }
+}
+
+impl Serialize for ToolChoice {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeMap;
+
+        match self {
+            Self::Mode(mode) => mode.serialize(serializer),
+            Self::AllowedTools(allowed) => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("allowed_tools", allowed)?;
+                map.end()
+            }
+            Self::Unknown { data, .. } => data.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ToolChoice {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match &value {
+            serde_json::Value::String(_) => {
+                // Delegates unknown strings to FunctionCallingMode::Unknown.
+                let mode: FunctionCallingMode =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(Self::Mode(mode))
+            }
+            serde_json::Value::Object(obj) if obj.contains_key("allowed_tools") => {
+                match serde_json::from_value::<AllowedTools>(obj["allowed_tools"].clone()) {
+                    Ok(allowed) => Ok(Self::AllowedTools(allowed)),
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to parse tool_choice.allowed_tools: {}. \
+                             Preserving in Unknown variant.",
+                            e
+                        );
+                        Ok(Self::Unknown {
+                            choice_type: "allowed_tools".to_string(),
+                            data: value,
+                        })
+                    }
+                }
+            }
+            _ => {
+                tracing::warn!(
+                    "Encountered unknown ToolChoice shape: {}. \
+                     Preserving in Unknown variant.",
+                    value
+                );
+                Ok(Self::Unknown {
+                    choice_type: format!("<unrecognized: {}>", value),
+                    data: value,
+                })
+            }
+        }
+    }
+}
+
 /// Types of search to perform with the Google Search tool.
 ///
 /// This enum is marked `#[non_exhaustive]` for forward compatibility.
 ///
 /// # Wire Format
 ///
-/// Values serialize as snake_case strings: `"web_search"`, `"image_search"`.
+/// Values serialize as snake_case strings: `"web_search"`, `"image_search"`,
+/// `"enterprise_web_search"`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SearchType {
@@ -712,6 +936,8 @@ pub enum SearchType {
     WebSearch,
     /// Image search (only available for specific models like `gemini-3.1-flash-image-preview`)
     ImageSearch,
+    /// Enterprise web search
+    EnterpriseWebSearch,
     /// Unknown search type for forward compatibility
     Unknown {
         /// The unrecognized search type string from the API
@@ -755,6 +981,7 @@ impl Serialize for SearchType {
         match self {
             Self::WebSearch => serializer.serialize_str("web_search"),
             Self::ImageSearch => serializer.serialize_str("image_search"),
+            Self::EnterpriseWebSearch => serializer.serialize_str("enterprise_web_search"),
             Self::Unknown { search_type, .. } => serializer.serialize_str(search_type),
         }
     }
@@ -769,6 +996,7 @@ impl<'de> Deserialize<'de> for SearchType {
         match value.as_str() {
             Some("web_search") => Ok(Self::WebSearch),
             Some("image_search") => Ok(Self::ImageSearch),
+            Some("enterprise_web_search") => Ok(Self::EnterpriseWebSearch),
             Some(other) => {
                 tracing::warn!(
                     "Encountered unknown SearchType '{}'. \
@@ -859,6 +1087,8 @@ impl From<GoogleSearchConfig> for Tool {
 #[derive(Clone, Debug, Default)]
 pub struct GoogleMapsConfig {
     enable_widget: Option<bool>,
+    latitude: Option<f64>,
+    longitude: Option<f64>,
 }
 
 impl GoogleMapsConfig {
@@ -874,12 +1104,22 @@ impl GoogleMapsConfig {
         self.enable_widget = Some(true);
         self
     }
+
+    /// Biases results toward the given coordinates.
+    #[must_use]
+    pub fn with_location(mut self, latitude: f64, longitude: f64) -> Self {
+        self.latitude = Some(latitude);
+        self.longitude = Some(longitude);
+        self
+    }
 }
 
 impl From<GoogleMapsConfig> for Tool {
     fn from(config: GoogleMapsConfig) -> Self {
         Tool::GoogleMaps {
             enable_widget: config.enable_widget,
+            latitude: config.latitude,
+            longitude: config.longitude,
         }
     }
 }
@@ -902,7 +1142,7 @@ impl From<GoogleMapsConfig> for Tool {
 pub struct McpServerConfig {
     name: String,
     url: String,
-    allowed_tools: Option<Vec<String>>,
+    allowed_tools: Option<Vec<AllowedTools>>,
     headers: Option<HashMap<String, String>>,
 }
 
@@ -918,9 +1158,19 @@ impl McpServerConfig {
         }
     }
 
-    /// Sets the list of allowed tool names.
+    /// Restricts the model to the given tool names (no explicit mode).
+    ///
+    /// For per-mode restrictions use
+    /// [`with_allowed_tools_config`](Self::with_allowed_tools_config).
     #[must_use]
     pub fn with_allowed_tools(mut self, allowed_tools: Vec<String>) -> Self {
+        self.allowed_tools = Some(vec![AllowedTools::new(allowed_tools)]);
+        self
+    }
+
+    /// Sets the full `[{mode, tools}]` allowed-tools restriction list.
+    #[must_use]
+    pub fn with_allowed_tools_config(mut self, allowed_tools: Vec<AllowedTools>) -> Self {
         self.allowed_tools = Some(allowed_tools);
         self
     }
@@ -963,6 +1213,8 @@ impl From<McpServerConfig> for Tool {
 pub struct ComputerUseConfig {
     environment: String,
     excluded_predefined_functions: Vec<String>,
+    enable_prompt_injection_detection: Option<bool>,
+    disabled_safety_policies: Vec<String>,
 }
 
 impl ComputerUseConfig {
@@ -972,13 +1224,42 @@ impl ComputerUseConfig {
         Self {
             environment: "browser".to_string(),
             excluded_predefined_functions: Vec::new(),
+            enable_prompt_injection_detection: None,
+            disabled_safety_policies: Vec::new(),
         }
+    }
+
+    /// Sets the operating environment. Known values: `browser`, `mobile`,
+    /// `desktop`.
+    #[must_use]
+    pub fn with_environment(mut self, environment: impl Into<String>) -> Self {
+        self.environment = environment.into();
+        self
     }
 
     /// Excludes specific predefined browser functions from model access.
     #[must_use]
     pub fn excluding(mut self, functions: Vec<String>) -> Self {
         self.excluded_predefined_functions = functions;
+        self
+    }
+
+    /// Enables (or disables) prompt injection detection.
+    #[must_use]
+    pub fn with_prompt_injection_detection(mut self, enabled: bool) -> Self {
+        self.enable_prompt_injection_detection = Some(enabled);
+        self
+    }
+
+    /// Disables the given safety policies.
+    ///
+    /// Known values include `financial_transactions`,
+    /// `sensitive_data_modification`, `communication_tool`,
+    /// `account_creation`, `data_modification`, `user_consent_management`,
+    /// and `legal_terms_and_agreements`.
+    #[must_use]
+    pub fn disabling_safety_policies(mut self, policies: Vec<String>) -> Self {
+        self.disabled_safety_policies = policies;
         self
     }
 }
@@ -994,6 +1275,8 @@ impl From<ComputerUseConfig> for Tool {
         Tool::ComputerUse {
             environment: config.environment,
             excluded_predefined_functions: config.excluded_predefined_functions,
+            enable_prompt_injection_detection: config.enable_prompt_injection_detection,
+            disabled_safety_policies: config.disabled_safety_policies,
         }
     }
 }
@@ -1084,12 +1367,12 @@ mod tests {
 
     #[test]
     fn test_function_calling_mode_serialization() {
-        // Test all known modes
+        // Wire format is lowercase per API revision 2026-05-20
         let test_cases = [
-            (FunctionCallingMode::Auto, "\"AUTO\""),
-            (FunctionCallingMode::Any, "\"ANY\""),
-            (FunctionCallingMode::None, "\"NONE\""),
-            (FunctionCallingMode::Validated, "\"VALIDATED\""),
+            (FunctionCallingMode::Auto, "\"auto\""),
+            (FunctionCallingMode::Any, "\"any\""),
+            (FunctionCallingMode::None, "\"none\""),
+            (FunctionCallingMode::Validated, "\"validated\""),
         ];
 
         for (mode, expected_json) in test_cases {
@@ -1099,6 +1382,16 @@ mod tests {
             let parsed: FunctionCallingMode =
                 serde_json::from_str(&json).expect("Deserialization failed");
             assert_eq!(parsed, mode);
+        }
+
+        // Legacy UPPERCASE values are still accepted on deserialize
+        for (raw, expected) in [
+            ("\"AUTO\"", FunctionCallingMode::Auto),
+            ("\"VALIDATED\"", FunctionCallingMode::Validated),
+        ] {
+            let parsed: FunctionCallingMode =
+                serde_json::from_str(raw).expect("Deserialization failed");
+            assert_eq!(parsed, expected);
         }
     }
 
@@ -1187,6 +1480,8 @@ mod tests {
     fn test_tool_google_maps_roundtrip() {
         let tool = Tool::GoogleMaps {
             enable_widget: None,
+            latitude: None,
+            longitude: None,
         };
         let json = serde_json::to_string(&tool).expect("Serialization failed");
         assert!(json.contains("\"type\":\"google_maps\""));
@@ -1194,7 +1489,7 @@ mod tests {
 
         let parsed: Tool = serde_json::from_str(&json).expect("Deserialization failed");
         match parsed {
-            Tool::GoogleMaps { enable_widget } => assert_eq!(enable_widget, None),
+            Tool::GoogleMaps { enable_widget, .. } => assert_eq!(enable_widget, None),
             other => panic!("Expected GoogleMaps variant, got {:?}", other),
         }
     }
@@ -1203,13 +1498,25 @@ mod tests {
     fn test_tool_google_maps_with_widget_roundtrip() {
         let tool = Tool::GoogleMaps {
             enable_widget: Some(true),
+            latitude: Some(40.758),
+            longitude: Some(-73.9855),
         };
         let json = serde_json::to_string(&tool).expect("Serialization failed");
         assert!(json.contains("\"enable_widget\":true"));
+        assert!(json.contains("\"latitude\":40.758"));
+        assert!(json.contains("\"longitude\":-73.9855"));
 
         let parsed: Tool = serde_json::from_str(&json).expect("Deserialization failed");
         match parsed {
-            Tool::GoogleMaps { enable_widget } => assert_eq!(enable_widget, Some(true)),
+            Tool::GoogleMaps {
+                enable_widget,
+                latitude,
+                longitude,
+            } => {
+                assert_eq!(enable_widget, Some(true));
+                assert_eq!(latitude, Some(40.758));
+                assert_eq!(longitude, Some(-73.9855));
+            }
             other => panic!("Expected GoogleMaps variant, got {:?}", other),
         }
     }
@@ -1271,7 +1578,10 @@ mod tests {
         let tool = Tool::McpServer {
             name: "my-server".to_string(),
             url: "https://mcp.example.com/api".to_string(),
-            allowed_tools: Some(vec!["read_file".to_string(), "list_dir".to_string()]),
+            allowed_tools: Some(vec![
+                AllowedTools::new(vec!["read_file".to_string(), "list_dir".to_string()])
+                    .with_mode(FunctionCallingMode::Auto),
+            ]),
             headers: Some(HashMap::from([(
                 "Authorization".to_string(),
                 "Bearer token".to_string(),
@@ -1289,7 +1599,9 @@ mod tests {
                 ..
             } => {
                 let tools = allowed_tools.expect("Should have allowed_tools");
-                assert_eq!(tools.len(), 2);
+                assert_eq!(tools.len(), 1);
+                assert_eq!(tools[0].tools.len(), 2);
+                assert_eq!(tools[0].mode, Some(FunctionCallingMode::Auto));
                 let hdrs = headers.expect("Should have headers");
                 assert_eq!(hdrs.get("Authorization").unwrap(), "Bearer token");
             }
@@ -1351,22 +1663,49 @@ mod tests {
         let tool = Tool::ComputerUse {
             environment: "browser".to_string(),
             excluded_predefined_functions: vec!["submit_form".to_string(), "download".to_string()],
+            enable_prompt_injection_detection: Some(true),
+            disabled_safety_policies: vec!["data_modification".to_string()],
         };
         let json = serde_json::to_string(&tool).expect("Serialization failed");
         assert!(json.contains("\"type\":\"computer_use\""));
         assert!(json.contains("\"environment\":\"browser\""));
-        assert!(json.contains("\"excludedPredefinedFunctions\""));
+        // Spec wire format is snake_case (fixed from legacy camelCase)
+        assert!(json.contains("\"excluded_predefined_functions\""));
+        assert!(!json.contains("excludedPredefinedFunctions"));
+        assert!(json.contains("\"enable_prompt_injection_detection\":true"));
+        assert!(json.contains("\"disabled_safety_policies\""));
 
         let parsed: Tool = serde_json::from_str(&json).expect("Deserialization failed");
         match parsed {
             Tool::ComputerUse {
                 environment,
                 excluded_predefined_functions,
+                enable_prompt_injection_detection,
+                disabled_safety_policies,
             } => {
                 assert_eq!(environment, "browser");
                 assert_eq!(excluded_predefined_functions.len(), 2);
                 assert!(excluded_predefined_functions.contains(&"submit_form".to_string()));
+                assert_eq!(enable_prompt_injection_detection, Some(true));
+                assert_eq!(
+                    disabled_safety_policies,
+                    vec!["data_modification".to_string()]
+                );
             }
+            other => panic!("Expected ComputerUse variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_tool_computer_use_legacy_camel_case_accepted() {
+        // Pre-revision payloads used camelCase; the alias keeps them parseable.
+        let json = r#"{"type":"computer_use","environment":"browser","excludedPredefinedFunctions":["a"]}"#;
+        let parsed: Tool = serde_json::from_str(json).expect("Deserialization failed");
+        match parsed {
+            Tool::ComputerUse {
+                excluded_predefined_functions,
+                ..
+            } => assert_eq!(excluded_predefined_functions, vec!["a".to_string()]),
             other => panic!("Expected ComputerUse variant, got {:?}", other),
         }
     }
@@ -1377,11 +1716,13 @@ mod tests {
         let tool = Tool::ComputerUse {
             environment: "browser".to_string(),
             excluded_predefined_functions: vec![],
+            enable_prompt_injection_detection: None,
+            disabled_safety_policies: vec![],
         };
         let json = serde_json::to_string(&tool).expect("Serialization failed");
         assert!(json.contains("\"type\":\"computer_use\""));
         assert!(json.contains("\"environment\":\"browser\""));
-        assert!(!json.contains("excludedPredefinedFunctions"));
+        assert!(!json.contains("excluded_predefined_functions"));
 
         let parsed: Tool = serde_json::from_str(&json).expect("Deserialization failed");
         match parsed {
@@ -1405,6 +1746,8 @@ mod tests {
 
         let google_maps = Tool::GoogleMaps {
             enable_widget: None,
+            latitude: None,
+            longitude: None,
         };
         assert!(!google_maps.is_unknown());
         assert_eq!(google_maps.unknown_tool_type(), None);
@@ -1423,6 +1766,8 @@ mod tests {
         let computer_use = Tool::ComputerUse {
             environment: "browser".to_string(),
             excluded_predefined_functions: vec![],
+            enable_prompt_injection_detection: None,
+            disabled_safety_policies: vec![],
         };
         assert!(!computer_use.is_unknown());
         assert_eq!(computer_use.unknown_tool_type(), None);
@@ -1560,7 +1905,8 @@ mod tests {
         assert!(matches!(
             tool,
             Tool::GoogleMaps {
-                enable_widget: None
+                enable_widget: None,
+                ..
             }
         ));
 
@@ -1568,7 +1914,8 @@ mod tests {
         assert!(matches!(
             tool,
             Tool::GoogleMaps {
-                enable_widget: Some(true)
+                enable_widget: Some(true),
+                ..
             }
         ));
     }
@@ -1599,6 +1946,7 @@ mod tests {
             Tool::ComputerUse {
                 environment,
                 excluded_predefined_functions,
+                ..
             } => {
                 assert_eq!(environment, "browser");
                 assert!(excluded_predefined_functions.is_empty());

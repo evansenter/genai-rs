@@ -69,38 +69,41 @@ pub use errors::GenaiError;
 pub mod content;
 pub use content::{
     Annotation, CodeExecutionLanguage, Content, FileSearchResultItem, GoogleMapsResultItem,
-    GoogleSearchResultItem, Place, Resolution, UrlContextResultItem,
+    GoogleSearchResultItem, Place, Resolution, ReviewSnippet, UrlContextResultItem,
 };
+
+// Step types (revision 2026-05-20 response model)
+pub mod steps;
+pub use steps::{FunctionResultPayload, Step, StepDelta, StepError};
 
 // Request types (includes agent configuration)
 pub mod request;
 pub use request::{
     AgentConfig, DeepResearchConfig, DynamicConfig, GenerationConfig, ImageAspectRatio,
-    ImageConfig, ImageSize, InteractionInput, InteractionRequest, Role, SpeechConfig,
-    ThinkingLevel, ThinkingSummaries, Turn, TurnContent,
+    ImageConfig, ImageSize, InteractionInput, InteractionRequest, Role, ServiceTier, SpeechConfig,
+    ThinkingLevel, ThinkingSummaries, TurnContent,
 };
 
 // Response types
 pub mod response;
 pub use response::{
-    AudioInfo, CodeExecutionCallInfo, CodeExecutionResultInfo, ContentSummary, FunctionCallInfo,
-    FunctionResultInfo, GoogleMapsResultInfo, GroundingChunk, GroundingMetadata, ImageInfo,
-    InteractionResponse, InteractionStatus, ModalityTokens, OwnedFunctionCallInfo,
-    UrlContextMetadata, UrlContextResultInfo, UrlMetadataEntry, UrlRetrievalStatus, UsageMetadata,
-    WebSource,
+    AudioInfo, CodeExecutionCallInfo, CodeExecutionResultInfo, FunctionCallInfo,
+    FunctionResultInfo, GoogleMapsResultInfo, GroundingToolCount, ImageInfo, InteractionResponse,
+    InteractionStatus, ModalityTokens, OwnedFunctionCallInfo, StepSummary, UrlContextResultInfo,
+    UsageMetadata,
 };
 
 // Tool types (function declarations, built-in tools)
 pub mod tools;
 pub use tools::{
-    ComputerUseConfig, FileSearchConfig, FunctionCallingMode, FunctionDeclaration,
+    AllowedTools, ComputerUseConfig, FileSearchConfig, FunctionCallingMode, FunctionDeclaration,
     FunctionDeclarationBuilder, FunctionParameters, GoogleMapsConfig, GoogleSearchConfig,
-    McpServerConfig, SearchType, Tool,
+    McpServerConfig, SearchType, Tool, ToolChoice,
 };
 
 // Wire streaming types (from API)
 pub mod wire_streaming;
-pub use wire_streaming::{InteractionStreamEvent, StreamChunk, StreamEvent};
+pub use wire_streaming::{InteractionStreamEvent, StreamChunk, StreamEvent, StreamMetadata};
 
 // Wire-level inspection (WireEvent, WireInspector, built-in inspectors)
 pub mod wire;

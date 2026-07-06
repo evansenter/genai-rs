@@ -146,7 +146,7 @@ where
 ///         .await?;
 ///
 ///     // Check if we got an image (not text)
-///     if resp.outputs.iter().any(|o| matches!(o, Content::Image { .. })) {
+///     if resp.has_images() {
 ///         Ok(resp)
 ///     } else {
 ///         Err(anyhow::anyhow!("No image in response"))
@@ -543,27 +543,36 @@ pub async fn consume_stream(
                 }
 
                 match event.chunk {
-                    StreamChunk::Delta(delta) => {
+                    StreamChunk::StepStart { step, .. } => {
+                        if matches!(step, genai_rs::Step::FunctionCall { .. }) {
+                            result.saw_function_call = true;
+                        }
+                        if matches!(step, genai_rs::Step::Thought { .. }) {
+                            result.saw_thought = true;
+                        }
+                    }
+                    StreamChunk::StepDelta { delta, .. } => {
                         result.delta_count += 1;
                         if let Some(text) = delta.as_text() {
                             result.collected_text.push_str(text);
                             print!("{}", text);
                         }
-                        if delta.is_function_call() {
+                        if delta.as_arguments_delta().is_some() {
                             result.saw_function_call = true;
                         }
-                        if delta.is_thought() {
+                        if let genai_rs::StepDelta::ThoughtSignature { signature } = &delta {
                             result.saw_thought = true;
-                            // Thoughts contain cryptographic signatures, not readable text
-                            if let Some(sig) = delta.thought_signature() {
+                            result.saw_thought_signature = true;
+                            // Thoughts carry opaque signatures, not readable text
+                            if let Some(sig) = signature {
                                 result.collected_thoughts.push_str(sig);
                             }
                         }
-                        if delta.is_thought_signature() {
-                            result.saw_thought_signature = true;
+                        if matches!(delta, genai_rs::StepDelta::ThoughtSummary { .. }) {
+                            result.saw_thought = true;
                         }
                     }
-                    StreamChunk::Complete(response) => {
+                    StreamChunk::Completed(response) => {
                         println!("\nStream complete: {:?}", response.id);
                         result.final_response = Some(response);
                     }
@@ -659,12 +668,18 @@ pub async fn consume_auto_function_stream(
                             result.collected_text.push_str(text);
                             print!("{}", text);
                         }
-                        if delta.is_thought() {
-                            result.saw_thought = true;
-                            // Thoughts contain cryptographic signatures, not readable text
-                            if let Some(sig) = delta.thought_signature() {
-                                result.collected_thoughts.push_str(sig);
+                        match &delta {
+                            genai_rs::StepDelta::ThoughtSignature { signature } => {
+                                result.saw_thought = true;
+                                // Thoughts carry opaque signatures, not readable text
+                                if let Some(sig) = signature {
+                                    result.collected_thoughts.push_str(sig);
+                                }
                             }
+                            genai_rs::StepDelta::ThoughtSummary { .. } => {
+                                result.saw_thought = true;
+                            }
+                            _ => {}
                         }
                     }
                     AutoFunctionStreamChunk::ExecutingFunctions { pending_calls, .. } => {

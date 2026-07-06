@@ -79,7 +79,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 println!("\nRetrieving interaction details after cancellation...");
                 let retrieved = client.get_interaction(interaction_id).await?;
                 println!("Retrieved status: {:?}", retrieved.status);
-                println!("Output count: {} items", retrieved.outputs.len());
+                println!("Step count: {} items", retrieved.steps.len());
             }
             Err(GenaiError::Api {
                 status_code: 404, ..

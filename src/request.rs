@@ -6,7 +6,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
 use crate::content::Content;
-use crate::tools::{FunctionCallingMode, Tool};
+use crate::steps::Step;
+use crate::tools::{Tool, ToolChoice};
 
 /// Role in a conversation turn.
 ///
@@ -196,102 +197,8 @@ impl TurnContent {
     }
 }
 
-/// A single turn in a multi-turn conversation.
-///
-/// Represents one message in a conversation, containing the role (who sent it)
-/// and the content of the message.
-///
-/// # Example
-///
-/// ```
-/// use genai_rs::{Turn, Role, TurnContent};
-///
-/// // Create a user turn with text
-/// let user_turn = Turn::user("What is 2+2?");
-///
-/// // Create a model turn with text
-/// let model_turn = Turn::model("2+2 equals 4.");
-///
-/// // Create a turn with explicit role and content
-/// let turn = Turn::new(Role::User, "Hello!");
-///
-/// // Access via getters
-/// assert!(matches!(turn.role(), &Role::User));
-/// assert_eq!(turn.content().as_text(), Some("Hello!"));
-/// ```
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Turn {
-    role: Role,
-    content: TurnContent,
-}
-
-impl Turn {
-    /// Creates a new turn with the given role and content.
-    pub fn new(role: Role, content: impl Into<TurnContent>) -> Self {
-        Self {
-            role,
-            content: content.into(),
-        }
-    }
-
-    /// Returns a reference to the role of this turn.
-    #[must_use]
-    pub fn role(&self) -> &Role {
-        &self.role
-    }
-
-    /// Returns a reference to the content of this turn.
-    #[must_use]
-    pub fn content(&self) -> &TurnContent {
-        &self.content
-    }
-
-    /// Creates a user turn with the given content.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use genai_rs::Turn;
-    ///
-    /// let turn = Turn::user("What is the capital of France?");
-    /// ```
-    pub fn user(content: impl Into<TurnContent>) -> Self {
-        Self::new(Role::User, content)
-    }
-
-    /// Creates a model turn with the given content.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use genai_rs::Turn;
-    ///
-    /// let turn = Turn::model("The capital of France is Paris.");
-    /// ```
-    pub fn model(content: impl Into<TurnContent>) -> Self {
-        Self::new(Role::Model, content)
-    }
-
-    /// Returns `true` if this is a user turn.
-    #[must_use]
-    pub fn is_user(&self) -> bool {
-        *self.role() == Role::User
-    }
-
-    /// Returns `true` if this is a model turn.
-    #[must_use]
-    pub fn is_model(&self) -> bool {
-        *self.role() == Role::Model
-    }
-
-    /// Returns the text content if this turn contains text.
-    #[must_use]
-    pub fn as_text(&self) -> Option<&str> {
-        self.content().as_text()
-    }
-}
-
-/// Input for an interaction - can be a simple string, array of content, or turns.
+/// Input for an interaction - a simple string, an array of content blocks,
+/// or an array of steps (conversation history).
 ///
 /// This enum is marked `#[non_exhaustive]` for forward compatibility.
 /// New input types may be added in future versions.
@@ -299,35 +206,104 @@ impl Turn {
 /// # Variants
 ///
 /// - `Text`: Simple text input for single-turn conversations
-/// - `Content`: Array of content objects for multimodal input
-/// - `Turns`: Array of turns for explicit multi-turn conversations
+/// - `Content`: Array of content blocks for multimodal input
+/// - `Steps`: Array of [`Step`]s — the canonical multi-turn/history form
+///   under API revision 2026-05-20 (replaces the deprecated `Turn` array)
 ///
 /// # Example
 ///
 /// ```
-/// use genai_rs::{InteractionInput, Turn};
+/// use genai_rs::{InteractionInput, Step};
 ///
 /// // Simple text
 /// let input = InteractionInput::Text("Hello!".to_string());
 ///
-/// // Multi-turn conversation
-/// let turns = vec![
-///     Turn::user("What is 2+2?"),
-///     Turn::model("2+2 equals 4."),
-///     Turn::user("And what's that times 3?"),
+/// // Multi-turn conversation history as steps
+/// let steps = vec![
+///     Step::user_text("What is 2+2?"),
+///     Step::model_text("2+2 equals 4."),
+///     Step::user_text("And what's that times 3?"),
 /// ];
-/// let input = InteractionInput::Turns(turns);
+/// let input = InteractionInput::Steps(steps);
 /// ```
-#[derive(Clone, Serialize, Deserialize, Debug)]
-#[serde(untagged)]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum InteractionInput {
     /// Simple text input
     Text(String),
-    /// Array of content objects
+    /// Array of content blocks (single-turn multimodal input)
     Content(Vec<Content>),
-    /// Array of turns for multi-turn conversations
-    Turns(Vec<Turn>),
+    /// Array of steps (multi-turn conversation history, function results,
+    /// thought signatures, ...)
+    Steps(Vec<Step>),
+}
+
+impl Serialize for InteractionInput {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Text(t) => serializer.serialize_str(t),
+            Self::Content(c) => c.serialize(serializer),
+            Self::Steps(s) => s.serialize(serializer),
+        }
+    }
+}
+
+/// The set of `type` tags that identify a content block (as opposed to a step).
+const CONTENT_TYPE_TAGS: &[&str] = &["text", "image", "audio", "video", "document"];
+
+impl<'de> Deserialize<'de> for InteractionInput {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::String(s) => Ok(Self::Text(s)),
+            serde_json::Value::Array(items) => {
+                // Decide between [Content] and [Step] by inspecting element
+                // type tags. Elements with content tags (text/image/...) are
+                // content blocks; everything else (user_input, function_call,
+                // unknown future types, ...) is treated as steps, the
+                // canonical revision 2026-05-20 form.
+                let is_content = items.iter().all(|item| {
+                    item.get("type")
+                        .and_then(|t| t.as_str())
+                        .is_some_and(|t| CONTENT_TYPE_TAGS.contains(&t))
+                });
+                if is_content && !items.is_empty() {
+                    let contents = serde_json::from_value(serde_json::Value::Array(items))
+                        .map_err(serde::de::Error::custom)?;
+                    Ok(Self::Content(contents))
+                } else {
+                    let steps = serde_json::from_value(serde_json::Value::Array(items))
+                        .map_err(serde::de::Error::custom)?;
+                    Ok(Self::Steps(steps))
+                }
+            }
+            other @ serde_json::Value::Object(_) => {
+                // A single content or step object.
+                let is_content = other
+                    .get("type")
+                    .and_then(|t| t.as_str())
+                    .is_some_and(|t| CONTENT_TYPE_TAGS.contains(&t));
+                if is_content {
+                    let content: Content =
+                        serde_json::from_value(other).map_err(serde::de::Error::custom)?;
+                    Ok(Self::Content(vec![content]))
+                } else {
+                    let step: Step =
+                        serde_json::from_value(other).map_err(serde::de::Error::custom)?;
+                    Ok(Self::Steps(vec![step]))
+                }
+            }
+            other => Err(serde::de::Error::custom(format!(
+                "InteractionInput must be a string, array, or object; got {other}"
+            ))),
+        }
+    }
 }
 
 /// Thinking level for chain-of-thought reasoning.
@@ -487,8 +463,6 @@ pub struct GenerationConfig {
     pub max_output_tokens: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub top_k: Option<i32>,
     /// Thinking level for chain-of-thought reasoning
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_level: Option<ThinkingLevel>,
@@ -510,20 +484,21 @@ pub struct GenerationConfig {
     pub thinking_summaries: Option<ThinkingSummaries>,
     /// Controls function calling behavior.
     ///
-    /// This field determines how the model uses declared tools/functions:
-    /// - `Auto` (default): Model decides whether to call functions
-    /// - `Any`: Model must call a function
-    /// - `None`: Function calling is disabled
-    /// - `Validated`: Ensures schema adherence for both function calls and natural language
+    /// Either a plain mode string (`auto|any|none|validated`) or an
+    /// `allowed_tools` restriction object. See [`ToolChoice`].
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_choice: Option<FunctionCallingMode>,
-    /// Optional list of specific tool names the model is allowed to call.
-    /// When set, restricts the model to only calling the named tools.
+    pub tool_choice: Option<ToolChoice>,
+    /// Positive values penalize tokens that already appeared in the text,
+    /// increasing the likelihood of new topics. Range: [-2.0, 2.0].
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub allowed_tools: Option<Vec<String>>,
+    pub presence_penalty: Option<f32>,
+    /// Positive values penalize tokens proportionally to their frequency in
+    /// the text so far, reducing repetition. Range: [-2.0, 2.0].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frequency_penalty: Option<f32>,
     /// Speech configuration for text-to-speech audio output.
     ///
-    /// Required when using `AUDIO` response modality.
+    /// Required when using the `audio` response modality.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speech_config: Option<SpeechConfig>,
     /// Image generation configuration.
@@ -984,8 +959,12 @@ pub struct InteractionRequest {
 
     /// Response MIME type for structured output.
     ///
-    /// Required when using `response_format` with a JSON schema.
-    /// Typically "application/json".
+    /// Deprecated by the API in favor of `response_format`; still sent when
+    /// set, but prefer `response_format` for structured output.
+    #[deprecated(
+        since = "0.8.0",
+        note = "The API deprecated response_mime_type; use response_format instead"
+    )]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_mime_type: Option<String>,
 
@@ -1005,9 +984,135 @@ pub struct InteractionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub store: Option<bool>,
 
-    /// System instruction for the model
+    /// System instruction for the model (plain string per the API spec)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub system_instruction: Option<InteractionInput>,
+    pub system_instruction: Option<String>,
+
+    /// Latency/priority tier for processing this request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<ServiceTier>,
+
+    /// Name of an explicit context cache to use for this request
+    /// (e.g., `cachedContents/xyz`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cached_content: Option<String>,
+}
+
+/// Latency/priority service tier for a request.
+///
+/// This enum is marked `#[non_exhaustive]` for forward compatibility.
+///
+/// # Wire Format
+///
+/// Serializes as lowercase strings: `"flex"`, `"standard"`, `"priority"`.
+///
+/// # Evergreen Pattern
+///
+/// Unknown values from the API deserialize into the `Unknown` variant,
+/// preserving the original data for debugging and roundtrip serialization.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum ServiceTier {
+    /// Flexible latency, lower cost.
+    Flex,
+    /// Standard processing.
+    Standard,
+    /// Prioritized processing.
+    Priority,
+    /// Unknown variant for forward compatibility (Evergreen pattern)
+    Unknown {
+        /// The unrecognized tier type from the API
+        tier_type: String,
+        /// The raw JSON value, preserved for debugging and roundtrip
+        data: serde_json::Value,
+    },
+}
+
+impl ServiceTier {
+    /// Returns true if this is an unknown service tier.
+    #[must_use]
+    pub const fn is_unknown(&self) -> bool {
+        matches!(self, Self::Unknown { .. })
+    }
+
+    /// Returns the tier type name if this is an unknown service tier.
+    #[must_use]
+    pub fn unknown_tier_type(&self) -> Option<&str> {
+        match self {
+            Self::Unknown { tier_type, .. } => Some(tier_type),
+            _ => None,
+        }
+    }
+
+    /// Returns the preserved data if this is an unknown service tier.
+    #[must_use]
+    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::Unknown { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for ServiceTier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Flex => write!(f, "flex"),
+            Self::Standard => write!(f, "standard"),
+            Self::Priority => write!(f, "priority"),
+            Self::Unknown { tier_type, .. } => write!(f, "{}", tier_type),
+        }
+    }
+}
+
+impl Serialize for ServiceTier {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Flex => serializer.serialize_str("flex"),
+            Self::Standard => serializer.serialize_str("standard"),
+            Self::Priority => serializer.serialize_str("priority"),
+            Self::Unknown { tier_type, .. } => serializer.serialize_str(tier_type),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ServiceTier {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value.as_str() {
+            Some("flex") => Ok(Self::Flex),
+            Some("standard") => Ok(Self::Standard),
+            Some("priority") => Ok(Self::Priority),
+            Some(other) => {
+                tracing::warn!(
+                    "Encountered unknown ServiceTier '{}' - using Unknown variant (Evergreen)",
+                    other
+                );
+                Ok(Self::Unknown {
+                    tier_type: other.to_string(),
+                    data: value,
+                })
+            }
+            None => {
+                let tier_type = format!("<non-string: {}>", value);
+                tracing::warn!(
+                    "ServiceTier received non-string value: {}. \
+                     Preserving in Unknown variant.",
+                    value
+                );
+                Ok(Self::Unknown {
+                    tier_type,
+                    data: value,
+                })
+            }
+        }
+    }
 }
 
 // =============================================================================
@@ -1737,38 +1842,135 @@ mod tests {
     }
 
     // =========================================================================
-    // GenerationConfig allowed_tools Tests
+    // GenerationConfig tool_choice / penalty Tests
     // =========================================================================
 
     #[test]
-    fn test_generation_config_allowed_tools_serializes() {
+    fn test_generation_config_tool_choice_mode_serializes_lowercase() {
         let config = GenerationConfig {
-            allowed_tools: Some(vec!["get_weather".to_string(), "get_time".to_string()]),
+            tool_choice: Some(ToolChoice::Mode(crate::tools::FunctionCallingMode::Any)),
             ..Default::default()
         };
 
-        let json = serde_json::to_string(&config).expect("Serialization failed");
-        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-
-        let tools = value["allowed_tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 2);
-        assert_eq!(tools[0], "get_weather");
-        assert_eq!(tools[1], "get_time");
+        let value = serde_json::to_value(&config).unwrap();
+        assert_eq!(value["tool_choice"], "any");
     }
 
     #[test]
-    fn test_generation_config_allowed_tools_omitted_when_none() {
+    fn test_generation_config_tool_choice_allowed_tools_object() {
         let config = GenerationConfig {
-            allowed_tools: None,
+            tool_choice: Some(ToolChoice::allowed_tools(
+                Some(crate::tools::FunctionCallingMode::Any),
+                vec!["get_weather".to_string(), "get_time".to_string()],
+            )),
             ..Default::default()
         };
 
-        let json = serde_json::to_string(&config).expect("Serialization failed");
-        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-
+        let value = serde_json::to_value(&config).unwrap();
+        assert_eq!(value["tool_choice"]["allowed_tools"]["mode"], "any");
+        assert_eq!(
+            value["tool_choice"]["allowed_tools"]["tools"][0],
+            "get_weather"
+        );
         assert!(
             value.get("allowed_tools").is_none(),
-            "allowed_tools should be omitted when None"
+            "top-level allowed_tools was removed from generation_config"
         );
+    }
+
+    #[test]
+    fn test_generation_config_penalties_serialize() {
+        let config = GenerationConfig {
+            presence_penalty: Some(0.5),
+            frequency_penalty: Some(-0.5),
+            ..Default::default()
+        };
+        let value = serde_json::to_value(&config).unwrap();
+        assert_eq!(value["presence_penalty"], 0.5);
+        assert_eq!(value["frequency_penalty"], -0.5);
+    }
+
+    #[test]
+    fn test_generation_config_has_no_top_k() {
+        // top_k was dropped from the 2026-05-20 spec; ensure it never serializes.
+        let config = GenerationConfig {
+            temperature: Some(0.3),
+            ..Default::default()
+        };
+        let value = serde_json::to_value(&config).unwrap();
+        assert!(value.get("top_k").is_none());
+    }
+
+    // =========================================================================
+    // ServiceTier Tests
+    // =========================================================================
+
+    #[test]
+    fn test_service_tier_roundtrip() {
+        for (tier, wire) in [
+            (ServiceTier::Flex, "\"flex\""),
+            (ServiceTier::Standard, "\"standard\""),
+            (ServiceTier::Priority, "\"priority\""),
+        ] {
+            assert_eq!(serde_json::to_string(&tier).unwrap(), wire);
+            let parsed: ServiceTier = serde_json::from_str(wire).unwrap();
+            assert_eq!(parsed, tier);
+        }
+    }
+
+    #[test]
+    fn test_service_tier_unknown_roundtrip() {
+        let unknown: ServiceTier = serde_json::from_str("\"turbo\"").unwrap();
+        assert!(unknown.is_unknown());
+        assert_eq!(unknown.unknown_tier_type(), Some("turbo"));
+        assert!(unknown.unknown_data().is_some());
+        assert_eq!(serde_json::to_string(&unknown).unwrap(), "\"turbo\"");
+    }
+
+    // =========================================================================
+    // InteractionInput Tests
+    // =========================================================================
+
+    #[test]
+    fn test_interaction_input_text_roundtrip() {
+        let input = InteractionInput::Text("Hello".into());
+        let json = serde_json::to_string(&input).unwrap();
+        assert_eq!(json, "\"Hello\"");
+        let back: InteractionInput = serde_json::from_str(&json).unwrap();
+        assert!(matches!(back, InteractionInput::Text(t) if t == "Hello"));
+    }
+
+    #[test]
+    fn test_interaction_input_content_array_roundtrip() {
+        let json = r#"[{"type":"text","text":"hi"},{"type":"image","uri":"files/x","mime_type":"image/png"}]"#;
+        let input: InteractionInput = serde_json::from_str(json).unwrap();
+        match &input {
+            InteractionInput::Content(c) => assert_eq!(c.len(), 2),
+            other => panic!("Expected Content, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_interaction_input_steps_array_roundtrip() {
+        let json = r#"[
+            {"type":"user_input","content":[{"type":"text","text":"hi"}]},
+            {"type":"model_output","content":[{"type":"text","text":"hello"}]},
+            {"type":"function_result","call_id":"c1","result":"done"}
+        ]"#;
+        let input: InteractionInput = serde_json::from_str(json).unwrap();
+        match &input {
+            InteractionInput::Steps(s) => assert_eq!(s.len(), 3),
+            other => panic!("Expected Steps, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_interaction_input_single_content_object() {
+        let json = r#"{"type":"text","text":"hi"}"#;
+        let input: InteractionInput = serde_json::from_str(json).unwrap();
+        match &input {
+            InteractionInput::Content(c) => assert_eq!(c.len(), 1),
+            other => panic!("Expected Content, got {other:?}"),
+        }
     }
 }

@@ -241,11 +241,12 @@ async fn structured_with_search(client: &Client) -> Result<(), Box<dyn Error>> {
     let json: serde_json::Value = serde_json::from_str(text)?;
     println!("Stock Info JSON:\n{}", serde_json::to_string_pretty(&json)?);
 
-    // Show grounding metadata if available
-    if let Some(metadata) = response.google_search_metadata() {
+    // Show grounding sources if available
+    let search_results = response.google_search_results();
+    if !search_results.is_empty() {
         println!(
             "\nGrounded with {} sources from web search",
-            metadata.grounding_chunks.len()
+            search_results.len()
         );
     }
 
@@ -288,13 +289,13 @@ async fn streaming_structured_output(client: &Client) -> Result<(), Box<dyn Erro
     while let Some(result) = stream.next().await {
         match result {
             Ok(event) => match event.chunk {
-                StreamChunk::Delta(content) => {
-                    if let Some(text) = content.as_text() {
+                StreamChunk::StepDelta { delta, .. } => {
+                    if let Some(text) = delta.as_text() {
                         print!("{}", text);
                         stdout().flush()?;
                     }
                 }
-                StreamChunk::Complete(response) => {
+                StreamChunk::Completed(response) => {
                     final_response = Some(response);
                 }
                 _ => {} // Handle unknown variants

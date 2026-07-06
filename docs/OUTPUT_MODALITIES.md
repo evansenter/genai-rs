@@ -203,6 +203,10 @@ for audio in response.audios() {
     // File extension
     let ext = audio.extension();  // "wav", "mp3", etc.
 
+    // Sample rate and channel count, if reported by the API
+    let rate = audio.sample_rate();  // e.g., Some(24000)
+    let channels = audio.channels(); // e.g., Some(1)
+
     // Raw bytes
     let bytes = audio.bytes()?;
 }
@@ -211,6 +215,8 @@ for audio in response.audios() {
 ## Structured Output (JSON)
 
 Force the model to return valid JSON matching a schema.
+
+> **Note**: `with_response_format(schema)` is all you need — passing a JSON schema implies JSON output. The old `with_response_mime_type()` method is deprecated (the API deprecated `response_mime_type`).
 
 ### Basic JSON Schema
 
@@ -221,7 +227,6 @@ let response = client
     .interaction()
     .with_model("gemini-3-flash-preview")
     .with_text("Generate a user profile for John Doe, age 30")
-    .with_response_mime_type("application/json")
     .with_response_format(json!({
         "type": "object",
         "properties": {
@@ -268,7 +273,6 @@ let response = client
     .interaction()
     .with_model("gemini-3-flash-preview")
     .with_text("List 3 popular smartphones with prices")
-    .with_response_mime_type("application/json")
     .with_response_format(schema)
     .create()
     .await?;
@@ -304,7 +308,6 @@ let response = client
     .with_model("gemini-3-flash-preview")
     .with_text("What's the weather in Tokyo?")
     .with_google_search()
-    .with_response_mime_type("application/json")
     .with_response_format(json!({
         "type": "object",
         "properties": {
@@ -339,7 +342,7 @@ let json_str = response.as_text().unwrap();
 
 ### Multiple Content Types in Response
 
-Responses can contain multiple content types:
+Responses can contain multiple content types (spread across `response.steps`):
 
 ```rust,ignore
 // Check what content types are present
@@ -348,12 +351,12 @@ println!("Has images: {}", response.has_images());
 println!("Has audio: {}", response.has_audio());
 println!("Has thoughts: {}", response.has_thoughts());
 
-// Content summary
-let summary = response.content_summary();
+// Step summary (per-step-type and per-content-type counts)
+let summary = response.step_summary();
 println!("Text blocks: {}", summary.text_count);
 println!("Image blocks: {}", summary.image_count);
 println!("Audio blocks: {}", summary.audio_count);
-println!("Thought blocks: {}", summary.thought_count);
+println!("Thought steps: {}", summary.thought_count);
 ```
 
 ## Response Helpers
@@ -389,7 +392,7 @@ for image in response.images() {
 
 ```rust,ignore
 // Get first audio
-let audio: Option<AudioOutput> = response.first_audio();
+let audio: Option<AudioInfo> = response.first_audio();
 
 // Check for audio
 let has_audio: bool = response.has_audio();
@@ -399,18 +402,27 @@ for audio in response.audios() {
     let bytes = audio.bytes()?;
     let mime = audio.mime_type();
     let ext = audio.extension();
+    let rate = audio.sample_rate();   // Option<u32>
+    let channels = audio.channels();  // Option<u32>
 }
 ```
 
 ### Thought Helpers (Thinking Mode)
 
 ```rust,ignore
-// Check for thinking content
+// Check for thought steps (Step::Thought)
 let has_thoughts: bool = response.has_thoughts();
 
 // Iterate thought signatures (cryptographic proofs, not readable reasoning)
 for signature in response.thought_signatures() {
     println!("Thought signature: {}", signature);
+}
+
+// Iterate readable thought summaries (requires with_thinking_summaries(ThinkingSummaries::Auto))
+for content in response.thought_summaries() {
+    if let Some(text) = content.as_text() {
+        println!("Reasoning summary: {}", text);
+    }
 }
 ```
 

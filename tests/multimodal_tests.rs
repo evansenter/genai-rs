@@ -1267,6 +1267,7 @@ mod text_to_speech {
 
         println!("=== Testing NESTED SpeechConfig format ===");
 
+        #[allow(deprecated)]
         let request = InteractionRequest {
             model: Some(tts_model.to_string()),
             agent: None,
@@ -1282,6 +1283,8 @@ mod text_to_speech {
             background: None,
             store: None,
             system_instruction: None,
+            service_tier: None,
+            cached_content: None,
         };
 
         let mut request_json = serde_json::to_value(&request).expect("Serialize request");
@@ -1323,6 +1326,7 @@ mod text_to_speech {
             ..Default::default()
         };
 
+        #[allow(deprecated)]
         let flat_request = InteractionRequest {
             model: Some(tts_model.to_string()),
             agent: None,
@@ -1338,6 +1342,8 @@ mod text_to_speech {
             background: None,
             store: None,
             system_instruction: None,
+            service_tier: None,
+            cached_content: None,
         };
 
         let flat_json = serde_json::to_value(&flat_request).expect("Serialize flat request");

@@ -7,6 +7,146 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Interactions API revision 2026-05-20 migration
+
+The crate now speaks Interactions API wire revision **2026-05-20**: every
+Interactions API request sends the `Api-Revision: 2026-05-20` header
+(create/get/delete/cancel, streaming included; the Files API is unrevisioned,
+matching google-genai). This is a comprehensive breaking migration.
+
+> **Note**: wire shapes were derived from Google's generated `google-genai`
+> 2.10 API bindings and covered with fixture tests. Live wire verification
+> with `LOUD_WIRE=1` and a real `GEMINI_API_KEY` is still pending and should
+> be performed before release.
+
+#### Breaking - response model (`outputs` -> `steps`)
+
+- `InteractionResponse.outputs: Vec<Content>` replaced by `steps: Vec<Step>`.
+  `Step` is a new `#[non_exhaustive]` tagged union (`user_input`,
+  `model_output`, `thought`, `function_call`, `function_result`,
+  `code_execution_call/result`, `url_context_call/result`,
+  `google_search_call/result`, `mcp_server_tool_call/result`,
+  `file_search_call/result`, `google_maps_call/result`, plus the standard
+  `Unknown { step_type, data }` variant). Tool call/result and thought steps
+  carry opaque `signature` fields that must be replayed unchanged.
+- Convenience accessors (`as_text()`, `all_text()`, `function_calls()`,
+  `images()`, `audios()`, `code_execution_*()`, `google_search_*()`,
+  `url_context_*()`, `file_search_results()`, `google_maps_results()`,
+  `thought_signatures()`, annotations helpers) are reimplemented over steps
+  and keep working. New: `output_contents()`, `output_steps()`,
+  `thought_summaries()`, `unknown_steps()`.
+- `Content` slimmed to the spec content union: `Text`, `Image`, `Audio`,
+  `Video`, `Document`, `Unknown`. All tool/thought `Content` variants were
+  removed (they are `Step`s now); `ComputerUseCall`/`ComputerUseResult`
+  content was dropped entirely (computer use surfaces as `function_call`
+  steps). `Content::Audio` gained `sample_rate` and `channels`.
+- `Annotation` is now a typed citation union: `UrlCitation`, `FileCitation`,
+  `PlaceCitation` (with `ReviewSnippet`s), plus `Unknown`. Byte-offset
+  `extract_span()` is preserved.
+- `InteractionResponse` gained `environment_id`, `output_text`, and a typed
+  optional `input`; it serializes uniformly in snake_case (the previous
+  `camelCase` rename was wrong for this API) and now implements `Default`.
+- `content_summary()`/`ContentSummary` replaced by
+  `step_summary()`/`StepSummary`.
+- `InteractionStatus` gained first-class `BudgetExceeded`
+  (`"budget_exceeded"`).
+- `UsageMetadata`: removed `total_reasoning_tokens` (not in the spec; use
+  `total_thought_tokens`), added `grounding_tool_count:
+  Vec<GroundingToolCount>` and `grounding_count_for_tool()`.
+  `InteractionResponse::reasoning_tokens()` removed in favor of
+  `thought_tokens()`.
+- `FunctionCallInfo.id` is now `&str` (required by the spec);
+  `FunctionResultInfo.result` is a typed `FunctionResultPayload`
+  (string | JSON | content blocks union).
+
+#### Breaking - SSE lifecycle
+
+- Wire events migrated from `interaction.start` / `content.start|delta|stop` /
+  `interaction.complete` to `interaction.created`,
+  `interaction.status_update`, `step.start`, `step.delta`, `step.stop`,
+  `interaction.completed`, and `error`.
+- `StreamChunk` variants renamed/reshaped: `Created { interaction }`,
+  `StepStart { index, step }`, `StepDelta { index, delta: StepDelta }`,
+  `StepStop { index, usage, step_usage }` (per-step usage), and
+  `Completed(InteractionResponse)`. Stream termination keys on
+  `interaction.completed` / `error`.
+- New `StepDelta` payload union: `text`, `image`, `audio` (with
+  `rate`/`sample_rate`/`channels`), `video`, `document`, `thought_summary`,
+  `thought_signature`, `text_annotation_delta`, `arguments_delta`
+  (function-call arguments now stream incrementally), built-in tool
+  call/result deltas, `function_result`, and `Unknown`.
+- The HTTP layer accumulates `step.start`/`step.delta`/`step.stop` into the
+  final `Completed` response (including parsing streamed `arguments_delta`
+  fragments into `FunctionCall.arguments`), so `response.function_calls()`
+  and `as_text()` work after streaming. Lifecycle `metadata.total_usage` is
+  folded into the completed response when the payload omits usage.
+- `AutoFunctionStreamChunk::Delta` now carries `StepDelta` (exposing
+  `arguments_delta` in the auto-function stream); the auto-function streaming
+  loop and `last_event_id` resume work over the new events.
+
+#### Breaking - input model & requests
+
+- `Turn` and `InteractionInput::Turns` removed (deprecated in the spec).
+  Conversation history is represented as steps:
+  `InteractionInput::Steps(Vec<Step>)`, `with_history(Vec<Step>)`,
+  `Step::user_text()` / `Step::model_text()` /
+  `InteractionResponse::output_steps()`. `ConversationBuilder` keeps its
+  fluent `.user()`/`.model()`/`.turn()` API but produces steps.
+- `system_instruction` is a plain `Option<String>` per the spec.
+- `generation_config.tool_choice` is a typed union `ToolChoice`: a lowercase
+  mode string (`auto|any|none|validated`) or
+  `{"allowed_tools": {"mode", "tools"}}`. The crate's previous top-level
+  `generation_config.allowed_tools: Vec<String>` was removed;
+  `with_allowed_tools()` now produces the object form. New
+  `with_tool_choice()` escape hatch.
+- `generation_config.top_k` removed (dropped from the spec).
+- `response_mime_type` deprecated (API deprecation); use `response_format`.
+- `interactions_api` helper constructors renamed `*_content` -> `*_step` and
+  return `Step`.
+
+#### Fixed - spec/implementation disagreements
+
+- `FunctionCallingMode` now serializes lowercase (`"auto"`, ...); legacy
+  UPPERCASE still accepted on deserialize.
+- `CodeExecutionLanguage` now serializes `"python"` (was `"PYTHON"`); legacy
+  accepted on deserialize.
+- `Tool::ComputerUse` `excluded_predefined_functions` now serializes
+  snake_case (was `excludedPredefinedFunctions`); legacy alias accepted on
+  deserialize.
+- MCP server `allowed_tools` is now `[{mode, tools}]` (`Vec<AllowedTools>`)
+  per the spec (was `[String]`).
+- `InteractionResponse` no longer serializes camelCase field names.
+- Removed speculative `grounding_metadata`/`url_context_metadata` response
+  fields (and `GroundingMetadata`, `GroundingChunk`, `WebSource`,
+  `UrlContextMetadata`, `UrlMetadataEntry`, `UrlRetrievalStatus` types) -
+  not part of the Interactions API; grounding data lives in steps and typed
+  annotations.
+
+#### Added with the revision
+
+- `Api-Revision` header constants (`src/http/common.rs`).
+- `Step`, `StepDelta`, `StepError`, `FunctionResultPayload`, `StepSummary`,
+  `Annotation` union + `ReviewSnippet`, `ToolChoice` + `AllowedTools`,
+  `ServiceTier`, `GroundingToolCount`, `StreamMetadata` types.
+- `service_tier` request field + `with_service_tier()` (`flex | standard |
+  priority` + Unknown).
+- `cached_content` request field + `with_cached_content()` (explicit caching).
+- `presence_penalty` / `frequency_penalty` generation config fields +
+  `with_presence_penalty()` / `with_frequency_penalty()`.
+- `include_input` query param support: `Client::get_interaction_with_input()`.
+- `SearchType::EnterpriseWebSearch`.
+- `Tool::GoogleMaps` `latitude`/`longitude` +
+  `GoogleMapsConfig::with_location()`.
+- `Tool::ComputerUse` `enable_prompt_injection_detection` and
+  `disabled_safety_policies`; documented `mobile`/`desktop` environments;
+  `ComputerUseConfig::with_environment()` /
+  `with_prompt_injection_detection()` / `disabling_safety_policies()`.
+- `AudioInfo::sample_rate()` / `channels()`;
+  `GoogleSearchResultItem.search_suggestions`; `Place.url` /
+  `review_snippets`.
+- `StreamChunk::delta_text()` convenience; `Step`/`StepDelta` accessors
+  (`as_text()`, `signature()`, `step_type()`, `as_arguments_delta()`, ...).
+
 ### Added
 
 - `InteractionStatus::Incomplete` variant for interactions that end before completion

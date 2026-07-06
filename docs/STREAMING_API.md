@@ -8,7 +8,10 @@ This guide covers everything you need to know about streaming responses and stre
 - [Streaming vs Non-Streaming](#streaming-vs-non-streaming)
 - [Type Hierarchy](#type-hierarchy)
 - [Event Types and Lifecycle](#event-types-and-lifecycle)
+- [Step Deltas](#step-deltas)
+- [Per-Step Usage](#per-step-usage)
 - [Basic Streaming](#basic-streaming)
+- [Streaming Function Calls](#streaming-function-calls)
 - [Auto-Function Streaming](#auto-function-streaming)
 - [Stream Resume](#stream-resume)
 - [Accessor Consistency](#accessor-consistency)
@@ -35,7 +38,10 @@ The key decision points are:
 
 ### Non-Streaming (`create()`)
 
-```rust,ignore
+```rust,no_run
+# use genai_rs::Client;
+# async fn example() -> Result<(), genai_rs::GenaiError> {
+# let client = Client::new("your-api-key".to_string());
 let response = client.interaction()
     .with_model("gemini-3-flash-preview")
     .with_text("Write a poem about Rust")
@@ -43,7 +49,9 @@ let response = client.interaction()
     .await?;
 
 // All content available at once
-println!("{}", response.as_text().unwrap());
+println!("{}", response.as_text().unwrap_or_default());
+# Ok(())
+# }
 ```
 
 **Characteristics:**
@@ -53,9 +61,12 @@ println!("{}", response.as_text().unwrap());
 
 ### Basic Streaming (`create_stream()`)
 
-```rust,ignore
+```rust,no_run
 use futures_util::StreamExt;
+use genai_rs::{Client, StreamChunk};
 
+# async fn example() -> Result<(), genai_rs::GenaiError> {
+# let client = Client::new("your-api-key".to_string());
 let mut stream = client.interaction()
     .with_model("gemini-3-flash-preview")
     .with_text("Write a poem about Rust")
@@ -63,19 +74,21 @@ let mut stream = client.interaction()
 
 while let Some(result) = stream.next().await {
     let event = result?;
-    if let StreamChunk::Delta(content) = &event.chunk {
-        if let Some(text) = content.as_text() {
-            print!("{}", text);
+    if let StreamChunk::StepDelta { delta, .. } = &event.chunk {
+        if let Some(text) = delta.as_text() {
+            print!("{text}");
         }
     }
 }
+# Ok(())
+# }
 ```
 
 **Characteristics:**
 - Returns `Stream<StreamEvent>` for incremental processing
 - Each `StreamEvent` contains a `chunk` and optional `event_id`
-- Events arrive as content is generated
-- Final `Complete` event contains full response with usage metadata
+- Events arrive as steps are generated (`step.start` / `step.delta` / `step.stop`)
+- Final `Completed` event contains the full response with usage metadata
 
 ### When to Use Each
 
@@ -87,55 +100,6 @@ while let Some(result) = stream.next().await {
 | Need resume capability | | ✅ |
 | Simple code preferred | ✅ | |
 | Background/batch processing | ✅ | |
-
-### Important: Function Calls in Streaming Mode
-
-When using basic streaming (`create_stream()`) with function calling, there's a key difference from non-streaming:
-
-**Non-streaming:** Function calls are in the response
-```rust,ignore
-let response = client.interaction()
-    .with_functions_from_registry()
-    .with_text("What's the weather?")
-    .create()
-    .await?;
-
-// ✅ Function calls available directly
-for call in response.function_calls() {
-    println!("Call: {}({})", call.name, call.args);
-}
-```
-
-**Streaming:** Function calls arrive as Delta events, NOT in Complete
-```rust,ignore
-let mut stream = client.interaction()
-    .with_functions_from_registry()
-    .with_text("What's the weather?")
-    .create_stream();
-
-let mut function_calls = Vec::new();
-
-while let Some(result) = stream.next().await {
-    match result?.chunk {
-        StreamChunk::Delta(content) => {
-            // ✅ Function calls arrive here as Content::FunctionCall
-            if let Content::FunctionCall { id, name, args } = content {
-                function_calls.push((id, name, args));
-            }
-        }
-        StreamChunk::Complete(response) => {
-            // ❌ response.function_calls() is EMPTY!
-            // The Complete event only has metadata (id, usage),
-            // not the accumulated content from deltas.
-        }
-        _ => {}
-    }
-}
-```
-
-**Why?** In streaming, the API sends content incrementally. The `Complete` event signals "stream finished" but doesn't re-aggregate all the delta content. You must accumulate `Content::FunctionCall` items from `Delta` events yourself.
-
-**Recommendation:** Use `create_stream_with_auto_functions()` instead, which handles accumulation and function execution automatically. See [Auto-Function Streaming](#auto-function-streaming).
 
 ## Type Hierarchy
 
@@ -153,7 +117,7 @@ StreamEvent                    # Wrapper with position metadata
 
 ```text
 AutoFunctionStreamEvent        # Wrapper with position metadata
-├── chunk: AutoFunctionStreamChunk  # Content/function lifecycle
+├── chunk: AutoFunctionStreamChunk  # Step deltas + function lifecycle
 └── event_id: Option<String>   # For stream resumption (API events only)
 ```
 
@@ -176,30 +140,50 @@ This mirrors how SSE works: each Server-Sent Event has an optional `id` field se
 
 ## Event Types and Lifecycle
 
+### SSE Lifecycle Events
+
+Under API revision 2026-05-20 the server emits this lifecycle:
+
+| SSE event type | `StreamChunk` variant | Notes |
+|----------------|------------------------|-------|
+| `interaction.created` | `Created { interaction }` | First event; contains the interaction ID |
+| `interaction.status_update` | `StatusUpdate { interaction_id, status }` | Background/agent progress |
+| `step.start` | `StepStart { index, step }` | A step begins at an output index |
+| `step.delta` | `StepDelta { index, delta }` | Incremental payload for that step |
+| `step.stop` | `StepStop { index, usage, step_usage }` | Step finished; carries per-step usage |
+| `interaction.completed` | `Completed(response)` | Terminal; full response |
+| `error` | `Error { message, code }` | Terminal |
+
+The stream terminates on `interaction.completed` or `error` - no more events follow either.
+
 ### StreamChunk Variants
 
 ```rust,ignore
 #[non_exhaustive]
 pub enum StreamChunk {
-    /// Interaction accepted (first event, provides early access to ID)
-    Start { interaction: InteractionResponse },
+    /// Interaction created (first event, provides early access to ID).
+    /// The payload is a partial interaction resource.
+    Created { interaction: InteractionResponse },
 
     /// Status change during processing (for background/agent interactions)
     StatusUpdate { interaction_id: String, status: InteractionStatus },
 
-    /// Content generation begins for an output position.
-    /// NOTE: This event only announces the content type - actual content arrives in Delta events.
-    /// This is why `Content::Text.text` and `Thought.text` are `Option<String>`.
-    ContentStart { index: usize, content_type: Option<String> },
+    /// A step started at the given index. The step may be partially
+    /// populated (e.g. a FunctionCall step with empty arguments) -
+    /// deltas fill it in.
+    StepStart { index: usize, step: Step },
 
-    /// Incremental content (text, thought, function_call)
-    Delta(Content),
+    /// Incremental payload for the step at the given index
+    /// (text fragment, arguments_delta, thought signature, ...)
+    StepDelta { index: usize, delta: StepDelta },
 
-    /// Content generation ends for an output position
-    ContentStop { index: usize },
+    /// The step at the given index finished.
+    /// `usage` is cumulative interaction usage; `step_usage` is
+    /// attributable to this step alone.
+    StepStop { index: usize, usage: Option<UsageMetadata>, step_usage: Option<UsageMetadata> },
 
     /// Final complete response (terminal)
-    Complete(InteractionResponse),
+    Completed(InteractionResponse),
 
     /// Error occurred (terminal)
     Error { message: String, code: Option<String> },
@@ -209,28 +193,36 @@ pub enum StreamChunk {
 }
 ```
 
+The convenience helper `chunk.delta_text() -> Option<&str>` returns the text fragment when the chunk is a `StepDelta` carrying `StepDelta::Text` - handy for the common "print streaming text" loop.
+
 ### Typical Event Sequence
 
 ```text
-Start           →  Interaction accepted, ID available
-ContentStart    →  Output block 0 starting (type: "text")
-Delta           →  "The "
-Delta           →  "answer "
-Delta           →  "is "
-Delta           →  "42."
-ContentStop     →  Output block 0 complete
-Complete        →  Full response with usage metadata
+Created         →  Interaction accepted, ID available
+StepStart       →  Step 0 starting (e.g. a model_output step)
+StepDelta       →  "The "
+StepDelta       →  "answer "
+StepDelta       →  "is "
+StepDelta       →  "42."
+StepStop        →  Step 0 complete (usage / step_usage)
+Completed       →  Full response with assembled steps and usage metadata
 ```
 
 ### Terminal Events
 
-`Complete` and `Error` are terminal events - no more events will follow:
+`Completed` and `Error` are terminal events - no more events will follow:
 
 ```rust,ignore
 if event.is_terminal() {
     break;  // Stream has ended
 }
 ```
+
+### The Completed Response Is Fully Assembled
+
+The HTTP layer accumulates `step.start` / `step.delta` / `step.stop` events as they arrive. If the server's `interaction.completed` payload omits the steps (because they were already delivered incrementally), the accumulated steps are filled into the final `Completed(response)` - including parsing streamed `arguments_delta` fragments into `Step::FunctionCall.arguments`.
+
+This means `response.function_calls()`, `response.as_text()`, and the other step accessors work on the `Completed` response exactly as they do for non-streaming `create()`. You do not need to accumulate deltas yourself unless you want incremental display.
 
 ### AutoFunctionStreamChunk Variants
 
@@ -239,8 +231,9 @@ For auto-function streaming, additional variants track function lifecycle:
 ```rust,ignore
 #[non_exhaustive]
 pub enum AutoFunctionStreamChunk {
-    /// Incremental content from the model
-    Delta(Content),
+    /// Incremental step payload from the model (text fragments,
+    /// arguments_delta fragments, thought summaries/signatures, ...)
+    Delta(StepDelta),
 
     /// Function calls detected, about to execute.
     /// `pending_calls` contains the validated function calls that will be executed.
@@ -263,15 +256,64 @@ pub enum AutoFunctionStreamChunk {
 }
 ```
 
+## Step Deltas
+
+`StepDelta` (exported at the crate root) is the incremental payload carried by `step.delta` events. It is `#[non_exhaustive]` and tagged on the wire by `type`:
+
+| Variant | Wire `type` | Payload |
+|---------|-------------|---------|
+| `Text { text }` | `text` | Text fragment |
+| `ThoughtSummary { content }` | `thought_summary` | `Option<Content>` summary block |
+| `ThoughtSignature { signature }` | `thought_signature` | Opaque signature fragment |
+| `TextAnnotation { annotations }` | `text_annotation_delta` | Citations for previously streamed text |
+| `ArgumentsDelta { arguments }` | `arguments_delta` | Raw JSON fragment of function-call arguments |
+| `Image` / `Audio` / `Video` / `Document` | `image` / `audio` / ... | Media data (base64 `data`, `uri`, `mime_type`, ...) |
+| `FunctionResult { call_id, name, result, is_error }` | `function_result` | Function result payload |
+| `CodeExecutionCall` / `CodeExecutionResult` | `code_execution_*` | Server-side code execution |
+| `UrlContextCall` / `UrlContextResult` | `url_context_*` | URL context tool |
+| `GoogleSearchCall` / `GoogleSearchResult` | `google_search_*` | Google Search tool |
+| `McpServerToolCall` / `McpServerToolResult` | `mcp_server_tool_*` | MCP server tools |
+| `FileSearchCall` / `FileSearchResult` | `file_search_*` | File search tool |
+| `GoogleMapsCall` / `GoogleMapsResult` | `google_maps_*` | Google Maps tool |
+| `Unknown { delta_type, data }` | anything else | Preserved for forward compatibility |
+
+**Helpers:**
+
+- `delta.as_text() -> Option<&str>` - the text fragment for `Text` deltas
+- `delta.as_arguments_delta() -> Option<&str>` - the raw JSON fragment for `ArgumentsDelta`
+- `delta.is_unknown()` / `delta.unknown_delta_type()` / `delta.unknown_data()` - Evergreen unknown handling
+
+## Per-Step Usage
+
+Token usage is reported at two granularities during streaming:
+
+1. **`StepStop { usage, step_usage, .. }`**: each `step.stop` event may carry
+   - `usage`: cumulative interaction usage so far
+   - `step_usage`: usage attributable to that step alone
+2. **Final total**: the `interaction.completed` event may carry the total in the interaction payload itself (`response.usage`), or in the event's metadata (`InteractionStreamEvent.metadata: StreamMetadata { total_usage }`). The HTTP layer copies `metadata.total_usage` into the final `Completed(response).usage` when the interaction payload omits it, so consumers can always read usage from the `Completed` response.
+
+```rust,ignore
+match &event.chunk {
+    StreamChunk::StepStop { index, usage, step_usage } => {
+        println!("step {index} done: step={step_usage:?} cumulative={usage:?}");
+    }
+    StreamChunk::Completed(response) => {
+        println!("total usage: {:?}", response.usage);
+    }
+    _ => {}
+}
+```
+
 ## Basic Streaming
 
 ### Minimal Example
 
-```rust,ignore
+```rust,no_run
 use futures_util::StreamExt;
 use genai_rs::{Client, StreamChunk};
 
-let client = Client::builder(api_key).build()?;
+# async fn example() -> Result<(), genai_rs::GenaiError> {
+let client = Client::new("your-api-key".to_string());
 
 let mut stream = client.interaction()
     .with_model("gemini-3-flash-preview")
@@ -281,17 +323,26 @@ let mut stream = client.interaction()
 while let Some(result) = stream.next().await {
     let event = result?;
     match &event.chunk {
-        StreamChunk::Delta(content) => {
-            if let Some(text) = content.as_text() {
-                print!("{}", text);
-                io::stdout().flush()?;
+        StreamChunk::StepDelta { delta, .. } => {
+            if let Some(text) = delta.as_text() {
+                print!("{text}");
             }
         }
-        StreamChunk::Complete(response) => {
+        StreamChunk::Completed(response) => {
             println!("\n\nDone! Tokens: {:?}", response.usage);
         }
         _ => {}  // Handle unknown future variants
     }
+}
+# Ok(())
+# }
+```
+
+For the common text-only loop, `event.chunk.delta_text()` collapses the first match arm:
+
+```rust,ignore
+if let Some(text) = event.chunk.delta_text() {
+    print!("{text}");
 }
 ```
 
@@ -307,29 +358,30 @@ while let Some(result) = stream.next().await {
     }
 
     match &event.chunk {
-        StreamChunk::Start { interaction } => {
+        StreamChunk::Created { interaction } => {
             interaction_id = interaction.id.clone();
-            eprintln!("[Start] ID={:?}", interaction.id);
+            eprintln!("[Created] ID={:?}", interaction.id);
         }
         StreamChunk::StatusUpdate { status, .. } => {
             eprintln!("[Status] {:?}", status);
         }
-        StreamChunk::ContentStart { index, content_type } => {
-            eprintln!("[ContentStart] index={}, type={:?}", index, content_type);
+        StreamChunk::StepStart { index, step } => {
+            eprintln!("[StepStart] index={}, type={}", index, step.step_type());
         }
-        StreamChunk::Delta(content) => {
-            if let Some(text) = content.as_text() {
+        StreamChunk::StepDelta { delta, .. } => {
+            if let Some(text) = delta.as_text() {
                 print!("{}", text);
             }
-            if let Some(thought) = content.thought() {
-                eprintln!("[Thought] {}", thought);
+            if let StepDelta::ThoughtSummary { content: Some(c) } = delta {
+                eprintln!("[Thought] {:?}", c.as_text());
             }
         }
-        StreamChunk::ContentStop { index } => {
-            eprintln!("[ContentStop] index={}", index);
+        StreamChunk::StepStop { index, usage, step_usage } => {
+            eprintln!("[StepStop] index={}, step_usage={:?}, cumulative={:?}",
+                index, step_usage, usage);
         }
-        StreamChunk::Complete(response) => {
-            println!("\n[Complete] Tokens: {:?}", response.usage);
+        StreamChunk::Completed(response) => {
+            println!("\n[Completed] Tokens: {:?}", response.usage);
         }
         StreamChunk::Error { message, code } => {
             eprintln!("[Error] {} (code: {:?})", message, code);
@@ -342,29 +394,87 @@ while let Some(result) = stream.next().await {
 }
 ```
 
-## Auto-Function Streaming
+## Streaming Function Calls
 
-Combines streaming with automatic function execution. Content is streamed in real-time while functions execute between streaming rounds.
+Function calls now stream incrementally. When the model decides to call a function:
 
-### Basic Usage
+1. `step.start` announces a `Step::FunctionCall` with the call `id` and `name` (arguments still empty)
+2. `step.delta` events carry `StepDelta::ArgumentsDelta { arguments }` - raw JSON **string fragments** of the function-call arguments
+3. `step.stop` closes the step
 
-```rust,ignore
+Concatenating the fragments yields the complete arguments JSON. You can do this yourself for live display, but you usually don't have to: the HTTP layer assembles the streamed steps (including parsing accumulated `arguments_delta` fragments into `FunctionCall.arguments`) into the final `Completed` response, so **`response.function_calls()` works after streaming** just like in non-streaming mode.
+
+```rust,no_run
 use futures_util::StreamExt;
-use genai_rs::{Client, AutoFunctionStreamChunk};
+use genai_rs::{Client, Step, StreamChunk};
+
+# async fn example(functions: Vec<genai_rs::FunctionDeclaration>) -> Result<(), genai_rs::GenaiError> {
+let client = Client::new("your-api-key".to_string());
 
 let mut stream = client.interaction()
     .with_model("gemini-3-flash-preview")
     .with_text("What's the weather in Tokyo?")
-    .add_functions(vec![weather_function])
+    .add_functions(functions)
+    .create_stream();
+
+let mut streamed_args = String::new();
+
+while let Some(result) = stream.next().await {
+    let event = result?;
+    match &event.chunk {
+        StreamChunk::StepStart { step, .. } => {
+            if let Step::FunctionCall { name, .. } = step {
+                println!("[Function call starting: {name}]");
+            }
+        }
+        StreamChunk::StepDelta { delta, .. } => {
+            // Arguments arrive incrementally as raw JSON fragments
+            if let Some(fragment) = delta.as_arguments_delta() {
+                streamed_args.push_str(fragment);
+            }
+        }
+        StreamChunk::Completed(response) => {
+            // The streamed steps were assembled into the final response,
+            // including the parsed function-call arguments:
+            for call in response.function_calls() {
+                println!("Call: {}({}) [id={}]", call.name, call.args, call.id);
+            }
+        }
+        _ => {}
+    }
+}
+# Ok(())
+# }
+```
+
+**Recommendation:** If you want the functions executed for you, use `create_stream_with_auto_functions()` instead, which detects calls, executes your registered functions, and loops until the model finishes. See [Auto-Function Streaming](#auto-function-streaming).
+
+## Auto-Function Streaming
+
+Combines streaming with automatic function execution. Step deltas are streamed in real-time while functions execute between streaming rounds.
+
+### Basic Usage
+
+```rust,no_run
+use futures_util::StreamExt;
+use genai_rs::{AutoFunctionStreamChunk, Client};
+
+# async fn example() -> Result<(), genai_rs::GenaiError> {
+let client = Client::new("your-api-key".to_string());
+
+// Functions are auto-discovered from the #[tool] registry / tool service.
+let mut stream = client.interaction()
+    .with_model("gemini-3-flash-preview")
+    .with_text("What's the weather in Tokyo?")
     .create_stream_with_auto_functions();
 
 while let Some(result) = stream.next().await {
     let event = result?;
 
     match &event.chunk {
-        AutoFunctionStreamChunk::Delta(content) => {
-            if let Some(text) = content.as_text() {
-                print!("{}", text);
+        AutoFunctionStreamChunk::Delta(delta) => {
+            if let Some(text) = delta.as_text() {
+                print!("{text}");
             }
         }
         AutoFunctionStreamChunk::ExecutingFunctions { pending_calls, .. } => {
@@ -377,13 +487,17 @@ while let Some(result) = stream.next().await {
                 println!("  {} took {:?}", r.name, r.duration);
             }
         }
-        AutoFunctionStreamChunk::Complete(response) => {
+        AutoFunctionStreamChunk::Complete(_response) => {
             println!("\n[Done]");
         }
         _ => {}
     }
 }
+# Ok(())
+# }
 ```
+
+Note that `AutoFunctionStreamChunk::Delta` carries a `StepDelta` - the same incremental payload type as basic streaming - so text fragments, `arguments_delta` fragments, and thought summaries/signatures all flow through it.
 
 ### Event ID Behavior
 
@@ -406,18 +520,25 @@ if event.event_id.is_some() {
 
 Convert a stream into the same result type as non-streaming `create_with_auto_functions()`:
 
-```rust,ignore
-use genai_rs::AutoFunctionResultAccumulator;
+```rust,no_run
+use futures_util::StreamExt;
+use genai_rs::{AutoFunctionResultAccumulator, AutoFunctionStreamChunk, Client};
 
+# async fn example() -> Result<(), genai_rs::GenaiError> {
+# let client = Client::new("your-api-key".to_string());
+# let mut stream = client.interaction()
+#     .with_model("gemini-3-flash-preview")
+#     .with_text("What's the weather in Tokyo?")
+#     .create_stream_with_auto_functions();
 let mut accumulator = AutoFunctionResultAccumulator::new();
 
 while let Some(event) = stream.next().await {
     let event = event?;
 
     // Process deltas for UI
-    if let AutoFunctionStreamChunk::Delta(content) = &event.chunk {
-        if let Some(text) = content.as_text() {
-            print!("{}", text);
+    if let AutoFunctionStreamChunk::Delta(delta) = &event.chunk {
+        if let Some(text) = delta.as_text() {
+            print!("{text}");
         }
     }
 
@@ -425,9 +546,11 @@ while let Some(event) = stream.next().await {
     if let Some(result) = accumulator.push(event.chunk) {
         // Stream complete - result has same shape as create_with_auto_functions()
         println!("Executed {} functions", result.executions.len());
-        println!("Final text: {}", result.response.as_text().unwrap());
+        println!("Final text: {:?}", result.response.as_text());
     }
 }
+# Ok(())
+# }
 ```
 
 ## Stream Resume
@@ -447,7 +570,12 @@ The streaming API supports resuming interrupted streams using `event_id`.
 
 ### Resume Pattern
 
-```rust,ignore
+```rust,no_run
+use futures_util::StreamExt;
+use genai_rs::{Client, StreamChunk};
+
+# async fn example() -> Result<(), genai_rs::GenaiError> {
+# let client = Client::new("your-api-key".to_string());
 // Initial stream
 let mut last_event_id: Option<String> = None;
 let mut interaction_id: Option<String> = None;
@@ -466,8 +594,8 @@ while let Some(result) = stream.next().await {
         last_event_id = event.event_id.clone();
     }
 
-    // Capture interaction ID from Start event
-    if let StreamChunk::Start { interaction } = &event.chunk {
+    // Capture interaction ID from the Created event
+    if let StreamChunk::Created { interaction } = &event.chunk {
         interaction_id = interaction.id.clone();
     }
 
@@ -476,15 +604,20 @@ while let Some(result) = stream.next().await {
 
 // If interrupted, resume from last position:
 if let (Some(id), Some(last_evt)) = (&interaction_id, &last_event_id) {
-    let resumed = client.get_interaction_stream(id, Some(last_evt));
-    // Continue processing from where we left off
+    let mut resumed = client.get_interaction_stream(id, Some(last_evt));
+    while let Some(result) = resumed.next().await {
+        let _event = result?;
+        // Continue processing from where we left off
+    }
 }
+# Ok(())
+# }
 ```
 
 ### Requirements for Resume
 
 1. **Store enabled**: Interaction must be stored (`with_store_enabled()`)
-2. **Interaction ID**: Need the interaction ID (from `Start` event or response)
+2. **Interaction ID**: Need the interaction ID (from the `Created` event or response)
 3. **Event ID**: Need the last successfully processed event's ID
 
 ### get_interaction_stream()
@@ -521,14 +654,16 @@ The wrapper types (`StreamEvent`, `AutoFunctionStreamEvent`) delegate accessors 
 
 | Method | Delegates To | Description |
 |--------|--------------|-------------|
-| `is_delta()` | matches chunk | Check if Delta variant |
-| `is_complete()` | matches chunk | Check if Complete variant |
+| `is_delta()` | matches chunk | Check if `StepDelta` variant |
+| `is_complete()` | matches chunk | Check if `Completed` variant |
 | `is_unknown()` | `chunk.is_unknown()` | Check if Unknown variant |
-| `is_terminal()` | `chunk.is_terminal()` | Check if Complete or Error |
-| `interaction_id()` | `chunk.interaction_id()` | Get ID if present |
-| `status()` | `chunk.status()` | Get status if present |
+| `is_terminal()` | `chunk.is_terminal()` | Check if Completed or Error |
+| `interaction_id()` | `chunk.interaction_id()` | Get ID (Created/StatusUpdate/Completed) |
+| `status()` | `chunk.status()` | Get status (Created/StatusUpdate/Completed) |
 | `unknown_chunk_type()` | `chunk.unknown_chunk_type()` | Get unknown type name |
 | `unknown_data()` | `chunk.unknown_data()` | Get preserved JSON data |
+
+The text helper lives on the chunk itself: `event.chunk.delta_text()`.
 
 ### AutoFunctionStreamEvent Accessors
 
@@ -553,7 +688,7 @@ Following the [Evergreen](https://github.com/google-deepmind/evergreen-spec) phi
 
 ### Non-Exhaustive Enums
 
-All chunk enums use `#[non_exhaustive]`:
+All chunk enums (and `StepDelta`) use `#[non_exhaustive]`:
 
 ```rust,ignore
 #[non_exhaustive]
@@ -567,8 +702,8 @@ Always include a wildcard arm in match statements:
 
 ```rust,ignore
 match &event.chunk {
-    StreamChunk::Delta(_) => { /* ... */ }
-    StreamChunk::Complete(_) => { /* ... */ }
+    StreamChunk::StepDelta { .. } => { /* ... */ }
+    StreamChunk::Completed(_) => { /* ... */ }
     _ => {
         // Handle unknown future variants
         if let Some(chunk_type) = event.unknown_chunk_type() {
@@ -593,7 +728,7 @@ Unknown {
 
 Access with helper methods:
 - `is_unknown()` - Check if unknown
-- `unknown_chunk_type()` - Get the type name
+- `unknown_chunk_type()` - Get the type name (for `StepDelta`: `unknown_delta_type()`)
 - `unknown_data()` - Get the preserved JSON
 
 ### Logging Unknown Events
@@ -639,11 +774,11 @@ impl StreamingSession {
             }
 
             match &event.chunk {
-                StreamChunk::Start { interaction } => {
+                StreamChunk::Created { interaction } => {
                     self.interaction_id = interaction.id.clone();
                 }
-                StreamChunk::Delta(content) => {
-                    if let Some(text) = content.as_text() {
+                StreamChunk::StepDelta { delta, .. } => {
+                    if let Some(text) = delta.as_text() {
                         full_text.push_str(text);
                         self.total_chars += text.len();
                     }
@@ -676,10 +811,8 @@ const FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 while let Some(event) = stream.next().await {
     let event = event?;
 
-    if let StreamChunk::Delta(content) = &event.chunk {
-        if let Some(text) = content.as_text() {
-            buffer.push_str(text);
-        }
+    if let Some(text) = event.chunk.delta_text() {
+        buffer.push_str(text);
     }
 
     // Flush periodically or on terminal events
@@ -730,15 +863,15 @@ async fn stream_with_retry(
                     }
 
                     match &event.chunk {
-                        StreamChunk::Start { interaction } => {
+                        StreamChunk::Created { interaction } => {
                             interaction_id = interaction.id.clone();
                         }
-                        StreamChunk::Delta(content) => {
-                            if let Some(text) = content.as_text() {
+                        StreamChunk::StepDelta { delta, .. } => {
+                            if let Some(text) = delta.as_text() {
                                 full_text.push_str(text);
                             }
                         }
-                        StreamChunk::Complete(_) => {
+                        StreamChunk::Completed(_) => {
                             completed = true;
                         }
                         StreamChunk::Error { message, .. } => {
@@ -788,9 +921,9 @@ Background processing? ───────────────────
 ### Event Handling Approach
 
 ```text
-Just need text output? ──────────────────────────> Only handle Delta + Complete
-Need progress tracking? ─────────────────────────> Handle Start, ContentStart/Stop
-Building chat UI? ───────────────────────────────> Handle Delta for text, Complete for metadata
+Just need text output? ──────────────────────────> Only handle StepDelta + Completed
+Need progress tracking? ─────────────────────────> Handle Created, StepStart/StepStop
+Building chat UI? ───────────────────────────────> StepDelta for text, Completed for metadata
 Agent with functions? ───────────────────────────> Use auto-function streaming
 ```
 
@@ -802,7 +935,7 @@ Examples demonstrating streaming patterns:
 |---------|----------|
 | `streaming` | Basic streaming, all event types, resume pattern |
 | `streaming_auto_functions` | Auto-function streaming with progress tracking |
-| `thinking` | Streaming with thought content |
+| `thinking` | Streaming with thought summaries |
 | `deep_research` | Long-running background streaming |
 
 Run any example:
@@ -824,23 +957,29 @@ With `LOUD_WIRE=1`, you'll see the raw SSE events:
   input: "Write a poem"
 
 [RES#1] SSE stream:
-  event_type: interaction.start
+  event_type: interaction.created
   event_id: evt_001
 
-  event_type: content.start
+  event_type: step.start
   event_id: evt_002
+  step: {"type": "model_output", "content": []}
 
-  event_type: content.delta
+  event_type: step.delta
   event_id: evt_003
   delta: {"type": "text", "text": "In "}
 
-  event_type: content.delta
+  event_type: step.delta
   event_id: evt_004
   delta: {"type": "text", "text": "circuits "}
 
   ...
 
-  event_type: interaction.complete
+  event_type: step.stop
+  event_id: evt_041
+  usage: {...}
+  step_usage: {...}
+
+  event_type: interaction.completed
   event_id: evt_042
 ```
 

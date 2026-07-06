@@ -35,10 +35,16 @@ Output shows:
 [RES#1] 200 OK
 {
   "status": "completed",
-  "outputs": [...],
+  "steps": [
+    {"type": "model_output", "content": [{"type": "text", "text": "..."}]}
+  ],
+  "output_text": "...",
   ...
 }
 ```
+
+Every request also carries the `Api-Revision: 2026-05-20` header, which selects
+the Interactions API revision this library targets.
 
 Error responses are shown too (`Error (429): {...}`), including the full
 error body from the API.
@@ -349,8 +355,8 @@ loop {
     while let Some(result) = stream.next().await {
         if let Ok(event) = result {
             last_event_id = event.event_id.clone();
-            // Capture interaction_id from the Complete chunk
-            if let StreamChunk::Complete(response) = &event.chunk {
+            // Capture interaction_id from the Completed chunk
+            if let StreamChunk::Completed(response) = &event.chunk {
                 interaction_id = response.id.clone();
             }
             // Process...
@@ -489,13 +495,13 @@ let mut stream = client.interaction().create_stream();
 // Using convenience methods (recommended)
 println!("Input: {:?}", response.input_tokens());
 println!("Output: {:?}", response.output_tokens());
-println!("Reasoning: {:?}", response.reasoning_tokens());
+println!("Thoughts: {:?}", response.thought_tokens());
 
 // Or using the UsageMetadata struct directly
 if let Some(usage) = &response.usage {
     println!("Input: {:?}", usage.total_input_tokens);
     println!("Output: {:?}", usage.total_output_tokens);
-    println!("Reasoning: {:?}", usage.total_reasoning_tokens);
+    println!("Thoughts: {:?}", usage.total_thought_tokens);
 }
 ```
 

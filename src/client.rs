@@ -282,27 +282,16 @@ impl Client {
     ///
     /// ```no_run
     /// use genai_rs::Client;
-    /// use genai_rs::{InteractionRequest, InteractionInput};
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::new("your-api-key".to_string());
     ///
-    /// let request = InteractionRequest {
-    ///     model: Some("gemini-3-flash-preview".to_string()),
-    ///     agent: None,
-    ///     agent_config: None,
-    ///     input: InteractionInput::Text("Hello, world!".to_string()),
-    ///     previous_interaction_id: None,
-    ///     tools: None,
-    ///     response_modalities: None,
-    ///     response_format: None,
-    ///     response_mime_type: None,
-    ///     generation_config: None,
-    ///     stream: None,
-    ///     background: None,
-    ///     store: None,
-    ///     system_instruction: None,
-    /// };
+    /// // Build a reusable request with the builder, then execute it.
+    /// let request = client
+    ///     .interaction()
+    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_text("Hello, world!")
+    ///     .build()?;
     ///
     /// let response = client.execute(request).await?;
     /// println!("Interaction ID: {:?}", response.id);
@@ -314,27 +303,16 @@ impl Client {
     ///
     /// ```no_run
     /// use genai_rs::{Client, StreamChunk};
-    /// use genai_rs::{InteractionRequest, InteractionInput};
     /// use futures_util::StreamExt;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::builder("api_key".to_string()).build()?;
-    /// let request = InteractionRequest {
-    ///     model: Some("gemini-3-flash-preview".to_string()),
-    ///     agent: None,
-    ///     agent_config: None,
-    ///     input: InteractionInput::Text("Count to 5".to_string()),
-    ///     previous_interaction_id: None,
-    ///     tools: None,
-    ///     response_modalities: None,
-    ///     response_format: None,
-    ///     response_mime_type: None,
-    ///     generation_config: None,
-    ///     stream: Some(true),
-    ///     background: None,
-    ///     store: None,
-    ///     system_instruction: None,
-    /// };
+    /// let mut request = client
+    ///     .interaction()
+    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_text("Count to 5")
+    ///     .build()?;
+    /// request.stream = Some(true);
     ///
     /// let mut last_event_id = None;
     /// let mut stream = client.execute_stream(request);
@@ -342,12 +320,12 @@ impl Client {
     ///     let event = result?;
     ///     last_event_id = event.event_id.clone();  // Track for resume
     ///     match event.chunk {
-    ///         StreamChunk::Delta(delta) => {
+    ///         StreamChunk::StepDelta { delta, .. } => {
     ///             if let Some(text) = delta.as_text() {
     ///                 print!("{}", text);
     ///             }
     ///         }
-    ///         StreamChunk::Complete(response) => {
+    ///         StreamChunk::Completed(response) => {
     ///             println!("\nDone! ID: {:?}", response.id);
     ///         }
     ///         _ => {} // Handle unknown future variants
@@ -428,12 +406,12 @@ impl Client {
     /// while let Some(result) = stream.next().await {
     ///     let event = result?;
     ///     match event.chunk {
-    ///         StreamChunk::Delta(delta) => {
+    ///         StreamChunk::StepDelta { delta, .. } => {
     ///             if let Some(text) = delta.as_text() {
     ///                 print!("{}", text);
     ///             }
     ///         }
-    ///         StreamChunk::Complete(response) => {
+    ///         StreamChunk::Completed(response) => {
     ///             println!("\nDone!");
     ///         }
     ///         _ => {}
@@ -489,7 +467,34 @@ impl Client {
         tracing::debug!("Getting interaction: ID={interaction_id}");
 
         let response =
-            crate::http::interactions::get_interaction(&self.http, interaction_id).await?;
+            crate::http::interactions::get_interaction(&self.http, interaction_id, false).await?;
+
+        log_response_body(&response);
+        tracing::debug!("Retrieved interaction: status={:?}", response.status);
+
+        Ok(response)
+    }
+
+    /// Retrieves an existing interaction by its ID, including the original input.
+    ///
+    /// Like [`get_interaction()`](Self::get_interaction), but sets the
+    /// `include_input=true` query parameter so the response's `input` field is
+    /// populated.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The HTTP request fails
+    /// - Response parsing fails
+    /// - The API returns an error
+    pub async fn get_interaction_with_input(
+        &self,
+        interaction_id: &str,
+    ) -> Result<crate::InteractionResponse, GenaiError> {
+        tracing::debug!("Getting interaction (with input): ID={interaction_id}");
+
+        let response =
+            crate::http::interactions::get_interaction(&self.http, interaction_id, true).await?;
 
         log_response_body(&response);
         tracing::debug!("Retrieved interaction: status={:?}", response.status);
@@ -532,12 +537,12 @@ impl Client {
     ///     let event = result?;
     ///     println!("Event ID: {:?}", event.event_id);
     ///     match event.chunk {
-    ///         StreamChunk::Delta(delta) => {
+    ///         StreamChunk::StepDelta { delta, .. } => {
     ///             if let Some(text) = delta.as_text() {
     ///                 print!("{}", text);
     ///             }
     ///         }
-    ///         StreamChunk::Complete(response) => {
+    ///         StreamChunk::Completed(response) => {
     ///             println!("\nDone! Status: {:?}", response.status);
     ///         }
     ///         _ => {}

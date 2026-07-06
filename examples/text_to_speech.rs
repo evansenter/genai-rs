@@ -36,7 +36,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let filename = format!("output_basic.{}", audio.extension());
         std::fs::write(&filename, &bytes)?;
         println!("Saved audio ({} bytes) to: {}", bytes.len(), filename);
-        println!("MIME type: {:?}\n", audio.mime_type());
+        println!("MIME type: {:?}", audio.mime_type());
+        // The API reports PCM parameters alongside the audio data
+        if let Some(rate) = audio.sample_rate() {
+            println!("Sample rate: {} Hz", rate);
+        }
+        if let Some(channels) = audio.channels() {
+            println!("Channels: {}", channels);
+        }
+        println!();
     } else {
         println!("No audio in response\n");
     }
@@ -100,11 +108,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     for (i, audio) in response.audios().enumerate() {
         let bytes = audio.bytes()?;
         println!(
-            "  Audio {}: {} bytes, MIME: {:?}, extension: {}",
+            "  Audio {}: {} bytes, MIME: {:?}, extension: {}, sample_rate: {:?}, channels: {:?}",
             i,
             bytes.len(),
             audio.mime_type(),
-            audio.extension()
+            audio.extension(),
+            audio.sample_rate(),
+            audio.channels()
         );
     }
     println!();

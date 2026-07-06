@@ -156,11 +156,9 @@ let response = client.interaction()
     .with_google_search()
     .create().await?;
 
-// Access sources
-if let Some(meta) = response.google_search_metadata() {
-    for source in &meta.grounding_chunks {
-        println!("{}: {}", source.web.title, source.web.domain);
-    }
+// Access sources (GoogleSearchResult steps)
+for source in response.google_search_results() {
+    println!("{}: {}", source.title, source.url);
 }
 ```
 

@@ -97,9 +97,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         println!("\nModel Response:\n{text}");
     }
 
-    // Show content summary
-    let summary = response.content_summary();
-    println!("\nContent summary: {summary}");
+    // Show step summary
+    let summary = response.step_summary();
+    println!("\nStep summary: {summary}");
 
     // Show token usage
     if let Some(usage) = response.usage {

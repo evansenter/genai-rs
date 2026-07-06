@@ -50,10 +50,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
 
             // 5. Check if response is grounded and display sources
-            if response.has_google_search_metadata() {
+            if response.has_google_search_calls() || response.has_google_search_results() {
                 println!("--- Grounding Information ---");
 
-                // Display search queries from GoogleSearchCall outputs
+                // Display search queries from GoogleSearchCall steps
                 let search_queries = response.google_search_calls();
                 if !search_queries.is_empty() {
                     println!("Search Queries:");
@@ -63,7 +63,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     println!();
                 }
 
-                // Display web sources from GoogleSearchResult outputs
+                // Display web sources from GoogleSearchResult steps
                 let search_results = response.google_search_results();
                 if !search_results.is_empty() {
                     println!("Web Sources ({} total):", search_results.len());
@@ -83,11 +83,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 for annotation in response.all_annotations() {
                     if let Some(span) = annotation.extract_span(&text) {
                         println!(
-                            "  \"{}\" (bytes {}..{}) → {}",
+                            "  \"{}\" (bytes {:?}..{:?}) → {}",
                             span,
-                            annotation.start_index,
-                            annotation.end_index,
-                            annotation.source.as_deref().unwrap_or("<no source>")
+                            annotation.start_index(),
+                            annotation.end_index(),
+                            annotation.source().unwrap_or("<no source>")
                         );
                     }
                 }
@@ -149,13 +149,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     while let Some(result) = stream.next().await {
         match result {
             Ok(event) => match event.chunk {
-                StreamChunk::Delta(content) => {
-                    if let Some(text) = content.as_text() {
+                StreamChunk::StepDelta { delta, .. } => {
+                    if let Some(text) = delta.as_text() {
                         print!("{}", text);
                         stdout().flush()?;
                     }
                 }
-                StreamChunk::Complete(response) => {
+                StreamChunk::Completed(response) => {
                     println!("\n");
                     let search_results = response.google_search_results();
                     if !search_results.is_empty() {

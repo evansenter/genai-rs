@@ -669,11 +669,11 @@ mod tests {
             WireEvent::SseFrame {
                 id: 1,
                 event_type: None,
-                data: r#"{"event_type": "content.delta"}"#.to_string(),
+                data: r#"{"event_type": "step.delta"}"#.to_string(),
             },
             WireEvent::SseFrame {
                 id: 1,
-                event_type: Some("interaction.complete".to_string()),
+                event_type: Some("interaction.completed".to_string()),
                 data: String::new(),
             },
             WireEvent::SseFrame {
@@ -851,11 +851,11 @@ mod tests {
 
         let event = WireEvent::SseFrame {
             id: 1,
-            event_type: Some("interaction.complete".to_string()),
+            event_type: Some("interaction.completed".to_string()),
             data: "{}".to_string(),
         };
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json["kind"], "sse_frame");
-        assert_eq!(json["event_type"], "interaction.complete");
+        assert_eq!(json["event_type"], "interaction.completed");
     }
 }

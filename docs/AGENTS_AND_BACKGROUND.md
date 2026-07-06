@@ -177,6 +177,7 @@ async fn poll_for_completion(
             InteractionStatus::Completed => return Ok(response),
             InteractionStatus::Failed => return Err("Task failed".into()),
             InteractionStatus::Cancelled => return Err("Task cancelled".into()),
+            InteractionStatus::BudgetExceeded => return Err("Budget exceeded".into()),
             InteractionStatus::InProgress => {
                 // Exponential backoff
                 sleep(delay).await;
@@ -220,22 +221,25 @@ You can also stream results as they become available:
 
 ```rust,ignore
 use futures_util::StreamExt;
+use genai_rs::StreamChunk;
 
-let mut stream = client.get_interaction_stream(interaction_id);
+// Second argument is an optional last_event_id for resuming a prior stream
+let mut stream = client.get_interaction_stream(interaction_id, None);
 
 while let Some(result) = stream.next().await {
     match result {
-        Ok(event) => {
-            if let StreamChunk::Delta(delta) = event.chunk {
+        Ok(event) => match event.chunk {
+            StreamChunk::StepDelta { delta, .. } => {
                 if let Some(text) = delta.as_text() {
                     print!("{}", text);
                 }
             }
-            if let StreamChunk::Complete(response) = event.chunk {
+            StreamChunk::Completed(_response) => {
                 println!("\nComplete!");
                 break;
             }
-        }
+            _ => {}
+        },
         Err(e) => {
             eprintln!("Stream error: {}", e);
             break;
@@ -305,6 +309,8 @@ match response.status {
     InteractionStatus::Cancelled => { /* handle cancellation */ }
     InteractionStatus::InProgress => { /* keep polling */ }
     InteractionStatus::RequiresAction => { /* handle required action */ }
+    InteractionStatus::Incomplete => { /* ended early, e.g. token limit */ }
+    InteractionStatus::BudgetExceeded => { /* configured budget exhausted */ }
     _ => {
         // Unknown status - log and continue (Evergreen pattern)
         log::warn!("Unknown status: {:?}", response.status);
@@ -332,10 +338,18 @@ Background tasks may have intermediate outputs:
 ```rust,ignore
 let response = client.get_interaction(&interaction_id).await?;
 
-// Check for outputs even if still in progress
-if !response.outputs.is_empty() {
+// Check for steps even if still in progress
+if !response.steps.is_empty() {
     println!("Partial results available");
 }
+```
+
+To fold partial or final results into a conversation history, use
+`response.output_steps()`:
+
+```rust,ignore
+let mut history: Vec<Step> = vec![Step::user_text("Research topic")];
+history.extend(response.output_steps());
 ```
 
 ## Status Reference
@@ -347,6 +361,11 @@ if !response.outputs.is_empty() {
 | `Failed` | Task failed | Check error, possibly retry |
 | `Cancelled` | Task was cancelled | Handle cancellation |
 | `RequiresAction` | Task needs input | Rare for agents, check response |
+| `Incomplete` | Ended before completion (e.g., token limit) | Inspect partial results |
+| `BudgetExceeded` | Configured budget was exceeded | Inspect partial results, adjust budget |
+
+Unrecognized statuses deserialize to `InteractionStatus::Unknown` — keep
+polling on unknown statuses and rely on your own timeout (Evergreen pattern).
 
 ## Example
 

@@ -161,21 +161,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     while let Some(result) = stream.next().await {
         match result {
             Ok(event) => match event.chunk {
-                StreamChunk::Delta(content) => {
-                    if let Some(text) = content.as_text() {
+                StreamChunk::StepStart { step, .. } => {
+                    if matches!(step, genai_rs::Step::FunctionCall { .. }) {
+                        println!("\n  [Function call step started - manual handling needed]");
+                    }
+                }
+                StreamChunk::StepDelta { delta, .. } => {
+                    if let Some(text) = delta.as_text() {
                         print!("{}", text);
                         stdout().flush()?;
                     }
-                    if content.is_function_call() {
-                        println!("\n  [Function call received - manual handling needed]");
+                    if delta.as_arguments_delta().is_some() {
+                        print!("[function args streaming]");
+                        stdout().flush()?;
                     }
                 }
-                StreamChunk::Complete(response) => {
+                StreamChunk::Completed(response) => {
                     println!();
                     if response.has_function_calls() {
                         println!("\nPending function calls (you execute these):");
                         for call in response.function_calls() {
-                            println!("  - {}({}) [id: {:?}]", call.name, call.args, call.id);
+                            println!("  - {}({}) [id: {}]", call.name, call.args, call.id);
                         }
                     }
                 }

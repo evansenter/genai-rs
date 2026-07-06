@@ -17,7 +17,7 @@ use common::{
     get_client, interaction_builder, is_long_conversation_api_error, stateful_builder,
     validate_response_semantically,
 };
-use genai_rs::{Content, FunctionDeclaration, InteractionStatus};
+use genai_rs::{FunctionDeclaration, InteractionStatus, Step};
 use serde_json::json;
 
 // =============================================================================
@@ -210,15 +210,15 @@ async fn test_conversation_function_then_text() {
     let call = &calls[0];
 
     // Turn 2: Provide function result
-    let result = Content::function_result(
+    let result = Step::function_result(
         "get_weather",
-        call.id.unwrap().to_string(),
+        call.id.to_string(),
         json!({"temperature": "25°C", "conditions": "sunny"}),
     );
 
     let response2 = stateful_builder(&client)
         .with_previous_interaction(response1.id.as_ref().expect("id should exist"))
-        .with_content(vec![result])
+        .with_history(vec![result])
         .add_function(get_weather.clone())
         .create()
         .await
@@ -451,10 +451,8 @@ async fn test_usage_longer_response() {
 }
 
 // =============================================================================
-// Explicit Turn Array Tests (Issue #271)
+// Explicit Step Array Tests (Issue #271)
 // =============================================================================
-
-use genai_rs::Turn;
 
 #[tokio::test]
 #[ignore = "Requires API key"]
@@ -466,9 +464,9 @@ async fn test_explicit_turns_basic() {
     };
 
     let turns = vec![
-        Turn::user("What is 2+2?"),
-        Turn::model("2+2 equals 4."),
-        Turn::user("And what's that times 3?"),
+        Step::user_text("What is 2+2?"),
+        Step::model_text("2+2 equals 4."),
+        Step::user_text("And what's that times 3?"),
     ];
 
     let response = interaction_builder(&client)
@@ -540,19 +538,19 @@ async fn test_explicit_turns_context_preservation() {
     };
 
     let turns = vec![
-        Turn::user("I'm planning a trip to Tokyo next month."),
-        Turn::model(
+        Step::user_text("I'm planning a trip to Tokyo next month."),
+        Step::model_text(
             "Tokyo is an amazing destination! It offers incredible food, \
              ancient temples, modern technology, and beautiful cherry blossoms. \
              What aspects of the city are you most excited to explore?",
         ),
-        Turn::user("I love trying local cuisine."),
-        Turn::model(
+        Step::user_text("I love trying local cuisine."),
+        Step::model_text(
             "Great choice! Tokyo has some of the best food in the world. \
              Try ramen in a local shop, fresh sushi at Tsukiji Outer Market, \
              and don't miss Japanese convenience store food - it's surprisingly excellent!",
         ),
-        Turn::user("Where am I going and what do I enjoy?"),
+        Step::user_text("Where am I going and what do I enjoy?"),
     ];
 
     let response = interaction_builder(&client)
@@ -587,7 +585,7 @@ async fn test_explicit_turns_single_user_message() {
         return;
     };
 
-    let turns = vec![Turn::user(
+    let turns = vec![Step::user_text(
         "What is the capital of France? Reply in one word.",
     )];
 

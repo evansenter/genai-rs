@@ -1,4 +1,14 @@
-//! Unit tests for Content types, serialization, and Unknown variant handling.
+//! Unit tests for Content types, Step types, serialization, and Unknown
+//! variant handling (API revision 2026-05-20).
+//!
+//! Tool calls, tool results, and thoughts are no longer `Content` variants;
+//! they are typed `Step` variants (see `src/steps.rs`). The tool-content
+//! tests that used to live here have been migrated to the equivalent Step
+//! wire-format tests below.
+//!
+//! Note: the launch-era computer-use content tests were removed entirely —
+//! computer use has no Step equivalent (it flows through `function_call`
+//! steps).
 
 use super::*;
 
@@ -19,42 +29,6 @@ fn test_serialize_interaction_content() {
 }
 
 #[test]
-fn test_deserialize_function_call_content() {
-    let content_json =
-        r#"{"type": "function_call", "name": "get_weather", "arguments": {"location": "Paris"}}"#;
-
-    let content: Content = serde_json::from_str(content_json).expect("Deserialization failed");
-
-    match content {
-        Content::FunctionCall { name, args, .. } => {
-            assert_eq!(name, "get_weather");
-            assert_eq!(args["location"], "Paris");
-        }
-        _ => panic!("Expected FunctionCall variant"),
-    }
-}
-
-#[test]
-fn test_deserialize_function_call_streaming_start() {
-    // In streaming, content.start events may only have id and type (no name/arguments).
-    // This simulates what the API sends in an SSE content.start event for function_call.
-    let content_json = r#"{"type": "function_call", "id": "call-abc123"}"#;
-
-    let content: Content = serde_json::from_str(content_json).expect("Deserialization failed");
-
-    match content {
-        Content::FunctionCall { id, name, args } => {
-            assert_eq!(id.as_deref(), Some("call-abc123"));
-            // Name defaults to empty string when not provided
-            assert_eq!(name, "");
-            // Args defaults to null when not provided
-            assert_eq!(args, serde_json::Value::Null);
-        }
-        _ => panic!("Expected FunctionCall variant, got {:?}", content),
-    }
-}
-
-#[test]
 fn test_content_empty_text_returns_none() {
     let content = Content::Text {
         text: Some(String::new()),
@@ -70,29 +44,131 @@ fn test_content_empty_text_returns_none() {
 }
 
 #[test]
-fn test_content_thought_signature_accessor() {
-    // Non-empty thought signature returns Some
-    let content = Content::Thought {
-        signature: Some("EosFCogFAXLI2...".to_string()),
+fn test_content_type_check_helpers() {
+    assert!(Content::text("hi").is_text());
+    assert!(Content::image_data("data", "image/png").is_image());
+    assert!(Content::audio_data("data", "audio/wav").is_audio());
+    assert!(Content::video_data("data", "video/mp4").is_video());
+    assert!(Content::document_data("data", "application/pdf").is_document());
+
+    let text = Content::text("hi");
+    assert!(!text.is_image());
+    assert!(!text.is_audio());
+    assert!(!text.is_video());
+    assert!(!text.is_document());
+    assert!(!text.is_unknown());
+}
+
+#[test]
+fn test_known_types_still_work() {
+    // Ensure adding Unknown doesn't break known types
+    let text_json = r#"{"type": "text", "text": "Hello"}"#;
+    let content: Content = serde_json::from_str(text_json).unwrap();
+    assert!(matches!(content, Content::Text { .. }));
+    assert!(!content.is_unknown());
+
+    let image_json = r#"{"type": "image", "data": "base64", "mime_type": "image/png"}"#;
+    let content: Content = serde_json::from_str(image_json).unwrap();
+    assert!(matches!(content, Content::Image { .. }));
+    assert!(!content.is_unknown());
+
+    let audio_json = r#"{"type": "audio", "data": "base64", "mime_type": "audio/wav"}"#;
+    let content: Content = serde_json::from_str(audio_json).unwrap();
+    assert!(matches!(content, Content::Audio { .. }));
+    assert!(!content.is_unknown());
+
+    let document_json =
+        r#"{"type": "document", "uri": "files/abc", "mime_type": "application/pdf"}"#;
+    let content: Content = serde_json::from_str(document_json).unwrap();
+    assert!(matches!(content, Content::Document { .. }));
+    assert!(!content.is_unknown());
+}
+
+#[test]
+fn test_audio_content_sample_rate_and_channels() {
+    // Audio gained sample_rate/channels in revision 2026-05-20
+    let audio = Content::Audio {
+        data: Some("base64audio".to_string()),
+        uri: None,
+        mime_type: Some("audio/L16;codec=pcm;rate=24000".to_string()),
+        sample_rate: Some(24000),
+        channels: Some(1),
     };
-    assert_eq!(content.thought_signature(), Some("EosFCogFAXLI2..."));
 
-    // Empty signature returns None
-    let empty = Content::Thought {
-        signature: Some(String::new()),
-    };
-    assert_eq!(empty.thought_signature(), None);
+    let json = serde_json::to_string(&audio).expect("Serialization failed");
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(value["type"], "audio");
+    assert_eq!(value["sample_rate"], 24000);
+    assert_eq!(value["channels"], 1);
 
-    // None signature returns None
-    let none = Content::Thought { signature: None };
-    assert_eq!(none.thought_signature(), None);
+    let restored: Content = serde_json::from_str(&json).expect("Deserialization failed");
+    match restored {
+        Content::Audio {
+            sample_rate,
+            channels,
+            ..
+        } => {
+            assert_eq!(sample_rate, Some(24000));
+            assert_eq!(channels, Some(1));
+        }
+        _ => panic!("Expected Audio variant"),
+    }
 
-    // Text variant returns None for thought_signature()
-    let text_content = Content::Text {
-        text: Some("hello".to_string()),
+    // Backward compatibility: audio without the new fields still deserializes
+    let json = r#"{"type": "audio", "data": "base64", "mime_type": "audio/wav"}"#;
+    let content: Content = serde_json::from_str(json).unwrap();
+    match content {
+        Content::Audio {
+            sample_rate,
+            channels,
+            ..
+        } => {
+            assert_eq!(sample_rate, None);
+            assert_eq!(channels, None);
+        }
+        _ => panic!("Expected Audio variant"),
+    }
+}
+
+#[test]
+fn test_serialize_known_variant_with_none_fields() {
+    // Test that known variants with None fields serialize correctly (omit None fields)
+    let text = Content::Text {
+        text: None,
         annotations: None,
     };
-    assert_eq!(text_content.thought_signature(), None);
+    let json = serde_json::to_string(&text).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(value["type"], "text");
+    assert!(value.get("text").is_none());
+    assert!(value.get("annotations").is_none());
+
+    let image = Content::Image {
+        data: Some("base64data".to_string()),
+        uri: None,
+        mime_type: None,
+        resolution: None,
+    };
+    let json = serde_json::to_string(&image).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(value["type"], "image");
+    assert_eq!(value["data"], "base64data");
+    assert!(value.get("uri").is_none());
+    assert!(value.get("mime_type").is_none());
+    assert!(value.get("resolution").is_none());
+
+    let audio = Content::Audio {
+        data: Some("base64audio".to_string()),
+        uri: None,
+        mime_type: None,
+        sample_rate: None,
+        channels: None,
+    };
+    let json = serde_json::to_string(&audio).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(value["type"], "audio");
+    assert!(value.get("sample_rate").is_none());
+    assert!(value.get("channels").is_none());
 }
 
 // --- Unknown Variant Tests ---
@@ -103,7 +179,6 @@ fn test_content_thought_signature_accessor() {
 #[test]
 fn test_deserialize_unknown_interaction_content() {
     // Simulate a new API content type that this library doesn't know about
-    // Note: code_execution_result is now a known type, so use a truly unknown type
     let unknown_json = r#"{"type": "future_api_feature", "data_field": "some_value", "count": 42}"#;
 
     let content: Content =
@@ -145,32 +220,10 @@ fn test_deserialize_unknown_streaming_content() {
 }
 
 #[test]
-fn test_known_types_still_work() {
-    // Ensure adding Unknown doesn't break known types
-    let text_json = r#"{"type": "text", "text": "Hello"}"#;
-    let content: Content = serde_json::from_str(text_json).unwrap();
-    assert!(matches!(content, Content::Text { .. }));
-    assert!(!content.is_unknown());
-
-    let thought_json = r#"{"type": "thought", "text": "Thinking..."}"#;
-    let content: Content = serde_json::from_str(thought_json).unwrap();
-    assert!(matches!(content, Content::Thought { .. }));
-    assert!(!content.is_unknown());
-
-    let signature_json = r#"{"type": "thought_signature", "signature": "sig123"}"#;
-    let content: Content = serde_json::from_str(signature_json).unwrap();
-    assert!(matches!(content, Content::ThoughtSignature { .. }));
-    assert!(!content.is_unknown());
-
-    let function_json = r#"{"type": "function_call", "name": "test", "arguments": {}}"#;
-    let content: Content = serde_json::from_str(function_json).unwrap();
-    assert!(matches!(content, Content::FunctionCall { .. }));
-    assert!(!content.is_unknown());
-}
-
-#[test]
 fn test_serialize_unknown_content_roundtrip() {
-    // Create an Unknown content (simulating what we'd receive from API)
+    // Create an Unknown content (simulating what we'd receive from API).
+    // Note: code_execution_result is a Step type in revision 2026-05-20, so
+    // as *content* it is genuinely unknown.
     let unknown = Content::Unknown {
         content_type: "code_execution_result".to_string(),
         data: serde_json::json!({
@@ -187,45 +240,6 @@ fn test_serialize_unknown_content_roundtrip() {
     assert_eq!(value["type"], "code_execution_result");
     assert_eq!(value["outcome"], "success");
     assert_eq!(value["output"], "42");
-}
-
-#[test]
-fn test_serialize_known_variant_with_none_fields() {
-    // Test that known variants with None fields serialize correctly (omit None fields)
-    let text = Content::Text {
-        text: None,
-        annotations: None,
-    };
-    let json = serde_json::to_string(&text).unwrap();
-    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(value["type"], "text");
-    assert!(value.get("text").is_none());
-    assert!(value.get("annotations").is_none());
-
-    let image = Content::Image {
-        data: Some("base64data".to_string()),
-        uri: None,
-        mime_type: None,
-        resolution: None,
-    };
-    let json = serde_json::to_string(&image).unwrap();
-    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(value["type"], "image");
-    assert_eq!(value["data"], "base64data");
-    assert!(value.get("uri").is_none());
-    assert!(value.get("mime_type").is_none());
-    assert!(value.get("resolution").is_none());
-
-    let fc = Content::FunctionCall {
-        id: None,
-        name: "test_fn".to_string(),
-        args: serde_json::json!({"arg": "value"}),
-    };
-    let json = serde_json::to_string(&fc).unwrap();
-    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(value["type"], "function_call");
-    assert_eq!(value["name"], "test_fn");
-    assert!(value.get("id").is_none());
 }
 
 #[test]
@@ -385,185 +399,676 @@ fn test_deserialize_unknown_with_null_type() {
     }
 }
 
-// --- Built-in Tool Content Tests ---
+// =============================================================================
+// Step Tests (migrated from removed Content tool variants)
+// =============================================================================
+// FunctionCall, Thought, CodeExecution*, GoogleSearch*, UrlContext*, and
+// FileSearchResult are Step variants under revision 2026-05-20. These tests
+// preserve the wire-format coverage the removed Content variants had.
+
+// --- Function Call / Thought Steps ---
 
 #[test]
-fn test_deserialize_code_execution_call() {
-    // Test deserialization from the API format (arguments object)
+fn test_deserialize_function_call_step() {
+    let step_json = r#"{"type": "function_call", "id": "call-1", "name": "get_weather", "arguments": {"location": "Paris"}}"#;
+
+    let step: Step = serde_json::from_str(step_json).expect("Deserialization failed");
+
+    match step {
+        Step::FunctionCall {
+            id,
+            name,
+            arguments,
+        } => {
+            assert_eq!(id, "call-1");
+            assert_eq!(name, "get_weather");
+            assert_eq!(arguments["location"], "Paris");
+        }
+        _ => panic!("Expected FunctionCall variant"),
+    }
+}
+
+#[test]
+fn test_deserialize_function_call_step_missing_arguments() {
+    // Arguments default to null when not provided
+    let step_json = r#"{"type": "function_call", "id": "call-abc123", "name": "get_weather"}"#;
+
+    let step: Step = serde_json::from_str(step_json).expect("Deserialization failed");
+
+    match step {
+        Step::FunctionCall {
+            id,
+            name,
+            arguments,
+        } => {
+            assert_eq!(id, "call-abc123");
+            assert_eq!(name, "get_weather");
+            assert_eq!(arguments, serde_json::Value::Null);
+        }
+        _ => panic!("Expected FunctionCall variant, got {:?}", step),
+    }
+}
+
+#[cfg(not(feature = "strict-unknown"))]
+#[test]
+fn test_deserialize_function_call_step_missing_required_fields_becomes_unknown() {
+    // id and name are required on function_call steps; a payload without them
+    // becomes Unknown per the Evergreen philosophy (data preserved, no error).
+    let step_json = r#"{"type": "function_call", "id": "call-abc123"}"#;
+
+    let step: Step = serde_json::from_str(step_json).expect("Should deserialize");
+
+    assert!(step.is_unknown());
+    assert_eq!(step.unknown_step_type(), Some("function_call"));
+    let data = step.unknown_data().expect("Should preserve data");
+    assert_eq!(data["id"], "call-abc123");
+}
+
+#[test]
+fn test_serialize_function_call_step() {
+    let step = Step::function_call("call_1", "test_fn", serde_json::json!({"arg": "value"}));
+
+    let json = serde_json::to_string(&step).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    // id/name/arguments live at the top level of the step
+    assert_eq!(value["type"], "function_call");
+    assert_eq!(value["id"], "call_1");
+    assert_eq!(value["name"], "test_fn");
+    assert_eq!(value["arguments"]["arg"], "value");
+}
+
+#[test]
+fn test_step_thought_signature_accessor() {
+    // Thought step with signature returns Some
+    let step = Step::thought("EosFCogFAXLI2...");
+    assert_eq!(step.signature(), Some("EosFCogFAXLI2..."));
+
+    // Thought step without signature returns None
+    let none = Step::Thought {
+        signature: None,
+        summary: vec![],
+    };
+    assert_eq!(none.signature(), None);
+
+    // Non-signature-bearing steps return None
+    let text_step = Step::model_text("hello");
+    assert_eq!(text_step.signature(), None);
+}
+
+#[test]
+fn test_step_constructors() {
+    // user_text / model_text wrap text content
+    let user = Step::user_text("Hi");
+    assert!(matches!(user, Step::UserInput { .. }));
+    assert_eq!(user.as_text(), Some("Hi"));
+
+    let model = Step::model_text("Hello");
+    assert!(matches!(model, Step::ModelOutput { .. }));
+    assert_eq!(model.as_text(), Some("Hello"));
+
+    // user_input / model_output take content blocks
+    let user = Step::user_input(vec![Content::text("a"), Content::text("b")]);
+    assert_eq!(user.content().unwrap().len(), 2);
+
+    let model = Step::model_output(vec![Content::text("c")]);
+    assert_eq!(model.content().unwrap().len(), 1);
+
+    // function_call
+    let call = Step::function_call("call_9", "get_weather", serde_json::json!({"city": "SF"}));
+    match &call {
+        Step::FunctionCall {
+            id,
+            name,
+            arguments,
+        } => {
+            assert_eq!(id, "call_9");
+            assert_eq!(name, "get_weather");
+            assert_eq!(arguments["city"], "SF");
+        }
+        _ => panic!("Expected FunctionCall variant"),
+    }
+
+    // function_result (success)
+    let result = Step::function_result(
+        "get_weather",
+        "call_9",
+        serde_json::json!({"temperature": "72F"}),
+    );
+    match &result {
+        Step::FunctionResult {
+            call_id,
+            name,
+            result,
+            is_error,
+        } => {
+            assert_eq!(call_id, "call_9");
+            assert_eq!(name.as_deref(), Some("get_weather"));
+            assert_eq!(result.as_json().unwrap()["temperature"], "72F");
+            assert!(is_error.is_none());
+        }
+        _ => panic!("Expected FunctionResult variant"),
+    }
+
+    // function_result_error sets is_error
+    let error = Step::function_result_error(
+        "api_call",
+        "call_10",
+        serde_json::json!({"error": "timeout", "code": 504}),
+    );
+    match &error {
+        Step::FunctionResult {
+            call_id,
+            name,
+            result,
+            is_error,
+        } => {
+            assert_eq!(call_id, "call_10");
+            assert_eq!(name.as_deref(), Some("api_call"));
+            assert_eq!(result.as_json().unwrap()["code"], 504);
+            assert_eq!(*is_error, Some(true));
+        }
+        _ => panic!("Expected FunctionResult variant"),
+    }
+}
+
+#[test]
+fn test_step_type_names() {
+    assert_eq!(Step::user_text("x").step_type(), "user_input");
+    assert_eq!(Step::model_text("x").step_type(), "model_output");
+    assert_eq!(Step::thought("sig").step_type(), "thought");
+    assert_eq!(
+        Step::function_call("id", "fn", serde_json::Value::Null).step_type(),
+        "function_call"
+    );
+    assert_eq!(
+        Step::function_result("fn", "id", "ok").step_type(),
+        "function_result"
+    );
+    assert_eq!(
+        Step::Unknown {
+            step_type: "future_step".to_string(),
+            data: serde_json::Value::Null,
+        }
+        .step_type(),
+        "future_step"
+    );
+}
+
+#[test]
+fn test_model_output_step_with_error() {
+    let json = r#"{
+        "type": "model_output",
+        "content": [],
+        "error": {"code": 400, "message": "Bad things happened"}
+    }"#;
+
+    let step: Step = serde_json::from_str(json).expect("Should deserialize");
+    match step {
+        Step::ModelOutput { content, error } => {
+            assert!(content.is_empty());
+            let error = error.expect("Should have error");
+            assert_eq!(error.code, Some(400));
+            assert_eq!(error.message.as_deref(), Some("Bad things happened"));
+            assert!(error.details.is_none());
+        }
+        _ => panic!("Expected ModelOutput variant"),
+    }
+}
+
+// --- Step Unknown Variant (Evergreen pattern, mirrors Content::Unknown) ---
+
+#[test]
+fn test_serialize_unknown_step() {
+    let unknown = Step::Unknown {
+        step_type: "future_step_type".to_string(),
+        data: serde_json::json!({
+            "type": "future_step_type",
+            "payload": {"nested": true},
+            "count": 7
+        }),
+    };
+
+    let json = serde_json::to_string(&unknown).expect("Serialization should work");
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(value["type"], "future_step_type");
+    assert_eq!(value["payload"]["nested"], true);
+    assert_eq!(value["count"], 7);
+    // Exactly one "type" key
+    let obj = value.as_object().unwrap();
+    assert_eq!(obj.keys().filter(|k| *k == "type").count(), 1);
+}
+
+#[cfg(not(feature = "strict-unknown"))]
+#[test]
+fn test_deserialize_unknown_step_roundtrip() {
+    let unknown_json = r#"{"type": "future_step_type", "payload": "some_value", "count": 42}"#;
+
+    let step: Step = serde_json::from_str(unknown_json).expect("Should deserialize as Unknown");
+
+    assert!(step.is_unknown());
+    assert_eq!(step.unknown_step_type(), Some("future_step_type"));
+    let data = step.unknown_data().expect("Should have data");
+    assert_eq!(data["payload"], "some_value");
+    assert_eq!(data["count"], 42);
+
+    // Roundtrip: serialize back and re-deserialize
+    let reserialized = serde_json::to_string(&step).expect("Should serialize");
+    let restored: Step = serde_json::from_str(&reserialized).expect("Should deserialize again");
+    assert!(restored.is_unknown());
+    assert_eq!(restored.unknown_step_type(), Some("future_step_type"));
+}
+
+#[cfg(not(feature = "strict-unknown"))]
+#[test]
+fn test_deserialize_step_with_missing_type() {
+    let malformed_json = r#"{"foo": "bar"}"#;
+    let step: Step = serde_json::from_str(malformed_json).unwrap();
+    match step {
+        Step::Unknown { step_type, data } => {
+            assert_eq!(step_type, "<missing type>");
+            assert_eq!(data["foo"], "bar");
+        }
+        _ => panic!("Expected Unknown variant"),
+    }
+}
+
+// --- FunctionResultPayload ---
+
+#[test]
+fn test_function_result_payload_conversions() {
+    // From &str / String -> Text
+    let payload: FunctionResultPayload = "plain result".into();
+    assert_eq!(payload.as_text(), Some("plain result"));
+    assert!(payload.as_json().is_none());
+    assert!(payload.as_contents().is_none());
+    assert_eq!(payload.to_value(), serde_json::json!("plain result"));
+
+    let payload: FunctionResultPayload = String::from("owned").into();
+    assert_eq!(payload.as_text(), Some("owned"));
+
+    // From Value: strings become Text, objects become Json
+    let payload: FunctionResultPayload = serde_json::json!("string value").into();
+    assert_eq!(payload.as_text(), Some("string value"));
+
+    let payload: FunctionResultPayload = serde_json::json!({"temp": 72}).into();
+    assert_eq!(payload.as_json().unwrap()["temp"], 72);
+    assert_eq!(payload.to_value(), serde_json::json!({"temp": 72}));
+
+    // From Vec<Content> -> Contents
+    let payload: FunctionResultPayload = vec![Content::text("block")].into();
+    let contents = payload.as_contents().expect("Should be Contents");
+    assert_eq!(contents.len(), 1);
+    assert_eq!(contents[0].as_text(), Some("block"));
+}
+
+#[test]
+fn test_function_result_payload_from_value_classification() {
+    // Arrays of typed objects are classified as content lists
+    let payload = FunctionResultPayload::from_value(serde_json::json!([
+        {"type": "text", "text": "hello"}
+    ]));
+    assert!(payload.as_contents().is_some());
+
+    // Mixed / untyped arrays stay as raw JSON
+    let payload = FunctionResultPayload::from_value(serde_json::json!([1, 2, 3]));
+    assert!(payload.as_json().is_some());
+
+    let payload = FunctionResultPayload::from_value(serde_json::json!([{"no_type": true}]));
+    assert!(payload.as_json().is_some());
+}
+
+#[test]
+fn test_function_result_payload_serde_roundtrip() {
+    // Text payload serializes as a bare string
+    let payload = FunctionResultPayload::Text("output".to_string());
+    let json = serde_json::to_string(&payload).unwrap();
+    assert_eq!(json, r#""output""#);
+    let restored: FunctionResultPayload = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored.as_text(), Some("output"));
+
+    // Json payload roundtrips
+    let payload = FunctionResultPayload::Json(serde_json::json!({"a": 1}));
+    let json = serde_json::to_string(&payload).unwrap();
+    let restored: FunctionResultPayload = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored.as_json().unwrap()["a"], 1);
+
+    // Contents payload roundtrips
+    let payload = FunctionResultPayload::Contents(vec![Content::text("hi")]);
+    let json = serde_json::to_string(&payload).unwrap();
+    let restored: FunctionResultPayload = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored.as_contents().unwrap()[0].as_text(), Some("hi"));
+}
+
+// --- Code Execution Steps ---
+
+#[test]
+fn test_deserialize_code_execution_call_step() {
+    // Wire format nests language/code inside `arguments`; language is lowercase.
+    let json = r#"{"type": "code_execution_call", "id": "call_123", "arguments": {"code": "print(42)", "language": "python"}}"#;
+    let step: Step = serde_json::from_str(json).expect("Should deserialize");
+
+    match &step {
+        Step::CodeExecutionCall {
+            id,
+            language,
+            code,
+            signature,
+        } => {
+            assert_eq!(id, "call_123");
+            assert_eq!(*language, CodeExecutionLanguage::Python);
+            assert_eq!(code, "print(42)");
+            assert!(signature.is_none());
+        }
+        _ => panic!("Expected CodeExecutionCall variant, got {:?}", step),
+    }
+
+    assert!(!step.is_unknown());
+}
+
+#[test]
+fn test_deserialize_code_execution_call_step_legacy_uppercase_language() {
+    // Legacy uppercase "PYTHON" is still accepted on deserialize
     let json = r#"{"type": "code_execution_call", "id": "call_123", "arguments": {"code": "print(42)", "language": "PYTHON"}}"#;
-    let content: Content = serde_json::from_str(json).expect("Should deserialize");
+    let step: Step = serde_json::from_str(json).expect("Should deserialize");
 
-    match &content {
-        Content::CodeExecutionCall { id, language, code } => {
-            assert_eq!(*id, Some("call_123".to_string()));
+    match &step {
+        Step::CodeExecutionCall { language, code, .. } => {
             assert_eq!(*language, CodeExecutionLanguage::Python);
             assert_eq!(code, "print(42)");
         }
-        _ => panic!("Expected CodeExecutionCall variant, got {:?}", content),
+        _ => panic!("Expected CodeExecutionCall variant, got {:?}", step),
     }
-
-    assert!(content.is_code_execution_call());
-    assert!(!content.is_unknown());
 }
 
 #[test]
-fn test_deserialize_code_execution_call_direct_fields() {
-    // Test deserialization from direct fields (new format)
-    let json = r#"{"type": "code_execution_call", "id": "call_123", "language": "PYTHON", "code": "print(42)"}"#;
-    let content: Content = serde_json::from_str(json).expect("Should deserialize");
+fn test_deserialize_code_execution_call_step_missing_arguments_defaults() {
+    // Under revision 2026-05-20 a code_execution_call without arguments is
+    // handled leniently: language defaults to Python and code to empty.
+    // (This replaces the launch-era malformed-becomes-Unknown behavior.)
+    let json = r#"{"type": "code_execution_call", "id": "call_no_args"}"#;
+    let step: Step = serde_json::from_str(json).expect("Should deserialize");
 
-    match &content {
-        Content::CodeExecutionCall { id, language, code } => {
-            assert_eq!(*id, Some("call_123".to_string()));
+    match &step {
+        Step::CodeExecutionCall {
+            id, language, code, ..
+        } => {
+            assert_eq!(id, "call_no_args");
             assert_eq!(*language, CodeExecutionLanguage::Python);
-            assert_eq!(code, "print(42)");
+            assert!(code.is_empty());
         }
-        _ => panic!("Expected CodeExecutionCall variant, got {:?}", content),
+        _ => panic!("Expected CodeExecutionCall variant, got {:?}", step),
     }
 }
 
 #[test]
-fn test_deserialize_code_execution_call_malformed_becomes_unknown() {
-    // Issue #186: Malformed CodeExecutionCall (missing both direct fields and arguments)
-    // should become Unknown variant per Evergreen philosophy, not silently fall back to empty code.
-    let json =
-        r#"{"type": "code_execution_call", "id": "call_malformed", "extra_field": "unexpected"}"#;
-    let content: Content = serde_json::from_str(json).expect("Should deserialize");
-
-    // Should be Unknown, not a CodeExecutionCall with empty code
-    match &content {
-        Content::Unknown { content_type, data } => {
-            assert_eq!(content_type, "code_execution_call");
-            // Verify the original data is preserved for debugging
-            assert_eq!(data["id"], "call_malformed");
-            assert_eq!(data["extra_field"], "unexpected");
-            assert_eq!(data["type"], "code_execution_call");
-        }
-        Content::CodeExecutionCall { code, .. } => {
-            panic!(
-                "Should NOT be CodeExecutionCall with empty code (got code={:?}). \
-                 Malformed responses should become Unknown variant.",
-                code
-            );
-        }
-        _ => panic!("Expected Unknown variant, got {:?}", content),
-    }
-
-    assert!(content.is_unknown());
-    assert!(!content.is_code_execution_call());
-    assert_eq!(content.unknown_content_type(), Some("code_execution_call"));
-}
-
-#[test]
-fn test_deserialize_code_execution_call_malformed_roundtrip() {
-    // Verify malformed CodeExecutionCall can roundtrip through Unknown variant
-    let json =
-        r#"{"type": "code_execution_call", "id": "call_malformed", "custom": {"nested": true}}"#;
-    let content: Content = serde_json::from_str(json).expect("Should deserialize");
-
-    assert!(content.is_unknown());
-
-    // Serialize back
-    let reserialized = serde_json::to_string(&content).expect("Should serialize");
-    let value: serde_json::Value =
-        serde_json::from_str(&reserialized).expect("Should parse as JSON");
-
-    // Verify key fields are preserved
-    assert_eq!(value["type"], "code_execution_call");
-    assert_eq!(value["id"], "call_malformed");
-    assert_eq!(value["custom"]["nested"], true);
-}
-
-#[test]
-fn test_deserialize_code_execution_call_arguments_missing_code_becomes_unknown() {
-    // Arguments path: when arguments object exists but code is missing, treat as Unknown
-    // This is the same Evergreen pattern as the direct fields path
-    let json = r#"{"type": "code_execution_call", "id": "call_args_no_code", "arguments": {"language": "PYTHON"}}"#;
-    let content: Content = serde_json::from_str(json).expect("Should deserialize");
-
-    // Should be Unknown, not CodeExecutionCall with empty code
-    match &content {
-        Content::Unknown { content_type, data } => {
-            assert_eq!(content_type, "code_execution_call");
-            assert_eq!(data["id"], "call_args_no_code");
-            assert_eq!(data["arguments"]["language"], "PYTHON");
-        }
-        Content::CodeExecutionCall { code, .. } => {
-            panic!(
-                "Should NOT be CodeExecutionCall with empty code (got code={:?}). \
-                 Arguments path should also treat missing code as Unknown.",
-                code
-            );
-        }
-        _ => panic!("Expected Unknown variant, got {:?}", content),
-    }
-
-    assert!(content.is_unknown());
-}
-
-#[test]
-fn test_deserialize_code_execution_call_arguments_valid() {
-    // Arguments path: when arguments object has code, should work normally
-    let json = r#"{"type": "code_execution_call", "id": "call_valid", "arguments": {"language": "PYTHON", "code": "print('hi')"}}"#;
-    let content: Content = serde_json::from_str(json).expect("Should deserialize");
-
-    match &content {
-        Content::CodeExecutionCall { id, language, code } => {
-            assert_eq!(*id, Some("call_valid".to_string()));
-            assert_eq!(*language, CodeExecutionLanguage::Python);
-            assert_eq!(code, "print('hi')");
-        }
-        _ => panic!("Expected CodeExecutionCall variant, got {:?}", content),
-    }
-
-    assert!(content.is_code_execution_call());
-    assert!(!content.is_unknown());
-}
-
-#[test]
-fn test_deserialize_code_execution_result() {
-    // Test deserialization from API wire format (is_error + result)
+fn test_deserialize_code_execution_result_step() {
     let json = r#"{"type": "code_execution_result", "call_id": "call_123", "is_error": false, "result": "42\n"}"#;
-    let content: Content = serde_json::from_str(json).expect("Should deserialize");
+    let step: Step = serde_json::from_str(json).expect("Should deserialize");
 
-    match &content {
-        Content::CodeExecutionResult {
+    match &step {
+        Step::CodeExecutionResult {
             call_id,
             is_error,
             result,
+            signature,
         } => {
-            assert_eq!(*call_id, Some("call_123".to_string()));
+            assert_eq!(call_id, "call_123");
             assert!(!is_error);
             assert_eq!(result, "42\n");
+            assert!(signature.is_none());
         }
-        _ => panic!("Expected CodeExecutionResult variant, got {:?}", content),
+        _ => panic!("Expected CodeExecutionResult variant, got {:?}", step),
     }
-
-    assert!(content.is_code_execution_result());
-    assert!(!content.is_unknown());
 }
 
 #[test]
-fn test_deserialize_code_execution_result_error() {
+fn test_deserialize_code_execution_result_step_error() {
     let json = r#"{"type": "code_execution_result", "call_id": "call_456", "is_error": true, "result": "NameError: x not defined"}"#;
-    let content: Content = serde_json::from_str(json).expect("Should deserialize");
+    let step: Step = serde_json::from_str(json).expect("Should deserialize");
 
-    match &content {
-        Content::CodeExecutionResult {
+    match &step {
+        Step::CodeExecutionResult {
             call_id,
             is_error,
             result,
+            ..
         } => {
-            assert_eq!(*call_id, Some("call_456".to_string()));
+            assert_eq!(call_id, "call_456");
             assert!(is_error);
             assert!(result.contains("NameError"));
         }
-        _ => panic!("Expected CodeExecutionResult variant, got {:?}", content),
+        _ => panic!("Expected CodeExecutionResult variant, got {:?}", step),
+    }
+}
+
+#[test]
+fn test_serialize_code_execution_call_step() {
+    let step = Step::CodeExecutionCall {
+        id: "call_123".to_string(),
+        language: CodeExecutionLanguage::Python,
+        code: "print(42)".to_string(),
+        signature: None,
+    };
+
+    let json = serde_json::to_string(&step).expect("Serialization should work");
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(value["type"], "code_execution_call");
+    assert_eq!(value["id"], "call_123");
+    // Wire format nests language and code inside arguments; language is lowercase
+    assert_eq!(value["arguments"]["language"], "python");
+    assert_eq!(value["arguments"]["code"], "print(42)");
+}
+
+#[test]
+fn test_serialize_code_execution_result_step() {
+    let step = Step::CodeExecutionResult {
+        call_id: "call_123".to_string(),
+        is_error: false,
+        result: "42".to_string(),
+        signature: None,
+    };
+
+    let json = serde_json::to_string(&step).expect("Serialization should work");
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(value["type"], "code_execution_result");
+    assert_eq!(value["call_id"], "call_123");
+    assert_eq!(value["is_error"], false);
+    assert_eq!(value["result"], "42");
+}
+
+#[test]
+fn test_serialize_code_execution_result_step_error() {
+    let step = Step::CodeExecutionResult {
+        call_id: "call_456".to_string(),
+        is_error: true,
+        result: "NameError: x not defined".to_string(),
+        signature: None,
+    };
+
+    let json = serde_json::to_string(&step).expect("Serialization should work");
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(value["type"], "code_execution_result");
+    assert_eq!(value["call_id"], "call_456");
+    assert_eq!(value["is_error"], true);
+    assert!(value["result"].as_str().unwrap().contains("NameError"));
+}
+
+#[test]
+fn test_step_signature_preserved_on_tool_steps() {
+    // Tool call/result steps carry an opaque signature that must roundtrip
+    let step = Step::CodeExecutionCall {
+        id: "call_sig".to_string(),
+        language: CodeExecutionLanguage::Python,
+        code: "print(1)".to_string(),
+        signature: Some("sig-abc".to_string()),
+    };
+    assert_eq!(step.signature(), Some("sig-abc"));
+
+    let json = serde_json::to_string(&step).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(value["signature"], "sig-abc");
+
+    let restored: Step = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored.signature(), Some("sig-abc"));
+}
+
+#[test]
+fn test_roundtrip_built_in_tool_steps() {
+    // CodeExecutionCall roundtrip
+    let original = Step::CodeExecutionCall {
+        id: "call_123".to_string(),
+        language: CodeExecutionLanguage::Python,
+        code: "print('hello')".to_string(),
+        signature: None,
+    };
+    let json = serde_json::to_string(&original).unwrap();
+    let restored: Step = serde_json::from_str(&json).unwrap();
+    assert!(matches!(restored, Step::CodeExecutionCall { .. }));
+
+    // CodeExecutionResult roundtrip
+    let original = Step::CodeExecutionResult {
+        call_id: "call_123".to_string(),
+        is_error: false,
+        result: "hello\n".to_string(),
+        signature: None,
+    };
+    let json = serde_json::to_string(&original).unwrap();
+    let restored: Step = serde_json::from_str(&json).unwrap();
+    assert!(matches!(restored, Step::CodeExecutionResult { .. }));
+
+    // GoogleSearchCall roundtrip
+    let original = Step::GoogleSearchCall {
+        id: "call123".to_string(),
+        queries: vec!["test query".to_string()],
+        search_type: None,
+        signature: None,
+    };
+    let json = serde_json::to_string(&original).unwrap();
+    let restored: Step = serde_json::from_str(&json).unwrap();
+    match restored {
+        Step::GoogleSearchCall { queries, .. } => assert_eq!(queries, vec!["test query"]),
+        other => panic!("Expected GoogleSearchCall variant, got {:?}", other),
+    }
+
+    // GoogleSearchResult roundtrip
+    let original = Step::GoogleSearchResult {
+        call_id: "call123".to_string(),
+        result: vec![],
+        is_error: None,
+        signature: None,
+    };
+    let json = serde_json::to_string(&original).unwrap();
+    let restored: Step = serde_json::from_str(&json).unwrap();
+    assert!(matches!(restored, Step::GoogleSearchResult { .. }));
+
+    // UrlContextCall roundtrip
+    let original = Step::UrlContextCall {
+        id: "ctx_123".to_string(),
+        urls: vec!["https://example.com".to_string()],
+        signature: None,
+    };
+    let json = serde_json::to_string(&original).unwrap();
+    let restored: Step = serde_json::from_str(&json).unwrap();
+    match restored {
+        Step::UrlContextCall { urls, .. } => assert_eq!(urls, vec!["https://example.com"]),
+        other => panic!("Expected UrlContextCall variant, got {:?}", other),
+    }
+
+    // UrlContextResult roundtrip
+    let original = Step::UrlContextResult {
+        call_id: "ctx_123".to_string(),
+        result: vec![UrlContextResultItem::new("https://example.com", "success")],
+        is_error: None,
+        signature: None,
+    };
+    let json = serde_json::to_string(&original).unwrap();
+    let restored: Step = serde_json::from_str(&json).unwrap();
+    assert!(matches!(restored, Step::UrlContextResult { .. }));
+}
+
+#[test]
+fn test_step_edge_cases_empty_values() {
+    // Empty code in CodeExecutionCall
+    let step = Step::CodeExecutionCall {
+        id: "call_empty".to_string(),
+        language: CodeExecutionLanguage::Python,
+        code: String::new(),
+        signature: None,
+    };
+    let json = serde_json::to_string(&step).unwrap();
+    let restored: Step = serde_json::from_str(&json).unwrap();
+    match restored {
+        Step::CodeExecutionCall {
+            id, language, code, ..
+        } => {
+            assert_eq!(id, "call_empty");
+            assert_eq!(language, CodeExecutionLanguage::Python);
+            assert!(code.is_empty());
+        }
+        _ => panic!("Expected CodeExecutionCall"),
+    }
+
+    // Empty results in GoogleSearchResult
+    let step = Step::GoogleSearchResult {
+        call_id: "call_empty".to_string(),
+        result: vec![],
+        is_error: None,
+        signature: None,
+    };
+    let json = serde_json::to_string(&step).unwrap();
+    let restored: Step = serde_json::from_str(&json).unwrap();
+    assert!(matches!(restored, Step::GoogleSearchResult { .. }));
+
+    // UrlContextResult with unsafe status item
+    let step = Step::UrlContextResult {
+        call_id: "ctx_unsafe".to_string(),
+        result: vec![UrlContextResultItem::new(
+            "https://blocked.example.com",
+            "unsafe",
+        )],
+        is_error: None,
+        signature: None,
+    };
+    let json = serde_json::to_string(&step).unwrap();
+    let restored: Step = serde_json::from_str(&json).unwrap();
+    match restored {
+        Step::UrlContextResult {
+            call_id, result, ..
+        } => {
+            assert_eq!(call_id, "ctx_unsafe");
+            assert_eq!(result.len(), 1);
+            assert!(result[0].is_unsafe());
+        }
+        _ => panic!("Expected UrlContextResult"),
+    }
+
+    // Empty result string in CodeExecutionResult
+    let step = Step::CodeExecutionResult {
+        call_id: "call_no_output".to_string(),
+        is_error: false,
+        result: String::new(),
+        signature: None,
+    };
+    let json = serde_json::to_string(&step).unwrap();
+    let restored: Step = serde_json::from_str(&json).unwrap();
+    match restored {
+        Step::CodeExecutionResult {
+            call_id, result, ..
+        } => {
+            assert_eq!(call_id, "call_no_output");
+            assert!(result.is_empty());
+        }
+        _ => panic!("Expected CodeExecutionResult"),
     }
 }
 
 // =============================================================================
-// CodeExecutionLanguage Unknown Variant Tests
+// CodeExecutionLanguage Tests
 // =============================================================================
 
 #[cfg(not(feature = "strict-unknown"))]
@@ -597,86 +1102,101 @@ fn test_code_execution_language_unknown_display() {
 
 #[test]
 fn test_code_execution_language_known_variants_serde() {
-    // Verify Python roundtrips correctly
+    // Revision 2026-05-20 wire format is lowercase "python"
     let language = CodeExecutionLanguage::Python;
     let serialized = serde_json::to_string(&language).expect("Should serialize");
-    assert_eq!(serialized, r#""PYTHON""#);
+    assert_eq!(serialized, r#""python""#);
 
     let deserialized: CodeExecutionLanguage =
         serde_json::from_str(&serialized).expect("Should deserialize");
     assert_eq!(deserialized, language);
     assert!(!deserialized.is_unknown());
+
+    // Display uses lowercase
+    assert_eq!(format!("{}", CodeExecutionLanguage::Python), "python");
 }
 
 #[test]
-fn test_deserialize_google_search_call() {
-    // Test the actual API format: arguments.queries is an array
-    let json = r#"{"type": "google_search_call", "id": "call123", "arguments": {"queries": ["Rust programming", "latest version"]}}"#;
-    let content: Content = serde_json::from_str(json).expect("Should deserialize");
+fn test_code_execution_language_accepts_legacy_uppercase() {
+    // Legacy uppercase "PYTHON" is still accepted on deserialize
+    let deserialized: CodeExecutionLanguage =
+        serde_json::from_str(r#""PYTHON""#).expect("Should deserialize legacy format");
+    assert_eq!(deserialized, CodeExecutionLanguage::Python);
+    assert!(!deserialized.is_unknown());
+}
 
-    match &content {
-        Content::GoogleSearchCall { id, queries } => {
+// --- Google Search / URL Context Steps ---
+
+#[test]
+fn test_deserialize_google_search_call_step() {
+    // Wire format: arguments.queries is an array
+    let json = r#"{"type": "google_search_call", "id": "call123", "arguments": {"queries": ["Rust programming", "latest version"]}}"#;
+    let step: Step = serde_json::from_str(json).expect("Should deserialize");
+
+    match &step {
+        Step::GoogleSearchCall { id, queries, .. } => {
             assert_eq!(id, "call123");
             assert_eq!(queries.len(), 2);
             assert_eq!(queries[0], "Rust programming");
             assert_eq!(queries[1], "latest version");
         }
-        _ => panic!("Expected GoogleSearchCall variant, got {:?}", content),
+        _ => panic!("Expected GoogleSearchCall variant, got {:?}", step),
     }
 
-    assert!(content.is_google_search_call());
-    assert!(!content.is_unknown());
+    assert!(!step.is_unknown());
 }
 
 #[test]
-fn test_deserialize_google_search_result() {
-    // Test the actual API format: result is an array of objects with title/url
+fn test_deserialize_google_search_result_step() {
+    // Wire format: result is an array of objects with title/url
     let json = r#"{"type": "google_search_result", "call_id": "call123", "result": [{"title": "Rust", "url": "https://rust-lang.org", "rendered_content": "Some content"}]}"#;
-    let content: Content = serde_json::from_str(json).expect("Should deserialize");
+    let step: Step = serde_json::from_str(json).expect("Should deserialize");
 
-    match &content {
-        Content::GoogleSearchResult { call_id, result } => {
+    match &step {
+        Step::GoogleSearchResult {
+            call_id, result, ..
+        } => {
             assert_eq!(call_id, "call123");
             assert_eq!(result.len(), 1);
             assert_eq!(result[0].title, "Rust");
             assert_eq!(result[0].url, "https://rust-lang.org");
             assert_eq!(result[0].rendered_content.as_deref(), Some("Some content"));
         }
-        _ => panic!("Expected GoogleSearchResult variant, got {:?}", content),
+        _ => panic!("Expected GoogleSearchResult variant, got {:?}", step),
     }
 
-    assert!(content.is_google_search_result());
-    assert!(!content.is_unknown());
+    assert!(!step.is_unknown());
 }
 
 #[test]
-fn test_deserialize_url_context_call() {
-    // Wire format from LOUD_WIRE: {"type": "url_context_call", "id": "...", "arguments": {"urls": [...]}}
+fn test_deserialize_url_context_call_step() {
+    // Wire format: {"type": "url_context_call", "id": "...", "arguments": {"urls": [...]}}
     let json = r#"{"type": "url_context_call", "id": "ctx_123", "arguments": {"urls": ["https://example.com", "https://example.org"]}}"#;
-    let content: Content = serde_json::from_str(json).expect("Should deserialize");
+    let step: Step = serde_json::from_str(json).expect("Should deserialize");
 
-    match &content {
-        Content::UrlContextCall { id, urls } => {
+    match &step {
+        Step::UrlContextCall { id, urls, .. } => {
             assert_eq!(id, "ctx_123");
             assert_eq!(urls.len(), 2);
             assert_eq!(urls[0], "https://example.com");
             assert_eq!(urls[1], "https://example.org");
         }
-        _ => panic!("Expected UrlContextCall variant, got {:?}", content),
+        _ => panic!("Expected UrlContextCall variant, got {:?}", step),
     }
 
-    assert!(content.is_url_context_call());
-    assert!(!content.is_unknown());
+    assert!(!step.is_unknown());
 }
 
 #[test]
-fn test_deserialize_url_context_result() {
-    // Wire format from LOUD_WIRE: {"type": "url_context_result", "call_id": "...", "result": [{"url": "...", "status": "..."}]}
+fn test_deserialize_url_context_result_step() {
+    // Wire format: {"type": "url_context_result", "call_id": "...", "result": [{"url": "...", "status": "..."}]}
     let json = r#"{"type": "url_context_result", "call_id": "ctx_123", "result": [{"url": "https://example.com", "status": "success"}, {"url": "https://example.org", "status": "error"}]}"#;
-    let content: Content = serde_json::from_str(json).expect("Should deserialize");
+    let step: Step = serde_json::from_str(json).expect("Should deserialize");
 
-    match &content {
-        Content::UrlContextResult { call_id, result } => {
+    match &step {
+        Step::UrlContextResult {
+            call_id, result, ..
+        } => {
             assert_eq!(call_id, "ctx_123");
             assert_eq!(result.len(), 2);
             assert_eq!(result[0].url, "https://example.com");
@@ -686,23 +1206,24 @@ fn test_deserialize_url_context_result() {
             assert_eq!(result[1].status, "error");
             assert!(result[1].is_error());
         }
-        _ => panic!("Expected UrlContextResult variant, got {:?}", content),
+        _ => panic!("Expected UrlContextResult variant, got {:?}", step),
     }
 
-    assert!(content.is_url_context_result());
-    assert!(!content.is_unknown());
+    assert!(!step.is_unknown());
 }
 
 #[test]
-fn test_url_context_result_with_empty_result_array() {
+fn test_url_context_result_step_with_empty_result_array() {
     // Test UrlContextResult with empty result array
-    let content = Content::UrlContextResult {
+    let step = Step::UrlContextResult {
         call_id: "ctx_empty".to_string(),
         result: vec![],
+        is_error: None,
+        signature: None,
     };
 
     // Serialize and verify structure
-    let json = serde_json::to_string(&content).expect("Serialization should work");
+    let json = serde_json::to_string(&step).expect("Serialization should work");
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
 
     assert_eq!(value["type"], "url_context_result");
@@ -712,11 +1233,12 @@ fn test_url_context_result_with_empty_result_array() {
     // Deserialize with empty result array
     let json_empty_result =
         r#"{"type": "url_context_result", "call_id": "ctx_empty", "result": []}"#;
-    let deserialized: Content =
-        serde_json::from_str(json_empty_result).expect("Should deserialize");
+    let deserialized: Step = serde_json::from_str(json_empty_result).expect("Should deserialize");
 
     match &deserialized {
-        Content::UrlContextResult { call_id, result } => {
+        Step::UrlContextResult {
+            call_id, result, ..
+        } => {
             assert_eq!(call_id, "ctx_empty");
             assert!(result.is_empty());
         }
@@ -726,12 +1248,11 @@ fn test_url_context_result_with_empty_result_array() {
 
 #[test]
 fn test_url_context_result_item_status_helpers() {
-    use crate::UrlContextResultItem;
-
     let success_item = UrlContextResultItem::new("https://example.com", "success");
     assert!(success_item.is_success());
     assert!(!success_item.is_error());
     assert!(!success_item.is_unsafe());
+    assert!(!success_item.is_paywall());
 
     let error_item = UrlContextResultItem::new("https://example.org", "error");
     assert!(!error_item.is_success());
@@ -742,195 +1263,22 @@ fn test_url_context_result_item_status_helpers() {
     assert!(!unsafe_item.is_success());
     assert!(!unsafe_item.is_error());
     assert!(unsafe_item.is_unsafe());
+
+    let paywall_item = UrlContextResultItem::new("https://news.example", "paywall");
+    assert!(!paywall_item.is_success());
+    assert!(paywall_item.is_paywall());
 }
 
-#[test]
-fn test_serialize_code_execution_call() {
-    let content = Content::CodeExecutionCall {
-        id: Some("call_123".to_string()),
-        language: CodeExecutionLanguage::Python,
-        code: "print(42)".to_string(),
-    };
-
-    let json = serde_json::to_string(&content).expect("Serialization should work");
-    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-
-    assert_eq!(value["type"], "code_execution_call");
-    assert_eq!(value["id"], "call_123");
-    // Wire format nests language and code inside arguments
-    assert_eq!(value["arguments"]["language"], "PYTHON");
-    assert_eq!(value["arguments"]["code"], "print(42)");
-}
+// --- Response-Level Step Deserialization ---
 
 #[test]
-fn test_serialize_code_execution_result() {
-    let content = Content::CodeExecutionResult {
-        call_id: Some("call_123".to_string()),
-        is_error: false,
-        result: "42".to_string(),
-    };
-
-    let json = serde_json::to_string(&content).expect("Serialization should work");
-    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-
-    assert_eq!(value["type"], "code_execution_result");
-    assert_eq!(value["call_id"], "call_123"); // serializes without wrapping
-    assert_eq!(value["is_error"], false);
-    assert_eq!(value["result"], "42");
-}
-
-#[test]
-fn test_serialize_code_execution_result_error() {
-    let content = Content::CodeExecutionResult {
-        call_id: Some("call_456".to_string()),
-        is_error: true,
-        result: "NameError: x not defined".to_string(),
-    };
-
-    let json = serde_json::to_string(&content).expect("Serialization should work");
-    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-
-    assert_eq!(value["type"], "code_execution_result");
-    assert_eq!(value["call_id"], "call_456");
-    assert_eq!(value["is_error"], true);
-    assert!(value["result"].as_str().unwrap().contains("NameError"));
-}
-
-#[test]
-fn test_roundtrip_built_in_tool_content() {
-    // CodeExecutionCall roundtrip
-    let original = Content::CodeExecutionCall {
-        id: Some("call_123".to_string()),
-        language: CodeExecutionLanguage::Python,
-        code: "print('hello')".to_string(),
-    };
-    let json = serde_json::to_string(&original).unwrap();
-    let restored: Content = serde_json::from_str(&json).unwrap();
-    assert!(matches!(restored, Content::CodeExecutionCall { .. }));
-
-    // CodeExecutionResult roundtrip
-    let original = Content::CodeExecutionResult {
-        call_id: Some("call_123".to_string()),
-        is_error: false,
-        result: "hello\n".to_string(),
-    };
-    let json = serde_json::to_string(&original).unwrap();
-    let restored: Content = serde_json::from_str(&json).unwrap();
-    assert!(matches!(restored, Content::CodeExecutionResult { .. }));
-
-    // GoogleSearchCall roundtrip
-    let original = Content::GoogleSearchCall {
-        id: "call123".to_string(),
-        queries: vec!["test query".to_string()],
-    };
-    let json = serde_json::to_string(&original).unwrap();
-    let restored: Content = serde_json::from_str(&json).unwrap();
-    assert!(matches!(restored, Content::GoogleSearchCall { .. }));
-
-    // GoogleSearchResult roundtrip
-    let original = Content::GoogleSearchResult {
-        call_id: "call123".to_string(),
-        result: vec![],
-    };
-    let json = serde_json::to_string(&original).unwrap();
-    let restored: Content = serde_json::from_str(&json).unwrap();
-    assert!(matches!(restored, Content::GoogleSearchResult { .. }));
-
-    // UrlContextCall roundtrip
-    let original = Content::UrlContextCall {
-        id: "ctx_123".to_string(),
-        urls: vec!["https://example.com".to_string()],
-    };
-    let json = serde_json::to_string(&original).unwrap();
-    let restored: Content = serde_json::from_str(&json).unwrap();
-    assert!(matches!(restored, Content::UrlContextCall { .. }));
-
-    // UrlContextResult roundtrip
-    let original = Content::UrlContextResult {
-        call_id: "ctx_123".to_string(),
-        result: vec![UrlContextResultItem::new("https://example.com", "success")],
-    };
-    let json = serde_json::to_string(&original).unwrap();
-    let restored: Content = serde_json::from_str(&json).unwrap();
-    assert!(matches!(restored, Content::UrlContextResult { .. }));
-}
-
-#[test]
-fn test_edge_cases_empty_values() {
-    // Empty code in CodeExecutionCall
-    let content = Content::CodeExecutionCall {
-        id: Some("call_empty".to_string()),
-        language: CodeExecutionLanguage::Python,
-        code: "".to_string(),
-    };
-    let json = serde_json::to_string(&content).unwrap();
-    let restored: Content = serde_json::from_str(&json).unwrap();
-    match restored {
-        Content::CodeExecutionCall { id, language, code } => {
-            assert_eq!(id, Some("call_empty".to_string()));
-            assert_eq!(language, CodeExecutionLanguage::Python);
-            assert!(code.is_empty());
-        }
-        _ => panic!("Expected CodeExecutionCall"),
-    }
-
-    // Empty results in GoogleSearchResult
-    let content = Content::GoogleSearchResult {
-        call_id: "call_empty".to_string(),
-        result: vec![],
-    };
-    let json = serde_json::to_string(&content).unwrap();
-    let restored: Content = serde_json::from_str(&json).unwrap();
-    assert!(matches!(restored, Content::GoogleSearchResult { .. }));
-
-    // UrlContextResult with unsafe status item
-    let content = Content::UrlContextResult {
-        call_id: "ctx_unsafe".to_string(),
-        result: vec![UrlContextResultItem::new(
-            "https://blocked.example.com",
-            "unsafe",
-        )],
-    };
-    let json = serde_json::to_string(&content).unwrap();
-    let restored: Content = serde_json::from_str(&json).unwrap();
-    match restored {
-        Content::UrlContextResult { call_id, result } => {
-            assert_eq!(call_id, "ctx_unsafe");
-            assert_eq!(result.len(), 1);
-            assert!(result[0].is_unsafe());
-        }
-        _ => panic!("Expected UrlContextResult"),
-    }
-
-    // Empty result string in CodeExecutionResult
-    let content = Content::CodeExecutionResult {
-        call_id: Some("call_no_output".to_string()),
-        is_error: false,
-        result: "".to_string(),
-    };
-    let json = serde_json::to_string(&content).unwrap();
-    let restored: Content = serde_json::from_str(&json).unwrap();
-    match restored {
-        Content::CodeExecutionResult {
-            call_id, result, ..
-        } => {
-            assert_eq!(call_id, Some("call_no_output".to_string()));
-            assert!(result.is_empty());
-        }
-        _ => panic!("Expected CodeExecutionResult"),
-    }
-}
-
-#[test]
-fn test_deserialize_response_with_built_in_tool_outputs() {
-    // Test deserializing a full response that contains built-in tool content
-    // Note: code_execution_call and code_execution_result are now known types
+fn test_deserialize_response_with_built_in_tool_steps() {
+    // Test deserializing a full response whose steps include built-in tools
     let response_json = r#"{
         "id": "interaction_789",
         "model": "gemini-3-flash-preview",
-        "input": [{"type": "text", "text": "Execute some code"}],
-        "outputs": [
-            {"type": "text", "text": "Here's the result:"},
+        "steps": [
+            {"type": "model_output", "content": [{"type": "text", "text": "Here's the result:"}]},
             {"type": "code_execution_call", "id": "call_abc", "arguments": {"code": "print(42)", "language": "python"}},
             {"type": "code_execution_result", "call_id": "call_abc", "is_error": false, "result": "42"}
         ],
@@ -938,16 +1286,17 @@ fn test_deserialize_response_with_built_in_tool_outputs() {
     }"#;
 
     let response: InteractionResponse =
-        serde_json::from_str(response_json).expect("Should deserialize with built-in tool types");
+        serde_json::from_str(response_json).expect("Should deserialize with built-in tool steps");
 
     assert_eq!(response.id.as_deref(), Some("interaction_789"));
-    assert_eq!(response.outputs.len(), 3);
+    assert_eq!(response.steps.len(), 3);
     assert!(response.has_text());
     assert!(response.has_code_execution_calls());
     assert!(response.has_code_execution_results());
-    assert!(!response.has_unknown()); // These are now known types
+    assert!(!response.has_unknown()); // These are all known step types
 
-    let summary = response.content_summary();
+    let summary = response.step_summary();
+    assert_eq!(summary.model_output_count, 1);
     assert_eq!(summary.text_count, 1);
     assert_eq!(summary.code_execution_call_count, 1);
     assert_eq!(summary.code_execution_result_count, 1);
@@ -956,14 +1305,13 @@ fn test_deserialize_response_with_built_in_tool_outputs() {
 
 #[cfg(not(feature = "strict-unknown"))]
 #[test]
-fn test_deserialize_response_with_unknown_in_outputs() {
-    // Test deserializing a full response that contains truly unknown content
+fn test_deserialize_response_with_unknown_steps() {
+    // Test deserializing a full response that contains truly unknown steps
     let response_json = r#"{
         "id": "interaction_789",
         "model": "gemini-3-flash-preview",
-        "input": [{"type": "text", "text": "Do something"}],
-        "outputs": [
-            {"type": "text", "text": "Result:"},
+        "steps": [
+            {"type": "model_output", "content": [{"type": "text", "text": "Result:"}]},
             {"type": "future_tool_result", "data": "some_data"},
             {"type": "another_unknown_type", "value": 123}
         ],
@@ -971,14 +1319,14 @@ fn test_deserialize_response_with_unknown_in_outputs() {
     }"#;
 
     let response: InteractionResponse =
-        serde_json::from_str(response_json).expect("Should deserialize with unknown types");
+        serde_json::from_str(response_json).expect("Should deserialize with unknown step types");
 
     assert_eq!(response.id.as_deref(), Some("interaction_789"));
-    assert_eq!(response.outputs.len(), 3);
+    assert_eq!(response.steps.len(), 3);
     assert!(response.has_text());
     assert!(response.has_unknown());
 
-    let summary = response.content_summary();
+    let summary = response.step_summary();
     assert_eq!(summary.text_count, 1);
     assert_eq!(summary.unknown_count, 2);
     assert!(
@@ -994,50 +1342,44 @@ fn test_deserialize_response_with_unknown_in_outputs() {
 }
 
 // --- Annotation Tests ---
+// Annotation is a discriminated union under revision 2026-05-20:
+// url_citation / file_citation / place_citation / Unknown.
 
 #[test]
-fn test_annotation_struct_basics() {
-    let annotation = Annotation {
-        start_index: 0,
-        end_index: 10,
-        source: Some("https://example.com".to_string()),
-    };
+fn test_annotation_url_citation_constructor_and_accessors() {
+    let annotation = Annotation::url_citation("https://example.com", None, 0, 10);
 
-    assert_eq!(annotation.byte_len(), 10);
-    assert!(annotation.has_source());
+    assert_eq!(annotation.start_index(), Some(0));
+    assert_eq!(annotation.end_index(), Some(10));
+    assert_eq!(annotation.source(), Some("https://example.com"));
+    assert!(!annotation.is_unknown());
 
-    let no_source = Annotation {
-        start_index: 5,
-        end_index: 15,
-        source: None,
-    };
-    assert_eq!(no_source.byte_len(), 10);
-    assert!(!no_source.has_source());
+    let with_title = Annotation::url_citation(
+        "https://example.org",
+        Some("Example Title".to_string()),
+        5,
+        15,
+    );
+    match &with_title {
+        Annotation::UrlCitation { url, title, .. } => {
+            assert_eq!(url.as_deref(), Some("https://example.org"));
+            assert_eq!(title.as_deref(), Some("Example Title"));
+        }
+        _ => panic!("Expected UrlCitation variant"),
+    }
 }
 
 #[test]
 fn test_annotation_extract_span() {
     let text = "Hello, world!";
-    let annotation = Annotation {
-        start_index: 0,
-        end_index: 5,
-        source: None,
-    };
+    let annotation = Annotation::url_citation("https://example.com", None, 0, 5);
     assert_eq!(annotation.extract_span(text), Some("Hello"));
 
-    let annotation_mid = Annotation {
-        start_index: 7,
-        end_index: 12,
-        source: None,
-    };
+    let annotation_mid = Annotation::url_citation("https://example.com", None, 7, 12);
     assert_eq!(annotation_mid.extract_span(text), Some("world"));
 
     // Out of bounds
-    let out_of_bounds = Annotation {
-        start_index: 100,
-        end_index: 200,
-        source: None,
-    };
+    let out_of_bounds = Annotation::url_citation("https://example.com", None, 100, 200);
     assert_eq!(out_of_bounds.extract_span(text), None);
 }
 
@@ -1045,34 +1387,97 @@ fn test_annotation_extract_span() {
 fn test_annotation_extract_span_utf8() {
     // Test with UTF-8 text - annotations use byte indices
     let text = "Héllo, 世界!"; // "Héllo" = 6 bytes (H=1, é=2, l=1, l=1, o=1), ", " = 2 bytes, "世界" = 6 bytes
-    let annotation = Annotation {
-        start_index: 0,
-        end_index: 6, // "Héllo" in bytes
-        source: None,
-    };
+    let annotation = Annotation::url_citation("https://example.com", None, 0, 6);
     assert_eq!(annotation.extract_span(text), Some("Héllo"));
 
     // Extract Chinese characters
-    let world_annotation = Annotation {
-        start_index: 8, // After "Héllo, "
-        end_index: 14,  // "世界" is 6 bytes
-        source: None,
-    };
+    let world_annotation = Annotation::url_citation("https://example.com", None, 8, 14);
     assert_eq!(world_annotation.extract_span(text), Some("世界"));
+}
+
+#[test]
+fn test_annotation_extract_span_inverted_indices() {
+    // Edge case: start_index > end_index (malformed annotation)
+    // The implementation should gracefully return None
+    let inverted = Annotation::url_citation("https://example.com", None, 10, 5);
+
+    let text = "Hello, world!";
+    assert_eq!(
+        inverted.extract_span(text),
+        None,
+        "Inverted indices should return None"
+    );
+}
+
+#[test]
+fn test_annotation_extract_span_zero_length() {
+    // Edge case: start_index == end_index (zero-length span)
+    let zero_len = Annotation::url_citation("https://example.com", None, 5, 5);
+
+    let text = "Hello, world!";
+    assert_eq!(
+        zero_len.extract_span(text),
+        Some(""),
+        "Zero-length span should return empty string"
+    );
+}
+
+#[test]
+fn test_annotation_extract_span_mid_utf8_boundary() {
+    // Edge case: indices that land in the middle of a multi-byte character
+    // "世" is a 3-byte UTF-8 character (E4 B8 96)
+    let text = "Hello, 世界!"; // "世" starts at byte 7, "界" starts at byte 10
+
+    // Try to slice starting in the middle of "世" (byte 8)
+    let mid_start = Annotation::url_citation("https://example.com", None, 8, 13);
+    assert_eq!(
+        mid_start.extract_span(text),
+        None,
+        "Slicing from middle of UTF-8 character should return None"
+    );
+
+    // Try to slice ending in the middle of "界" (byte 11)
+    let mid_end = Annotation::url_citation("https://example.com", None, 7, 11);
+    assert_eq!(
+        mid_end.extract_span(text),
+        None,
+        "Slicing to middle of UTF-8 character should return None"
+    );
+
+    // Valid slice of "世界" (bytes 7-13)
+    let valid_cjk = Annotation::url_citation("https://example.com", None, 7, 13);
+    assert_eq!(
+        valid_cjk.extract_span(text),
+        Some("世界"),
+        "Valid CJK character slice should work"
+    );
+}
+
+#[test]
+fn test_annotation_url_citation_wire_format() {
+    // Wire format: {"type":"url_citation","url":...,"title":...,"start_index":N,"end_index":N}
+    let annotation =
+        Annotation::url_citation("https://example.com", Some("Example".to_string()), 3, 9);
+
+    let json = serde_json::to_string(&annotation).expect("Serialization failed");
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(value["type"], "url_citation");
+    assert_eq!(value["url"], "https://example.com");
+    assert_eq!(value["title"], "Example");
+    assert_eq!(value["start_index"], 3);
+    assert_eq!(value["end_index"], 9);
 }
 
 #[test]
 fn test_serialize_text_with_annotations() {
     let annotations = vec![
-        Annotation {
-            start_index: 0,
-            end_index: 5,
-            source: Some("https://example.com".to_string()),
-        },
-        Annotation {
+        Annotation::url_citation("https://example.com", None, 0, 5),
+        Annotation::UrlCitation {
+            url: None,
+            title: None,
             start_index: 10,
             end_index: 20,
-            source: None,
         },
     ];
 
@@ -1088,12 +1493,14 @@ fn test_serialize_text_with_annotations() {
     assert_eq!(value["text"], "Hello, world! This is grounded text.");
     assert!(value["annotations"].is_array());
     assert_eq!(value["annotations"].as_array().unwrap().len(), 2);
+    assert_eq!(value["annotations"][0]["type"], "url_citation");
     assert_eq!(value["annotations"][0]["start_index"], 0);
     assert_eq!(value["annotations"][0]["end_index"], 5);
-    assert_eq!(value["annotations"][0]["source"], "https://example.com");
+    assert_eq!(value["annotations"][0]["url"], "https://example.com");
     assert_eq!(value["annotations"][1]["start_index"], 10);
     assert_eq!(value["annotations"][1]["end_index"], 20);
-    assert!(value["annotations"][1].get("source").is_none());
+    // None url is omitted from the wire format
+    assert!(value["annotations"][1].get("url").is_none());
 }
 
 #[test]
@@ -1119,8 +1526,8 @@ fn test_deserialize_text_with_annotations() {
         "type": "text",
         "text": "This is grounded text.",
         "annotations": [
-            {"start_index": 0, "end_index": 4, "source": "https://example.com"},
-            {"start_index": 8, "end_index": 16}
+            {"type": "url_citation", "url": "https://example.com", "title": "Example", "start_index": 0, "end_index": 4},
+            {"type": "url_citation", "start_index": 8, "end_index": 16}
         ]
     }"#;
 
@@ -1131,12 +1538,12 @@ fn test_deserialize_text_with_annotations() {
             assert_eq!(text, Some("This is grounded text.".to_string()));
             let annots = annotations.expect("Should have annotations");
             assert_eq!(annots.len(), 2);
-            assert_eq!(annots[0].start_index, 0);
-            assert_eq!(annots[0].end_index, 4);
-            assert_eq!(annots[0].source, Some("https://example.com".to_string()));
-            assert_eq!(annots[1].start_index, 8);
-            assert_eq!(annots[1].end_index, 16);
-            assert_eq!(annots[1].source, None);
+            assert_eq!(annots[0].start_index(), Some(0));
+            assert_eq!(annots[0].end_index(), Some(4));
+            assert_eq!(annots[0].source(), Some("https://example.com"));
+            assert_eq!(annots[1].start_index(), Some(8));
+            assert_eq!(annots[1].end_index(), Some(16));
+            assert_eq!(annots[1].source(), None);
         }
         _ => panic!("Expected Text variant"),
     }
@@ -1159,11 +1566,12 @@ fn test_deserialize_text_without_annotations() {
 
 #[test]
 fn test_text_with_annotations_roundtrip() {
-    let annotations = vec![Annotation {
-        start_index: 5,
-        end_index: 15,
-        source: Some("https://source.example.com".to_string()),
-    }];
+    let annotations = vec![Annotation::url_citation(
+        "https://source.example.com",
+        None,
+        5,
+        15,
+    )];
 
     let original = Content::Text {
         text: Some("Some grounded content here.".to_string()),
@@ -1183,12 +1591,9 @@ fn test_text_with_annotations_roundtrip() {
             assert_eq!(text, Some("Some grounded content here.".to_string()));
             let annots = annotations.expect("Should have annotations");
             assert_eq!(annots.len(), 1);
-            assert_eq!(annots[0].start_index, 5);
-            assert_eq!(annots[0].end_index, 15);
-            assert_eq!(
-                annots[0].source,
-                Some("https://source.example.com".to_string())
-            );
+            assert_eq!(annots[0].start_index(), Some(5));
+            assert_eq!(annots[0].end_index(), Some(15));
+            assert_eq!(annots[0].source(), Some("https://source.example.com"));
         }
         _ => panic!("Expected Text variant"),
     }
@@ -1198,11 +1603,12 @@ fn test_text_with_annotations_roundtrip() {
 fn test_annotations_helper_method() {
     let content_with_annotations = Content::Text {
         text: Some("Hello".to_string()),
-        annotations: Some(vec![Annotation {
-            start_index: 0,
-            end_index: 5,
-            source: None,
-        }]),
+        annotations: Some(vec![Annotation::url_citation(
+            "https://example.com",
+            None,
+            0,
+            5,
+        )]),
     };
 
     assert!(content_with_annotations.annotations().is_some());
@@ -1216,96 +1622,116 @@ fn test_annotations_helper_method() {
     assert!(content_without_annotations.annotations().is_none());
 
     // Non-text content returns None
-    let thought = Content::Thought {
-        signature: Some("sig_thinking".to_string()),
-    };
-    assert!(thought.annotations().is_none());
+    let image = Content::image_data("base64", "image/png");
+    assert!(image.annotations().is_none());
 }
 
 #[test]
-fn test_annotation_extract_span_inverted_indices() {
-    // Edge case: start_index > end_index (malformed annotation)
-    // The implementation should gracefully return None
-    let inverted = Annotation {
-        start_index: 10,
-        end_index: 5, // start > end - invalid range
-        source: None,
-    };
+fn test_annotation_file_citation_deserialize() {
+    let json = r#"{
+        "type": "file_citation",
+        "document_uri": "files/abc123",
+        "file_name": "report.pdf",
+        "source": "stores/my-store",
+        "page_number": 3,
+        "start_index": 0,
+        "end_index": 12
+    }"#;
 
-    let text = "Hello, world!";
-    assert_eq!(
-        inverted.extract_span(text),
-        None,
-        "Inverted indices should return None"
-    );
+    let annotation: Annotation = serde_json::from_str(json).expect("Should deserialize");
 
-    // byte_len should use saturating_sub to avoid underflow
-    assert_eq!(
-        inverted.byte_len(),
-        0,
-        "byte_len of inverted indices should be 0 (saturating_sub)"
-    );
+    match &annotation {
+        Annotation::FileCitation {
+            document_uri,
+            file_name,
+            source,
+            page_number,
+            start_index,
+            end_index,
+            ..
+        } => {
+            assert_eq!(document_uri.as_deref(), Some("files/abc123"));
+            assert_eq!(file_name.as_deref(), Some("report.pdf"));
+            assert_eq!(source.as_deref(), Some("stores/my-store"));
+            assert_eq!(*page_number, Some(3));
+            assert_eq!(*start_index, 0);
+            assert_eq!(*end_index, 12);
+        }
+        _ => panic!("Expected FileCitation variant, got {:?}", annotation),
+    }
+
+    // source() prefers document_uri for file citations
+    assert_eq!(annotation.source(), Some("files/abc123"));
+    assert!(!annotation.is_unknown());
 }
 
 #[test]
-fn test_annotation_extract_span_zero_length() {
-    // Edge case: start_index == end_index (zero-length span)
-    let zero_len = Annotation {
-        start_index: 5,
-        end_index: 5,
-        source: Some("https://example.com".to_string()),
-    };
+fn test_annotation_place_citation_deserialize() {
+    let json = r#"{
+        "type": "place_citation",
+        "place_id": "ChIJLU7jZClu5kcR",
+        "name": "Eiffel Tower",
+        "url": "https://maps.example.com/eiffel",
+        "review_snippets": [{"title": "Great!", "url": "https://r.example.com", "review_id": "r1"}],
+        "start_index": 4,
+        "end_index": 16
+    }"#;
 
-    let text = "Hello, world!";
-    assert_eq!(
-        zero_len.extract_span(text),
-        Some(""),
-        "Zero-length span should return empty string"
-    );
-    assert_eq!(zero_len.byte_len(), 0);
+    let annotation: Annotation = serde_json::from_str(json).expect("Should deserialize");
+
+    match &annotation {
+        Annotation::PlaceCitation {
+            place_id,
+            name,
+            url,
+            review_snippets,
+            start_index,
+            end_index,
+        } => {
+            assert_eq!(place_id.as_deref(), Some("ChIJLU7jZClu5kcR"));
+            assert_eq!(name.as_deref(), Some("Eiffel Tower"));
+            assert_eq!(url.as_deref(), Some("https://maps.example.com/eiffel"));
+            assert_eq!(review_snippets.len(), 1);
+            assert_eq!(review_snippets[0].title.as_deref(), Some("Great!"));
+            assert_eq!(review_snippets[0].review_id.as_deref(), Some("r1"));
+            assert_eq!(*start_index, 4);
+            assert_eq!(*end_index, 16);
+        }
+        _ => panic!("Expected PlaceCitation variant, got {:?}", annotation),
+    }
+
+    // source() prefers the place URL
+    assert_eq!(annotation.source(), Some("https://maps.example.com/eiffel"));
 }
 
 #[test]
-fn test_annotation_extract_span_mid_utf8_boundary() {
-    // Edge case: indices that land in the middle of a multi-byte character
-    // "世" is a 3-byte UTF-8 character (E4 B8 96)
-    let text = "Hello, 世界!"; // "世" starts at byte 7, "界" starts at byte 10
+fn test_annotation_unknown_variant() {
+    // Unrecognized annotation types are preserved in Unknown
+    let json =
+        r#"{"type": "future_citation", "custom_field": "value", "start_index": 2, "end_index": 6}"#;
+    let annotation: Annotation = serde_json::from_str(json).expect("Should deserialize");
 
-    // Try to slice starting in the middle of "世" (byte 8)
-    let mid_start = Annotation {
-        start_index: 8, // Middle of "世"
-        end_index: 13,
-        source: None,
-    };
+    assert!(annotation.is_unknown());
     assert_eq!(
-        mid_start.extract_span(text),
-        None,
-        "Slicing from middle of UTF-8 character should return None"
+        annotation.unknown_annotation_type(),
+        Some("future_citation")
     );
+    let data = annotation.unknown_data().expect("Should have data");
+    assert_eq!(data["custom_field"], "value");
 
-    // Try to slice ending in the middle of "界" (byte 11)
-    let mid_end = Annotation {
-        start_index: 7, // Start of "世"
-        end_index: 11,  // Middle of "界"
-        source: None,
-    };
-    assert_eq!(
-        mid_end.extract_span(text),
-        None,
-        "Slicing to middle of UTF-8 character should return None"
-    );
+    // Indices are still readable from the preserved data
+    assert_eq!(annotation.start_index(), Some(2));
+    assert_eq!(annotation.end_index(), Some(6));
+    assert_eq!(annotation.extract_span("Hello, world!"), Some("llo,"));
+    assert_eq!(annotation.source(), None);
 
-    // Valid slice of "世界" (bytes 7-13)
-    let valid_cjk = Annotation {
-        start_index: 7,
-        end_index: 13,
-        source: None,
-    };
-    assert_eq!(
-        valid_cjk.extract_span(text),
-        Some("世界"),
-        "Valid CJK character slice should work"
-    );
+    // Roundtrip preserves the original fields
+    let reserialized = serde_json::to_string(&annotation).expect("Should serialize");
+    let value: serde_json::Value = serde_json::from_str(&reserialized).unwrap();
+    assert_eq!(value["type"], "future_citation");
+    assert_eq!(value["custom_field"], "value");
+    assert_eq!(value["start_index"], 2);
+    assert_eq!(value["end_index"], 6);
 }
 
 // --- Resolution Tests ---
@@ -1602,31 +2028,32 @@ fn test_resolution_unknown_object_form() {
     assert_eq!(data.get("tokens").unwrap(), 5000);
 }
 
-// --- File Search Tests ---
+// --- File Search Steps ---
 
 #[test]
-fn test_deserialize_file_search_result() {
+fn test_deserialize_file_search_result_step() {
     // Test the actual API format
     let json = r#"{"type": "file_search_result", "call_id": "call123", "result": [{"title": "Document.pdf", "text": "Relevant content", "file_search_store": "store-1"}]}"#;
-    let content: Content = serde_json::from_str(json).expect("Should deserialize");
+    let step: Step = serde_json::from_str(json).expect("Should deserialize");
 
-    match &content {
-        Content::FileSearchResult { call_id, result } => {
+    match &step {
+        Step::FileSearchResult {
+            call_id, result, ..
+        } => {
             assert_eq!(call_id, "call123");
             assert_eq!(result.len(), 1);
             assert_eq!(result[0].title, "Document.pdf");
             assert_eq!(result[0].text, "Relevant content");
             assert_eq!(result[0].store, "store-1");
         }
-        _ => panic!("Expected FileSearchResult variant, got {:?}", content),
+        _ => panic!("Expected FileSearchResult variant, got {:?}", step),
     }
 
-    assert!(content.is_file_search_result());
-    assert!(!content.is_unknown());
+    assert!(!step.is_unknown());
 }
 
 #[test]
-fn test_deserialize_file_search_result_multiple_items() {
+fn test_deserialize_file_search_result_step_multiple_items() {
     let json = r#"{
         "type": "file_search_result",
         "call_id": "call456",
@@ -1635,10 +2062,12 @@ fn test_deserialize_file_search_result_multiple_items() {
             {"title": "Second.pdf", "text": "Second content", "file_search_store": "store-b"}
         ]
     }"#;
-    let content: Content = serde_json::from_str(json).expect("Should deserialize");
+    let step: Step = serde_json::from_str(json).expect("Should deserialize");
 
-    match &content {
-        Content::FileSearchResult { call_id, result } => {
+    match &step {
+        Step::FileSearchResult {
+            call_id, result, ..
+        } => {
             assert_eq!(call_id, "call456");
             assert_eq!(result.len(), 2);
             assert_eq!(result[0].title, "First.pdf");
@@ -1649,17 +2078,18 @@ fn test_deserialize_file_search_result_multiple_items() {
 }
 
 #[test]
-fn test_serialize_file_search_result() {
-    let content = Content::FileSearchResult {
+fn test_serialize_file_search_result_step() {
+    let step = Step::FileSearchResult {
         call_id: "call789".to_string(),
         result: vec![FileSearchResultItem {
             title: "Results.pdf".to_string(),
             text: "Found text".to_string(),
             store: "my-store".to_string(),
         }],
+        signature: None,
     };
 
-    let json = serde_json::to_string(&content).expect("Serialization should work");
+    let json = serde_json::to_string(&step).expect("Serialization should work");
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
 
     assert_eq!(value["type"], "file_search_result");
@@ -1671,8 +2101,8 @@ fn test_serialize_file_search_result() {
 }
 
 #[test]
-fn test_file_search_result_roundtrip() {
-    let original = Content::FileSearchResult {
+fn test_file_search_result_step_roundtrip() {
+    let original = Step::FileSearchResult {
         call_id: "roundtrip_test".to_string(),
         result: vec![
             FileSearchResultItem {
@@ -1686,13 +2116,16 @@ fn test_file_search_result_roundtrip() {
                 store: "store-2".to_string(),
             },
         ],
+        signature: None,
     };
 
     let json = serde_json::to_string(&original).unwrap();
-    let restored: Content = serde_json::from_str(&json).unwrap();
+    let restored: Step = serde_json::from_str(&json).unwrap();
 
     match restored {
-        Content::FileSearchResult { call_id, result } => {
+        Step::FileSearchResult {
+            call_id, result, ..
+        } => {
             assert_eq!(call_id, "roundtrip_test");
             assert_eq!(result.len(), 2);
             assert_eq!(result[0].title, "Doc1.pdf");
@@ -1704,18 +2137,25 @@ fn test_file_search_result_roundtrip() {
 }
 
 #[test]
-fn test_file_search_result_empty_results() {
-    // Test empty results array
-    let content = Content::FileSearchResult {
+fn test_file_search_result_step_empty_results() {
+    // Empty results are omitted from the wire but roundtrip to an empty vec
+    let step = Step::FileSearchResult {
         call_id: "no_results".to_string(),
         result: vec![],
+        signature: None,
     };
 
-    let json = serde_json::to_string(&content).unwrap();
-    let restored: Content = serde_json::from_str(&json).unwrap();
+    let json = serde_json::to_string(&step).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    // The 2026-05-20 spec doesn't document a result field, so empty results
+    // are not serialized.
+    assert!(value.get("result").is_none());
 
+    let restored: Step = serde_json::from_str(&json).unwrap();
     match restored {
-        Content::FileSearchResult { call_id, result } => {
+        Step::FileSearchResult {
+            call_id, result, ..
+        } => {
             assert_eq!(call_id, "no_results");
             assert!(result.is_empty());
         }
@@ -1732,7 +2172,7 @@ fn test_file_search_result_item_default() {
 }
 
 // =============================================================================
-// Content Constructor Tests (new_*() methods)
+// Content Constructor Tests
 // =============================================================================
 
 #[test]
@@ -1758,101 +2198,8 @@ fn test_new_text_with_empty_string() {
         }
         _ => panic!("Expected Text variant"),
     }
-    // Empty string returns None from text() accessor
+    // Empty string returns None from as_text() accessor
     assert_eq!(content.as_text(), None);
-}
-
-#[test]
-fn test_new_thought_creates_correct_variant() {
-    // Note: new_thought() now takes a signature value (Thought content contains signature, not text)
-    let content = Content::thought("EosFCogFAXLI2...");
-    match &content {
-        Content::Thought { signature } => {
-            assert_eq!(*signature, Some("EosFCogFAXLI2...".to_string()));
-        }
-        _ => panic!("Expected Thought variant"),
-    }
-    assert!(content.is_thought());
-    assert_eq!(content.thought_signature(), Some("EosFCogFAXLI2..."));
-}
-
-#[test]
-fn test_new_thought_with_empty_string() {
-    let content = Content::thought("");
-    match &content {
-        Content::Thought { signature } => {
-            assert_eq!(*signature, Some(String::new()));
-        }
-        _ => panic!("Expected Thought variant"),
-    }
-    // Empty string returns None from thought_signature() accessor
-    assert_eq!(content.thought_signature(), None);
-}
-
-#[test]
-fn test_new_function_call_creates_correct_variant() {
-    let content = Content::function_call("get_weather", serde_json::json!({"location": "SF"}));
-    match &content {
-        Content::FunctionCall { id, name, args } => {
-            assert!(id.is_none());
-            assert_eq!(name, "get_weather");
-            assert_eq!(args["location"], "SF");
-        }
-        _ => panic!("Expected FunctionCall variant"),
-    }
-    assert!(content.is_function_call());
-}
-
-#[test]
-fn test_new_function_call_with_id_creates_correct_variant() {
-    let content = Content::function_call_with_id(
-        Some("call_123"),
-        "get_weather",
-        serde_json::json!({"location": "San Francisco"}),
-    );
-    match content {
-        Content::FunctionCall { id, name, args } => {
-            assert_eq!(id, Some("call_123".to_string()));
-            assert_eq!(name, "get_weather");
-            assert_eq!(args["location"], "San Francisco");
-        }
-        _ => panic!("Expected FunctionCall variant"),
-    }
-}
-
-#[test]
-fn test_new_function_call_with_id_none_id() {
-    let content = Content::function_call_with_id(None::<String>, "my_func", serde_json::json!({}));
-    match content {
-        Content::FunctionCall { id, name, .. } => {
-            assert!(id.is_none());
-            assert_eq!(name, "my_func");
-        }
-        _ => panic!("Expected FunctionCall variant"),
-    }
-}
-
-#[test]
-fn test_new_function_result_creates_correct_variant() {
-    let content = Content::function_result(
-        "get_weather",
-        "call_abc123",
-        serde_json::json!({"temperature": "72F", "conditions": "sunny"}),
-    );
-    match content {
-        Content::FunctionResult {
-            name,
-            call_id,
-            result,
-            ..
-        } => {
-            assert_eq!(name, Some("get_weather".to_string()));
-            assert_eq!(call_id, "call_abc123");
-            assert_eq!(result["temperature"], "72F");
-            assert_eq!(result["conditions"], "sunny");
-        }
-        _ => panic!("Expected FunctionResult variant"),
-    }
 }
 
 #[test]
@@ -1943,10 +2290,15 @@ fn test_new_audio_data_creates_correct_variant() {
             data,
             uri,
             mime_type,
+            sample_rate,
+            channels,
         } => {
             assert_eq!(data, Some("base64audiodata".to_string()));
             assert!(uri.is_none());
             assert_eq!(mime_type, Some("audio/mp3".to_string()));
+            // Constructors no longer take a sample rate; both default to None
+            assert!(sample_rate.is_none());
+            assert!(channels.is_none());
         }
         _ => panic!("Expected Audio variant"),
     }
@@ -1960,10 +2312,14 @@ fn test_new_audio_uri_creates_correct_variant() {
             data,
             uri,
             mime_type,
+            sample_rate,
+            channels,
         } => {
             assert!(data.is_none());
             assert_eq!(uri, Some("https://example.com/audio.mp3".to_string()));
             assert_eq!(mime_type, Some("audio/mp3".to_string()));
+            assert!(sample_rate.is_none());
+            assert!(channels.is_none());
         }
         _ => panic!("Expected Audio variant"),
     }
@@ -2163,28 +2519,6 @@ fn test_constructor_serialization_roundtrip() {
 }
 
 // =============================================================================
-// Annotation Constructor Tests
-// =============================================================================
-
-#[test]
-fn test_annotation_new_constructor() {
-    let annotation = Annotation::new(0, 10, Some("https://example.com".to_string()));
-    assert_eq!(annotation.start_index, 0);
-    assert_eq!(annotation.end_index, 10);
-    assert!(annotation.has_source());
-    assert_eq!(annotation.source, Some("https://example.com".to_string()));
-}
-
-#[test]
-fn test_annotation_new_without_source() {
-    let annotation = Annotation::new(5, 15, None);
-    assert_eq!(annotation.start_index, 5);
-    assert_eq!(annotation.end_index, 15);
-    assert!(!annotation.has_source());
-    assert!(annotation.source.is_none());
-}
-
-// =============================================================================
 // GoogleSearchResultItem / FileSearchResultItem Constructor Tests
 // =============================================================================
 
@@ -2195,6 +2529,7 @@ fn test_google_search_result_item_new() {
     assert_eq!(item.url, "https://rust-lang.org");
     assert!(!item.has_rendered_content());
     assert!(item.rendered_content.is_none());
+    assert!(item.search_suggestions.is_none());
 }
 
 #[test]
@@ -2303,101 +2638,6 @@ fn test_with_resolution_unknown_variant() {
             assert_eq!(res.unknown_resolution_type(), Some("ULTRA_MEGA_HD"));
         }
         _ => panic!("Expected Image variant"),
-    }
-}
-
-// =============================================================================
-// with_result() and with_result_error() Tests
-// =============================================================================
-
-#[test]
-fn test_with_result_creates_function_result() {
-    let call = Content::function_call_with_id(
-        Some("call_123"),
-        "get_weather",
-        serde_json::json!({"location": "SF"}),
-    );
-    let result = call.with_result(serde_json::json!({"temp": 72}));
-
-    match result {
-        Content::FunctionResult {
-            name,
-            call_id,
-            result,
-            is_error,
-        } => {
-            assert_eq!(name, Some("get_weather".to_string()));
-            assert_eq!(call_id, "call_123");
-            assert_eq!(result["temp"], 72);
-            assert!(is_error.is_none());
-        }
-        _ => panic!("Expected FunctionResult variant"),
-    }
-}
-
-#[test]
-fn test_with_result_error_sets_is_error() {
-    let call =
-        Content::function_call_with_id(Some("call_456"), "api_request", serde_json::json!({}));
-    let result = call.with_result_error(serde_json::json!({"error": "timeout"}));
-
-    match result {
-        Content::FunctionResult {
-            name,
-            call_id,
-            is_error,
-            ..
-        } => {
-            assert_eq!(name, Some("api_request".to_string()));
-            assert_eq!(call_id, "call_456");
-            assert_eq!(is_error, Some(true));
-        }
-        _ => panic!("Expected FunctionResult variant"),
-    }
-}
-
-#[test]
-fn test_with_result_on_non_function_call_returns_unchanged() {
-    let text = Content::text("Hello");
-    let after = text.clone().with_result(serde_json::json!({"data": 1}));
-    assert_eq!(text, after);
-}
-
-#[test]
-fn test_with_result_uses_empty_call_id_when_none() {
-    // Function call without ID should use empty string for call_id
-    let call = Content::function_call("get_data", serde_json::json!({}));
-    let result = call.with_result(serde_json::json!({"value": 42}));
-
-    match result {
-        Content::FunctionResult { call_id, .. } => {
-            assert_eq!(call_id, "");
-        }
-        _ => panic!("Expected FunctionResult variant"),
-    }
-}
-
-#[test]
-fn test_function_result_error_constructor() {
-    let content = Content::function_result_error(
-        "api_call",
-        "call_123",
-        serde_json::json!({"error": "timeout", "code": 504}),
-    );
-
-    match content {
-        Content::FunctionResult {
-            name,
-            call_id,
-            result,
-            is_error,
-        } => {
-            assert_eq!(name, Some("api_call".to_string()));
-            assert_eq!(call_id, "call_123");
-            assert_eq!(result, serde_json::json!({"error": "timeout", "code": 504}));
-            assert_eq!(is_error, Some(true));
-        }
-        _ => panic!("Expected FunctionResult variant"),
     }
 }
 

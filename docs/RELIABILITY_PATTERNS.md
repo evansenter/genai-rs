@@ -11,6 +11,7 @@ This guide covers production patterns for building reliable applications with `g
 - [Timeout Management](#timeout-management)
 - [Cancellation](#cancellation)
 - [Rate Limiting](#rate-limiting)
+- [Service Tiers](#service-tiers)
 - [Graceful Degradation](#graceful-degradation)
 - [Production Checklist](#production-checklist)
 
@@ -339,7 +340,13 @@ async fn interruptible_request(
                     InteractionStatus::Completed => return Ok(Some(status)),
                     InteractionStatus::Failed => return Err(GenaiError::Internal("Failed".into())),
                     InteractionStatus::Cancelled => return Ok(None),
+                    InteractionStatus::BudgetExceeded => {
+                        // Budget exhausted - partial results may be available
+                        return Ok(Some(status));
+                    }
                     _ => {
+                        // Includes InProgress and unknown statuses (Evergreen
+                        // pattern: keep polling, rely on your own timeout)
                         sleep(Duration::from_secs(2)).await;
                     }
                 }
@@ -422,6 +429,33 @@ impl TokenBucket {
     }
 }
 ```
+
+## Service Tiers
+
+Requests can declare a service tier to trade latency for cost or priority:
+
+| Tier | Behavior |
+|------|----------|
+| `ServiceTier::Standard` | Default processing |
+| `ServiceTier::Flex` | Lower cost, may be queued under load |
+| `ServiceTier::Priority` | Higher priority processing |
+
+```rust,ignore
+use genai_rs::ServiceTier;
+
+// Batch/offline work tolerates queuing - use Flex
+let response = client
+    .interaction()
+    .with_model("gemini-3-flash-preview")
+    .with_text("Summarize this document...")
+    .with_service_tier(ServiceTier::Flex)
+    .create()
+    .await?;
+```
+
+Flex-tier requests are more likely to be queued or shed under load, so pair
+them with the retry patterns above. Reserve `Priority` for latency-sensitive,
+user-facing paths.
 
 ## Graceful Degradation
 

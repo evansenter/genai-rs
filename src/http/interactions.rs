@@ -1,16 +1,17 @@
-use super::common::{API_KEY_HEADER, Endpoint, construct_endpoint_url};
+use super::common::{
+    API_KEY_HEADER, API_REVISION, API_REVISION_HEADER, Endpoint, construct_endpoint_url,
+};
 use super::context::HttpContext;
 use super::error_helpers::{check_response_wire, deserialize_with_context};
 use super::sse_parser::parse_sse_stream;
 use crate::errors::GenaiError;
+use crate::steps::StepAccumulator;
 use crate::wire::WireEvent;
 use crate::{
-    Content, InteractionRequest, InteractionResponse, InteractionStreamEvent, StreamChunk,
-    StreamEvent,
+    InteractionRequest, InteractionResponse, InteractionStreamEvent, StreamChunk, StreamEvent,
 };
 use async_stream::try_stream;
 use futures_util::{Stream, StreamExt};
-use std::collections::HashMap;
 use tracing::{debug, warn};
 
 /// Creates a new interaction with the Gemini API.
@@ -38,6 +39,7 @@ pub async fn create_interaction(
         .http_client
         .post(&url)
         .header(API_KEY_HEADER, &ctx.api_key)
+        .header(API_REVISION_HEADER, API_REVISION)
         .json(&request)
         .send()
         .await?;
@@ -58,40 +60,163 @@ pub async fn create_interaction(
     Ok(interaction_response)
 }
 
+/// Dispatches one parsed SSE event to `StreamChunk`s, updating the step
+/// accumulator. Shared by the create and get streaming paths.
+///
+/// Returns `Some(chunk)` for events that should be surfaced to the consumer;
+/// `None` for events that were dropped (with a warning).
+fn dispatch_stream_event(
+    event: InteractionStreamEvent,
+    accumulator: &mut StepAccumulator,
+) -> Option<StreamChunk> {
+    match event.event_type.as_str() {
+        "interaction.created" => {
+            // Interaction accepted - provides early access to interaction ID
+            if let Some(interaction) = event.interaction {
+                Some(StreamChunk::Created { interaction })
+            } else {
+                warn!("interaction.created event missing interaction field - event dropped");
+                None
+            }
+        }
+        "interaction.status_update" => match (event.interaction_id, event.status) {
+            (Some(interaction_id), Some(status)) => Some(StreamChunk::StatusUpdate {
+                interaction_id,
+                status,
+            }),
+            (has_id, has_status) => {
+                warn!(
+                    "interaction.status_update missing required fields: interaction_id={}, status={} - event dropped",
+                    has_id.is_some(),
+                    has_status.is_some()
+                );
+                None
+            }
+        },
+        "step.start" => match (event.index, event.step) {
+            (Some(index), Some(step)) => {
+                accumulator.start(index, step.clone());
+                Some(StreamChunk::StepStart { index, step })
+            }
+            (index, step) => {
+                warn!(
+                    "step.start missing required fields: index={}, step={} - event dropped",
+                    index.is_some(),
+                    step.is_some()
+                );
+                None
+            }
+        },
+        "step.delta" => match (event.index, event.delta) {
+            (Some(index), Some(delta)) => {
+                accumulator.apply_delta(index, &delta);
+                Some(StreamChunk::StepDelta { index, delta })
+            }
+            (index, delta) => {
+                warn!(
+                    "step.delta missing required fields: index={}, delta={} - event dropped",
+                    index.is_some(),
+                    delta.is_some()
+                );
+                None
+            }
+        },
+        "step.stop" => {
+            if let Some(index) = event.index {
+                accumulator.stop(index);
+                Some(StreamChunk::StepStop {
+                    index,
+                    usage: event.usage,
+                    step_usage: event.step_usage,
+                })
+            } else {
+                warn!("step.stop event missing index field - event dropped");
+                None
+            }
+        }
+        "interaction.completed" => {
+            if let Some(mut interaction) = event.interaction {
+                // The lifecycle payload may omit steps (streaming already
+                // delivered them incrementally). Fill them in from the
+                // accumulator so response.function_calls() / as_text() work.
+                if interaction.steps.is_empty() && !accumulator.is_empty() {
+                    interaction.steps = std::mem::take(accumulator).finish();
+                }
+                // Total usage may arrive via event metadata instead of the
+                // partial interaction payload.
+                if interaction.usage.is_none()
+                    && let Some(metadata) = event.metadata
+                {
+                    interaction.usage = metadata.total_usage;
+                }
+                Some(StreamChunk::Completed(interaction))
+            } else {
+                warn!("interaction.completed event missing interaction field - event dropped");
+                None
+            }
+        }
+        "error" => {
+            // Error occurred during streaming
+            if let Some(error) = event.error {
+                Some(StreamChunk::Error {
+                    message: error.message,
+                    code: error.code,
+                })
+            } else {
+                // If no error object, treat as unknown error
+                Some(StreamChunk::Error {
+                    message: "Unknown streaming error".to_string(),
+                    code: None,
+                })
+            }
+        }
+        other => {
+            debug!(
+                "Unknown SSE event type '{}' - preserving as StreamChunk::Unknown",
+                other
+            );
+            Some(StreamChunk::Unknown {
+                chunk_type: other.to_string(),
+                data: event.raw,
+            })
+        }
+    }
+}
+
 /// Creates a new interaction with streaming responses.
 ///
 /// Returns a stream of `StreamEvent` items as they arrive from the server.
 /// Each event contains:
-/// - `chunk`: The content (Start, StatusUpdate, Delta, Complete, Error, etc.)
+/// - `chunk`: The content (Created, StatusUpdate, StepStart, StepDelta, StepStop, Completed, Error, ...)
 /// - `event_id`: An identifier for stream resumption
 ///
-/// Chunk types:
-/// - `StreamChunk::Start`: Initial event with interaction ID
+/// Chunk types (API revision 2026-05-20 lifecycle):
+/// - `StreamChunk::Created`: Initial event (`interaction.created`) with interaction ID
 /// - `StreamChunk::StatusUpdate`: Status changes during processing
-/// - `StreamChunk::ContentStart`: Content generation begins for an output
-/// - `StreamChunk::Delta`: Incremental content (text, thought, function_call)
-/// - `StreamChunk::ContentStop`: Content generation ends for an output
-/// - `StreamChunk::Complete`: The final complete interaction response
+/// - `StreamChunk::StepStart`: A step begins at an index
+/// - `StreamChunk::StepDelta`: Incremental step payload (text, arguments_delta, thought_signature, ...)
+/// - `StreamChunk::StepStop`: A step finished (carries per-step usage)
+/// - `StreamChunk::Completed`: The final complete interaction response
 /// - `StreamChunk::Error`: Error occurred during streaming
 ///
 /// # Example
 /// ```ignore
 /// let mut last_event_id = None;
-/// let stream = create_interaction_stream(&client, &api_key, request);
+/// let stream = create_interaction_stream(&ctx, request);
 /// while let Some(event) = stream.next().await {
 ///     let event = event?;
 ///     last_event_id = event.event_id.clone();  // Track for resume
 ///     match event.chunk {
-///         StreamChunk::Start { interaction } => {
+///         StreamChunk::Created { interaction } => {
 ///             println!("Started: {:?}", interaction.id);
 ///         }
-///         StreamChunk::Delta(delta) => {
+///         StreamChunk::StepDelta { delta, .. } => {
 ///             if let Some(text) = delta.as_text() {
 ///                 print!("{}", text);
 ///             }
 ///         }
-///         StreamChunk::Complete(response) => {
-///             println!("\nComplete: {} tokens", response.usage.map(|u| u.total_tokens).flatten().unwrap_or(0));
+///         StreamChunk::Completed(response) => {
+///             println!("\nComplete: {:?} tokens", response.total_tokens());
 ///         }
 ///         StreamChunk::Error { message, .. } => {
 ///             eprintln!("Error: {}", message);
@@ -118,19 +243,16 @@ pub fn create_interaction_stream<'a>(
     );
 
     try_stream! {
-        // Accumulate content from deltas to include in Complete response.
-        // In streaming, the API sends content via delta events, but the final
-        // interaction.complete event has empty outputs. We accumulate here so
-        // that response.function_calls() and response.as_text() work consistently.
-        //
-        // We track content by index because content can arrive in multiple chunks
-        // that need to be merged (e.g., text fragments, function call arguments).
-        let mut content_by_index: HashMap<usize, Content> = HashMap::new();
+        // Accumulate steps from step.start/step.delta/step.stop events so the
+        // final Completed response carries a fully-populated steps array even
+        // when the server's interaction.completed payload omits it.
+        let mut accumulator = StepAccumulator::new();
 
         let response = ctx
             .http_client
             .post(&url)
             .header(API_KEY_HEADER, &ctx.api_key)
+            .header(API_REVISION_HEADER, API_REVISION)
             .json(&request)
             .send()
             .await?;
@@ -148,147 +270,15 @@ pub fn create_interaction_stream<'a>(
         while let Some(result) = parsed_stream.next().await {
             let event = result?;
             debug!(
-                "SSE event received: event_type={:?}, has_delta={}, has_interaction={}, event_id={:?}",
+                "SSE event received: event_type={:?}, index={:?}, event_id={:?}",
                 event.event_type,
-                event.delta.is_some(),
-                event.interaction.is_some(),
+                event.index,
                 event.event_id
             );
 
-            // Extract event_id for the StreamEvent wrapper
             let event_id = event.event_id.clone();
-
-            // Handle different event types from the Interactions API:
-            // - interaction.start: Initial event with interaction data (yields Start)
-            // - interaction.status_update: Status changes (yields StatusUpdate)
-            // - content.start: Content block begins (yields ContentStart)
-            // - content.delta: Incremental content updates (yields Delta)
-            // - content.stop: Content block ends (yields ContentStop)
-            // - interaction.complete: Final response (yields Complete)
-            // - error: Error occurred (yields Error)
-            match event.event_type.as_str() {
-                "interaction.start" => {
-                    // Interaction has started - provides early access to interaction ID
-                    if let Some(interaction) = event.interaction {
-                        yield StreamEvent::new(StreamChunk::Start { interaction }, event_id);
-                    } else {
-                        warn!("interaction.start event missing interaction field - event dropped");
-                    }
-                }
-                "interaction.status_update" => {
-                    // Status change during processing
-                    match (event.interaction_id, event.status) {
-                        (Some(interaction_id), Some(status)) => {
-                            yield StreamEvent::new(
-                                StreamChunk::StatusUpdate { interaction_id, status },
-                                event_id,
-                            );
-                        }
-                        (has_id, has_status) => {
-                            warn!(
-                                "interaction.status_update missing required fields: interaction_id={}, status={} - event dropped",
-                                has_id.is_some(),
-                                has_status.is_some()
-                            );
-                        }
-                    }
-                }
-                "content.start" => {
-                    // Content generation begins
-                    if let Some(index) = event.index {
-                        // Try to get content type from the content field if present
-                        let content_type = event.content.as_ref().and_then(|c| {
-                            // Get the content type name from the variant
-                            match c {
-                                Content::Text { .. } => Some("text".to_string()),
-                                Content::Thought { .. } => Some("thought".to_string()),
-                                Content::FunctionCall { .. } => Some("function_call".to_string()),
-                                Content::FunctionResult { .. } => Some("function_result".to_string()),
-                                Content::CodeExecutionCall { .. } => Some("code_execution_call".to_string()),
-                                Content::CodeExecutionResult { .. } => Some("code_execution_result".to_string()),
-                                Content::GoogleSearchCall { .. } => Some("google_search_call".to_string()),
-                                Content::GoogleSearchResult { .. } => Some("google_search_result".to_string()),
-                                Content::UrlContextCall { .. } => Some("url_context_call".to_string()),
-                                Content::UrlContextResult { .. } => Some("url_context_result".to_string()),
-                                Content::Unknown { content_type, .. } => Some(content_type.clone()),
-                                _ => None,
-                            }
-                        });
-                        yield StreamEvent::new(StreamChunk::ContentStart { index, content_type }, event_id);
-                    } else {
-                        warn!("content.start event missing index field - event dropped");
-                    }
-                }
-                "content.delta" => {
-                    // Incremental content update
-                    if let Some(delta) = event.delta.clone() {
-                        // Accumulate content for the Complete response by merging
-                        // deltas at the same index. This ensures response.function_calls()
-                        // and response.as_text() work in streaming mode.
-                        if let Some(index) = event.index {
-                            merge_content_at_index(&mut content_by_index, index, delta.clone());
-                        }
-                        yield StreamEvent::new(StreamChunk::Delta(delta), event_id);
-                    } else {
-                        warn!("content.delta event missing delta field - event dropped");
-                    }
-                }
-                "content.stop" => {
-                    // Content generation ends
-                    if let Some(index) = event.index {
-                        yield StreamEvent::new(StreamChunk::ContentStop { index }, event_id);
-                    } else {
-                        warn!("content.stop event missing index field - event dropped");
-                    }
-                }
-                "interaction.complete" => {
-                    // Final complete response
-                    if let Some(mut interaction) = event.interaction {
-                        // Merge accumulated delta content into outputs.
-                        // The API's Complete event has empty outputs in streaming mode,
-                        // but users expect response.function_calls() and as_text() to work.
-                        if !content_by_index.is_empty() {
-                            // Sort by index to maintain order
-                            let mut outputs: Vec<_> = content_by_index.drain().collect();
-                            outputs.sort_by_key(|(idx, _)| *idx);
-                            interaction.outputs = outputs.into_iter().map(|(_, c)| c).collect();
-                        }
-                        yield StreamEvent::new(StreamChunk::Complete(interaction), event_id);
-                    } else {
-                        warn!("interaction.complete event missing interaction field - event dropped");
-                    }
-                }
-                "error" => {
-                    // Error occurred during streaming
-                    if let Some(error) = event.error {
-                        yield StreamEvent::new(
-                            StreamChunk::Error { message: error.message, code: error.code },
-                            event_id,
-                        );
-                    } else {
-                        // If no error object, treat as unknown error
-                        yield StreamEvent::new(
-                            StreamChunk::Error { message: "Unknown streaming error".to_string(), code: None },
-                            event_id,
-                        );
-                    }
-                }
-                _ => {
-                    // For unknown event types, only yield if they have delta content.
-                    // Do NOT yield Complete for other event types that happen to have
-                    // an interaction field - only interaction.complete is the final response.
-                    if let Some(delta) = event.delta {
-                        yield StreamEvent::new(StreamChunk::Delta(delta), event_id);
-                    } else if event.interaction.is_some() {
-                        // Warn about unknown event types with interaction fields - this could
-                        // indicate API version drift that needs attention
-                        warn!(
-                            "Unknown event type '{}' has interaction field but is not 'interaction.complete' - skipping",
-                            event.event_type
-                        );
-                    }
-                    // Skip events without useful content
-                }
+            if let Some(chunk) = dispatch_stream_event(event, &mut accumulator) {
+                yield StreamEvent::new(chunk, event_id);
             }
         }
     }
@@ -299,6 +289,8 @@ pub fn create_interaction_stream<'a>(
 /// Useful for checking the status of long-running interactions or agents,
 /// or for retrieving the full conversation history.
 ///
+/// Set `include_input` to also receive the original `input` in the response.
+///
 /// # Errors
 ///
 /// Returns an error if:
@@ -308,11 +300,13 @@ pub fn create_interaction_stream<'a>(
 pub async fn get_interaction(
     ctx: &HttpContext,
     interaction_id: &str,
+    include_input: bool,
 ) -> Result<InteractionResponse, GenaiError> {
     let endpoint = Endpoint::GetInteraction {
         id: interaction_id,
         stream: false,
         last_event_id: None,
+        include_input,
     };
     let url = construct_endpoint_url(endpoint);
 
@@ -323,6 +317,7 @@ pub async fn get_interaction(
         .http_client
         .get(&url)
         .header(API_KEY_HEADER, &ctx.api_key)
+        .header(API_REVISION_HEADER, API_REVISION)
         .send()
         .await?;
 
@@ -352,17 +347,10 @@ pub async fn get_interaction(
 /// Each event includes an `event_id` that can be used to resume the stream
 /// from that point if the connection is interrupted.
 ///
-/// # Arguments
-///
-/// * `http_client` - The reqwest HTTP client
-/// * `api_key` - The Gemini API key
-/// * `interaction_id` - The ID of the interaction to stream
-/// * `last_event_id` - Optional event ID to resume from (for stream resumption)
-///
 /// # Example
 /// ```ignore
 /// // Resume a stream after interruption
-/// let mut stream = get_interaction_stream(&client, &api_key, &id, Some("evt_abc123"));
+/// let mut stream = get_interaction_stream(&ctx, &id, Some("evt_abc123"));
 /// while let Some(event) = stream.next().await {
 ///     let event = event?;
 ///     println!("Received chunk: {:?}", event.chunk);
@@ -381,6 +369,7 @@ pub fn get_interaction_stream<'a>(
         id: interaction_id,
         stream: true,
         last_event_id,
+        include_input: false,
     };
     let url = construct_endpoint_url(endpoint);
 
@@ -396,13 +385,14 @@ pub fn get_interaction_stream<'a>(
     );
 
     try_stream! {
-        // Accumulate content by index (same as create_interaction_stream)
-        let mut content_by_index: HashMap<usize, Content> = HashMap::new();
+        // Accumulate steps (same as create_interaction_stream)
+        let mut accumulator = StepAccumulator::new();
 
         let response = ctx
             .http_client
             .get(&url)
             .header(API_KEY_HEADER, &ctx.api_key)
+            .header(API_REVISION_HEADER, API_REVISION)
             .send()
             .await?;
 
@@ -419,49 +409,15 @@ pub fn get_interaction_stream<'a>(
         while let Some(result) = parsed_stream.next().await {
             let event = result?;
             debug!(
-                "SSE event received: event_type={:?}, has_delta={}, has_interaction={}, event_id={:?}",
+                "SSE event received: event_type={:?}, index={:?}, event_id={:?}",
                 event.event_type,
-                event.delta.is_some(),
-                event.interaction.is_some(),
+                event.index,
                 event.event_id
             );
 
-            // Extract event_id for the StreamEvent wrapper
             let event_id = event.event_id.clone();
-
-            // Handle different event types (same logic as create_interaction_stream)
-            match event.event_type.as_str() {
-                "content.delta" => {
-                    if let Some(delta) = event.delta.clone() {
-                        if let Some(index) = event.index {
-                            merge_content_at_index(&mut content_by_index, index, delta.clone());
-                        }
-                        yield StreamEvent::new(StreamChunk::Delta(delta), event_id);
-                    }
-                }
-                "interaction.complete" => {
-                    if let Some(mut interaction) = event.interaction {
-                        if !content_by_index.is_empty() {
-                            let mut outputs: Vec<_> = content_by_index.drain().collect();
-                            outputs.sort_by_key(|(idx, _)| *idx);
-                            interaction.outputs = outputs.into_iter().map(|(_, c)| c).collect();
-                        }
-                        yield StreamEvent::new(StreamChunk::Complete(interaction), event_id);
-                    }
-                }
-                "interaction.start" | "interaction.status_update" | "content.start" | "content.stop" => {
-                    // Known lifecycle events - skip silently
-                }
-                _ => {
-                    if let Some(delta) = event.delta {
-                        yield StreamEvent::new(StreamChunk::Delta(delta), event_id);
-                    } else if event.interaction.is_some() {
-                        warn!(
-                            "Unknown event type '{}' has interaction field but is not 'interaction.complete' - skipping",
-                            event.event_type
-                        );
-                    }
-                }
+            if let Some(chunk) = dispatch_stream_event(event, &mut accumulator) {
+                yield StreamEvent::new(chunk, event_id);
             }
         }
     }
@@ -488,6 +444,7 @@ pub async fn delete_interaction(ctx: &HttpContext, interaction_id: &str) -> Resu
         .http_client
         .delete(&url)
         .header(API_KEY_HEADER, &ctx.api_key)
+        .header(API_REVISION_HEADER, API_REVISION)
         .send()
         .await?;
 
@@ -527,6 +484,7 @@ pub async fn cancel_interaction(
         .http_client
         .post(&url)
         .header(API_KEY_HEADER, &ctx.api_key)
+        .header(API_REVISION_HEADER, API_REVISION)
         .json(&serde_json::json!({}))
         .send()
         .await?;
@@ -547,71 +505,10 @@ pub async fn cancel_interaction(
     Ok(interaction_response)
 }
 
-/// Merges a delta Content into the accumulated content at a given index.
-///
-/// For text content, this concatenates the text. For function calls, arguments
-/// are merged as JSON string chunks. For other content types, the delta replaces
-/// any existing content.
-fn merge_content_at_index(content_map: &mut HashMap<usize, Content>, index: usize, delta: Content) {
-    match content_map.get_mut(&index) {
-        Some(existing) => {
-            // Merge based on content type
-            match (existing, &delta) {
-                // Text content: concatenate the text
-                (
-                    Content::Text {
-                        text: Some(existing_text),
-                        ..
-                    },
-                    Content::Text {
-                        text: Some(delta_text),
-                        ..
-                    },
-                ) => {
-                    existing_text.push_str(delta_text);
-                }
-                // FunctionCall: merge name and arguments as they stream in
-                (
-                    Content::FunctionCall {
-                        name: existing_name,
-                        args: existing_args,
-                        ..
-                    },
-                    Content::FunctionCall {
-                        name: delta_name,
-                        args: delta_args,
-                        ..
-                    },
-                ) => {
-                    // Name is a String, concatenate if delta has content
-                    if !delta_name.is_empty() {
-                        existing_name.push_str(delta_name);
-                    }
-                    // Args: if both are strings, concatenate the JSON string chunks
-                    if let (serde_json::Value::String(es), serde_json::Value::String(ds)) =
-                        (existing_args, delta_args)
-                    {
-                        es.push_str(ds);
-                    }
-                    // If delta args isn't a string, just keep existing
-                }
-                // For other types, just replace
-                _ => {
-                    content_map.insert(index, delta);
-                }
-            }
-        }
-        None => {
-            // No existing content at this index, just insert
-            content_map.insert(index, delta);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Content, InteractionInput, InteractionStatus};
+    use crate::{InteractionInput, InteractionStatus, Step, StepDelta};
 
     #[test]
     fn test_endpoint_url_construction() {
@@ -626,25 +523,40 @@ mod tests {
             id: "test_id_123",
             stream: false,
             last_event_id: None,
+            include_input: false,
         };
         let url = construct_endpoint_url(endpoint_get);
         assert!(url.contains("/v1beta/interactions/test_id_123"));
         assert!(!url.contains("key=")); // API key should not be in URL
 
+        let endpoint_get_with_input = Endpoint::GetInteraction {
+            id: "test_id_123",
+            stream: false,
+            last_event_id: None,
+            include_input: true,
+        };
+        let url = construct_endpoint_url(endpoint_get_with_input);
+        assert!(url.contains("include_input=true"));
+
         let endpoint_delete = Endpoint::DeleteInteraction { id: "test_id_456" };
         let url = construct_endpoint_url(endpoint_delete);
         assert!(url.contains("/v1beta/interactions/test_id_456"));
-        assert!(!url.contains("key=")); // API key should not be in URL
 
         let endpoint_cancel = Endpoint::CancelInteraction { id: "test_id_789" };
         let url = construct_endpoint_url(endpoint_cancel);
         assert!(url.contains("/v1beta/interactions/test_id_789/cancel"));
-        assert!(!url.contains("key=")); // API key should not be in URL
+    }
+
+    #[test]
+    fn test_api_revision_constants() {
+        assert_eq!(API_REVISION_HEADER, "Api-Revision");
+        assert_eq!(API_REVISION, "2026-05-20");
     }
 
     #[test]
     fn test_create_interaction_request_serialization() {
         // Verify request serialization works correctly
+        #[allow(deprecated)]
         let request = InteractionRequest {
             model: Some("gemini-3-flash-preview".to_string()),
             agent: None,
@@ -660,6 +572,8 @@ mod tests {
             background: None,
             store: None,
             system_instruction: None,
+            service_tier: None,
+            cached_content: None,
         };
 
         let json = serde_json::to_string(&request).expect("Serialization should work");
@@ -669,12 +583,11 @@ mod tests {
 
     #[test]
     fn test_interaction_response_deserialization() {
-        // Verify we can deserialize a typical response
+        // Verify we can deserialize a typical revision 2026-05-20 response
         let response_json = r#"{
             "id": "test_interaction_123",
             "model": "gemini-3-flash-preview",
-            "input": [{"type": "text", "text": "Hello"}],
-            "outputs": [{"type": "text", "text": "Hi there!"}],
+            "steps": [{"type": "model_output", "content": [{"type": "text", "text": "Hi there!"}]}],
             "status": "completed"
         }"#;
 
@@ -683,15 +596,8 @@ mod tests {
 
         assert_eq!(response.id.as_deref(), Some("test_interaction_123"));
         assert_eq!(response.status, InteractionStatus::Completed);
-        assert_eq!(response.outputs.len(), 1);
-
-        // Verify we can access the text content
-        match &response.outputs[0] {
-            Content::Text { text, .. } => {
-                assert_eq!(text.as_ref().unwrap(), "Hi there!")
-            }
-            _ => panic!("Expected Text content"),
-        }
+        assert_eq!(response.steps.len(), 1);
+        assert_eq!(response.as_text(), Some("Hi there!"));
     }
 
     #[test]
@@ -700,8 +606,7 @@ mod tests {
         let response_json = r#"{
             "id": "cancelled_interaction_123",
             "model": "deep-research-pro-preview-12-2025",
-            "input": [{"type": "text", "text": "Research topic"}],
-            "outputs": [],
+            "steps": [],
             "status": "cancelled"
         }"#;
 
@@ -710,6 +615,192 @@ mod tests {
 
         assert_eq!(response.id.as_deref(), Some("cancelled_interaction_123"));
         assert_eq!(response.status, InteractionStatus::Cancelled);
-        assert!(response.outputs.is_empty());
+        assert!(response.steps.is_empty());
+    }
+
+    // =========================================================================
+    // SSE dispatch tests (event shapes per revision 2026-05-20)
+    // =========================================================================
+
+    fn parse_event(json: &str) -> InteractionStreamEvent {
+        serde_json::from_str(json).expect("event should parse")
+    }
+
+    #[test]
+    fn test_dispatch_full_text_lifecycle() {
+        let mut acc = StepAccumulator::new();
+
+        let created = dispatch_stream_event(
+            parse_event(
+                r#"{"event_type":"interaction.created","interaction":{"id":"i1","status":"in_progress"},"event_id":"e0"}"#,
+            ),
+            &mut acc,
+        )
+        .unwrap();
+        assert!(matches!(created, StreamChunk::Created { .. }));
+
+        let start = dispatch_stream_event(
+            parse_event(
+                r#"{"event_type":"step.start","index":0,"step":{"type":"model_output","content":[]},"event_id":"e1"}"#,
+            ),
+            &mut acc,
+        )
+        .unwrap();
+        assert!(matches!(start, StreamChunk::StepStart { index: 0, .. }));
+
+        let delta = dispatch_stream_event(
+            parse_event(
+                r#"{"event_type":"step.delta","index":0,"delta":{"type":"text","text":"Hello"},"event_id":"e2"}"#,
+            ),
+            &mut acc,
+        )
+        .unwrap();
+        match &delta {
+            StreamChunk::StepDelta { index: 0, delta } => {
+                assert_eq!(delta.as_text(), Some("Hello"));
+            }
+            other => panic!("Expected StepDelta, got {other:?}"),
+        }
+
+        let stop = dispatch_stream_event(
+            parse_event(
+                r#"{"event_type":"step.stop","index":0,"step_usage":{"total_output_tokens":5},"event_id":"e3"}"#,
+            ),
+            &mut acc,
+        )
+        .unwrap();
+        match &stop {
+            StreamChunk::StepStop { step_usage, .. } => {
+                assert_eq!(step_usage.as_ref().unwrap().total_output_tokens, Some(5));
+            }
+            other => panic!("Expected StepStop, got {other:?}"),
+        }
+
+        let completed = dispatch_stream_event(
+            parse_event(
+                r#"{"event_type":"interaction.completed","interaction":{"id":"i1","status":"completed"},"metadata":{"total_usage":{"total_tokens":12}},"event_id":"e4"}"#,
+            ),
+            &mut acc,
+        )
+        .unwrap();
+        match completed {
+            StreamChunk::Completed(response) => {
+                // Steps were filled from the accumulator.
+                assert_eq!(response.as_text(), Some("Hello"));
+                // Usage was taken from event metadata.
+                assert_eq!(response.total_tokens(), Some(12));
+            }
+            other => panic!("Expected Completed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_dispatch_function_call_arguments_delta() {
+        let mut acc = StepAccumulator::new();
+
+        dispatch_stream_event(
+            parse_event(
+                r#"{"event_type":"step.start","index":0,"step":{"type":"function_call","id":"c1","name":"get_weather","arguments":{}}}"#,
+            ),
+            &mut acc,
+        );
+        let delta = dispatch_stream_event(
+            parse_event(
+                r#"{"event_type":"step.delta","index":0,"delta":{"type":"arguments_delta","arguments":"{\"city\":\"Tokyo\"}"}}"#,
+            ),
+            &mut acc,
+        )
+        .unwrap();
+        assert!(matches!(
+            delta,
+            StreamChunk::StepDelta {
+                delta: StepDelta::ArgumentsDelta { .. },
+                ..
+            }
+        ));
+        dispatch_stream_event(
+            parse_event(r#"{"event_type":"step.stop","index":0}"#),
+            &mut acc,
+        );
+
+        let completed = dispatch_stream_event(
+            parse_event(
+                r#"{"event_type":"interaction.completed","interaction":{"id":"i1","status":"requires_action"}}"#,
+            ),
+            &mut acc,
+        )
+        .unwrap();
+        match completed {
+            StreamChunk::Completed(response) => {
+                let calls = response.function_calls();
+                assert_eq!(calls.len(), 1);
+                assert_eq!(calls[0].name, "get_weather");
+                assert_eq!(calls[0].args["city"], "Tokyo");
+            }
+            other => panic!("Expected Completed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_dispatch_status_update_and_error() {
+        let mut acc = StepAccumulator::new();
+
+        let update = dispatch_stream_event(
+            parse_event(
+                r#"{"event_type":"interaction.status_update","interaction_id":"i1","status":"budget_exceeded"}"#,
+            ),
+            &mut acc,
+        )
+        .unwrap();
+        assert!(matches!(
+            update,
+            StreamChunk::StatusUpdate {
+                status: InteractionStatus::BudgetExceeded,
+                ..
+            }
+        ));
+
+        let error = dispatch_stream_event(
+            parse_event(r#"{"event_type":"error","error":{"message":"boom","code":"internal"}}"#),
+            &mut acc,
+        )
+        .unwrap();
+        assert!(matches!(error, StreamChunk::Error { message, .. } if message == "boom"));
+    }
+
+    #[test]
+    fn test_dispatch_unknown_event_preserved() {
+        let mut acc = StepAccumulator::new();
+        let chunk = dispatch_stream_event(
+            parse_event(r#"{"event_type":"interaction.paused","reason":"maintenance"}"#),
+            &mut acc,
+        )
+        .unwrap();
+        assert!(chunk.is_unknown());
+        assert_eq!(chunk.unknown_chunk_type(), Some("interaction.paused"));
+        assert_eq!(chunk.unknown_data().unwrap()["reason"], "maintenance");
+    }
+
+    #[test]
+    fn test_dispatch_completed_prefers_server_steps() {
+        let mut acc = StepAccumulator::new();
+        acc.start(0, Step::model_text("accumulated"));
+
+        let completed = dispatch_stream_event(
+            parse_event(
+                r#"{"event_type":"interaction.completed","interaction":{
+                    "id":"i1","status":"completed",
+                    "steps":[{"type":"model_output","content":[{"type":"text","text":"authoritative"}]}]
+                }}"#,
+            ),
+            &mut acc,
+        )
+        .unwrap();
+        match completed {
+            StreamChunk::Completed(response) => {
+                assert_eq!(response.as_text(), Some("authoritative"));
+            }
+            other => panic!("Expected Completed, got {other:?}"),
+        }
     }
 }

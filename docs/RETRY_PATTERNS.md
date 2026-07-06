@@ -96,13 +96,16 @@ See `examples/retry_with_backoff.rs` for a complete example.
 
 When using `execute_stream()`, the response is consumed as it arrives. If an error occurs partway through:
 - Chunks already received are in your buffer
-- The server has no resume point
-- Retrying starts generation from scratch (different output due to LLM non-determinism)
+- Re-sending the request starts generation from scratch (different output due to LLM non-determinism)
 
 **Recommendations for streaming:**
 1. Accept partial loss on transient errors
 2. Fall back to non-streaming `execute()` with retry for critical requests
 3. Buffer chunks yourself if you need partial recovery
+4. For stored interactions (`with_store_enabled()`), track each event's
+   `event_id` and resume the same generation via
+   `client.get_interaction_stream(interaction_id, Some(last_event_id))` —
+   see [Error Handling](ERROR_HANDLING.md#stream-resume-on-error)
 
 ## Auto-Functions and Retry
 

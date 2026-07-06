@@ -99,17 +99,15 @@ See [Examples Index](docs/EXAMPLES_INDEX.md) for the complete categorized list.
 
 ```rust,ignore
 use futures_util::StreamExt;
-use genai_rs::StreamChunk;
 
 let mut stream = client.interaction()
     .with_text("Write a haiku about Rust.")
     .create_stream();
 
 while let Some(Ok(event)) = stream.next().await {
-    if let StreamChunk::Delta(delta) = &event.chunk {
-        if let Some(text) = delta.as_text() {
-            print!("{}", text);
-        }
+    // delta_text() extracts text from StreamChunk::StepDelta events
+    if let Some(text) = event.chunk.delta_text() {
+        print!("{}", text);
     }
 }
 ```
@@ -236,8 +234,9 @@ See [Logging Strategy](docs/LOGGING_STRATEGY.md) for details.
 This library follows the [Evergreen philosophy](https://github.com/google-deepmind/evergreen-spec): unknown API types deserialize into `Unknown` variants instead of failing. Always include wildcard arms:
 
 ```rust,ignore
-match content {
-    Content::Text { text } => println!("{}", text.unwrap_or_default()),
+match step {
+    Step::ModelOutput { content, .. } => { /* text, images, ... */ }
+    Step::FunctionCall { name, .. } => println!("call: {name}"),
     _ => {}  // Handles future variants gracefully
 }
 ```

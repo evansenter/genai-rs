@@ -56,6 +56,7 @@ LOUD_WIRE=1 cargo run --example <example_name>
 | `google_search` | Real-time web grounding | Beginner |
 | `code_execution` | Run Python in sandbox | Beginner |
 | `url_context` | Fetch and analyze web pages | Beginner |
+| `google_maps` | Location-grounded responses with place data | Beginner |
 | `computer_use` | Browser automation | Advanced |
 | `file_search` | Semantic document retrieval | Intermediate |
 
@@ -83,7 +84,8 @@ LOUD_WIRE=1 cargo run --example <example_name>
 | Example | Description | Difficulty |
 |---------|-------------|------------|
 | `stateful_interaction` | Server-side context with `previous_interaction_id` | Beginner |
-| `explicit_turns` | Client-side history with Turn arrays | Intermediate |
+| `explicit_turns` | Client-side history with `Step` arrays | Intermediate |
+| `response_passthrough` | Feed `response.output_steps()` back as history | Intermediate |
 | `thought_echo` | Manual thought handling in multi-turn | Advanced |
 
 ### Advanced Features
@@ -155,7 +157,7 @@ Full control over the function execution loop.
 ```bash
 cargo run --example manual_function_calling
 ```
-**Learn**: Manual loop, `Content::function_result()`, custom execution logic.
+**Learn**: Manual loop, `Step::function_result()`, custom execution logic.
 
 #### tool_service
 Dependency injection for functions that need shared state.
@@ -178,7 +180,7 @@ Use real-time web data for grounded responses.
 ```bash
 cargo run --example google_search
 ```
-**Learn**: `with_google_search()`, grounding metadata.
+**Learn**: `with_google_search()`, `google_search_calls()`/`google_search_results()` steps.
 
 #### code_execution
 Run Python code in a sandboxed environment.

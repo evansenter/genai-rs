@@ -33,10 +33,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("Interaction ID: {interaction_id}");
     println!("Status: {:?}\n", first_response.status);
 
-    if !first_response.outputs.is_empty() {
+    if !first_response.steps.is_empty() {
         println!("Assistant:");
-        for output in &first_response.outputs {
-            if let Some(t) = output.as_text() {
+        for content in first_response.output_contents() {
+            if let Some(t) = content.as_text() {
                 println!("{t}");
             }
         }
@@ -61,10 +61,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("Previous Interaction ID: {}", interaction_id);
     println!("Status: {:?}\n", second_response.status);
 
-    if !second_response.outputs.is_empty() {
+    if !second_response.steps.is_empty() {
         println!("Assistant:");
-        for output in &second_response.outputs {
-            if let Some(t) = output.as_text() {
+        for content in second_response.output_contents() {
+            if let Some(t) = content.as_text() {
                 println!("{t}");
             }
         }
@@ -89,10 +89,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("Previous Interaction ID: {:?}", second_response.id);
     println!("Status: {:?}\n", third_response.status);
 
-    if !third_response.outputs.is_empty() {
+    if !third_response.steps.is_empty() {
         println!("Assistant:");
-        for output in &third_response.outputs {
-            if let Some(t) = output.as_text() {
+        for content in third_response.output_contents() {
+            if let Some(t) = content.as_text() {
                 println!("{t}");
             }
         }
@@ -101,12 +101,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // === Demonstrate retrieval ===
     println!("\n=== RETRIEVING FIRST INTERACTION ===\n");
 
-    match client.get_interaction(&interaction_id).await {
+    // get_interaction_with_input also populates the original input
+    match client.get_interaction_with_input(&interaction_id).await {
         Ok(retrieved) => {
             println!("Retrieved Interaction ID: {:?}", retrieved.id);
             println!("Status: {:?}", retrieved.status);
-            println!("Input parts: {}", retrieved.input.len());
-            println!("Output parts: {}", retrieved.outputs.len());
+            println!("Input present: {}", retrieved.input.is_some());
+            println!("Step count: {}", retrieved.steps.len());
         }
         Err(e) => {
             eprintln!("Error retrieving interaction: {e}");
@@ -133,7 +134,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("• with_store_enabled() saves interactions server-side for multi-turn conversations");
     println!("• with_previous_interaction(id) chains turns together for context");
     println!("• Each turn returns an ID to reference in the next turn");
-    println!("• client.get_interaction(id) retrieves stored interactions\n");
+    println!("• client.get_interaction(id) retrieves stored interactions");
+    println!("• client.get_interaction_with_input(id) also returns the original input\n");
 
     println!("--- What You'll See with LOUD_WIRE=1 ---");
     println!("  [REQ#1] POST with input + store:true");
@@ -142,8 +144,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("  [RES#2] completed: text response (remembers context)");
     println!("  [REQ#3] POST with input + previousInteractionId + store:true");
     println!("  [RES#3] completed: text response (full conversation context)");
-    println!("  [REQ#4] GET interaction by ID");
-    println!("  [RES#4] retrieved: stored interaction with inputs/outputs\n");
+    println!("  [REQ#4] GET interaction by ID (include_input=true)");
+    println!("  [RES#4] retrieved: stored interaction with input + steps\n");
 
     println!("--- Production Considerations ---");
     println!("• Store only when multi-turn is needed (costs storage)");

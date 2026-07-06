@@ -10,16 +10,17 @@
 //!
 //! Tests for Unknown variant preservation are gated with `#[cfg(not(feature = "strict-unknown"))]`
 //! because the `strict-unknown` feature causes deserialization errors instead of creating
-//! Unknown variants. The Unknown variant tests cover all 11 types with Unknown support:
+//! Unknown variants for Content, Step, and FileState. The Unknown variant tests cover:
 //!
-//! 1. Resolution, Content, StreamChunk, AutoFunctionStreamChunk
+//! 1. Resolution, Content, Step, StepDelta, StreamChunk, AutoFunctionStreamChunk
 //! 2. Tool, FunctionCallingMode, FileState
 //! 3. Role, ThinkingLevel, ThinkingSummaries, InteractionStatus
 
 use chrono::{DateTime, TimeZone, Utc};
 use genai_rs::{
     Annotation, AutoFunctionResult, AutoFunctionStreamChunk, Content, FunctionExecutionResult,
-    InteractionResponse, InteractionStatus, ModalityTokens, PendingFunctionCall, UsageMetadata,
+    InteractionResponse, InteractionStatus, ModalityTokens, PendingFunctionCall, Step, StepDelta,
+    UsageMetadata,
 };
 use proptest::prelude::*;
 
@@ -109,6 +110,7 @@ fn arb_interaction_status() -> impl Strategy<Value = InteractionStatus> {
         Just(InteractionStatus::Failed),
         Just(InteractionStatus::Cancelled),
         Just(InteractionStatus::Incomplete),
+        Just(InteractionStatus::BudgetExceeded),
     ]
 }
 
@@ -149,7 +151,6 @@ fn arb_usage_metadata() -> impl Strategy<Value = UsageMetadata> {
         proptest::option::of(any::<u32>()),
         proptest::option::of(any::<u32>()),
         proptest::option::of(any::<u32>()),
-        proptest::option::of(any::<u32>()),
         arb_modality_tokens_vec(),
         arb_modality_tokens_vec(),
         arb_modality_tokens_vec(),
@@ -161,7 +162,6 @@ fn arb_usage_metadata() -> impl Strategy<Value = UsageMetadata> {
                 total_output_tokens,
                 total_tokens,
                 total_cached_tokens,
-                total_reasoning_tokens,
                 total_thought_tokens,
                 total_tool_use_tokens,
                 input_tokens_by_modality,
@@ -174,13 +174,13 @@ fn arb_usage_metadata() -> impl Strategy<Value = UsageMetadata> {
                     total_output_tokens,
                     total_tokens,
                     total_cached_tokens,
-                    total_reasoning_tokens,
                     total_thought_tokens,
                     total_tool_use_tokens,
                     input_tokens_by_modality,
                     output_tokens_by_modality,
                     cached_tokens_by_modality,
                     tool_use_tokens_by_modality,
+                    grounding_tool_count: None,
                 }
             },
         )
@@ -191,12 +191,19 @@ fn arb_usage_metadata() -> impl Strategy<Value = UsageMetadata> {
 // =============================================================================
 
 fn arb_annotation() -> impl Strategy<Value = Annotation> {
-    (0usize..1000, 0usize..1000, proptest::option::of(".{0,100}"))
-        .prop_map(|(start, len, source)| Annotation::new(start, start.saturating_add(len), source))
+    (
+        0usize..1000,
+        0usize..1000,
+        ".{1,100}",
+        proptest::option::of(".{0,100}"),
+    )
+        .prop_map(|(start, len, url, title)| {
+            Annotation::url_citation(url, title, start, start.saturating_add(len))
+        })
 }
 
 // =============================================================================
-// Content Strategy (subset for streaming tests)
+// Content Strategy (subset for streaming tests: media blocks only)
 // =============================================================================
 
 fn arb_interaction_content() -> impl Strategy<Value = Content> {
@@ -207,15 +214,51 @@ fn arb_interaction_content() -> impl Strategy<Value = Content> {
             proptest::option::of(proptest::collection::vec(arb_annotation(), 0..3))
         )
             .prop_map(|(text, annotations)| Content::Text { text, annotations }),
-        // Thought content (signature is a cryptographic value, not readable text)
-        proptest::option::of(arb_text()).prop_map(|signature| Content::Thought { signature }),
-        // FunctionCall content
+        // Image content
         (
-            proptest::option::of(arb_identifier()),
-            arb_identifier(),
-            arb_json_value(),
+            proptest::option::of(arb_text()),
+            proptest::option::of(arb_text()),
         )
-            .prop_map(|(id, name, args)| { Content::FunctionCall { id, name, args } }),
+            .prop_map(|(data, mime_type)| Content::Image {
+                data,
+                uri: None,
+                mime_type,
+                resolution: None,
+            }),
+    ]
+}
+
+// =============================================================================
+// Step Strategy (subset for building response histories)
+// =============================================================================
+
+fn arb_step() -> impl Strategy<Value = Step> {
+    prop_oneof![
+        // user_input
+        prop::collection::vec(arb_interaction_content(), 0..3).prop_map(Step::user_input),
+        // model_output
+        prop::collection::vec(arb_interaction_content(), 0..3).prop_map(Step::model_output),
+        // thought with a signature
+        arb_text().prop_map(Step::thought),
+        // function_call
+        (arb_identifier(), arb_identifier(), arb_json_value())
+            .prop_map(|(id, name, args)| Step::function_call(id, name, args)),
+    ]
+}
+
+// =============================================================================
+// StepDelta Strategy (subset for streaming tests)
+// =============================================================================
+
+fn arb_step_delta() -> impl Strategy<Value = StepDelta> {
+    prop_oneof![
+        // Text fragment
+        arb_text().prop_map(|text| StepDelta::Text { text }),
+        // Streaming function-call arguments fragment
+        arb_text().prop_map(|arguments| StepDelta::ArgumentsDelta { arguments }),
+        // Thought signature fragment
+        proptest::option::of(arb_text())
+            .prop_map(|signature| StepDelta::ThoughtSignature { signature }),
     ]
 }
 
@@ -225,27 +268,27 @@ fn arb_interaction_content() -> impl Strategy<Value = Content> {
 
 fn arb_interaction_response() -> impl Strategy<Value = InteractionResponse> {
     (
-        proptest::option::of(arb_identifier()),                 // id
-        proptest::option::of(arb_identifier()),                 // model
-        proptest::option::of(arb_identifier()),                 // agent
-        prop::collection::vec(arb_interaction_content(), 0..3), // input
-        prop::collection::vec(arb_interaction_content(), 0..5), // outputs
-        arb_interaction_status(),                               // status
-        proptest::option::of(arb_usage_metadata()),             // usage
-        proptest::option::of(arb_identifier()),                 // previous_interaction_id
-        proptest::option::of(arb_datetime()),                   // created
-        proptest::option::of(arb_datetime()),                   // updated
+        proptest::option::of(arb_identifier()),     // id
+        proptest::option::of(arb_identifier()),     // model
+        proptest::option::of(arb_identifier()),     // agent
+        prop::collection::vec(arb_step(), 0..5),    // steps
+        arb_interaction_status(),                   // status
+        proptest::option::of(arb_usage_metadata()), // usage
+        proptest::option::of(arb_identifier()),     // previous_interaction_id
+        proptest::option::of(arb_identifier()),     // environment_id
+        proptest::option::of(arb_datetime()),       // created
+        proptest::option::of(arb_datetime()),       // updated
     )
         .prop_map(
             |(
                 id,
                 model,
                 agent,
-                input,
-                outputs,
+                steps,
                 status,
                 usage,
                 previous_interaction_id,
+                environment_id,
                 created,
                 updated,
             )| {
@@ -253,16 +296,14 @@ fn arb_interaction_response() -> impl Strategy<Value = InteractionResponse> {
                     id,
                     model,
                     agent,
-                    input,
-                    outputs,
+                    steps,
                     status,
                     usage,
-                    tools: None,
-                    grounding_metadata: None,
-                    url_context_metadata: None,
                     previous_interaction_id,
+                    environment_id,
                     created,
                     updated,
+                    ..Default::default()
                 }
             },
         )
@@ -274,8 +315,8 @@ fn arb_interaction_response() -> impl Strategy<Value = InteractionResponse> {
 
 fn arb_auto_function_stream_chunk() -> impl Strategy<Value = AutoFunctionStreamChunk> {
     prop_oneof![
-        // Delta variant
-        arb_interaction_content().prop_map(AutoFunctionStreamChunk::Delta),
+        // Delta variant (now carries a StepDelta)
+        arb_step_delta().prop_map(AutoFunctionStreamChunk::Delta),
         // ExecutingFunctions variant
         (
             arb_interaction_response(),
@@ -366,6 +407,7 @@ proptest! {
         prop_assert_eq!(&result.response.id, &restored.response.id);
         prop_assert_eq!(&result.response.model, &restored.response.model);
         prop_assert_eq!(&result.response.status, &restored.response.status);
+        prop_assert_eq!(result.response.steps.len(), restored.response.steps.len());
         prop_assert_eq!(result.executions.len(), restored.executions.len());
         prop_assert_eq!(result.reached_max_loops, restored.reached_max_loops);
 
@@ -379,10 +421,10 @@ proptest! {
         prop_assert_eq!(json, restored_json);
     }
 
-    /// Test Delta variant with various content types.
+    /// Test Delta variant with various step delta payloads.
     #[test]
-    fn delta_chunk_roundtrip(content in arb_interaction_content()) {
-        let chunk = AutoFunctionStreamChunk::Delta(content);
+    fn delta_chunk_roundtrip(delta in arb_step_delta()) {
+        let chunk = AutoFunctionStreamChunk::Delta(delta);
         let json = serde_json::to_string(&chunk).expect("Serialization should succeed");
         let restored: AutoFunctionStreamChunk = serde_json::from_str(&json).expect("Deserialization should succeed");
 
@@ -524,9 +566,10 @@ proptest! {
 // Unknown Variant Strategy Generators
 // =============================================================================
 //
-// These strategies generate Unknown variants for all 11 types with Unknown support.
+// These strategies generate Unknown variants for the types with Unknown support.
 // Tests using these are gated with #[cfg(not(feature = "strict-unknown"))] because
-// strict mode causes deserialization errors instead of creating Unknown variants.
+// strict mode causes deserialization errors (for Content/Step/FileState) instead
+// of creating Unknown variants.
 
 /// Strategy for generating unknown type strings (simulating future API additions).
 #[cfg(not(feature = "strict-unknown"))]
@@ -591,16 +634,16 @@ fn arb_thinking_summaries_with_unknown() -> impl Strategy<Value = ThinkingSummar
     prop_oneof![
         Just(ThinkingSummaries::Auto),
         Just(ThinkingSummaries::None),
-        // Unknown variant via JSON deserialization (uses SCREAMING_CASE)
+        // Unknown variant via JSON deserialization
         arb_unknown_type_string().prop_map(|type_str| {
-            let screaming = type_str.to_uppercase();
-            serde_json::from_value::<ThinkingSummaries>(serde_json::json!(screaming))
+            serde_json::from_value::<ThinkingSummaries>(serde_json::json!(type_str))
                 .expect("Unknown thinking summaries should deserialize")
         }),
     ]
 }
 
 /// Strategy for generating FunctionCallingMode values including Unknown variant.
+/// The wire format is lowercase under revision 2026-05-20.
 #[cfg(not(feature = "strict-unknown"))]
 fn arb_function_calling_mode_with_unknown() -> impl Strategy<Value = FunctionCallingMode> {
     prop_oneof![
@@ -608,10 +651,9 @@ fn arb_function_calling_mode_with_unknown() -> impl Strategy<Value = FunctionCal
         Just(FunctionCallingMode::Any),
         Just(FunctionCallingMode::None),
         Just(FunctionCallingMode::Validated),
-        // Unknown variant via JSON deserialization (uses SCREAMING_CASE)
+        // Unknown variant via JSON deserialization
         arb_unknown_type_string().prop_map(|type_str| {
-            let screaming = type_str.to_uppercase();
-            serde_json::from_value::<FunctionCallingMode>(serde_json::json!(screaming))
+            serde_json::from_value::<FunctionCallingMode>(serde_json::json!(type_str))
                 .expect("Unknown function calling mode should deserialize")
         }),
     ]
@@ -627,6 +669,7 @@ fn arb_interaction_status_with_unknown() -> impl Strategy<Value = InteractionSta
         Just(InteractionStatus::Failed),
         Just(InteractionStatus::Cancelled),
         Just(InteractionStatus::Incomplete),
+        Just(InteractionStatus::BudgetExceeded),
         // Unknown variant via JSON deserialization
         arb_unknown_type_string().prop_map(|type_str| {
             serde_json::from_value::<InteractionStatus>(serde_json::json!(type_str))
@@ -661,6 +704,30 @@ fn arb_interaction_content_unknown() -> impl Strategy<Value = Content> {
         });
         serde_json::from_value::<Content>(json)
             .expect("Unknown interaction content should deserialize")
+    })
+}
+
+/// Strategy for generating Step Unknown variant.
+#[cfg(not(feature = "strict-unknown"))]
+fn arb_step_unknown() -> impl Strategy<Value = Step> {
+    (arb_unknown_type_string(), arb_json_value()).prop_map(|(type_str, extra_data)| {
+        let json = serde_json::json!({
+            "type": type_str,
+            "extra_field": extra_data,
+        });
+        serde_json::from_value::<Step>(json).expect("Unknown step should deserialize")
+    })
+}
+
+/// Strategy for generating StepDelta Unknown variant.
+#[cfg(not(feature = "strict-unknown"))]
+fn arb_step_delta_unknown() -> impl Strategy<Value = StepDelta> {
+    (arb_unknown_type_string(), arb_json_value()).prop_map(|(type_str, extra_data)| {
+        let json = serde_json::json!({
+            "type": type_str,
+            "extra_field": extra_data,
+        });
+        serde_json::from_value::<StepDelta>(json).expect("Unknown step delta should deserialize")
     })
 }
 
@@ -819,6 +886,34 @@ proptest! {
         prop_assert!(content.is_unknown(), "Generated content should be Unknown");
         prop_assert!(restored.is_unknown(), "Restored content should be Unknown");
         prop_assert_eq!(content.unknown_content_type(), restored.unknown_content_type());
+
+        let restored_json = serde_json::to_value(&restored).expect("Re-serialization should succeed");
+        prop_assert_eq!(json, restored_json);
+    }
+
+    /// Test Step Unknown variant roundtrip.
+    #[test]
+    fn step_unknown_roundtrip(step in arb_step_unknown()) {
+        let json = serde_json::to_value(&step).expect("Serialization should succeed");
+        let restored: Step = serde_json::from_value(json.clone()).expect("Deserialization should succeed");
+
+        prop_assert!(step.is_unknown(), "Generated step should be Unknown");
+        prop_assert!(restored.is_unknown(), "Restored step should be Unknown");
+        prop_assert_eq!(step.unknown_step_type(), restored.unknown_step_type());
+
+        let restored_json = serde_json::to_value(&restored).expect("Re-serialization should succeed");
+        prop_assert_eq!(json, restored_json);
+    }
+
+    /// Test StepDelta Unknown variant roundtrip.
+    #[test]
+    fn step_delta_unknown_roundtrip(delta in arb_step_delta_unknown()) {
+        let json = serde_json::to_value(&delta).expect("Serialization should succeed");
+        let restored: StepDelta = serde_json::from_value(json.clone()).expect("Deserialization should succeed");
+
+        prop_assert!(delta.is_unknown(), "Generated delta should be Unknown");
+        prop_assert!(restored.is_unknown(), "Restored delta should be Unknown");
+        prop_assert_eq!(delta.unknown_delta_type(), restored.unknown_delta_type());
 
         let restored_json = serde_json::to_value(&restored).expect("Re-serialization should succeed");
         prop_assert_eq!(json, restored_json);
