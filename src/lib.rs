@@ -105,6 +105,11 @@ pub use wire_streaming::{InteractionStreamEvent, StreamChunk, StreamEvent};
 // Wire-level inspection (WireEvent, WireInspector, built-in inspectors)
 pub mod wire;
 
+// Native client for Google's Antigravity localharness agent runtime
+// (feature = "antigravity"). See docs/ANTIGRAVITY.md.
+#[cfg(feature = "antigravity")]
+pub mod antigravity;
+
 // Files API types
 pub use http::files::{
     DEFAULT_CHUNK_SIZE, FileError, FileMetadata, FileState, ListFilesResponse, ResumableUpload,
@@ -196,6 +201,10 @@ mod doc_tests {
 
     // Detailed guides in docs/
     doc_comment!(include_str!("../docs/AGENTS_AND_BACKGROUND.md"));
+    // ANTIGRAVITY.md uses only `rust,ignore` code blocks: the doctest
+    // harness runs without the `antigravity` feature, so its snippets are
+    // compile-checked by the feature-gated example and tests instead.
+    doc_comment!(include_str!("../docs/ANTIGRAVITY.md"));
     doc_comment!(include_str!("../docs/BUILT_IN_TOOLS.md"));
     doc_comment!(include_str!("../docs/CONFIGURATION.md"));
     doc_comment!(include_str!("../docs/CONVERSATION_PATTERNS.md"));

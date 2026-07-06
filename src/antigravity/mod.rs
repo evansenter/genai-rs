@@ -1,0 +1,1425 @@
+//! Native client for Google's Antigravity `localharness` agent runtime.
+//!
+//! The [`google-antigravity` Python SDK](https://pypi.org/project/google-antigravity/)
+//! ships a Go binary (`localharness`) that *is* the agent runtime: model
+//! calls, streaming, history/compaction, built-in tool execution (shell,
+//! file edits, web search), MCP, and trajectory persistence all live inside
+//! it. This module speaks the harness's protocol directly — a stdio
+//! handshake plus proto-JSON over a localhost WebSocket — so Rust
+//! applications get the full agent runtime with **Rust-native tools, hooks,
+//! and policies** and no Python in the loop.
+//!
+//! Enable with the `antigravity` cargo feature. See `docs/ANTIGRAVITY.md`
+//! for the full guide, and [`SUPPORTED_HARNESS_VERSION`] for the pinned
+//! harness version.
+//!
+//! # Quick start
+//!
+//! ```rust,ignore
+//! use genai_rs::antigravity::{AntigravityAgent, policy};
+//!
+//! let mut agent = AntigravityAgent::builder()
+//!     .with_api_key(std::env::var("GEMINI_API_KEY")?)
+//!     .with_model("gemini-3-flash-preview")
+//!     .with_system_instructions("You are a code-review assistant.")
+//!     .add_workspace("/path/to/repo")
+//!     .add_policy(policy::deny_all())
+//!     .add_policy(policy::allow("view_file"))
+//!     .spawn()
+//!     .await?;
+//!
+//! let response = agent.chat("Summarize src/lib.rs").await?;
+//! println!("{}", response.text());
+//! agent.shutdown().await?;
+//! ```
+
+mod config;
+mod handshake;
+mod hooks;
+mod process;
+pub mod protocol;
+mod session;
+mod streaming;
+mod tools;
+pub mod triggers;
+
+pub use config::{BuiltinTool, Capabilities, McpServer, SUPPORTED_HARNESS_VERSION};
+pub use hooks::{
+    Policy, PolicyDecision, PostToolHook, PreToolDecision, PreToolHook, ToolInvocation,
+    ToolOutcome, policy,
+};
+pub use streaming::{AgentEvent, AgentEventStream, ToolAction};
+
+use crate::wire::{LoudWirePrinter, WireInspector};
+use crate::{FunctionDeclaration, ToolService};
+use serde_json::Value;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+use thiserror::Error;
+
+use hooks::PolicyEngine;
+use process::HarnessProcess;
+use protocol::{
+    HookDecision, HookVerdict, InputEvent, OutputEvent, OutputPayload, StepSource, StepState,
+    StepTarget, StepUpdate, TrajectoryState,
+};
+use session::{Session, SinkHandle, WireContext};
+use tools::ToolDispatcher;
+
+/// Confirmation requests that carry no recognizable action are pre-request
+/// notifications for a host-side tool; the concrete call follows with its
+/// own confirmation, so these are auto-approved (mirrors the reference SDK).
+const PRE_REQUEST_HOST_TOOL: &str = "pre_request_host_tool_request";
+
+/// How long to wait for the `initializeConversationResponse`.
+const INIT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Model backend HTTP codes that abort the turn (bad request / auth
+/// failures cannot recover by retrying within the turn).
+const FATAL_HTTP_CODES: [u32; 3] = [400, 401, 403];
+
+// =============================================================================
+// Errors
+// =============================================================================
+
+/// Errors from the Antigravity harness client.
+///
+/// Spawn- and init-time variants carry the tail of the harness's stderr —
+/// that is where the harness reports actionable problems (e.g. `no text
+/// model configuration provided`).
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum AntigravityError {
+    /// The `localharness` binary could not be found.
+    #[error(
+        "localharness binary not found. Searched: {searched:?}. \
+         Install it with `pip install google-antigravity=={SUPPORTED_HARNESS_VERSION}` \
+         or set {}.",
+        process::HARNESS_PATH_ENV
+    )]
+    HarnessNotFound {
+        /// The locations that were searched, in order.
+        searched: Vec<String>,
+    },
+    /// The stdio handshake with the harness failed.
+    #[error("harness handshake failed: {message}\nharness stderr:\n{stderr}")]
+    HandshakeFailed {
+        /// What went wrong.
+        message: String,
+        /// Tail of the harness's stderr.
+        stderr: String,
+    },
+    /// The conversation could not be initialized.
+    #[error("conversation initialization failed: {message}\nharness stderr:\n{stderr}")]
+    InitFailed {
+        /// What went wrong.
+        message: String,
+        /// Tail of the harness's stderr.
+        stderr: String,
+    },
+    /// The harness closed the connection unexpectedly (it likely crashed).
+    #[error("harness connection closed: {message}\nharness stderr:\n{stderr}")]
+    ConnectionClosed {
+        /// What went wrong.
+        message: String,
+        /// Tail of the harness's stderr.
+        stderr: String,
+    },
+    /// A custom tool could not be dispatched.
+    #[error("tool dispatch failed for '{name}': {message}")]
+    ToolDispatch {
+        /// The tool name.
+        name: String,
+        /// What went wrong.
+        message: String,
+    },
+    /// The agent configuration is invalid.
+    #[error("invalid agent configuration: {0}")]
+    Config(String),
+    /// An operation exceeded its time budget.
+    #[error("{operation} timed out after {timeout:?}")]
+    Timeout {
+        /// The operation that timed out.
+        operation: String,
+        /// The configured budget.
+        timeout: Duration,
+    },
+    /// The turn failed (model backend error, cancellation, or pre-turn
+    /// denial).
+    #[error("agent turn failed: {0}")]
+    Turn(String),
+    /// WebSocket transport error.
+    #[error("websocket error: {0}")]
+    WebSocket(String),
+    /// The harness sent something this client could not parse.
+    #[error("protocol error: {0}")]
+    Protocol(String),
+    /// I/O error.
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+    /// JSON (de)serialization error.
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
+}
+
+// =============================================================================
+// ChatResponse
+// =============================================================================
+
+/// The assembled result of one agent turn.
+#[derive(Debug, Clone, Default)]
+pub struct ChatResponse {
+    text: String,
+    thoughts: String,
+    usage: Option<protocol::UsageMetadata>,
+    structured_output: Option<Value>,
+    errors: Vec<String>,
+}
+
+impl ChatResponse {
+    /// The final response text (the last completed model step directed at
+    /// the user).
+    #[must_use]
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Concatenated thinking text from the turn's completed steps.
+    #[must_use]
+    pub fn thoughts(&self) -> &str {
+        &self.thoughts
+    }
+
+    /// Token usage reported for the turn (last report wins).
+    #[must_use]
+    pub fn usage(&self) -> Option<&protocol::UsageMetadata> {
+        self.usage.as_ref()
+    }
+
+    /// Structured output from the agent's `finish` action, when a response
+    /// schema was configured.
+    #[must_use]
+    pub fn structured_output(&self) -> Option<&Value> {
+        self.structured_output.as_ref()
+    }
+
+    /// Non-fatal errors the harness reported during the turn.
+    #[must_use]
+    pub fn errors(&self) -> &[String] {
+        &self.errors
+    }
+}
+
+// =============================================================================
+// Builder
+// =============================================================================
+
+/// Builder for [`AntigravityAgent`]. Create via
+/// [`AntigravityAgent::builder`].
+#[derive(Default)]
+pub struct AgentBuilder {
+    harness_path: Option<PathBuf>,
+    api_key: Option<String>,
+    model: Option<String>,
+    system_instructions: Option<String>,
+    workspaces: Vec<String>,
+    tools: Vec<FunctionDeclaration>,
+    tool_services: Vec<Arc<dyn ToolService>>,
+    mcp_servers: Vec<McpServer>,
+    policies: Vec<Policy>,
+    pre_tool: Option<PreToolHook>,
+    post_tool: Option<PostToolHook>,
+    save_dir: Option<String>,
+    conversation_id: Option<String>,
+    capabilities: Capabilities,
+    response_schema: Option<Value>,
+    app_data_dir: Option<String>,
+    skills_paths: Vec<String>,
+    turn_timeout: Option<Duration>,
+    inspectors: Vec<Arc<dyn WireInspector>>,
+}
+
+impl std::fmt::Debug for AgentBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentBuilder")
+            .field("harness_path", &self.harness_path)
+            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
+            .field("model", &self.model)
+            .field("workspaces", &self.workspaces)
+            .field("tools", &self.tools.len())
+            .field("mcp_servers", &self.mcp_servers.len())
+            .field("policies", &self.policies.len())
+            .field("capabilities", &self.capabilities)
+            .finish_non_exhaustive()
+    }
+}
+
+impl AgentBuilder {
+    /// Sets an explicit path to the `localharness` binary, bypassing
+    /// discovery.
+    #[must_use]
+    pub fn with_harness_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.harness_path = Some(path.into());
+        self
+    }
+
+    /// Sets the Gemini API key used by the harness for model calls.
+    #[must_use]
+    pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
+        self.api_key = Some(api_key.into());
+        self
+    }
+
+    /// Sets the text model (default: `gemini-3-flash-preview`).
+    #[must_use]
+    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+        self.model = Some(model.into());
+        self
+    }
+
+    /// Sets custom system instructions for the agent.
+    #[must_use]
+    pub fn with_system_instructions(mut self, instructions: impl Into<String>) -> Self {
+        self.system_instructions = Some(instructions.into());
+        self
+    }
+
+    /// Sets the workspace directory, replacing any previously configured
+    /// workspaces. Use [`Self::add_workspace`] to accumulate several.
+    #[must_use]
+    pub fn with_workspace(mut self, directory: impl Into<String>) -> Self {
+        self.workspaces = vec![directory.into()];
+        self
+    }
+
+    /// Adds a workspace directory the agent may operate in.
+    #[must_use]
+    pub fn add_workspace(mut self, directory: impl Into<String>) -> Self {
+        self.workspaces.push(directory.into());
+        self
+    }
+
+    /// Adds a custom tool by declaration. Execution resolves through the
+    /// crate's global function registry (`#[tool]` macro), exactly like the
+    /// Interactions-API auto-function path.
+    #[must_use]
+    pub fn add_tool(mut self, declaration: FunctionDeclaration) -> Self {
+        self.tools.push(declaration);
+        self
+    }
+
+    /// Registers a [`ToolService`] providing stateful custom tools.
+    #[must_use]
+    pub fn with_tool_service(mut self, service: Arc<dyn ToolService>) -> Self {
+        self.tool_services.push(service);
+        self
+    }
+
+    /// Adds an MCP server for the harness to connect to.
+    #[must_use]
+    pub fn add_mcp_server(mut self, server: McpServer) -> Self {
+        self.mcp_servers.push(server);
+        self
+    }
+
+    /// Adds a tool policy. See [`policy`] for constructors.
+    ///
+    /// Exact-name rules beat wildcard rules; within the same specificity
+    /// tier the first registered matching rule wins, so
+    /// `[deny_all(), allow("get_weather")]` allows only `get_weather`.
+    /// When no rule matches, the call is allowed (default open), subject
+    /// to the pre-tool hook.
+    #[must_use]
+    pub fn add_policy(mut self, policy: Policy) -> Self {
+        self.policies.push(policy);
+        self
+    }
+
+    /// Sets a pre-tool hook, consulted before every tool dispatch and for
+    /// `confirm(...)` policies.
+    #[must_use]
+    pub fn on_pre_tool(
+        mut self,
+        hook: impl Fn(&ToolInvocation) -> PreToolDecision + Send + Sync + 'static,
+    ) -> Self {
+        self.pre_tool = Some(Arc::new(hook));
+        self
+    }
+
+    /// Sets a post-tool hook, observing completed custom tool calls.
+    #[must_use]
+    pub fn on_post_tool(mut self, hook: impl Fn(&ToolOutcome) + Send + Sync + 'static) -> Self {
+        self.post_tool = Some(Arc::new(hook));
+        self
+    }
+
+    /// Sets the directory where the harness persists trajectories,
+    /// enabling session resume via [`Self::with_conversation_id`].
+    #[must_use]
+    pub fn with_save_dir(mut self, dir: impl Into<String>) -> Self {
+        self.save_dir = Some(dir.into());
+        self
+    }
+
+    /// Resumes a saved conversation by id (see
+    /// [`AntigravityAgent::conversation_id`]). Requires
+    /// [`Self::with_save_dir`] pointing at the same directory.
+    #[must_use]
+    pub fn with_conversation_id(mut self, id: impl Into<String>) -> Self {
+        self.conversation_id = Some(id.into());
+        self
+    }
+
+    /// Configures which built-in harness tools are available.
+    /// Default: the read-only set.
+    #[must_use]
+    pub fn with_capabilities(mut self, capabilities: Capabilities) -> Self {
+        self.capabilities = capabilities;
+        self
+    }
+
+    /// Sets a JSON schema for structured final output (delivered through
+    /// [`ChatResponse::structured_output`]).
+    #[must_use]
+    pub fn with_response_schema(mut self, schema: Value) -> Self {
+        self.response_schema = Some(schema);
+        self
+    }
+
+    /// Sets the harness's application data directory.
+    #[must_use]
+    pub fn with_app_data_dir(mut self, dir: impl Into<String>) -> Self {
+        self.app_data_dir = Some(dir.into());
+        self
+    }
+
+    /// Adds a path to search for agent skills.
+    #[must_use]
+    pub fn add_skills_path(mut self, path: impl Into<String>) -> Self {
+        self.skills_paths.push(path.into());
+        self
+    }
+
+    /// Sets a wall-clock budget per turn. When exceeded, `chat` /
+    /// `send_streaming` fail with [`AntigravityError::Timeout`].
+    /// Default: unlimited.
+    #[must_use]
+    pub fn with_turn_timeout(mut self, timeout: Duration) -> Self {
+        self.turn_timeout = Some(timeout);
+        self
+    }
+
+    /// Registers a wire inspector receiving this session's
+    /// [`WireEvent`](crate::wire::WireEvent)s (harness spawn, WebSocket
+    /// traffic, harness stderr). The `LOUD_WIRE` environment variable
+    /// additionally installs the standard stderr printer, exactly like the
+    /// Interactions client.
+    #[must_use]
+    pub fn add_wire_inspector(mut self, inspector: Arc<dyn WireInspector>) -> Self {
+        self.inspectors.push(inspector);
+        self
+    }
+
+    /// Launches the harness, performs the handshake, connects the
+    /// WebSocket, and initializes the conversation.
+    ///
+    /// # Errors
+    ///
+    /// - [`AntigravityError::Config`] when write-capable built-ins or MCP
+    ///   servers are enabled without any policy or pre-tool hook (safety
+    ///   parity with the reference SDK), or when a model is configured
+    ///   without an API key.
+    /// - [`AntigravityError::HarnessNotFound`] when discovery fails.
+    /// - [`AntigravityError::HandshakeFailed`] / [`AntigravityError::InitFailed`]
+    ///   with the harness's stderr tail when startup fails.
+    pub async fn spawn(self) -> Result<AntigravityAgent, AntigravityError> {
+        // Safety parity with the reference SDK: refuse to run write-capable
+        // agents with no policy and no pre-tool hook.
+        if (self.capabilities.has_write_tools() || !self.mcp_servers.is_empty())
+            && self.policies.is_empty()
+            && self.pre_tool.is_none()
+        {
+            return Err(AntigravityError::Config(
+                "write-capable built-in tools or MCP servers are enabled without a safety \
+                 policy. Add `.add_policy(policy::allow_all())` to approve all tool calls, \
+                 `.add_policy(policy::deny_all())` plus specific `policy::allow(..)` rules \
+                 to selectively allow tools, or an `.on_pre_tool(..)` hook."
+                    .to_string(),
+            ));
+        }
+        if self.model.is_some() && self.api_key.is_none() {
+            return Err(AntigravityError::Config(
+                "a model is configured without an API key; call with_api_key(..)".to_string(),
+            ));
+        }
+
+        let binary = process::discover_harness(self.harness_path.as_deref())?;
+
+        let mut inspectors = self.inspectors.clone();
+        if std::env::var("LOUD_WIRE").is_ok() {
+            inspectors.push(Arc::new(LoudWirePrinter::new()));
+        }
+        let wire = WireContext::new(inspectors);
+
+        // Stdio handshake.
+        let input_config = handshake::InputConfig {
+            storage_directory: self.save_dir.clone().unwrap_or_default(),
+            port: 0,
+            bind_address: String::new(),
+            client_info: Some(handshake::ClientInfo {
+                language: "rust".to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                language_version: env!("CARGO_PKG_RUST_VERSION").to_string(),
+            }),
+        };
+        let (mut harness, output_config) =
+            HarnessProcess::spawn(&binary, &input_config, &wire).await?;
+
+        // WebSocket connect (retry with backoff).
+        let session = match Session::connect(output_config.port, &output_config.api_key, wire).await
+        {
+            Ok(session) => session,
+            Err(e) => {
+                let stderr = harness.stderr_tail().await;
+                harness.kill().await;
+                return Err(AntigravityError::InitFailed {
+                    message: e.to_string(),
+                    stderr,
+                });
+            }
+        };
+
+        // Conversation init.
+        let dispatcher = ToolDispatcher::new(self.tools.clone(), &self.tool_services);
+        let config = self.build_harness_config(&dispatcher);
+        let init = protocol::InitializeConversationEvent {
+            config: Some(config),
+        };
+
+        let mut agent = AntigravityAgent {
+            harness,
+            session,
+            dispatcher,
+            policy_engine: PolicyEngine::new(self.policies),
+            pre_tool: self.pre_tool,
+            post_tool: self.post_tool,
+            conversation_id: None,
+            initial_history: Vec::new(),
+            turn_timeout: self.turn_timeout,
+        };
+
+        match agent.initialize(init).await {
+            Ok(()) => Ok(agent),
+            Err(e) => {
+                agent.session.close().await;
+                agent.harness.kill().await;
+                Err(e)
+            }
+        }
+    }
+
+    fn build_harness_config(&self, dispatcher: &ToolDispatcher) -> protocol::HarnessConfig {
+        let mut enabled_hooks = Vec::new();
+        if !self.policies.is_empty() || self.pre_tool.is_some() {
+            enabled_hooks.push(protocol::LifecycleHook::PreTool);
+        }
+        if self.post_tool.is_some() {
+            enabled_hooks.push(protocol::LifecycleHook::PostTool);
+        }
+
+        let models = self
+            .api_key
+            .as_ref()
+            .map(|api_key| {
+                vec![protocol::ModelConfig {
+                    name: Some(
+                        self.model
+                            .clone()
+                            .unwrap_or_else(|| "gemini-3-flash-preview".to_string()),
+                    ),
+                    types: vec![protocol::ModelType::Text],
+                    gemini_api_endpoint: Some(protocol::GeminiApiEndpoint {
+                        api_key: Some(api_key.clone()),
+                        ..Default::default()
+                    }),
+                    vertex_endpoint: None,
+                }]
+            })
+            .unwrap_or_default();
+
+        protocol::HarnessConfig {
+            cascade_id: self.conversation_id.clone(),
+            system_instructions: self
+                .system_instructions
+                .as_ref()
+                .map(|text| protocol::SystemInstructions::custom_text(text.clone())),
+            tools: dispatcher.harness_declarations(),
+            harness_side_tools: Some(self.capabilities.to_harness_side_tools()),
+            compaction_threshold: None,
+            workspaces: self
+                .workspaces
+                .iter()
+                .map(protocol::Workspace::filesystem)
+                .collect(),
+            skills_paths: self.skills_paths.clone(),
+            finish_tool_schema_json: self.response_schema.as_ref().map(ToString::to_string),
+            initial_trajectory: None,
+            app_data_dir: self.app_data_dir.clone(),
+            mcp_servers: self.mcp_servers.iter().map(McpServer::to_wire).collect(),
+            models,
+            enabled_hooks,
+            custom_subagents: Vec::new(),
+        }
+    }
+}
+
+// =============================================================================
+// Agent
+// =============================================================================
+
+/// A running Antigravity agent session.
+///
+/// Created with [`AntigravityAgent::builder`]. One turn runs at a time:
+/// [`chat`](Self::chat) drives it to completion, and
+/// [`send_streaming`](Self::send_streaming) exposes the same loop as an
+/// event stream. Call [`shutdown`](Self::shutdown) for a graceful exit (the
+/// harness then persists trajectories); dropping the agent kills the
+/// harness process without persistence.
+pub struct AntigravityAgent {
+    harness: HarnessProcess,
+    session: Session,
+    dispatcher: ToolDispatcher,
+    policy_engine: PolicyEngine,
+    pre_tool: Option<PreToolHook>,
+    post_tool: Option<PostToolHook>,
+    conversation_id: Option<String>,
+    initial_history: Vec<StepUpdate>,
+    turn_timeout: Option<Duration>,
+}
+
+impl std::fmt::Debug for AntigravityAgent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AntigravityAgent")
+            .field("harness", &self.harness)
+            .field("conversation_id", &self.conversation_id)
+            .field("dispatcher", &self.dispatcher)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Cancels an in-flight turn from outside the turn-driving future (e.g.
+/// while consuming an [`AgentEventStream`]). Obtain via
+/// [`AntigravityAgent::cancel_handle`]; cheap to clone.
+///
+/// Cancellation makes the in-flight `chat`/stream fail with
+/// [`AntigravityError::Turn`] once the harness confirms.
+#[derive(Debug, Clone)]
+pub struct CancelHandle {
+    sink: SinkHandle,
+}
+
+impl CancelHandle {
+    /// Sends a halt request for the current turn.
+    pub async fn cancel(&self) -> Result<(), AntigravityError> {
+        self.sink.send(&InputEvent::HaltRequest(true)).await
+    }
+}
+
+impl AntigravityAgent {
+    /// Starts building an agent.
+    #[must_use]
+    pub fn builder() -> AgentBuilder {
+        AgentBuilder::default()
+    }
+
+    /// The conversation id assigned by the harness. Persist it together
+    /// with [`AgentBuilder::with_save_dir`] to resume the session later.
+    #[must_use]
+    pub fn conversation_id(&self) -> Option<&str> {
+        self.conversation_id.as_deref()
+    }
+
+    /// Steps restored from a saved conversation, when resuming.
+    #[must_use]
+    pub fn initial_history(&self) -> &[StepUpdate] {
+        &self.initial_history
+    }
+
+    /// Returns a handle that can cancel an in-flight turn.
+    #[must_use]
+    pub fn cancel_handle(&self) -> CancelHandle {
+        CancelHandle {
+            sink: self.session.sink_handle(),
+        }
+    }
+
+    /// Cancels the current turn (equivalent to
+    /// [`CancelHandle::cancel`]).
+    pub async fn cancel(&self) -> Result<(), AntigravityError> {
+        self.session.send(&InputEvent::HaltRequest(true)).await
+    }
+
+    /// Sends a message and drives the turn to completion.
+    pub async fn chat(
+        &mut self,
+        prompt: impl Into<String>,
+    ) -> Result<ChatResponse, AntigravityError> {
+        self.session
+            .send(&InputEvent::UserInput(prompt.into()))
+            .await?;
+        let mut turn = TurnState::new(self.turn_timeout);
+        loop {
+            match self.next_turn_event(&mut turn).await? {
+                Some(AgentEvent::Finished(response)) => return Ok(*response),
+                Some(_) => {}
+                None => {
+                    return Err(AntigravityError::Protocol(
+                        "turn ended without a Finished event".to_string(),
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Sends a message and returns a stream of [`AgentEvent`]s for the
+    /// turn. The stream ends after [`AgentEvent::Finished`].
+    pub async fn send_streaming(
+        &mut self,
+        prompt: impl Into<String>,
+    ) -> Result<AgentEventStream<'_>, AntigravityError> {
+        self.session
+            .send(&InputEvent::UserInput(prompt.into()))
+            .await?;
+        let timeout = self.turn_timeout;
+        let stream = async_stream::try_stream! {
+            let mut turn = TurnState::new(timeout);
+            while let Some(event) = self.next_turn_event(&mut turn).await? {
+                let finished = matches!(event, AgentEvent::Finished(_));
+                yield event;
+                if finished {
+                    break;
+                }
+            }
+        };
+        Ok(AgentEventStream::new(Box::pin(stream)))
+    }
+
+    /// Gracefully shuts down: closes the WebSocket (the harness serializes
+    /// its trajectory), closes stdin (EOF triggers the harness's clean
+    /// exit), then escalates to SIGTERM and SIGKILL if it lingers.
+    pub async fn shutdown(self) -> Result<(), AntigravityError> {
+        self.session.close().await;
+        self.harness.shutdown().await
+    }
+
+    // -------------------------------------------------------------------
+    // Init
+    // -------------------------------------------------------------------
+
+    async fn initialize(
+        &mut self,
+        init: protocol::InitializeConversationEvent,
+    ) -> Result<(), AntigravityError> {
+        self.session.send_raw(serde_json::to_value(&init)?).await?;
+
+        let deadline = tokio::time::Instant::now() + INIT_TIMEOUT;
+        loop {
+            let event = match tokio::time::timeout_at(deadline, self.session.next_event()).await {
+                Ok(Ok(Some(event))) => event,
+                Ok(Ok(None)) => {
+                    let stderr = self.harness.stderr_tail().await;
+                    return Err(AntigravityError::InitFailed {
+                        message: "harness closed the connection during initialization".to_string(),
+                        stderr,
+                    });
+                }
+                Ok(Err(e)) => {
+                    let stderr = self.harness.stderr_tail().await;
+                    return Err(AntigravityError::InitFailed {
+                        message: e.to_string(),
+                        stderr,
+                    });
+                }
+                Err(_) => {
+                    let stderr = self.harness.stderr_tail().await;
+                    return Err(AntigravityError::InitFailed {
+                        message: format!("no initialization response within {INIT_TIMEOUT:?}"),
+                        stderr,
+                    });
+                }
+            };
+            match event.payload {
+                Some(OutputPayload::InitializeConversationResponse(response)) => {
+                    self.conversation_id = response.cascade_id.clone();
+                    self.initial_history = response.history;
+                    return Ok(());
+                }
+                Some(other) => {
+                    tracing::debug!(
+                        "Ignoring pre-init event while waiting for initialization: {other:?}"
+                    );
+                }
+                None => {}
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Turn loop
+    // -------------------------------------------------------------------
+
+    /// Returns the next agent event for the running turn, or `None` once
+    /// the turn has finished and all events were drained.
+    async fn next_turn_event(
+        &mut self,
+        turn: &mut TurnState,
+    ) -> Result<Option<AgentEvent>, AntigravityError> {
+        loop {
+            if let Some(event) = turn.queue.pop_front() {
+                return Ok(Some(event));
+            }
+            if turn.finished {
+                return Ok(None);
+            }
+            let next = self.session.next_event();
+            let event = match turn.deadline {
+                Some(deadline) => match tokio::time::timeout_at(deadline, next).await {
+                    Ok(result) => result?,
+                    Err(_) => {
+                        return Err(AntigravityError::Timeout {
+                            operation: "agent turn".to_string(),
+                            timeout: turn.timeout.unwrap_or_default(),
+                        });
+                    }
+                },
+                None => next.await?,
+            };
+            let Some(event) = event else {
+                let stderr = self.harness.stderr_tail().await;
+                return Err(AntigravityError::ConnectionClosed {
+                    message: "harness closed the WebSocket mid-turn".to_string(),
+                    stderr,
+                });
+            };
+            self.process_event(event, turn).await?;
+        }
+    }
+
+    async fn process_event(
+        &mut self,
+        event: OutputEvent,
+        turn: &mut TurnState,
+    ) -> Result<(), AntigravityError> {
+        if let Some(usage) = event.usage_metadata {
+            turn.usage = Some(usage);
+        }
+        match event.payload {
+            Some(OutputPayload::StepUpdate(step)) => self.process_step(*step, turn).await?,
+            Some(OutputPayload::TrajectoryStateUpdate(update)) => {
+                self.process_trajectory_update(&update, turn)?;
+            }
+            Some(OutputPayload::ToolCall(call)) => self.process_tool_call(call, turn).await?,
+            Some(OutputPayload::CallHookRequest(request)) => {
+                self.process_hook_request(request).await?;
+            }
+            Some(OutputPayload::SessionEndResponse(_)) => {}
+            Some(OutputPayload::InitializeConversationResponse(_)) => {
+                tracing::warn!("Unexpected initializeConversationResponse mid-turn; ignoring.");
+            }
+            Some(OutputPayload::Unknown { event_type, data }) => {
+                tracing::warn!("Unknown harness event '{event_type}'; surfacing and continuing.");
+                turn.queue
+                    .push_back(AgentEvent::Unknown { event_type, data });
+            }
+            None => {}
+        }
+        Ok(())
+    }
+
+    async fn process_step(
+        &mut self,
+        step: StepUpdate,
+        turn: &mut TurnState,
+    ) -> Result<(), AntigravityError> {
+        let step_key = (
+            step.trajectory_id.clone().unwrap_or_default(),
+            step.step_index.unwrap_or_default(),
+        );
+        if turn.main_trajectory.is_none()
+            && let Some(trajectory_id) = &step.trajectory_id
+        {
+            turn.main_trajectory = Some(trajectory_id.clone());
+        }
+        let is_main = turn.main_trajectory.as_deref() == step.trajectory_id.as_deref();
+
+        // Debounce bookkeeping: leaving the waiting state clears the
+        // handled-request markers for the step.
+        if step.state != Some(StepState::WaitingForUser) {
+            turn.handled_waits.remove(&step_key);
+        }
+
+        // Deltas stream through from every trajectory (subagents included).
+        if let Some(delta) = &step.thinking_delta
+            && !delta.is_empty()
+        {
+            turn.queue
+                .push_back(AgentEvent::ThinkingDelta(delta.clone()));
+        }
+        if let Some(delta) = &step.text_delta
+            && !delta.is_empty()
+        {
+            turn.queue.push_back(AgentEvent::TextDelta(delta.clone()));
+        }
+
+        let is_terminal = matches!(step.state, Some(StepState::Done) | Some(StepState::Error));
+
+        // Completed tool actions surface once, with their results populated.
+        if is_terminal
+            && let Some(action) = streaming::ToolAction::from_step(&step)
+            && turn.announced_actions.insert(step_key.clone())
+        {
+            turn.queue
+                .push_back(AgentEvent::ToolAction(Box::new(action)));
+        }
+
+        // Structured output from the finish action.
+        if let Some(finish) = &step.finish
+            && let Some(output) = &finish.output_string
+            && !output.is_empty()
+        {
+            match serde_json::from_str(output) {
+                Ok(value) => turn.structured_output = Some(value),
+                Err(e) => tracing::warn!("Failed to parse structured output JSON: {e}"),
+            }
+        }
+
+        // Errors: fatal model-backend codes abort the turn; everything else
+        // is surfaced as an event and recorded (the harness retries or the
+        // model reacts).
+        if step.state == Some(StepState::Error) || step.error.is_some() {
+            let message = step
+                .error
+                .as_ref()
+                .and_then(|e| e.error_message.clone())
+                .or_else(|| step.error_message.clone())
+                .or_else(|| step.text.clone())
+                .unwrap_or_else(|| "unknown harness error".to_string());
+            let http_code = step.error.as_ref().and_then(|e| e.http_code);
+            if step.source == Some(StepSource::System)
+                && http_code.is_some_and(|code| FATAL_HTTP_CODES.contains(&code))
+            {
+                return Err(AntigravityError::Turn(format!(
+                    "model backend error (HTTP {}): {message}",
+                    http_code.unwrap_or_default()
+                )));
+            }
+            turn.errors.push(message.clone());
+            turn.queue.push_back(AgentEvent::Error(message));
+        }
+
+        // Thinking text accumulates from completed steps.
+        if step.state == Some(StepState::Done)
+            && let Some(thinking) = &step.thinking
+            && !thinking.is_empty()
+            && turn.thought_steps.insert(step_key.clone())
+        {
+            if !turn.thoughts.is_empty() {
+                turn.thoughts.push('\n');
+            }
+            turn.thoughts.push_str(thinking);
+        }
+
+        // Final-response candidate: completed model text directed at the
+        // user, on the main trajectory. The last one wins.
+        if is_main
+            && step.source == Some(StepSource::Model)
+            && step.state == Some(StepState::Done)
+            && step.target == Some(StepTarget::User)
+            && let Some(text) = &step.text
+            && !text.is_empty()
+        {
+            turn.final_text = Some(text.clone());
+        }
+
+        // Waiting state: answer confirmation/question requests, debounced —
+        // the harness re-broadcasts them on every internal tick.
+        if step.state == Some(StepState::WaitingForUser) {
+            if step.tool_confirmation_request.is_some()
+                && turn.mark_wait_handled(&step_key, "tool_confirmation_request")
+            {
+                self.answer_tool_confirmation(&step).await?;
+            }
+            if let Some(questions) = &step.questions_request
+                && turn.mark_wait_handled(&step_key, "questions_request")
+            {
+                self.answer_questions(&step, questions.questions.len())
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Policy-checks a pending harness-side tool and replies with a
+    /// `tool_confirmation`.
+    async fn answer_tool_confirmation(
+        &mut self,
+        step: &StepUpdate,
+    ) -> Result<(), AntigravityError> {
+        let action = streaming::ToolAction::from_step(step);
+        let (name, mut args) = match &action {
+            Some(action) => (action.tool_name(), action.args()),
+            // No recognizable action: a pre-request for a host-side tool.
+            // The concrete call follows with its own confirmation, so this
+            // is auto-approved (mirrors the reference SDK).
+            None => (
+                PRE_REQUEST_HOST_TOOL.to_string(),
+                Value::Object(Default::default()),
+            ),
+        };
+        if let Some(request_text) = &step.request_text
+            && let Value::Object(map) = &mut args
+        {
+            map.insert(
+                "request_text".to_string(),
+                Value::String(request_text.clone()),
+            );
+        }
+        let accepted = if name == PRE_REQUEST_HOST_TOOL {
+            true
+        } else {
+            let invocation = ToolInvocation {
+                name: name.clone(),
+                args,
+                id: None,
+            };
+            match hooks::decide(&self.policy_engine, self.pre_tool.as_ref(), &invocation) {
+                PreToolDecision::Allow => true,
+                PreToolDecision::Deny { reason } => {
+                    tracing::info!("Rejecting harness tool '{name}': {reason}");
+                    false
+                }
+            }
+        };
+        self.session
+            .send(&InputEvent::ToolConfirmation(protocol::ToolConfirmation {
+                trajectory_id: step.trajectory_id.clone().unwrap_or_default(),
+                step_index: step.step_index.unwrap_or_default(),
+                accepted,
+            }))
+            .await
+    }
+
+    /// Replies to a `questions_request`. Interactive question handling is
+    /// not supported yet; every question is answered "unanswered" so the
+    /// harness never deadlocks (the protocol requires a response).
+    async fn answer_questions(
+        &mut self,
+        step: &StepUpdate,
+        question_count: usize,
+    ) -> Result<(), AntigravityError> {
+        tracing::warn!(
+            "Harness asked {question_count} user question(s) but interactive question \
+             handling is not supported; answering as unanswered. Disable the \
+             ask_question builtin (Capabilities) to prevent this."
+        );
+        let response = protocol::UserQuestionsResponse {
+            trajectory_id: step.trajectory_id.clone().unwrap_or_default(),
+            step_index: step.step_index.unwrap_or_default(),
+            cancelled: None,
+            response: Some(protocol::QuestionsResponse {
+                answers: (0..question_count)
+                    .map(|_| protocol::UserQuestionAnswer::unanswered())
+                    .collect(),
+            }),
+        };
+        self.session
+            .send(&InputEvent::QuestionResponse(response))
+            .await
+    }
+
+    fn process_trajectory_update(
+        &mut self,
+        update: &protocol::TrajectoryStateUpdate,
+        turn: &mut TurnState,
+    ) -> Result<(), AntigravityError> {
+        let is_main = turn.main_trajectory.is_none()
+            || turn.main_trajectory.as_deref() == update.trajectory_id.as_deref();
+        match update.state {
+            Some(TrajectoryState::Idle) if is_main => {
+                if let Some(error) = &update.error {
+                    return Err(AntigravityError::Turn(error.clone()));
+                }
+                let response = turn.take_response();
+                turn.finished = true;
+                turn.queue
+                    .push_back(AgentEvent::Finished(Box::new(response)));
+            }
+            Some(TrajectoryState::Cancelled) => {
+                let message = update
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "turn cancelled".to_string());
+                return Err(AntigravityError::Turn(message));
+            }
+            _ => {
+                // Running / subagent idle / unknown states: nothing to do.
+            }
+        }
+        Ok(())
+    }
+
+    /// Dispatches a custom (client-executed) tool call: policy check first
+    /// (defense in depth), then execution through the crate's function
+    /// registry / tool services, then a `tool_response` back to the
+    /// harness.
+    async fn process_tool_call(
+        &mut self,
+        call: protocol::ToolCall,
+        turn: &mut TurnState,
+    ) -> Result<(), AntigravityError> {
+        let id = call.id.clone().unwrap_or_default();
+        let name = call.name.clone().unwrap_or_default();
+        let args: Value = match call
+            .arguments_json
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(serde_json::from_str)
+        {
+            Some(Ok(value)) => value,
+            Some(Err(e)) => {
+                tracing::warn!("Unparseable arguments for tool '{name}': {e}");
+                call.arguments.clone().unwrap_or(Value::Null)
+            }
+            None => call
+                .arguments
+                .clone()
+                .unwrap_or_else(|| Value::Object(Default::default())),
+        };
+
+        let invocation = ToolInvocation {
+            name: name.clone(),
+            args: args.clone(),
+            id: Some(id.clone()),
+        };
+        let result = match hooks::decide(&self.policy_engine, self.pre_tool.as_ref(), &invocation) {
+            PreToolDecision::Deny { reason } => {
+                tracing::info!("Denying custom tool '{name}': {reason}");
+                serde_json::json!({
+                    "error": format!("Tool execution denied by policy: {reason}")
+                })
+            }
+            PreToolDecision::Allow => {
+                let result = self.dispatcher.execute(&name, args).await;
+                if let Some(post_tool) = &self.post_tool {
+                    let outcome = ToolOutcome {
+                        name: name.clone(),
+                        result: result.get("error").is_none().then(|| result.to_string()),
+                        error: result
+                            .get("error")
+                            .and_then(Value::as_str)
+                            .map(ToString::to_string),
+                    };
+                    post_tool(&outcome);
+                }
+                turn.queue.push_back(AgentEvent::ToolCallDispatched {
+                    name: name.clone(),
+                    id: id.clone(),
+                });
+                result
+            }
+        };
+        self.session
+            .send(&InputEvent::ToolResponse(protocol::ToolResponse {
+                id,
+                response_json: Some(result.to_string()),
+                supplemental_media: Vec::new(),
+            }))
+            .await
+    }
+
+    /// Answers a lifecycle hook callback. The protocol requires a response
+    /// for every request, so unknown hook kinds get an `empty_result`.
+    async fn process_hook_request(
+        &mut self,
+        request: protocol::CallHookRequest,
+    ) -> Result<(), AntigravityError> {
+        let request_id = request.request_id.clone().unwrap_or_default();
+        let mut response = protocol::CallHookResponse {
+            request_id,
+            ..Default::default()
+        };
+        if let Some(pre_tool_args) = &request.pre_tool_args {
+            let name = pre_tool_args.tool_name.clone().unwrap_or_default();
+            let args = pre_tool_args
+                .arguments_json
+                .as_deref()
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or_else(|| Value::Object(Default::default()));
+            let invocation = ToolInvocation {
+                name,
+                args,
+                id: None,
+            };
+            let verdict =
+                match hooks::decide(&self.policy_engine, self.pre_tool.as_ref(), &invocation) {
+                    PreToolDecision::Allow => HookVerdict {
+                        decision: Some(HookDecision::Allow),
+                        reason: None,
+                    },
+                    PreToolDecision::Deny { reason } => HookVerdict {
+                        decision: Some(HookDecision::Deny),
+                        reason: Some(reason),
+                    },
+                };
+            response.pre_tool_result = Some(verdict);
+        } else if let Some(post_tool_args) = &request.post_tool_args {
+            if let Some(post_tool) = &self.post_tool {
+                post_tool(&ToolOutcome {
+                    name: post_tool_args.tool_name.clone().unwrap_or_default(),
+                    result: post_tool_args.result.clone(),
+                    error: post_tool_args.error.clone(),
+                });
+            }
+            response.empty_result = Some(protocol::EmptyResult {});
+        } else {
+            response.empty_result = Some(protocol::EmptyResult {});
+        }
+        self.session
+            .send(&InputEvent::CallHookResponse(response))
+            .await
+    }
+}
+
+// =============================================================================
+// Per-turn state
+// =============================================================================
+
+struct TurnState {
+    queue: VecDeque<AgentEvent>,
+    finished: bool,
+    main_trajectory: Option<String>,
+    handled_waits: HashMap<(String, u32), HashSet<&'static str>>,
+    announced_actions: HashSet<(String, u32)>,
+    thought_steps: HashSet<(String, u32)>,
+    final_text: Option<String>,
+    thoughts: String,
+    usage: Option<protocol::UsageMetadata>,
+    structured_output: Option<Value>,
+    errors: Vec<String>,
+    timeout: Option<Duration>,
+    deadline: Option<tokio::time::Instant>,
+}
+
+impl TurnState {
+    fn new(timeout: Option<Duration>) -> Self {
+        Self {
+            queue: VecDeque::new(),
+            finished: false,
+            main_trajectory: None,
+            handled_waits: HashMap::new(),
+            announced_actions: HashSet::new(),
+            thought_steps: HashSet::new(),
+            final_text: None,
+            thoughts: String::new(),
+            usage: None,
+            structured_output: None,
+            errors: Vec::new(),
+            timeout,
+            deadline: timeout.map(|t| tokio::time::Instant::now() + t),
+        }
+    }
+
+    /// Marks a waiting-state request as handled for the step; returns
+    /// `true` on first sighting (the harness re-broadcasts requests on
+    /// every internal tick while waiting).
+    fn mark_wait_handled(&mut self, step_key: &(String, u32), kind: &'static str) -> bool {
+        self.handled_waits
+            .entry(step_key.clone())
+            .or_default()
+            .insert(kind)
+    }
+
+    fn take_response(&mut self) -> ChatResponse {
+        ChatResponse {
+            text: self.final_text.take().unwrap_or_default(),
+            thoughts: std::mem::take(&mut self.thoughts),
+            usage: self.usage.take(),
+            structured_output: self.structured_output.take(),
+            errors: std::mem::take(&mut self.errors),
+        }
+    }
+}
+
+#[cfg(test)]
+mod agent_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_spawn_requires_policy_for_write_tools() {
+        let err = AntigravityAgent::builder()
+            .with_capabilities(Capabilities::all())
+            .spawn()
+            .await
+            .unwrap_err();
+        let AntigravityError::Config(message) = &err else {
+            panic!("expected Config error, got {err:?}");
+        };
+        assert!(message.contains("safety"));
+        assert!(message.contains("allow_all"));
+    }
+
+    #[tokio::test]
+    async fn test_spawn_requires_policy_for_mcp_servers() {
+        let err = AntigravityAgent::builder()
+            .add_mcp_server(McpServer::stdio("uvx", ["mcp-server-git"]))
+            .spawn()
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AntigravityError::Config(_)));
+    }
+
+    /// A harness path that exists but cannot be executed, so `spawn()`
+    /// gets past the safety gate and discovery, then fails fast at process
+    /// launch (without ever falling through to a real installed harness).
+    fn unexecutable_harness() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("localharness");
+        std::fs::write(&path, b"not a binary").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        (dir, path)
+    }
+
+    #[tokio::test]
+    async fn test_spawn_write_tools_allowed_with_policy() {
+        let (_dir, path) = unexecutable_harness();
+        // With a policy the safety gate passes; the spawn then fails at
+        // process launch, proving we got past the Config check.
+        let err = AntigravityAgent::builder()
+            .with_harness_path(&path)
+            .with_capabilities(Capabilities::all())
+            .add_policy(policy::allow_all())
+            .spawn()
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AntigravityError::HandshakeFailed { .. }),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_spawn_write_tools_allowed_with_pre_tool_hook() {
+        let (_dir, path) = unexecutable_harness();
+        let err = AntigravityAgent::builder()
+            .with_harness_path(&path)
+            .with_capabilities(Capabilities::all())
+            .on_pre_tool(|_| PreToolDecision::Allow)
+            .spawn()
+            .await
+            .unwrap_err();
+        assert!(!matches!(err, AntigravityError::Config(_)));
+    }
+
+    #[tokio::test]
+    async fn test_spawn_model_without_api_key_is_config_error() {
+        let err = AntigravityAgent::builder()
+            .with_model("gemini-3-flash-preview")
+            .spawn()
+            .await
+            .unwrap_err();
+        let AntigravityError::Config(message) = &err else {
+            panic!("expected Config error, got {err:?}");
+        };
+        assert!(message.contains("with_api_key"));
+    }
+
+    #[test]
+    fn test_builder_harness_config_assembly() {
+        let builder = AntigravityAgent::builder()
+            .with_api_key("test-key")
+            .with_model("gemini-3-flash-preview")
+            .with_system_instructions("Be brief.")
+            .add_workspace("/w1")
+            .add_workspace("/w2")
+            .with_conversation_id("resume-me")
+            .with_response_schema(serde_json::json!({"type": "object"}))
+            .with_app_data_dir("/data")
+            .add_skills_path("/skills")
+            .add_policy(policy::allow_all())
+            .add_mcp_server(McpServer::stdio("uvx", ["mcp-server-git"]).with_name("git"))
+            .with_capabilities(Capabilities::read_only().enable(BuiltinTool::RunCommand));
+        let dispatcher = ToolDispatcher::new(builder.tools.clone(), &builder.tool_services);
+        let config = builder.build_harness_config(&dispatcher);
+
+        assert_eq!(config.cascade_id.as_deref(), Some("resume-me"));
+        assert_eq!(config.models.len(), 1);
+        let model = &config.models[0];
+        assert_eq!(model.name.as_deref(), Some("gemini-3-flash-preview"));
+        assert_eq!(model.types, vec![protocol::ModelType::Text]);
+        assert_eq!(
+            model
+                .gemini_api_endpoint
+                .as_ref()
+                .unwrap()
+                .api_key
+                .as_deref(),
+            Some("test-key")
+        );
+        assert_eq!(config.workspaces.len(), 2);
+        assert_eq!(
+            config.finish_tool_schema_json.as_deref(),
+            Some(r#"{"type":"object"}"#)
+        );
+        assert_eq!(config.app_data_dir.as_deref(), Some("/data"));
+        assert_eq!(config.skills_paths, vec!["/skills"]);
+        assert_eq!(config.mcp_servers[0].name.as_deref(), Some("git"));
+        // Policies enable the pre-tool lifecycle hook.
+        assert_eq!(config.enabled_hooks, vec![protocol::LifecycleHook::PreTool]);
+        // Custom instructions round through the `custom.part` shape.
+        let instructions = config.system_instructions.as_ref().unwrap();
+        assert_eq!(
+            instructions.custom.as_ref().unwrap().part[0]
+                .text
+                .as_deref(),
+            Some("Be brief.")
+        );
+        // run_command was enabled on top of the read-only set.
+        let side_tools = config.harness_side_tools.as_ref().unwrap();
+        assert!(side_tools.run_command.unwrap().enabled);
+        assert!(!side_tools.file_edit.unwrap().enabled);
+    }
+
+    #[test]
+    fn test_builder_no_api_key_sends_no_models() {
+        let builder = AntigravityAgent::builder();
+        let dispatcher = ToolDispatcher::new(vec![], &[]);
+        let config = builder.build_harness_config(&dispatcher);
+        assert!(config.models.is_empty());
+        assert!(config.enabled_hooks.is_empty());
+    }
+
+    #[test]
+    fn test_builder_with_workspace_replaces() {
+        let builder = AntigravityAgent::builder()
+            .add_workspace("/a")
+            .with_workspace("/only");
+        assert_eq!(builder.workspaces, vec!["/only"]);
+    }
+
+    #[test]
+    fn test_post_tool_hook_enables_post_tool_lifecycle_hook() {
+        let builder = AntigravityAgent::builder().on_post_tool(|_| {});
+        let dispatcher = ToolDispatcher::new(vec![], &[]);
+        let config = builder.build_harness_config(&dispatcher);
+        assert_eq!(
+            config.enabled_hooks,
+            vec![protocol::LifecycleHook::PostTool]
+        );
+    }
+}

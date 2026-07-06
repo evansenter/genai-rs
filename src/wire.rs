@@ -126,6 +126,40 @@ pub enum WireEvent {
         /// URI of the uploaded file.
         uri: String,
     },
+    /// An Antigravity `localharness` process was spawned.
+    ///
+    /// For Antigravity sessions the correlation id is shared by every event
+    /// of one harness session (spawn, WebSocket traffic, stderr).
+    HarnessSpawn {
+        /// Correlation id shared by all events of this harness session.
+        id: u64,
+        /// Filesystem path of the harness binary.
+        path: String,
+        /// OS process id, when available.
+        pid: Option<u32>,
+    },
+    /// A proto-JSON message sent to the harness over its WebSocket.
+    WsSend {
+        /// Correlation id shared by all events of this harness session.
+        id: u64,
+        /// The JSON payload as sent.
+        payload: serde_json::Value,
+    },
+    /// A proto-JSON message received from the harness over its WebSocket.
+    WsReceive {
+        /// Correlation id shared by all events of this harness session.
+        id: u64,
+        /// The JSON payload as received. Non-JSON frames are preserved as a
+        /// `serde_json::Value::String`.
+        payload: serde_json::Value,
+    },
+    /// A line of stderr output from the harness process.
+    HarnessStderr {
+        /// Correlation id shared by all events of this harness session.
+        id: u64,
+        /// One decoded stderr line (without the trailing newline).
+        line: String,
+    },
 }
 
 impl WireEvent {
@@ -139,7 +173,11 @@ impl WireEvent {
             | Self::ErrorBody { id, .. }
             | Self::SseFrame { id, .. }
             | Self::UploadStart { id, .. }
-            | Self::UploadComplete { id, .. } => *id,
+            | Self::UploadComplete { id, .. }
+            | Self::HarnessSpawn { id, .. }
+            | Self::WsSend { id, .. }
+            | Self::WsReceive { id, .. }
+            | Self::HarnessStderr { id, .. } => *id,
         }
     }
 }
@@ -469,6 +507,41 @@ impl LoudWirePrinter {
             paint::green_bold("UPLOADED")
         );
     }
+
+    fn print_harness_spawn(id: u64, path: &str, pid: Option<u32>) {
+        let prefix = Self::request_prefix(id);
+        let direction = paint::green_bold(">>>");
+        let pid_text = pid.map_or_else(|| "?".to_string(), |p| p.to_string());
+
+        eprintln!(
+            "{prefix} {direction} {} {path} (pid {pid_text})",
+            paint::green_bold("HARNESS")
+        );
+    }
+
+    fn print_ws_send(id: u64, payload: &serde_json::Value) {
+        let prefix = Self::request_prefix(id);
+        let direction = paint::green_bold(">>>");
+
+        eprintln!("{prefix} {direction} {}:", paint::green("WS Send"));
+        Self::print_json(&prefix, payload);
+    }
+
+    fn print_ws_receive(id: u64, payload: &serde_json::Value) {
+        let prefix = Self::response_prefix(id);
+        let direction = paint::red_bold("<<<");
+
+        eprintln!("{prefix} {direction} {}:", paint::red("WS Receive"));
+        Self::print_json(&prefix, payload);
+    }
+
+    fn print_harness_stderr(id: u64, line: &str) {
+        let prefix = Self::response_prefix(id);
+        let label = paint::blue_bold("STDERR");
+        let truncated = truncate_utf8(line, RAW_BODY_LIMIT);
+
+        eprintln!("{prefix} {label}: {truncated}");
+    }
 }
 
 impl WireInspector for LoudWirePrinter {
@@ -497,6 +570,12 @@ impl WireInspector for LoudWirePrinter {
                 size_bytes,
             } => Self::print_upload_start(*id, file_name, mime_type, *size_bytes),
             WireEvent::UploadComplete { id, uri } => Self::print_upload_complete(*id, uri),
+            WireEvent::HarnessSpawn { id, path, pid } => {
+                Self::print_harness_spawn(*id, path, *pid);
+            }
+            WireEvent::WsSend { id, payload } => Self::print_ws_send(*id, payload),
+            WireEvent::WsReceive { id, payload } => Self::print_ws_receive(*id, payload),
+            WireEvent::HarnessStderr { id, line } => Self::print_harness_stderr(*id, line),
         }
     }
 }
@@ -621,6 +700,47 @@ impl WireInspector for TracingForwarder {
                     "wire upload complete"
                 );
             }
+            WireEvent::HarnessSpawn { id, path, pid } => {
+                tracing::event!(
+                    target: "genai_rs::wire",
+                    Level::DEBUG,
+                    kind = "harness_spawn",
+                    id,
+                    path = %path,
+                    pid,
+                    "wire harness spawn"
+                );
+            }
+            WireEvent::WsSend { id, payload } => {
+                tracing::event!(
+                    target: "genai_rs::wire",
+                    Level::DEBUG,
+                    kind = "ws_send",
+                    id,
+                    payload = %payload,
+                    "wire ws send"
+                );
+            }
+            WireEvent::WsReceive { id, payload } => {
+                tracing::event!(
+                    target: "genai_rs::wire",
+                    Level::DEBUG,
+                    kind = "ws_receive",
+                    id,
+                    payload = %payload,
+                    "wire ws receive"
+                );
+            }
+            WireEvent::HarnessStderr { id, line } => {
+                tracing::event!(
+                    target: "genai_rs::wire",
+                    Level::DEBUG,
+                    kind = "harness_stderr",
+                    id,
+                    line = %line,
+                    "wire harness stderr"
+                );
+            }
         }
     }
 }
@@ -690,6 +810,32 @@ mod tests {
             WireEvent::UploadComplete {
                 id: 3,
                 uri: "https://example.com/files/abc".to_string(),
+            },
+            WireEvent::HarnessSpawn {
+                id: 4,
+                path: "/usr/local/bin/localharness".to_string(),
+                pid: Some(4242),
+            },
+            WireEvent::HarnessSpawn {
+                id: 4,
+                path: "/usr/local/bin/localharness".to_string(),
+                pid: None,
+            },
+            WireEvent::WsSend {
+                id: 4,
+                payload: serde_json::json!({"userInput": "hello"}),
+            },
+            WireEvent::WsReceive {
+                id: 4,
+                payload: serde_json::json!({"stepUpdate": {"textDelta": "hi"}}),
+            },
+            WireEvent::WsReceive {
+                id: 4,
+                payload: serde_json::Value::String("not json".to_string()),
+            },
+            WireEvent::HarnessStderr {
+                id: 4,
+                line: "harness diagnostic \u{4e16}\u{754c}".repeat(100),
             },
         ]
     }
@@ -857,5 +1003,22 @@ mod tests {
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json["kind"], "sse_frame");
         assert_eq!(json["event_type"], "interaction.complete");
+
+        let event = WireEvent::HarnessStderr {
+            id: 9,
+            line: "harness log".to_string(),
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["kind"], "harness_stderr");
+        assert_eq!(json["id"], 9);
+        assert_eq!(json["line"], "harness log");
+
+        let event = WireEvent::WsSend {
+            id: 9,
+            payload: serde_json::json!({"userInput": "hi"}),
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["kind"], "ws_send");
+        assert_eq!(json["payload"]["userInput"], "hi");
     }
 }
