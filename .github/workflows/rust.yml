@@ -53,6 +53,24 @@ jobs:
       - name: Run doctests with strict-unknown feature
         run: cargo test --workspace --features strict-unknown --doc
 
+  test-antigravity:
+    name: Test Suite (antigravity)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-nextest
+      - uses: Swatinem/rust-cache@v2
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold
+      - name: Install pinned localharness wheel
+        # Version must match SUPPORTED_HARNESS_VERSION in src/antigravity/.
+        run: pip install google-antigravity==0.1.5
+      - name: Run unit tests with antigravity feature
+        run: cargo nextest run --workspace --features antigravity
+      - name: Run harness integration tests (API-key tests self-skip)
+        run: cargo nextest run --features antigravity --run-ignored all -E 'binary(antigravity_harness)'
+
   test-integration:
     name: Integration Tests (${{ matrix.group }})
     needs: check
