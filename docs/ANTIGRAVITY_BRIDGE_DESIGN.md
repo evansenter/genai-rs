@@ -102,6 +102,43 @@ cache dir) is a possible follow-up, not v1.
 Licensing: SDK and wheel are Apache-2.0; ported protocol-handling logic
 carries Google LLC attribution in file headers where derived.
 
+## Lessons adopted from prior art (agy-bridge / llm-tool)
+
+The existing PyO3 bridge (`domenukk/agy-bridge`) was reviewed in depth. Its
+transport layer confirms the native decision by counter-example (a ~900-line
+Python init script monkeypatching five SDK internals, process-global
+registries to cross the FFI boundary, comment-enforced GIL invariants,
+POSIX-only venv discovery). Its **API vocabulary**, however, is strong and we
+adopt these ideas natively:
+
+- **`IntoFuture` agent builder** — `bridge.agent(cfg).tools(...).await`.
+- **Take-once typed streaming handles** — a unified event stream plus
+  optional split text/thought/tool-call streams on the response handle.
+- **Structural error classification, never string matching** — with unit
+  tests asserting that name/message sniffing is rejected.
+- **Defense in depth for policies** — declarative policy set evaluated
+  Rust-side before every custom-tool dispatch, even though the harness also
+  enforces hook decisions.
+- **Mockable runtime boundary** — session transport behind a trait so the
+  agent API is unit-testable without spawning the binary.
+- **Macro ergonomics** (for `#[tool]` evolution, separate workstream):
+  compile-time-mandatory doc comments per parameter, `Option<T>` →
+  `serde(default)`, flexible return types, trybuild compile-fail tests.
+- **Zombie hygiene** — explicit cleanup on init-timeout so leaked harness
+  processes cannot accumulate; layered timeouts (inner operation + outer
+  safety margin).
+
+## Relationship to the Interactions API `agent` field
+
+The Interactions API exposes hosted agents including
+`agent: "antigravity-preview-05-2026"` — the same harness run server-side.
+genai-rs therefore offers the Antigravity harness at two altitudes:
+
+- **Hosted**: `client.interaction().with_agent("antigravity-preview-05-2026")`
+  (plus Environments/Agents resources — see `docs/INTERACTIONS_API_GAP.md`).
+- **Local**: `genai_rs::antigravity` spawning `localharness` with local
+  workspaces, local tool execution, and local policy enforcement (this doc).
+
 ## Module layout
 
 New top-level module, feature-gated:
