@@ -151,12 +151,17 @@ async fn canary_function_calling_interaction() {
 
         use genai_rs::Step;
 
-        // Build conversation history with the function call and result
-        let history = InteractionInput::Steps(vec![
-            Step::user_text("What time is it?"),
-            Step::function_call(call.id, call.name, call.args.clone()),
-            Step::function_result(call.name, call.id, json!({"time": "12:00 PM"})),
-        ]);
+        // Build conversation history by replaying the model's actual output
+        // steps — rebuilding the function_call by hand would drop its
+        // signature, which the API requires on stateless replay.
+        let mut steps = vec![Step::user_text("What time is it?")];
+        steps.extend(response.output_steps());
+        steps.push(Step::function_result(
+            call.name,
+            call.id,
+            json!({"time": "12:00 PM"}),
+        ));
+        let history = InteractionInput::Steps(steps);
 
         let followup = client
             .interaction()

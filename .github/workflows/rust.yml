@@ -258,12 +258,14 @@ jobs:
           done
       - name: Check size limits
         run: |
-          # Fail if any example exceeds 10MB
+          # Fail if any example exceeds 12MB (raised from 10MB when the
+          # 2026-05-20 revision surface + reqwest 0.13 pushed audio_input
+          # to ~10.1MB; guards against runaway growth, not absolute size)
           for f in target/release/examples/*; do
             if [ -f "$f" ] && [[ "$(basename "$f")" != *.d ]]; then
               size=$(stat -c%s "$f")
-              if [ "$size" -gt 10485760 ]; then
-                echo "::error::Binary $(basename $f) exceeds 10MB limit: $size bytes"
+              if [ "$size" -gt 12582912 ]; then
+                echo "::error::Binary $(basename $f) exceeds 12MB limit: $size bytes"
                 exit 1
               fi
             fi
