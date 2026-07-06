@@ -135,10 +135,13 @@ async fn test_interaction_with_webhook_config() {
 
     // Per-request webhook routing; the URI is unreachable, but the request
     // itself must be accepted with the webhook_config field present.
+    // Verified live (2026-07): the API rejects webhook_config unless
+    // background=true is also set.
     let result = client
         .interaction()
         .with_model("gemini-3-flash-preview")
         .with_text("Say hello.")
+        .with_background(true)
         .with_webhook_config(
             WebhookConfig::new()
                 .with_uris(vec![TEST_WEBHOOK_URI.to_string()])

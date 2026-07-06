@@ -1229,7 +1229,12 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// Events for this request are delivered to the config's URIs instead of
     /// the registered webhooks, with optional user metadata echoed on each
-    /// event. Most useful with background execution.
+    /// event.
+    ///
+    /// The API **requires** [`with_background(true)`](Self::with_background)
+    /// when a webhook config is set (verified live: requests are rejected
+    /// with HTTP 400 `"background=true is required when webhook_config is
+    /// specified."` otherwise).
     ///
     /// # Example
     ///
