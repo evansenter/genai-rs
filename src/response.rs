@@ -1094,6 +1094,7 @@ impl InteractionResponse {
                     id,
                     name,
                     arguments,
+                    ..
                 } = step
                 {
                     Some(FunctionCallInfo {
@@ -1135,6 +1136,7 @@ impl InteractionResponse {
                     call_id,
                     result,
                     is_error,
+                    ..
                 } = step
                 {
                     Some(FunctionResultInfo {

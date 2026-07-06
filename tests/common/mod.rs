@@ -1056,3 +1056,22 @@ pub fn is_long_conversation_api_error(error: &GenaiError) -> bool {
     let error_str = format!("{:?}", error);
     error_str.contains("UTF-8") || error_str.contains("spanner") || error_str.contains("truncated")
 }
+
+/// Checks if an error is the API's content safety block
+/// (400 "Request blocked due to safety violations").
+///
+/// Built-in tools that pull in external content (URL context, search) can
+/// intermittently trip this when the backend classifies the fetched content
+/// as unsafe — observed live 2026-07 with URL context. Tests should treat
+/// this as inconclusive and skip rather than fail.
+#[allow(dead_code)]
+pub fn is_safety_block_error(error: &GenaiError) -> bool {
+    match error {
+        GenaiError::Api {
+            status_code,
+            message,
+            ..
+        } => *status_code == 400 && message.to_lowercase().contains("safety violation"),
+        _ => false,
+    }
+}

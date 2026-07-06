@@ -194,7 +194,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("Text-to-Speech Demo Complete\n");
 
     println!("--- What You'll See with LOUD_WIRE=1 ---");
-    println!("  [REQ#1] POST with text + responseModalities=[AUDIO] + speechConfig");
+    println!("  [REQ#1] POST with text + response_modalities=[\"audio\"] + speechConfig");
     println!("  [RES#1] completed: audio content with base64 data\n");
 
     println!("--- Production Considerations ---");

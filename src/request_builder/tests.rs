@@ -353,9 +353,11 @@ fn test_interaction_builder_with_response_modalities() {
         .with_text("Generate an image")
         .with_response_modalities(vec!["IMAGE".to_string()]);
 
+    // Modalities are normalized to lowercase - the API is case-sensitive and
+    // rejects uppercase values (verified live).
     assert_eq!(
         builder.response_modalities.as_ref().unwrap(),
-        &vec!["IMAGE".to_string()]
+        &vec!["image".to_string()]
     );
 }
 

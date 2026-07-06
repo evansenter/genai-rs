@@ -483,9 +483,16 @@ Thought signatures are cryptographic proofs that thoughts haven't been modified.
 | API | Signature Location |
 |-----|-------------------|
 | `generateContent` (per docs) | On `function_call` as `thought_signature` field |
-| Interactions API (actual) | On the `thought` step as `signature` field |
+| Interactions API (actual) | On the `thought` step as `signature` field, **and** on the `function_call` step as `signature` |
 
-Our testing confirms signatures are present on thought steps across all configurations:
+> **Verified live 2026-07 (revision 2026-05-20)**: `function_call` steps now
+> carry their own `signature` field, and the API **rejects stateless replay**
+> of a `function_call` step that omits it. Replay `response.output_steps()`
+> verbatim (as shown below) and both the thought and function-call
+> signatures are preserved automatically. The per-configuration table below
+> records earlier findings from before this revision.
+
+Earlier testing confirmed signatures are present on thought steps across all configurations:
 
 | Configuration | Sig on Thought? | Sig on FC? | Test |
 |---------------|-----------------|------------|------|
@@ -498,7 +505,7 @@ Our testing confirms signatures are present on thought steps across all configur
 
 ### Practical Implications
 
-**For stateless multi-turn**: Replay signatures by extending your history with `response.output_steps()`. This includes the `Step::Thought` steps verbatim (carrying their `signature`) alongside the `Step::FunctionCall` steps, so the reasoning chain validates on the next request:
+**For stateless multi-turn**: Replay signatures by extending your history with `response.output_steps()`. This includes the `Step::Thought` steps verbatim (carrying their `signature`) alongside the `Step::FunctionCall` steps (which carry their own `signature`, required by the API on replay), so the reasoning chain validates on the next request:
 
 ```rust,ignore
 // Replay the model's full turn - Thought steps carry the signature

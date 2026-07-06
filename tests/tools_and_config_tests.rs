@@ -1257,7 +1257,7 @@ mod image_generation {
                     .interaction()
                     .with_model("gemini-3-pro-image-preview")
                     .with_text("Generate a simple image of a red circle on a white background.")
-                    .with_response_modalities(vec!["IMAGE".to_string()])
+                    .with_response_modalities(vec!["image".to_string()])
                     .with_store_enabled()
                     .create()
                     .await?;
@@ -1590,10 +1590,57 @@ mod config_fields {
         );
     }
 
-    /// Test response_mime_type with structured output.
+    /// Test that response_mime_type without response_format is rejected.
     ///
-    /// The response_mime_type field is deprecated in favor of response_format,
-    /// but should still work when combined with it.
+    /// Verified live 2026-07: the API returns 400 "responseFormat must be set
+    /// when responseMimeType is set". This test documents that constraint.
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    #[allow(deprecated)]
+    async fn test_generation_config_response_mime_type_without_format_rejected() {
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        let result = interaction_builder(&client)
+            .with_text("Generate a greeting in Spanish.")
+            .with_response_mime_type("application/json")
+            .create()
+            .await;
+
+        match result {
+            Err(genai_rs::GenaiError::Api {
+                status_code,
+                message,
+                ..
+            }) => {
+                assert_eq!(
+                    status_code, 400,
+                    "Expected 400 for mime-type-only request, got {status_code}: {message}"
+                );
+                assert!(
+                    message.contains("responseFormat"),
+                    "Expected responseFormat constraint message, got: {message}"
+                );
+                println!("✓ API rejected response_mime_type without response_format: {message}");
+            }
+            Err(other) => panic!("Expected API error, got: {other}"),
+            Ok(_) => panic!(
+                "Expected 400 for response_mime_type without response_format; \
+                 API accepted it — the constraint may have been lifted"
+            ),
+        }
+    }
+
+    /// Test that response_mime_type is rejected even when paired with
+    /// response_format.
+    ///
+    /// Verified live 2026-07: the API returns the same 400 ("responseFormat
+    /// must be set when responseMimeType is set") whether response_format is
+    /// present or not, and regardless of shape (raw JSON schema or typed
+    /// union) — the deprecated response_mime_type field is effectively
+    /// unusable. Use response_format alone for structured output.
     #[tokio::test]
     #[ignore = "Requires API key"]
     #[allow(deprecated)]
@@ -1612,38 +1659,47 @@ mod config_fields {
             "required": ["greeting", "language"]
         });
 
-        let response = interaction_builder(&client)
+        let result = interaction_builder(&client)
             .with_text("Generate a greeting in Spanish.")
             .with_response_mime_type("application/json")
             .with_response_format(schema)
             .create()
-            .await
-            .expect("Response mime type request should succeed");
+            .await;
 
-        assert_eq!(response.status, InteractionStatus::Completed);
-        let text = response.as_text().expect("Should have text response");
-        println!("Response with MIME type: {}", text);
-
-        // Should be valid JSON
-        let parsed: serde_json::Value =
-            serde_json::from_str(text).expect("Response should be valid JSON");
-        assert!(
-            parsed.get("greeting").is_some(),
-            "Should have greeting field"
-        );
-        assert!(
-            parsed.get("language").is_some(),
-            "Should have language field"
-        );
-        println!("✓ response_mime_type produced valid structured JSON output");
+        match result {
+            Err(genai_rs::GenaiError::Api {
+                status_code,
+                message,
+                ..
+            }) => {
+                assert_eq!(
+                    status_code, 400,
+                    "Expected 400 for response_mime_type request, got {status_code}: {message}"
+                );
+                assert!(
+                    message.contains("responseFormat"),
+                    "Expected responseFormat constraint message, got: {message}"
+                );
+                println!(
+                    "✓ API rejected response_mime_type even alongside response_format: {message}"
+                );
+            }
+            Err(other) => panic!("Expected API error, got: {other}"),
+            Ok(_) => panic!(
+                "Expected 400 for response_mime_type + response_format; \
+                 API accepted it — the deprecated field may work again"
+            ),
+        }
     }
 
     /// Test combined new generation config fields.
     ///
-    /// This test uses seed, stop_sequences, and response_mime_type together.
+    /// This test uses seed and response_format together. It deliberately does
+    /// NOT set the deprecated response_mime_type — the API rejects any
+    /// request carrying it (verified live 2026-07; see
+    /// test_generation_config_response_mime_type).
     #[tokio::test]
     #[ignore = "Requires API key"]
-    #[allow(deprecated)]
     async fn test_generation_config_new_fields_combined() {
         let Some(client) = get_client() else {
             println!("Skipping: GEMINI_API_KEY not set");
@@ -1664,7 +1720,6 @@ mod config_fields {
         let response = interaction_builder(&client)
             .with_text("List 3 colors as a JSON array.")
             .with_seed(42)
-            .with_response_mime_type("application/json")
             .with_response_format(schema)
             .create()
             .await

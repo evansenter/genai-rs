@@ -681,25 +681,34 @@ fn arb_known_step() -> impl Strategy<Value = Step> {
         )
             .prop_map(|(signature, summary)| Step::Thought { signature, summary }),
         // function_call
-        (arb_identifier(), arb_identifier(), arb_json_value()).prop_map(|(id, name, arguments)| {
-            Step::FunctionCall {
+        (
+            arb_identifier(),
+            arb_identifier(),
+            arb_json_value(),
+            proptest::option::of(arb_text()),
+        )
+            .prop_map(|(id, name, arguments, signature)| Step::FunctionCall {
                 id,
                 name,
                 arguments,
-            }
-        }),
+                signature,
+            }),
         // function_result
         (
             arb_identifier(),
             proptest::option::of(arb_identifier()),
             arb_function_result_payload(),
             proptest::option::of(proptest::bool::ANY),
+            proptest::option::of(arb_text()),
         )
-            .prop_map(|(call_id, name, result, is_error)| Step::FunctionResult {
-                call_id,
-                name,
-                result,
-                is_error,
+            .prop_map(|(call_id, name, result, is_error, signature)| {
+                Step::FunctionResult {
+                    call_id,
+                    name,
+                    result,
+                    is_error,
+                    signature,
+                }
             }),
         // code_execution_call (wire: nested arguments {language, code})
         (
@@ -2433,6 +2442,7 @@ proptest! {
             id: "call_123".to_string(),
             name: "deep_function".to_string(),
             arguments: nested_args,
+            signature: None,
         };
 
         assert_value_roundtrip(&step)?;
@@ -2468,6 +2478,7 @@ proptest! {
             name: Some("deep_function".to_string()),
             result: FunctionResultPayload::Json(nested_result),
             is_error: None,
+            signature: None,
         };
 
         assert_value_roundtrip(&step)?;

@@ -419,6 +419,7 @@ fn test_deserialize_function_call_step() {
             id,
             name,
             arguments,
+            signature: _,
         } => {
             assert_eq!(id, "call-1");
             assert_eq!(name, "get_weather");
@@ -440,6 +441,7 @@ fn test_deserialize_function_call_step_missing_arguments() {
             id,
             name,
             arguments,
+            signature: _,
         } => {
             assert_eq!(id, "call-abc123");
             assert_eq!(name, "get_weather");
@@ -521,6 +523,7 @@ fn test_step_constructors() {
             id,
             name,
             arguments,
+            signature: _,
         } => {
             assert_eq!(id, "call_9");
             assert_eq!(name, "get_weather");
@@ -541,6 +544,7 @@ fn test_step_constructors() {
             name,
             result,
             is_error,
+            signature: _,
         } => {
             assert_eq!(call_id, "call_9");
             assert_eq!(name.as_deref(), Some("get_weather"));
@@ -562,6 +566,7 @@ fn test_step_constructors() {
             name,
             result,
             is_error,
+            signature: _,
         } => {
             assert_eq!(call_id, "call_10");
             assert_eq!(name.as_deref(), Some("api_call"));

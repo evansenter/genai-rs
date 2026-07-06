@@ -551,7 +551,7 @@ where
 
 /// Speech configuration for text-to-speech audio output.
 ///
-/// Configure voice, language, and speaker settings when using `AUDIO` response modality.
+/// Configure voice, language, and speaker settings when using the `audio` response modality.
 ///
 /// # Example
 ///
@@ -1138,7 +1138,7 @@ pub struct InteractionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<Tool>>,
 
-    /// Response modalities (e.g., ["IMAGE"])
+    /// Response modalities (e.g., ["image"]; the API only accepts lowercase)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_modalities: Option<Vec<String>>,
 
@@ -1153,7 +1153,9 @@ pub struct InteractionRequest {
     /// Response MIME type for structured output.
     ///
     /// Deprecated by the API in favor of `response_format`; still sent when
-    /// set, but prefer `response_format` for structured output.
+    /// set, but the API rejects requests carrying it (verified live 2026-07:
+    /// 400 "responseFormat must be set when responseMimeType is set", even
+    /// when `response_format` is set). Use `response_format` instead.
     #[deprecated(
         since = "0.8.0",
         note = "The API deprecated response_mime_type; use response_format instead"

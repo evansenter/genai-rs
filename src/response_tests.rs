@@ -238,11 +238,15 @@ fn test_interaction_response_function_calls() {
                 "get_weather",
                 serde_json::json!({"location": "Paris"}),
             ),
-            Step::function_call(
-                "call_002",
-                "get_time",
-                serde_json::json!({"timezone": "UTC"}),
-            ),
+            // Signature-bearing call (the API returns `signature` on
+            // function_call steps; verified live 2026-07) still surfaces
+            // through the accessor.
+            Step::FunctionCall {
+                id: "call_002".to_string(),
+                name: "get_time".to_string(),
+                arguments: serde_json::json!({"timezone": "UTC"}),
+                signature: Some("sig-abc".to_string()),
+            },
         ],
         ..Default::default()
     };

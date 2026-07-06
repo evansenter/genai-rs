@@ -951,10 +951,15 @@ impl<'a> InteractionBuilder<'a> {
         self
     }
 
-    /// Sets response modalities (e.g., ["IMAGE"]).
+    /// Sets response modalities (e.g., `["image"]`).
+    ///
+    /// The API is case-sensitive and only accepts lowercase modality names
+    /// (`text`, `image`, `audio`, `video`, `document` — verified live), so
+    /// each provided value is lowercased before being sent. The list stays
+    /// `Vec<String>` (open enum) so new modalities pass through unchanged.
     #[must_use]
     pub fn with_response_modalities(mut self, modalities: Vec<String>) -> Self {
-        self.response_modalities = Some(modalities);
+        self.response_modalities = Some(modalities.into_iter().map(|m| m.to_lowercase()).collect());
         self
     }
 
@@ -962,7 +967,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// This is a convenience method equivalent to:
     /// ```ignore
-    /// .with_response_modalities(vec!["IMAGE".to_string()])
+    /// .with_response_modalities(vec!["image".to_string()])
     /// ```
     ///
     /// Use this when you want the model to generate images. Requires a model
@@ -994,14 +999,14 @@ impl<'a> InteractionBuilder<'a> {
     /// ```
     #[must_use]
     pub fn with_image_output(self) -> Self {
-        self.with_response_modalities(vec!["IMAGE".to_string()])
+        self.with_response_modalities(vec!["image".to_string()])
     }
 
     /// Configures the request to return audio output.
     ///
     /// This is a convenience method equivalent to:
     /// ```ignore
-    /// .with_response_modalities(vec!["AUDIO".to_string()])
+    /// .with_response_modalities(vec!["audio".to_string()])
     /// ```
     ///
     /// Use this when you want the model to generate speech audio. Requires a model
@@ -1038,7 +1043,7 @@ impl<'a> InteractionBuilder<'a> {
     /// ```
     #[must_use]
     pub fn with_audio_output(self) -> Self {
-        self.with_response_modalities(vec!["AUDIO".to_string()])
+        self.with_response_modalities(vec!["audio".to_string()])
     }
 
     /// Sets a single speech configuration for text-to-speech output,
@@ -1806,8 +1811,14 @@ impl<'a> InteractionBuilder<'a> {
 
     /// Sets the response MIME type for structured output.
     ///
-    /// Required when using `with_response_format()` with a JSON schema.
     /// Typically "application/json" for structured JSON output.
+    ///
+    /// **Note**: The API now rejects any request that sets
+    /// `response_mime_type` (verified live 2026-07: 400 "responseFormat must
+    /// be set when responseMimeType is set" — returned even when
+    /// `response_format` IS set, in either raw-schema or typed form). The
+    /// deprecated field is effectively unusable; use
+    /// [`with_response_format()`](Self::with_response_format) alone.
     ///
     /// # Example
     /// ```no_run

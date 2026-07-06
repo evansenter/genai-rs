@@ -1621,7 +1621,7 @@ mod multimodal {
                     .interaction()
                     .with_model(model)
                     .with_text(prompt)
-                    .with_response_modalities(vec!["IMAGE".to_string()])
+                    .with_response_modalities(vec!["image".to_string()])
                     .with_store_enabled()
                     .create()
                     .await?;

@@ -16,8 +16,10 @@ Deep Research options.
 
 > **Note**: wire shapes were derived from Google's generated `google-genai`
 > 2.10 API bindings and covered with fixture + proptest roundtrip tests.
-> Live wire verification with `LOUD_WIRE=1` and a real `GEMINI_API_KEY` is
-> still pending and should be performed before release.
+> The core 2026-05-20 revision was verified live 2026-07 with a real
+> `GEMINI_API_KEY` (see below); the phase-2 additions in this section
+> (webhooks, environments, agents, retrieval, video, typed formats) are
+> still pending live verification and should be checked before release.
 
 #### Added — Webhooks
 
@@ -122,9 +124,12 @@ Interactions API request sends the `Api-Revision: 2026-05-20` header
 matching google-genai). This is a comprehensive breaking migration.
 
 > **Note**: wire shapes were derived from Google's generated `google-genai`
-> 2.10 API bindings and covered with fixture tests. Live wire verification
-> with `LOUD_WIRE=1` and a real `GEMINI_API_KEY` is still pending and should
-> be performed before release.
+> 2.10 API bindings and covered with fixture tests. The core revision was
+> verified live 2026-07 with a real `GEMINI_API_KEY` (`LOUD_WIRE=1` against
+> `generativelanguage.googleapis.com`): revision accepted, steps model and
+> snake_case field naming confirmed, `function_call` `signature` discovered
+> and modeled, lowercase response modalities and the
+> `response_mime_type`-requires-`response_format` constraint enforced.
 
 #### Breaking - response model (`outputs` -> `steps`)
 
@@ -294,6 +299,9 @@ matching google-genai). This is a comprehensive breaking migration.
 
 ### Fixed
 
+- **BREAKING**: `Step::FunctionCall` and `Step::FunctionResult` gained a `signature: Option<String>` field (verified live 2026-07: the API returns `signature` on `function_call` steps and rejects stateless replay of history that omits it; the generated SDK bindings do not list it on `function_call`). Existing constructors set it to `None`; it is preserved on deserialize/serialize roundtrip
+- Response modalities are now sent lowercase: `with_image_output()` / `with_audio_output()` send `"image"` / `"audio"` (previously `"IMAGE"` / `"AUDIO"`, which the API rejects — supported values are `text`, `image`, `audio`, `video`, `document`; verified live 2026-07). `with_response_modalities()` normalizes provided values to lowercase
+- Documented that the API now rejects any request setting the deprecated `response_mime_type` — even when `response_format` is also set, in raw-schema or typed form (400 "responseFormat must be set when responseMimeType is set"; verified live 2026-07). Use `response_format` alone
 - Error response bodies are now visible in wire output (`WireEvent::ErrorBody`); previously `LOUD_WIRE=1` showed only the status line for failed requests
 - Wire output no longer panics when truncating multi-byte UTF-8 content (`data`/`signature` fields and non-JSON bodies truncate on character boundaries)
 - Request bodies are no longer serialized for wire debugging when it is disabled (previously every request paid the serialization cost even without `LOUD_WIRE`)

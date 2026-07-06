@@ -218,7 +218,7 @@ mod basic {
             .with_system_instruction("Be helpful")
             .add_function(func)
             .with_generation_config(config)
-            .with_response_modalities(vec!["TEXT".to_string()])
+            .with_response_modalities(vec!["text".to_string()])
             .with_background(true)
             .with_store_disabled();
 

@@ -29,12 +29,30 @@ request and implements the revision's protocol:
 - ✅ Per-step usage (`usage`/`step_usage` on `step.stop`) and
   `metadata.total_usage` on lifecycle events.
 
-⚠️ Live wire verification with `LOUD_WIRE=1` + a real `GEMINI_API_KEY` is
-pending (no key available in the migration environment) — this applies to
-both the revision migration and the phase-2 surface expansion (webhooks,
-agents, environments, retrieval, typed response formats, video config,
-multi-speaker TTS). Diff observed wire shapes against the fixture tests
-before release.
+✅ Live wire verification performed 2026-07 with a real `GEMINI_API_KEY`
+against `generativelanguage.googleapis.com` (Api-Revision 2026-05-20).
+Results:
+
+- Revision `2026-05-20` accepted; the steps model and snake_case field
+  naming confirmed on the wire.
+- `function_call` steps carry a `signature` field the generated SDK bindings
+  omit — the API returns it and **rejects stateless replay without it**.
+  `Step::FunctionCall` / `Step::FunctionResult` now model it.
+- Response modalities are enforced lowercase (`text`, `image`, `audio`,
+  `video`, `document`); uppercase values (e.g. `"AUDIO"`) are rejected.
+  `with_response_modalities()` now normalizes to lowercase.
+- The deprecated `response_mime_type` is rejected outright
+  (400 "responseFormat must be set when responseMimeType is set" — returned
+  even when `response_format` IS set, raw-schema or typed; and camelCase
+  `responseMimeType` gets "Unknown parameter"). Use `response_format` alone.
+- The typed `response_format` union (`{type: "text", mime_type, schema}`)
+  and the raw JSON-schema form were both accepted live for text output.
+
+⚠️ Still pending live verification: the phase-2 surface expansion (webhooks,
+environments, agents, retrieval, video config, typed response formats,
+multi-speaker TTS — fixture coverage only) and the per-step usage shapes on
+`step.stop`. Diff observed wire shapes against the fixture tests before
+release.
 
 ## Missing surface (by user value)
 

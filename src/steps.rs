@@ -253,6 +253,10 @@ pub enum Step {
         name: String,
         /// Arguments to pass to the function (JSON object).
         arguments: serde_json::Value,
+        /// Opaque signature for backend validation. Returned by the API and
+        /// required when replaying this step in stateless history (verified
+        /// live 2026-07; the generated SDK bindings omit it).
+        signature: Option<String>,
     },
     /// The result of a client-side function call
     /// (`type: "function_result"`).
@@ -265,6 +269,9 @@ pub enum Step {
         result: FunctionResultPayload,
         /// Whether the function execution errored.
         is_error: Option<bool>,
+        /// Opaque signature hash for backend validation; pass through
+        /// unchanged when replaying history.
+        signature: Option<String>,
     },
     /// Server-side code execution call (`type: "code_execution_call"`).
     ///
@@ -486,6 +493,7 @@ impl Step {
             id: id.into(),
             name: name.into(),
             arguments,
+            signature: None,
         }
     }
 
@@ -503,6 +511,7 @@ impl Step {
             name: Some(name.into()),
             result: result.into(),
             is_error: None,
+            signature: None,
         }
     }
 
@@ -517,6 +526,7 @@ impl Step {
             name: Some(name.into()),
             result: result.into(),
             is_error: Some(true),
+            signature: None,
         }
     }
 
@@ -542,12 +552,15 @@ impl Step {
 
     /// Returns the opaque signature carried by this step, if any.
     ///
-    /// Thought steps and built-in tool call/result steps carry signatures
-    /// that must be passed back unchanged when replaying history statelessly.
+    /// Thought steps, function call/result steps, and built-in tool
+    /// call/result steps carry signatures that must be passed back unchanged
+    /// when replaying history statelessly.
     #[must_use]
     pub fn signature(&self) -> Option<&str> {
         match self {
             Self::Thought { signature, .. }
+            | Self::FunctionCall { signature, .. }
+            | Self::FunctionResult { signature, .. }
             | Self::CodeExecutionCall { signature, .. }
             | Self::CodeExecutionResult { signature, .. }
             | Self::UrlContextCall { signature, .. }
@@ -621,17 +634,22 @@ impl Serialize for Step {
                 id,
                 name,
                 arguments,
+                signature,
             } => {
                 map.serialize_entry("type", "function_call")?;
                 map.serialize_entry("id", id)?;
                 map.serialize_entry("name", name)?;
                 map.serialize_entry("arguments", arguments)?;
+                if let Some(s) = signature {
+                    map.serialize_entry("signature", s)?;
+                }
             }
             Self::FunctionResult {
                 call_id,
                 name,
                 result,
                 is_error,
+                signature,
             } => {
                 map.serialize_entry("type", "function_result")?;
                 map.serialize_entry("call_id", call_id)?;
@@ -641,6 +659,9 @@ impl Serialize for Step {
                 map.serialize_entry("result", result)?;
                 if let Some(e) = is_error {
                     map.serialize_entry("is_error", e)?;
+                }
+                if let Some(s) = signature {
+                    map.serialize_entry("signature", s)?;
                 }
             }
             Self::CodeExecutionCall {
@@ -875,6 +896,8 @@ impl<'de> Deserialize<'de> for Step {
                 name: String,
                 #[serde(default)]
                 arguments: serde_json::Value,
+                #[serde(default)]
+                signature: Option<String>,
             },
             FunctionResult {
                 call_id: String,
@@ -884,6 +907,8 @@ impl<'de> Deserialize<'de> for Step {
                 result: Option<FunctionResultPayload>,
                 #[serde(default)]
                 is_error: Option<bool>,
+                #[serde(default)]
+                signature: Option<String>,
             },
             CodeExecutionCall {
                 id: String,
@@ -988,21 +1013,25 @@ impl<'de> Deserialize<'de> for Step {
                     id,
                     name,
                     arguments,
+                    signature,
                 } => Step::FunctionCall {
                     id,
                     name,
                     arguments,
+                    signature,
                 },
                 KnownStep::FunctionResult {
                     call_id,
                     name,
                     result,
                     is_error,
+                    signature,
                 } => Step::FunctionResult {
                     call_id,
                     name,
                     result: result.unwrap_or(FunctionResultPayload::Json(serde_json::Value::Null)),
                     is_error,
+                    signature,
                 },
                 KnownStep::CodeExecutionCall {
                     id,
@@ -2171,11 +2200,18 @@ impl StepAccumulator {
                 result,
                 is_error,
             } => {
+                // Preserve a signature delivered on step.start; the delta
+                // payload does not carry one.
+                let signature = match &entry.step {
+                    Step::FunctionResult { signature, .. } => signature.clone(),
+                    _ => None,
+                };
                 entry.step = Step::FunctionResult {
                     call_id: call_id.clone(),
                     name: name.clone(),
                     result: result.clone(),
                     is_error: *is_error,
+                    signature,
                 };
             }
             StepDelta::CodeExecutionCall {
@@ -2499,10 +2535,12 @@ mod tests {
                 id,
                 name,
                 arguments,
+                signature,
             } => {
                 assert_eq!(id, "call_1");
                 assert_eq!(name, "get_weather");
                 assert_eq!(arguments["city"], "Tokyo");
+                assert_eq!(*signature, None);
             }
             other => panic!("Expected FunctionCall, got {other:?}"),
         }
@@ -2511,6 +2549,61 @@ mod tests {
         assert_eq!(out["type"], "function_call");
         assert_eq!(out["id"], "call_1");
         assert_eq!(out["arguments"]["city"], "Tokyo");
+        // No signature was present, so none is emitted.
+        assert!(out.get("signature").is_none());
+    }
+
+    #[test]
+    fn test_step_function_call_roundtrip_preserves_signature() {
+        // Verified live 2026-07: the API returns `signature` on function_call
+        // steps and rejects stateless replay without it.
+        let json_str = r#"{
+            "type": "function_call",
+            "id": "call_2",
+            "name": "get_weather",
+            "arguments": {"city": "Paris"},
+            "signature": "sig-fc-123"
+        }"#;
+        let step: Step = serde_json::from_str(json_str).unwrap();
+        match &step {
+            Step::FunctionCall { signature, .. } => {
+                assert_eq!(signature.as_deref(), Some("sig-fc-123"));
+            }
+            other => panic!("Expected FunctionCall, got {other:?}"),
+        }
+        assert_eq!(step.signature(), Some("sig-fc-123"));
+
+        let out = serde_json::to_value(&step).unwrap();
+        assert_eq!(out["type"], "function_call");
+        assert_eq!(out["signature"], "sig-fc-123");
+    }
+
+    #[test]
+    fn test_step_function_result_roundtrip_preserves_signature() {
+        let json_str = r#"{
+            "type": "function_result",
+            "call_id": "call_2",
+            "name": "get_weather",
+            "result": "sunny",
+            "signature": "sig-fr-456"
+        }"#;
+        let step: Step = serde_json::from_str(json_str).unwrap();
+        match &step {
+            Step::FunctionResult { signature, .. } => {
+                assert_eq!(signature.as_deref(), Some("sig-fr-456"));
+            }
+            other => panic!("Expected FunctionResult, got {other:?}"),
+        }
+        assert_eq!(step.signature(), Some("sig-fr-456"));
+
+        let out = serde_json::to_value(&step).unwrap();
+        assert_eq!(out["type"], "function_result");
+        assert_eq!(out["signature"], "sig-fr-456");
+
+        // Constructors leave the signature unset.
+        let constructed = Step::function_result("get_weather", "call_2", "sunny");
+        let out = serde_json::to_value(&constructed).unwrap();
+        assert!(out.get("signature").is_none());
     }
 
     #[test]
@@ -2826,6 +2919,7 @@ mod tests {
                 id: "c1".into(),
                 name: "get_weather".into(),
                 arguments: serde_json::Value::Null,
+                signature: None,
             },
         );
         acc.apply_delta(

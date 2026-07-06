@@ -125,19 +125,23 @@ Helper methods on each type:
 
 Revision 2026-05-20 replaces the launch-era `outputs: [Content]` array with
 `steps: [Step]`. Steps are a discriminated union tagged by `"type"` with
-snake_case values. All tool call/result steps carry an optional opaque
-`signature` used for validation on replay.
+snake_case values. All tool call/result steps (including `function_call` /
+`function_result`) carry an optional opaque `signature` used for validation
+on replay.
 
-**Status**: Pending live verification (2026-05-20 revision). Shapes derived from the
-API spec; serialization covered by unit and proptest roundtrip tests.
+**Status**: Core shapes verified live 2026-07 against
+`generativelanguage.googleapis.com` (Api-Revision 2026-05-20): the steps
+model, snake_case field naming, and the `function_call` `signature` field
+were all confirmed on the wire. Serialization covered by unit and proptest
+roundtrip tests.
 
 | Wire `type` | Rust Variant | Payload shape |
 |-------------|--------------|---------------|
 | `user_input` | `Step::UserInput` | `{"content": [Content, ...]}` |
 | `model_output` | `Step::ModelOutput` | `{"content": [Content, ...], "error"?: {code, message, details}}` |
 | `thought` | `Step::Thought` | `{"signature"?: "...", "summary"?: [Content, ...]}` |
-| `function_call` | `Step::FunctionCall` | `{"id": "...", "name": "...", "arguments": {...}}` — **top-level**, no nesting |
-| `function_result` | `Step::FunctionResult` | `{"call_id": "...", "name"?: "...", "result": <payload>, "is_error"?: bool}` |
+| `function_call` | `Step::FunctionCall` | `{"id": "...", "name": "...", "arguments": {...}, "signature"?: "..."}` — **top-level**, no nesting. `signature` VERIFIED LIVE 2026-07: the API returns it and rejects stateless replay without it (the generated SDK bindings omit it) |
+| `function_result` | `Step::FunctionResult` | `{"call_id": "...", "name"?: "...", "result": <payload>, "is_error"?: bool, "signature"?: "..."}` — optional signature hash for backend validation |
 | `code_execution_call` | `Step::CodeExecutionCall` | `{"id": "...", "arguments": {"language": "python", "code": "..."}, "signature"?: "..."}` — **nested** arguments |
 | `code_execution_result` | `Step::CodeExecutionResult` | `{"call_id": "...", "result": "...", "is_error": bool, "signature"?: "..."}` |
 | `url_context_call` | `Step::UrlContextCall` | `{"id": "...", "arguments": {"urls": [...]}, "signature"?: "..."}` |
@@ -628,7 +632,7 @@ a distinct `speaker` matching the prompt) for multi-speaker TTS:
   "model": "gemini-2.5-pro-preview-tts",
   "input": "Alice: Hi Bob!\nBob: Hey Alice!",
   "generation_config": {
-    "response_modalities": ["AUDIO"],
+    "response_modalities": ["audio"],
     "speech_config": [
       {"voice": "Kore", "language": "en-US", "speaker": "Alice"},
       {"voice": "Puck", "language": "en-US", "speaker": "Bob"}

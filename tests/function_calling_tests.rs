@@ -31,8 +31,8 @@ mod common;
 use common::{
     consume_auto_function_stream, consume_stream, extended_test_timeout, get_client,
     get_time_function, get_weather_function, interaction_builder, is_long_conversation_api_error,
-    retry_on_any_error, stateful_builder, test_timeout, validate_response_semantically,
-    with_timeout,
+    is_safety_block_error, retry_on_any_error, stateful_builder, test_timeout,
+    validate_response_semantically, with_timeout,
 };
 use genai_rs::{
     CallableFunction, FunctionDeclaration, FunctionExecutionResult, GenaiError, InteractionStatus,
@@ -2865,6 +2865,12 @@ mod builtins_multiturn {
                     println!("URL Context tool not available - skipping test");
                     return;
                 }
+                if is_safety_block_error(&e) {
+                    // The backend intermittently classifies the fetched page
+                    // content as a safety violation (observed live 2026-07).
+                    eprintln!("Turn 1 blocked by content safety filter - test inconclusive: {e:?}");
+                    return;
+                }
                 panic!("Turn 1 failed unexpectedly: {:?}", e);
             }
         };
@@ -2904,6 +2910,12 @@ mod builtins_multiturn {
             Err(e) => {
                 if is_long_conversation_api_error(&e) {
                     println!("API limitation encountered: {:?}", e);
+                    return;
+                }
+                if is_safety_block_error(&e) {
+                    // The backend intermittently classifies the fetched page
+                    // content as a safety violation (observed live 2026-07).
+                    eprintln!("Turn 2 blocked by content safety filter - test inconclusive: {e:?}");
                     return;
                 }
                 panic!("Turn 2 failed unexpectedly: {:?}", e);
