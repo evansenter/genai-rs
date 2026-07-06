@@ -55,6 +55,13 @@ colored = { version = "3", optional = true }
 colored_json = { version = "5", optional = true }
 regex = "1"
 urlencoding = "2"
+# Antigravity harness client (feature = "antigravity"). The harness WebSocket
+# is localhost-only (ws://), so no TLS features are needed.
+tokio-tungstenite = { version = "0.29", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+# SIGTERM escalation during harness shutdown (feature = "antigravity").
+libc = { version = "0.2", optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
@@ -87,6 +94,25 @@ wire-color = ["dep:colored", "dep:colored_json"]
 ##
 ## Default: disabled (unknown types are captured gracefully)
 strict-unknown = []
+
+## Native client for Google's Antigravity `localharness` agent runtime.
+##
+## Adds the `genai_rs::antigravity` module: spawn the harness binary, drive
+## agent conversations over its local WebSocket protocol, dispatch custom
+## Rust tools, and enforce tool policies. See `docs/ANTIGRAVITY.md`.
+##
+## Default: disabled
+antigravity = ["dep:tokio-tungstenite", "dep:libc"]
+
+# Feature-gated integration tests
+[[test]]
+name = "antigravity_harness"
+required-features = ["antigravity"]
+
+# Feature-gated examples
+[[example]]
+name = "antigravity_agent"
+required-features = ["antigravity"]
 
 # Real-world example applications
 [[example]]

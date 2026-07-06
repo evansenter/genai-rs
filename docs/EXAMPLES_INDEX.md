@@ -95,6 +95,7 @@ LOUD_WIRE=1 cargo run --example <example_name>
 | `thinking` | Chain-of-thought reasoning levels | Intermediate |
 | `deep_research` | Long-running research agent | Advanced |
 | `cancel_interaction` | Cancel background tasks | Intermediate |
+| `antigravity_agent` | Local Antigravity harness agent with Rust tools and policies (`--features antigravity`) | Advanced |
 
 ### Real-World Applications
 

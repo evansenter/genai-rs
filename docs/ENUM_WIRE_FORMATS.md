@@ -853,3 +853,36 @@ uses `#[serde(default)]`, so test fixtures can be built with
 `InteractionResponse { status: InteractionStatus::Completed, steps: vec![...], ..Default::default() }`.
 
 If a `test-support` feature for constructing mock instances becomes commonly requested, we'll consider adding it.
+
+## Antigravity Harness Protocol (feature `antigravity`)
+
+The `genai_rs::antigravity::protocol` module speaks the localharness
+proto-JSON protocol (see `docs/ANTIGRAVITY.md`). Wire formats were verified
+against the descriptor set and a live harness from the
+`google-antigravity` 0.1.5 wheel (`LOUD_WIRE=1` on a real session):
+
+- Field names are **camelCase**; enums are **SCREAMING_SNAKE_CASE** strings.
+- 64-bit integers (`seqNum`, token counts) arrive as JSON **strings**; the
+  crate accepts both strings and numbers.
+
+Enums with Unknown variants (same pattern and helper methods as above):
+
+| Type | Location | Context Field | Wire Values |
+|------|----------|---------------|-------------|
+| `StepState` | src/antigravity/protocol.rs | `state_type` | `STATE_ACTIVE`, `STATE_DONE`, `STATE_WAITING_FOR_USER`, `STATE_ERROR` |
+| `StepSource` | src/antigravity/protocol.rs | `source_type` | `SOURCE_SYSTEM`, `SOURCE_USER`, `SOURCE_MODEL` |
+| `StepTarget` | src/antigravity/protocol.rs | `target_type` | `TARGET_USER`, `TARGET_MODEL`, `TARGET_ENVIRONMENT` |
+| `TrajectoryState` | src/antigravity/protocol.rs | `state_type` | `STATE_RUNNING`, `STATE_IDLE`, `STATE_CANCELLED` |
+| `ModelType` | src/antigravity/protocol.rs | `model_type` | `MODEL_TYPE_TEXT`, `MODEL_TYPE_IMAGE` |
+| `LifecycleHook` | src/antigravity/protocol.rs | `hook_type` | `LIFECYCLE_HOOK_PRE_TOOL`, `LIFECYCLE_HOOK_POST_TOOL`, ... |
+| `HookDecision` | src/antigravity/protocol.rs | `decision_type` | `ALLOW`, `DENY` |
+| `LineAction` | src/antigravity/protocol.rs | `action_type` | `LINE_ACTION_INSERT`, `LINE_ACTION_DELETE`, `LINE_ACTION_NONE` |
+
+Envelope oneofs also carry Unknown variants (`event_type` + `data`):
+`InputEvent::Unknown` and `OutputPayload::Unknown`. Harness-emitted structs
+(`StepUpdate`, `ToolCall`, `UsageMetadata`, action submessages, ...)
+preserve unrecognized fields in a flattened `extra` map for roundtrip.
+
+Note: `strict-unknown` does not apply to the Antigravity protocol — the
+harness protocol is explicitly internal/unstable, so soft-typing is always
+on there.

@@ -166,6 +166,14 @@ matching google-genai). This is a comprehensive breaking migration.
   - `LoudWirePrinter` built-in inspector — the colored stderr printer behind `LOUD_WIRE=1` (unchanged UX: the env var, now read at `Client` construction, installs it automatically)
   - `TracingForwarder` built-in inspector — forwards wire events to `tracing` at `DEBUG` under the new `genai_rs::wire` target (`RUST_LOG=genai_rs::wire=debug`)
 - SSE `event:` lines are now surfaced to wire inspectors as `WireEvent::SseFrame { event_type, .. }`
+- New `antigravity` feature (off by default): native `genai_rs::antigravity` client for Google's Antigravity `localharness` agent runtime (see `docs/ANTIGRAVITY.md`):
+  - `AntigravityAgent::builder()` — spawn the harness binary (discovery via `ANTIGRAVITY_HARNESS_PATH`, python3 site-packages, or `PATH`), stdio handshake, localhost WebSocket, conversation init; pinned to `google-antigravity` 0.1.5 (`SUPPORTED_HARNESS_VERSION`)
+  - `agent.chat()` and `agent.send_streaming()` (`AgentEvent`: text/thinking deltas, structured `ToolAction`s, custom tool dispatches, `Finished`, Evergreen `Unknown`), `CancelHandle`, turn timeouts, graceful `shutdown()` with SIGTERM/SIGKILL escalation
+  - Custom tools reuse the existing `#[tool]`/`FunctionRegistry`/`ToolService` machinery; harness built-ins gated via `Capabilities` (read-only by default)
+  - Tool policies (`policy::allow/deny/confirm/allow_all/deny_all`) evaluated Rust-side before every dispatch, plus `on_pre_tool`/`on_post_tool` hooks; spawn-time safety gate refuses write-capable tools or MCP servers without a policy or hook (parity with the Python SDK)
+  - MCP server config (`McpServer::stdio`/`McpServer::http`), structured output via `with_response_schema`, session persistence/resume via `with_save_dir` + `with_conversation_id`
+  - Proto-JSON protocol types under `antigravity::protocol` with Evergreen unknown-variant preservation throughout
+  - New `WireEvent` variants `HarnessSpawn`, `WsSend`, `WsReceive`, `HarnessStderr` (LOUD_WIRE and wire inspectors cover harness sessions)
 
 ### Changed
 

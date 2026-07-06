@@ -1,6 +1,22 @@
 # Antigravity Bridge Design
 
-Status: **Draft — under review**
+Status: **Implemented (phase 1)** — `src/antigravity/`, feature `antigravity`,
+user guide `docs/ANTIGRAVITY.md`. Deviations from this design in phase 1:
+
+- `triggers.rs` is a stub (config type only; no scheduler wired into the
+  builder yet). Custom subagent registration is likewise not exposed on the
+  builder, though the wire types (`CustomAgent`) are implemented.
+- Hooks are synchronous closures (`on_pre_tool`/`on_post_tool`); async hooks
+  and the `workspace_only` policy combinator are follow-ups. Policies support
+  `allow`/`deny`/`confirm`/`allow_all`/`deny_all` with exact-name-over-wildcard
+  priority (a simplification of the Python SDK's six-tier model).
+- The session transport is driven sequentially by the turn loop (no
+  background reader task); cancellation uses a shared sink handle. A mockable
+  transport trait was deferred — protocol logic is unit-tested at the serde
+  layer and against the real binary instead.
+- `IntoFuture` builder sugar was skipped in favor of an explicit
+  `spawn().await`.
+
 Scope: Add first-class support for building agentic applications on Google's
 Antigravity harness, alongside the existing Interactions API client.
 
