@@ -104,6 +104,85 @@ async fn test_antigravity_init_failure_surfaces_harness_stderr() {
     );
 }
 
+/// A wire inspector that records every WebSocket send.
+#[derive(Debug, Default)]
+struct WsSendCapture(std::sync::Mutex<Vec<serde_json::Value>>);
+
+impl genai_rs::wire::WireInspector for WsSendCapture {
+    fn on_event(&self, event: &genai_rs::wire::WireEvent) {
+        if let genai_rs::wire::WireEvent::WsSend { payload, .. } = event {
+            self.0.lock().unwrap().push(payload.clone());
+        }
+    }
+}
+
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
+async fn test_antigravity_trigger_sends_automated_trigger_when_idle() {
+    use genai_rs::antigravity::TriggerConfig;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let inspector = Arc::new(WsSendCapture::default());
+    let agent = AntigravityAgent::builder()
+        .with_api_key("dummy-key-trigger-test")
+        .with_model("gemini-3-flash-preview")
+        .add_trigger(TriggerConfig::new("tick-xyzzy", Duration::from_secs(1)))
+        .add_wire_inspector(inspector.clone())
+        .spawn()
+        .await
+        .expect("spawn");
+
+    // The agent is idle after init, so the trigger must deliver after its
+    // first 1s interval. Poll generously (up to 15s) to stay non-flaky on
+    // slow machines; typical delivery is ~1s.
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    let mut delivered = false;
+    while std::time::Instant::now() < deadline {
+        delivered = inspector.0.lock().unwrap().iter().any(|payload| {
+            payload.get("automatedTrigger").and_then(|v| v.as_str()) == Some("tick-xyzzy")
+        });
+        if delivered {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(
+        delivered,
+        "expected an automatedTrigger send within 15s; sends observed: {:?}",
+        inspector.0.lock().unwrap()
+    );
+
+    agent.shutdown().await.expect("graceful shutdown");
+}
+
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
+async fn test_antigravity_subagent_config_accepted_at_init() {
+    use genai_rs::antigravity::{BuiltinTool, Capabilities, Subagent};
+
+    // The harness must accept a conversation init carrying customSubagents
+    // (no API key needed for init).
+    let agent = AntigravityAgent::builder()
+        .with_api_key("dummy-key-subagent-test")
+        .with_model("gemini-3-flash-preview")
+        .add_tool(AntigravityTestWeatherCallable.declaration())
+        .add_subagent(
+            Subagent::new("weather-checker")
+                .with_description("Looks up the weather for one city.")
+                .with_system_instructions("Always use the weather tool.")
+                .add_tool("antigravity_test_weather"),
+        )
+        .with_capabilities(Capabilities::read_only().enable(BuiltinTool::StartSubagent))
+        .add_policy(policy::allow_all())
+        .spawn()
+        .await
+        .expect("init with custom subagents should succeed");
+    assert!(agent.conversation_id().is_some());
+
+    agent.shutdown().await.expect("graceful shutdown");
+}
+
 // =============================================================================
 // Real API key required
 // =============================================================================

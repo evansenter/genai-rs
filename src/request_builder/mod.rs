@@ -89,7 +89,6 @@ pub struct InteractionBuilder<'a> {
     tools: Option<Vec<InternalTool>>,
     response_modalities: Option<Vec<String>>,
     response_format: Option<ResponseFormatSpec>,
-    response_mime_type: Option<String>,
     generation_config: Option<GenerationConfig>,
     speech_configs: Option<Vec<SpeechConfig>>,
     background: Option<bool>,
@@ -120,7 +119,6 @@ impl std::fmt::Debug for InteractionBuilder<'_> {
             .field("tools", &self.tools)
             .field("response_modalities", &self.response_modalities)
             .field("response_format", &self.response_format)
-            .field("response_mime_type", &self.response_mime_type)
             .field("generation_config", &self.generation_config)
             .field("speech_configs", &self.speech_configs)
             .field("webhook_config", &self.webhook_config)
@@ -154,7 +152,6 @@ impl<'a> InteractionBuilder<'a> {
             tools: None,
             response_modalities: None,
             response_format: None,
-            response_mime_type: None,
             generation_config: None,
             speech_configs: None,
             background: None,
@@ -1814,50 +1811,6 @@ impl<'a> InteractionBuilder<'a> {
         self
     }
 
-    /// Sets the response MIME type for structured output.
-    ///
-    /// Typically "application/json" for structured JSON output.
-    ///
-    /// **Note**: The API now rejects any request that sets
-    /// `response_mime_type` (verified live 2026-07: 400 "responseFormat must
-    /// be set when responseMimeType is set" — returned even when
-    /// `response_format` IS set, in either raw-schema or typed form). The
-    /// deprecated field is effectively unusable; use
-    /// [`with_response_format()`](Self::with_response_format) alone.
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use genai_rs::Client;
-    /// # use serde_json::json;
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = Client::builder("api-key".to_string()).build()?;
-    /// let response = client
-    ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
-    ///     .with_text("Generate user data")
-    ///     .with_response_mime_type("application/json")
-    ///     .with_response_format(json!({
-    ///         "type": "object",
-    ///         "properties": {
-    ///             "name": {"type": "string"},
-    ///             "age": {"type": "integer"}
-    ///         }
-    ///     }))
-    ///     .create()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[must_use]
-    #[deprecated(
-        since = "0.8.0",
-        note = "The API deprecated response_mime_type; use with_response_format() instead"
-    )]
-    pub fn with_response_mime_type(mut self, mime_type: impl Into<String>) -> Self {
-        self.response_mime_type = Some(mime_type.into());
-        self
-    }
-
     /// Explicitly enables storage for this interaction.
     ///
     /// Storage is enabled by default, so this method is typically only needed
@@ -2219,7 +2172,6 @@ impl<'a> InteractionBuilder<'a> {
             (config, None) => config,
         };
 
-        #[allow(deprecated)]
         Ok(InteractionRequest {
             model: self.model,
             agent: self.agent,
@@ -2229,7 +2181,6 @@ impl<'a> InteractionBuilder<'a> {
             tools: self.tools,
             response_modalities: self.response_modalities,
             response_format: self.response_format,
-            response_mime_type: self.response_mime_type,
             generation_config,
             stream: None, // Set by create() vs create_stream()
             background: self.background,

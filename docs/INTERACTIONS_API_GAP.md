@@ -44,7 +44,8 @@ Results:
 - The deprecated `response_mime_type` is rejected outright
   (400 "responseFormat must be set when responseMimeType is set" — returned
   even when `response_format` IS set, raw-schema or typed; and camelCase
-  `responseMimeType` gets "Unknown parameter"). Use `response_format` alone.
+  `responseMimeType` gets "Unknown parameter"). The field has therefore been
+  removed from this crate; use `response_format` alone.
 - The typed `response_format` union (`{type: "text", mime_type, schema}`)
   and the raw JSON-schema form were both accepted live for text output.
 
@@ -113,7 +114,7 @@ Completed in the revision-migration phase and the phase-2 surface expansion
 - ~~`FunctionCallingMode` serialized UPPERCASE~~ → lowercase.
 - ~~`CodeExecutionLanguage` `"PYTHON"`~~ → `"python"`.
 - ~~`top_k` in GenerationConfig~~ → removed.
-- ~~`response_mime_type`~~ → `#[deprecated]`, still functional.
+- ~~`response_mime_type`~~ → removed (the API rejects it in all forms).
 - ~~`Turn`-array input~~ → removed; history is steps.
 - ~~`system_instruction` typed as InteractionInput~~ → plain string.
 - ~~`total_reasoning_tokens` in usage~~ → removed.

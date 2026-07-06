@@ -295,7 +295,7 @@ Notes:
 
 Force the model to return valid JSON matching a schema.
 
-> **Note**: `with_response_format(schema)` is all you need — passing a JSON schema implies JSON output. The old `with_response_mime_type()` method is deprecated, and the API now rejects any request that sets `response_mime_type` — even alongside `response_format` (verified live 2026-07: 400 "responseFormat must be set when responseMimeType is set" in all combinations).
+> **Note**: `with_response_format(schema)` is all you need — passing a JSON schema implies JSON output. The old `with_response_mime_type()` method was removed: the API rejects any request that sets `response_mime_type` — even alongside `response_format` (verified live 2026-07: 400 "responseFormat must be set when responseMimeType is set" in all combinations).
 
 ### Basic JSON Schema
 

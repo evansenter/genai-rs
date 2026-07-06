@@ -1150,19 +1150,6 @@ pub struct InteractionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_format: Option<ResponseFormatSpec>,
 
-    /// Response MIME type for structured output.
-    ///
-    /// Deprecated by the API in favor of `response_format`; still sent when
-    /// set, but the API rejects requests carrying it (verified live 2026-07:
-    /// 400 "responseFormat must be set when responseMimeType is set", even
-    /// when `response_format` is set). Use `response_format` instead.
-    #[deprecated(
-        since = "0.8.0",
-        note = "The API deprecated response_mime_type; use response_format instead"
-    )]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub response_mime_type: Option<String>,
-
     /// Model configuration
     #[serde(skip_serializing_if = "Option::is_none")]
     pub generation_config: Option<GenerationConfig>,

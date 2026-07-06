@@ -88,7 +88,6 @@ Methods follow a consistent naming pattern based on their behavior:
 | `with_response_formats(Vec<ResponseFormat>)` | with | replaces | List form — one format per output modality |
 | `with_response_modalities(Vec<String>)` | with | replaces | Requested output modalities |
 | `with_image_output()` / `with_audio_output()` / `with_video_output()` | with | replaces | Modality shortcuts |
-| `with_response_mime_type()` | with | replaces | **Deprecated** — the API rejects any request setting `response_mime_type`, even alongside `response_format` (verified live 2026-07); use `with_response_format()` instead |
 
 Note: `GenerationConfig` no longer has a `top_k` field (removed in API revision 2026-05-20), so there is no `with_top_k()` builder method. `FileSearchConfig::with_top_k()` (a file-search retrieval setting) is unrelated and still exists.
 

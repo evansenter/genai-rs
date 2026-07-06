@@ -212,7 +212,8 @@ matching google-genai). This is a comprehensive breaking migration.
   `with_allowed_tools()` now produces the object form. New
   `with_tool_choice()` escape hatch.
 - `generation_config.top_k` removed (dropped from the spec).
-- `response_mime_type` deprecated (API deprecation); use `response_format`.
+- `response_mime_type` deprecated (API deprecation), then removed outright —
+  see the Removed section below; use `response_format`.
 - `interactions_api` helper constructors renamed `*_content` -> `*_step` and
   return `Step`.
 
@@ -286,6 +287,8 @@ matching google-genai). This is a comprehensive breaking migration.
   - MCP server config (`McpServer::stdio`/`McpServer::http`), structured output via `with_response_schema`, session persistence/resume via `with_save_dir` + `with_conversation_id`
   - Proto-JSON protocol types under `antigravity::protocol` with Evergreen unknown-variant preservation throughout
   - New `WireEvent` variants `HarnessSpawn`, `WsSend`, `WsReceive`, `HarnessStderr` (LOUD_WIRE and wire inspectors cover harness sessions)
+  - Client-side triggers: `AgentBuilder::add_trigger(TriggerConfig)` spawns a per-trigger timer task that injects an `automated_trigger` message every interval, delivered only while the agent is idle (firings that come due mid-turn are deferred until the turn ends; missed intervals collapse into a single delivery). Tasks stop cleanly on `shutdown()`/drop; zero intervals are rejected at `spawn()`
+  - Subagent registration: `AgentBuilder::add_subagent(Subagent)` sends static `custom_subagents` in the conversation init (name, description, appended-style system instructions, per-subagent `Capabilities`, custom tools referenced by name). `spawn()` validates that referenced custom tools are registered on the parent agent and that subagent names are unique; nested subagents are force-disabled (harness limitation, reference-SDK parity)
 
 ### Changed
 
@@ -301,13 +304,13 @@ matching google-genai). This is a comprehensive breaking migration.
 
 - **BREAKING**: `Step::FunctionCall` and `Step::FunctionResult` gained a `signature: Option<String>` field (verified live 2026-07: the API returns `signature` on `function_call` steps and rejects stateless replay of history that omits it; the generated SDK bindings do not list it on `function_call`). Existing constructors set it to `None`; it is preserved on deserialize/serialize roundtrip
 - Response modalities are now sent lowercase: `with_image_output()` / `with_audio_output()` send `"image"` / `"audio"` (previously `"IMAGE"` / `"AUDIO"`, which the API rejects — supported values are `text`, `image`, `audio`, `video`, `document`; verified live 2026-07). `with_response_modalities()` normalizes provided values to lowercase
-- Documented that the API now rejects any request setting the deprecated `response_mime_type` — even when `response_format` is also set, in raw-schema or typed form (400 "responseFormat must be set when responseMimeType is set"; verified live 2026-07). Use `response_format` alone
 - Error response bodies are now visible in wire output (`WireEvent::ErrorBody`); previously `LOUD_WIRE=1` showed only the status line for failed requests
 - Wire output no longer panics when truncating multi-byte UTF-8 content (`data`/`signature` fields and non-JSON bodies truncate on character boundaries)
 - Request bodies are no longer serialized for wire debugging when it is disabled (previously every request paid the serialization cost even without `LOUD_WIRE`)
 
 ### Removed
 
+- **BREAKING**: `response_mime_type` removed outright — the `InteractionRequest` field and `InteractionBuilder::with_response_mime_type()` (previously `#[deprecated]`). Live verification (2026-07) showed the API rejects every request carrying the field: alone it returns 400 "responseFormat must be set when responseMimeType is set", the same 400 is returned even when `response_format` IS set (raw-schema or typed form), and camelCase `responseMimeType` gets "Unknown parameter" — the field is dead server-side, so no working code can be using it. Use `with_response_format()` alone; passing a JSON schema implies JSON output
 - `with_computer_use()` and `with_computer_use_excluding()` — use `add_tool(ComputerUseConfig::new())`
 - `add_mcp_server()` — use `add_tool(McpServerConfig::new(name, url))`
 - `with_file_search()` and `with_file_search_config()` — use `add_tool(FileSearchConfig::new(stores))`

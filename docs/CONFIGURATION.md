@@ -654,7 +654,6 @@ Note: `top_k` was removed by the API revision 2026-05-20.
 | `with_service_tier()` | Set latency/priority tier |
 | `with_cached_content()` | Reference an explicit context cache |
 | `with_response_format()` | JSON schema for structured output |
-| `with_response_mime_type()` | **Deprecated** — use `with_response_format()` |
 | `with_timeout()` | Set request timeout |
 
 ### ClientBuilder Methods

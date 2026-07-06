@@ -248,7 +248,7 @@ Enforce JSON schema on responses.
 ```bash
 cargo run --example structured_output
 ```
-**Learn**: `with_response_format()`, `with_response_mime_type()`.
+**Learn**: `with_response_format()`.
 
 ### Advanced Examples
 

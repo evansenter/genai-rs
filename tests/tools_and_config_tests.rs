@@ -1498,7 +1498,7 @@ mod sampling {
 }
 
 // =============================================================================
-// Generation Config: New Fields (seed, stop_sequences, response_mime_type)
+// Generation Config: New Fields (seed, stop_sequences)
 // =============================================================================
 
 mod config_fields {
@@ -1590,114 +1590,60 @@ mod config_fields {
         );
     }
 
-    /// Test that response_mime_type without response_format is rejected.
+    /// Test that the API rejects requests carrying `response_mime_type`.
     ///
-    /// Verified live 2026-07: the API returns 400 "responseFormat must be set
-    /// when responseMimeType is set". This test documents that constraint.
+    /// The typed field was removed from `InteractionRequest` (the API
+    /// rejects it in every combination — alone or alongside
+    /// `response_format`, raw-schema or typed; verified live 2026-07 with
+    /// 400 "responseFormat must be set when responseMimeType is set"), so
+    /// this test injects the field via a raw JSON request to document the
+    /// server-side constraint that motivated the removal.
     #[tokio::test]
     #[ignore = "Requires API key"]
-    #[allow(deprecated)]
-    async fn test_generation_config_response_mime_type_without_format_rejected() {
-        let Some(client) = get_client() else {
+    async fn test_generation_config_response_mime_type_rejected() {
+        let Some(api_key) = std::env::var("GEMINI_API_KEY")
+            .ok()
+            .filter(|k| !k.is_empty())
+        else {
             println!("Skipping: GEMINI_API_KEY not set");
             return;
         };
 
-        let result = interaction_builder(&client)
-            .with_text("Generate a greeting in Spanish.")
-            .with_response_mime_type("application/json")
-            .create()
-            .await;
-
-        match result {
-            Err(genai_rs::GenaiError::Api {
-                status_code,
-                message,
-                ..
-            }) => {
-                assert_eq!(
-                    status_code, 400,
-                    "Expected 400 for mime-type-only request, got {status_code}: {message}"
-                );
-                assert!(
-                    message.contains("responseFormat"),
-                    "Expected responseFormat constraint message, got: {message}"
-                );
-                println!("✓ API rejected response_mime_type without response_format: {message}");
-            }
-            Err(other) => panic!("Expected API error, got: {other}"),
-            Ok(_) => panic!(
-                "Expected 400 for response_mime_type without response_format; \
-                 API accepted it — the constraint may have been lifted"
-            ),
-        }
-    }
-
-    /// Test that response_mime_type is rejected even when paired with
-    /// response_format.
-    ///
-    /// Verified live 2026-07: the API returns the same 400 ("responseFormat
-    /// must be set when responseMimeType is set") whether response_format is
-    /// present or not, and regardless of shape (raw JSON schema or typed
-    /// union) — the deprecated response_mime_type field is effectively
-    /// unusable. Use response_format alone for structured output.
-    #[tokio::test]
-    #[ignore = "Requires API key"]
-    #[allow(deprecated)]
-    async fn test_generation_config_response_mime_type() {
-        let Some(client) = get_client() else {
-            println!("Skipping: GEMINI_API_KEY not set");
-            return;
-        };
-
-        let schema = json!({
-            "type": "object",
-            "properties": {
-                "greeting": {"type": "string"},
-                "language": {"type": "string"}
-            },
-            "required": ["greeting", "language"]
+        // Raw request: the typed InteractionRequest no longer carries the
+        // field, so build the JSON body directly.
+        let body = json!({
+            "model": "gemini-3-flash-preview",
+            "input": "Generate a greeting in Spanish.",
+            "response_mime_type": "application/json",
         });
+        let response = reqwest::Client::new()
+            .post("https://generativelanguage.googleapis.com/v1beta/interactions")
+            .header("X-Goog-Api-Key", api_key)
+            .header("Api-Revision", "2026-05-20")
+            .json(&body)
+            .send()
+            .await
+            .expect("request should reach the API");
 
-        let result = interaction_builder(&client)
-            .with_text("Generate a greeting in Spanish.")
-            .with_response_mime_type("application/json")
-            .with_response_format(schema)
-            .create()
-            .await;
-
-        match result {
-            Err(genai_rs::GenaiError::Api {
-                status_code,
-                message,
-                ..
-            }) => {
-                assert_eq!(
-                    status_code, 400,
-                    "Expected 400 for response_mime_type request, got {status_code}: {message}"
-                );
-                assert!(
-                    message.contains("responseFormat"),
-                    "Expected responseFormat constraint message, got: {message}"
-                );
-                println!(
-                    "✓ API rejected response_mime_type even alongside response_format: {message}"
-                );
-            }
-            Err(other) => panic!("Expected API error, got: {other}"),
-            Ok(_) => panic!(
-                "Expected 400 for response_mime_type + response_format; \
-                 API accepted it — the deprecated field may work again"
-            ),
-        }
+        let status = response.status().as_u16();
+        let text = response.text().await.unwrap_or_default();
+        assert_eq!(
+            status, 400,
+            "Expected 400 for a request carrying response_mime_type; \
+             got {status}: {text} — the constraint may have been lifted"
+        );
+        assert!(
+            text.contains("responseFormat") || text.contains("response_mime_type"),
+            "Expected the responseFormat/responseMimeType constraint message, got: {text}"
+        );
+        println!("✓ API rejected response_mime_type: {text}");
     }
 
     /// Test combined new generation config fields.
     ///
-    /// This test uses seed and response_format together. It deliberately does
-    /// NOT set the deprecated response_mime_type — the API rejects any
-    /// request carrying it (verified live 2026-07; see
-    /// test_generation_config_response_mime_type).
+    /// This test uses seed and response_format together. (The removed
+    /// `response_mime_type` field is rejected by the API in every form —
+    /// see test_generation_config_response_mime_type_rejected.)
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_generation_config_new_fields_combined() {

@@ -1267,7 +1267,6 @@ mod text_to_speech {
 
         println!("=== Testing NESTED SpeechConfig format ===");
 
-        #[allow(deprecated)]
         let request = InteractionRequest {
             model: Some(tts_model.to_string()),
             agent: None,
@@ -1277,7 +1276,6 @@ mod text_to_speech {
             tools: None,
             response_modalities: Some(vec!["audio".to_string()]),
             response_format: None,
-            response_mime_type: None,
             generation_config: None,
             stream: None,
             background: None,
@@ -1328,7 +1326,6 @@ mod text_to_speech {
             ..Default::default()
         };
 
-        #[allow(deprecated)]
         let flat_request = InteractionRequest {
             model: Some(tts_model.to_string()),
             agent: None,
@@ -1338,7 +1335,6 @@ mod text_to_speech {
             tools: None,
             response_modalities: Some(vec!["audio".to_string()]),
             response_format: None,
-            response_mime_type: None,
             generation_config: Some(flat_gen_config),
             stream: None,
             background: None,

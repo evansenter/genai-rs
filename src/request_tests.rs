@@ -3,7 +3,6 @@
 use super::*;
 
 #[test]
-#[allow(deprecated)] // response_mime_type is deprecated but still part of the struct
 fn test_serialize_create_interaction_request_with_model() {
     let request = InteractionRequest {
         model: Some("gemini-3-flash-preview".to_string()),
@@ -14,7 +13,6 @@ fn test_serialize_create_interaction_request_with_model() {
         tools: None,
         response_modalities: None,
         response_format: None,
-        response_mime_type: None,
         generation_config: None,
         stream: None,
         background: None,
@@ -501,7 +499,6 @@ fn test_agent_config_helper_methods() {
 }
 
 #[test]
-#[allow(deprecated)] // response_mime_type is deprecated but still part of the struct
 fn test_create_interaction_request_with_agent_config() {
     let config: AgentConfig = DeepResearchConfig::new()
         .with_thinking_summaries(ThinkingSummaries::Auto)
@@ -516,7 +513,6 @@ fn test_create_interaction_request_with_agent_config() {
         tools: None,
         response_modalities: None,
         response_format: None,
-        response_mime_type: None,
         generation_config: None,
         stream: None,
         background: Some(true),
@@ -586,7 +582,6 @@ fn test_agent_config_field_naming_conventions() {
 /// - Deserializing from dead-letter queues
 /// - Request replay/debugging scenarios
 #[test]
-#[allow(deprecated)] // response_mime_type is deprecated but still part of the struct
 fn test_interaction_request_roundtrip() {
     let original = InteractionRequest {
         model: Some("gemini-3-flash-preview".to_string()),
@@ -597,7 +592,6 @@ fn test_interaction_request_roundtrip() {
         tools: None,
         response_modalities: None,
         response_format: None,
-        response_mime_type: Some("text/plain".to_string()),
         generation_config: Some(GenerationConfig {
             temperature: Some(0.7),
             max_output_tokens: Some(100),
@@ -627,7 +621,6 @@ fn test_interaction_request_roundtrip() {
         original.previous_interaction_id,
         deserialized.previous_interaction_id
     );
-    assert_eq!(original.response_mime_type, deserialized.response_mime_type);
     assert_eq!(original.stream, deserialized.stream);
     assert_eq!(original.store, deserialized.store);
     assert_eq!(original.system_instruction, deserialized.system_instruction);
@@ -651,7 +644,6 @@ fn test_interaction_request_roundtrip() {
 }
 
 #[test]
-#[allow(deprecated)] // response_mime_type is deprecated but still part of the struct
 fn test_response_format_serializes_as_snake_case() {
     let request = InteractionRequest {
         model: Some("gemini-3-flash-preview".to_string()),
@@ -670,7 +662,6 @@ fn test_response_format_serializes_as_snake_case() {
             })
             .into(),
         ),
-        response_mime_type: None,
         generation_config: None,
         stream: None,
         background: None,
@@ -865,7 +856,6 @@ fn test_deep_research_config_full_wire_shape() {
 }
 
 #[test]
-#[allow(deprecated)]
 fn test_request_with_webhook_config_and_environment_wire_shape() {
     use crate::environment::{EnvironmentSource, RemoteEnvironment};
     use crate::webhooks::WebhookConfig;
@@ -879,7 +869,6 @@ fn test_request_with_webhook_config_and_environment_wire_shape() {
         tools: None,
         response_modalities: None,
         response_format: None,
-        response_mime_type: None,
         generation_config: None,
         stream: None,
         background: Some(true),

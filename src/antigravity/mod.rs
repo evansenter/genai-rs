@@ -43,12 +43,13 @@ mod streaming;
 mod tools;
 pub mod triggers;
 
-pub use config::{BuiltinTool, Capabilities, McpServer, SUPPORTED_HARNESS_VERSION};
+pub use config::{BuiltinTool, Capabilities, McpServer, SUPPORTED_HARNESS_VERSION, Subagent};
 pub use hooks::{
     Policy, PolicyDecision, PostToolHook, PreToolDecision, PreToolHook, ToolInvocation,
     ToolOutcome, policy,
 };
 pub use streaming::{AgentEvent, AgentEventStream, ToolAction};
+pub use triggers::TriggerConfig;
 
 use crate::wire::{LoudWirePrinter, WireInspector};
 use crate::{FunctionDeclaration, ToolService};
@@ -239,6 +240,8 @@ pub struct AgentBuilder {
     skills_paths: Vec<String>,
     turn_timeout: Option<Duration>,
     inspectors: Vec<Arc<dyn WireInspector>>,
+    triggers: Vec<TriggerConfig>,
+    subagents: Vec<Subagent>,
 }
 
 impl std::fmt::Debug for AgentBuilder {
@@ -252,6 +255,8 @@ impl std::fmt::Debug for AgentBuilder {
             .field("mcp_servers", &self.mcp_servers.len())
             .field("policies", &self.policies.len())
             .field("capabilities", &self.capabilities)
+            .field("triggers", &self.triggers.len())
+            .field("subagents", &self.subagents.len())
             .finish_non_exhaustive()
     }
 }
@@ -422,6 +427,36 @@ impl AgentBuilder {
         self
     }
 
+    /// Adds a recurring client-side trigger: after `spawn()`, a timer task
+    /// sends [`InputEvent::AutomatedTrigger`](protocol::InputEvent) with the
+    /// trigger's message every interval, **deferred while a turn is in
+    /// flight** (missed intervals collapse into one delivery). See
+    /// [`triggers`] for the full delivery semantics and
+    /// lifecycle guarantees.
+    ///
+    /// Intervals must be non-zero; `spawn()` fails with
+    /// [`AntigravityError::Config`] otherwise.
+    #[must_use]
+    pub fn add_trigger(mut self, trigger: TriggerConfig) -> Self {
+        self.triggers.push(trigger);
+        self
+    }
+
+    /// Adds a static subagent the parent agent can delegate to via the
+    /// `start_subagent` builtin (enable it with [`Self::with_capabilities`];
+    /// it is write-capable, so the safety gate requires a policy or
+    /// pre-tool hook).
+    ///
+    /// Custom tools listed on the subagent (by name) must also be
+    /// registered on this builder (`add_tool` / `with_tool_service`);
+    /// `spawn()` fails with [`AntigravityError::Config`] on a dangling
+    /// reference or a duplicate subagent name.
+    #[must_use]
+    pub fn add_subagent(mut self, subagent: Subagent) -> Self {
+        self.subagents.push(subagent);
+        self
+    }
+
     /// Launches the harness, performs the handshake, connects the
     /// WebSocket, and initializes the conversation.
     ///
@@ -453,6 +488,54 @@ impl AgentBuilder {
             return Err(AntigravityError::Config(
                 "a model is configured without an API key; call with_api_key(..)".to_string(),
             ));
+        }
+        if let Some(trigger) = self.triggers.iter().find(|t| t.interval.is_zero()) {
+            return Err(AntigravityError::Config(format!(
+                "trigger '{}' has a zero interval; trigger intervals must be non-zero",
+                trigger.message
+            )));
+        }
+
+        // Subagent validation: unique names, and every referenced custom
+        // tool registered on the parent (the harness dispatches subagent
+        // custom-tool calls through the parent's registry).
+        let dispatcher = ToolDispatcher::new(self.tools.clone(), &self.tool_services);
+        {
+            let declared: HashSet<String> = dispatcher
+                .harness_declarations()
+                .into_iter()
+                .filter_map(|tool| tool.name)
+                .collect();
+            let mut subagent_names = HashSet::new();
+            for subagent in &self.subagents {
+                if !subagent_names.insert(subagent.name().to_string()) {
+                    return Err(AntigravityError::Config(format!(
+                        "duplicate subagent name '{}'; subagent names must be unique",
+                        subagent.name()
+                    )));
+                }
+                if let Some(missing) = subagent
+                    .tool_names()
+                    .iter()
+                    .find(|name| !declared.contains(name.as_str()))
+                {
+                    return Err(AntigravityError::Config(format!(
+                        "subagent '{}' references custom tool '{missing}' which is not \
+                         registered on the agent; custom tools used by subagents must also \
+                         be added via add_tool(..) or with_tool_service(..)",
+                        subagent.name()
+                    )));
+                }
+            }
+            if !self.subagents.is_empty()
+                && !self.capabilities.is_enabled(BuiltinTool::StartSubagent)
+            {
+                tracing::warn!(
+                    "Subagents are configured but the start_subagent builtin is disabled; \
+                     the parent agent cannot invoke them. Enable it with \
+                     with_capabilities(Capabilities::read_only().enable(BuiltinTool::StartSubagent))."
+                );
+            }
         }
 
         let binary = process::discover_harness(self.harness_path.as_deref())?;
@@ -492,7 +575,6 @@ impl AgentBuilder {
         };
 
         // Conversation init.
-        let dispatcher = ToolDispatcher::new(self.tools.clone(), &self.tool_services);
         let config = self.build_harness_config(&dispatcher);
         let init = protocol::InitializeConversationEvent {
             config: Some(config),
@@ -508,10 +590,29 @@ impl AgentBuilder {
             conversation_id: None,
             initial_history: Vec::new(),
             turn_timeout: self.turn_timeout,
+            idle: Arc::new(tokio::sync::watch::channel(true).0),
+            trigger_tasks: triggers::TriggerTasks::default(),
         };
 
         match agent.initialize(init).await {
-            Ok(()) => Ok(agent),
+            Ok(()) => {
+                // Start trigger timers only once the conversation is live.
+                // Each task writes through the shared sink handle (the same
+                // out-of-band path CancelHandle uses) and watches the
+                // agent's idle flag.
+                for trigger in self.triggers {
+                    let sink = agent.session.sink_handle();
+                    agent.trigger_tasks.push(triggers::spawn_trigger_task(
+                        trigger,
+                        agent.idle.subscribe(),
+                        move |message| {
+                            let sink = sink.clone();
+                            async move { sink.send(&InputEvent::AutomatedTrigger(message)).await }
+                        },
+                    ));
+                }
+                Ok(agent)
+            }
             Err(e) => {
                 agent.session.close().await;
                 agent.harness.kill().await;
@@ -549,13 +650,20 @@ impl AgentBuilder {
             })
             .unwrap_or_default();
 
+        let tools = dispatcher.harness_declarations();
+        let custom_subagents = self
+            .subagents
+            .iter()
+            .map(|subagent| subagent.to_wire(&tools))
+            .collect();
+
         protocol::HarnessConfig {
             cascade_id: self.conversation_id.clone(),
             system_instructions: self
                 .system_instructions
                 .as_ref()
                 .map(|text| protocol::SystemInstructions::custom_text(text.clone())),
-            tools: dispatcher.harness_declarations(),
+            tools,
             harness_side_tools: Some(self.capabilities.to_harness_side_tools()),
             compaction_threshold: None,
             workspaces: self
@@ -570,7 +678,7 @@ impl AgentBuilder {
             mcp_servers: self.mcp_servers.iter().map(McpServer::to_wire).collect(),
             models,
             enabled_hooks,
-            custom_subagents: Vec::new(),
+            custom_subagents,
         }
     }
 }
@@ -597,6 +705,12 @@ pub struct AntigravityAgent {
     conversation_id: Option<String>,
     initial_history: Vec<StepUpdate>,
     turn_timeout: Option<Duration>,
+    /// `true` while no turn is being driven; trigger tasks watch this to
+    /// defer deliveries (see [`triggers`]).
+    idle: Arc<tokio::sync::watch::Sender<bool>>,
+    /// Timer tasks spawned for [`AgentBuilder::add_trigger`] configs;
+    /// aborted on shutdown and on drop.
+    trigger_tasks: triggers::TriggerTasks,
 }
 
 impl std::fmt::Debug for AntigravityAgent {
@@ -666,10 +780,12 @@ impl AntigravityAgent {
         &mut self,
         prompt: impl Into<String>,
     ) -> Result<ChatResponse, AntigravityError> {
+        // Mark busy before sending so a trigger cannot slip in between.
+        let guard = TurnGuard::begin(&self.idle);
         self.session
             .send(&InputEvent::UserInput(prompt.into()))
             .await?;
-        let mut turn = TurnState::new(self.turn_timeout);
+        let mut turn = TurnState::new(self.turn_timeout, guard);
         loop {
             match self.next_turn_event(&mut turn).await? {
                 Some(AgentEvent::Finished(response)) => return Ok(*response),
@@ -689,12 +805,16 @@ impl AntigravityAgent {
         &mut self,
         prompt: impl Into<String>,
     ) -> Result<AgentEventStream<'_>, AntigravityError> {
+        // Mark busy before sending so a trigger cannot slip in between.
+        // The guard moves into the stream's turn state: dropping the
+        // stream mid-turn marks the agent idle again.
+        let guard = TurnGuard::begin(&self.idle);
         self.session
             .send(&InputEvent::UserInput(prompt.into()))
             .await?;
         let timeout = self.turn_timeout;
         let stream = async_stream::try_stream! {
-            let mut turn = TurnState::new(timeout);
+            let mut turn = TurnState::new(timeout, guard);
             while let Some(event) = self.next_turn_event(&mut turn).await? {
                 let finished = matches!(event, AgentEvent::Finished(_));
                 yield event;
@@ -709,7 +829,9 @@ impl AntigravityAgent {
     /// Gracefully shuts down: closes the WebSocket (the harness serializes
     /// its trajectory), closes stdin (EOF triggers the harness's clean
     /// exit), then escalates to SIGTERM and SIGKILL if it lingers.
-    pub async fn shutdown(self) -> Result<(), AntigravityError> {
+    pub async fn shutdown(mut self) -> Result<(), AntigravityError> {
+        // Stop trigger timers first so nothing writes to the closing socket.
+        self.trigger_tasks.abort_all();
         self.session.close().await;
         self.harness.shutdown().await
     }
@@ -1196,6 +1318,29 @@ impl AntigravityAgent {
 // Per-turn state
 // =============================================================================
 
+/// RAII marker for "a turn is being driven": construction flips the
+/// agent's idle flag to busy, drop (turn completion, error, timeout, or a
+/// dropped mid-turn stream) flips it back to idle, releasing any deferred
+/// trigger deliveries.
+struct TurnGuard {
+    idle: Arc<tokio::sync::watch::Sender<bool>>,
+}
+
+impl TurnGuard {
+    fn begin(idle: &Arc<tokio::sync::watch::Sender<bool>>) -> Self {
+        idle.send_replace(false);
+        Self {
+            idle: Arc::clone(idle),
+        }
+    }
+}
+
+impl Drop for TurnGuard {
+    fn drop(&mut self) {
+        self.idle.send_replace(true);
+    }
+}
+
 struct TurnState {
     queue: VecDeque<AgentEvent>,
     finished: bool,
@@ -1210,10 +1355,13 @@ struct TurnState {
     errors: Vec<String>,
     timeout: Option<Duration>,
     deadline: Option<tokio::time::Instant>,
+    /// Held for the turn's lifetime; dropping the state marks the agent
+    /// idle again (releasing deferred trigger deliveries).
+    _turn_guard: TurnGuard,
 }
 
 impl TurnState {
-    fn new(timeout: Option<Duration>) -> Self {
+    fn new(timeout: Option<Duration>, turn_guard: TurnGuard) -> Self {
         Self {
             queue: VecDeque::new(),
             finished: false,
@@ -1228,6 +1376,7 @@ impl TurnState {
             errors: Vec::new(),
             timeout,
             deadline: timeout.map(|t| tokio::time::Instant::now() + t),
+            _turn_guard: turn_guard,
         }
     }
 
@@ -1393,6 +1542,88 @@ mod agent_tests {
         let side_tools = config.harness_side_tools.as_ref().unwrap();
         assert!(side_tools.run_command.unwrap().enabled);
         assert!(!side_tools.file_edit.unwrap().enabled);
+    }
+
+    #[tokio::test]
+    async fn test_spawn_rejects_zero_interval_trigger() {
+        let err = AntigravityAgent::builder()
+            .add_trigger(TriggerConfig::new("tick", Duration::ZERO))
+            .spawn()
+            .await
+            .unwrap_err();
+        let AntigravityError::Config(message) = &err else {
+            panic!("expected Config error, got {err:?}");
+        };
+        assert!(message.contains("non-zero"));
+        assert!(message.contains("tick"));
+    }
+
+    #[test]
+    fn test_builder_add_trigger_accumulates() {
+        let builder = AntigravityAgent::builder()
+            .add_trigger(TriggerConfig::new("a", Duration::from_secs(1)))
+            .add_trigger(TriggerConfig::new("b", Duration::from_secs(2)));
+        assert_eq!(builder.triggers.len(), 2);
+        assert_eq!(builder.triggers[0].message, "a");
+        assert_eq!(builder.triggers[1].interval, Duration::from_secs(2));
+    }
+
+    #[tokio::test]
+    async fn test_spawn_rejects_subagent_with_unregistered_tool() {
+        let err = AntigravityAgent::builder()
+            .add_subagent(Subagent::new("auditor").add_tool("not_registered"))
+            .spawn()
+            .await
+            .unwrap_err();
+        let AntigravityError::Config(message) = &err else {
+            panic!("expected Config error, got {err:?}");
+        };
+        assert!(message.contains("auditor"));
+        assert!(message.contains("not_registered"));
+        assert!(message.contains("add_tool"));
+    }
+
+    #[tokio::test]
+    async fn test_spawn_rejects_duplicate_subagent_names() {
+        let err = AntigravityAgent::builder()
+            .add_subagent(Subagent::new("twin"))
+            .add_subagent(Subagent::new("twin"))
+            .spawn()
+            .await
+            .unwrap_err();
+        let AntigravityError::Config(message) = &err else {
+            panic!("expected Config error, got {err:?}");
+        };
+        assert!(message.contains("twin"));
+        assert!(message.contains("unique"));
+    }
+
+    #[test]
+    fn test_builder_subagents_reach_harness_config() {
+        let declaration = crate::FunctionDeclaration::builder("severity_classifier")
+            .description("Classifies severity.")
+            .build();
+        let builder = AntigravityAgent::builder()
+            .add_tool(declaration)
+            .add_subagent(
+                Subagent::new("auditor")
+                    .with_description("Audits files.")
+                    .add_tool("severity_classifier"),
+            );
+        let dispatcher = ToolDispatcher::new(builder.tools.clone(), &builder.tool_services);
+        let config = builder.build_harness_config(&dispatcher);
+
+        assert_eq!(config.custom_subagents.len(), 1);
+        let subagent = &config.custom_subagents[0];
+        assert_eq!(subagent.name.as_deref(), Some("auditor"));
+        assert_eq!(subagent.description.as_deref(), Some("Audits files."));
+        // The subagent carries the parent's full tool declaration.
+        assert_eq!(subagent.tools.len(), 1);
+        assert_eq!(
+            subagent.tools[0].name.as_deref(),
+            Some("severity_classifier")
+        );
+        assert!(subagent.tools[0].parameters_json_schema.is_some());
     }
 
     #[test]

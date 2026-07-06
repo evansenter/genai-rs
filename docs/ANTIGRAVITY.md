@@ -194,6 +194,48 @@ let agent = AntigravityAgent::builder()
 The harness owns the MCP connections and tool execution; your policies see
 the calls as `mcp_<server>_<tool>`.
 
+## Subagents
+
+Static subagents run in their own trajectory with their own instructions and
+tool set; the parent model delegates to them through the `start_subagent`
+builtin. That builtin is **off** in the default read-only capability set and
+is write-capable, so enabling it requires a policy or pre-tool hook (the
+spawn-time safety gate):
+
+```rust,ignore
+use genai_rs::antigravity::{BuiltinTool, Capabilities, Subagent, policy};
+
+let agent = AntigravityAgent::builder()
+    .add_tool(SeverityClassifierCallable.declaration())   // parent registration
+    .add_subagent(
+        Subagent::new("auditor")
+            .with_description("Audits one file for security issues.")
+            .with_system_instructions("Focus on injection vectors.")
+            .with_capabilities(Capabilities::read_only()) // the default
+            .add_tool("severity_classifier"),             // reference by name
+    )
+    .with_capabilities(Capabilities::read_only().enable(BuiltinTool::StartSubagent))
+    .add_policy(policy::allow_all())
+    // ...
+    ;
+```
+
+Rules (matching the reference SDK):
+
+- **Custom tools are referenced by name** and must also be registered on the
+  parent agent (`add_tool` / `with_tool_service`) — subagent custom-tool
+  calls dispatch through the parent's registry. `spawn()` validates the
+  references (and name uniqueness) and fails with `AntigravityError::Config`
+  on a dangling one.
+- Subagent `with_system_instructions` are **appended** to the harness's
+  default subagent instructions, not a full replacement (unlike the parent's
+  `with_system_instructions`).
+- Subagent capabilities default to the read-only builtin set; nested
+  subagents are unsupported, so `start_subagent` is force-disabled inside a
+  subagent.
+- Subagent activity surfaces in streams as `AgentEvent::ToolAction` with
+  `ToolAction::InvokeSubagent`, plus the subagent trajectory's own deltas.
+
 ## Streaming
 
 ```rust,ignore
@@ -242,6 +284,39 @@ if let Some(value) = response.structured_output() {
     println!("severity = {}", value["severity"]);
 }
 ```
+
+## Triggers
+
+Triggers inject a message into the conversation on a fixed interval —
+without a user turn — via the protocol's `automated_trigger` event
+(mirroring the reference SDK's `TriggerRunner`):
+
+```rust,ignore
+use genai_rs::antigravity::TriggerConfig;
+use std::time::Duration;
+
+let agent = AntigravityAgent::builder()
+    .add_trigger(TriggerConfig::new(
+        "Check the queue for new items and summarize them.",
+        Duration::from_secs(300),
+    ))
+    // ...
+    .spawn().await?;
+```
+
+Delivery semantics (see `antigravity::triggers` for details):
+
+- The first firing happens after the first interval elapses, not
+  immediately. Intervals must be non-zero (`spawn()` validates).
+- A firing is delivered **only while the agent is idle** (no
+  `chat`/`send_streaming` turn in flight). If it comes due mid-turn, it is
+  deferred until the turn ends, and missed intervals collapse into a single
+  delivery (no backlog after a long turn).
+- Trigger tasks stop cleanly on `shutdown()` and on drop — no zombie
+  timers. A failed delivery (session closed) ends that trigger's task; other
+  triggers and the session are unaffected.
+- A trigger delivered while idle starts a harness-side turn; its output
+  events are drained by your next `chat`/`send_streaming` call.
 
 ## Session persistence and resume
 
@@ -303,11 +378,6 @@ variants, never on message text. Key variants: `HarnessNotFound{searched}`,
 
 ## Current limitations (follow-ups)
 
-- **Triggers**: `antigravity::triggers` holds the config type only; the
-  interval scheduler that injects `automated_trigger` events is not wired
-  into the builder yet.
-- **Subagents**: the wire types (`CustomAgent`) exist, but the builder does
-  not expose custom subagent registration yet.
 - **User questions**: the `ask_question` builtin is answered "unanswered"
   automatically (never deadlocks); interactive question hooks are not
   exposed. Disable the builtin if this matters.

@@ -3,9 +3,16 @@
 Status: **Implemented (phase 1)** — `src/antigravity/`, feature `antigravity`,
 user guide `docs/ANTIGRAVITY.md`. Deviations from this design in phase 1:
 
-- `triggers.rs` is a stub (config type only; no scheduler wired into the
-  builder yet). Custom subagent registration is likewise not exposed on the
-  builder, though the wire types (`CustomAgent`) are implemented.
+- ~~`triggers.rs` is a stub~~ — implemented: `AgentBuilder::add_trigger`
+  spawns per-trigger timer tasks sending `automated_trigger` events, gated
+  on client-side idleness (deliveries defer while a turn is in flight and
+  missed intervals collapse into one), aborted on shutdown/drop. Jitter was
+  dropped from the plan (the reference SDK's `every()` has none).
+- ~~Custom subagent registration not exposed~~ — implemented:
+  `AgentBuilder::add_subagent(Subagent)` with spawn-time validation that
+  referenced custom tools are registered on the parent (reference-SDK
+  parity, including appended-style subagent instructions and force-disabled
+  nested subagents).
 - Hooks are synchronous closures (`on_pre_tool`/`on_post_tool`); async hooks
   and the `workspace_only` policy combinator are follow-ups. Policies support
   `allow`/`deny`/`confirm`/`allow_all`/`deny_all` with exact-name-over-wildcard

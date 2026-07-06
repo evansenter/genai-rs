@@ -382,7 +382,6 @@ mod streaming {
         };
 
         with_timeout(test_timeout(), async {
-            #[allow(deprecated)]
             let request = InteractionRequest {
                 model: Some("gemini-3-flash-preview".to_string()),
                 agent: None,
@@ -392,7 +391,6 @@ mod streaming {
                 tools: None,
                 response_modalities: None,
                 response_format: None,
-                response_mime_type: None,
                 generation_config: None,
                 stream: Some(true),
                 background: None,

@@ -203,6 +203,156 @@ impl Capabilities {
     }
 }
 
+/// A static subagent the parent agent can delegate to.
+///
+/// Subagents run in their own trajectory with their own instructions and
+/// tool set. The parent model invokes them through the `start_subagent`
+/// builtin — enable it with
+/// `Capabilities::read_only().enable(BuiltinTool::StartSubagent)` (it is
+/// write-capable, so the spawn-time safety gate requires a policy or
+/// pre-tool hook).
+///
+/// ```rust,ignore
+/// use genai_rs::antigravity::{AntigravityAgent, BuiltinTool, Capabilities, Subagent, policy};
+///
+/// let agent = AntigravityAgent::builder()
+///     .add_tool(severity_classifier_declaration())   // parent registration
+///     .add_subagent(
+///         Subagent::new("auditor")
+///             .with_description("Audits one file for security issues.")
+///             .with_system_instructions("Focus on injection vectors.")
+///             .add_tool("severity_classifier"),      // reference by name
+///     )
+///     .with_capabilities(Capabilities::read_only().enable(BuiltinTool::StartSubagent))
+///     .add_policy(policy::allow_all())
+///     // ...
+///     ;
+/// ```
+///
+/// Custom tools are referenced **by name** and must also be registered on
+/// the parent agent (`add_tool` / `with_tool_service`) — the harness
+/// dispatches a subagent's custom tool calls through the parent's tool
+/// registry. `spawn()` validates this and fails with
+/// [`AntigravityError::Config`](super::AntigravityError::Config) on a
+/// dangling reference.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Subagent {
+    name: String,
+    description: Option<String>,
+    system_instructions: Option<String>,
+    capabilities: Capabilities,
+    tool_names: Vec<String>,
+}
+
+impl Subagent {
+    /// Creates a subagent with the given (unique) name and the default
+    /// read-only builtin set (matching the reference SDK).
+    #[must_use]
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            description: None,
+            system_instructions: None,
+            capabilities: Capabilities::read_only(),
+            tool_names: Vec::new(),
+        }
+    }
+
+    /// Sets the description shown to the parent model (how it decides when
+    /// to delegate).
+    #[must_use]
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// Sets system instructions for the subagent. These are **appended** to
+    /// the harness's default subagent instructions (reference SDK
+    /// semantics), not a full replacement.
+    #[must_use]
+    pub fn with_system_instructions(mut self, instructions: impl Into<String>) -> Self {
+        self.system_instructions = Some(instructions.into());
+        self
+    }
+
+    /// Configures which built-in harness tools the subagent may use
+    /// (default: the read-only set). `start_subagent` is force-disabled —
+    /// the harness does not support nested subagents.
+    #[must_use]
+    pub fn with_capabilities(mut self, capabilities: Capabilities) -> Self {
+        self.capabilities = capabilities;
+        self
+    }
+
+    /// Adds a custom tool, referenced by name. The tool must also be
+    /// registered on the parent agent; `spawn()` validates this.
+    #[must_use]
+    pub fn add_tool(mut self, name: impl Into<String>) -> Self {
+        self.tool_names.push(name.into());
+        self
+    }
+
+    /// The subagent's name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The custom tool names this subagent references.
+    #[must_use]
+    pub fn tool_names(&self) -> &[String] {
+        &self.tool_names
+    }
+
+    /// Builds the wire `CustomAgent`, resolving custom tool names against
+    /// the parent's declarations. Callers must have validated the names
+    /// beforehand (`spawn()` does); unresolved names are skipped here.
+    pub(crate) fn to_wire(&self, parent_tools: &[protocol::Tool]) -> protocol::CustomAgent {
+        if self.capabilities.is_enabled(BuiltinTool::StartSubagent) {
+            tracing::warn!(
+                "Subagent '{}' enables start_subagent, but nested subagents are not \
+                 supported by the harness; disabling it.",
+                self.name
+            );
+        }
+        let mut harness_side_tools = self.capabilities.to_harness_side_tools();
+        // Nested subagents are unsupported (parity with the reference SDK).
+        harness_side_tools.subagents = Some(protocol::ToolToggle::new(false));
+
+        let tools = self
+            .tool_names
+            .iter()
+            .filter_map(|name| {
+                parent_tools
+                    .iter()
+                    .find(|tool| tool.name.as_deref() == Some(name))
+                    .cloned()
+            })
+            .collect();
+
+        protocol::CustomAgent {
+            name: Some(self.name.clone()),
+            description: self.description.clone(),
+            // Reference SDK semantics: subagent instructions are appended
+            // sections (title "System"), never a full replacement.
+            system_instructions: self.system_instructions.as_ref().map(|text| {
+                protocol::SystemInstructions {
+                    custom: None,
+                    appended: Some(protocol::AppendedSystemInstructions {
+                        custom_identity: None,
+                        appended_sections: vec![protocol::InstructionSection {
+                            title: Some("System".to_string()),
+                            content: Some(text.clone()),
+                        }],
+                    }),
+                }
+            }),
+            harness_side_tools: Some(harness_side_tools),
+            tools,
+        }
+    }
+}
+
 /// An MCP server for the harness to connect to.
 ///
 /// ```rust,ignore
@@ -445,6 +595,98 @@ mod tests {
         for (tool, name) in expected {
             assert_eq!(tool.wire_name(), name);
         }
+    }
+
+    fn parent_tool(name: &str) -> protocol::Tool {
+        protocol::Tool {
+            name: Some(name.to_string()),
+            description: Some(format!("{name} description")),
+            parameters_json_schema: Some(r#"{"type":"object"}"#.to_string()),
+            response_json_schema: None,
+        }
+    }
+
+    #[test]
+    fn test_subagent_defaults() {
+        let subagent = Subagent::new("auditor");
+        assert_eq!(subagent.name(), "auditor");
+        assert!(subagent.tool_names().is_empty());
+        let wire = subagent.to_wire(&[]);
+        assert_eq!(wire.name.as_deref(), Some("auditor"));
+        assert!(wire.description.is_none());
+        assert!(wire.system_instructions.is_none());
+        assert!(wire.tools.is_empty());
+        // Default capabilities: read-only builtins, explicit flags.
+        let side_tools = wire.harness_side_tools.unwrap();
+        assert!(side_tools.view_file.unwrap().enabled);
+        assert!(!side_tools.run_command.unwrap().enabled);
+        assert!(!side_tools.subagents.unwrap().enabled);
+    }
+
+    #[test]
+    fn test_subagent_to_wire_resolves_parent_tools() {
+        let subagent = Subagent::new("auditor")
+            .with_description("Audits files.")
+            .with_system_instructions("Focus on injection vectors.")
+            .add_tool("severity_classifier");
+        assert_eq!(subagent.tool_names(), ["severity_classifier"]);
+
+        let parent_tools = [parent_tool("other"), parent_tool("severity_classifier")];
+        let wire = subagent.to_wire(&parent_tools);
+        assert_eq!(wire.description.as_deref(), Some("Audits files."));
+        // Instructions are appended sections (reference SDK semantics),
+        // never a custom replacement.
+        let instructions = wire.system_instructions.unwrap();
+        assert!(instructions.custom.is_none());
+        let appended = instructions.appended.unwrap();
+        assert_eq!(appended.appended_sections.len(), 1);
+        assert_eq!(
+            appended.appended_sections[0].title.as_deref(),
+            Some("System")
+        );
+        assert_eq!(
+            appended.appended_sections[0].content.as_deref(),
+            Some("Focus on injection vectors.")
+        );
+        // The full parent declaration is copied, not just the name.
+        assert_eq!(wire.tools.len(), 1);
+        assert_eq!(wire.tools[0].name.as_deref(), Some("severity_classifier"));
+        assert_eq!(
+            wire.tools[0].parameters_json_schema.as_deref(),
+            Some(r#"{"type":"object"}"#)
+        );
+    }
+
+    #[test]
+    fn test_subagent_start_subagent_forced_off() {
+        // Nested subagents are unsupported: even when explicitly enabled,
+        // the wire config disables the builtin.
+        let subagent = Subagent::new("nested")
+            .with_capabilities(Capabilities::read_only().enable(BuiltinTool::StartSubagent));
+        let wire = subagent.to_wire(&[]);
+        assert!(!wire.harness_side_tools.unwrap().subagents.unwrap().enabled);
+    }
+
+    #[test]
+    fn test_subagent_wire_serialization_fixture() {
+        let subagent = Subagent::new("auditor")
+            .with_description("Audits files.")
+            .with_system_instructions("Be thorough.")
+            .add_tool("severity_classifier");
+        let wire = subagent.to_wire(&[parent_tool("severity_classifier")]);
+        let value = serde_json::to_value(&wire).unwrap();
+        // Proto-JSON: camelCase fields, JSON-string schema.
+        assert_eq!(
+            value["systemInstructions"]["appended"]["appendedSections"][0]["content"],
+            "Be thorough."
+        );
+        assert_eq!(value["tools"][0]["name"], "severity_classifier");
+        assert_eq!(
+            value["tools"][0]["parametersJsonSchema"],
+            r#"{"type":"object"}"#
+        );
+        assert_eq!(value["harnessSideTools"]["subagents"]["enabled"], false);
+        assert_eq!(value["harnessSideTools"]["viewFile"]["enabled"], true);
     }
 
     #[test]

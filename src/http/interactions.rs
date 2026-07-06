@@ -556,7 +556,6 @@ mod tests {
     #[test]
     fn test_create_interaction_request_serialization() {
         // Verify request serialization works correctly
-        #[allow(deprecated)]
         let request = InteractionRequest {
             model: Some("gemini-3-flash-preview".to_string()),
             agent: None,
@@ -566,7 +565,6 @@ mod tests {
             tools: None,
             response_modalities: None,
             response_format: None,
-            response_mime_type: None,
             generation_config: None,
             stream: None,
             background: None,
