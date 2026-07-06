@@ -400,6 +400,8 @@ mod streaming {
                 system_instruction: None,
                 service_tier: None,
                 cached_content: None,
+                webhook_config: None,
+                environment: None,
             };
 
             let stream = client.execute_stream(request);

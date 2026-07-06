@@ -30,12 +30,16 @@ request and implements the revision's protocol:
   `metadata.total_usage` on lifecycle events.
 
 ⚠️ Live wire verification with `LOUD_WIRE=1` + a real `GEMINI_API_KEY` is
-pending (no key available in the migration environment). Diff observed wire
-shapes against the fixture tests before release.
+pending (no key available in the migration environment) — this applies to
+both the revision migration and the phase-2 surface expansion (webhooks,
+agents, environments, retrieval, typed response formats, video config,
+multi-speaker TTS). Diff observed wire shapes against the fixture tests
+before release.
 
 ## Missing surface (by user value)
 
-Completed in the revision-migration phase:
+Completed in the revision-migration phase and the phase-2 surface expansion
+(2026-07):
 
 1. ~~`Api-Revision: 2026-05-20` migration (steps model + new SSE lifecycle).~~ ✅
 2. ~~`tool_choice` restructure: lowercase enums or
@@ -45,36 +49,41 @@ Completed in the revision-migration phase:
    (`with_cached_content()`)
 4. ~~`service_tier`: `flex | standard | priority`.~~ ✅ (`ServiceTier`,
    `with_service_tier()`)
-5. Webhooks: `webhook_config {uris, user_metadata}` on requests + full
+5. ~~Webhooks: `webhook_config {uris, user_metadata}` on requests + full
    `/v1beta/webhooks` resource (CRUD, `:ping`, `:rotateSigningSecret`,
    events `batch.succeeded/expired/failed`, `interaction.requires_action/
-   completed/failed`, `video.generated`). — **next phase**
+   completed/failed`, `video.generated`).~~ ✅ (`src/webhooks.rs`,
+   `Client::*_webhook*()`, `with_webhook_config()`)
 6. ~~`include_input` query param on GET interaction.~~ ✅
    (`Client::get_interaction_with_input()`)
-7. `retrieval` tool: `vertex_ai_search | rag_store | exa_ai_search |
-   parallel_ai_search` + per-backend configs. — **next phase**
-8. Video generation: `response_modalities: ["video"]`,
+7. ~~`retrieval` tool: `vertex_ai_search | rag_store | exa_ai_search |
+   parallel_ai_search` + per-backend configs.~~ ✅ (`Tool::Retrieval`,
+   `RetrievalConfig`)
+8. ~~Video generation: `response_modalities: ["video"]`,
    `generation_config.video_config {task}`, video response_format
-   (`gcs_uri`, `duration`, `delivery: uri`). — **next phase** (note: `video`
-   content blocks and `video` stream deltas ARE already modeled)
-9. Typed `response_format` union (text/audio/image/video) + list form +
-   `delivery: inline|uri`. — **next phase** (`response_format` remains raw
-   JSON for now)
-10. Environments (`environment` request field, sources
+   (`gcs_uri`, `duration`, `delivery: uri`).~~ ✅ (`VideoConfig`/`VideoTask`,
+   `with_video_output()`, `ResponseFormat::Video`)
+9. ~~Typed `response_format` union (text/audio/image/video) + list form +
+   `delivery: inline|uri`.~~ ✅ (`ResponseFormat`/`ResponseFormatSpec`/
+   `ResponseDelivery`; raw JSON schemas still accepted by
+   `with_response_format()`)
+10. ~~Environments (`environment` request field, sources
     `gcs|inline|repository|skill_registry`, network allowlist) + Agents
-    resource (`/v1beta/agents` CRUD). — **next phase** (note: the
-    `environment_id` RESPONSE field is already modeled)
-11. Multi-speaker TTS: `speech_config` as a list of `{voice, language,
-    speaker}`. — **next phase** (crate still sends a single object)
+    resource (`/v1beta/agents` CRUD).~~ ✅ (`src/environment.rs`,
+    `src/agents.rs`, `with_environment()`, `Client::*_agent*()`)
+11. ~~Multi-speaker TTS: `speech_config` as a list of `{voice, language,
+    speaker}`.~~ ✅ (list wire form; `with_speech_configs()` /
+    `add_speech_config()`; legacy single object accepted on deserialize)
 12. ~~`presence_penalty` / `frequency_penalty` [-2, 2].~~ ✅
 13. ~~Tool config completeness: GoogleMaps `latitude`/`longitude`; ComputerUse
     `enable_prompt_injection_detection`, `disabled_safety_policies`,
     `mobile|desktop` environments; GoogleSearch `enterprise_web_search`;
     MCP `allowed_tools` as `[{mode, tools}]`.~~ ✅
 14. ~~`budget_exceeded` status (first-class); usage `grounding_tool_count`.~~ ✅
-15. Deep-research config: `visualization`, `collaborative_planning`,
+15. ~~Deep-research config: `visualization`, `collaborative_planning`,
     `enable_bigquery_tool`; document agent IDs incl.
-    `antigravity-preview-05-2026`. — **next phase**
+    `antigravity-preview-05-2026`.~~ ✅ (`DeepResearchConfig` options;
+    agent IDs in `docs/AGENTS_AND_BACKGROUND.md`)
 16. ~~Typed citation annotations: `url_citation`, `file_citation`,
     `place_citation` (with review snippets); byte indices.~~ ✅
 17. ~~Audio content `channels`/`sample_rate`.~~ ✅
@@ -96,7 +105,10 @@ Completed in the revision-migration phase:
 
 Every change lands with wire-fixture tests derived from the generated SDK
 bindings (see `src/steps.rs`, `src/wire_streaming.rs`,
-`src/http/interactions.rs`, `tests/wire_format_verification_tests.rs`).
+`src/http/interactions.rs`, `tests/wire_format_verification_tests.rs`;
+phase-2 fixtures in `src/webhooks.rs`, `src/environment.rs`,
+`src/agents.rs`, `src/response_format.rs`, `src/tools.rs`, and
+`tests/webhooks_and_agents_tests.rs`).
 Before release: run the integration suite with a real `GEMINI_API_KEY` and
 `LOUD_WIRE=1`, diff observed wire shapes against the fixtures, and update
 `docs/ENUM_WIRE_FORMATS.md`.

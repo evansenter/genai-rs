@@ -7,6 +7,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Interactions API surface expansion (phase 2)
+
+Adds the remaining 2026-05-20 API surface on top of the revision migration:
+webhooks, environments + agents resources, the retrieval tool, typed
+response formats, video generation config, multi-speaker TTS, and new
+Deep Research options.
+
+> **Note**: wire shapes were derived from Google's generated `google-genai`
+> 2.10 API bindings and covered with fixture + proptest roundtrip tests.
+> Live wire verification with `LOUD_WIRE=1` and a real `GEMINI_API_KEY` is
+> still pending and should be performed before release.
+
+#### Added — Webhooks
+
+- Full `/v1beta/webhooks` resource client: `Client::create_webhook()`,
+  `get_webhook()`, `list_webhooks()`, `update_webhook()` (with
+  `update_mask`), `delete_webhook()`, `ping_webhook()`, and
+  `rotate_webhook_signing_secret()` (with `RevocationBehavior`).
+- New types in `src/webhooks.rs`: `Webhook`, `WebhookUpdate`,
+  `SigningSecret`, `WebhookListResponse`, `RotateSigningSecretResponse`,
+  and Evergreen enums `WebhookEvent` (`batch.succeeded/expired/failed`,
+  `interaction.requires_action/completed/failed`, `video.generated`) and
+  `WebhookState` (`enabled`, `disabled`,
+  `disabled_due_to_failed_deliveries`).
+- Per-request webhook routing: `webhook_config {uris, user_metadata}` on
+  `InteractionRequest` + `InteractionBuilder::with_webhook_config()`.
+- Webhook/agent endpoints send the same `Api-Revision: 2026-05-20` header
+  as interactions (matching google-genai, which applies the revision header
+  globally).
+
+#### Added — Environments and Agents resource
+
+- `environment` field on `InteractionRequest` +
+  `InteractionBuilder::with_environment()`, accepting a string environment
+  ID or a typed `RemoteEnvironment` (`EnvironmentSpec` union). New types in
+  `src/environment.rs`: `EnvironmentSource` (sources
+  `gcs|inline|repository|skill_registry` via `SourceType`),
+  `NetworkConfig` (`"disabled"` | `{allowlist}` union), `AllowlistEntry`
+  (domain wildcard + header-injection `transform`).
+- `/v1beta/agents` resource client: `Client::create_agent()`,
+  `get_agent()`, `list_agents()` (`page_size`/`page_token`/`parent`),
+  `delete_agent()`; `Agent` type (`id`, `base_agent`,
+  `system_instruction`, `description`, `tools`, `base_environment`) in
+  `src/agents.rs`.
+
+#### Added — Retrieval tool
+
+- `Tool::Retrieval` with `RetrievalType`
+  (`vertex_ai_search|rag_store|exa_ai_search|parallel_ai_search` +
+  Unknown) and per-backend configs: `VertexAiSearchConfig`
+  (`engine`/`datastores`), `ExaAiSearchConfig`/`ParallelAiSearchConfig`
+  (`api_key`/`custom_config`), `RagStoreConfig` (`rag_resources`,
+  deprecated `similarity_top_k`/`vector_distance_threshold`,
+  `rag_retrieval_config` with `top_k`/`hybrid_search`/`filter`/`ranking`).
+- `RetrievalConfig` builder for `add_tool()` that keeps `retrieval_types`
+  in sync with the configured backends.
+
+#### Changed — typed `response_format`
+
+- `InteractionRequest.response_format` is now a typed
+  `Option<ResponseFormatSpec>` (single object or list) instead of raw
+  `serde_json::Value`. `ResponseFormat` is a tagged union:
+  `Text{mime_type, schema}`, `Audio{mime_type, delivery, sample_rate,
+  bit_rate}`, `Image{mime_type, delivery, aspect_ratio, image_size}`,
+  `Video{delivery, gcs_uri, aspect_ratio, duration}`, plus Unknown;
+  `ResponseDelivery` is `inline|uri` + Unknown.
+- `with_response_format()` now takes `impl Into<ResponseFormat>` — raw
+  `serde_json::Value` schemas keep compiling and convert to
+  `ResponseFormat::Text{mime_type: "application/json", schema}` (the typed
+  equivalent of the old wire shape). New
+  `with_response_formats(Vec<ResponseFormat>)` for the list form.
+- Raw schema dicts received on the wire (no recognized `type` tag)
+  roundtrip losslessly through `ResponseFormat::Unknown`.
+
+#### Added — video generation config
+
+- `generation_config.video_config {task}` (`VideoConfig` + `VideoTask`
+  enum: `text_to_video|image_to_video|reference_to_video|edit` + Unknown),
+  `with_video_config()`, and the `with_video_output()` modality shortcut
+  (`response_modalities: ["video"]`).
+
+#### Changed — multi-speaker TTS (`speech_config` list)
+
+- `GenerationConfig.speech_config` is now `Option<Vec<SpeechConfig>>` to
+  match the spec's list wire format (multi-speaker TTS). The legacy
+  single-object wire form is still accepted on deserialize.
+- Builder: `with_speech_config(single)` keeps working (sends a one-entry
+  list); new `with_speech_configs(Vec<SpeechConfig>)` and
+  `add_speech_config()` for multi-speaker dialogue.
+
+#### Added — Deep Research config options
+
+- `DeepResearchConfig::with_visualization(Visualization)` (`off|auto` +
+  Unknown), `with_collaborative_planning(bool)`, and
+  `with_bigquery_tool(bool)`; managed agent IDs (incl.
+  `deep-research-preview-04-2026`, `deep-research-max-preview-04-2026`,
+  `antigravity-preview-05-2026`) documented in
+  `docs/AGENTS_AND_BACKGROUND.md`.
+
+#### New examples
+
+- `examples/webhooks_and_background.rs` — webhook resource lifecycle +
+  per-request webhook routing (runs without an API key, printing request
+  shapes).
+- `examples/retrieval_grounding.rs` — retrieval tool over Vertex AI
+  Search, RAG store, and Exa.ai backends.
+
 ### Interactions API revision 2026-05-20 migration
 
 The crate now speaks Interactions API wire revision **2026-05-20**: every

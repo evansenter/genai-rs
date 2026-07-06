@@ -81,7 +81,29 @@ pub mod request;
 pub use request::{
     AgentConfig, DeepResearchConfig, DynamicConfig, GenerationConfig, ImageAspectRatio,
     ImageConfig, ImageSize, InteractionInput, InteractionRequest, Role, ServiceTier, SpeechConfig,
-    ThinkingLevel, ThinkingSummaries, TurnContent,
+    ThinkingLevel, ThinkingSummaries, TurnContent, VideoConfig, VideoTask, Visualization,
+};
+
+// Typed response_format union (text/audio/image/video + list form)
+pub mod response_format;
+pub use response_format::{ResponseDelivery, ResponseFormat, ResponseFormatSpec};
+
+// Environment types (environment request field, agent base_environment)
+pub mod environment;
+pub use environment::{
+    AllowlistEntry, EnvironmentSource, EnvironmentSpec, NetworkConfig, RemoteEnvironment,
+    SourceType,
+};
+
+// Agents resource (/v1beta/agents)
+pub mod agents;
+pub use agents::{Agent, AgentListResponse};
+
+// Webhooks resource (/v1beta/webhooks) and per-request webhook_config
+pub mod webhooks;
+pub use webhooks::{
+    RevocationBehavior, RotateSigningSecretResponse, SigningSecret, Webhook, WebhookConfig,
+    WebhookEvent, WebhookListResponse, WebhookState, WebhookUpdate,
 };
 
 // Response types
@@ -96,9 +118,11 @@ pub use response::{
 // Tool types (function declarations, built-in tools)
 pub mod tools;
 pub use tools::{
-    AllowedTools, ComputerUseConfig, FileSearchConfig, FunctionCallingMode, FunctionDeclaration,
-    FunctionDeclarationBuilder, FunctionParameters, GoogleMapsConfig, GoogleSearchConfig,
-    McpServerConfig, SearchType, Tool, ToolChoice,
+    AllowedTools, ComputerUseConfig, ExaAiSearchConfig, FileSearchConfig, FunctionCallingMode,
+    FunctionDeclaration, FunctionDeclarationBuilder, FunctionParameters, GoogleMapsConfig,
+    GoogleSearchConfig, HybridSearchConfig, McpServerConfig, ParallelAiSearchConfig, RagFilter,
+    RagRanking, RagResource, RagRetrievalConfig, RagStoreConfig, RetrievalConfig, RetrievalType,
+    SearchType, Tool, ToolChoice, VertexAiSearchConfig,
 };
 
 // Wire streaming types (from API)

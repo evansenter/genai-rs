@@ -10,6 +10,7 @@ Gemini provides several server-side tools that execute automatically without req
 - [URL Context](#url-context)
 - [Computer Use](#computer-use)
 - [File Search](#file-search)
+- [Retrieval](#retrieval)
 - [Google Maps](#google-maps)
 - [MCP Servers](#mcp-servers)
 - [Combining Tools](#combining-tools)
@@ -23,6 +24,7 @@ Gemini provides several server-side tools that execute automatically without req
 | URL Context | Fetch and analyze URLs | Server-side |
 | Computer Use | Browser automation | Server-side |
 | File Search | Semantic document search | Server-side |
+| Retrieval | External retrieval backends (Vertex AI Search, RAG, Exa.ai, Parallel.ai) | Server-side |
 | Google Maps | Place and location data | Server-side |
 | MCP Servers | Remote MCP tool calls | Server-side |
 
@@ -354,6 +356,107 @@ let response = client
 **When to use**: Document Q&A, research across multiple files, finding specific information in large documents.
 
 **Example**: `cargo run --example file_search`
+
+## Retrieval
+
+Ground responses in external retrieval backends: Vertex AI Search engines and
+datastores, Vertex RAG Store corpora, or third-party search APIs (Exa.ai,
+Parallel.ai). Configure via [`RetrievalConfig`], which keeps the enabled
+`retrieval_types` in sync with the per-backend configs.
+
+> **Note**: These backends require pre-provisioned resources (search engines,
+> RAG corpora) or third-party API keys. Pending live verification against the
+> 2026-05-20 revision.
+
+### Vertex AI Search
+
+```rust,no_run
+use genai_rs::{Client, RetrievalConfig, VertexAiSearchConfig};
+
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+# let client = Client::new("api-key".to_string());
+let response = client
+    .interaction()
+    .with_model("gemini-3-flash-preview")
+    .with_text("What does our handbook say about vacation policy?")
+    .add_tool(RetrievalConfig::new().with_vertex_ai_search(
+        VertexAiSearchConfig::new()
+            .with_engine("projects/p/locations/global/engines/my-engine"),
+    ))
+    .create()
+    .await?;
+# Ok(())
+# }
+```
+
+### RAG Store
+
+```rust,no_run
+use genai_rs::{
+    Client, RagFilter, RagRanking, RagResource, RagRetrievalConfig, RagStoreConfig,
+    RetrievalConfig,
+};
+
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+# let client = Client::new("api-key".to_string());
+let response = client
+    .interaction()
+    .with_model("gemini-3-flash-preview")
+    .with_text("Summarize the design documents about caching")
+    .add_tool(RetrievalConfig::new().with_rag_store(
+        RagStoreConfig::new(vec![
+            RagResource::new("projects/p/locations/us/ragCorpora/docs"),
+        ])
+        .with_rag_retrieval_config(
+            RagRetrievalConfig::new()
+                .with_top_k(8)
+                .with_hybrid_search_alpha(0.5)
+                .with_filter(RagFilter {
+                    vector_distance_threshold: Some(0.7),
+                    vector_similarity_threshold: None,
+                    metadata_filter: Some("category = \"design\"".to_string()),
+                })
+                .with_ranking(RagRanking::rank_service().with_model_name("ranker-v2")),
+        ),
+    ))
+    .create()
+    .await?;
+# Ok(())
+# }
+```
+
+### Third-Party Search (Exa.ai / Parallel.ai)
+
+```rust,no_run
+use genai_rs::{Client, ExaAiSearchConfig, ParallelAiSearchConfig, RetrievalConfig};
+
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+# let client = Client::new("api-key".to_string());
+let exa_key = std::env::var("EXA_API_KEY")?;
+let response = client
+    .interaction()
+    .with_model("gemini-3-flash-preview")
+    .with_text("Find recent papers on speculative decoding")
+    .add_tool(RetrievalConfig::new().with_exa_ai_search(
+        ExaAiSearchConfig::new(exa_key)
+            .with_custom_config(serde_json::json!({"num_results": 5})),
+    ))
+    .create()
+    .await?;
+# Ok(())
+# }
+```
+
+**Security**: Exa.ai / Parallel.ai `api_key` values are sent on the wire in
+the tool config — load them from secrets management and treat request logs as
+sensitive.
+
+**When to use**: Enterprise search over provisioned Vertex resources, RAG
+corpora with fine-grained retrieval control, or third-party web-search APIs.
+For Google-hosted document stores prefer [File Search](#file-search); for
+general web grounding prefer [Google Search](#google-search).
+
+**Example**: `cargo run --example retrieval_grounding`
 
 ## Google Maps
 

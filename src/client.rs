@@ -674,6 +674,233 @@ impl Client {
         Ok(response)
     }
 
+    // --- Webhooks resource methods (`/v1beta/webhooks`) ---
+
+    /// Registers a new webhook.
+    ///
+    /// The returned webhook includes `new_signing_secret` — only populated on
+    /// create — which is used to verify event payload signatures. Store it
+    /// securely; it is not returned again.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails, the API returns an error,
+    /// or response parsing fails.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{Client, Webhook, WebhookEvent};
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::new("api-key".to_string());
+    ///
+    /// let webhook = client.create_webhook(
+    ///     &Webhook::new(
+    ///         "https://example.com/hooks/genai",
+    ///         vec![WebhookEvent::InteractionCompleted, WebhookEvent::InteractionFailed],
+    ///     )
+    ///     .with_name("my-hook"),
+    /// ).await?;
+    ///
+    /// println!("Created {:?}; secret: {:?}", webhook.id, webhook.new_signing_secret);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn create_webhook(
+        &self,
+        webhook: &crate::Webhook,
+    ) -> Result<crate::Webhook, GenaiError> {
+        crate::http::webhooks::create_webhook(&self.http, webhook).await
+    }
+
+    /// Retrieves a registered webhook by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the webhook doesn't exist, the HTTP request fails,
+    /// or response parsing fails.
+    pub async fn get_webhook(&self, webhook_id: &str) -> Result<crate::Webhook, GenaiError> {
+        crate::http::webhooks::get_webhook(&self.http, webhook_id).await
+    }
+
+    /// Lists registered webhooks.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_size` - Optional maximum number of webhooks per page.
+    /// * `page_token` - Optional token from a previous list call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails or response parsing fails.
+    pub async fn list_webhooks(
+        &self,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+    ) -> Result<crate::WebhookListResponse, GenaiError> {
+        crate::http::webhooks::list_webhooks(&self.http, page_size, page_token).await
+    }
+
+    /// Updates a registered webhook.
+    ///
+    /// # Arguments
+    ///
+    /// * `webhook_id` - The webhook to update.
+    /// * `update` - The fields to change (only set fields are sent).
+    /// * `update_mask` - Optional comma-separated list of fields to update
+    ///   (e.g. `"uri,subscribed_events"`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the webhook doesn't exist, the HTTP request fails,
+    /// or response parsing fails.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{Client, WebhookState, WebhookUpdate};
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let client = Client::new("api-key".to_string());
+    /// // Temporarily disable a webhook
+    /// let updated = client.update_webhook(
+    ///     "wh-123",
+    ///     &WebhookUpdate::new().with_state(WebhookState::Disabled),
+    ///     Some("state"),
+    /// ).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn update_webhook(
+        &self,
+        webhook_id: &str,
+        update: &crate::WebhookUpdate,
+        update_mask: Option<&str>,
+    ) -> Result<crate::Webhook, GenaiError> {
+        crate::http::webhooks::update_webhook(&self.http, webhook_id, update, update_mask).await
+    }
+
+    /// Deletes a registered webhook.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the webhook doesn't exist or the HTTP request fails.
+    pub async fn delete_webhook(&self, webhook_id: &str) -> Result<(), GenaiError> {
+        crate::http::webhooks::delete_webhook(&self.http, webhook_id).await
+    }
+
+    /// Sends a test event to a webhook (`:ping`).
+    ///
+    /// Use this to verify your endpoint receives and validates deliveries
+    /// before relying on it for real events.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the webhook doesn't exist or the HTTP request fails.
+    pub async fn ping_webhook(&self, webhook_id: &str) -> Result<(), GenaiError> {
+        crate::http::webhooks::ping_webhook(&self.http, webhook_id).await
+    }
+
+    /// Rotates a webhook's signing secret (`:rotateSigningSecret`).
+    ///
+    /// Returns the newly generated secret. Pass a
+    /// [`RevocationBehavior`](crate::RevocationBehavior) to control whether
+    /// previous secrets stay valid for 24 hours (safe rollover) or are
+    /// revoked immediately; `None` uses the API default.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the webhook doesn't exist, the HTTP request fails,
+    /// or response parsing fails.
+    pub async fn rotate_webhook_signing_secret(
+        &self,
+        webhook_id: &str,
+        revocation_behavior: Option<crate::RevocationBehavior>,
+    ) -> Result<crate::RotateSigningSecretResponse, GenaiError> {
+        crate::http::webhooks::rotate_signing_secret(&self.http, webhook_id, revocation_behavior)
+            .await
+    }
+
+    // --- Agents resource methods (`/v1beta/agents`) ---
+
+    /// Creates a custom agent.
+    ///
+    /// Once created, run the agent with
+    /// [`InteractionBuilder::with_agent()`](crate::InteractionBuilder::with_agent)
+    /// using its ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails, the API returns an error,
+    /// or response parsing fails.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{Agent, Client, Tool};
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::new("api-key".to_string());
+    ///
+    /// let agent = client.create_agent(
+    ///     &Agent::new("customer-sentinel")
+    ///         .with_system_instruction("You monitor customer feedback.")
+    ///         .add_tool(Tool::CodeExecution),
+    /// ).await?;
+    ///
+    /// // Run it
+    /// let response = client.interaction()
+    ///     .with_agent(agent.id.as_deref().unwrap_or("customer-sentinel"))
+    ///     .with_text("Summarize this week's feedback")
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn create_agent(&self, agent: &crate::Agent) -> Result<crate::Agent, GenaiError> {
+        crate::http::agents::create_agent(&self.http, agent).await
+    }
+
+    /// Retrieves an agent by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the agent doesn't exist, the HTTP request fails,
+    /// or response parsing fails.
+    pub async fn get_agent(&self, agent_id: &str) -> Result<crate::Agent, GenaiError> {
+        crate::http::agents::get_agent(&self.http, agent_id).await
+    }
+
+    /// Lists agents.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_size` - Optional maximum number of agents per page.
+    /// * `page_token` - Optional token from a previous list call.
+    /// * `parent` - Optional parent resource filter.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails or response parsing fails.
+    pub async fn list_agents(
+        &self,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+        parent: Option<&str>,
+    ) -> Result<crate::AgentListResponse, GenaiError> {
+        crate::http::agents::list_agents(&self.http, page_size, page_token, parent).await
+    }
+
+    /// Deletes an agent by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the agent doesn't exist or the HTTP request fails.
+    pub async fn delete_agent(&self, agent_id: &str) -> Result<(), GenaiError> {
+        crate::http::agents::delete_agent(&self.http, agent_id).await
+    }
+
     // --- Files API methods ---
 
     /// Uploads a file from a path to the Files API.

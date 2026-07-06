@@ -1285,6 +1285,8 @@ mod text_to_speech {
             system_instruction: None,
             service_tier: None,
             cached_content: None,
+            webhook_config: None,
+            environment: None,
         };
 
         let mut request_json = serde_json::to_value(&request).expect("Serialize request");
@@ -1320,9 +1322,9 @@ mod text_to_speech {
         println!("\n=== Testing FLAT SpeechConfig format ===");
 
         let flat_gen_config = GenerationConfig {
-            speech_config: Some(genai_rs::SpeechConfig::with_voice_and_language(
+            speech_config: Some(vec![genai_rs::SpeechConfig::with_voice_and_language(
                 "Kore", "en-US",
-            )),
+            )]),
             ..Default::default()
         };
 
@@ -1344,6 +1346,8 @@ mod text_to_speech {
             system_instruction: None,
             service_tier: None,
             cached_content: None,
+            webhook_config: None,
+            environment: None,
         };
 
         let flat_json = serde_json::to_value(&flat_request).expect("Serialize flat request");

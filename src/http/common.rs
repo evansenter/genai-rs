@@ -14,7 +14,7 @@ impl ApiVersion {
 }
 
 // --- URL Construction ---
-const BASE_URL_PREFIX: &str = "https://generativelanguage.googleapis.com";
+pub(crate) const BASE_URL_PREFIX: &str = "https://generativelanguage.googleapis.com";
 
 /// Header name for API key authentication.
 ///

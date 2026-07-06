@@ -22,6 +22,8 @@ fn test_serialize_create_interaction_request_with_model() {
         system_instruction: None,
         service_tier: None,
         cached_content: None,
+        webhook_config: None,
+        environment: None,
     };
 
     let json = serde_json::to_string(&request).expect("Serialization failed");
@@ -47,6 +49,7 @@ fn test_generation_config_serialization() {
         frequency_penalty: None,
         speech_config: None,
         image_config: None,
+        video_config: None,
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -72,6 +75,7 @@ fn test_generation_config_new_fields_serialization() {
         frequency_penalty: Some(-0.25),
         speech_config: None,
         image_config: None,
+        video_config: None,
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -101,6 +105,7 @@ fn test_generation_config_roundtrip() {
         frequency_penalty: Some(0.25),
         speech_config: None,
         image_config: None,
+        video_config: None,
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -519,6 +524,8 @@ fn test_create_interaction_request_with_agent_config() {
         system_instruction: None,
         service_tier: None,
         cached_content: None,
+        webhook_config: None,
+        environment: None,
     };
 
     let json = serde_json::to_string(&request).expect("Serialization failed");
@@ -602,6 +609,8 @@ fn test_interaction_request_roundtrip() {
         system_instruction: Some("Be helpful.".to_string()),
         service_tier: Some(ServiceTier::Flex),
         cached_content: Some("cachedContents/xyz".to_string()),
+        webhook_config: None,
+        environment: None,
     };
 
     // Serialize to JSON
@@ -652,12 +661,15 @@ fn test_response_format_serializes_as_snake_case() {
         previous_interaction_id: None,
         tools: None,
         response_modalities: None,
-        response_format: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "name": { "type": "string" }
-            }
-        })),
+        response_format: Some(
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" }
+                }
+            })
+            .into(),
+        ),
         response_mime_type: None,
         generation_config: None,
         stream: None,
@@ -666,6 +678,8 @@ fn test_response_format_serializes_as_snake_case() {
         system_instruction: None,
         service_tier: None,
         cached_content: None,
+        webhook_config: None,
+        environment: None,
     };
 
     let json = serde_json::to_string(&request).expect("Serialization failed");
@@ -743,4 +757,156 @@ fn test_interaction_input_content_deserializes_by_type_tag() {
         "Expected Content input, got {:?}",
         input
     );
+}
+
+// ============================================================================
+// speech_config list wire form / video_config / new request fields
+// ============================================================================
+
+#[test]
+fn test_speech_config_wire_form_is_list() {
+    let config = GenerationConfig {
+        speech_config: Some(vec![SpeechConfig::with_voice_and_language("Kore", "en-US")]),
+        ..Default::default()
+    };
+    let value = serde_json::to_value(&config).unwrap();
+    assert!(value["speech_config"].is_array());
+    assert_eq!(value["speech_config"][0]["voice"], "Kore");
+}
+
+#[test]
+fn test_speech_config_deserializes_legacy_single_object() {
+    // Pre-2026-05-20 payloads carried a single object; still accepted.
+    let json = r#"{"speech_config": {"voice": "Kore", "language": "en-US"}}"#;
+    let config: GenerationConfig = serde_json::from_str(json).unwrap();
+    let speech = config.speech_config.unwrap();
+    assert_eq!(speech.len(), 1);
+    assert_eq!(speech[0].voice.as_deref(), Some("Kore"));
+}
+
+#[test]
+fn test_speech_config_deserializes_list() {
+    let json = r#"{"speech_config": [
+        {"voice": "Kore", "speaker": "Alice"},
+        {"voice": "Puck", "speaker": "Bob"}
+    ]}"#;
+    let config: GenerationConfig = serde_json::from_str(json).unwrap();
+    let speech = config.speech_config.unwrap();
+    assert_eq!(speech.len(), 2);
+    assert_eq!(speech[1].speaker.as_deref(), Some("Bob"));
+}
+
+#[test]
+fn test_video_config_wire_shape() {
+    let config = GenerationConfig {
+        video_config: Some(VideoConfig::new().with_task(VideoTask::ImageToVideo)),
+        ..Default::default()
+    };
+    let value = serde_json::to_value(&config).unwrap();
+    assert_eq!(value["video_config"]["task"], "image_to_video");
+}
+
+#[test]
+fn test_video_task_roundtrip_and_unknown() {
+    for (task, wire) in [
+        (VideoTask::TextToVideo, "\"text_to_video\""),
+        (VideoTask::ImageToVideo, "\"image_to_video\""),
+        (VideoTask::ReferenceToVideo, "\"reference_to_video\""),
+        (VideoTask::Edit, "\"edit\""),
+    ] {
+        assert_eq!(serde_json::to_string(&task).unwrap(), wire);
+        let parsed: VideoTask = serde_json::from_str(wire).unwrap();
+        assert_eq!(parsed, task);
+    }
+
+    let unknown: VideoTask = serde_json::from_str("\"frame_interpolation\"").unwrap();
+    assert!(unknown.is_unknown());
+    assert_eq!(unknown.unknown_task_type(), Some("frame_interpolation"));
+    assert!(unknown.unknown_data().is_some());
+    assert_eq!(
+        serde_json::to_string(&unknown).unwrap(),
+        "\"frame_interpolation\""
+    );
+}
+
+#[test]
+fn test_visualization_roundtrip_and_unknown() {
+    for (visualization, wire) in [
+        (Visualization::Off, "\"off\""),
+        (Visualization::Auto, "\"auto\""),
+    ] {
+        assert_eq!(serde_json::to_string(&visualization).unwrap(), wire);
+        let parsed: Visualization = serde_json::from_str(wire).unwrap();
+        assert_eq!(parsed, visualization);
+    }
+
+    let unknown: Visualization = serde_json::from_str("\"interactive\"").unwrap();
+    assert!(unknown.is_unknown());
+    assert_eq!(unknown.unknown_visualization_type(), Some("interactive"));
+    assert!(unknown.unknown_data().is_some());
+    assert_eq!(serde_json::to_string(&unknown).unwrap(), "\"interactive\"");
+}
+
+#[test]
+fn test_deep_research_config_full_wire_shape() {
+    let config: AgentConfig = DeepResearchConfig::new()
+        .with_thinking_summaries(ThinkingSummaries::Auto)
+        .with_visualization(Visualization::Off)
+        .with_collaborative_planning(true)
+        .with_bigquery_tool(true)
+        .into();
+
+    let value = serde_json::to_value(&config).unwrap();
+    assert_eq!(value["type"], "deep-research");
+    assert_eq!(value["thinking_summaries"], "THINKING_SUMMARIES_AUTO");
+    assert_eq!(value["visualization"], "off");
+    assert_eq!(value["collaborative_planning"], true);
+    assert_eq!(value["enable_bigquery_tool"], true);
+}
+
+#[test]
+#[allow(deprecated)]
+fn test_request_with_webhook_config_and_environment_wire_shape() {
+    use crate::environment::{EnvironmentSource, RemoteEnvironment};
+    use crate::webhooks::WebhookConfig;
+
+    let request = InteractionRequest {
+        model: Some("gemini-3-flash-preview".to_string()),
+        agent: None,
+        agent_config: None,
+        input: InteractionInput::Text("Hello".to_string()),
+        previous_interaction_id: None,
+        tools: None,
+        response_modalities: None,
+        response_format: None,
+        response_mime_type: None,
+        generation_config: None,
+        stream: None,
+        background: Some(true),
+        store: None,
+        system_instruction: None,
+        service_tier: None,
+        cached_content: None,
+        webhook_config: Some(
+            WebhookConfig::new().with_uris(vec!["https://example.com/hook".to_string()]),
+        ),
+        environment: Some(
+            RemoteEnvironment::new()
+                .add_source(EnvironmentSource::inline("/etc/motd", "hello"))
+                .into(),
+        ),
+    };
+
+    let value = serde_json::to_value(&request).unwrap();
+    assert_eq!(
+        value["webhook_config"]["uris"][0],
+        "https://example.com/hook"
+    );
+    assert_eq!(value["environment"]["type"], "remote");
+    assert_eq!(value["environment"]["sources"][0]["type"], "inline");
+
+    // Roundtrip preserves the new fields
+    let back: InteractionRequest = serde_json::from_value(value).unwrap();
+    assert!(back.webhook_config.is_some());
+    assert!(back.environment.is_some());
 }

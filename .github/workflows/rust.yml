@@ -65,7 +65,7 @@ jobs:
           - group: core
             tests: "interactions_api_tests multiturn_tests streaming_multiturn_tests"
           - group: tools
-            tests: "tools_and_config_tests agents_tests"
+            tests: "tools_and_config_tests agents_tests webhooks_and_agents_tests"
           - group: functions
             tests: "function_calling_tests"
           - group: multimodal

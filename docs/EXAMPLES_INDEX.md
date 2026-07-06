@@ -59,6 +59,7 @@ LOUD_WIRE=1 cargo run --example <example_name>
 | `google_maps` | Location-grounded responses with place data | Beginner |
 | `computer_use` | Browser automation | Advanced |
 | `file_search` | Semantic document retrieval | Intermediate |
+| `retrieval_grounding` | Retrieval tool (Vertex AI Search, RAG store, Exa.ai/Parallel.ai) | Advanced |
 
 ### Multimodal Input
 
@@ -94,6 +95,7 @@ LOUD_WIRE=1 cargo run --example <example_name>
 |---------|-------------|------------|
 | `thinking` | Chain-of-thought reasoning levels | Intermediate |
 | `deep_research` | Long-running research agent | Advanced |
+| `webhooks_and_background` | Webhook resource CRUD + per-request webhook routing | Advanced |
 | `cancel_interaction` | Cancel background tasks | Intermediate |
 | `antigravity_agent` | Local Antigravity harness agent with Rust tools and policies (`--features antigravity`) | Advanced |
 
@@ -197,6 +199,16 @@ cargo run --example url_context
 ```
 **Learn**: `with_url_context()`, web content analysis.
 
+#### retrieval_grounding
+Ground responses in external retrieval backends.
+```bash
+cargo run --example retrieval_grounding
+```
+**Learn**: `RetrievalConfig`, `VertexAiSearchConfig`, `RagStoreConfig` (+
+`RagRetrievalConfig` hybrid search/filter/ranking), `ExaAiSearchConfig`.
+**Note**: Runs without credentials (prints request shapes); live call needs
+`GEMINI_API_KEY` + `VERTEX_AI_SEARCH_ENGINE`.
+
 ### Multimodal Examples
 
 #### multimodal_image
@@ -253,6 +265,15 @@ Long-running research with background execution.
 cargo run --example deep_research
 ```
 **Learn**: `with_agent()`, `with_background()`, polling patterns.
+
+#### webhooks_and_background
+Push-based completion via webhooks instead of polling.
+```bash
+cargo run --example webhooks_and_background
+```
+**Learn**: `create_webhook()`/`ping_webhook()`/`rotate_webhook_signing_secret()`,
+`WebhookEvent`, `with_webhook_config()` on background interactions.
+**Note**: Runs without `GEMINI_API_KEY` (prints request shapes).
 
 #### cancel_interaction
 Cancel in-progress background tasks.

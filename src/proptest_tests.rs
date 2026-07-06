@@ -16,19 +16,27 @@ use super::content::{
     Annotation, CodeExecutionLanguage, Content, FileSearchResultItem, GoogleMapsResultItem,
     GoogleSearchResultItem, Place, Resolution, ReviewSnippet, UrlContextResultItem,
 };
+use super::environment::{
+    AllowlistEntry, EnvironmentSource, EnvironmentSpec, NetworkConfig, RemoteEnvironment,
+    SourceType,
+};
 use super::request::{
     AgentConfig, DeepResearchConfig, DynamicConfig, GenerationConfig, ImageAspectRatio,
     ImageConfig, ImageSize, InteractionInput, Role, ServiceTier, SpeechConfig, ThinkingLevel,
-    ThinkingSummaries, TurnContent,
+    ThinkingSummaries, TurnContent, VideoConfig, VideoTask, Visualization,
 };
 use super::response::{
     GroundingToolCount, InteractionResponse, InteractionStatus, ModalityTokens,
     OwnedFunctionCallInfo, UsageMetadata,
 };
+use super::response_format::{ResponseDelivery, ResponseFormat, ResponseFormatSpec};
 use super::steps::{FunctionResultPayload, Step, StepDelta, StepError};
 use super::tools::{
-    AllowedTools, FunctionCallingMode, FunctionParameters, SearchType, Tool, ToolChoice,
+    AllowedTools, ExaAiSearchConfig, FunctionCallingMode, FunctionParameters, HybridSearchConfig,
+    ParallelAiSearchConfig, RagFilter, RagRanking, RagResource, RagRetrievalConfig, RagStoreConfig,
+    RetrievalType, SearchType, Tool, ToolChoice, VertexAiSearchConfig,
 };
+use super::webhooks::{RevocationBehavior, WebhookConfig, WebhookEvent, WebhookState};
 use super::wire_streaming::StreamChunk;
 
 // =============================================================================
@@ -1142,7 +1150,8 @@ fn arb_speech_config() -> impl Strategy<Value = SpeechConfig> {
 }
 
 fn arb_generation_config() -> impl Strategy<Value = GenerationConfig> {
-    (
+    // Split into two tuples to stay under proptest's 12-element limit
+    let part1 = (
         proptest::option::of(arb_clean_float().prop_map(|v| v.as_f64().unwrap() as f32)),
         proptest::option::of(1..10000i32),
         proptest::option::of(arb_clean_float().prop_map(|v| v.as_f64().unwrap() as f32)),
@@ -1150,14 +1159,36 @@ fn arb_generation_config() -> impl Strategy<Value = GenerationConfig> {
         proptest::option::of(1..1000i64),
         proptest::option::of(proptest::collection::vec(arb_identifier(), 0..3)),
         proptest::option::of(arb_thinking_summaries()),
+    );
+    let part2 = (
         proptest::option::of(arb_tool_choice()),
         proptest::option::of(arb_clean_float().prop_map(|v| v.as_f64().unwrap() as f32)),
         proptest::option::of(arb_clean_float().prop_map(|v| v.as_f64().unwrap() as f32)),
-        proptest::option::of(arb_speech_config()),
+        proptest::option::of(proptest::collection::vec(arb_speech_config(), 1..3)),
         proptest::option::of(arb_image_config()),
-    )
-        .prop_map(
-            |(
+        proptest::option::of(arb_video_config()),
+    );
+    (part1, part2).prop_map(
+        |(
+            (
+                temperature,
+                max_output_tokens,
+                top_p,
+                thinking_level,
+                seed,
+                stop_sequences,
+                thinking_summaries,
+            ),
+            (
+                tool_choice,
+                presence_penalty,
+                frequency_penalty,
+                speech_config,
+                image_config,
+                video_config,
+            ),
+        )| {
+            GenerationConfig {
                 temperature,
                 max_output_tokens,
                 top_p,
@@ -1170,23 +1201,27 @@ fn arb_generation_config() -> impl Strategy<Value = GenerationConfig> {
                 frequency_penalty,
                 speech_config,
                 image_config,
-            )| {
-                GenerationConfig {
-                    temperature,
-                    max_output_tokens,
-                    top_p,
-                    thinking_level,
-                    seed,
-                    stop_sequences,
-                    thinking_summaries,
-                    tool_choice,
-                    presence_penalty,
-                    frequency_penalty,
-                    speech_config,
-                    image_config,
-                }
-            },
-        )
+                video_config,
+            }
+        },
+    )
+}
+
+fn arb_video_task() -> impl Strategy<Value = VideoTask> {
+    prop_oneof![
+        Just(VideoTask::TextToVideo),
+        Just(VideoTask::ImageToVideo),
+        Just(VideoTask::ReferenceToVideo),
+        Just(VideoTask::Edit),
+        arb_unknown_type().prop_map(|task_type| VideoTask::Unknown {
+            data: serde_json::Value::String(task_type.clone()),
+            task_type,
+        }),
+    ]
+}
+
+fn arb_video_config() -> impl Strategy<Value = VideoConfig> {
+    proptest::option::of(arb_video_task()).prop_map(|task| VideoConfig { task })
 }
 
 // =============================================================================
@@ -1404,9 +1439,345 @@ fn arb_tool() -> impl Strategy<Value = Tool> {
                 allowed_tools,
                 headers: headers.map(|m| m.into_iter().collect()),
             }),
+        // Retrieval tool (types non-empty when present since empty is skipped)
+        (
+            proptest::option::of(proptest::collection::vec(arb_retrieval_type(), 1..3)),
+            proptest::option::of(arb_vertex_ai_search_config()),
+            proptest::option::of(arb_exa_ai_search_config()),
+            proptest::option::of(arb_parallel_ai_search_config()),
+            proptest::option::of(arb_rag_store_config()),
+        )
+            .prop_map(
+                |(
+                    retrieval_types,
+                    vertex_ai_search_config,
+                    exa_ai_search_config,
+                    parallel_ai_search_config,
+                    rag_store_config,
+                )| Tool::Retrieval {
+                    retrieval_types,
+                    vertex_ai_search_config,
+                    exa_ai_search_config,
+                    parallel_ai_search_config,
+                    rag_store_config: rag_store_config.map(Box::new),
+                },
+            ),
         // Unknown tool (Tool preserves unknowns even in strict mode)
         (arb_unknown_type(), arb_unknown_object())
             .prop_map(|(tool_type, data)| Tool::Unknown { tool_type, data }),
+    ]
+}
+
+// =============================================================================
+// Retrieval Tool Strategies
+// =============================================================================
+
+fn arb_retrieval_type() -> impl Strategy<Value = RetrievalType> {
+    prop_oneof![
+        Just(RetrievalType::VertexAiSearch),
+        Just(RetrievalType::RagStore),
+        Just(RetrievalType::ExaAiSearch),
+        Just(RetrievalType::ParallelAiSearch),
+        arb_unknown_type().prop_map(|retrieval_type| RetrievalType::Unknown {
+            data: serde_json::Value::String(retrieval_type.clone()),
+            retrieval_type,
+        }),
+    ]
+}
+
+fn arb_vertex_ai_search_config() -> impl Strategy<Value = VertexAiSearchConfig> {
+    (
+        proptest::option::of(arb_identifier()),
+        proptest::option::of(proptest::collection::vec(arb_identifier(), 0..3)),
+    )
+        .prop_map(|(engine, datastores)| VertexAiSearchConfig { engine, datastores })
+}
+
+fn arb_exa_ai_search_config() -> impl Strategy<Value = ExaAiSearchConfig> {
+    (arb_identifier(), proptest::option::of(arb_unknown_object())).prop_map(
+        |(api_key, custom_config)| ExaAiSearchConfig {
+            api_key,
+            custom_config,
+        },
+    )
+}
+
+fn arb_parallel_ai_search_config() -> impl Strategy<Value = ParallelAiSearchConfig> {
+    (
+        proptest::option::of(arb_identifier()),
+        proptest::option::of(arb_unknown_object()),
+    )
+        .prop_map(|(api_key, custom_config)| ParallelAiSearchConfig {
+            api_key,
+            custom_config,
+        })
+}
+
+fn arb_rag_store_config() -> impl Strategy<Value = RagStoreConfig> {
+    (
+        proptest::option::of(proptest::collection::vec(
+            (
+                proptest::option::of(arb_identifier()),
+                proptest::option::of(proptest::collection::vec(arb_identifier(), 0..2)),
+            )
+                .prop_map(|(rag_corpus, rag_file_ids)| RagResource {
+                    rag_corpus,
+                    rag_file_ids,
+                }),
+            0..3,
+        )),
+        proptest::option::of(1..100i32),
+        proptest::option::of(arb_clean_f64()),
+        proptest::option::of(arb_rag_retrieval_config()),
+    )
+        .prop_map(
+            |(rag_resources, similarity_top_k, vector_distance_threshold, rag_retrieval_config)| {
+                RagStoreConfig {
+                    rag_resources,
+                    similarity_top_k,
+                    vector_distance_threshold,
+                    rag_retrieval_config,
+                }
+            },
+        )
+}
+
+fn arb_rag_retrieval_config() -> impl Strategy<Value = RagRetrievalConfig> {
+    (
+        proptest::option::of(1..100i32),
+        proptest::option::of(
+            proptest::option::of(arb_clean_float().prop_map(|v| v.as_f64().unwrap() as f32))
+                .prop_map(|alpha| HybridSearchConfig { alpha }),
+        ),
+        proptest::option::of(
+            (
+                proptest::option::of(arb_clean_f64()),
+                proptest::option::of(arb_clean_f64()),
+                proptest::option::of(arb_text()),
+            )
+                .prop_map(
+                    |(vector_distance_threshold, vector_similarity_threshold, metadata_filter)| {
+                        RagFilter {
+                            vector_distance_threshold,
+                            vector_similarity_threshold,
+                            metadata_filter,
+                        }
+                    },
+                ),
+        ),
+        proptest::option::of(
+            proptest::option::of(arb_identifier()).prop_map(|model_name| RagRanking {
+                ranking_config: "rank_service".to_string(),
+                model_name,
+            }),
+        ),
+    )
+        .prop_map(
+            |(top_k, hybrid_search, filter, ranking)| RagRetrievalConfig {
+                top_k,
+                hybrid_search,
+                filter,
+                ranking,
+            },
+        )
+}
+
+// =============================================================================
+// Webhook / Environment / ResponseFormat Strategies
+// =============================================================================
+
+fn arb_webhook_event() -> impl Strategy<Value = WebhookEvent> {
+    prop_oneof![
+        Just(WebhookEvent::BatchSucceeded),
+        Just(WebhookEvent::BatchExpired),
+        Just(WebhookEvent::BatchFailed),
+        Just(WebhookEvent::InteractionRequiresAction),
+        Just(WebhookEvent::InteractionCompleted),
+        Just(WebhookEvent::InteractionFailed),
+        Just(WebhookEvent::VideoGenerated),
+        arb_unknown_type().prop_map(|event_type| WebhookEvent::Unknown {
+            data: serde_json::Value::String(event_type.clone()),
+            event_type,
+        }),
+    ]
+}
+
+fn arb_webhook_state() -> impl Strategy<Value = WebhookState> {
+    prop_oneof![
+        Just(WebhookState::Enabled),
+        Just(WebhookState::Disabled),
+        Just(WebhookState::DisabledDueToFailedDeliveries),
+        arb_unknown_type().prop_map(|state_type| WebhookState::Unknown {
+            data: serde_json::Value::String(state_type.clone()),
+            state_type,
+        }),
+    ]
+}
+
+fn arb_revocation_behavior() -> impl Strategy<Value = RevocationBehavior> {
+    prop_oneof![
+        Just(RevocationBehavior::RevokePreviousSecretsAfterH24),
+        Just(RevocationBehavior::RevokePreviousSecretsImmediately),
+        arb_unknown_type().prop_map(|behavior_type| RevocationBehavior::Unknown {
+            data: serde_json::Value::String(behavior_type.clone()),
+            behavior_type,
+        }),
+    ]
+}
+
+fn arb_webhook_config() -> impl Strategy<Value = WebhookConfig> {
+    (
+        proptest::option::of(proptest::collection::vec(arb_text(), 0..3)),
+        proptest::option::of(arb_unknown_object()),
+    )
+        .prop_map(|(uris, user_metadata)| WebhookConfig {
+            uris,
+            user_metadata,
+        })
+}
+
+fn arb_source_type() -> impl Strategy<Value = SourceType> {
+    prop_oneof![
+        Just(SourceType::Gcs),
+        Just(SourceType::Inline),
+        Just(SourceType::Repository),
+        Just(SourceType::SkillRegistry),
+        arb_unknown_type().prop_map(|source_type| SourceType::Unknown {
+            data: serde_json::Value::String(source_type.clone()),
+            source_type,
+        }),
+    ]
+}
+
+fn arb_environment_source() -> impl Strategy<Value = EnvironmentSource> {
+    (
+        proptest::option::of(arb_source_type()),
+        proptest::option::of(arb_identifier()),
+        proptest::option::of(arb_identifier()),
+        proptest::option::of(arb_text()),
+        proptest::option::of(arb_identifier()),
+    )
+        .prop_map(
+            |(source_type, source, target, content, encoding)| EnvironmentSource {
+                source_type,
+                source,
+                target,
+                content,
+                encoding,
+            },
+        )
+}
+
+fn arb_network_config() -> impl Strategy<Value = NetworkConfig> {
+    prop_oneof![
+        Just(NetworkConfig::Disabled),
+        proptest::collection::vec(
+            (
+                arb_identifier(),
+                proptest::option::of(proptest::collection::vec(
+                    proptest::collection::btree_map(arb_identifier(), arb_text(), 1..3)
+                        .prop_map(|m| m.into_iter().collect::<std::collections::HashMap<_, _>>()),
+                    1..2,
+                )),
+            )
+                .prop_map(|(domain, transform)| AllowlistEntry { domain, transform }),
+            0..3,
+        )
+        .prop_map(NetworkConfig::Allowlist),
+    ]
+}
+
+fn arb_environment_spec() -> impl Strategy<Value = EnvironmentSpec> {
+    prop_oneof![
+        arb_identifier().prop_map(EnvironmentSpec::Id),
+        (
+            proptest::collection::vec(arb_environment_source(), 0..3),
+            proptest::option::of(arb_network_config()),
+        )
+            .prop_map(|(sources, network)| {
+                EnvironmentSpec::Remote(RemoteEnvironment { sources, network })
+            }),
+    ]
+}
+
+fn arb_response_delivery() -> impl Strategy<Value = ResponseDelivery> {
+    prop_oneof![
+        Just(ResponseDelivery::Inline),
+        Just(ResponseDelivery::Uri),
+        arb_unknown_type().prop_map(|delivery_type| ResponseDelivery::Unknown {
+            data: serde_json::Value::String(delivery_type.clone()),
+            delivery_type,
+        }),
+    ]
+}
+
+fn arb_response_format() -> impl Strategy<Value = ResponseFormat> {
+    prop_oneof![
+        (
+            proptest::option::of(arb_identifier()),
+            proptest::option::of(arb_unknown_object()),
+        )
+            .prop_map(|(mime_type, schema)| ResponseFormat::Text { mime_type, schema }),
+        (
+            proptest::option::of(arb_identifier()),
+            proptest::option::of(arb_response_delivery()),
+            proptest::option::of(8000..48000i32),
+            proptest::option::of(32000..320_000i32),
+        )
+            .prop_map(|(mime_type, delivery, sample_rate, bit_rate)| {
+                ResponseFormat::Audio {
+                    mime_type,
+                    delivery,
+                    sample_rate,
+                    bit_rate,
+                }
+            }),
+        (
+            proptest::option::of(arb_identifier()),
+            proptest::option::of(arb_response_delivery()),
+            proptest::option::of(arb_image_aspect_ratio()),
+            proptest::option::of(arb_image_size()),
+        )
+            .prop_map(|(mime_type, delivery, aspect_ratio, image_size)| {
+                ResponseFormat::Image {
+                    mime_type,
+                    delivery,
+                    aspect_ratio,
+                    image_size,
+                }
+            }),
+        (
+            proptest::option::of(arb_response_delivery()),
+            proptest::option::of(arb_identifier()),
+            proptest::option::of(arb_image_aspect_ratio()),
+            proptest::option::of(arb_identifier()),
+        )
+            .prop_map(|(delivery, gcs_uri, aspect_ratio, duration)| {
+                ResponseFormat::Video {
+                    delivery,
+                    gcs_uri,
+                    aspect_ratio,
+                    duration,
+                }
+            }),
+    ]
+}
+
+fn arb_response_format_spec() -> impl Strategy<Value = ResponseFormatSpec> {
+    prop_oneof![
+        arb_response_format().prop_map(ResponseFormatSpec::Single),
+        proptest::collection::vec(arb_response_format(), 0..3).prop_map(ResponseFormatSpec::List),
+    ]
+}
+
+fn arb_visualization() -> impl Strategy<Value = Visualization> {
+    prop_oneof![
+        Just(Visualization::Off),
+        Just(Visualization::Auto),
+        arb_unknown_type().prop_map(|visualization_type| Visualization::Unknown {
+            data: serde_json::Value::String(visualization_type.clone()),
+            visualization_type,
+        }),
     ]
 }
 
@@ -1680,6 +2051,111 @@ proptest! {
     #[test]
     fn generation_config_roundtrip(config in arb_generation_config()) {
         assert_value_roundtrip(&config)?;
+    }
+
+    /// Test that VideoTask roundtrips correctly through JSON.
+    #[test]
+    fn video_task_roundtrip(task in arb_video_task()) {
+        let json = serde_json::to_string(&task).expect("Serialization should succeed");
+        let restored: VideoTask = serde_json::from_str(&json).expect("Deserialization should succeed");
+        prop_assert_eq!(task, restored);
+    }
+
+    /// Test that VideoConfig roundtrips correctly through JSON.
+    #[test]
+    fn video_config_roundtrip(config in arb_video_config()) {
+        let json = serde_json::to_string(&config).expect("Serialization should succeed");
+        let restored: VideoConfig = serde_json::from_str(&json).expect("Deserialization should succeed");
+        prop_assert_eq!(config, restored);
+    }
+
+    /// Test that Visualization roundtrips correctly through JSON.
+    #[test]
+    fn visualization_roundtrip(visualization in arb_visualization()) {
+        let json = serde_json::to_string(&visualization).expect("Serialization should succeed");
+        let restored: Visualization = serde_json::from_str(&json).expect("Deserialization should succeed");
+        prop_assert_eq!(visualization, restored);
+    }
+
+    /// Test that WebhookEvent roundtrips correctly through JSON.
+    #[test]
+    fn webhook_event_roundtrip(event in arb_webhook_event()) {
+        let json = serde_json::to_string(&event).expect("Serialization should succeed");
+        let restored: WebhookEvent = serde_json::from_str(&json).expect("Deserialization should succeed");
+        prop_assert_eq!(event, restored);
+    }
+
+    /// Test that WebhookState roundtrips correctly through JSON.
+    #[test]
+    fn webhook_state_roundtrip(state in arb_webhook_state()) {
+        let json = serde_json::to_string(&state).expect("Serialization should succeed");
+        let restored: WebhookState = serde_json::from_str(&json).expect("Deserialization should succeed");
+        prop_assert_eq!(state, restored);
+    }
+
+    /// Test that RevocationBehavior roundtrips correctly through JSON.
+    #[test]
+    fn revocation_behavior_roundtrip(behavior in arb_revocation_behavior()) {
+        let json = serde_json::to_string(&behavior).expect("Serialization should succeed");
+        let restored: RevocationBehavior = serde_json::from_str(&json).expect("Deserialization should succeed");
+        prop_assert_eq!(behavior, restored);
+    }
+
+    /// Test that WebhookConfig roundtrips correctly through JSON.
+    #[test]
+    fn webhook_config_roundtrip(config in arb_webhook_config()) {
+        let json = serde_json::to_string(&config).expect("Serialization should succeed");
+        let restored: WebhookConfig = serde_json::from_str(&json).expect("Deserialization should succeed");
+        prop_assert_eq!(config, restored);
+    }
+
+    /// Test that SourceType roundtrips correctly through JSON.
+    #[test]
+    fn source_type_roundtrip(source_type in arb_source_type()) {
+        let json = serde_json::to_string(&source_type).expect("Serialization should succeed");
+        let restored: SourceType = serde_json::from_str(&json).expect("Deserialization should succeed");
+        prop_assert_eq!(source_type, restored);
+    }
+
+    /// Test that EnvironmentSpec (string ID or remote environment)
+    /// roundtrips correctly through JSON.
+    #[test]
+    fn environment_spec_roundtrip(spec in arb_environment_spec()) {
+        let json = serde_json::to_string(&spec).expect("Serialization should succeed");
+        let restored: EnvironmentSpec = serde_json::from_str(&json).expect("Deserialization should succeed");
+        prop_assert_eq!(spec, restored);
+    }
+
+    /// Test that ResponseDelivery roundtrips correctly through JSON.
+    #[test]
+    fn response_delivery_roundtrip(delivery in arb_response_delivery()) {
+        let json = serde_json::to_string(&delivery).expect("Serialization should succeed");
+        let restored: ResponseDelivery = serde_json::from_str(&json).expect("Deserialization should succeed");
+        prop_assert_eq!(delivery, restored);
+    }
+
+    /// Test that ResponseFormat roundtrips correctly through JSON.
+    #[test]
+    fn response_format_roundtrip(format in arb_response_format()) {
+        let json = serde_json::to_string(&format).expect("Serialization should succeed");
+        let restored: ResponseFormat = serde_json::from_str(&json).expect("Deserialization should succeed");
+        prop_assert_eq!(format, restored);
+    }
+
+    /// Test that ResponseFormatSpec (single vs list) roundtrips correctly.
+    #[test]
+    fn response_format_spec_roundtrip(spec in arb_response_format_spec()) {
+        let json = serde_json::to_string(&spec).expect("Serialization should succeed");
+        let restored: ResponseFormatSpec = serde_json::from_str(&json).expect("Deserialization should succeed");
+        prop_assert_eq!(spec, restored);
+    }
+
+    /// Test that RetrievalType roundtrips correctly through JSON.
+    #[test]
+    fn retrieval_type_roundtrip(retrieval_type in arb_retrieval_type()) {
+        let json = serde_json::to_string(&retrieval_type).expect("Serialization should succeed");
+        let restored: RetrievalType = serde_json::from_str(&json).expect("Deserialization should succeed");
+        prop_assert_eq!(retrieval_type, restored);
     }
 
     /// Test that FunctionResultPayload roundtrips through JSON, preserving

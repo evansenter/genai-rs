@@ -1312,3 +1312,322 @@ fn test_interaction_builder_with_allowed_tools_preserves_mode() {
         ))
     );
 }
+
+// ============================================================================
+// Webhook config / environment / response format / speech / video builders
+// ============================================================================
+
+#[test]
+fn test_builder_with_webhook_config() {
+    use crate::WebhookConfig;
+
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-3-flash-preview")
+        .with_text("Hello")
+        .with_webhook_config(
+            WebhookConfig::new()
+                .with_uris(vec!["https://example.com/hook".to_string()])
+                .with_user_metadata(json!({"job": 1})),
+        )
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    assert_eq!(
+        value["webhook_config"]["uris"][0],
+        "https://example.com/hook"
+    );
+    assert_eq!(value["webhook_config"]["user_metadata"]["job"], 1);
+}
+
+#[test]
+fn test_builder_with_environment_id() {
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-3-flash-preview")
+        .with_text("Hello")
+        .with_environment("environments/env-123")
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    assert_eq!(value["environment"], "environments/env-123");
+}
+
+#[test]
+fn test_builder_with_typed_remote_environment() {
+    use crate::{AllowlistEntry, EnvironmentSource, NetworkConfig, RemoteEnvironment};
+
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-3-flash-preview")
+        .with_text("Hello")
+        .with_environment(
+            RemoteEnvironment::new()
+                .add_source(EnvironmentSource::gcs("gs://bucket", "/data"))
+                .with_network(NetworkConfig::Allowlist(vec![AllowlistEntry::new(
+                    "*.googleapis.com",
+                )])),
+        )
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    assert_eq!(value["environment"]["type"], "remote");
+    assert_eq!(value["environment"]["sources"][0]["type"], "gcs");
+    assert_eq!(
+        value["environment"]["network"]["allowlist"][0]["domain"],
+        "*.googleapis.com"
+    );
+}
+
+#[test]
+fn test_builder_with_response_format_raw_schema_maps_to_text() {
+    // Backward compatibility: raw serde_json::Value schemas keep working and
+    // now serialize inside the typed text format.
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-3-flash-preview")
+        .with_text("Generate data")
+        .with_response_format(json!({
+            "type": "object",
+            "properties": {"name": {"type": "string"}}
+        }))
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    assert_eq!(value["response_format"]["type"], "text");
+    assert_eq!(value["response_format"]["mime_type"], "application/json");
+    assert_eq!(
+        value["response_format"]["schema"]["properties"]["name"]["type"],
+        "string"
+    );
+}
+
+#[test]
+fn test_builder_with_response_format_typed_variant() {
+    use crate::{ResponseDelivery, ResponseFormat};
+
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-2.5-pro-preview-tts")
+        .with_text("Read aloud")
+        .with_response_format(ResponseFormat::Audio {
+            mime_type: Some("audio/mp3".to_string()),
+            delivery: Some(ResponseDelivery::Inline),
+            sample_rate: Some(24000),
+            bit_rate: None,
+        })
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    assert_eq!(value["response_format"]["type"], "audio");
+    assert_eq!(value["response_format"]["mime_type"], "audio/mp3");
+    assert_eq!(value["response_format"]["delivery"], "inline");
+    assert_eq!(value["response_format"]["sample_rate"], 24000);
+}
+
+#[test]
+fn test_builder_with_response_formats_list() {
+    use crate::ResponseFormat;
+
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-3-pro-image-preview")
+        .with_text("A diagram")
+        .with_response_formats(vec![
+            ResponseFormat::text_plain(),
+            ResponseFormat::Image {
+                mime_type: Some("image/jpeg".to_string()),
+                delivery: None,
+                aspect_ratio: None,
+                image_size: None,
+            },
+        ])
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    let formats = value["response_format"].as_array().expect("list form");
+    assert_eq!(formats.len(), 2);
+    assert_eq!(formats[0]["type"], "text");
+    assert_eq!(formats[1]["type"], "image");
+}
+
+#[test]
+fn test_builder_with_speech_config_serializes_as_single_entry_list() {
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-2.5-pro-preview-tts")
+        .with_text("Hello")
+        .with_speech_config(SpeechConfig::with_voice_and_language("Kore", "en-US"))
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    let speech = value["generation_config"]["speech_config"]
+        .as_array()
+        .expect("speech_config must be a list on the wire");
+    assert_eq!(speech.len(), 1);
+    assert_eq!(speech[0]["voice"], "Kore");
+    assert_eq!(speech[0]["language"], "en-US");
+}
+
+#[test]
+fn test_builder_multi_speaker_speech_configs() {
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-2.5-pro-preview-tts")
+        .with_text("Alice: hi\nBob: hey")
+        .add_speech_config(SpeechConfig {
+            voice: Some("Kore".to_string()),
+            language: Some("en-US".to_string()),
+            speaker: Some("Alice".to_string()),
+        })
+        .add_speech_config(SpeechConfig {
+            voice: Some("Puck".to_string()),
+            language: Some("en-US".to_string()),
+            speaker: Some("Bob".to_string()),
+        })
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    let speech = value["generation_config"]["speech_config"]
+        .as_array()
+        .expect("speech_config must be a list on the wire");
+    assert_eq!(speech.len(), 2);
+    assert_eq!(speech[0]["speaker"], "Alice");
+    assert_eq!(speech[1]["speaker"], "Bob");
+}
+
+#[test]
+fn test_builder_with_speech_configs_replaces() {
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-2.5-pro-preview-tts")
+        .with_text("Hello")
+        .add_speech_config(SpeechConfig::with_voice("Kore"))
+        .with_speech_configs(vec![SpeechConfig::with_voice("Puck")])
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    let speech = value["generation_config"]["speech_config"]
+        .as_array()
+        .unwrap();
+    assert_eq!(speech.len(), 1, "with_speech_configs replaces");
+    assert_eq!(speech[0]["voice"], "Puck");
+}
+
+#[test]
+fn test_builder_with_video_config_and_output() {
+    use crate::{VideoConfig, VideoTask};
+
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("veo-3.1-generate-preview")
+        .with_text("A hummingbird in slow motion")
+        .with_video_output()
+        .with_video_config(VideoConfig::new().with_task(VideoTask::TextToVideo))
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    assert_eq!(value["response_modalities"][0], "video");
+    assert_eq!(
+        value["generation_config"]["video_config"]["task"],
+        "text_to_video"
+    );
+}
+
+#[test]
+fn test_builder_retrieval_tool() {
+    use crate::{RetrievalConfig, VertexAiSearchConfig};
+
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-3-flash-preview")
+        .with_text("Search internal docs")
+        .add_tool(
+            RetrievalConfig::new()
+                .with_vertex_ai_search(VertexAiSearchConfig::new().with_engine("engines/e")),
+        )
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    assert_eq!(value["tools"][0]["type"], "retrieval");
+    assert_eq!(value["tools"][0]["retrieval_types"][0], "vertex_ai_search");
+    assert_eq!(
+        value["tools"][0]["vertex_ai_search_config"]["engine"],
+        "engines/e"
+    );
+}
+
+#[test]
+fn test_builder_deep_research_config_new_fields() {
+    use crate::Visualization;
+
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_agent("deep-research-preview-04-2026")
+        .with_text("Research something")
+        .with_agent_config(
+            DeepResearchConfig::new()
+                .with_thinking_summaries(ThinkingSummaries::Auto)
+                .with_visualization(Visualization::Auto)
+                .with_collaborative_planning(true)
+                .with_bigquery_tool(false),
+        )
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    let config = &value["agent_config"];
+    assert_eq!(config["type"], "deep-research");
+    assert_eq!(config["thinking_summaries"], "THINKING_SUMMARIES_AUTO");
+    assert_eq!(config["visualization"], "auto");
+    assert_eq!(config["collaborative_planning"], true);
+    assert_eq!(config["enable_bigquery_tool"], false);
+}
+
+#[test]
+fn test_builder_request_roundtrip_with_new_fields() {
+    use crate::{EnvironmentSpec, ResponseFormat, WebhookConfig};
+
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-3-flash-preview")
+        .with_text("Hello")
+        .with_webhook_config(WebhookConfig::new().with_uris(vec!["https://x.example".into()]))
+        .with_environment("env-1")
+        .with_response_format(ResponseFormat::json_schema(json!({"type": "object"})))
+        .build()
+        .unwrap();
+
+    let json = serde_json::to_string(&request).unwrap();
+    let back: InteractionRequest = serde_json::from_str(&json).unwrap();
+    assert!(matches!(
+        back.environment,
+        Some(EnvironmentSpec::Id(ref id)) if id == "env-1"
+    ));
+    assert!(back.webhook_config.is_some());
+    assert!(back.response_format.is_some());
+}

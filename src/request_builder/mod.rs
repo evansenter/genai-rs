@@ -10,10 +10,11 @@ use std::time::Duration;
 use tracing::debug;
 
 use crate::{
-    AgentConfig, Content, DeepResearchConfig, FunctionCallingMode, FunctionDeclaration,
-    GenerationConfig, ImageConfig, InteractionInput, InteractionRequest, InteractionResponse,
-    ServiceTier, SpeechConfig, Step, StreamEvent, ThinkingLevel, ThinkingSummaries,
-    Tool as InternalTool, ToolChoice,
+    AgentConfig, Content, DeepResearchConfig, EnvironmentSpec, FunctionCallingMode,
+    FunctionDeclaration, GenerationConfig, ImageConfig, InteractionInput, InteractionRequest,
+    InteractionResponse, ResponseFormat, ResponseFormatSpec, ServiceTier, SpeechConfig, Step,
+    StreamEvent, ThinkingLevel, ThinkingSummaries, Tool as InternalTool, ToolChoice, VideoConfig,
+    WebhookConfig,
 };
 use futures_util::{StreamExt, stream::BoxStream};
 
@@ -87,15 +88,17 @@ pub struct InteractionBuilder<'a> {
     previous_interaction_id: Option<String>,
     tools: Option<Vec<InternalTool>>,
     response_modalities: Option<Vec<String>>,
-    response_format: Option<serde_json::Value>,
+    response_format: Option<ResponseFormatSpec>,
     response_mime_type: Option<String>,
     generation_config: Option<GenerationConfig>,
-    speech_config: Option<SpeechConfig>,
+    speech_configs: Option<Vec<SpeechConfig>>,
     background: Option<bool>,
     store: Option<bool>,
     system_instruction: Option<String>,
     service_tier: Option<ServiceTier>,
     cached_content: Option<String>,
+    webhook_config: Option<WebhookConfig>,
+    environment: Option<EnvironmentSpec>,
     /// Maximum iterations for auto function calling loop
     max_function_call_loops: usize,
     /// Tool service for dependency-injected functions
@@ -119,7 +122,9 @@ impl std::fmt::Debug for InteractionBuilder<'_> {
             .field("response_format", &self.response_format)
             .field("response_mime_type", &self.response_mime_type)
             .field("generation_config", &self.generation_config)
-            .field("speech_config", &self.speech_config)
+            .field("speech_configs", &self.speech_configs)
+            .field("webhook_config", &self.webhook_config)
+            .field("environment", &self.environment)
             .field("background", &self.background)
             .field("store", &self.store)
             .field("system_instruction", &self.system_instruction)
@@ -151,12 +156,14 @@ impl<'a> InteractionBuilder<'a> {
             response_format: None,
             response_mime_type: None,
             generation_config: None,
-            speech_config: None,
+            speech_configs: None,
             background: None,
             store: None,
             system_instruction: None,
             service_tier: None,
             cached_content: None,
+            webhook_config: None,
+            environment: None,
             max_function_call_loops: DEFAULT_MAX_FUNCTION_CALL_LOOPS,
             tool_service: None,
             timeout: None,
@@ -1034,10 +1041,14 @@ impl<'a> InteractionBuilder<'a> {
         self.with_response_modalities(vec!["AUDIO".to_string()])
     }
 
-    /// Sets speech configuration for text-to-speech output.
+    /// Sets a single speech configuration for text-to-speech output,
+    /// replacing any previously set speaker configs.
     ///
     /// Use this to customize voice, language, and speaker settings when
-    /// generating audio output.
+    /// generating audio output. On the wire, `speech_config` is a list; this
+    /// method sends a single-entry list. For multi-speaker TTS use
+    /// [`with_speech_configs()`](Self::with_speech_configs) or
+    /// [`add_speech_config()`](Self::add_speech_config).
     ///
     /// # Example
     ///
@@ -1067,7 +1078,55 @@ impl<'a> InteractionBuilder<'a> {
     /// ```
     #[must_use]
     pub fn with_speech_config(mut self, config: SpeechConfig) -> Self {
-        self.speech_config = Some(config);
+        self.speech_configs = Some(vec![config]);
+        self
+    }
+
+    /// Sets the full list of speaker configurations for multi-speaker
+    /// text-to-speech, replacing any previously set configs.
+    ///
+    /// Each entry's `speaker` should match a speaker name given in the
+    /// prompt.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{Client, SpeechConfig};
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::new("api-key".to_string());
+    ///
+    /// let response = client
+    ///     .interaction()
+    ///     .with_model("gemini-2.5-pro-preview-tts")
+    ///     .with_text("Alice: Hi Bob!\nBob: Hey Alice, how are you?")
+    ///     .with_audio_output()
+    ///     .with_speech_configs(vec![
+    ///         SpeechConfig { voice: Some("Kore".into()), language: Some("en-US".into()), speaker: Some("Alice".into()) },
+    ///         SpeechConfig { voice: Some("Puck".into()), language: Some("en-US".into()), speaker: Some("Bob".into()) },
+    ///     ])
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_speech_configs(mut self, configs: Vec<SpeechConfig>) -> Self {
+        self.speech_configs = Some(configs);
+        self
+    }
+
+    /// Adds one speaker configuration, accumulating for multi-speaker
+    /// text-to-speech.
+    ///
+    /// See [`with_speech_configs()`](Self::with_speech_configs) for the
+    /// replace-all form.
+    #[must_use]
+    pub fn add_speech_config(mut self, config: SpeechConfig) -> Self {
+        self.speech_configs
+            .get_or_insert_with(Vec::new)
+            .push(config);
         self
     }
 
@@ -1105,6 +1164,142 @@ impl<'a> InteractionBuilder<'a> {
             .generation_config
             .get_or_insert_with(GenerationConfig::default);
         gen_config.image_config = Some(config);
+        self
+    }
+
+    /// Sets the video generation configuration
+    /// (`generation_config.video_config`).
+    ///
+    /// Controls the video generation task mode. Combine with
+    /// [`with_video_output()`](Self::with_video_output) and optionally a
+    /// video [`ResponseFormat`] for delivery options.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{Client, VideoConfig, VideoTask};
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::new("api-key".to_string());
+    ///
+    /// let response = client
+    ///     .interaction()
+    ///     .with_model("veo-3.1-generate-preview")
+    ///     .with_text("A hummingbird hovering over a flower, slow motion")
+    ///     .with_video_output()
+    ///     .with_video_config(VideoConfig::new().with_task(VideoTask::TextToVideo))
+    ///     .with_background(true)
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_video_config(mut self, config: VideoConfig) -> Self {
+        let gen_config = self
+            .generation_config
+            .get_or_insert_with(GenerationConfig::default);
+        gen_config.video_config = Some(config);
+        self
+    }
+
+    /// Configures the request to return video output.
+    ///
+    /// This is a convenience method equivalent to:
+    /// ```ignore
+    /// .with_response_modalities(vec!["video".to_string()])
+    /// ```
+    ///
+    /// Requires a model that supports video generation. Video generation
+    /// typically runs in the background — pair with `with_background(true)`
+    /// and poll or use webhooks (`video.generated` event) for completion.
+    /// See `docs/OUTPUT_MODALITIES.md`.
+    #[must_use]
+    pub fn with_video_output(self) -> Self {
+        self.with_response_modalities(vec!["video".to_string()])
+    }
+
+    /// Sets per-request webhook routing.
+    ///
+    /// Events for this request are delivered to the config's URIs instead of
+    /// the registered webhooks, with optional user metadata echoed on each
+    /// event. Most useful with background execution.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{Client, WebhookConfig};
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::new("api-key".to_string());
+    ///
+    /// let response = client
+    ///     .interaction()
+    ///     .with_agent("deep-research-preview-04-2026")
+    ///     .with_text("Research the history of quantum computing")
+    ///     .with_background(true)
+    ///     .with_webhook_config(
+    ///         WebhookConfig::new()
+    ///             .with_uris(vec!["https://example.com/hooks/genai".to_string()])
+    ///             .with_user_metadata(serde_json::json!({"job_id": "job-42"})),
+    ///     )
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_webhook_config(mut self, config: WebhookConfig) -> Self {
+        self.webhook_config = Some(config);
+        self
+    }
+
+    /// Sets the environment for this interaction.
+    ///
+    /// Accepts a string environment ID (e.g., from a previous response's
+    /// `environment_id`) or a typed
+    /// [`RemoteEnvironment`](crate::RemoteEnvironment) with sources and a
+    /// network allowlist.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{Client, EnvironmentSource, RemoteEnvironment};
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::new("api-key".to_string());
+    ///
+    /// // Typed remote environment
+    /// let response = client
+    ///     .interaction()
+    ///     .with_agent("antigravity-preview-05-2026")
+    ///     .with_text("Run the test suite")
+    ///     .with_environment(
+    ///         RemoteEnvironment::new()
+    ///             .add_source(EnvironmentSource::repository("github.com/org/repo", "/workspace")),
+    ///     )
+    ///     .create()
+    ///     .await?;
+    ///
+    /// // Or reuse an environment by ID on the next turn
+    /// let env_id = response.environment_id.clone().unwrap_or_default();
+    /// let follow_up = client
+    ///     .interaction()
+    ///     .with_agent("antigravity-preview-05-2026")
+    ///     .with_previous_interaction(response.id.clone().unwrap_or_default())
+    ///     .with_text("Now fix the failing test")
+    ///     .with_environment(env_id)
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_environment(mut self, environment: impl Into<EnvironmentSpec>) -> Self {
+        self.environment = Some(environment.into());
         self
     }
 
@@ -1224,9 +1419,75 @@ impl<'a> InteractionBuilder<'a> {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Typed Formats
+    ///
+    /// Beyond raw JSON schemas, this accepts any
+    /// [`ResponseFormat`] — audio, image, and video
+    /// output formats included. A raw `serde_json::Value` schema converts to
+    /// `ResponseFormat::Text { mime_type: "application/json", schema }`
+    /// (the pre-0.8 wire behavior wrapped in the typed union). For the list
+    /// form use [`with_response_formats()`](Self::with_response_formats).
+    ///
+    /// ```no_run
+    /// # use genai_rs::{Client, ResponseDelivery, ResponseFormat};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let client = Client::new("api-key".to_string());
+    /// let response = client
+    ///     .interaction()
+    ///     .with_model("gemini-2.5-pro-preview-tts")
+    ///     .with_text("Read this aloud")
+    ///     .with_audio_output()
+    ///     .with_response_format(ResponseFormat::Audio {
+    ///         mime_type: Some("audio/mp3".to_string()),
+    ///         delivery: Some(ResponseDelivery::Inline),
+    ///         sample_rate: Some(24000),
+    ///         bit_rate: None,
+    ///     })
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
-    pub fn with_response_format(mut self, format: serde_json::Value) -> Self {
-        self.response_format = Some(format);
+    pub fn with_response_format(mut self, format: impl Into<ResponseFormat>) -> Self {
+        self.response_format = Some(ResponseFormatSpec::Single(format.into()));
+        self
+    }
+
+    /// Sets a list of response formats (one per requested output modality).
+    ///
+    /// Use with [`with_response_modalities()`](Self::with_response_modalities)
+    /// when requesting multiple output modalities.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use genai_rs::{Client, ResponseFormat};
+    /// # use serde_json::json;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let client = Client::new("api-key".to_string());
+    /// let response = client
+    ///     .interaction()
+    ///     .with_model("gemini-3-pro-image-preview")
+    ///     .with_text("A labeled diagram of a volcano")
+    ///     .with_response_formats(vec![
+    ///         ResponseFormat::text_plain(),
+    ///         ResponseFormat::Image {
+    ///             mime_type: Some("image/jpeg".to_string()),
+    ///             delivery: None,
+    ///             aspect_ratio: None,
+    ///             image_size: None,
+    ///         },
+    ///     ])
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_response_formats(mut self, formats: Vec<ResponseFormat>) -> Self {
+        self.response_format = Some(ResponseFormatSpec::List(formats));
         self
     }
 
@@ -1929,8 +2190,8 @@ impl<'a> InteractionBuilder<'a> {
             _ => {} // Valid: exactly one is set
         }
 
-        // Merge speech_config into generation_config if present
-        let generation_config = match (self.generation_config, self.speech_config) {
+        // Merge speech_configs into generation_config if present
+        let generation_config = match (self.generation_config, self.speech_configs) {
             (Some(mut config), Some(speech)) => {
                 config.speech_config = Some(speech);
                 Some(config)
@@ -1960,6 +2221,8 @@ impl<'a> InteractionBuilder<'a> {
             system_instruction: self.system_instruction,
             service_tier: self.service_tier,
             cached_content: self.cached_content,
+            webhook_config: self.webhook_config,
+            environment: self.environment,
         })
     }
 }

@@ -48,6 +48,8 @@ Methods follow a consistent naming pattern based on their behavior:
 | `with_timeout()` | with | replaces | |
 | `with_service_tier(ServiceTier)` | with | replaces | `Flex`/`Standard`/`Priority` (wire: lowercase `"flex"`/`"standard"`/`"priority"`) |
 | `with_cached_content(impl Into<String>)` | with | replaces | References an explicit context cache (e.g. `"cachedContents/xyz"`) |
+| `with_webhook_config(WebhookConfig)` | with | replaces | Per-request webhook routing (`uris` + `user_metadata`) |
+| `with_environment(impl Into<EnvironmentSpec>)` | with | replaces | Environment ID string or typed `RemoteEnvironment` |
 | **Input** |
 | `with_text()` | with | replaces | Composes with `with_history()` |
 | `with_history(Vec<Step>)` | with | replaces | Composes with `with_text()` |
@@ -72,13 +74,20 @@ Methods follow a consistent naming pattern based on their behavior:
 | `with_tool_choice(ToolChoice)` | with | replaces | Sets the full `tool_choice` union directly; escape hatch for custom shapes |
 | `with_allowed_tools(Vec<String>)` | with | replaces | Restricts model to named tools; sets `tool_choice` to the `AllowedTools` restriction object (preserves a previously set mode) |
 | `with_image_config(ImageConfig)` | with | replaces | Image generation aspect ratio and size |
+| `with_video_config(VideoConfig)` | with | replaces | Video generation task mode (`generation_config.video_config`) |
+| `with_speech_config(SpeechConfig)` | with | replaces | Single-voice TTS (sends a single-entry `speech_config` list) |
+| `with_speech_configs(Vec<SpeechConfig>)` | with | replaces | Full multi-speaker `speech_config` list |
+| `add_speech_config(SpeechConfig)` | add | accumulates | Appends one speaker config |
 | `with_thinking_level()` | with | replaces | Chain-of-thought reasoning level |
 | `with_seed()` | with | replaces | Deterministic output |
 | `with_stop_sequences()` | with | replaces | Halt generation on sequences |
 | `with_presence_penalty(f32)` | with | replaces | Penalizes tokens already present; range [-2.0, 2.0] |
 | `with_frequency_penalty(f32)` | with | replaces | Penalizes tokens by frequency; range [-2.0, 2.0] |
-| **Response Format** |
-| `with_response_format(serde_json::Value)` | with | replaces | JSON schema for structured output |
+| **Response Format & Modalities** |
+| `with_response_format(impl Into<ResponseFormat>)` | with | replaces | Typed format (text/audio/image/video) or a raw JSON schema `serde_json::Value` (maps to the text/`application/json` form) |
+| `with_response_formats(Vec<ResponseFormat>)` | with | replaces | List form — one format per output modality |
+| `with_response_modalities(Vec<String>)` | with | replaces | Requested output modalities |
+| `with_image_output()` / `with_audio_output()` / `with_video_output()` | with | replaces | Modality shortcuts |
 | `with_response_mime_type()` | with | replaces | **Deprecated** — the API deprecated `response_mime_type`; use `with_response_format()` instead |
 
 Note: `GenerationConfig` no longer has a `top_k` field (removed in API revision 2026-05-20), so there is no `with_top_k()` builder method. `FileSearchConfig::with_top_k()` (a file-search retrieval setting) is unrelated and still exists.
@@ -94,11 +103,13 @@ For tools with optional configuration, use a config struct with `add_tool()`:
 | `McpServerConfig` | `name`, `url` | `.with_allowed_tools(Vec<String>)`, `.with_allowed_tools_config(Vec<AllowedTools>)`, `.with_headers(...)` |
 | `ComputerUseConfig` | (none) | `.with_environment(env)`, `.excluding(Vec<String>)`, `.with_prompt_injection_detection(bool)`, `.disabling_safety_policies(Vec<String>)` |
 | `FileSearchConfig` | `store_names` | `.with_top_k(i32)`, `.with_metadata_filter(String)` |
+| `RetrievalConfig` | (none) | `.with_vertex_ai_search(...)`, `.with_rag_store(...)`, `.with_exa_ai_search(...)`, `.with_parallel_ai_search(...)`, `.with_retrieval_types(Vec<RetrievalType>)` |
 
 Notes:
 
 - `ComputerUseConfig::with_environment()` accepts `"browser"` (default), `"mobile"`, or `"desktop"`.
 - `McpServerConfig::with_allowed_tools(Vec<String>)` wraps the names into a single `AllowedTools` entry; use `.with_allowed_tools_config(Vec<AllowedTools>)` to supply pre-built `AllowedTools` objects (e.g. with a mode via `AllowedTools::new(tools).with_mode(mode)`).
+- Each `RetrievalConfig::with_*` backend method also enables the corresponding `RetrievalType`, keeping `retrieval_types` in sync; `.with_retrieval_types()` is the explicit escape hatch.
 
 **Convention**: Prefer struct variants with optional fields over unit variants when the API has configuration options. This avoids breaking changes when adding fields later.
 

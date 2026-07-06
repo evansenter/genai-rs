@@ -36,6 +36,17 @@ All types below implement graceful handling of unrecognized values via an `Unkno
 | 18 | `ImageAspectRatio` | src/request.rs | `ratio_type` | Image aspect ratios (14 values) |
 | 19 | `ImageSize` | src/request.rs | `size_type` | Image resolution (512/1K/2K/4K) |
 | 20 | `SearchType` | src/tools.rs | `search_type` | web_search/image_search/enterprise_web_search |
+| 21 | `RetrievalType` | src/tools.rs | `retrieval_type` | vertex_ai_search/rag_store/exa_ai_search/parallel_ai_search |
+| 22 | `WebhookEvent` | src/webhooks.rs | `event_type` | batch.*/interaction.*/video.generated |
+| 23 | `WebhookState` | src/webhooks.rs | `state_type` | enabled/disabled/disabled_due_to_failed_deliveries |
+| 24 | `RevocationBehavior` | src/webhooks.rs | `behavior_type` | Signing-secret rotation behavior |
+| 25 | `SourceType` | src/environment.rs | `source_type` | gcs/inline/repository/skill_registry |
+| 26 | `NetworkConfig` | src/environment.rs | `network_type` | `"disabled"` string OR `{allowlist}` object |
+| 27 | `EnvironmentSpec` | src/environment.rs | `environment_type` | Env-ID string OR `{type:"remote"}` object |
+| 28 | `ResponseDelivery` | src/response_format.rs | `delivery_type` | inline/uri |
+| 29 | `ResponseFormat` | src/response_format.rs | `format_type` | text/audio/image/video union |
+| 30 | `VideoTask` | src/request.rs | `task_type` | text_to_video/image_to_video/reference_to_video/edit |
+| 31 | `Visualization` | src/request.rs | `visualization_type` | off/auto (Deep Research agent_config) |
 
 **Removed in revision 2026-05-20** (no longer exist in this library or on the wire):
 `UrlRetrievalStatus`, `GroundingMetadata`, `UrlContextMetadata`, `Turn`, and all tool-related
@@ -89,7 +100,19 @@ Helper methods on each type:
 | `Tool::GoogleSearch` | snake_case + optional array | `{"type": "google_search", "search_types": ["web_search"]}` | |
 | `Tool::GoogleMaps` | snake_case + optional fields | `{"type": "google_maps", "enable_widget": true, "latitude": ..., "longitude": ...}` | `latitude`/`longitude` pending live verification (2026-05-20 revision) |
 | `Tool::ComputerUse` | snake_case | `{"type": "computer_use", "environment": "browser", ...}` | **Changed**: fields now snake_case. Pending live verification (2026-05-20 revision) |
-| `SpeechConfig` | flat fields | `{"voice": "Kore", "language": "en-US"}` | Inside generation_config |
+| `SpeechConfig` | **list** of flat objects | `[{"voice": "Kore", "language": "en-US", "speaker": "Alice"}]` | **Changed** in 2026-05-20: `speech_config` is a list (multi-speaker TTS); legacy single object accepted on deserialize. Pending live verification (2026-05-20 revision) |
+| `Tool::Retrieval` | snake_case object | `{"type": "retrieval", "retrieval_types": [...], "vertex_ai_search_config": {...}}` | New. Pending live verification (2026-05-20 revision) |
+| `RetrievalType` | snake_case string | `"vertex_ai_search"`, `"rag_store"`, `"exa_ai_search"`, `"parallel_ai_search"` | Pending live verification (2026-05-20 revision) |
+| `WebhookEvent` | dotted lowercase | `"batch.succeeded"`, `"interaction.completed"`, `"video.generated"` | Pending live verification (2026-05-20 revision) |
+| `WebhookState` | snake_case | `"enabled"`, `"disabled"`, `"disabled_due_to_failed_deliveries"` | Output only. Pending live verification (2026-05-20 revision) |
+| `RevocationBehavior` | snake_case | `"revoke_previous_secrets_after_h24"`, `"revoke_previous_secrets_immediately"` | Request only (`:rotateSigningSecret`). Pending live verification (2026-05-20 revision) |
+| `SourceType` | snake_case | `"gcs"`, `"inline"`, `"repository"`, `"skill_registry"` | Environment source `type`. Pending live verification (2026-05-20 revision) |
+| `NetworkConfig` | string OR object | `"disabled"` / `{"allowlist": [{"domain": "*.googleapis.com"}]}` | Omit field to allow all traffic. Pending live verification (2026-05-20 revision) |
+| `EnvironmentSpec` | string OR object | `"env-123"` / `{"type": "remote", "sources": [...], "network": ...}` | Request `environment` + agent `base_environment`. Pending live verification (2026-05-20 revision) |
+| `ResponseFormat` | tagged by `"type"` OR raw schema dict | `{"type": "text", "mime_type": "application/json", "schema": {...}}` | Single object or list; raw schema dicts preserved via `Unknown`. Pending live verification (2026-05-20 revision) |
+| `ResponseDelivery` | lowercase | `"inline"`, `"uri"` | Audio/image/video formats. Pending live verification (2026-05-20 revision) |
+| `VideoTask` | snake_case | `"text_to_video"`, `"image_to_video"`, `"reference_to_video"`, `"edit"` | `generation_config.video_config.task`. Pending live verification (2026-05-20 revision) |
+| `Visualization` | lowercase | `"off"`, `"auto"` | Deep Research `agent_config.visualization`. Pending live verification (2026-05-20 revision) |
 | Audio MIME type (TTS response) | with params | `"audio/L16;codec=pcm;rate=24000"` | Raw PCM audio |
 | `GoogleSearchResultItem` | snake_case | `{"title": "...", "url": "...", "rendered_content": "..."}` | Optional `search_suggestions` added in 2026-05-20 |
 | `UrlContextResultItem` | snake_case | `{"url": "...", "status": "success"}` | Verified 2026-01-13 - no paywall field |
@@ -596,17 +619,20 @@ are **gone**. Computer-use actions flow through plain `function_call` /
 ### SpeechConfig (generation_config)
 
 Used in `generation_config.speech_config` for text-to-speech audio output.
+Per the 2026-05-20 spec the wire format is a **list** of speaker
+configurations — one entry for single-voice TTS, multiple entries (each with
+a distinct `speaker` matching the prompt) for multi-speaker TTS:
 
 ```json
 {
   "model": "gemini-2.5-pro-preview-tts",
-  "input": "Hello, world!",
+  "input": "Alice: Hi Bob!\nBob: Hey Alice!",
   "generation_config": {
     "response_modalities": ["AUDIO"],
-    "speech_config": {
-      "voice": "Kore",
-      "language": "en-US"
-    }
+    "speech_config": [
+      {"voice": "Kore", "language": "en-US", "speaker": "Alice"},
+      {"voice": "Puck", "language": "en-US", "speaker": "Bob"}
+    ]
   }
 }
 ```
@@ -615,14 +641,14 @@ Used in `generation_config.speech_config` for text-to-speech audio output.
 |------------|-----------|----------|-------|
 | `voice` | `voice` | No* | Voice name (e.g., "Kore", "Puck", "Charon") |
 | `language` | `language` | Yes** | Language code (e.g., "en-US", "es-ES") |
-| `speaker` | `speaker` | No | For multi-speaker TTS scenarios |
+| `speaker` | `speaker` | No | Must match a speaker name in the prompt for multi-speaker TTS |
 
 *Voice defaults to a system voice if not specified.
 **Language is required by the API when voice is specified.
 
 **Important**: The Google docs suggest a nested structure (`voiceConfig.prebuiltVoiceConfig.voiceName`) but **that format returns 400 error**. Only the flat structure shown above works with the Interactions API.
 
-**Verified**: 2026-01-10 - Tested both formats in `test_speech_config_nested_format_fails_flat_succeeds`. Nested format fails with `no such field: 'voiceConfig'`.
+**Verified**: 2026-01-10 (flat single-object form) - Tested both formats in `test_speech_config_nested_format_fails_flat_succeeds`. Nested format fails with `no such field: 'voiceConfig'`. The **list** form is from the 2026-05-20 spec and is pending live verification; the legacy single-object form is still accepted on deserialize.
 
 ### Audio Response (TTS output)
 
@@ -768,6 +794,162 @@ Configures `Tool::GoogleSearch.search_types` and appears on
 | `SearchType::ImageSearch` | `"image_search"` | Model-restricted |
 | `SearchType::EnterpriseWebSearch` | `"enterprise_web_search"` | New in 2026-05-20; pending live verification (2026-05-20 revision) |
 | `SearchType::Unknown { search_type, data }` | preserved | |
+
+### Tool::Retrieval (request)
+
+Grounds responses in external retrieval backends. `retrieval_types` selects
+the backends; per-backend configs supply their parameters.
+
+```json
+{
+  "type": "retrieval",
+  "retrieval_types": ["vertex_ai_search", "rag_store"],
+  "vertex_ai_search_config": {"engine": "projects/p/.../engines/e", "datastores": ["ds-1"]},
+  "rag_store_config": {
+    "rag_resources": [{"rag_corpus": "projects/p/.../ragCorpora/c", "rag_file_ids": ["f1"]}],
+    "rag_retrieval_config": {
+      "top_k": 8,
+      "hybrid_search": {"alpha": 0.5},
+      "filter": {"vector_distance_threshold": 0.7, "metadata_filter": "category = \"tech\""},
+      "ranking": {"ranking_config": "rank_service", "model_name": "ranker-v2"}
+    }
+  },
+  "exa_ai_search_config": {"api_key": "...", "custom_config": {}},
+  "parallel_ai_search_config": {"api_key": "...", "custom_config": {}}
+}
+```
+
+Notes:
+- `RetrievalType`: `vertex_ai_search` | `rag_store` | `exa_ai_search` |
+  `parallel_ai_search` + `Unknown { retrieval_type, data }` with the standard
+  helpers.
+- `rag_store_config.similarity_top_k` / `vector_distance_threshold` are
+  deprecated by the API in favor of `rag_retrieval_config`.
+- The RAG filter field is `filter` on the wire (the generated Python bindings
+  alias it as `filter_`).
+- `ranking.ranking_config` is always the literal `"rank_service"`.
+- Exa/Parallel `api_key` values are sent on the wire — treat request logs as
+  sensitive.
+
+**Status**: Pending live verification (2026-05-20 revision).
+
+### Webhooks (`/v1beta/webhooks` resource + `webhook_config`)
+
+Webhook resource (snake_case, RFC3339 timestamps):
+
+```json
+{
+  "id": "webhooks/wh-123",
+  "name": "my-hook",
+  "uri": "https://example.com/hook",
+  "subscribed_events": ["batch.succeeded", "interaction.completed", "video.generated"],
+  "state": "enabled",
+  "signing_secrets": [{"truncated_secret": "whsec_...abcd", "expire_time": "2026-08-01T00:00:00Z"}],
+  "new_signing_secret": "whsec_full",
+  "create_time": "2026-07-01T12:00:00Z",
+  "update_time": "2026-07-02T12:00:00Z"
+}
+```
+
+- `WebhookEvent` wire values: `batch.succeeded`, `batch.expired`,
+  `batch.failed`, `interaction.requires_action`, `interaction.completed`,
+  `interaction.failed`, `video.generated` (+ `Unknown`).
+- `WebhookState`: `enabled`, `disabled`,
+  `disabled_due_to_failed_deliveries` (+ `Unknown`). Output only.
+- `new_signing_secret` is only populated on create.
+- `:rotateSigningSecret` takes `{"revocation_behavior":
+  "revoke_previous_secrets_after_h24" | "revoke_previous_secrets_immediately"}`
+  and returns `{"secret": "..."}`; `:ping` takes/returns empty objects.
+- List/update query params are snake_case: `page_size`, `page_token`,
+  `update_mask`.
+- Per-request routing: `webhook_config: {"uris": [...], "user_metadata": {...}}`
+  on the interaction request.
+- Webhook and agent endpoints send the same `Api-Revision: 2026-05-20`
+  header as interactions (the generated google-genai bindings apply the
+  revision header globally).
+
+**Status**: Pending live verification (2026-05-20 revision).
+
+### Environment (request `environment` / agent `base_environment`)
+
+Union: a string environment ID, or a typed remote environment object.
+
+```json
+"env-123"
+```
+
+```json
+{
+  "type": "remote",
+  "sources": [
+    {"type": "gcs", "source": "gs://bucket/data", "target": "/data"},
+    {"type": "inline", "target": "/etc/config", "content": "aGVsbG8=", "encoding": "base64"},
+    {"type": "repository", "source": "github.com/org/repo", "target": "/workspace"},
+    {"type": "skill_registry", "source": "skills/my-skill"}
+  ],
+  "network": {"allowlist": [
+    {"domain": "*.googleapis.com"},
+    {"domain": "api.example.com", "transform": [{"Authorization": "Bearer ..."}]}
+  ]}
+}
+```
+
+- `network` is a union: the string `"disabled"` (all network off), an
+  `{"allowlist": [...]}` object, or omitted entirely (all traffic allowed).
+- The response echoes the server-assigned environment as `environment_id`,
+  which can be passed back as the string form on later turns.
+
+**Status**: Pending live verification (2026-05-20 revision).
+
+### ResponseFormat (request `response_format`)
+
+Typed union tagged by `"type"`; the request field accepts one object or a
+list (one per output modality).
+
+```json
+{"type": "text", "mime_type": "application/json", "schema": {"type": "object"}}
+{"type": "audio", "mime_type": "audio/mp3", "delivery": "inline", "sample_rate": 24000, "bit_rate": 128000}
+{"type": "image", "mime_type": "image/jpeg", "delivery": "uri", "aspect_ratio": "16:9", "image_size": "2K"}
+{"type": "video", "delivery": "uri", "gcs_uri": "gs://bucket/out", "aspect_ratio": "9:16", "duration": "8s"}
+```
+
+- `delivery` (`ResponseDelivery`): `"inline"` | `"uri"` (+ `Unknown`).
+- Known text MIME types: `application/json`, `text/plain`. Known audio MIME
+  types: `audio/mp3`, `audio/ogg_opus`, `audio/l16`, `audio/wav`,
+  `audio/alaw`, `audio/mulaw`. Known image MIME type: `image/jpeg`.
+- The API also accepts a raw JSON-schema dict here (the pre-revision form);
+  such dicts have no recognized `"type"` tag and roundtrip through
+  `ResponseFormat::Unknown` with the data preserved. When *building*
+  requests, a raw `serde_json::Value` passed to `with_response_format()`
+  converts to the typed `text`/`application/json` form.
+- `video.gcs_uri` is required on Vertex when `delivery` is `"uri"`.
+
+**Status**: Pending live verification (2026-05-20 revision).
+
+### VideoConfig / VideoTask (generation_config)
+
+```json
+{"generation_config": {"video_config": {"task": "text_to_video"}}}
+```
+
+`VideoTask`: `text_to_video` | `image_to_video` | `reference_to_video` |
+`edit` (+ `Unknown { task_type, data }`). Omit to let the model pick the
+mode from the prompt and input media. Pair with
+`response_modalities: ["video"]` and (optionally) a `video` response format.
+
+**Status**: Pending live verification (2026-05-20 revision).
+
+### Visualization (Deep Research agent_config)
+
+```json
+{"agent_config": {"type": "deep-research", "visualization": "auto", "collaborative_planning": true, "enable_bigquery_tool": true}}
+```
+
+`Visualization`: `"off"` | `"auto"` (+ `Unknown { visualization_type, data }`).
+Note the contrast with `thinking_summaries`, which uses `THINKING_SUMMARIES_*`
+in agent_config; `visualization` is lowercase per the spec.
+
+**Status**: Pending live verification (2026-05-20 revision).
 
 ### GroundingToolCount (usage metadata)
 

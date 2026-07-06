@@ -6,8 +6,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
 use crate::content::Content;
+use crate::environment::EnvironmentSpec;
+use crate::response_format::ResponseFormatSpec;
 use crate::steps::Step;
 use crate::tools::{Tool, ToolChoice};
+use crate::webhooks::WebhookConfig;
 
 /// Role in a conversation turn.
 ///
@@ -498,14 +501,52 @@ pub struct GenerationConfig {
     pub frequency_penalty: Option<f32>,
     /// Speech configuration for text-to-speech audio output.
     ///
-    /// Required when using the `audio` response modality.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub speech_config: Option<SpeechConfig>,
+    /// Required when using the `audio` response modality. The wire format is
+    /// a **list** of speaker configurations: a single entry for single-voice
+    /// TTS, multiple entries (each with a distinct `speaker` name matching
+    /// the prompt) for multi-speaker TTS.
+    ///
+    /// A legacy single-object wire form is still accepted on deserialize.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_speech_configs"
+    )]
+    pub speech_config: Option<Vec<SpeechConfig>>,
     /// Image generation configuration.
     ///
     /// Controls aspect ratio and size for image generation output.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_config: Option<ImageConfig>,
+    /// Video generation configuration.
+    ///
+    /// Controls the video generation task mode when using the `video`
+    /// response modality.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub video_config: Option<VideoConfig>,
+}
+
+/// Deserializes `speech_config` from either the spec list form or the legacy
+/// single-object form.
+fn deserialize_speech_configs<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<SpeechConfig>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum ListOrSingle {
+        List(Vec<SpeechConfig>),
+        Single(SpeechConfig),
+    }
+
+    Ok(
+        Option::<ListOrSingle>::deserialize(deserializer)?.map(|value| match value {
+            ListOrSingle::List(list) => list,
+            ListOrSingle::Single(single) => vec![single],
+        }),
+    )
 }
 
 /// Speech configuration for text-to-speech audio output.
@@ -861,6 +902,154 @@ impl<'de> Deserialize<'de> for ImageSize {
     }
 }
 
+/// Task mode for video generation.
+///
+/// If not specified, the model automatically determines the appropriate mode
+/// based on the provided text prompt and input media.
+///
+/// This enum is marked `#[non_exhaustive]` for forward compatibility.
+///
+/// # Wire Format
+///
+/// Serializes as lowercase snake_case strings: `"text_to_video"`,
+/// `"image_to_video"`, `"reference_to_video"`, `"edit"`.
+///
+/// # Evergreen Pattern
+///
+/// Unknown values from the API deserialize into the `Unknown` variant,
+/// preserving the original data for debugging and roundtrip serialization.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum VideoTask {
+    /// Generate a video from a text prompt.
+    TextToVideo,
+    /// Generate a video from an input image.
+    ImageToVideo,
+    /// Generate a video from reference media.
+    ReferenceToVideo,
+    /// Edit an existing video.
+    Edit,
+    /// Unknown variant for forward compatibility (Evergreen pattern)
+    Unknown {
+        /// The unrecognized task type from the API
+        task_type: String,
+        /// The full JSON data, preserved for debugging and roundtrip serialization
+        data: serde_json::Value,
+    },
+}
+
+impl VideoTask {
+    /// Returns true if this is an unknown video task.
+    #[must_use]
+    pub const fn is_unknown(&self) -> bool {
+        matches!(self, Self::Unknown { .. })
+    }
+
+    /// Returns the task type name if this is an unknown video task.
+    #[must_use]
+    pub fn unknown_task_type(&self) -> Option<&str> {
+        match self {
+            Self::Unknown { task_type, .. } => Some(task_type),
+            _ => None,
+        }
+    }
+
+    /// Returns the preserved data if this is an unknown video task.
+    #[must_use]
+    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::Unknown { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for VideoTask {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::TextToVideo => serializer.serialize_str("text_to_video"),
+            Self::ImageToVideo => serializer.serialize_str("image_to_video"),
+            Self::ReferenceToVideo => serializer.serialize_str("reference_to_video"),
+            Self::Edit => serializer.serialize_str("edit"),
+            Self::Unknown { task_type, .. } => serializer.serialize_str(task_type),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for VideoTask {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value.as_str() {
+            Some("text_to_video") => Ok(Self::TextToVideo),
+            Some("image_to_video") => Ok(Self::ImageToVideo),
+            Some("reference_to_video") => Ok(Self::ReferenceToVideo),
+            Some("edit") => Ok(Self::Edit),
+            Some(other) => {
+                tracing::warn!(
+                    "Encountered unknown VideoTask '{}' - using Unknown variant (Evergreen)",
+                    other
+                );
+                Ok(Self::Unknown {
+                    task_type: other.to_string(),
+                    data: value,
+                })
+            }
+            None => {
+                let task_type = format!("<non-string: {}>", value);
+                tracing::warn!(
+                    "VideoTask received non-string value: {}. \
+                     Preserving in Unknown variant.",
+                    value
+                );
+                Ok(Self::Unknown {
+                    task_type,
+                    data: value,
+                })
+            }
+        }
+    }
+}
+
+/// Configuration for video generation output
+/// (`generation_config.video_config`).
+///
+/// # Example
+///
+/// ```
+/// use genai_rs::{VideoConfig, VideoTask};
+///
+/// let config = VideoConfig::new().with_task(VideoTask::TextToVideo);
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VideoConfig {
+    /// Optional task mode for video generation. When unset, the model picks
+    /// the mode based on the prompt and input media.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<VideoTask>,
+}
+
+impl VideoConfig {
+    /// Creates an empty video config (model chooses the task mode).
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the video generation task mode.
+    #[must_use]
+    pub fn with_task(mut self, task: VideoTask) -> Self {
+        self.task = Some(task);
+        self
+    }
+}
+
 /// Request body for the Interactions API endpoint.
 ///
 /// This type represents a fully-constructed interaction request that can be
@@ -953,9 +1142,13 @@ pub struct InteractionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_modalities: Option<Vec<String>>,
 
-    /// JSON schema for structured output
+    /// Typed response format(s) for structured/media output.
+    ///
+    /// A single [`ResponseFormat`](crate::ResponseFormat) or a list of them
+    /// (see [`ResponseFormatSpec`]). For the common JSON-schema case use
+    /// [`InteractionBuilder::with_response_format()`](crate::InteractionBuilder::with_response_format).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub response_format: Option<serde_json::Value>,
+    pub response_format: Option<ResponseFormatSpec>,
 
     /// Response MIME type for structured output.
     ///
@@ -996,6 +1189,17 @@ pub struct InteractionRequest {
     /// (e.g., `cachedContents/xyz`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cached_content: Option<String>,
+
+    /// Per-request webhook routing: deliver this request's events to the
+    /// given URIs (instead of the registered webhooks) with optional
+    /// user metadata echoed on each event.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub webhook_config: Option<WebhookConfig>,
+
+    /// Environment for the interaction: a string environment ID or a typed
+    /// remote environment (sources + network allowlist).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment: Option<EnvironmentSpec>,
 }
 
 /// Latency/priority service tier for a request.
@@ -1338,23 +1542,142 @@ impl AgentConfig {
     }
 }
 
+/// Visualization mode for the Deep Research agent.
+///
+/// Controls whether the agent includes visualizations in its response.
+///
+/// This enum is marked `#[non_exhaustive]` for forward compatibility.
+///
+/// # Wire Format
+///
+/// Serializes as lowercase strings: `"off"`, `"auto"`.
+///
+/// # Evergreen Pattern
+///
+/// Unknown values from the API deserialize into the `Unknown` variant,
+/// preserving the original data for debugging and roundtrip serialization.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum Visualization {
+    /// No visualizations in the response.
+    Off,
+    /// The agent decides when to include visualizations.
+    Auto,
+    /// Unknown variant for forward compatibility (Evergreen pattern)
+    Unknown {
+        /// The unrecognized visualization type from the API
+        visualization_type: String,
+        /// The raw JSON value, preserved for debugging and roundtrip
+        data: serde_json::Value,
+    },
+}
+
+impl Visualization {
+    /// Returns true if this is an unknown visualization mode.
+    #[must_use]
+    pub const fn is_unknown(&self) -> bool {
+        matches!(self, Self::Unknown { .. })
+    }
+
+    /// Returns the visualization type name if this is an unknown mode.
+    #[must_use]
+    pub fn unknown_visualization_type(&self) -> Option<&str> {
+        match self {
+            Self::Unknown {
+                visualization_type, ..
+            } => Some(visualization_type),
+            _ => None,
+        }
+    }
+
+    /// Returns the preserved data if this is an unknown mode.
+    #[must_use]
+    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::Unknown { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for Visualization {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Off => serializer.serialize_str("off"),
+            Self::Auto => serializer.serialize_str("auto"),
+            Self::Unknown {
+                visualization_type, ..
+            } => serializer.serialize_str(visualization_type),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Visualization {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value.as_str() {
+            Some("off") => Ok(Self::Off),
+            Some("auto") => Ok(Self::Auto),
+            Some(other) => {
+                tracing::warn!(
+                    "Encountered unknown Visualization '{}' - using Unknown variant (Evergreen)",
+                    other
+                );
+                Ok(Self::Unknown {
+                    visualization_type: other.to_string(),
+                    data: value,
+                })
+            }
+            None => {
+                let visualization_type = format!("<non-string: {}>", value);
+                tracing::warn!(
+                    "Visualization received non-string value: {}. \
+                     Preserving in Unknown variant.",
+                    value
+                );
+                Ok(Self::Unknown {
+                    visualization_type,
+                    data: value,
+                })
+            }
+        }
+    }
+}
+
 /// Configuration for Deep Research agent.
 ///
 /// Deep Research agent performs comprehensive research tasks
-/// and can optionally include thinking summaries.
+/// and can optionally include thinking summaries, visualizations,
+/// collaborative planning, and BigQuery access.
+///
+/// Known Deep Research agent IDs: `deep-research-pro-preview-12-2025`,
+/// `deep-research-preview-04-2026`, `deep-research-max-preview-04-2026`.
+/// See `docs/AGENTS_AND_BACKGROUND.md`.
 ///
 /// # Example
 ///
 /// ```
-/// use genai_rs::{AgentConfig, DeepResearchConfig, ThinkingSummaries};
+/// use genai_rs::{AgentConfig, DeepResearchConfig, ThinkingSummaries, Visualization};
 ///
 /// let config: AgentConfig = DeepResearchConfig::new()
 ///     .with_thinking_summaries(ThinkingSummaries::Auto)
+///     .with_visualization(Visualization::Auto)
+///     .with_collaborative_planning(true)
+///     .with_bigquery_tool(true)
 ///     .into();
 /// ```
 #[derive(Clone, Debug, Default)]
 pub struct DeepResearchConfig {
     thinking_summaries: Option<ThinkingSummaries>,
+    visualization: Option<Visualization>,
+    collaborative_planning: Option<bool>,
+    enable_bigquery_tool: Option<bool>,
 }
 
 impl DeepResearchConfig {
@@ -1372,6 +1695,30 @@ impl DeepResearchConfig {
         self.thinking_summaries = Some(summaries);
         self
     }
+
+    /// Set the visualization mode (`off` | `auto`).
+    #[must_use]
+    pub fn with_visualization(mut self, visualization: Visualization) -> Self {
+        self.visualization = Some(visualization);
+        self
+    }
+
+    /// Enable (or disable) human-in-the-loop planning.
+    ///
+    /// When `true`, the agent first returns a research plan and only proceeds
+    /// after the user confirms the plan in the next turn.
+    #[must_use]
+    pub fn with_collaborative_planning(mut self, enabled: bool) -> Self {
+        self.collaborative_planning = Some(enabled);
+        self
+    }
+
+    /// Enable (or disable) the BigQuery tool for the Deep Research agent.
+    #[must_use]
+    pub fn with_bigquery_tool(mut self, enabled: bool) -> Self {
+        self.enable_bigquery_tool = Some(enabled);
+        self
+    }
 }
 
 impl From<DeepResearchConfig> for AgentConfig {
@@ -1384,6 +1731,25 @@ impl From<DeepResearchConfig> for AgentConfig {
         if let Some(ts) = config.thinking_summaries {
             // Use agent_config format (THINKING_SUMMARIES_*), not generation_config format (auto/none)
             map.insert("thinking_summaries".into(), ts.to_agent_config_value());
+        }
+        if let Some(visualization) = config.visualization {
+            map.insert(
+                "visualization".into(),
+                serde_json::to_value(&visualization)
+                    .expect("Visualization serialization is infallible"),
+            );
+        }
+        if let Some(planning) = config.collaborative_planning {
+            map.insert(
+                "collaborative_planning".into(),
+                serde_json::Value::Bool(planning),
+            );
+        }
+        if let Some(bigquery) = config.enable_bigquery_tool {
+            map.insert(
+                "enable_bigquery_tool".into(),
+                serde_json::Value::Bool(bigquery),
+            );
         }
         AgentConfig(serde_json::Value::Object(map))
     }
