@@ -40,6 +40,15 @@ Output shows:
 }
 ```
 
+Error responses are shown too (`Error (429): {...}`), including the full
+error body from the API.
+
+`LOUD_WIRE` is read once when the `Client` is constructed — set it before
+starting your program. Under the hood it installs a
+`genai_rs::wire::LoudWirePrinter`; for programmatic capture (custom sinks,
+forwarding to `tracing` via `RUST_LOG=genai_rs::wire=debug`), see the wire
+inspection API in [docs/LOGGING_STRATEGY.md](docs/LOGGING_STRATEGY.md).
+
 ### Enable Library Logging
 
 For internal library behavior:

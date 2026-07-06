@@ -1,15 +1,15 @@
 use super::common::{API_KEY_HEADER, Endpoint, construct_endpoint_url};
-use super::error_helpers::{check_response, deserialize_with_context};
-use super::loud_wire;
+use super::context::HttpContext;
+use super::error_helpers::{check_response_wire, deserialize_with_context};
 use super::sse_parser::parse_sse_stream;
 use crate::errors::GenaiError;
+use crate::wire::WireEvent;
 use crate::{
     Content, InteractionRequest, InteractionResponse, InteractionStreamEvent, StreamChunk,
     StreamEvent,
 };
 use async_stream::try_stream;
 use futures_util::{Stream, StreamExt};
-use reqwest::Client as ReqwestClient;
 use std::collections::HashMap;
 use tracing::{debug, warn};
 
@@ -25,39 +25,32 @@ use tracing::{debug, warn};
 /// - The response status is not successful
 /// - The response cannot be parsed as JSON
 pub async fn create_interaction(
-    http_client: &ReqwestClient,
-    api_key: &str,
+    ctx: &HttpContext,
     request: InteractionRequest,
 ) -> Result<InteractionResponse, GenaiError> {
     let endpoint = Endpoint::CreateInteraction { stream: false };
     let url = construct_endpoint_url(endpoint);
 
-    // LOUD_WIRE: Log outgoing request
-    let request_id = loud_wire::next_request_id();
-    let request_body = match serde_json::to_string(&request) {
-        Ok(body) => Some(body),
-        Err(e) => {
-            tracing::warn!("LOUD_WIRE: Failed to serialize request body: {}", e);
-            None
-        }
-    };
-    loud_wire::log_request(request_id, "POST", &url, request_body.as_deref());
+    let request_id = ctx.next_request_id();
+    ctx.emit_request(request_id, "POST", &url, ctx.serialize_wire_body(&request));
 
-    let response = http_client
+    let response = ctx
+        .http_client
         .post(&url)
-        .header(API_KEY_HEADER, api_key)
+        .header(API_KEY_HEADER, &ctx.api_key)
         .json(&request)
         .send()
         .await?;
 
-    // LOUD_WIRE: Log response status
-    loud_wire::log_response_status(request_id, response.status().as_u16());
+    ctx.emit(WireEvent::ResponseStatus {
+        id: request_id,
+        status: response.status().as_u16(),
+    });
 
-    let response = check_response(response).await?;
+    let response = check_response_wire(response, ctx, request_id).await?;
     let response_text = response.text().await.map_err(GenaiError::Http)?;
 
-    // LOUD_WIRE: Log response body
-    loud_wire::log_response_body(request_id, &response_text);
+    ctx.emit_response_body(request_id, &response_text);
 
     let interaction_response: InteractionResponse =
         deserialize_with_context(&response_text, "InteractionResponse from create")?;
@@ -108,23 +101,21 @@ pub async fn create_interaction(
 /// }
 /// ```
 pub fn create_interaction_stream<'a>(
-    http_client: &'a ReqwestClient,
-    api_key: &'a str,
+    ctx: &'a HttpContext,
     request: InteractionRequest,
 ) -> impl Stream<Item = Result<StreamEvent, GenaiError>> + Send + 'a {
     let endpoint = Endpoint::CreateInteraction { stream: true };
     let url = construct_endpoint_url(endpoint);
 
-    // LOUD_WIRE: Log outgoing request (before try_stream! to capture request_id)
-    let request_id = loud_wire::next_request_id();
-    let request_body = match serde_json::to_string(&request) {
-        Ok(body) => Some(body),
-        Err(e) => {
-            tracing::warn!("LOUD_WIRE: Failed to serialize request body: {}", e);
-            None
-        }
-    };
-    loud_wire::log_request(request_id, "POST (stream)", &url, request_body.as_deref());
+    // Emit the request event before try_stream! so the request id is
+    // captured even if the stream is never polled.
+    let request_id = ctx.next_request_id();
+    ctx.emit_request(
+        request_id,
+        "POST (stream)",
+        &url,
+        ctx.serialize_wire_body(&request),
+    );
 
     try_stream! {
         // Accumulate content from deltas to include in Complete response.
@@ -136,19 +127,22 @@ pub fn create_interaction_stream<'a>(
         // that need to be merged (e.g., text fragments, function call arguments).
         let mut content_by_index: HashMap<usize, Content> = HashMap::new();
 
-        let response = http_client
+        let response = ctx
+            .http_client
             .post(&url)
-            .header(API_KEY_HEADER, api_key)
+            .header(API_KEY_HEADER, &ctx.api_key)
             .json(&request)
             .send()
             .await?;
 
-        // LOUD_WIRE: Log response status
-        loud_wire::log_response_status(request_id, response.status().as_u16());
+        ctx.emit(WireEvent::ResponseStatus {
+            id: request_id,
+            status: response.status().as_u16(),
+        });
 
-        let response = check_response(response).await?;
+        let response = check_response_wire(response, ctx, request_id).await?;
         let byte_stream = response.bytes_stream();
-        let parsed_stream = parse_sse_stream::<InteractionStreamEvent>(byte_stream, request_id);
+        let parsed_stream = parse_sse_stream::<InteractionStreamEvent>(byte_stream, ctx, request_id);
         futures_util::pin_mut!(parsed_stream);
 
         while let Some(result) = parsed_stream.next().await {
@@ -312,8 +306,7 @@ pub fn create_interaction_stream<'a>(
 /// - The response status is not successful
 /// - The response cannot be parsed as JSON
 pub async fn get_interaction(
-    http_client: &ReqwestClient,
-    api_key: &str,
+    ctx: &HttpContext,
     interaction_id: &str,
 ) -> Result<InteractionResponse, GenaiError> {
     let endpoint = Endpoint::GetInteraction {
@@ -323,24 +316,25 @@ pub async fn get_interaction(
     };
     let url = construct_endpoint_url(endpoint);
 
-    // LOUD_WIRE: Log outgoing request
-    let request_id = loud_wire::next_request_id();
-    loud_wire::log_request(request_id, "GET", &url, None);
+    let request_id = ctx.next_request_id();
+    ctx.emit_request(request_id, "GET", &url, None);
 
-    let response = http_client
+    let response = ctx
+        .http_client
         .get(&url)
-        .header(API_KEY_HEADER, api_key)
+        .header(API_KEY_HEADER, &ctx.api_key)
         .send()
         .await?;
 
-    // LOUD_WIRE: Log response status
-    loud_wire::log_response_status(request_id, response.status().as_u16());
+    ctx.emit(WireEvent::ResponseStatus {
+        id: request_id,
+        status: response.status().as_u16(),
+    });
 
-    let response = check_response(response).await?;
+    let response = check_response_wire(response, ctx, request_id).await?;
     let response_text = response.text().await.map_err(GenaiError::Http)?;
 
-    // LOUD_WIRE: Log response body
-    loud_wire::log_response_body(request_id, &response_text);
+    ctx.emit_response_body(request_id, &response_text);
 
     let interaction_response: InteractionResponse =
         deserialize_with_context(&response_text, "InteractionResponse from get")?;
@@ -379,8 +373,7 @@ pub async fn get_interaction(
 /// }
 /// ```
 pub fn get_interaction_stream<'a>(
-    http_client: &'a ReqwestClient,
-    api_key: &'a str,
+    ctx: &'a HttpContext,
     interaction_id: &'a str,
     last_event_id: Option<&'a str>,
 ) -> impl Stream<Item = Result<StreamEvent, GenaiError>> + Send + 'a {
@@ -391,12 +384,11 @@ pub fn get_interaction_stream<'a>(
     };
     let url = construct_endpoint_url(endpoint);
 
-    // LOUD_WIRE: Log outgoing request
-    let request_id = loud_wire::next_request_id();
+    let request_id = ctx.next_request_id();
     let resume_info = last_event_id
         .map(|id| format!(" (resuming from {})", id))
         .unwrap_or_default();
-    loud_wire::log_request(
+    ctx.emit_request(
         request_id,
         &format!("GET (stream){}", resume_info),
         &url,
@@ -407,18 +399,21 @@ pub fn get_interaction_stream<'a>(
         // Accumulate content by index (same as create_interaction_stream)
         let mut content_by_index: HashMap<usize, Content> = HashMap::new();
 
-        let response = http_client
+        let response = ctx
+            .http_client
             .get(&url)
-            .header(API_KEY_HEADER, api_key)
+            .header(API_KEY_HEADER, &ctx.api_key)
             .send()
             .await?;
 
-        // LOUD_WIRE: Log response status
-        loud_wire::log_response_status(request_id, response.status().as_u16());
+        ctx.emit(WireEvent::ResponseStatus {
+            id: request_id,
+            status: response.status().as_u16(),
+        });
 
-        let response = check_response(response).await?;
+        let response = check_response_wire(response, ctx, request_id).await?;
         let byte_stream = response.bytes_stream();
-        let parsed_stream = parse_sse_stream::<InteractionStreamEvent>(byte_stream, request_id);
+        let parsed_stream = parse_sse_stream::<InteractionStreamEvent>(byte_stream, ctx, request_id);
         futures_util::pin_mut!(parsed_stream);
 
         while let Some(result) = parsed_stream.next().await {
@@ -482,28 +477,26 @@ pub fn get_interaction_stream<'a>(
 /// Returns an error if:
 /// - The HTTP request fails
 /// - The response status is not successful
-pub async fn delete_interaction(
-    http_client: &ReqwestClient,
-    api_key: &str,
-    interaction_id: &str,
-) -> Result<(), GenaiError> {
+pub async fn delete_interaction(ctx: &HttpContext, interaction_id: &str) -> Result<(), GenaiError> {
     let endpoint = Endpoint::DeleteInteraction { id: interaction_id };
     let url = construct_endpoint_url(endpoint);
 
-    // LOUD_WIRE: Log outgoing request
-    let request_id = loud_wire::next_request_id();
-    loud_wire::log_request(request_id, "DELETE", &url, None);
+    let request_id = ctx.next_request_id();
+    ctx.emit_request(request_id, "DELETE", &url, None);
 
-    let response = http_client
+    let response = ctx
+        .http_client
         .delete(&url)
-        .header(API_KEY_HEADER, api_key)
+        .header(API_KEY_HEADER, &ctx.api_key)
         .send()
         .await?;
 
-    // LOUD_WIRE: Log response status
-    loud_wire::log_response_status(request_id, response.status().as_u16());
+    ctx.emit(WireEvent::ResponseStatus {
+        id: request_id,
+        status: response.status().as_u16(),
+    });
 
-    check_response(response).await?;
+    check_response_wire(response, ctx, request_id).await?;
     Ok(())
 }
 
@@ -520,33 +513,33 @@ pub async fn delete_interaction(
 /// - The response cannot be parsed as JSON
 /// - The interaction is not in a cancellable state
 pub async fn cancel_interaction(
-    http_client: &ReqwestClient,
-    api_key: &str,
+    ctx: &HttpContext,
     interaction_id: &str,
 ) -> Result<InteractionResponse, GenaiError> {
     let endpoint = Endpoint::CancelInteraction { id: interaction_id };
     let url = construct_endpoint_url(endpoint);
 
-    // LOUD_WIRE: Log outgoing request
-    let request_id = loud_wire::next_request_id();
-    loud_wire::log_request(request_id, "POST", &url, Some("{}"));
+    let request_id = ctx.next_request_id();
+    ctx.emit_request(request_id, "POST", &url, Some(serde_json::json!({})));
 
     // Send empty JSON body - the API requires Content-Length header
-    let response = http_client
+    let response = ctx
+        .http_client
         .post(&url)
-        .header(API_KEY_HEADER, api_key)
+        .header(API_KEY_HEADER, &ctx.api_key)
         .json(&serde_json::json!({}))
         .send()
         .await?;
 
-    // LOUD_WIRE: Log response status
-    loud_wire::log_response_status(request_id, response.status().as_u16());
+    ctx.emit(WireEvent::ResponseStatus {
+        id: request_id,
+        status: response.status().as_u16(),
+    });
 
-    let response = check_response(response).await?;
+    let response = check_response_wire(response, ctx, request_id).await?;
     let response_text = response.text().await.map_err(GenaiError::Http)?;
 
-    // LOUD_WIRE: Log response body
-    loud_wire::log_response_body(request_id, &response_text);
+    ctx.emit_response_body(request_id, &response_text);
 
     let interaction_response: InteractionResponse =
         deserialize_with_context(&response_text, "InteractionResponse from cancel")?;

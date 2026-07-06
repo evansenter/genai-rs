@@ -102,6 +102,9 @@ pub use tools::{
 pub mod wire_streaming;
 pub use wire_streaming::{InteractionStreamEvent, StreamChunk, StreamEvent};
 
+// Wire-level inspection (WireEvent, WireInspector, built-in inspectors)
+pub mod wire;
+
 // Files API types
 pub use http::files::{
     DEFAULT_CHUNK_SIZE, FileError, FileMetadata, FileState, ListFilesResponse, ResumableUpload,

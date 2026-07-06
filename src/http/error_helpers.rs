@@ -1,6 +1,8 @@
 //! Error handling utilities for HTTP responses and error context formatting.
 
+use super::context::HttpContext;
 use crate::errors::GenaiError;
+use crate::wire::WireEvent;
 use reqwest::Response;
 use serde::de::DeserializeOwned;
 
@@ -23,6 +25,33 @@ pub async fn check_response(response: Response) -> Result<Response, GenaiError> 
     }
 }
 
+/// Like [`check_response`], but also surfaces error response bodies to the
+/// installed wire inspectors as [`WireEvent::ErrorBody`] before constructing
+/// the error.
+///
+/// # Errors
+///
+/// Returns an error with status code and body preview on non-success status.
+pub async fn check_response_wire(
+    response: Response,
+    ctx: &HttpContext,
+    request_id: u64,
+) -> Result<Response, GenaiError> {
+    if response.status().is_success() {
+        return Ok(response);
+    }
+
+    let parts = read_error_parts(response).await;
+    if ctx.has_inspectors() {
+        ctx.emit(WireEvent::ErrorBody {
+            id: request_id,
+            status: parts.status_code,
+            body: parts.body.clone(),
+        });
+    }
+    Err(parts.into_api_error())
+}
+
 /// Google's request ID header name.
 ///
 /// This is a standard Google Cloud API header that uniquely identifies each request.
@@ -37,19 +66,29 @@ const REQUEST_ID_HEADER: &str = "x-goog-request-id";
 /// - HTTP date (e.g., "Wed, 21 Oct 2015 07:28:00 GMT")
 const RETRY_AFTER_HEADER: &str = "retry-after";
 
-/// Reads error response body and creates a detailed GenaiError::Api with context.
-///
-/// Extracts:
-/// - HTTP status code for programmatic error handling
-/// - Truncated response body (first 200 chars)
-/// - Request ID from `x-goog-request-id` header for debugging/support
-/// - Retry delay from `Retry-After` header (typically for 429 errors)
-///
-/// # Returns
-///
-/// A structured `GenaiError::Api` with status code, message, optional request ID,
-/// and optional retry delay. If body cannot be read, the message describes the read failure.
-pub async fn read_error_with_context(response: Response) -> GenaiError {
+/// Raw pieces of an error response, extracted before the body is consumed.
+struct ErrorParts {
+    status_code: u16,
+    request_id: Option<String>,
+    retry_after: Option<std::time::Duration>,
+    /// Full (untruncated) error body.
+    body: String,
+}
+
+impl ErrorParts {
+    /// Builds the structured API error, truncating the body for the message.
+    fn into_api_error(self) -> GenaiError {
+        GenaiError::Api {
+            status_code: self.status_code,
+            message: truncate_for_context(&self.body, ERROR_BODY_PREVIEW_LENGTH),
+            request_id: self.request_id,
+            retry_after: self.retry_after,
+        }
+    }
+}
+
+/// Reads the status code, diagnostic headers, and full body of an error response.
+async fn read_error_parts(response: Response) -> ErrorParts {
     let status_code = response.status().as_u16();
 
     // Extract request ID from response headers before consuming the body
@@ -66,19 +105,33 @@ pub async fn read_error_with_context(response: Response) -> GenaiError {
         .and_then(|v| v.to_str().ok())
         .and_then(parse_retry_after);
 
-    let error_body = response
+    let body = response
         .text()
         .await
         .unwrap_or_else(|e| format!("Failed to read error body: {}", e));
 
-    let message = truncate_for_context(&error_body, ERROR_BODY_PREVIEW_LENGTH);
-
-    GenaiError::Api {
+    ErrorParts {
         status_code,
-        message,
         request_id,
         retry_after,
+        body,
     }
+}
+
+/// Reads error response body and creates a detailed GenaiError::Api with context.
+///
+/// Extracts:
+/// - HTTP status code for programmatic error handling
+/// - Truncated response body (first 200 chars)
+/// - Request ID from `x-goog-request-id` header for debugging/support
+/// - Retry delay from `Retry-After` header (typically for 429 errors)
+///
+/// # Returns
+///
+/// A structured `GenaiError::Api` with status code, message, optional request ID,
+/// and optional retry delay. If body cannot be read, the message describes the read failure.
+pub async fn read_error_with_context(response: Response) -> GenaiError {
+    read_error_parts(response).await.into_api_error()
 }
 
 /// Parses the Retry-After header value into a Duration.

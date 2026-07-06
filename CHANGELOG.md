@@ -20,12 +20,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `with_google_maps()` shorthand on `InteractionBuilder`
 - `Place` struct with Evergreen forward-compatible `extra` field
 - `GoogleMapsResultInfo` view type and response accessors (`has_google_maps_results()`, `google_maps_results()`)
+- Public `genai_rs::wire` module for structured wire-level inspection:
+  - `WireEvent` (requests, response status/bodies, error bodies, SSE frames, file uploads) with per-client request-id correlation
+  - `WireInspector` trait and `ClientBuilder::add_wire_inspector()` (multiple inspectors supported)
+  - `LoudWirePrinter` built-in inspector — the colored stderr printer behind `LOUD_WIRE=1` (unchanged UX: the env var, now read at `Client` construction, installs it automatically)
+  - `TracingForwarder` built-in inspector — forwards wire events to `tracing` at `DEBUG` under the new `genai_rs::wire` target (`RUST_LOG=genai_rs::wire=debug`)
+- SSE `event:` lines are now surfaced to wire inspectors as `WireEvent::SseFrame { event_type, .. }`
 
 ### Changed
 
 - `Tool::GoogleSearch` is now a struct variant with optional `search_types` field (was unit variant)
 - `Tool::McpServer` has additional optional fields `allowed_tools` and `headers`
 - Proptest roundtrip comparisons use `serde_json::Value` for HashMap key order independence
+- **BREAKING**: `reqwest` upgraded 0.12 → 0.13 (`GenaiError::Http(reqwest::Error)` and `ResumableUpload` methods expose reqwest types publicly). MSRV is unchanged (Rust 1.88)
+- New default-on feature `wire-color` gates the `colored`/`colored_json` dependencies; build with `default-features = false` for plain-text wire output
+- Wire debug request ids are now per-`Client` (previously a process-global counter)
+- Minor dependency bumps: tokio 1.48 → 1.52, proptest 1.9 → 1.11, utoipa 5.4 → 5.5
+
+### Fixed
+
+- Error response bodies are now visible in wire output (`WireEvent::ErrorBody`); previously `LOUD_WIRE=1` showed only the status line for failed requests
+- Wire output no longer panics when truncating multi-byte UTF-8 content (`data`/`signature` fields and non-JSON bodies truncate on character boundaries)
+- Request bodies are no longer serialized for wire debugging when it is disabled (previously every request paid the serialization cost even without `LOUD_WIRE`)
 
 ### Removed
 

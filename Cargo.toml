@@ -6,8 +6,8 @@ members = [
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"] }
-tokio = { version = "1.48", features = ["full"] }
+reqwest = { version = "0.13", features = ["json", "rustls", "stream"] }
+tokio = { version = "1.52", features = ["full"] }
 async-stream = "0.3"
 futures-util = "0.3"
 thiserror = "2.0"
@@ -18,7 +18,7 @@ bytes = "1.11"
 syn = { version = "2.0", features = ["full", "parsing"] }
 quote = "1.0"
 proc-macro2 = "1.0"
-utoipa = "5.4"
+utoipa = "5.5"
 chrono = { version = "0.4", features = ["serde"] }
 
 [package]
@@ -51,8 +51,8 @@ chrono = { workspace = true }
 base64 = "0.22"
 # Dependencies from genai-client
 tokio-util = { version = "0.7", features = ["io"] }
-colored = "3"
-colored_json = "5"
+colored = { version = "3", optional = true }
+colored_json = { version = "5", optional = true }
 regex = "1"
 urlencoding = "2"
 
@@ -62,13 +62,22 @@ trybuild = "1.0.114"
 tempfile = "3.15"
 bytes = { workspace = true }
 futures-util = { workspace = true }
-proptest = "1.9"
+proptest = "1.11"
 chrono = { workspace = true }
 doc-comment = "0.3"
 rand = "0.9"
 backon = "1.6"
 
 [features]
+default = ["wire-color"]
+
+## Colored output for the LoudWirePrinter wire inspector (LOUD_WIRE=1).
+##
+## Enabled by default. Disable (`default-features = false`) to drop the
+## `colored` and `colored_json` dependencies; wire output falls back to
+## plain pretty-printed text.
+wire-color = ["dep:colored", "dep:colored_json"]
+
 ## Strict mode for unknown content types.
 ##
 ## When enabled, encountering unknown content types in API responses will

@@ -1,5 +1,8 @@
 use crate::GenaiError;
+use crate::http::context::HttpContext;
+use crate::wire::{LoudWirePrinter, WireInspector};
 use reqwest::Client as ReqwestClient;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Logs a request body at debug level, preferring JSON format when possible.
@@ -21,9 +24,9 @@ fn log_response_body<T: std::fmt::Debug + serde::Serialize>(body: &T) {
 /// The main client for interacting with the Google Generative AI API.
 #[derive(Clone)]
 pub struct Client {
-    pub(crate) api_key: String,
-    #[allow(clippy::struct_field_names)]
-    pub(crate) http_client: ReqwestClient,
+    /// Shared HTTP context: reqwest client, API key, wire inspectors, and
+    /// the request-id counter for wire-event correlation.
+    pub(crate) http: HttpContext,
 }
 
 // Custom Debug implementation that redacts the API key for security.
@@ -32,9 +35,18 @@ impl std::fmt::Debug for Client {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Client")
             .field("api_key", &"[REDACTED]")
-            .field("http_client", &self.http_client)
+            .field("http_client", &self.http.http_client)
             .finish()
     }
+}
+
+/// Appends a [`LoudWirePrinter`] when the `LOUD_WIRE` environment variable is
+/// set. Checked once at `Client` construction time.
+fn with_env_inspectors(mut inspectors: Vec<Arc<dyn WireInspector>>) -> Vec<Arc<dyn WireInspector>> {
+    if std::env::var("LOUD_WIRE").is_ok() {
+        inspectors.push(Arc::new(LoudWirePrinter::new()));
+    }
+    inspectors
 }
 
 /// Builder for `Client` instances.
@@ -55,6 +67,7 @@ pub struct ClientBuilder {
     api_key: String,
     timeout: Option<Duration>,
     connect_timeout: Option<Duration>,
+    wire_inspectors: Vec<Arc<dyn WireInspector>>,
 }
 
 // Custom Debug implementation that redacts the API key for security.
@@ -64,6 +77,7 @@ impl std::fmt::Debug for ClientBuilder {
             .field("api_key", &"[REDACTED]")
             .field("timeout", &self.timeout)
             .field("connect_timeout", &self.connect_timeout)
+            .field("wire_inspectors", &self.wire_inspectors.len())
             .finish()
     }
 }
@@ -121,6 +135,32 @@ impl ClientBuilder {
         self
     }
 
+    /// Adds a wire inspector that observes raw API traffic.
+    ///
+    /// Inspectors receive a [`crate::wire::WireEvent`] for every request,
+    /// response, error body, SSE frame, and file upload. Multiple inspectors
+    /// may be registered; each receives every event. When the `LOUD_WIRE`
+    /// environment variable is set, a [`crate::wire::LoudWirePrinter`] is
+    /// appended automatically at `build()` time.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use genai_rs::Client;
+    /// use genai_rs::wire::TracingForwarder;
+    /// use std::sync::Arc;
+    ///
+    /// let client = Client::builder("api_key".to_string())
+    ///     .add_wire_inspector(Arc::new(TracingForwarder::new()))
+    ///     .build()?;
+    /// # Ok::<(), genai_rs::GenaiError>(())
+    /// ```
+    #[must_use]
+    pub fn add_wire_inspector(mut self, inspector: Arc<dyn WireInspector>) -> Self {
+        self.wire_inspectors.push(inspector);
+        self
+    }
+
     /// Builds the `Client`.
     ///
     /// # Errors
@@ -143,8 +183,11 @@ impl ClientBuilder {
             .map_err(|e| GenaiError::ClientBuild(e.to_string()))?;
 
         Ok(Client {
-            api_key: self.api_key,
-            http_client,
+            http: HttpContext::new(
+                http_client,
+                self.api_key,
+                with_env_inspectors(self.wire_inspectors),
+            ),
         })
     }
 }
@@ -161,6 +204,7 @@ impl Client {
             api_key,
             timeout: None,
             connect_timeout: None,
+            wire_inspectors: Vec::new(),
         }
     }
 
@@ -172,8 +216,11 @@ impl Client {
     #[must_use]
     pub fn new(api_key: String) -> Self {
         Self {
-            api_key,
-            http_client: ReqwestClient::new(),
+            http: HttpContext::new(
+                ReqwestClient::new(),
+                api_key,
+                with_env_inspectors(Vec::new()),
+            ),
         }
     }
 
@@ -346,12 +393,7 @@ impl Client {
         tracing::debug!("Creating interaction");
         log_request_body(&request);
 
-        let response = crate::http::interactions::create_interaction(
-            &self.http_client,
-            &self.api_key,
-            request,
-        )
-        .await?;
+        let response = crate::http::interactions::create_interaction(&self.http, request).await?;
 
         log_response_body(&response);
         tracing::debug!("Interaction created: ID={:?}", response.id);
@@ -410,11 +452,7 @@ impl Client {
         tracing::debug!("Creating streaming interaction");
         log_request_body(&request);
 
-        let stream = crate::http::interactions::create_interaction_stream(
-            &self.http_client,
-            &self.api_key,
-            request,
-        );
+        let stream = crate::http::interactions::create_interaction_stream(&self.http, request);
 
         stream
             .map(move |result| {
@@ -450,12 +488,8 @@ impl Client {
     ) -> Result<crate::InteractionResponse, GenaiError> {
         tracing::debug!("Getting interaction: ID={interaction_id}");
 
-        let response = crate::http::interactions::get_interaction(
-            &self.http_client,
-            &self.api_key,
-            interaction_id,
-        )
-        .await?;
+        let response =
+            crate::http::interactions::get_interaction(&self.http, interaction_id).await?;
 
         log_response_body(&response);
         tracing::debug!("Retrieved interaction: status={:?}", response.status);
@@ -526,8 +560,7 @@ impl Client {
         );
 
         let stream = crate::http::interactions::get_interaction_stream(
-            &self.http_client,
-            &self.api_key,
+            &self.http,
             interaction_id,
             last_event_id,
         );
@@ -562,12 +595,7 @@ impl Client {
     pub async fn delete_interaction(&self, interaction_id: &str) -> Result<(), GenaiError> {
         tracing::debug!("Deleting interaction: ID={interaction_id}");
 
-        crate::http::interactions::delete_interaction(
-            &self.http_client,
-            &self.api_key,
-            interaction_id,
-        )
-        .await?;
+        crate::http::interactions::delete_interaction(&self.http, interaction_id).await?;
 
         tracing::debug!("Interaction deleted successfully");
 
@@ -632,12 +660,8 @@ impl Client {
     ) -> Result<crate::InteractionResponse, GenaiError> {
         tracing::debug!("Cancelling interaction: ID={interaction_id}");
 
-        let response = crate::http::interactions::cancel_interaction(
-            &self.http_client,
-            &self.api_key,
-            interaction_id,
-        )
-        .await?;
+        let response =
+            crate::http::interactions::cancel_interaction(&self.http, interaction_id).await?;
 
         log_response_body(&response);
         tracing::debug!("Interaction cancelled: status={:?}", response.status);
@@ -725,14 +749,8 @@ impl Client {
             mime_type
         );
 
-        crate::http::files::upload_file(
-            &self.http_client,
-            &self.api_key,
-            file_data,
-            mime_type,
-            display_name.as_deref(),
-        )
-        .await
+        crate::http::files::upload_file(&self.http, file_data, mime_type, display_name.as_deref())
+            .await
     }
 
     /// Uploads a file with an explicit MIME type.
@@ -780,14 +798,8 @@ impl Client {
             mime_type
         );
 
-        crate::http::files::upload_file(
-            &self.http_client,
-            &self.api_key,
-            file_data,
-            mime_type,
-            display_name.as_deref(),
-        )
-        .await
+        crate::http::files::upload_file(&self.http, file_data, mime_type, display_name.as_deref())
+            .await
     }
 
     /// Uploads file bytes directly with a specified MIME type.
@@ -827,14 +839,7 @@ impl Client {
             display_name
         );
 
-        crate::http::files::upload_file(
-            &self.http_client,
-            &self.api_key,
-            data,
-            mime_type,
-            display_name,
-        )
-        .await
+        crate::http::files::upload_file(&self.http, data, mime_type, display_name).await
     }
 
     /// Gets metadata for an uploaded file.
@@ -863,7 +868,7 @@ impl Client {
     /// # }
     /// ```
     pub async fn get_file(&self, file_name: &str) -> Result<crate::FileMetadata, GenaiError> {
-        crate::http::files::get_file(&self.http_client, &self.api_key, file_name).await
+        crate::http::files::get_file(&self.http, file_name).await
     }
 
     /// Lists all uploaded files.
@@ -888,8 +893,7 @@ impl Client {
         page_size: Option<u32>,
         page_token: Option<&str>,
     ) -> Result<crate::ListFilesResponse, GenaiError> {
-        crate::http::files::list_files(&self.http_client, &self.api_key, page_size, page_token)
-            .await
+        crate::http::files::list_files(&self.http, page_size, page_token).await
     }
 
     /// Deletes an uploaded file.
@@ -914,7 +918,7 @@ impl Client {
     /// # }
     /// ```
     pub async fn delete_file(&self, file_name: &str) -> Result<(), GenaiError> {
-        crate::http::files::delete_file(&self.http_client, &self.api_key, file_name).await
+        crate::http::files::delete_file(&self.http, file_name).await
     }
 
     /// Uploads a file using chunked transfer to minimize memory usage.
@@ -1000,8 +1004,7 @@ impl Client {
         );
 
         crate::http::files::upload_file_chunked(
-            &self.http_client,
-            &self.api_key,
+            &self.http,
             path,
             mime_type,
             display_name.as_deref(),
@@ -1052,8 +1055,7 @@ impl Client {
         );
 
         crate::http::files::upload_file_chunked(
-            &self.http_client,
-            &self.api_key,
+            &self.http,
             path,
             mime_type,
             display_name.as_deref(),
@@ -1112,8 +1114,7 @@ impl Client {
         );
 
         crate::http::files::upload_file_chunked_with_chunk_size(
-            &self.http_client,
-            &self.api_key,
+            &self.http,
             path,
             mime_type,
             display_name.as_deref(),
@@ -1251,7 +1252,7 @@ mod tests {
     #[test]
     fn test_client_builder_default() {
         let client = Client::builder("test_key".to_string()).build().unwrap();
-        assert_eq!(client.api_key, "test_key");
+        assert_eq!(client.http.api_key, "test_key");
     }
 
     #[test]
@@ -1260,7 +1261,7 @@ mod tests {
             .with_timeout(Duration::from_secs(120))
             .build()
             .unwrap();
-        assert_eq!(client.api_key, "test_key");
+        assert_eq!(client.http.api_key, "test_key");
         // Note: We can't easily inspect the reqwest client's timeout,
         // but this test verifies the builder chain works
     }
@@ -1271,7 +1272,7 @@ mod tests {
             .with_connect_timeout(Duration::from_secs(10))
             .build()
             .unwrap();
-        assert_eq!(client.api_key, "test_key");
+        assert_eq!(client.http.api_key, "test_key");
     }
 
     #[test]
@@ -1281,13 +1282,13 @@ mod tests {
             .with_connect_timeout(Duration::from_secs(10))
             .build()
             .unwrap();
-        assert_eq!(client.api_key, "test_key");
+        assert_eq!(client.http.api_key, "test_key");
     }
 
     #[test]
     fn test_client_new() {
         let client = Client::new("test_key".to_string());
-        assert_eq!(client.api_key, "test_key");
+        assert_eq!(client.http.api_key, "test_key");
     }
 
     #[test]
@@ -1313,6 +1314,46 @@ mod tests {
     fn test_client_builder_returns_result() {
         let result = Client::builder("test_key".to_string()).build();
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_add_wire_inspector_accumulates() {
+        struct Noop;
+        impl WireInspector for Noop {
+            fn on_event(&self, _event: &crate::wire::WireEvent) {}
+        }
+
+        let client = Client::builder("test_key".to_string())
+            .add_wire_inspector(Arc::new(Noop))
+            .add_wire_inspector(Arc::new(Noop))
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            client.http.inspectors.len(),
+            2,
+            "add_wire_inspector should accumulate, not replace"
+        );
+    }
+
+    #[test]
+    fn test_loud_wire_env_installs_printer() {
+        // SAFETY: test-only env mutation. No other test reads LOUD_WIRE, and
+        // an extra printer on an unrelated concurrently-built client is
+        // harmless (nothing sends requests in unit tests).
+        unsafe { std::env::set_var("LOUD_WIRE", "1") };
+        let with_env = Client::builder("test_key".to_string()).build().unwrap();
+        unsafe { std::env::remove_var("LOUD_WIRE") };
+        let without_env = Client::builder("test_key".to_string()).build().unwrap();
+
+        assert!(
+            with_env.http.has_inspectors(),
+            "LOUD_WIRE should install a LoudWirePrinter at construction"
+        );
+        assert!(
+            !without_env.http.has_inspectors(),
+            "no inspectors expected without LOUD_WIRE or add_wire_inspector"
+        );
     }
 
     #[test]
