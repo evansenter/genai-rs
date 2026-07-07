@@ -912,7 +912,9 @@ impl<'de> Deserialize<'de> for ImageSize {
 /// # Wire Format
 ///
 /// Serializes as lowercase snake_case strings: `"text_to_video"`,
-/// `"image_to_video"`, `"reference_to_video"`, `"edit"`.
+/// `"image_to_video"`, `"reference_to_video"`, `"edit"`, `"extend"`.
+/// The full value list was confirmed live (2026-07) via the API's own
+/// validation error for `generation_config.video_config.task`.
 ///
 /// # Evergreen Pattern
 ///
@@ -929,6 +931,8 @@ pub enum VideoTask {
     ReferenceToVideo,
     /// Edit an existing video.
     Edit,
+    /// Extend an existing video.
+    Extend,
     /// Unknown variant for forward compatibility (Evergreen pattern)
     Unknown {
         /// The unrecognized task type from the API
@@ -974,6 +978,7 @@ impl Serialize for VideoTask {
             Self::ImageToVideo => serializer.serialize_str("image_to_video"),
             Self::ReferenceToVideo => serializer.serialize_str("reference_to_video"),
             Self::Edit => serializer.serialize_str("edit"),
+            Self::Extend => serializer.serialize_str("extend"),
             Self::Unknown { task_type, .. } => serializer.serialize_str(task_type),
         }
     }
@@ -990,6 +995,7 @@ impl<'de> Deserialize<'de> for VideoTask {
             Some("image_to_video") => Ok(Self::ImageToVideo),
             Some("reference_to_video") => Ok(Self::ReferenceToVideo),
             Some("edit") => Ok(Self::Edit),
+            Some("extend") => Ok(Self::Extend),
             Some(other) => {
                 tracing::warn!(
                     "Encountered unknown VideoTask '{}' - using Unknown variant (Evergreen)",
