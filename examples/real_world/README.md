@@ -14,6 +14,7 @@ This directory contains comprehensive example applications demonstrating practic
 | [Data Analysis](./data_analysis/) | CSV analysis with NL queries | Function calling, data operations |
 | [Web Scraper Agent](./web_scraper_agent/) | Web research assistant | Google Search grounding, streaming |
 | [Testing Assistant](./testing_assistant/) | Test generation from code | Coverage analysis, property tests |
+| [Repo Auditor](./repo_auditor/) | Agentic security audit (Antigravity harness) | Subagents, policies + hooks, structured report (`--features antigravity`) |
 
 ## Running Examples
 
@@ -34,6 +35,13 @@ cargo run --example code_assistant
 cargo run --example data_analysis
 cargo run --example web_scraper_agent
 cargo run --example testing_assistant
+```
+
+The Antigravity-based example additionally needs the `localharness` binary
+(`pip install google-antigravity==0.1.5`) and the crate feature:
+
+```bash
+cargo run --example repo_auditor --features antigravity
 ```
 
 ## Features Demonstrated

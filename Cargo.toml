@@ -116,6 +116,11 @@ required-features = ["antigravity"]
 
 # Real-world example applications
 [[example]]
+name = "repo_auditor"
+path = "examples/real_world/repo_auditor/main.rs"
+required-features = ["antigravity"]
+
+[[example]]
 name = "rag_system"
 path = "examples/real_world/rag_system/main.rs"
 

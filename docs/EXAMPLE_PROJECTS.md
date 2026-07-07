@@ -7,7 +7,7 @@ together. Each entry lists the features it exercises so these double as
 end-to-end validation targets. Candidates for `examples/real_world/` are
 marked.
 
-## 1. `repo-auditor` — agentic codebase review *(real_world candidate)*
+## 1. `repo-auditor` — agentic codebase review *(BUILT: `examples/real_world/repo_auditor/`)*
 
 An Antigravity agent pointed at a repository workspace with read-only
 built-in tools, plus a custom `#[tool]` severity classifier. Walks the code,
@@ -18,6 +18,9 @@ report (JSON schema via structured output).
 - Exercises: workspaces, built-in read-only tools, custom Rust tools via
   `#[tool]`, `deny_all` + selective allow policies, structured output,
   step streaming (live progress UI).
+- **Status: built** — see `examples/real_world/repo_auditor/`. The built
+  version also registers a `file_auditor` subagent (`add_subagent` +
+  `BuiltinTool::StartSubagent`) and a pre-tool hook guarding `.env` files.
 
 ## 2. `release-notes-bot` — dual-mode pipeline *(real_world candidate)*
 

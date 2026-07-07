@@ -113,6 +113,7 @@ Located in `examples/real_world/`:
 | `testing_assistant/` | Test generation from code | Intermediate |
 | `data_analysis/` | CSV data analysis with functions | Intermediate |
 | `rag_system/` | Retrieval-augmented generation | Advanced |
+| `repo_auditor/` | Agentic security audit on the Antigravity harness: subagent, policies, structured report (`--features antigravity`) | Advanced |
 
 ## Example Details
 
@@ -292,6 +293,7 @@ cargo run --example cancel_interaction
 | `computer_use` | Computer Use capability access |
 | `file_search` | Pre-configured file search store |
 | `google_search` | Google Search grounding access |
+| `antigravity_agent`, `repo_auditor` | `localharness` binary (`pip install google-antigravity==0.1.5`) + `--features antigravity` |
 
 ## Example Progression
 
