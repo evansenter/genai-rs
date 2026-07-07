@@ -458,10 +458,14 @@ mod mixed_content {
         let text = response.as_text().unwrap();
         println!("Comparison response: {}", text);
 
-        // Should mention differences or colors - use semantic validation
+        // Should mention differences or colors - use semantic validation.
+        // Deliberately omit the ground-truth colors from the context: naming
+        // them invites the validator to fail the response over color-perception
+        // quibbles (e.g. calling the blue square "purple"), which isn't what
+        // this test checks.
         assert_response_semantic(
             &client,
-            "Showed two colored squares (red and blue) and asked to compare them",
+            "Showed two colored squares and asked to compare them",
             text,
             "Does this response compare two colors or mention that the images are different?",
         )

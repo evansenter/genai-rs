@@ -295,7 +295,7 @@ fn get_top_products(n: i32, metric: String) -> String {
         .collect();
 
     match metric.as_str() {
-        "quantity" => sorted.sort_by(|a, b| b.2.cmp(&a.2)),
+        "quantity" => sorted.sort_by_key(|entry| std::cmp::Reverse(entry.2)),
         _ => sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)),
     }
 
