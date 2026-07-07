@@ -311,12 +311,16 @@ async fn test_interaction_with_inline_environment() {
                 "Environment interaction accepted: status={:?}, environment_id={:?}",
                 response.status, response.environment_id
             );
-            // Verified live (2026-07): the create response carries the
-            // provisioned environment's ID.
-            assert!(
-                response.environment_id.is_some(),
-                "accepted environment request should return environment_id"
-            );
+            // Verified live (2026-07): the create response *can* carry the
+            // provisioned environment's ID, but it is not guaranteed at
+            // accept-time — CI observed status=InProgress with
+            // environment_id=None (the ID appears once provisioning
+            // completes). Assert shape when present, tolerate absence.
+            if let Some(env_id) = &response.environment_id {
+                assert!(!env_id.is_empty(), "environment_id should be non-empty");
+            } else {
+                println!("environment_id not yet assigned at accept-time (provisioning)");
+            }
             // Clean up background interaction if possible
             if let Some(id) = &response.id {
                 let _ = client.cancel_interaction(id).await;
