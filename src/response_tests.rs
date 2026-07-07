@@ -2281,3 +2281,52 @@ fn test_response_object_and_service_tier_absent_are_skipped() {
     assert!(json.get("object").is_none());
     assert!(json.get("service_tier").is_none());
 }
+
+#[test]
+fn test_deserialize_response_webhook_config_echo() {
+    // The live API (Api-Revision 2026-05-20, verified 2026-07) echoes the
+    // request's webhook_config verbatim on the create response for
+    // background interactions. It must roundtrip losslessly.
+    let wire = serde_json::json!({
+        "id": "interaction_123",
+        "object": "interaction",
+        "model": "gemini-3-flash-preview",
+        "status": "in_progress",
+        "steps": [],
+        "webhook_config": {
+            "uris": ["https://example.com/hook"],
+            "user_metadata": {"job": "nightly"}
+        }
+    });
+
+    let response: InteractionResponse =
+        serde_json::from_value(wire.clone()).expect("Deserialization failed");
+    let config = response
+        .webhook_config
+        .as_ref()
+        .expect("webhook_config echo");
+    assert_eq!(
+        config.uris.as_deref(),
+        Some(&["https://example.com/hook".to_string()][..])
+    );
+    assert_eq!(
+        config.user_metadata,
+        Some(serde_json::json!({"job": "nightly"}))
+    );
+
+    // Lossless roundtrip: re-serialization matches the wire JSON exactly.
+    let roundtripped = serde_json::to_value(&response).expect("Serialization failed");
+    assert_eq!(roundtripped, wire);
+
+    // Absent field is skipped on serialize.
+    let bare = InteractionResponse {
+        status: InteractionStatus::Completed,
+        ..Default::default()
+    };
+    assert!(
+        serde_json::to_value(&bare)
+            .unwrap()
+            .get("webhook_config")
+            .is_none()
+    );
+}

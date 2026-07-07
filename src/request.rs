@@ -1709,6 +1709,11 @@ impl DeepResearchConfig {
     }
 
     /// Enable (or disable) the BigQuery tool for the Deep Research agent.
+    ///
+    /// Server-side constraint (verified live 2026-07): the Gemini API
+    /// rejects `agent_config.enable_bigquery_tool` — "not available on the
+    /// Gemini API but it is available on the Gemini Enterprise Agent
+    /// Platform" (Vertex-only).
     #[must_use]
     pub fn with_bigquery_tool(mut self, enabled: bool) -> Self {
         self.enable_bigquery_tool = Some(enabled);

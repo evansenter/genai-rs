@@ -481,6 +481,11 @@ impl Client {
     /// `include_input=true` query parameter so the response's `input` field is
     /// populated.
     ///
+    /// Live behavior note (2026-07): the parameter is accepted, but the
+    /// Gemini API was observed to return identical responses with and
+    /// without it — no `input` echo (and no `generation_config` echo) was
+    /// observed on completed interactions.
+    ///
     /// # Errors
     ///
     /// Returns an error if:
@@ -751,6 +756,11 @@ impl Client {
     /// * `update_mask` - Optional comma-separated list of fields to update
     ///   (e.g. `"uri,subscribed_events"`).
     ///
+    /// Live behavior note (2026-07): `update_mask` is not required — PATCH
+    /// applies exactly the fields present in the body. The mask was also
+    /// observed to be ignored when supplied (fields outside the mask still
+    /// updated), so rely on the partial body, not the mask, to scope updates.
+    ///
     /// # Errors
     ///
     /// Returns an error if the webhook doesn't exist, the HTTP request fails,
@@ -795,6 +805,10 @@ impl Client {
     /// Use this to verify your endpoint receives and validates deliveries
     /// before relying on it for real events.
     ///
+    /// Live behavior note (2026-07): the RPC accepts an empty JSON body
+    /// (`{}`, which this client sends) and returns `{}` on success even
+    /// when the destination URI is unreachable.
+    ///
     /// # Errors
     ///
     /// Returns an error if the webhook doesn't exist or the HTTP request fails.
@@ -829,6 +843,18 @@ impl Client {
     /// Once created, run the agent with
     /// [`InteractionBuilder::with_agent()`](crate::InteractionBuilder::with_agent)
     /// using its ID.
+    ///
+    /// Live behavior notes (2026-07):
+    /// - Agent creation was rejected with a generic
+    ///   `400 "Request contains an invalid argument."` for every payload
+    ///   tried on a standard Gemini API key (even schema-valid ones), which
+    ///   suggests the resource is allowlisted/gated. Field names are still
+    ///   validated first (snake_case: `id`, `base_agent`,
+    ///   `system_instruction`, `description`, `tools`, `base_environment`).
+    /// - `tools` on an agent only accepts `code_execution`, `google_search`,
+    ///   and `url_context` (per the API's own validation error).
+    /// - Managed agent IDs (e.g. `deep-research-preview-04-2026`) are not
+    ///   retrievable through `GET /v1beta/agents/{id}` (404).
     ///
     /// # Errors
     ///

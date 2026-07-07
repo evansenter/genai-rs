@@ -100,21 +100,21 @@ Helper methods on each type:
 | `Tool::GoogleSearch` | snake_case + optional array | `{"type": "google_search", "search_types": ["web_search"]}` | |
 | `Tool::GoogleMaps` | snake_case + optional fields | `{"type": "google_maps", "enable_widget": true, "latitude": ..., "longitude": ...}` | `latitude`/`longitude` pending live verification (2026-05-20 revision) |
 | `Tool::ComputerUse` | snake_case | `{"type": "computer_use", "environment": "browser", ...}` | **Changed**: fields now snake_case. Pending live verification (2026-05-20 revision) |
-| `SpeechConfig` | **list** of flat objects | `[{"voice": "Kore", "language": "en-US", "speaker": "Alice"}]` | **Changed** in 2026-05-20: `speech_config` is a list (multi-speaker TTS); legacy single object accepted on deserialize. Pending live verification (2026-05-20 revision) |
-| `Tool::Retrieval` | snake_case object | `{"type": "retrieval", "retrieval_types": [...], "vertex_ai_search_config": {...}}` | New. Pending live verification (2026-05-20 revision) |
-| `RetrievalType` | snake_case string | `"vertex_ai_search"`, `"rag_store"`, `"exa_ai_search"`, `"parallel_ai_search"` | Pending live verification (2026-05-20 revision) |
-| `WebhookEvent` | dotted lowercase | `"batch.succeeded"`, `"interaction.completed"`, `"video.generated"` | Pending live verification (2026-05-20 revision) |
-| `WebhookState` | snake_case | `"enabled"`, `"disabled"`, `"disabled_due_to_failed_deliveries"` | Output only. Pending live verification (2026-05-20 revision) |
-| `RevocationBehavior` | snake_case | `"revoke_previous_secrets_after_h24"`, `"revoke_previous_secrets_immediately"` | Request only (`:rotateSigningSecret`). Pending live verification (2026-05-20 revision) |
-| `SourceType` | snake_case | `"gcs"`, `"inline"`, `"repository"`, `"skill_registry"` | Environment source `type`. Pending live verification (2026-05-20 revision) |
-| `NetworkConfig` | string OR object | `"disabled"` / `{"allowlist": [{"domain": "*.googleapis.com"}]}` | Omit field to allow all traffic. Pending live verification (2026-05-20 revision) |
-| `EnvironmentSpec` | string OR object | `"env-123"` / `{"type": "remote", "sources": [...], "network": ...}` | Request `environment` + agent `base_environment`. Pending live verification (2026-05-20 revision) |
-| `ResponseFormat` | tagged by `"type"` OR raw schema dict | `{"type": "text", "mime_type": "application/json", "schema": {...}}` | Single object or list; raw schema dicts preserved via `Unknown`. Pending live verification (2026-05-20 revision) |
-| `ResponseDelivery` | lowercase | `"inline"`, `"uri"` | Audio/image/video formats. Pending live verification (2026-05-20 revision) |
-| `VideoTask` | snake_case | `"text_to_video"`, `"image_to_video"`, `"reference_to_video"`, `"edit"` | `generation_config.video_config.task`. Pending live verification (2026-05-20 revision) |
-| `Visualization` | lowercase | `"off"`, `"auto"` | Deep Research `agent_config.visualization`. Pending live verification (2026-05-20 revision) |
-| Audio MIME type (TTS response) | with params | `"audio/L16;codec=pcm;rate=24000"` | Raw PCM audio |
-| `GoogleSearchResultItem` | snake_case | `{"title": "...", "url": "...", "rendered_content": "..."}` | Optional `search_suggestions` added in 2026-05-20 |
+| `SpeechConfig` | **list** of flat objects | `[{"voice": "Kore", "language": "en-US", "speaker": "Alice"}]` | **Changed** in 2026-05-20: `speech_config` is a list (multi-speaker TTS); legacy single object accepted on deserialize. ✅ Verified live 2026-07 (two-speaker list accepted; single combined `audio/l16` stream returned; the API does not echo `speech_config` on reads — `include_input` observed as a no-op) |
+| `Tool::Retrieval` | snake_case object | `{"type": "retrieval", "retrieval_types": [...], "vertex_ai_search_config": {...}}` | New. ⚠️ Live 2026-07: the Gemini API rejects `type: "retrieval"` (Vertex-only — "allowed on the Gemini Enterprise Agent Platform"); Gemini tool types are `google_maps`, `mcp_server`, `function`, `google_search`, `file_search`, `computer_use`, `code_execution`, `url_context` |
+| `RetrievalType` | snake_case string | `"vertex_ai_search"`, `"rag_store"`, `"exa_ai_search"`, `"parallel_ai_search"` | Not verifiable live on the Gemini API (the retrieval tool itself is rejected as Vertex-only, 2026-07) |
+| `WebhookEvent` | dotted lowercase | `"batch.succeeded"`, `"interaction.completed"`, `"video.generated"` | ✅ Verified live 2026-07: the API's own validation error lists exactly our 7 values |
+| `WebhookState` | snake_case | `"enabled"`, `"disabled"`, `"disabled_due_to_failed_deliveries"` | Output only. ✅ Verified live 2026-07 (`enabled`/`disabled` observed; failed-deliveries state documented but not triggered) |
+| `RevocationBehavior` | snake_case | `"revoke_previous_secrets_after_h24"`, `"revoke_previous_secrets_immediately"` | Request only (`:rotateSigningSecret`). ✅ Verified live 2026-07: the API's validation error lists exactly these two values; camelCase key rejected |
+| `SourceType` | snake_case | `"gcs"`, `"inline"`, `"repository"`, `"skill_registry"` | Environment source `type`. ✅ `inline` verified live 2026-07 (accepted, `environment_id` returned); other source types not exercised |
+| `NetworkConfig` | string OR object | `"disabled"` / `{"allowlist": [{"domain": "*.googleapis.com"}]}` | Omit field to allow all traffic. ✅ Verified live 2026-07: both `"disabled"` and `{allowlist: [{domain, transform}]}` accepted |
+| `EnvironmentSpec` | string OR object | `"env-123"` / `{"type": "remote", "sources": [...], "network": ...}` | Request `environment` + agent `base_environment`. ✅ Verified live 2026-07 on requests: both the string-ID form and the typed remote object accepted (agent `base_environment` not verifiable — agent creation gated) |
+| `ResponseFormat` | tagged by `"type"` OR raw schema dict | `{"type": "text", "mime_type": "application/json", "schema": {...}}` | Single object or list; raw schema dicts preserved via `Unknown`. ✅ Verified live 2026-07: single + list forms accepted (list errors index as `response_format[i]`); text schema enforced; image works inline-only with `image/jpeg` only; audio works with `sample_rate` but rejects `mime_type`/`delivery`; video `gcs_uri` is Vertex-only |
+| `ResponseDelivery` | lowercase | `"inline"`, `"uri"` | Audio/image/video formats. ✅ Verified live 2026-07: the API's validation error lists exactly `inline`/`uri` — but `delivery` itself is currently rejected for audio and image on the Gemini API (inline-only) |
+| `VideoTask` | snake_case | `"text_to_video"`, `"image_to_video"`, `"reference_to_video"`, `"edit"`, `"extend"` | `generation_config.video_config.task`. ✅ Verified live 2026-07 via the API's validation error — which also revealed `"extend"` (added to the enum) |
+| `Visualization` | lowercase | `"off"`, `"auto"` | Deep Research `agent_config.visualization`. ✅ Verified live 2026-07: the API's validation error lists exactly `off`/`auto`; accepted with `collaborative_planning` (`enable_bigquery_tool` is Vertex-only) |
+| Audio MIME type (TTS response) | plain | `"audio/l16"` | Raw PCM audio. Live 2026-07 (revision 2026-05-20): lowercase `audio/l16` with a separate `sample_rate: 24000` field on the content block (no `;codec=...;rate=...` params observed) |
+| `GoogleSearchResultItem` | snake_case | `{"title": "...", "url": "...", "rendered_content": "..."}` | Optional `search_suggestions` added in 2026-05-20. Verified live 2026-07: items may carry **only** `search_suggestions` (an HTML rendering payload) with no `title`/`url`; empty `title`/`url` are skipped on serialize for wire fidelity |
 | `UrlContextResultItem` | snake_case | `{"url": "...", "status": "success"}` | Verified 2026-01-13 - no paywall field |
 | `ImageAspectRatio` | ratio string | `"1:1"`, `"16:9"`, `"9:16"` | 14 aspect ratios |
 | `ImageSize` | size string | `"512"`, `"1K"`, `"2K"`, `"4K"` | Image resolution |
@@ -391,7 +391,11 @@ New in revision 2026-05-20: `service_tier` on the interaction request
 | `ServiceTier::Priority` | `"priority"` |
 | `ServiceTier::Unknown { tier_type, data }` | preserved |
 
-**Status**: Pending live verification (2026-05-20 revision).
+**Status**: Response side verified live 2026-07 (Api-Revision 2026-05-20): every
+interaction response echoes the effective tier as `service_tier: "standard"`,
+alongside an `object: "interaction"` resource discriminator — both now modeled
+on `InteractionResponse` (`service_tier`, `object`). The request-side values
+(`flex`/`priority`) are still pending live verification.
 
 ### ThinkingSummaries (agent_config)
 
@@ -548,8 +552,15 @@ Wire types: `"google_search_call"` / `"google_search_result"`.
 `{"title": "...", "url": "...", "rendered_content": "...", "search_suggestions"?: ...}` —
 `search_suggestions` is new in 2026-05-20.
 
-**Status**: Call/result shapes verified 2026-01-13 pre-revision (as `Content`); step form,
-`search_type` field, and `search_suggestions` pending live verification (2026-05-20 revision).
+**Status**: Step form verified live 2026-07 (Api-Revision 2026-05-20) via `LOUD_WIRE=1`:
+the `google_search_call` step carried `id`, nested `arguments.queries`,
+`search_type: "web_search"`, and `signature`. The paired `google_search_result` items
+on the live wire carried **only** `search_suggestions` (an HTML `<style>...` rendering
+payload as a string) — no `title`/`url`/`rendered_content`. `title`/`url` deserialize
+to empty strings in that case and are skipped on re-serialize. Grounding citations
+arrived as `url_citation` annotations on the `model_output` text
+(`{"type": "url_citation", "url": ..., "title": ..., "start_index": ..., "end_index": ...}`),
+and `usage.grounding_tool_count` reported `[{"type": "google_search", "count": 1}]`.
 
 ### GoogleMapsCall (step)
 
@@ -651,6 +662,13 @@ a distinct `speaker` matching the prompt) for multi-speaker TTS:
 **Language is required by the API when voice is specified.
 
 **Important**: The Google docs suggest a nested structure (`voiceConfig.prebuiltVoiceConfig.voiceName`) but **that format returns 400 error**. Only the flat structure shown above works with the Interactions API.
+
+**Status**: ✅ Verified live 2026-07. The two-speaker list form above was
+accepted verbatim and returned a single combined `audio/l16` content block
+(`sample_rate: 24000`) covering both voices. The API does not echo
+`speech_config` (or any `generation_config`) back on reads — the
+`include_input=true` GET parameter was observed to be a no-op — so the echo
+shape (list vs. single object) is unobservable.
 
 **Verified**: 2026-01-10 (flat single-object form) - Tested both formats in `test_speech_config_nested_format_fails_flat_succeeds`. Nested format fails with `no such field: 'voiceConfig'`. The **list** form is from the 2026-05-20 spec and is pending live verification; the legacy single-object form is still accepted on deserialize.
 
@@ -835,7 +853,13 @@ Notes:
 - Exa/Parallel `api_key` values are sent on the wire — treat request logs as
   sensitive.
 
-**Status**: Pending live verification (2026-05-20 revision).
+**Status**: ⚠️ Verified live 2026-07 — **rejected on the Gemini API**. The
+request parses, but the API returns 400: "The value 'retrieval' is not
+supported for 'tools[0].type' on the Gemini API, it is allowed on the Gemini
+Enterprise Agent Platform." (i.e. the retrieval tool is Vertex-only). The
+same error enumerates the Gemini API's supported tool types: `google_maps`,
+`mcp_server`, `function`, `google_search`, `file_search`, `computer_use`,
+`code_execution`, `url_context`.
 
 ### Webhooks (`/v1beta/webhooks` resource + `webhook_config`)
 
@@ -872,7 +896,33 @@ Webhook resource (snake_case, RFC3339 timestamps):
   header as interactions (the generated google-genai bindings apply the
   revision header globally).
 
-**Status**: Pending live verification (2026-05-20 revision).
+**Status**: ✅ Verified live 2026-07 (full CRUD + `:ping` +
+`:rotateSigningSecret` round-trip). Live findings:
+
+- Get/list echo exactly what create sent (`uri`, `subscribed_events`,
+  `name`); `new_signing_secret` appears only on create; IDs are bare opaque
+  strings (no `webhooks/` prefix observed).
+- `create_time` / `update_time` were **not** returned by any endpoint (the
+  crate keeps them as optional fields).
+- `:ping` accepts an empty JSON body (`{}` — what this crate sends) *and* a
+  bodiless POST; returns `{}` even for unreachable URIs.
+- `update_mask` on PATCH is **not required and observed to be ignored** —
+  the PATCH applies exactly the fields present in the body (fields outside
+  a supplied mask still updated). Unknown query params are silently
+  ignored, so `update_mask` vs. `updateMask` casing cannot be
+  distinguished; body field casing IS enforced (camelCase body keys get
+  "Unknown parameter ... Did you mean ...").
+- `:rotateSigningSecret` returns a fresh `{"secret": ...}` each call;
+  the previous secrets gain a 24h `expire_time` by default. The
+  `revocation_behavior` enum is validated server-side (exactly our two
+  values).
+- Invalid `subscribed_events` values are rejected with an error listing
+  exactly our seven `WebhookEvent` values.
+- `webhook_config` on an interaction request requires `background=true`
+  and is echoed back verbatim (`uris` + `user_metadata`) in the create
+  response. `InteractionResponse` models the echo (`webhook_config`),
+  alongside the `object`/`service_tier` response fields discovered in the
+  same verification pass.
 
 ### Environment (request `environment` / agent `base_environment`)
 
@@ -903,7 +953,14 @@ Union: a string environment ID, or a typed remote environment object.
 - The response echoes the server-assigned environment as `environment_id`,
   which can be passed back as the string form on later turns.
 
-**Status**: Pending live verification (2026-05-20 revision).
+**Status**: ✅ Verified live 2026-07 (with `agent:
+"antigravity-preview-05-2026"`, `background: true`): inline source,
+`network: "disabled"`, `network: {allowlist: [{domain, transform}]}`, and
+the plain string environment-ID form were all accepted; accepted typed
+requests returned `environment_id`. `gcs`/`repository`/`skill_registry`
+sources and agent `base_environment` were not exercised (the latter needs
+agent creation, which is gated — see Agents notes in
+`docs/INTERACTIONS_API_GAP.md`).
 
 ### ResponseFormat (request `response_format`)
 
@@ -928,7 +985,24 @@ list (one per output modality).
   converts to the typed `text`/`application/json` form.
 - `video.gcs_uri` is required on Vertex when `delivery` is `"uri"`.
 
-**Status**: Pending live verification (2026-05-20 revision).
+**Status**: ✅ Verified live 2026-07 (single object and list forms; list
+validation errors index entries as `response_format[i]`). Server-side
+constraints observed on the Gemini API:
+
+- text: schema-bearing `application/json` form works end-to-end (output
+  validated against the schema).
+- image: works inline; `mime_type` only accepts `image/jpeg` (the API's
+  validation error lists it as the sole supported value); any `delivery`
+  value → 400 "Image delivery mode is not supported."
+- audio: works with `sample_rate`; any `mime_type` → 400 "Audio mime_type
+  is not supported in response_format." and any `delivery` → 400 "Audio
+  delivery mode is not supported." (output arrives inline as `audio/l16`).
+- video: `delivery`/`duration`/`aspect_ratio` are schema-recognized, but
+  `gcs_uri` → 400 "not available on the Gemini API but it is available on
+  the Gemini Enterprise Agent Platform" (Vertex-only), and no
+  Interactions-served model currently supports the video modality.
+- `ResponseDelivery` values confirmed via the API's validation error:
+  exactly `inline` | `uri`.
 
 ### VideoConfig / VideoTask (generation_config)
 
@@ -937,11 +1011,20 @@ list (one per output modality).
 ```
 
 `VideoTask`: `text_to_video` | `image_to_video` | `reference_to_video` |
-`edit` (+ `Unknown { task_type, data }`). Omit to let the model pick the
-mode from the prompt and input media. Pair with
+`edit` | `extend` (+ `Unknown { task_type, data }`). Omit to let the model
+pick the mode from the prompt and input media. Pair with
 `response_modalities: ["video"]` and (optionally) a `video` response format.
 
-**Status**: Pending live verification (2026-05-20 revision).
+**Status**: ✅ Verified live 2026-07 via the API's own validation error for
+`generation_config.video_config.task`, which lists exactly
+`text_to_video`, `image_to_video`, `reference_to_video`, `edit`, `extend` —
+the previously unmodeled `extend` was added to the enum. Note: video
+generation itself is not currently reachable through the Interactions API —
+Veo models (e.g. `veo-3.1-generate-preview`) return 404 "Model not found"
+(they are listed by `/v1beta/models` with only the legacy
+`predictLongRunning` method), and Gemini models reject
+`response_modalities: ["video"]`. `video_config` is accepted (ignored) on
+non-video models.
 
 ### Visualization (Deep Research agent_config)
 
@@ -953,7 +1036,13 @@ mode from the prompt and input media. Pair with
 Note the contrast with `thinking_summaries`, which uses `THINKING_SUMMARIES_*`
 in agent_config; `visualization` is lowercase per the spec.
 
-**Status**: Pending live verification (2026-05-20 revision).
+**Status**: ✅ Verified live 2026-07: the API's validation error for
+`agent_config.visualization` lists exactly `off` | `auto`;
+`visualization` + `collaborative_planning` were accepted on a
+`deep-research-preview-04-2026` background run (cancelled after creation).
+⚠️ `enable_bigquery_tool` is rejected on the Gemini API — "not available on
+the Gemini API but it is available on the Gemini Enterprise Agent Platform"
+(Vertex-only).
 
 ### GroundingToolCount (usage metadata)
 

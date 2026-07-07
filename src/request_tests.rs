@@ -804,6 +804,7 @@ fn test_video_task_roundtrip_and_unknown() {
         (VideoTask::ImageToVideo, "\"image_to_video\""),
         (VideoTask::ReferenceToVideo, "\"reference_to_video\""),
         (VideoTask::Edit, "\"edit\""),
+        (VideoTask::Extend, "\"extend\""),
     ] {
         assert_eq!(serde_json::to_string(&task).unwrap(), wire);
         let parsed: VideoTask = serde_json::from_str(wire).unwrap();

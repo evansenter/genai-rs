@@ -17,9 +17,21 @@ Deep Research options.
 > **Note**: wire shapes were derived from Google's generated `google-genai`
 > 2.10 API bindings and covered with fixture + proptest roundtrip tests.
 > The core 2026-05-20 revision was verified live 2026-07 with a real
-> `GEMINI_API_KEY` (see below); the phase-2 additions in this section
-> (webhooks, environments, agents, retrieval, video, typed formats) are
-> still pending live verification and should be checked before release.
+> `GEMINI_API_KEY` (see below), and the phase-2 additions in this section
+> were live-verified 2026-07 as well (webhooks full CRUD/ping/rotate,
+> environments, typed response formats, multi-speaker TTS, deep-research
+> knobs, video config schema). Live findings (details in
+> `docs/INTERACTIONS_API_GAP.md` / `docs/ENUM_WIRE_FORMATS.md`):
+> `VideoTask` gained a live-discovered `Extend` variant; webhook `:ping`
+> accepts the empty `{}` body and PATCH `update_mask` is optional and
+> observed to be ignored (the body scopes the update); several knobs are
+> Vertex-only and rejected by the Gemini API (`Tool::Retrieval`,
+> `enable_bigquery_tool`, video `gcs_uri`); audio/image response formats
+> are inline-only today (audio `mime_type`/`delivery` and image `delivery`
+> rejected; image `mime_type` limited to `image/jpeg`); Veo models are not
+> served by the Interactions API; and agent creation is gated on standard
+> API keys (agent `tools` accept only
+> `code_execution`/`google_search`/`url_context`).
 
 #### Added — Webhooks
 
@@ -35,6 +47,8 @@ Deep Research options.
   `disabled_due_to_failed_deliveries`).
 - Per-request webhook routing: `webhook_config {uris, user_metadata}` on
   `InteractionRequest` + `InteractionBuilder::with_webhook_config()`.
+  The API echoes it back on the create response (verified live 2026-07);
+  `InteractionResponse.webhook_config` models the echo.
 - Webhook/agent endpoints send the same `Api-Revision: 2026-05-20` header
   as interactions (matching google-genai, which applies the revision header
   globally).
@@ -86,7 +100,8 @@ Deep Research options.
 #### Added — video generation config
 
 - `generation_config.video_config {task}` (`VideoConfig` + `VideoTask`
-  enum: `text_to_video|image_to_video|reference_to_video|edit` + Unknown),
+  enum: `text_to_video|image_to_video|reference_to_video|edit|extend` +
+  Unknown; `extend` discovered via the API's live validation error 2026-07),
   `with_video_config()`, and the `with_video_output()` modality shortcut
   (`response_modalities: ["video"]`).
 

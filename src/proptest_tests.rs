@@ -1821,6 +1821,7 @@ fn arb_interaction_response() -> impl Strategy<Value = InteractionResponse> {
         proptest::option::of(arb_identifier()),                        // environment_id
         proptest::option::of(Just("interaction".to_string())),         // object
         proptest::option::of(arb_service_tier()),                      // service_tier
+        proptest::option::of(arb_webhook_config()),                    // webhook_config
         proptest::option::of(arb_text()),                              // output_text
         proptest::option::of(arb_datetime()),                          // created
         proptest::option::of(arb_datetime()),                          // updated
@@ -1835,6 +1836,7 @@ fn arb_interaction_response() -> impl Strategy<Value = InteractionResponse> {
                 environment_id,
                 object,
                 service_tier,
+                webhook_config,
                 output_text,
                 created,
                 updated,
@@ -1853,6 +1855,7 @@ fn arb_interaction_response() -> impl Strategy<Value = InteractionResponse> {
                 environment_id,
                 object,
                 service_tier,
+                webhook_config,
                 output_text,
                 created,
                 updated,

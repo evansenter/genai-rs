@@ -148,12 +148,19 @@ pub enum ResponseFormat {
         schema: Option<serde_json::Value>,
     },
     /// Audio output configuration.
+    ///
+    /// Server-side constraints (verified live 2026-07 on the Gemini API):
+    /// `mime_type` and `delivery` are schema-valid but rejected
+    /// ("Audio mime_type is not supported in response_format." /
+    /// "Audio delivery mode is not supported."); `sample_rate` is accepted.
+    /// Output is returned inline as `audio/l16`.
     Audio {
         /// MIME type of the audio output. Known values: `audio/mp3`,
         /// `audio/ogg_opus`, `audio/l16`, `audio/wav`, `audio/alaw`,
-        /// `audio/mulaw`.
+        /// `audio/mulaw`. Rejected by the Gemini API as of 2026-07.
         mime_type: Option<String>,
-        /// Delivery mode for the audio output.
+        /// Delivery mode for the audio output. Rejected by the Gemini API
+        /// as of 2026-07 (inline-only).
         delivery: Option<ResponseDelivery>,
         /// Sample rate in Hz.
         sample_rate: Option<i32>,
@@ -162,10 +169,17 @@ pub enum ResponseFormat {
         bit_rate: Option<i32>,
     },
     /// Image output configuration.
+    ///
+    /// Server-side constraints (verified live 2026-07 on the Gemini API):
+    /// `mime_type` is accepted but only `image/jpeg` is supported;
+    /// `delivery` is rejected ("Image delivery mode is not supported.",
+    /// inline-only).
     Image {
-        /// MIME type of the image output. Known value: `image/jpeg`.
+        /// MIME type of the image output. Known value: `image/jpeg`
+        /// (the only value the Gemini API accepts as of 2026-07).
         mime_type: Option<String>,
-        /// Delivery mode for the image output.
+        /// Delivery mode for the image output. Rejected by the Gemini API
+        /// as of 2026-07 (inline-only).
         delivery: Option<ResponseDelivery>,
         /// Aspect ratio for the image output.
         aspect_ratio: Option<ImageAspectRatio>,
@@ -177,7 +191,9 @@ pub enum ResponseFormat {
         /// Delivery mode for the video output.
         delivery: Option<ResponseDelivery>,
         /// GCS URI to store the video output. Required on Vertex when
-        /// `delivery` is `uri`.
+        /// `delivery` is `uri`. Rejected on the Gemini API (2026-07:
+        /// "not available on the Gemini API but it is available on the
+        /// Gemini Enterprise Agent Platform").
         gcs_uri: Option<String>,
         /// Aspect ratio for the video output. Known values: `16:9`, `9:16`.
         aspect_ratio: Option<ImageAspectRatio>,

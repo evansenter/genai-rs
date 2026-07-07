@@ -843,6 +843,15 @@ pub struct InteractionResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_tier: Option<ServiceTier>,
 
+    /// The per-request webhook routing config, echoed back by the API.
+    ///
+    /// The live API echoes the request's `webhook_config` (`uris` +
+    /// `user_metadata`) verbatim on the create response (verified 2026-07
+    /// against Api-Revision 2026-05-20). Preserved for lossless roundtrip
+    /// per Evergreen principles.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub webhook_config: Option<crate::webhooks::WebhookConfig>,
+
     /// Convenience field: concatenated output text, when provided by the API.
     ///
     /// Prefer [`as_text()`](Self::as_text) / [`all_text()`](Self::all_text),

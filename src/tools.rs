@@ -90,6 +90,13 @@ pub enum Tool {
     ///
     /// Prefer constructing via [`RetrievalConfig`], which keeps
     /// `retrieval_types` in sync with the per-backend configs.
+    ///
+    /// Server-side constraint (verified live 2026-07): the Gemini API
+    /// rejects `type: "retrieval"` — "not supported ... on the Gemini API,
+    /// it is allowed on the Gemini Enterprise Agent Platform" (Vertex).
+    /// The Gemini API's supported tool types are `google_maps`,
+    /// `mcp_server`, `function`, `google_search`, `file_search`,
+    /// `computer_use`, `code_execution`, and `url_context`.
     Retrieval {
         /// The retrieval backends to enable.
         retrieval_types: Option<Vec<RetrievalType>>,

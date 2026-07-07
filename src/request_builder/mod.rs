@@ -1090,6 +1090,11 @@ impl<'a> InteractionBuilder<'a> {
     /// Each entry's `speaker` should match a speaker name given in the
     /// prompt.
     ///
+    /// The list wire form was verified live (2026-07): a two-speaker
+    /// request returns a single combined `audio/l16` stream. The API does
+    /// not echo `speech_config` back on reads (`include_input` was observed
+    /// to be a no-op), so the echo shape could not be observed.
+    ///
     /// # Example
     ///
     /// ```no_run
@@ -1175,6 +1180,14 @@ impl<'a> InteractionBuilder<'a> {
     /// Controls the video generation task mode. Combine with
     /// [`with_video_output()`](Self::with_video_output) and optionally a
     /// video [`ResponseFormat`] for delivery options.
+    ///
+    /// Live availability note (2026-07): Veo models (e.g.
+    /// `veo-3.1-generate-preview`) are listed by `/v1beta/models` with only
+    /// the legacy `predictLongRunning` method and return
+    /// `404 "Model ... not found"` from the Interactions API; no
+    /// Interactions-served model supported the `video` response modality at
+    /// verification time. The `video_config` field itself is schema-valid
+    /// (its `task` enum is validated server-side).
     ///
     /// # Example
     ///

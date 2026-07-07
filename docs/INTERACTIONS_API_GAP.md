@@ -49,11 +49,53 @@ Results:
 - The typed `response_format` union (`{type: "text", mime_type, schema}`)
   and the raw JSON-schema form were both accepted live for text output.
 
-⚠️ Still pending live verification: the phase-2 surface expansion (webhooks,
-environments, agents, retrieval, video config, typed response formats,
-multi-speaker TTS — fixture coverage only) and the per-step usage shapes on
-`step.stop`. Diff observed wire shapes against the fixture tests before
-release.
+✅ Phase-2 surface verified live 2026-07 (real `GEMINI_API_KEY`,
+`generativelanguage.googleapis.com`, Api-Revision 2026-05-20). Per-item
+results — full wire notes in `docs/ENUM_WIRE_FORMATS.md`:
+
+- **Webhooks**: full CRUD + `:ping` + `:rotateSigningSecret` round-trip
+  green; get/list echo create's fields exactly; `new_signing_secret` only
+  on create; rotate returns a fresh distinct secret and old secrets get a
+  24h `expire_time`. `:ping` accepts our empty `{}` body (and a bodiless
+  POST). `update_mask` on PATCH is optional and observed to be **ignored**
+  — the body's fields alone determine what changes. `create_time`/
+  `update_time` were never returned. `webhook_config` on requests needs
+  `background=true` and is echoed back verbatim in the create response.
+- **Agents**: creation is **gated** on a standard API key — every
+  schema-valid payload got a generic 400 "Request contains an invalid
+  argument." (field names still validated: snake_case `id`, `base_agent`,
+  `system_instruction`, `description`, `tools`, `base_environment`).
+  Agent `tools` accept only `code_execution` / `google_search` /
+  `url_context` (per the API's validation error). `GET/LIST /agents` work
+  (`{"agents": [...]}`); managed agent IDs are not retrievable (404).
+  CRUD round-trip beyond create therefore unverifiable on this account.
+- **Environments**: inline source, `network: "disabled"`, allowlist with
+  header `transform`, and the string environment-ID form all accepted
+  (agent `antigravity-preview-05-2026`, background); `environment_id`
+  returned on typed requests.
+- **Typed response_format**: single + list forms accepted. Text-with-schema
+  output validates against the schema. Image: inline `image/jpeg` only
+  (`delivery` rejected). Audio: `sample_rate` works, `mime_type`/`delivery`
+  rejected (inline `audio/l16` returned). Video: `gcs_uri` is Vertex-only.
+- **Multi-speaker TTS**: list-form `speech_config` accepted; one combined
+  `audio/l16` stream returned. `include_input=true` on GET is a no-op (no
+  input or config echo), so the speech_config echo shape is unobservable.
+- **Video config**: Veo models 404 on the Interactions API (models list
+  shows them as `predictLongRunning`-only); `video_config.task` enum
+  validated server-side and revealed a fifth value `extend` (added to
+  `VideoTask`).
+- **Retrieval tool**: rejected as **Vertex-only** ("allowed on the Gemini
+  Enterprise Agent Platform"); Gemini tool types are `google_maps`,
+  `mcp_server`, `function`, `google_search`, `file_search`,
+  `computer_use`, `code_execution`, `url_context`.
+- **Deep-research knobs**: `visualization` (`off|auto`, server-validated) +
+  `collaborative_planning` accepted; `enable_bigquery_tool` is Vertex-only.
+
+Evergreen extras spotted during verification (returned by the API but not
+previously modeled on `InteractionResponse`) — all now modeled:
+`object: "interaction"`, `service_tier`, and the `webhook_config` echo.
+
+⚠️ Still pending live verification: per-step usage shapes on `step.stop`.
 
 ## Missing surface (by user value)
 
