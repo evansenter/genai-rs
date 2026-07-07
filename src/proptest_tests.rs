@@ -1222,6 +1222,7 @@ fn arb_video_task() -> impl Strategy<Value = VideoTask> {
         Just(VideoTask::ImageToVideo),
         Just(VideoTask::ReferenceToVideo),
         Just(VideoTask::Edit),
+        Just(VideoTask::Extend),
         arb_unknown_type().prop_map(|task_type| VideoTask::Unknown {
             data: serde_json::Value::String(task_type.clone()),
             task_type,
@@ -1818,6 +1819,8 @@ fn arb_interaction_response() -> impl Strategy<Value = InteractionResponse> {
         proptest::option::of(prop::collection::vec(arb_tool(), 0..3)), // tools
         proptest::option::of(arb_identifier()),                        // previous_interaction_id
         proptest::option::of(arb_identifier()),                        // environment_id
+        proptest::option::of(Just("interaction".to_string())),         // object
+        proptest::option::of(arb_service_tier()),                      // service_tier
         proptest::option::of(arb_text()),                              // output_text
         proptest::option::of(arb_datetime()),                          // created
         proptest::option::of(arb_datetime()),                          // updated
@@ -1826,7 +1829,16 @@ fn arb_interaction_response() -> impl Strategy<Value = InteractionResponse> {
     (part1, part2).prop_map(
         |(
             (id, model, agent, input, steps, status, usage),
-            (tools, previous_interaction_id, environment_id, output_text, created, updated),
+            (
+                tools,
+                previous_interaction_id,
+                environment_id,
+                object,
+                service_tier,
+                output_text,
+                created,
+                updated,
+            ),
         )| {
             InteractionResponse {
                 id,
@@ -1839,6 +1851,8 @@ fn arb_interaction_response() -> impl Strategy<Value = InteractionResponse> {
                 tools,
                 previous_interaction_id,
                 environment_id,
+                object,
+                service_tier,
                 output_text,
                 created,
                 updated,

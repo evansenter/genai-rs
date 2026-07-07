@@ -2241,3 +2241,43 @@ fn test_output_contents_iterates_model_output_only() {
     assert_eq!(contents.len(), 1);
     assert_eq!(contents[0].as_text(), Some("model text"));
 }
+
+#[test]
+fn test_deserialize_response_object_and_service_tier() {
+    // The live API (Api-Revision 2026-05-20, verified 2026-07) returns
+    // `object: "interaction"` and echoes the effective `service_tier` on
+    // every response. Both must roundtrip losslessly.
+    let wire = serde_json::json!({
+        "id": "interaction_123",
+        "object": "interaction",
+        "model": "gemini-3-flash-preview",
+        "service_tier": "standard",
+        "status": "completed",
+        "steps": [
+            {"type": "model_output", "content": [{"type": "text", "text": "hi"}]}
+        ]
+    });
+
+    let response: InteractionResponse =
+        serde_json::from_value(wire.clone()).expect("Deserialization failed");
+    assert_eq!(response.object.as_deref(), Some("interaction"));
+    assert_eq!(response.service_tier, Some(crate::ServiceTier::Standard));
+
+    // Lossless roundtrip: re-serialization matches the wire JSON exactly.
+    let roundtripped = serde_json::to_value(&response).expect("Serialization failed");
+    assert_eq!(roundtripped, wire);
+}
+
+#[test]
+fn test_response_object_and_service_tier_absent_are_skipped() {
+    // Responses without these fields (e.g. local fixtures) must not emit them.
+    let response = InteractionResponse {
+        status: InteractionStatus::Completed,
+        ..Default::default()
+    };
+    assert_eq!(response.object, None);
+    assert_eq!(response.service_tier, None);
+    let json = serde_json::to_value(&response).unwrap();
+    assert!(json.get("object").is_none());
+    assert!(json.get("service_tier").is_none());
+}

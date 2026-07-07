@@ -2712,3 +2712,33 @@ fn test_from_uri_and_mime_preserves_values() {
         _ => panic!("Expected Image variant"),
     }
 }
+
+#[test]
+fn test_google_search_result_item_suggestions_only_roundtrip() {
+    // Live wire shape (verified 2026-07): result items may carry ONLY
+    // `search_suggestions` (an HTML rendering payload) with no title/url.
+    // Deserialize must default title/url to empty, and re-serialization
+    // must NOT synthesize empty `title`/`url` fields the wire never sent.
+    let wire = serde_json::json!({"search_suggestions": "<style>.container{}</style>"});
+
+    let item: GoogleSearchResultItem =
+        serde_json::from_value(wire.clone()).expect("Deserialization failed");
+    assert_eq!(item.title, "");
+    assert_eq!(item.url, "");
+    assert_eq!(
+        item.search_suggestions.as_deref(),
+        Some("<style>.container{}</style>")
+    );
+
+    let roundtripped = serde_json::to_value(&item).expect("Serialization failed");
+    assert_eq!(roundtripped, wire);
+}
+
+#[test]
+fn test_google_search_result_item_populated_fields_serialize() {
+    // Non-empty title/url must still serialize.
+    let item = GoogleSearchResultItem::new("wikipedia.org", "https://example.com/r");
+    let json = serde_json::to_value(&item).unwrap();
+    assert_eq!(json["title"], "wikipedia.org");
+    assert_eq!(json["url"], "https://example.com/r");
+}

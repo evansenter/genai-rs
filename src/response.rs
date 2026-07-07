@@ -14,7 +14,7 @@ use crate::content::{
     Annotation, CodeExecutionLanguage, Content, FileSearchResultItem, GoogleSearchResultItem,
 };
 use crate::errors::GenaiError;
-use crate::request::InteractionInput;
+use crate::request::{InteractionInput, ServiceTier};
 use crate::steps::{FunctionResultPayload, Step};
 use crate::tools::Tool;
 
@@ -826,6 +826,22 @@ pub struct InteractionResponse {
     /// ID of the environment this interaction executed in, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment_id: Option<String>,
+
+    /// Resource type discriminator returned by the API.
+    ///
+    /// The live API returns `"interaction"` on every response (verified
+    /// 2026-07 against Api-Revision 2026-05-20). Preserved for lossless
+    /// roundtrip per Evergreen principles.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub object: Option<String>,
+
+    /// The service tier that actually processed this request.
+    ///
+    /// The live API echoes the effective tier (e.g. `"standard"`) on every
+    /// response, including when the request did not set `service_tier`
+    /// (verified 2026-07 against Api-Revision 2026-05-20).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<ServiceTier>,
 
     /// Convenience field: concatenated output text, when provided by the API.
     ///

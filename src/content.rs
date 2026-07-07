@@ -489,9 +489,17 @@ impl<'de> Deserialize<'de> for Annotation {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GoogleSearchResultItem {
-    /// Title of the search result (often the domain name)
+    /// Title of the search result (often the domain name).
+    ///
+    /// Empty when the wire item omits it — the live API returns items that
+    /// carry only `search_suggestions` (verified 2026-07). Empty values are
+    /// skipped on serialize so replayed history matches the wire.
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub title: String,
-    /// URL of the source (typically a grounding redirect URL)
+    /// URL of the source (typically a grounding redirect URL).
+    ///
+    /// Empty when the wire item omits it; skipped on serialize when empty.
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub url: String,
     /// The rendered content from the source (if available)
     #[serde(skip_serializing_if = "Option::is_none")]
