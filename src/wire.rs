@@ -205,8 +205,10 @@ const TRUNCATE_FIELDS: &[&str] = &["data", "signature"];
 
 /// Fields whose values are secrets and must be fully redacted (never
 /// printed, even partially). Covers third-party retrieval credentials
-/// (e.g. Exa/Parallel `api_key` in search configs).
-const REDACT_FIELDS: &[&str] = &["api_key"];
+/// (e.g. Exa/Parallel `api_key` in search configs) and webhook signing
+/// secrets (`new_signing_secret` on create, `secret` on rotate — both
+/// returned exactly once by the API).
+const REDACT_FIELDS: &[&str] = &["api_key", "new_signing_secret", "secret"];
 
 /// Replacement value for redacted fields.
 const REDACTED_PLACEHOLDER: &str = "[REDACTED]";
@@ -619,6 +621,28 @@ impl TracingForwarder {
     }
 }
 
+/// Renders a JSON body for tracing output with the same redaction and
+/// truncation guarantees as [`LoudWirePrinter`] (secret fields replaced,
+/// long base64 fields truncated).
+fn redacted_body_string(body: &serde_json::Value) -> String {
+    let mut value = body.clone();
+    truncate_long_fields(&mut value);
+    value.to_string()
+}
+
+/// Like [`redacted_body_string`] but for raw string payloads (error bodies,
+/// SSE `data:` frames): JSON payloads are redacted structurally; non-JSON
+/// payloads pass through unchanged.
+fn redacted_raw_string(raw: &str) -> Cow<'_, str> {
+    match serde_json::from_str::<serde_json::Value>(raw) {
+        Ok(mut value) => {
+            truncate_long_fields(&mut value);
+            Cow::Owned(value.to_string())
+        }
+        Err(_) => Cow::Borrowed(raw),
+    }
+}
+
 impl WireInspector for TracingForwarder {
     fn on_event(&self, event: &WireEvent) {
         use tracing::Level;
@@ -630,7 +654,7 @@ impl WireInspector for TracingForwarder {
                 url,
                 body,
             } => {
-                let body = body.as_ref().map(ToString::to_string);
+                let body = body.as_ref().map(redacted_body_string);
                 tracing::event!(
                     target: "genai_rs::wire",
                     Level::DEBUG,
@@ -658,7 +682,7 @@ impl WireInspector for TracingForwarder {
                     Level::DEBUG,
                     kind = "response_body",
                     id,
-                    body = %body,
+                    body = %redacted_body_string(body),
                     "wire response body"
                 );
             }
@@ -669,7 +693,7 @@ impl WireInspector for TracingForwarder {
                     kind = "error_body",
                     id,
                     status,
-                    body = %body,
+                    body = %redacted_raw_string(body),
                     "wire error body"
                 );
             }
@@ -684,7 +708,7 @@ impl WireInspector for TracingForwarder {
                     kind = "sse_frame",
                     id,
                     event_type = event_type.as_deref(),
-                    data = %data,
+                    data = %redacted_raw_string(data),
                     "wire sse frame"
                 );
             }
@@ -970,6 +994,39 @@ mod tests {
         let mut value = serde_json::json!({"api_key": null});
         truncate_long_fields(&mut value);
         assert!(value["api_key"].is_null());
+    }
+
+    #[test]
+    fn test_redact_fields_webhook_signing_secrets() {
+        // create_webhook returns new_signing_secret; rotate returns secret.
+        // Both are one-time values and must never reach inspector output.
+        let mut value = serde_json::json!({
+            "id": "webhooks/wh-1",
+            "new_signing_secret": "whsec_create-secret",
+            "secret": "whsec_rotated-secret"
+        });
+        truncate_long_fields(&mut value);
+        let rendered = value.to_string();
+        assert!(!rendered.contains("whsec_"), "secret leaked: {rendered}");
+        assert_eq!(value["new_signing_secret"], "[REDACTED]");
+        assert_eq!(value["secret"], "[REDACTED]");
+        assert_eq!(value["id"], "webhooks/wh-1");
+    }
+
+    #[test]
+    fn test_tracing_forwarder_body_rendering_redacts() {
+        // TracingForwarder must apply the same redaction guarantees as
+        // LoudWirePrinter to JSON bodies and raw string payloads.
+        let body = serde_json::json!({"secret": "whsec_x", "api_key": "k"});
+        let rendered = redacted_body_string(&body);
+        assert!(!rendered.contains("whsec_x"));
+        assert!(!rendered.contains("\"k\""));
+
+        let raw_json = r#"{"new_signing_secret":"whsec_y"}"#;
+        assert!(!redacted_raw_string(raw_json).contains("whsec_y"));
+
+        // Non-JSON payloads pass through unchanged.
+        assert_eq!(redacted_raw_string("plain text"), "plain text");
     }
 
     #[test]

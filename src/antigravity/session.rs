@@ -213,12 +213,18 @@ async fn send_json(
 }
 
 /// Redacts credential fields in the *inspection copy* of an outgoing
-/// payload (the harness receives the original). Today the only credential
-/// in the protocol is the Gemini `apiKey` inside model endpoint configs.
+/// payload (the harness receives the original). Credentials in the
+/// protocol: the Gemini `apiKey` inside model endpoint configs, plus the
+/// pure credential-carrier maps — MCP stdio `env`, MCP HTTP `headers`, and
+/// model-endpoint `httpHeaders` — whose values are API keys and
+/// `Authorization` tokens by design.
 fn redact_for_inspection(mut value: serde_json::Value) -> serde_json::Value {
     redact_keys(&mut value);
     value
 }
+
+/// Map-valued keys whose every entry is treated as a credential.
+const REDACT_MAP_KEYS: &[&str] = &["env", "headers", "httpHeaders"];
 
 fn redact_keys(value: &mut serde_json::Value) {
     match value {
@@ -226,6 +232,14 @@ fn redact_keys(value: &mut serde_json::Value) {
             for (key, entry) in map.iter_mut() {
                 if key == "apiKey" && entry.is_string() {
                     *entry = serde_json::Value::String("[REDACTED]".to_string());
+                } else if REDACT_MAP_KEYS.contains(&key.as_str()) {
+                    if let serde_json::Value::Object(entries) = entry {
+                        for value in entries.values_mut() {
+                            if value.is_string() {
+                                *value = serde_json::Value::String("[REDACTED]".to_string());
+                            }
+                        }
+                    }
                 } else {
                     redact_keys(entry);
                 }
@@ -293,5 +307,52 @@ mod tests {
     fn test_redaction_leaves_plain_payloads_alone() {
         let payload = json!({"userInput": "what is an apiKey?"});
         assert_eq!(redact_for_inspection(payload.clone()), payload);
+    }
+
+    #[test]
+    fn test_redaction_masks_mcp_and_endpoint_credentials() {
+        let payload = json!({
+            "config": {
+                "models": [
+                    {"geminiApiEndpoint": {
+                        "apiKey": "secret-1",
+                        "httpHeaders": {"x-custom-auth": "secret-2"}
+                    }}
+                ],
+                "mcpServers": [
+                    {"stdio": {
+                        "command": "my-mcp",
+                        "env": {"GITHUB_TOKEN": "secret-3", "MODE": "fast"}
+                    }},
+                    {"http": {
+                        "url": "https://internal/mcp",
+                        "headers": {"Authorization": "Bearer secret-4"}
+                    }}
+                ]
+            }
+        });
+        let redacted = redact_for_inspection(payload);
+        let text = redacted.to_string();
+        assert!(!text.contains("secret-"), "credential leaked: {text}");
+        // Structure survives: command/url untouched, header keys visible.
+        assert_eq!(
+            redacted["config"]["mcpServers"][0]["stdio"]["command"],
+            "my-mcp"
+        );
+        assert_eq!(
+            redacted["config"]["mcpServers"][1]["http"]["url"],
+            "https://internal/mcp"
+        );
+        assert_eq!(
+            redacted["config"]["mcpServers"][1]["http"]["headers"]["Authorization"],
+            "[REDACTED]"
+        );
+        // Non-string map values (none today) and non-credential env values are
+        // both redacted uniformly — env/headers are credential carriers by
+        // design, so over-redaction is the correct trade.
+        assert_eq!(
+            redacted["config"]["mcpServers"][0]["stdio"]["env"]["MODE"],
+            "[REDACTED]"
+        );
     }
 }
