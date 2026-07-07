@@ -40,10 +40,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 println!("{t}");
                             }
                         }
-                        genai_rs::Step::Thought { signature, .. } => {
-                            if signature.is_some() {
-                                println!("[Thought] (signature present)");
-                            }
+                        genai_rs::Step::Thought {
+                            signature: Some(_), ..
+                        } => {
+                            println!("[Thought] (signature present)");
                         }
                         _ => {}
                     }
