@@ -1698,7 +1698,7 @@ fn arb_network_config() -> impl Strategy<Value = NetworkConfig> {
                 }),
             0..3,
         )
-        .prop_map(NetworkConfig::Allowlist),
+        .prop_map(NetworkConfig::allowlist),
     ]
 }
 

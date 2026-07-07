@@ -455,6 +455,11 @@ still rustls.
   the non-optional `title`/`url` fields previously synthesized empty
   strings on stateless replay and are now skip-serialized when empty, so
   captured live responses roundtrip byte-identically.
+- `NetworkConfig::Allowlist` now preserves sibling keys next to
+  `allowlist` on roundtrip (Evergreen) via a struct variant with an
+  `extra` map — construct with the new `NetworkConfig::allowlist(entries)`
+  helper. Previously an unmodeled sibling field (e.g. a future
+  `default_policy`) was silently dropped on deserialize.
 
 #### Streaming & wire
 
@@ -498,6 +503,21 @@ still rustls.
   were misattributed to the user's turn, shifting every later response by
   one turn. Trigger-turn output is not surfaced (documented in
   `docs/ANTIGRAVITY.md`).
+- A cancelled *subagent* trajectory no longer fails the parent's whole
+  turn (mirroring the existing subagent-idle handling); subagent failures
+  surface through their step errors. Main-trajectory cancellation still
+  fails the turn with `AntigravityError::Turn`.
+- The harness stderr drain no longer stops permanently on a non-UTF-8
+  line (it now reads bytes and replaces invalid sequences lossily); a
+  stopped drain could let the stderr pipe fill and deadlock the child —
+  the drain's whole purpose at the wrong-binary trust boundary.
+- Closed a race between trigger delivery and turn begin: a trigger that
+  had passed its idle check could deliver its message *after*
+  `chat`/`send_streaming` marked the agent busy and consumed the
+  trigger-fired flag, injecting an `automated_trigger` into the user's
+  turn window with nobody left to drain the resulting harness turn. The
+  fire decision and turn begin are now mutually exclusive (shared lock +
+  idle re-check under it).
 - Unrecognized harness tool confirmations now **fail closed** — a
   confirmation whose action fields this client does not recognize (e.g. a
   builtin newer than the pinned harness) is approved only when a policy
@@ -556,6 +576,11 @@ still rustls.
   copies are redacted.
 - `LOUD_WIRE` output now fully redacts `api_key` fields (e.g.
   Exa/Parallel retrieval configs) instead of printing them.
+- Wire-inspection redaction now recurses into `data`/`signature` keys
+  whose values are objects or arrays (e.g. Evergreen `Unknown` payloads
+  preserved under a `data` key), so secrets nested inside them are
+  redacted; previously such subtrees were skipped entirely by both
+  `LoudWirePrinter` and `TracingForwarder`.
 - `Debug` for `Webhook` and `RotateSigningSecretResponse` now redacts
   `new_signing_secret` / `secret` (matching the client's `api_key`
   redaction precedent).

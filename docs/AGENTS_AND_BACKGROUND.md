@@ -191,7 +191,7 @@ let response = client
         RemoteEnvironment::new()
             .add_source(EnvironmentSource::repository("github.com/org/repo", "/workspace"))
             .add_source(EnvironmentSource::inline("/workspace/.env", "MODE=ci"))
-            .with_network(NetworkConfig::Allowlist(vec![
+            .with_network(NetworkConfig::allowlist(vec![
                 AllowlistEntry::new("*.crates.io"),
             ])),
     )

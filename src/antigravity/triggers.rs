@@ -18,7 +18,10 @@
 //!   becomes idle again. The reference SDK's `TriggerDelivery` enum names
 //!   this mode `WAIT_IDLE` (its default `send_immediately` mode does not
 //!   suit this crate's sequential turn loop, where nothing reads the
-//!   WebSocket between turns of a busy agent).
+//!   WebSocket between turns of a busy agent). Delivery is serialized
+//!   with `chat`/`send_streaming`'s turn begin through a shared lock, so
+//!   a trigger can never slip its message into a turn that begins
+//!   concurrently with the idle check.
 //! - **Overlap suppression**: intervals missed while busy collapse into a
 //!   single delivery — the timer restarts only after the deferred delivery
 //!   lands, so a long turn produces one trigger message, not a backlog.
@@ -44,6 +47,7 @@
 //!   ends the task on its own.
 
 use std::future::Future;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::watch;
@@ -105,14 +109,23 @@ impl Drop for TriggerTasks {
 ///
 /// `idle` reports whether the agent is between turns (`true` = idle); the
 /// sender side lives on the agent. `send` delivers the trigger message —
-/// in production it wraps the session's shared sink handle, in tests a
-/// channel.
+/// in production it wraps the session's shared sink handle (and sets the
+/// agent's `trigger_fired` flag before sending), in tests a channel.
+///
+/// `turn_sync` makes the fire decision and the agent's turn begin
+/// mutually exclusive: the task holds it across [idle re-check → send],
+/// and `AntigravityAgent::begin_turn` holds the same lock across [mark
+/// busy → consume `trigger_fired`]. Without it, a delivery could race a
+/// starting turn — pass the idle check, lose the race to the turn's flag
+/// swap, and land its message inside the user's turn with nobody left to
+/// drain the trigger-initiated harness turn.
 ///
 /// The task ends on its own when the idle channel closes (agent dropped)
 /// or a send fails (session closed); otherwise it runs until aborted.
 pub(crate) fn spawn_trigger_task<F, Fut>(
     config: TriggerConfig,
     mut idle: watch::Receiver<bool>,
+    turn_sync: Arc<tokio::sync::Mutex<()>>,
     send: F,
 ) -> JoinHandle<()>
 where
@@ -125,13 +138,25 @@ where
             // Deliver only while idle; a firing that comes due mid-turn is
             // deferred until the turn ends. Missed intervals collapse into
             // this single deferred delivery (overlap suppression).
-            if idle.wait_for(|is_idle| *is_idle).await.is_err() {
-                tracing::debug!("Trigger task exiting: agent dropped");
-                return;
-            }
-            if let Err(e) = send(config.message.clone()).await {
-                tracing::warn!("Trigger delivery failed; stopping trigger task: {e}");
-                return;
+            loop {
+                if idle.wait_for(|is_idle| *is_idle).await.is_err() {
+                    tracing::debug!("Trigger task exiting: agent dropped");
+                    return;
+                }
+                // Re-check idleness under the turn lock (see the fn docs):
+                // a turn may have begun between the wait above and the
+                // lock acquisition — if so, defer again instead of
+                // delivering into that turn.
+                let sync = turn_sync.lock().await;
+                if !*idle.borrow() {
+                    drop(sync);
+                    continue;
+                }
+                if let Err(e) = send(config.message.clone()).await {
+                    tracing::warn!("Trigger delivery failed; stopping trigger task: {e}");
+                    return;
+                }
+                break;
             }
             tracing::debug!(
                 interval = ?config.interval,
@@ -155,12 +180,13 @@ mod tests {
 
     /// Spawns a trigger task whose sends are observable through an mpsc
     /// channel.
-    fn observable_trigger(
+    fn observable_trigger_with_sync(
         config: TriggerConfig,
         idle: watch::Receiver<bool>,
+        turn_sync: Arc<tokio::sync::Mutex<()>>,
     ) -> (JoinHandle<()>, mpsc::UnboundedReceiver<String>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        let handle = spawn_trigger_task(config, idle, move |message| {
+        let handle = spawn_trigger_task(config, idle, turn_sync, move |message| {
             let tx = tx.clone();
             async move {
                 tx.send(message)
@@ -168,6 +194,13 @@ mod tests {
             }
         });
         (handle, rx)
+    }
+
+    fn observable_trigger(
+        config: TriggerConfig,
+        idle: watch::Receiver<bool>,
+    ) -> (JoinHandle<()>, mpsc::UnboundedReceiver<String>) {
+        observable_trigger_with_sync(config, idle, Arc::new(tokio::sync::Mutex::new(())))
     }
 
     #[tokio::test(start_paused = true)]
@@ -208,6 +241,52 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn test_trigger_defers_when_turn_begins_during_delivery_window() {
+        // TOCTOU regression test: the trigger passes its idle check, but a
+        // turn begins (takes the lock, marks busy) before the trigger can
+        // send. The trigger must re-check idleness under the lock and
+        // defer, not deliver into the freshly started turn.
+        let (idle_tx, idle_rx) = watch::channel(true);
+        let turn_sync = Arc::new(tokio::sync::Mutex::new(()));
+        let (handle, mut rx) = observable_trigger_with_sync(
+            TriggerConfig::new("check", Duration::from_millis(10)),
+            idle_rx,
+            Arc::clone(&turn_sync),
+        );
+
+        // Simulate begin_turn acquiring the lock first: the trigger's
+        // interval elapses and its idle wait passes (idle is true), but it
+        // blocks on the lock before sending.
+        let sync = turn_sync.lock().await;
+        tokio::time::sleep(Duration::from_millis(15)).await;
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            rx.try_recv().is_err(),
+            "must not deliver while the turn lock is held"
+        );
+
+        // The turn marks the agent busy and releases the lock (as
+        // begin_turn does). The trigger acquires the lock, re-checks
+        // idleness, sees the turn, and defers.
+        idle_tx.send_replace(false);
+        drop(sync);
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            rx.try_recv().is_err(),
+            "must re-check idleness under the lock and defer"
+        );
+
+        // Turn ends: the deferred delivery lands.
+        idle_tx.send_replace(true);
+        assert_eq!(rx.recv().await.as_deref(), Some("check"));
+        handle.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn test_trigger_task_exits_when_idle_channel_closes() {
         let (idle_tx, idle_rx) = watch::channel(false);
         let (handle, _rx) =
@@ -223,6 +302,7 @@ mod tests {
         let handle = spawn_trigger_task(
             TriggerConfig::new("x", Duration::from_millis(1)),
             idle_rx,
+            Arc::new(tokio::sync::Mutex::new(())),
             |_message| async { Err(AntigravityError::WebSocket("closed".to_string())) },
         );
         handle.await.expect("task exits cleanly after send failure");

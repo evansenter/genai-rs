@@ -269,7 +269,15 @@ pub enum NetworkConfig {
     Disabled,
     /// Restricts outbound traffic to the listed domains
     /// (wire: `{"allowlist": [{domain, transform}]}`).
-    Allowlist(Vec<AllowlistEntry>),
+    ///
+    /// Construct with [`NetworkConfig::allowlist`].
+    Allowlist {
+        /// The allowlist rules.
+        entries: Vec<AllowlistEntry>,
+        /// Sibling fields next to `allowlist` not yet modeled (Evergreen
+        /// forward compatibility), preserved on roundtrip.
+        extra: serde_json::Map<String, serde_json::Value>,
+    },
     /// Unknown variant for forward compatibility (Evergreen pattern)
     Unknown {
         /// A short descriptor of the unrecognized shape
@@ -280,6 +288,16 @@ pub enum NetworkConfig {
 }
 
 impl NetworkConfig {
+    /// Creates an allowlist config from the given rules (with no extra
+    /// sibling fields).
+    #[must_use]
+    pub fn allowlist(entries: Vec<AllowlistEntry>) -> Self {
+        Self::Allowlist {
+            entries,
+            extra: serde_json::Map::new(),
+        }
+    }
+
     /// Returns true if this is an unknown network config.
     #[must_use]
     pub const fn is_unknown(&self) -> bool {
@@ -313,9 +331,12 @@ impl Serialize for NetworkConfig {
         use serde::ser::SerializeMap;
         match self {
             Self::Disabled => serializer.serialize_str("disabled"),
-            Self::Allowlist(entries) => {
-                let mut map = serializer.serialize_map(Some(1))?;
+            Self::Allowlist { entries, extra } => {
+                let mut map = serializer.serialize_map(Some(1 + extra.len()))?;
                 map.serialize_entry("allowlist", entries)?;
+                for (key, value) in extra {
+                    map.serialize_entry(key, value)?;
+                }
                 map.end()
             }
             Self::Unknown { data, .. } => data.serialize(serializer),
@@ -333,7 +354,17 @@ impl<'de> Deserialize<'de> for NetworkConfig {
             serde_json::Value::String(s) if s == "disabled" => Ok(Self::Disabled),
             serde_json::Value::Object(obj) if obj.contains_key("allowlist") => {
                 match serde_json::from_value::<Vec<AllowlistEntry>>(obj["allowlist"].clone()) {
-                    Ok(entries) => Ok(Self::Allowlist(entries)),
+                    Ok(entries) => Ok(Self::Allowlist {
+                        entries,
+                        // Preserve sibling keys next to `allowlist` for
+                        // Evergreen roundtrip (mirrors RemoteEnvironment's
+                        // flattened `extra`).
+                        extra: obj
+                            .iter()
+                            .filter(|(key, _)| key.as_str() != "allowlist")
+                            .map(|(key, value)| (key.clone(), value.clone()))
+                            .collect(),
+                    }),
                     Err(e) => {
                         tracing::warn!(
                             "Failed to parse network allowlist: {}. \
@@ -372,7 +403,7 @@ impl<'de> Deserialize<'de> for NetworkConfig {
 /// let env = RemoteEnvironment::new()
 ///     .add_source(EnvironmentSource::gcs("gs://my-bucket/data", "/data"))
 ///     .add_source(EnvironmentSource::inline("/etc/motd", "hello"))
-///     .with_network(NetworkConfig::Allowlist(vec![
+///     .with_network(NetworkConfig::allowlist(vec![
 ///         AllowlistEntry::new("*.googleapis.com"),
 ///     ]));
 /// ```
@@ -671,13 +702,14 @@ mod tests {
 
     #[test]
     fn test_network_config_allowlist_roundtrip() {
-        let network = NetworkConfig::Allowlist(vec![
+        let network = NetworkConfig::allowlist(vec![
             AllowlistEntry::new("*.googleapis.com"),
             AllowlistEntry::new("api.example.com").with_transform(vec![HashMap::from([(
                 "Authorization".to_string(),
                 "Bearer token".to_string(),
             )])]),
         ]);
+        assert!(!network.is_unknown());
 
         let value = serde_json::to_value(&network).unwrap();
         assert_eq!(value["allowlist"][0]["domain"], "*.googleapis.com");
@@ -689,6 +721,24 @@ mod tests {
 
         let parsed: NetworkConfig = serde_json::from_value(value).unwrap();
         assert_eq!(parsed, network);
+    }
+
+    #[test]
+    fn test_network_config_allowlist_preserves_sibling_keys() {
+        // Sibling keys next to `allowlist` (e.g. a future `default_policy`)
+        // must survive the roundtrip (Evergreen), mirroring
+        // RemoteEnvironment's flattened `extra`.
+        let raw = json!({
+            "allowlist": [{"domain": "*.googleapis.com"}],
+            "default_policy": "deny"
+        });
+        let parsed: NetworkConfig = serde_json::from_value(raw.clone()).unwrap();
+        let NetworkConfig::Allowlist { entries, extra } = &parsed else {
+            panic!("expected Allowlist, got {parsed:?}");
+        };
+        assert_eq!(entries.len(), 1);
+        assert_eq!(extra["default_policy"], "deny");
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), raw);
     }
 
     #[test]

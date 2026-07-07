@@ -1371,7 +1371,7 @@ fn test_builder_with_typed_remote_environment() {
         .with_environment(
             RemoteEnvironment::new()
                 .add_source(EnvironmentSource::gcs("gs://bucket", "/data"))
-                .with_network(NetworkConfig::Allowlist(vec![AllowlistEntry::new(
+                .with_network(NetworkConfig::allowlist(vec![AllowlistEntry::new(
                     "*.googleapis.com",
                 )])),
         )

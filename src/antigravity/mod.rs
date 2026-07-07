@@ -595,6 +595,7 @@ impl AgentBuilder {
             turn_timeout: self.turn_timeout,
             idle: Arc::new(tokio::sync::watch::channel(true).0),
             trigger_fired: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            turn_sync: Arc::new(tokio::sync::Mutex::new(())),
             trigger_tasks: triggers::TriggerTasks::default(),
         };
 
@@ -610,6 +611,7 @@ impl AgentBuilder {
                     agent.trigger_tasks.push(triggers::spawn_trigger_task(
                         trigger,
                         agent.idle.subscribe(),
+                        Arc::clone(&agent.turn_sync),
                         move |message| {
                             let sink = sink.clone();
                             let fired = Arc::clone(&fired);
@@ -726,6 +728,13 @@ pub struct AntigravityAgent {
     /// checks this flag and halts-and-drains that turn before sending its
     /// own input, so stale events cannot desync the user's turn.
     trigger_fired: Arc<std::sync::atomic::AtomicBool>,
+    /// Serializes trigger delivery against turn begin. A trigger task
+    /// holds this lock across [idle re-check → set `trigger_fired` →
+    /// send]; [`begin_turn`](Self::begin_turn) holds it across [mark busy
+    /// → consume `trigger_fired`]. Without it, a trigger that passed its
+    /// idle check could deliver *after* the new turn consumed the flag,
+    /// injecting its message into the user's turn (see [`triggers`]).
+    turn_sync: Arc<tokio::sync::Mutex<()>>,
     /// Timer tasks spawned for [`AgentBuilder::add_trigger`] configs;
     /// aborted on shutdown and on drop.
     trigger_tasks: triggers::TriggerTasks,
@@ -803,8 +812,7 @@ impl AntigravityAgent {
         prompt: impl Into<String>,
     ) -> Result<ChatResponse, AntigravityError> {
         // Mark busy before sending so a trigger cannot slip in between.
-        let guard = TurnGuard::begin(&self.idle);
-        self.discard_trigger_turn().await;
+        let guard = self.begin_turn().await;
         self.session
             .send(&InputEvent::UserInput(prompt.into()))
             .await?;
@@ -835,8 +843,7 @@ impl AntigravityAgent {
         // Mark busy before sending so a trigger cannot slip in between.
         // The guard moves into the stream's turn state: dropping the
         // stream mid-turn marks the agent idle again.
-        let guard = TurnGuard::begin(&self.idle);
-        self.discard_trigger_turn().await;
+        let guard = self.begin_turn().await;
         self.session
             .send(&InputEvent::UserInput(prompt.into()))
             .await?;
@@ -962,17 +969,34 @@ impl AntigravityAgent {
         }
     }
 
-    /// Halts and drains a trigger-initiated harness turn, when one started
-    /// since the last client-driven turn. Called with the turn guard
-    /// already held, so no further trigger can be delivered concurrently.
-    async fn discard_trigger_turn(&mut self) {
-        if self
-            .trigger_fired
-            .swap(false, std::sync::atomic::Ordering::SeqCst)
-        {
+    /// Marks the agent busy and, when a trigger delivered since the last
+    /// client-driven turn, halts and drains the trigger-initiated harness
+    /// turn. Returns the guard that flips the agent back to idle on drop.
+    ///
+    /// Invariant (shared with [`triggers::spawn_trigger_task`]): flipping
+    /// the idle flag and consuming `trigger_fired` happen under
+    /// `turn_sync`, the same lock a trigger task holds across its [idle
+    /// re-check → set flag → send] window. This makes the fire decision
+    /// and the turn begin mutually exclusive — without it, a trigger that
+    /// already passed its idle check could set the flag and send *after*
+    /// the `swap` below returned `false`, delivering its message into the
+    /// turn we are about to start with nobody ever draining it.
+    async fn begin_turn(&mut self) -> TurnGuard {
+        let (guard, trigger_fired) = {
+            let _sync = self.turn_sync.lock().await;
+            let guard = TurnGuard::begin(&self.idle);
+            let fired = self
+                .trigger_fired
+                .swap(false, std::sync::atomic::Ordering::SeqCst);
+            (guard, fired)
+        };
+        // Drain outside the critical section: the agent is already marked
+        // busy, so trigger tasks defer and nothing new can fire meanwhile.
+        if trigger_fired {
             self.halt_and_drain("discarding a trigger-initiated turn")
                 .await;
         }
+        guard
     }
 
     /// Best-effort recovery when the harness may be driving (or have
@@ -1047,7 +1071,7 @@ impl AntigravityAgent {
         match event.payload {
             Some(OutputPayload::StepUpdate(step)) => self.process_step(*step, turn).await?,
             Some(OutputPayload::TrajectoryStateUpdate(update)) => {
-                self.process_trajectory_update(&update, turn)?;
+                Self::process_trajectory_update(&update, turn)?;
             }
             Some(OutputPayload::ToolCall(call)) => self.process_tool_call(call, turn).await?,
             Some(OutputPayload::CallHookRequest(request)) => {
@@ -1238,8 +1262,14 @@ impl AntigravityAgent {
             .await
     }
 
+    /// Routes a trajectory lifecycle update into the turn state.
+    ///
+    /// Only the *main* trajectory's terminal states decide the turn's
+    /// fate: subagent trajectories go idle (and can be cancelled, e.g. by
+    /// a pre-turn hook denial) while the parent keeps running — subagent
+    /// failures surface through their step errors, not here. Associated
+    /// fn (no `&self`) so the routing logic is unit-testable.
     fn process_trajectory_update(
-        &mut self,
         update: &protocol::TrajectoryStateUpdate,
         turn: &mut TurnState,
     ) -> Result<(), AntigravityError> {
@@ -1255,7 +1285,7 @@ impl AntigravityAgent {
                 turn.queue
                     .push_back(AgentEvent::Finished(Box::new(response)));
             }
-            Some(TrajectoryState::Cancelled) => {
+            Some(TrajectoryState::Cancelled) if is_main => {
                 let message = update
                     .error
                     .clone()
@@ -1263,7 +1293,8 @@ impl AntigravityAgent {
                 return Err(AntigravityError::Turn(message));
             }
             _ => {
-                // Running / subagent idle / unknown states: nothing to do.
+                // Running / subagent idle or cancelled / unknown states:
+                // nothing to do for the parent turn.
             }
         }
         Ok(())
@@ -1577,6 +1608,75 @@ impl TurnState {
 #[cfg(test)]
 mod agent_tests {
     use super::*;
+
+    fn trajectory_update(
+        trajectory_id: Option<&str>,
+        state: TrajectoryState,
+        error: Option<&str>,
+    ) -> protocol::TrajectoryStateUpdate {
+        protocol::TrajectoryStateUpdate {
+            trajectory_id: trajectory_id.map(str::to_string),
+            state: Some(state),
+            error: error.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_main_trajectory_idle_finishes_turn() {
+        let mut turn = TurnState::new(None, None);
+        turn.main_trajectory = Some("main".to_string());
+        turn.final_text = Some("done".to_string());
+        let update = trajectory_update(Some("main"), TrajectoryState::Idle, None);
+        AntigravityAgent::process_trajectory_update(&update, &mut turn).unwrap();
+        assert!(turn.finished);
+        assert!(matches!(
+            turn.queue.pop_front(),
+            Some(AgentEvent::Finished(_))
+        ));
+    }
+
+    #[test]
+    fn test_main_trajectory_cancelled_fails_turn() {
+        let mut turn = TurnState::new(None, None);
+        turn.main_trajectory = Some("main".to_string());
+        let update = trajectory_update(Some("main"), TrajectoryState::Cancelled, Some("halted"));
+        let err = AntigravityAgent::process_trajectory_update(&update, &mut turn).unwrap_err();
+        assert!(matches!(&err, AntigravityError::Turn(m) if m == "halted"));
+    }
+
+    #[test]
+    fn test_cancelled_before_any_step_fails_turn() {
+        // No main trajectory yet (e.g. a pre-turn hook denial cancels the
+        // turn before its first step): treated as the main trajectory.
+        let mut turn = TurnState::new(None, None);
+        let update = trajectory_update(Some("t-0"), TrajectoryState::Cancelled, None);
+        let err = AntigravityAgent::process_trajectory_update(&update, &mut turn).unwrap_err();
+        assert!(matches!(&err, AntigravityError::Turn(m) if m == "turn cancelled"));
+    }
+
+    #[test]
+    fn test_subagent_trajectory_cancelled_is_not_fatal() {
+        // A cancelled subagent trajectory must not fail the parent's turn
+        // (mirroring the subagent-idle no-op); subagent failures surface
+        // through their step errors instead.
+        let mut turn = TurnState::new(None, None);
+        turn.main_trajectory = Some("main".to_string());
+        let update = trajectory_update(Some("sub"), TrajectoryState::Cancelled, Some("denied"));
+        AntigravityAgent::process_trajectory_update(&update, &mut turn).unwrap();
+        assert!(!turn.finished);
+        assert!(turn.queue.is_empty());
+    }
+
+    #[test]
+    fn test_subagent_trajectory_idle_does_not_finish_turn() {
+        let mut turn = TurnState::new(None, None);
+        turn.main_trajectory = Some("main".to_string());
+        let update = trajectory_update(Some("sub"), TrajectoryState::Idle, None);
+        AntigravityAgent::process_trajectory_update(&update, &mut turn).unwrap();
+        assert!(!turn.finished);
+        assert!(turn.queue.is_empty());
+    }
 
     #[tokio::test]
     async fn test_spawn_requires_policy_for_write_tools() {

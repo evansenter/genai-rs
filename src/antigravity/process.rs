@@ -188,6 +188,54 @@ where
     Ok(payload)
 }
 
+/// Drains a stderr stream line by line into the diagnostic ring (bounded
+/// to [`STDERR_RING_CAPACITY`]), forwarding each line to `tracing` and the
+/// wire-inspection layer.
+///
+/// Reads bytes rather than UTF-8 lines: this sits at the wrong-binary
+/// trust boundary, and a single non-UTF-8 line must not stop the drain —
+/// a stopped drain lets the OS pipe buffer fill and deadlocks the child.
+/// Invalid UTF-8 is replaced lossily; only EOF or a genuine I/O error ends
+/// the loop.
+async fn drain_stderr<R>(stderr: R, ring: Arc<Mutex<VecDeque<String>>>, wire: WireContext)
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let mut reader = BufReader::new(stderr);
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        match reader.read_until(b'\n', &mut buf).await {
+            Ok(0) => return, // EOF: the child closed its stderr.
+            Ok(_) => {
+                // Strip the `\n` (and a preceding `\r`), matching what
+                // `AsyncBufReadExt::lines` used to do here.
+                if buf.last() == Some(&b'\n') {
+                    buf.pop();
+                    if buf.last() == Some(&b'\r') {
+                        buf.pop();
+                    }
+                }
+                let line = String::from_utf8_lossy(&buf).into_owned();
+                tracing::debug!("harness stderr: {line}");
+                wire.emit(|| WireEvent::HarnessStderr {
+                    id: wire.id(),
+                    line: line.clone(),
+                });
+                let mut ring = ring.lock().expect("stderr ring lock");
+                if ring.len() == STDERR_RING_CAPACITY {
+                    ring.pop_front();
+                }
+                ring.push_back(line);
+            }
+            Err(e) => {
+                tracing::debug!("harness stderr drain ended on read error: {e}");
+                return;
+            }
+        }
+    }
+}
+
 impl HarnessProcess {
     /// Spawns the harness, performs the stdio handshake, and starts the
     /// stderr drain task.
@@ -224,23 +272,11 @@ impl HarnessProcess {
         // harness. Lines are retained in a bounded ring for diagnostics and
         // surfaced through the wire-inspection layer.
         let stderr_lines = Arc::new(Mutex::new(VecDeque::with_capacity(STDERR_RING_CAPACITY)));
-        let ring = Arc::clone(&stderr_lines);
-        let stderr_wire = wire.clone();
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                tracing::debug!("harness stderr: {line}");
-                stderr_wire.emit(|| WireEvent::HarnessStderr {
-                    id: stderr_wire.id(),
-                    line: line.clone(),
-                });
-                let mut ring = ring.lock().expect("stderr ring lock");
-                if ring.len() == STDERR_RING_CAPACITY {
-                    ring.pop_front();
-                }
-                ring.push_back(line);
-            }
-        });
+        tokio::spawn(drain_stderr(
+            stderr,
+            Arc::clone(&stderr_lines),
+            wire.clone(),
+        ));
 
         let mut process = Self {
             child,
@@ -460,6 +496,44 @@ mod tests {
         data.extend_from_slice(b"short");
         let err = read_handshake_frame(&mut &data[..]).await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    #[tokio::test]
+    async fn test_stderr_drain_survives_invalid_utf8() {
+        // The drain sits at the wrong-binary trust boundary: a non-UTF-8
+        // line must be replaced lossily, not end the drain (a stopped
+        // drain lets the pipe fill and deadlocks the child).
+        let data: &[u8] = b"first line\n\xff\xfe broken\nafter\r\nlast without newline";
+        let ring = Arc::new(Mutex::new(VecDeque::new()));
+        drain_stderr(data, Arc::clone(&ring), WireContext::new(Vec::new())).await;
+
+        let lines: Vec<String> = ring.lock().unwrap().iter().cloned().collect();
+        assert_eq!(lines.len(), 4, "got: {lines:?}");
+        assert_eq!(lines[0], "first line");
+        assert!(
+            lines[1].contains('\u{FFFD}') && lines[1].ends_with(" broken"),
+            "invalid bytes must be replaced lossily, got: {:?}",
+            lines[1]
+        );
+        assert_eq!(lines[2], "after", "CRLF must be stripped");
+        assert_eq!(lines[3], "last without newline");
+    }
+
+    #[tokio::test]
+    async fn test_stderr_drain_ring_is_bounded() {
+        let mut data = Vec::new();
+        for i in 0..(STDERR_RING_CAPACITY + 10) {
+            data.extend_from_slice(format!("line {i}\n").as_bytes());
+        }
+        let ring = Arc::new(Mutex::new(VecDeque::new()));
+        drain_stderr(&data[..], Arc::clone(&ring), WireContext::new(Vec::new())).await;
+
+        let ring = ring.lock().unwrap();
+        assert_eq!(ring.len(), STDERR_RING_CAPACITY);
+        assert_eq!(
+            ring.back().unwrap(),
+            &format!("line {}", STDERR_RING_CAPACITY + 9)
+        );
     }
 
     #[test]

@@ -253,10 +253,17 @@ fn truncate_long_fields(value: &mut serde_json::Value) {
                         *val = serde_json::Value::String(REDACTED_PLACEHOLDER.to_string());
                     }
                 } else if TRUNCATE_FIELDS.contains(&key.as_str()) {
-                    if let serde_json::Value::String(s) = val
-                        && s.len() > TRUNCATE_THRESHOLD
-                    {
-                        *s = truncate_utf8(s, TRUNCATE_THRESHOLD).into_owned();
+                    match val {
+                        serde_json::Value::String(s) => {
+                            if s.len() > TRUNCATE_THRESHOLD {
+                                *s = truncate_utf8(s, TRUNCATE_THRESHOLD).into_owned();
+                            }
+                        }
+                        // A `data`/`signature` key can hold structured
+                        // payloads (e.g. Evergreen `Unknown` variants
+                        // preserve raw JSON under `data`); recurse so
+                        // secrets nested inside are still redacted.
+                        _ => truncate_long_fields(val),
                     }
                 } else {
                     truncate_long_fields(val);
@@ -986,6 +993,28 @@ mod tests {
             "[REDACTED]"
         );
         assert_eq!(value["api_key"], "[REDACTED]");
+    }
+
+    #[test]
+    fn test_truncate_fields_with_structured_values_still_redact_nested_secrets() {
+        // A `data` (or `signature`) key can hold an object or array — e.g.
+        // an Evergreen Unknown variant preserving raw JSON under `data`.
+        // The walk must recurse into those subtrees so nested secrets are
+        // still redacted, not skip them because the value is not a string.
+        let mut value = serde_json::json!({
+            "data": {"api_key": "nested-secret", "note": "kept"},
+            "wrapper": {"data": [{"new_signing_secret": "whsec_nested"}]},
+        });
+        truncate_long_fields(&mut value);
+        let rendered = value.to_string();
+        assert!(!rendered.contains("nested-secret"), "leaked: {rendered}");
+        assert!(!rendered.contains("whsec_nested"), "leaked: {rendered}");
+        assert_eq!(value["data"]["api_key"], "[REDACTED]");
+        assert_eq!(value["data"]["note"], "kept");
+        assert_eq!(
+            value["wrapper"]["data"][0]["new_signing_secret"],
+            "[REDACTED]"
+        );
     }
 
     #[test]
