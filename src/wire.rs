@@ -203,6 +203,14 @@ pub trait WireInspector: Send + Sync + 'static {
 /// These typically contain base64-encoded binary data.
 const TRUNCATE_FIELDS: &[&str] = &["data", "signature"];
 
+/// Fields whose values are secrets and must be fully redacted (never
+/// printed, even partially). Covers third-party retrieval credentials
+/// (e.g. Exa/Parallel `api_key` in search configs).
+const REDACT_FIELDS: &[&str] = &["api_key"];
+
+/// Replacement value for redacted fields.
+const REDACTED_PLACEHOLDER: &str = "[REDACTED]";
+
 /// Maximum length before truncation (keep roughly the first 100 bytes,
 /// never splitting a UTF-8 character).
 const TRUNCATE_THRESHOLD: usize = 100;
@@ -227,16 +235,22 @@ fn truncate_utf8(s: &str, max_bytes: usize) -> Cow<'_, str> {
     }
 }
 
-/// Truncate long base64-encoded fields in a JSON value.
+/// Truncate long base64-encoded fields and redact secret fields in a JSON
+/// value.
 ///
-/// Walks the JSON tree and truncates `"data"` and `"signature"` fields
-/// that contain strings longer than 100 bytes. Text content and
+/// Walks the JSON tree, truncates `"data"` and `"signature"` fields that
+/// contain strings longer than 100 bytes, and replaces secret fields (e.g.
+/// `"api_key"`) with `"[REDACTED]"` regardless of length. Text content and
 /// other fields are preserved in full.
 fn truncate_long_fields(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(map) => {
             for (key, val) in map.iter_mut() {
-                if TRUNCATE_FIELDS.contains(&key.as_str()) {
+                if REDACT_FIELDS.contains(&key.as_str()) {
+                    if !val.is_null() {
+                        *val = serde_json::Value::String(REDACTED_PLACEHOLDER.to_string());
+                    }
+                } else if TRUNCATE_FIELDS.contains(&key.as_str()) {
                     if let serde_json::Value::String(s) = val
                         && s.len() > TRUNCATE_THRESHOLD
                     {
@@ -358,6 +372,7 @@ mod paint {
 /// - SSE frames labelled in blue
 /// - Pretty-printed (and, with the `wire-color` feature, colored) JSON
 /// - Base64-heavy `data`/`signature` fields truncated to keep output readable
+/// - Secret fields (e.g. third-party retrieval `api_key`s) fully redacted
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LoudWirePrinter;
 
@@ -918,6 +933,43 @@ mod tests {
         truncate_long_fields(&mut value);
         assert_eq!(value["data"], "short");
         assert_eq!(value["signature"], "sig");
+    }
+
+    #[test]
+    fn test_redact_fields_api_key_fully_redacted() {
+        // Short api_key values must be redacted, not merely truncated
+        // (truncation leaves keys under the threshold fully intact).
+        let mut value = serde_json::json!({
+            "tools": [{
+                "retrieval": {
+                    "exa_ai_search_config": {"api_key": "exa-secret-key"},
+                    "parallel_ai_search_config": {"api_key": "par-secret-key"}
+                }
+            }],
+            "api_key": "top-level-secret"
+        });
+        truncate_long_fields(&mut value);
+        let rendered = value.to_string();
+        assert!(!rendered.contains("exa-secret-key"));
+        assert!(!rendered.contains("par-secret-key"));
+        assert!(!rendered.contains("top-level-secret"));
+        assert_eq!(
+            value["tools"][0]["retrieval"]["exa_ai_search_config"]["api_key"],
+            "[REDACTED]"
+        );
+        assert_eq!(
+            value["tools"][0]["retrieval"]["parallel_ai_search_config"]["api_key"],
+            "[REDACTED]"
+        );
+        assert_eq!(value["api_key"], "[REDACTED]");
+    }
+
+    #[test]
+    fn test_redact_fields_null_api_key_left_null() {
+        // An absent/null key is not a secret; keep the JSON shape honest.
+        let mut value = serde_json::json!({"api_key": null});
+        truncate_long_fields(&mut value);
+        assert!(value["api_key"].is_null());
     }
 
     #[test]

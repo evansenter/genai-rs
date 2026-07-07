@@ -2018,6 +2018,9 @@ impl<'de> Deserialize<'de> for StepDelta {
 #[derive(Debug, Default)]
 pub(crate) struct StepAccumulator {
     steps: std::collections::BTreeMap<usize, AccumulatedStep>,
+    /// Last cumulative interaction usage reported on a `step.stop` event.
+    /// Used as a fallback when the terminal event carries no usage.
+    last_cumulative_usage: Option<crate::response::UsageMetadata>,
 }
 
 #[derive(Debug)]
@@ -2093,12 +2096,25 @@ impl StepAccumulator {
                 if let Step::UserInput { content } | Step::ModelOutput { content, .. } =
                     &mut entry.step
                 {
-                    content.push(Content::Image {
-                        data: data.clone(),
-                        uri: uri.clone(),
-                        mime_type: mime_type.clone(),
-                        resolution: resolution.clone(),
-                    });
+                    // Images may stream in multiple chunks; append base64 data
+                    // to the previous image block when present.
+                    if let (
+                        Some(Content::Image {
+                            data: Some(existing),
+                            ..
+                        }),
+                        Some(new_data),
+                    ) = (content.last_mut(), data.as_ref())
+                    {
+                        existing.push_str(new_data);
+                    } else {
+                        content.push(Content::Image {
+                            data: data.clone(),
+                            uri: uri.clone(),
+                            mime_type: mime_type.clone(),
+                            resolution: resolution.clone(),
+                        });
+                    }
                 }
             }
             StepDelta::Audio {
@@ -2143,12 +2159,25 @@ impl StepAccumulator {
                 if let Step::UserInput { content } | Step::ModelOutput { content, .. } =
                     &mut entry.step
                 {
-                    content.push(Content::Video {
-                        data: data.clone(),
-                        uri: uri.clone(),
-                        mime_type: mime_type.clone(),
-                        resolution: resolution.clone(),
-                    });
+                    // Video may stream in multiple chunks; append base64 data
+                    // to the previous video block when present.
+                    if let (
+                        Some(Content::Video {
+                            data: Some(existing),
+                            ..
+                        }),
+                        Some(new_data),
+                    ) = (content.last_mut(), data.as_ref())
+                    {
+                        existing.push_str(new_data);
+                    } else {
+                        content.push(Content::Video {
+                            data: data.clone(),
+                            uri: uri.clone(),
+                            mime_type: mime_type.clone(),
+                            resolution: resolution.clone(),
+                        });
+                    }
                 }
             }
             StepDelta::Document {
@@ -2159,11 +2188,24 @@ impl StepAccumulator {
                 if let Step::UserInput { content } | Step::ModelOutput { content, .. } =
                     &mut entry.step
                 {
-                    content.push(Content::Document {
-                        data: data.clone(),
-                        uri: uri.clone(),
-                        mime_type: mime_type.clone(),
-                    });
+                    // Documents may stream in multiple chunks; append base64
+                    // data to the previous document block when present.
+                    if let (
+                        Some(Content::Document {
+                            data: Some(existing),
+                            ..
+                        }),
+                        Some(new_data),
+                    ) = (content.last_mut(), data.as_ref())
+                    {
+                        existing.push_str(new_data);
+                    } else {
+                        content.push(Content::Document {
+                            data: data.clone(),
+                            uri: uri.clone(),
+                            mime_type: mime_type.clone(),
+                        });
+                    }
                 }
             }
             StepDelta::ThoughtSummary { content } => {
@@ -2427,6 +2469,17 @@ impl StepAccumulator {
         if let Some(entry) = self.steps.get_mut(&index) {
             Self::finalize_entry(entry);
         }
+    }
+
+    /// Records the cumulative interaction usage reported on a `step.stop`
+    /// event, so it can serve as a fallback if the terminal event omits usage.
+    pub(crate) fn record_cumulative_usage(&mut self, usage: crate::response::UsageMetadata) {
+        self.last_cumulative_usage = Some(usage);
+    }
+
+    /// Takes the last recorded cumulative usage, if any.
+    pub(crate) fn take_cumulative_usage(&mut self) -> Option<crate::response::UsageMetadata> {
+        self.last_cumulative_usage.take()
     }
 
     fn finalize_entry(entry: &mut AccumulatedStep) {
@@ -2908,6 +2961,130 @@ mod tests {
         let steps = acc.finish();
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0].as_text(), Some("Hello world"));
+    }
+
+    #[test]
+    fn test_accumulator_image_deltas_accumulate_into_one_block() {
+        let mut acc = StepAccumulator::new();
+        acc.start(0, Step::model_output(vec![]));
+        acc.apply_delta(
+            0,
+            &StepDelta::Image {
+                data: Some("AAAA".into()),
+                uri: None,
+                mime_type: Some("image/png".into()),
+                resolution: None,
+            },
+        );
+        acc.apply_delta(
+            0,
+            &StepDelta::Image {
+                data: Some("BBBB".into()),
+                uri: None,
+                mime_type: Some("image/png".into()),
+                resolution: None,
+            },
+        );
+        acc.stop(0);
+        let steps = acc.finish();
+        match &steps[0] {
+            Step::ModelOutput { content, .. } => {
+                assert_eq!(content.len(), 1);
+                match &content[0] {
+                    Content::Image { data, .. } => assert_eq!(data.as_deref(), Some("AAAABBBB")),
+                    other => panic!("Expected Image, got {other:?}"),
+                }
+            }
+            other => panic!("Expected ModelOutput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_accumulator_video_and_document_deltas_accumulate() {
+        let mut acc = StepAccumulator::new();
+        acc.start(0, Step::model_output(vec![]));
+        acc.apply_delta(
+            0,
+            &StepDelta::Video {
+                data: Some("VV".into()),
+                uri: None,
+                mime_type: Some("video/mp4".into()),
+                resolution: None,
+            },
+        );
+        acc.apply_delta(
+            0,
+            &StepDelta::Video {
+                data: Some("WW".into()),
+                uri: None,
+                mime_type: Some("video/mp4".into()),
+                resolution: None,
+            },
+        );
+        acc.apply_delta(
+            0,
+            &StepDelta::Document {
+                data: Some("DD".into()),
+                uri: None,
+                mime_type: Some("application/pdf".into()),
+            },
+        );
+        acc.apply_delta(
+            0,
+            &StepDelta::Document {
+                data: Some("EE".into()),
+                uri: None,
+                mime_type: Some("application/pdf".into()),
+            },
+        );
+        acc.stop(0);
+        let steps = acc.finish();
+        match &steps[0] {
+            Step::ModelOutput { content, .. } => {
+                assert_eq!(content.len(), 2);
+                match &content[0] {
+                    Content::Video { data, .. } => assert_eq!(data.as_deref(), Some("VVWW")),
+                    other => panic!("Expected Video, got {other:?}"),
+                }
+                match &content[1] {
+                    Content::Document { data, .. } => assert_eq!(data.as_deref(), Some("DDEE")),
+                    other => panic!("Expected Document, got {other:?}"),
+                }
+            }
+            other => panic!("Expected ModelOutput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_accumulator_image_uri_delta_pushes_new_block() {
+        // Deltas without inline data (e.g. URI references) must not merge
+        // into the previous block.
+        let mut acc = StepAccumulator::new();
+        acc.start(0, Step::model_output(vec![]));
+        acc.apply_delta(
+            0,
+            &StepDelta::Image {
+                data: Some("AAAA".into()),
+                uri: None,
+                mime_type: Some("image/png".into()),
+                resolution: None,
+            },
+        );
+        acc.apply_delta(
+            0,
+            &StepDelta::Image {
+                data: None,
+                uri: Some("https://example.com/img.png".into()),
+                mime_type: Some("image/png".into()),
+                resolution: None,
+            },
+        );
+        acc.stop(0);
+        let steps = acc.finish();
+        match &steps[0] {
+            Step::ModelOutput { content, .. } => assert_eq!(content.len(), 2),
+            other => panic!("Expected ModelOutput, got {other:?}"),
+        }
     }
 
     #[test]

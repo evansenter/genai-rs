@@ -69,13 +69,16 @@ use protocol::{
 use session::{Session, SinkHandle, WireContext};
 use tools::ToolDispatcher;
 
-/// Confirmation requests that carry no recognizable action are pre-request
-/// notifications for a host-side tool; the concrete call follows with its
-/// own confirmation, so these are auto-approved (mirrors the reference SDK).
-const PRE_REQUEST_HOST_TOOL: &str = "pre_request_host_tool_request";
-
 /// How long to wait for the `initializeConversationResponse`.
 const INIT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Overall budget for halting-and-draining an orphaned harness turn (one
+/// that timed out, or one started by a trigger) before giving up.
+const HALT_DRAIN_BUDGET: Duration = Duration::from_secs(5);
+
+/// How long the event stream must stay silent during a halt-and-drain
+/// before it is considered fully drained.
+const HALT_DRAIN_SILENCE: Duration = Duration::from_millis(500);
 
 /// Model backend HTTP codes that abort the turn (bad request / auth
 /// failures cannot recover by retrying within the turn).
@@ -591,6 +594,7 @@ impl AgentBuilder {
             initial_history: Vec::new(),
             turn_timeout: self.turn_timeout,
             idle: Arc::new(tokio::sync::watch::channel(true).0),
+            trigger_fired: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             trigger_tasks: triggers::TriggerTasks::default(),
         };
 
@@ -602,12 +606,21 @@ impl AgentBuilder {
                 // agent's idle flag.
                 for trigger in self.triggers {
                     let sink = agent.session.sink_handle();
+                    let fired = Arc::clone(&agent.trigger_fired);
                     agent.trigger_tasks.push(triggers::spawn_trigger_task(
                         trigger,
                         agent.idle.subscribe(),
                         move |message| {
                             let sink = sink.clone();
-                            async move { sink.send(&InputEvent::AutomatedTrigger(message)).await }
+                            let fired = Arc::clone(&fired);
+                            async move {
+                                // Flag before sending so the next chat can
+                                // never miss an in-flight delivery (a false
+                                // positive on send failure only costs a
+                                // no-op drain).
+                                fired.store(true, std::sync::atomic::Ordering::SeqCst);
+                                sink.send(&InputEvent::AutomatedTrigger(message)).await
+                            }
                         },
                     ));
                 }
@@ -708,6 +721,11 @@ pub struct AntigravityAgent {
     /// `true` while no turn is being driven; trigger tasks watch this to
     /// defer deliveries (see [`triggers`]).
     idle: Arc<tokio::sync::watch::Sender<bool>>,
+    /// Set by trigger tasks on each delivery. A delivered trigger starts a
+    /// harness-side turn nobody consumes; the next `chat`/`send_streaming`
+    /// checks this flag and halts-and-drains that turn before sending its
+    /// own input, so stale events cannot desync the user's turn.
+    trigger_fired: Arc<std::sync::atomic::AtomicBool>,
     /// Timer tasks spawned for [`AgentBuilder::add_trigger`] configs;
     /// aborted on shutdown and on drop.
     trigger_tasks: triggers::TriggerTasks,
@@ -776,16 +794,21 @@ impl AntigravityAgent {
     }
 
     /// Sends a message and drives the turn to completion.
+    ///
+    /// If a [trigger](AgentBuilder::add_trigger) started a harness-side turn
+    /// since the last call, that turn is halted and its events are discarded
+    /// before this message is sent (see [`triggers`]).
     pub async fn chat(
         &mut self,
         prompt: impl Into<String>,
     ) -> Result<ChatResponse, AntigravityError> {
         // Mark busy before sending so a trigger cannot slip in between.
         let guard = TurnGuard::begin(&self.idle);
+        self.discard_trigger_turn().await;
         self.session
             .send(&InputEvent::UserInput(prompt.into()))
             .await?;
-        let mut turn = TurnState::new(self.turn_timeout, guard);
+        let mut turn = TurnState::new(self.turn_timeout, Some(guard));
         loop {
             match self.next_turn_event(&mut turn).await? {
                 Some(AgentEvent::Finished(response)) => return Ok(*response),
@@ -801,6 +824,10 @@ impl AntigravityAgent {
 
     /// Sends a message and returns a stream of [`AgentEvent`]s for the
     /// turn. The stream ends after [`AgentEvent::Finished`].
+    ///
+    /// If a [trigger](AgentBuilder::add_trigger) started a harness-side turn
+    /// since the last call, that turn is halted and its events are discarded
+    /// before this message is sent (see [`triggers`]).
     pub async fn send_streaming(
         &mut self,
         prompt: impl Into<String>,
@@ -809,12 +836,13 @@ impl AntigravityAgent {
         // The guard moves into the stream's turn state: dropping the
         // stream mid-turn marks the agent idle again.
         let guard = TurnGuard::begin(&self.idle);
+        self.discard_trigger_turn().await;
         self.session
             .send(&InputEvent::UserInput(prompt.into()))
             .await?;
         let timeout = self.turn_timeout;
         let stream = async_stream::try_stream! {
-            let mut turn = TurnState::new(timeout, guard);
+            let mut turn = TurnState::new(timeout, Some(guard));
             while let Some(event) = self.next_turn_event(&mut turn).await? {
                 let finished = matches!(event, AgentEvent::Finished(_));
                 yield event;
@@ -910,6 +938,11 @@ impl AntigravityAgent {
                 Some(deadline) => match tokio::time::timeout_at(deadline, next).await {
                     Ok(result) => result?,
                     Err(_) => {
+                        // The harness is still driving this turn. Without a
+                        // halt, its remaining events (including its terminal
+                        // trajectory-idle) would be consumed by the *next*
+                        // turn and desync every turn after it.
+                        self.halt_and_drain("recovering from a turn timeout").await;
                         return Err(AntigravityError::Timeout {
                             operation: "agent turn".to_string(),
                             timeout: turn.timeout.unwrap_or_default(),
@@ -926,6 +959,80 @@ impl AntigravityAgent {
                 });
             };
             self.process_event(event, turn).await?;
+        }
+    }
+
+    /// Halts and drains a trigger-initiated harness turn, when one started
+    /// since the last client-driven turn. Called with the turn guard
+    /// already held, so no further trigger can be delivered concurrently.
+    async fn discard_trigger_turn(&mut self) {
+        if self
+            .trigger_fired
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.halt_and_drain("discarding a trigger-initiated turn")
+                .await;
+        }
+    }
+
+    /// Best-effort recovery when the harness may be driving (or have
+    /// finished) a turn whose events nobody will consume — a turn that hit
+    /// its per-turn timeout, or one started by an automated trigger.
+    ///
+    /// Sends a halt, then drains events into a throwaway state — answering
+    /// protocol-required requests (confirmations, hooks) so the harness
+    /// never deadlocks, discarding everything surfaced — until the stream
+    /// stays silent for [`HALT_DRAIN_SILENCE`] or [`HALT_DRAIN_BUDGET`]
+    /// runs out. Stale-turn errors (including the halt's own cancellation)
+    /// are logged and swallowed; only transport health matters here.
+    async fn halt_and_drain(&mut self, why: &str) {
+        tracing::debug!("Halting and draining the harness turn ({why}).");
+        if let Err(e) = self.session.send(&InputEvent::HaltRequest(true)).await {
+            tracing::warn!("Failed to send halt request while {why}: {e}");
+            return;
+        }
+        let mut state = TurnState::new(None, None);
+        let deadline = tokio::time::Instant::now() + HALT_DRAIN_BUDGET;
+        loop {
+            let silence = tokio::time::Instant::now() + HALT_DRAIN_SILENCE;
+            match tokio::time::timeout_at(silence.min(deadline), self.session.next_event()).await {
+                Err(_) => {
+                    // Silent for the grace window: drained (or nothing was
+                    // running and the halt was a no-op). A budget overrun
+                    // instead means the stale turn is still streaming.
+                    if tokio::time::Instant::now() >= deadline {
+                        tracing::warn!(
+                            "Drain budget exhausted while {why}; the next turn may still \
+                             observe stale events."
+                        );
+                    }
+                    return;
+                }
+                Ok(Ok(Some(event))) => {
+                    match self.process_event(event, &mut state).await {
+                        Ok(()) => state.queue.clear(),
+                        Err(AntigravityError::Turn(message)) => {
+                            // The stale turn's cancellation or its own
+                            // fatal error: expected terminals. Keep
+                            // draining until silence in case more turns
+                            // (a second trigger) are queued behind it.
+                            tracing::debug!("Drained stale-turn terminal ({why}): {message}");
+                        }
+                        Err(e) => {
+                            tracing::warn!("Error while draining stale turn ({why}): {e}");
+                            return;
+                        }
+                    }
+                }
+                Ok(Ok(None)) => {
+                    tracing::warn!("Harness closed the connection while {why}.");
+                    return;
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!("Transport error while draining stale turn ({why}): {e}");
+                    return;
+                }
+            }
         }
     }
 
@@ -965,6 +1072,10 @@ impl AntigravityAgent {
         step: StepUpdate,
         turn: &mut TurnState,
     ) -> Result<(), AntigravityError> {
+        // Proto3 JSON omits default-valued scalars, so an absent
+        // `step_index` *is* index 0 (and an absent `trajectory_id` is the
+        // empty id) — mapping `None` to the default is the correct
+        // decoding, not a key collision between distinct steps.
         let step_key = (
             step.trajectory_id.clone().unwrap_or_default(),
             step.step_index.unwrap_or_default(),
@@ -1089,41 +1200,7 @@ impl AntigravityAgent {
         &mut self,
         step: &StepUpdate,
     ) -> Result<(), AntigravityError> {
-        let action = streaming::ToolAction::from_step(step);
-        let (name, mut args) = match &action {
-            Some(action) => (action.tool_name(), action.args()),
-            // No recognizable action: a pre-request for a host-side tool.
-            // The concrete call follows with its own confirmation, so this
-            // is auto-approved (mirrors the reference SDK).
-            None => (
-                PRE_REQUEST_HOST_TOOL.to_string(),
-                Value::Object(Default::default()),
-            ),
-        };
-        if let Some(request_text) = &step.request_text
-            && let Value::Object(map) = &mut args
-        {
-            map.insert(
-                "request_text".to_string(),
-                Value::String(request_text.clone()),
-            );
-        }
-        let accepted = if name == PRE_REQUEST_HOST_TOOL {
-            true
-        } else {
-            let invocation = ToolInvocation {
-                name: name.clone(),
-                args,
-                id: None,
-            };
-            match hooks::decide(&self.policy_engine, self.pre_tool.as_ref(), &invocation) {
-                PreToolDecision::Allow => true,
-                PreToolDecision::Deny { reason } => {
-                    tracing::info!("Rejecting harness tool '{name}': {reason}");
-                    false
-                }
-            }
-        };
+        let accepted = confirmation_decision(step, &self.policy_engine, self.pre_tool.as_ref());
         self.session
             .send(&InputEvent::ToolConfirmation(protocol::ToolConfirmation {
                 trajectory_id: step.trajectory_id.clone().unwrap_or_default(),
@@ -1315,6 +1392,100 @@ impl AntigravityAgent {
 }
 
 // =============================================================================
+// Tool-confirmation decision
+// =============================================================================
+
+/// Inserts the step's free-text confirmation prompt into the args map, when
+/// both are present.
+fn insert_request_text(step: &StepUpdate, args: &mut Value) {
+    if let Some(request_text) = &step.request_text
+        && let Value::Object(map) = args
+    {
+        map.insert(
+            "request_text".to_string(),
+            Value::String(request_text.clone()),
+        );
+    }
+}
+
+/// Decides whether a pending harness-side `tool_confirmation_request` is
+/// accepted. Pure decision logic, separated from the wire reply for unit
+/// testing.
+///
+/// Three cases (the request itself is an empty marker on the wire — the
+/// step's action fields are the only discriminator, verified against the
+/// harness 0.1.5 proto):
+///
+/// 1. **Recognized action** — the normal policy/hook decision.
+/// 2. **No action and no unrecognized step fields** — a pre-request
+///    notification for a host-side (client-executed) tool. Auto-approved,
+///    mirroring the reference SDK: the concrete call follows as a
+///    `tool_call` with its own policy check, so nothing is bypassed.
+/// 3. **No recognized action but unrecognized step fields** — most likely a
+///    harness builtin newer than this client, whose confirmation is its
+///    *only* gate. Fails closed unless a policy rule (wildcard `allow_all`
+///    or an exact rule naming the unknown wire field) or the pre-tool hook
+///    allows it; a `warn!` records the unknown fields either way
+///    (Evergreen: reply and continue — never deadlock the harness).
+fn confirmation_decision(
+    step: &StepUpdate,
+    engine: &PolicyEngine,
+    pre_tool: Option<&PreToolHook>,
+) -> bool {
+    if let Some(action) = streaming::ToolAction::from_step(step) {
+        let name = action.tool_name();
+        let mut args = action.args();
+        insert_request_text(step, &mut args);
+        let invocation = ToolInvocation {
+            name: name.clone(),
+            args,
+            id: None,
+        };
+        return match hooks::decide(engine, pre_tool, &invocation) {
+            PreToolDecision::Allow => true,
+            PreToolDecision::Deny { reason } => {
+                tracing::info!("Rejecting harness tool '{name}': {reason}");
+                false
+            }
+        };
+    }
+
+    if step.extra.is_empty() {
+        // Case 2: genuine pre-request notification.
+        tracing::debug!("Auto-approving a pre-request host-tool confirmation.");
+        return true;
+    }
+
+    // Case 3: unrecognized fields — evaluate policies against the first
+    // unknown wire field name (a new action field is the expected shape).
+    let mut keys: Vec<&str> = step.extra.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    let name = keys.first().copied().unwrap_or_default().to_string();
+    let mut args = Value::Object(step.extra.clone());
+    insert_request_text(step, &mut args);
+    let invocation = ToolInvocation {
+        name: name.clone(),
+        args,
+        id: None,
+    };
+    let decision = hooks::decide_with_default(
+        engine,
+        pre_tool,
+        &invocation,
+        PreToolDecision::deny(
+            "unrecognized tool confirmation matched no policy rule (failing closed)",
+        ),
+    );
+    let accepted = matches!(decision, PreToolDecision::Allow);
+    tracing::warn!(
+        "Unrecognized tool confirmation (unknown step fields {keys:?}); {} '{name}'. \
+         Add a policy rule for the wire field name to control this explicitly.",
+        if accepted { "allowing" } else { "denying" }
+    );
+    accepted
+}
+
+// =============================================================================
 // Per-turn state
 // =============================================================================
 
@@ -1356,12 +1527,14 @@ struct TurnState {
     timeout: Option<Duration>,
     deadline: Option<tokio::time::Instant>,
     /// Held for the turn's lifetime; dropping the state marks the agent
-    /// idle again (releasing deferred trigger deliveries).
-    _turn_guard: TurnGuard,
+    /// idle again (releasing deferred trigger deliveries). `None` for
+    /// throwaway drain states, which run *inside* a caller that already
+    /// holds the real guard.
+    _turn_guard: Option<TurnGuard>,
 }
 
 impl TurnState {
-    fn new(timeout: Option<Duration>, turn_guard: TurnGuard) -> Self {
+    fn new(timeout: Option<Duration>, turn_guard: Option<TurnGuard>) -> Self {
         Self {
             queue: VecDeque::new(),
             finished: false,
@@ -1652,5 +1825,167 @@ mod agent_tests {
             config.enabled_hooks,
             vec![protocol::LifecycleHook::PostTool]
         );
+    }
+
+    // -------------------------------------------------------------------
+    // Tool-confirmation decisions (see `confirmation_decision`)
+    // -------------------------------------------------------------------
+
+    /// A waiting step carrying a `run_command` action confirmation.
+    fn run_command_confirmation_step() -> StepUpdate {
+        StepUpdate {
+            state: Some(StepState::WaitingForUser),
+            request_text: Some("run `ls`?".to_string()),
+            tool_confirmation_request: Some(protocol::ToolConfirmationRequest::default()),
+            run_command: Some(protocol::ActionRunCommand {
+                command_line: Some("ls".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    /// A waiting confirmation step with no action payload at all (a
+    /// pre-request notification for a host-side tool).
+    fn pre_request_confirmation_step() -> StepUpdate {
+        StepUpdate {
+            state: Some(StepState::WaitingForUser),
+            tool_confirmation_request: Some(protocol::ToolConfirmationRequest::default()),
+            ..Default::default()
+        }
+    }
+
+    /// A waiting confirmation step whose action landed in `extra` — the
+    /// shape a harness builtin newer than this client produces.
+    fn unknown_action_confirmation_step() -> StepUpdate {
+        let mut step = pre_request_confirmation_step();
+        step.request_text = Some("do the new thing?".to_string());
+        step.extra.insert(
+            "deleteEverything".to_string(),
+            serde_json::json!({"target": "/"}),
+        );
+        step
+    }
+
+    fn engine(policies: Vec<Policy>) -> PolicyEngine {
+        PolicyEngine::new(policies)
+    }
+
+    #[test]
+    fn test_confirmation_denied_for_deny_policied_known_tool() {
+        let step = run_command_confirmation_step();
+        // Exact deny and wildcard deny must both reject (accepted=false).
+        assert!(!confirmation_decision(
+            &step,
+            &engine(vec![policy::deny("run_command")]),
+            None
+        ));
+        assert!(!confirmation_decision(
+            &step,
+            &engine(vec![policy::deny_all()]),
+            None
+        ));
+    }
+
+    #[test]
+    fn test_confirmation_allowed_for_allowed_known_tool() {
+        let step = run_command_confirmation_step();
+        assert!(confirmation_decision(
+            &step,
+            &engine(vec![policy::allow_all()]),
+            None
+        ));
+        assert!(confirmation_decision(
+            &step,
+            &engine(vec![policy::deny_all(), policy::allow("run_command")]),
+            None
+        ));
+    }
+
+    #[test]
+    fn test_confirmation_hook_sees_known_tool_args_and_request_text() {
+        let step = run_command_confirmation_step();
+        let hook: PreToolHook = Arc::new(|invocation| {
+            assert_eq!(invocation.name, "run_command");
+            assert_eq!(invocation.args["commandLine"], "ls");
+            assert_eq!(invocation.args["request_text"], "run `ls`?");
+            PreToolDecision::deny("hook says no")
+        });
+        assert!(!confirmation_decision(&step, &engine(vec![]), Some(&hook)));
+    }
+
+    #[test]
+    fn test_confirmation_pre_request_auto_approved_even_under_deny_all() {
+        // No action payload and no unknown fields: a pre-request
+        // notification. The concrete call gets its own policy check, so
+        // this is approved regardless of policy (mirrors the reference SDK).
+        let step = pre_request_confirmation_step();
+        assert!(confirmation_decision(
+            &step,
+            &engine(vec![policy::deny_all()]),
+            None
+        ));
+        assert!(confirmation_decision(&step, &engine(vec![]), None));
+    }
+
+    #[test]
+    fn test_confirmation_unknown_action_allowed_only_under_allow_all() {
+        let step = unknown_action_confirmation_step();
+        // allow_all (wildcard) approves.
+        assert!(confirmation_decision(
+            &step,
+            &engine(vec![policy::allow_all()]),
+            None
+        ));
+        // Restrictive policy sets fail closed.
+        assert!(!confirmation_decision(
+            &step,
+            &engine(vec![policy::deny_all()]),
+            None
+        ));
+        assert!(!confirmation_decision(
+            &step,
+            &engine(vec![policy::deny_all(), policy::allow("run_command")]),
+            None
+        ));
+        // No policies and no hook at all: still fail closed — an unknown
+        // builtin's confirmation is its only gate.
+        assert!(!confirmation_decision(&step, &engine(vec![]), None));
+    }
+
+    #[test]
+    fn test_confirmation_unknown_action_matches_exact_rule_by_wire_field() {
+        let step = unknown_action_confirmation_step();
+        assert!(confirmation_decision(
+            &step,
+            &engine(vec![policy::deny_all(), policy::allow("deleteEverything")]),
+            None
+        ));
+        assert!(!confirmation_decision(
+            &step,
+            &engine(vec![policy::allow_all(), policy::deny("deleteEverything")]),
+            None
+        ));
+    }
+
+    #[test]
+    fn test_confirmation_unknown_action_defers_to_hook() {
+        let step = unknown_action_confirmation_step();
+        let hook: PreToolHook = Arc::new(|invocation| {
+            // The hook sees the unknown wire field as the tool name and the
+            // preserved payload as args.
+            assert_eq!(invocation.name, "deleteEverything");
+            assert_eq!(invocation.args["deleteEverything"]["target"], "/");
+            assert_eq!(invocation.args["request_text"], "do the new thing?");
+            PreToolDecision::Allow
+        });
+        assert!(confirmation_decision(&step, &engine(vec![]), Some(&hook)));
+
+        let deny_hook: PreToolHook = Arc::new(|_| PreToolDecision::deny("nope"));
+        assert!(!confirmation_decision(
+            &step,
+            &engine(vec![]),
+            Some(&deny_hook)
+        ));
     }
 }

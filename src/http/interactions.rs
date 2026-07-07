@@ -124,6 +124,11 @@ fn dispatch_stream_event(
         "step.stop" => {
             if let Some(index) = event.index {
                 accumulator.stop(index);
+                // Retain the cumulative interaction usage as a fallback for
+                // terminal events that omit usage entirely.
+                if let Some(usage) = &event.usage {
+                    accumulator.record_cumulative_usage(usage.clone());
+                }
                 Some(StreamChunk::StepStop {
                     index,
                     usage: event.usage,
@@ -136,18 +141,22 @@ fn dispatch_stream_event(
         }
         "interaction.completed" => {
             if let Some(mut interaction) = event.interaction {
+                // Total usage may arrive via event metadata instead of the
+                // partial interaction payload; if both are absent, fall back
+                // to the last cumulative usage seen on a step.stop event.
+                // (Runs before the steps fill below, which takes the
+                // accumulator.)
+                if interaction.usage.is_none() {
+                    interaction.usage = event
+                        .metadata
+                        .and_then(|metadata| metadata.total_usage)
+                        .or_else(|| accumulator.take_cumulative_usage());
+                }
                 // The lifecycle payload may omit steps (streaming already
                 // delivered them incrementally). Fill them in from the
                 // accumulator so response.function_calls() / as_text() work.
                 if interaction.steps.is_empty() && !accumulator.is_empty() {
                     interaction.steps = std::mem::take(accumulator).finish();
-                }
-                // Total usage may arrive via event metadata instead of the
-                // partial interaction payload.
-                if interaction.usage.is_none()
-                    && let Some(metadata) = event.metadata
-                {
-                    interaction.usage = metadata.total_usage;
                 }
                 Some(StreamChunk::Completed(interaction))
             } else {
@@ -779,6 +788,63 @@ mod tests {
         assert!(chunk.is_unknown());
         assert_eq!(chunk.unknown_chunk_type(), Some("interaction.paused"));
         assert_eq!(chunk.unknown_data().unwrap()["reason"], "maintenance");
+    }
+
+    #[test]
+    fn test_dispatch_completed_falls_back_to_step_stop_usage() {
+        let mut acc = StepAccumulator::new();
+
+        dispatch_stream_event(
+            parse_event(
+                r#"{"event_type":"step.start","index":0,"step":{"type":"model_output","content":[]}}"#,
+            ),
+            &mut acc,
+        );
+        dispatch_stream_event(
+            parse_event(
+                r#"{"event_type":"step.stop","index":0,"usage":{"total_tokens":42},"step_usage":{"total_output_tokens":5}}"#,
+            ),
+            &mut acc,
+        );
+
+        // Terminal event with neither interaction.usage nor metadata.total_usage.
+        let completed = dispatch_stream_event(
+            parse_event(
+                r#"{"event_type":"interaction.completed","interaction":{"id":"i1","status":"completed"}}"#,
+            ),
+            &mut acc,
+        )
+        .unwrap();
+        match completed {
+            StreamChunk::Completed(response) => {
+                assert_eq!(response.total_tokens(), Some(42));
+            }
+            other => panic!("Expected Completed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_dispatch_completed_metadata_usage_wins_over_step_stop() {
+        let mut acc = StepAccumulator::new();
+
+        dispatch_stream_event(
+            parse_event(r#"{"event_type":"step.stop","index":0,"usage":{"total_tokens":42}}"#),
+            &mut acc,
+        );
+
+        let completed = dispatch_stream_event(
+            parse_event(
+                r#"{"event_type":"interaction.completed","interaction":{"id":"i1","status":"completed"},"metadata":{"total_usage":{"total_tokens":99}}}"#,
+            ),
+            &mut acc,
+        )
+        .unwrap();
+        match completed {
+            StreamChunk::Completed(response) => {
+                assert_eq!(response.total_tokens(), Some(99));
+            }
+            other => panic!("Expected Completed, got {other:?}"),
+        }
     }
 
     #[test]

@@ -302,7 +302,7 @@ pub struct SigningSecret {
 /// )
 /// .with_name("my-hook");
 /// ```
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Webhook {
     /// The URI to which webhook events will be sent (required).
@@ -331,6 +331,27 @@ pub struct Webhook {
     /// Output only. When the webhook was last updated.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub update_time: Option<DateTime<Utc>>,
+}
+
+// Custom Debug that redacts the one-time signing secret (mirrors the
+// api_key redaction on `Client` / `HttpContext`).
+impl std::fmt::Debug for Webhook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Webhook")
+            .field("uri", &self.uri)
+            .field("subscribed_events", &self.subscribed_events)
+            .field("name", &self.name)
+            .field("id", &self.id)
+            .field("state", &self.state)
+            .field("signing_secrets", &self.signing_secrets)
+            .field(
+                "new_signing_secret",
+                &self.new_signing_secret.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("create_time", &self.create_time)
+            .field("update_time", &self.update_time)
+            .finish()
+    }
 }
 
 impl Webhook {
@@ -526,13 +547,23 @@ pub struct WebhookListResponse {
 }
 
 /// Response for `POST /v1beta/webhooks/{id}:rotateSigningSecret`.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RotateSigningSecretResponse {
     /// The newly generated signing secret. Store it securely — it is not
     /// returned again.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub secret: Option<String>,
+}
+
+// Custom Debug that redacts the rotated signing secret (mirrors the
+// api_key redaction on `Client` / `HttpContext`).
+impl std::fmt::Debug for RotateSigningSecretResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RotateSigningSecretResponse")
+            .field("secret", &self.secret.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
 }
 
 /// Per-request webhook configuration (`webhook_config` on an interaction
@@ -769,6 +800,30 @@ mod tests {
 
         let empty: RotateSigningSecretResponse = serde_json::from_str("{}").unwrap();
         assert!(empty.secret.is_none());
+    }
+
+    #[test]
+    fn test_webhook_debug_redacts_new_signing_secret() {
+        let webhook = Webhook {
+            new_signing_secret: Some("whsec_super_secret".to_string()),
+            ..Webhook::new("https://example.com/hook", vec![])
+        };
+        let debug = format!("{webhook:?}");
+        assert!(!debug.contains("whsec_super_secret"));
+        assert!(debug.contains("[REDACTED]"));
+        // Absent secrets print as None (no misleading placeholder).
+        let no_secret = Webhook::new("https://example.com/hook", vec![]);
+        assert!(!format!("{no_secret:?}").contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn test_rotate_signing_secret_response_debug_redacts_secret() {
+        let response = RotateSigningSecretResponse {
+            secret: Some("whsec_rotated_secret".to_string()),
+        };
+        let debug = format!("{response:?}");
+        assert!(!debug.contains("whsec_rotated_secret"));
+        assert!(debug.contains("[REDACTED]"));
     }
 
     #[test]

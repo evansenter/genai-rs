@@ -156,6 +156,9 @@ pub struct EnvironmentSource {
     /// Optional encoding for inline content (e.g., `base64`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub encoding: Option<String>,
+    /// Additional fields not yet modeled (Evergreen forward compatibility)
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl EnvironmentSource {
@@ -224,6 +227,9 @@ pub struct AllowlistEntry {
     /// Headers to inject on outbound requests matching this domain.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transform: Option<Vec<HashMap<String, String>>>,
+    /// Additional fields not yet modeled (Evergreen forward compatibility)
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl AllowlistEntry {
@@ -232,7 +238,7 @@ impl AllowlistEntry {
     pub fn new(domain: impl Into<String>) -> Self {
         Self {
             domain: domain.into(),
-            transform: None,
+            ..Default::default()
         }
     }
 
@@ -376,6 +382,8 @@ pub struct RemoteEnvironment {
     pub sources: Vec<EnvironmentSource>,
     /// Outbound network configuration. `None` allows all outbound traffic.
     pub network: Option<NetworkConfig>,
+    /// Additional fields not yet modeled (Evergreen forward compatibility)
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl RemoteEnvironment {
@@ -414,6 +422,9 @@ impl Serialize for RemoteEnvironment {
         if let Some(network) = &self.network {
             map.serialize_entry("network", network)?;
         }
+        for (key, value) in &self.extra {
+            map.serialize_entry(key, value)?;
+        }
         map.end()
     }
 }
@@ -429,11 +440,18 @@ impl<'de> Deserialize<'de> for RemoteEnvironment {
             sources: Vec<EnvironmentSource>,
             #[serde(default)]
             network: Option<NetworkConfig>,
+            /// Unknown fields, preserved for Evergreen roundtrip.
+            #[serde(flatten)]
+            extra: serde_json::Map<String, serde_json::Value>,
         }
-        let raw = Raw::deserialize(deserializer)?;
+        let mut raw = Raw::deserialize(deserializer)?;
+        // The `type` discriminant is re-emitted by `Serialize`; keeping it in
+        // `extra` would duplicate the key on roundtrip.
+        raw.extra.remove("type");
         Ok(Self {
             sources: raw.sources,
             network: raw.network,
+            extra: raw.extra,
         })
     }
 }
@@ -705,6 +723,49 @@ mod tests {
         let env = RemoteEnvironment::new();
         let value = serde_json::to_value(&env).unwrap();
         assert_eq!(value, json!({"type": "remote"}));
+    }
+
+    #[test]
+    fn test_remote_environment_preserves_unknown_fields() {
+        // Unknown top-level fields must survive a deserialize/serialize
+        // roundtrip (Evergreen), without duplicating the `type` discriminant.
+        let raw = json!({
+            "type": "remote",
+            "sources": [{"type": "gcs", "source": "gs://bucket", "target": "/data"}],
+            "timeout_seconds": 300,
+            "region": "us-central1"
+        });
+        let env: RemoteEnvironment = serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(env.sources.len(), 1);
+        assert_eq!(env.extra["timeout_seconds"], json!(300));
+        assert_eq!(env.extra["region"], json!("us-central1"));
+        assert!(!env.extra.contains_key("type"));
+        assert_eq!(serde_json::to_value(&env).unwrap(), raw);
+    }
+
+    #[test]
+    fn test_environment_source_preserves_unknown_fields() {
+        let raw = json!({
+            "type": "repository",
+            "source": "owner/repo",
+            "target": "/workspace",
+            "branch": "main"
+        });
+        let source: EnvironmentSource = serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(source.extra["branch"], json!("main"));
+        assert_eq!(serde_json::to_value(&source).unwrap(), raw);
+    }
+
+    #[test]
+    fn test_allowlist_entry_preserves_unknown_fields() {
+        let raw = json!({
+            "domain": "*.googleapis.com",
+            "max_requests": 10
+        });
+        let entry: AllowlistEntry = serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(entry.domain, "*.googleapis.com");
+        assert_eq!(entry.extra["max_requests"], json!(10));
+        assert_eq!(serde_json::to_value(&entry).unwrap(), raw);
     }
 
     #[test]

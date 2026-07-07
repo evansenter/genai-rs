@@ -23,8 +23,15 @@
 //!   single delivery — the timer restarts only after the deferred delivery
 //!   lands, so a long turn produces one trigger message, not a backlog.
 //! - Idleness is tracked client-side. A trigger delivered while idle starts
-//!   a harness-side turn whose output events are drained by the next
-//!   `chat`/`send_streaming` call.
+//!   a harness-side turn that runs unobserved: **its output is not
+//!   surfaced** (no consumer reads the WebSocket between client-driven
+//!   turns). The next `chat`/`send_streaming` call halts that turn if it is
+//!   still running and discards its events before sending the new input, so
+//!   trigger turns can never desync or leak into a user turn's response.
+//!   The trigger's effects on conversation history (and any tool calls the
+//!   harness completed before the halt) persist. Surfacing trigger-turn
+//!   output through a dedicated consumer is a follow-up (see
+//!   `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`).
 //!
 //! # Lifecycle
 //!

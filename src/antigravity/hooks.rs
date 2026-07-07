@@ -200,38 +200,56 @@ impl PolicyEngine {
 /// Combines the policy verdict with the optional pre-tool hook into a final
 /// allow/deny decision. This is the single decision point used for custom
 /// tool calls, harness-side tool confirmations, and pre-tool hook callbacks.
+///
+/// When no policy rule matches and no hook is configured, the call is
+/// allowed (default open — see the module docs).
 pub(crate) fn decide(
     engine: &PolicyEngine,
     pre_tool: Option<&PreToolHook>,
     invocation: &ToolInvocation,
 ) -> PreToolDecision {
+    decide_with_default(engine, pre_tool, invocation, PreToolDecision::Allow)
+}
+
+/// Like [`decide`], but with an explicit `unmatched` outcome for the
+/// no-rule-matched / no-hook case. Used for *unrecognized* harness tool
+/// confirmations, which fail closed instead of default-open: an unknown
+/// builtin's confirmation is its only gate, so silently approving it would
+/// bypass a restrictive policy set entirely.
+pub(crate) fn decide_with_default(
+    engine: &PolicyEngine,
+    pre_tool: Option<&PreToolHook>,
+    invocation: &ToolInvocation,
+    unmatched: PreToolDecision,
+) -> PreToolDecision {
     match engine.evaluate(&invocation.name) {
         Some(PolicyDecision::Deny) => {
-            return PreToolDecision::deny(format!(
-                "Denied by policy for tool '{}'.",
+            PreToolDecision::deny(format!("Denied by policy for tool '{}'.", invocation.name))
+        }
+        Some(PolicyDecision::Confirm) => match pre_tool {
+            Some(hook) => hook(invocation),
+            None => PreToolDecision::deny(format!(
+                "Tool '{}' requires confirmation but no pre-tool hook is configured \
+                 (failing closed).",
                 invocation.name
-            ));
-        }
-        Some(PolicyDecision::Confirm) => {
-            return match pre_tool {
-                Some(hook) => hook(invocation),
-                None => PreToolDecision::deny(format!(
-                    "Tool '{}' requires confirmation but no pre-tool hook is configured \
-                     (failing closed).",
-                    invocation.name
-                )),
-            };
-        }
+            )),
+        },
         Some(PolicyDecision::Allow) => {
             // Policy allows; the hook still gets a say (defense in depth).
+            match pre_tool {
+                Some(hook) => hook(invocation),
+                None => PreToolDecision::Allow,
+            }
         }
         None => {
-            // No rule matched: default open, subject to the hook.
+            // No rule matched: the hook decides, else the caller's
+            // unmatched outcome applies (Allow for known tools —
+            // default open; Deny for unrecognized confirmations).
+            match pre_tool {
+                Some(hook) => hook(invocation),
+                None => unmatched,
+            }
         }
-    }
-    match pre_tool {
-        Some(hook) => hook(invocation),
-        None => PreToolDecision::Allow,
     }
 }
 
@@ -424,6 +442,42 @@ mod tests {
             id: Some("call-7".to_string()),
         };
         assert_eq!(decide(&engine, Some(&hook), &inv), PreToolDecision::Allow);
+    }
+
+    #[test]
+    fn test_decide_with_default_deny_applies_only_when_unmatched() {
+        let closed = || PreToolDecision::deny("unrecognized");
+        // No rules, no hook: the unmatched outcome applies.
+        assert!(matches!(
+            decide_with_default(&engine(vec![]), None, &invocation("t"), closed()),
+            PreToolDecision::Deny { .. }
+        ));
+        // A non-matching exact rule is still unmatched for this tool.
+        assert!(matches!(
+            decide_with_default(
+                &engine(vec![policy::allow("other")]),
+                None,
+                &invocation("t"),
+                closed()
+            ),
+            PreToolDecision::Deny { .. }
+        ));
+        // A matching wildcard allow wins over the unmatched outcome.
+        assert_eq!(
+            decide_with_default(
+                &engine(vec![policy::allow_all()]),
+                None,
+                &invocation("t"),
+                closed()
+            ),
+            PreToolDecision::Allow
+        );
+        // A hook still decides when no rule matches.
+        let hook: PreToolHook = Arc::new(|_| PreToolDecision::Allow);
+        assert_eq!(
+            decide_with_default(&engine(vec![]), Some(&hook), &invocation("t"), closed()),
+            PreToolDecision::Allow
+        );
     }
 
     #[test]

@@ -21,6 +21,14 @@ user guide `docs/ANTIGRAVITY.md`. Deviations from this design in phase 1:
   background reader task); cancellation uses a shared sink handle. A mockable
   transport trait was deferred — protocol logic is unit-tested at the serde
   layer and against the real binary instead.
+- Consequence of the sequential transport: **trigger-initiated harness turns
+  run unobserved and their output is not surfaced.** The next
+  `chat`/`send_streaming` halts a still-running trigger turn and drains its
+  events before sending the user's input (same discipline as per-turn
+  timeout recovery), so trigger turns cannot desync client-driven turns.
+  Follow-up: a background consumer owning the read half (reference-SDK
+  style) that drives trigger turns to completion and surfaces their output
+  via a documented channel/callback.
 - `IntoFuture` builder sugar was skipped in favor of an explicit
   `spawn().await`.
 

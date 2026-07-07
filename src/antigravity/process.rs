@@ -29,6 +29,12 @@ const STDERR_RING_CAPACITY: usize = 200;
 /// How long to wait for the handshake reply on stdout.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Maximum accepted length of the harness's handshake reply frame. The
+/// `OutputConfig` is a few dozen bytes in practice; anything near this cap
+/// means the child is not a harness (or is misbehaving), so we reject the
+/// declared length *before* allocating a buffer for it.
+const MAX_HANDSHAKE_FRAME_LEN: usize = 4 * 1024 * 1024;
+
 /// How long to wait for a clean exit after closing stdin.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
@@ -158,6 +164,30 @@ impl std::fmt::Debug for HarnessProcess {
     }
 }
 
+/// Reads one length-prefixed (u32 LE) handshake frame from `reader`,
+/// rejecting frames whose declared length exceeds
+/// [`MAX_HANDSHAKE_FRAME_LEN`] *before* allocating the payload buffer.
+async fn read_handshake_frame<R>(reader: &mut R) -> std::io::Result<Vec<u8>>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let mut len_bytes = [0u8; 4];
+    reader.read_exact(&mut len_bytes).await?;
+    let len = u32::from_le_bytes(len_bytes) as usize;
+    if len > MAX_HANDSHAKE_FRAME_LEN {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "handshake frame declares {len} bytes, exceeding the \
+                 {MAX_HANDSHAKE_FRAME_LEN}-byte cap; the binary is likely not a localharness"
+            ),
+        ));
+    }
+    let mut payload = vec![0u8; len];
+    reader.read_exact(&mut payload).await?;
+    Ok(payload)
+}
+
 impl HarnessProcess {
     /// Spawns the harness, performs the stdio handshake, and starts the
     /// stderr drain task.
@@ -223,12 +253,7 @@ impl HarnessProcess {
         let handshake = async {
             stdin.write_all(&input_config.encode_frame()).await?;
             stdin.flush().await?;
-            let mut len_bytes = [0u8; 4];
-            stdout.read_exact(&mut len_bytes).await?;
-            let len = u32::from_le_bytes(len_bytes) as usize;
-            let mut payload = vec![0u8; len];
-            stdout.read_exact(&mut payload).await?;
-            Ok::<Vec<u8>, std::io::Error>(payload)
+            read_handshake_frame(&mut stdout).await
         };
         let payload = match tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake).await {
             Ok(Ok(payload)) => payload,
@@ -401,6 +426,40 @@ mod tests {
         touch_executable(&path_dir.join("localharness"));
         let found = discover_in(Some(&missing), None, &[], Some(path_dir.as_os_str())).unwrap();
         assert_eq!(found, path_dir.join("localharness"));
+    }
+
+    #[tokio::test]
+    async fn test_handshake_frame_rejects_oversized_length_before_allocating() {
+        // Length prefix declares ~4 GiB; the payload never follows. The cap
+        // must reject it from the prefix alone (no allocation, no read).
+        let data = u32::MAX.to_le_bytes();
+        let err = read_handshake_frame(&mut &data[..]).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("exceeding"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn test_handshake_frame_rejects_just_over_cap() {
+        let data = ((MAX_HANDSHAKE_FRAME_LEN as u32) + 1).to_le_bytes();
+        let err = read_handshake_frame(&mut &data[..]).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[tokio::test]
+    async fn test_handshake_frame_reads_valid_frame() {
+        let mut data = 5u32.to_le_bytes().to_vec();
+        data.extend_from_slice(b"hello");
+        let payload = read_handshake_frame(&mut &data[..]).await.unwrap();
+        assert_eq!(payload, b"hello");
+    }
+
+    #[tokio::test]
+    async fn test_handshake_frame_truncated_payload_is_io_error() {
+        // Declared length exceeds the available bytes (but is under the cap).
+        let mut data = 10u32.to_le_bytes().to_vec();
+        data.extend_from_slice(b"short");
+        let err = read_handshake_frame(&mut &data[..]).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
     }
 
     #[test]

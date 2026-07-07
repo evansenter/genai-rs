@@ -158,6 +158,117 @@ async fn test_antigravity_trigger_sends_automated_trigger_when_idle() {
 
 #[tokio::test]
 #[ignore = "Requires localharness binary"]
+async fn test_antigravity_turn_timeout_halts_harness_turn() {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let inspector = Arc::new(WsSendCapture::default());
+    let mut agent = AntigravityAgent::builder()
+        .with_api_key("dummy-key-timeout-test")
+        .with_model("gemini-3-flash-preview")
+        // Far below any network round-trip: the timeout always fires before
+        // the turn can produce a terminal event.
+        .with_turn_timeout(Duration::from_millis(10))
+        .add_wire_inspector(inspector.clone())
+        .spawn()
+        .await
+        .expect("spawn");
+
+    let err = agent
+        .chat("this turn cannot finish in 10ms")
+        .await
+        .expect_err("a 10ms turn budget must time out");
+    assert!(
+        matches!(err, AntigravityError::Timeout { .. }),
+        "expected Timeout, got {err:?}"
+    );
+
+    // Timeout recovery must have halted the harness's still-running turn
+    // (and drained its events) so the next turn cannot consume stale
+    // output. Assert the wire discipline: userInput, then haltRequest.
+    let sends = inspector.0.lock().unwrap().clone();
+    let user_input = sends.iter().position(|p| p.get("userInput").is_some());
+    let halt = sends.iter().position(|p| p.get("haltRequest").is_some());
+    let user_input = user_input.expect("userInput was sent");
+    let halt = halt.expect("the timed-out turn must be halted");
+    assert!(
+        halt > user_input,
+        "halt must follow the timed-out turn's input; sends: {sends:?}"
+    );
+
+    agent.shutdown().await.expect("graceful shutdown");
+}
+
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
+async fn test_antigravity_chat_after_trigger_discards_trigger_turn() {
+    use genai_rs::antigravity::TriggerConfig;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let inspector = Arc::new(WsSendCapture::default());
+    let mut agent = AntigravityAgent::builder()
+        .with_api_key("dummy-key-trigger-chat-test")
+        .with_model("gemini-3-flash-preview")
+        .with_turn_timeout(Duration::from_secs(15))
+        .add_trigger(TriggerConfig::new("tick-quux", Duration::from_secs(1)))
+        .add_wire_inspector(inspector.clone())
+        .spawn()
+        .await
+        .expect("spawn");
+
+    // Wait for the trigger to deliver (it starts a harness-side turn that
+    // nothing consumes).
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    while std::time::Instant::now() < deadline {
+        let delivered = inspector
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|p| p.get("automatedTrigger").is_some());
+        if delivered {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    // chat() must halt-and-drain the trigger's turn before sending its own
+    // input, and must never surface the stale turn's outcome. With a dummy
+    // key this turn ends in a model-backend error or a timeout — never in
+    // the halted trigger turn's cancellation, and never in a stale Ok.
+    let result = agent.chat("hello after the trigger").await;
+    if let Err(AntigravityError::Turn(message)) = &result {
+        assert!(
+            !message.to_lowercase().contains("cancel"),
+            "the halted trigger turn's cancellation leaked into chat(): {message}"
+        );
+    }
+
+    // Wire discipline: automatedTrigger, then haltRequest, then userInput.
+    let sends = inspector.0.lock().unwrap().clone();
+    let trigger = sends
+        .iter()
+        .position(|p| p.get("automatedTrigger").is_some())
+        .expect("trigger was delivered");
+    let halt = sends
+        .iter()
+        .position(|p| p.get("haltRequest").is_some())
+        .expect("chat() must halt the unconsumed trigger turn");
+    let user_input = sends
+        .iter()
+        .position(|p| p.get("userInput").is_some())
+        .expect("userInput was sent");
+    assert!(
+        trigger < halt && halt < user_input,
+        "expected automatedTrigger < haltRequest < userInput; sends: {sends:?}"
+    );
+
+    agent.shutdown().await.expect("graceful shutdown");
+}
+
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
 async fn test_antigravity_subagent_config_accepted_at_init() {
     use genai_rs::antigravity::{BuiltinTool, Capabilities, Subagent};
 

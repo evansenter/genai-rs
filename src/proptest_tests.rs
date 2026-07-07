@@ -1673,6 +1673,7 @@ fn arb_environment_source() -> impl Strategy<Value = EnvironmentSource> {
                 target,
                 content,
                 encoding,
+                ..Default::default()
             },
         )
 }
@@ -1689,7 +1690,11 @@ fn arb_network_config() -> impl Strategy<Value = NetworkConfig> {
                     1..2,
                 )),
             )
-                .prop_map(|(domain, transform)| AllowlistEntry { domain, transform }),
+                .prop_map(|(domain, transform)| AllowlistEntry {
+                    domain,
+                    transform,
+                    ..Default::default()
+                }),
             0..3,
         )
         .prop_map(NetworkConfig::Allowlist),
@@ -1704,7 +1709,11 @@ fn arb_environment_spec() -> impl Strategy<Value = EnvironmentSpec> {
             proptest::option::of(arb_network_config()),
         )
             .prop_map(|(sources, network)| {
-                EnvironmentSpec::Remote(RemoteEnvironment { sources, network })
+                EnvironmentSpec::Remote(RemoteEnvironment {
+                    sources,
+                    network,
+                    ..Default::default()
+                })
             }),
     ]
 }

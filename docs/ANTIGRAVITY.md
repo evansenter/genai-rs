@@ -147,6 +147,26 @@ Rules:
 - Targets: builtin wire names (`run_command`, `edit_file`, ...), custom tool
   names, and MCP tools as `mcp_<server>_<tool>`.
 
+### Unrecognized tool confirmations
+
+Harness-side builtins pause in a *waiting* step until the client confirms
+them; the pending action's identity comes solely from which action field the
+step carries (the confirmation request itself is an empty marker on the
+wire — verified against the pinned harness proto). Two edge cases:
+
+- **Pre-request notifications** (a step with *no* action payload at all)
+  announce an upcoming host-side custom tool call. They are auto-approved
+  regardless of policy, mirroring the reference SDK: the concrete call
+  arrives separately and gets its own policy check, so nothing is bypassed.
+- **Unknown actions** (a step whose action landed in the Evergreen `extra`
+  map — e.g. a builtin newer than this client) **fail closed**: the
+  confirmation is that tool's *only* gate, so it is approved only when a
+  policy rule matches (wildcard `allow_all()`, or an exact rule naming the
+  unknown wire field, e.g. `allow("deleteEverything")`) or the `on_pre_tool`
+  hook allows it. A `warn!` records the unknown field names and the decision
+  either way. This is stricter than the reference SDK, which auto-approves
+  anything it cannot map.
+
 `on_post_tool` observes completed custom tool calls (and harness-side
 post-tool hook callbacks) for audit logging.
 
@@ -265,7 +285,10 @@ let cancel = agent.cancel_handle();
 cancel.cancel().await?;   // the in-flight turn fails with AntigravityError::Turn
 ```
 
-`with_turn_timeout(Duration)` bounds each turn's wall-clock time.
+`with_turn_timeout(Duration)` bounds each turn's wall-clock time. When the
+budget is exceeded, the crate halts the harness's still-running turn and
+drains its remaining events before returning `AntigravityError::Timeout`, so
+the next turn starts from a clean stream.
 
 ## Structured output
 
@@ -315,8 +338,14 @@ Delivery semantics (see `antigravity::triggers` for details):
 - Trigger tasks stop cleanly on `shutdown()` and on drop — no zombie
   timers. A failed delivery (session closed) ends that trigger's task; other
   triggers and the session are unaffected.
-- A trigger delivered while idle starts a harness-side turn; its output
-  events are drained by your next `chat`/`send_streaming` call.
+- A trigger delivered while idle starts a harness-side turn that runs
+  unobserved. **Its output is not surfaced**: the next
+  `chat`/`send_streaming` call halts the trigger's turn if it is still
+  running and discards its events before sending your input, so a trigger
+  turn can never surface as (or desync) your turn's response. The trigger's
+  effects on conversation history (and any tool calls completed before the
+  halt) persist; surfacing trigger-turn output through a dedicated consumer
+  is a follow-up.
 
 ## Session persistence and resume
 
@@ -383,5 +412,9 @@ variants, never on message text. Key variants: `HarnessNotFound{searched}`,
   exposed. Disable the builtin if this matters.
 - **Hooks are synchronous**: `on_pre_tool` / `on_post_tool` are sync
   closures; async hooks are a follow-up.
+- **Trigger-turn output is not surfaced**: turns started by
+  `add_trigger` deliveries run unobserved and are halted/discarded by the
+  next `chat`/`send_streaming` (see [Triggers](#triggers)); a background
+  consumer surfacing their events is a follow-up.
 - **Vertex endpoints**: wire types exist; the tested path is the Gemini API
   key endpoint.

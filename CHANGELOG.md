@@ -296,6 +296,7 @@ matching google-genai). This is a comprehensive breaking migration.
 - `Tool::McpServer` has additional optional fields `allowed_tools` and `headers`
 - Proptest roundtrip comparisons use `serde_json::Value` for HashMap key order independence
 - **BREAKING**: `reqwest` upgraded 0.12 → 0.13 (`GenaiError::Http(reqwest::Error)` and `ResumableUpload` methods expose reqwest types publicly). MSRV is unchanged (Rust 1.88)
+  - TLS **trust roots** changed with the upgrade: reqwest 0.13 removed the bundled-Mozilla-roots feature (`rustls-tls-webpki-roots`); its `rustls` feature now verifies certificates against the **OS trust store** via `rustls-platform-verifier`. The TLS stack is still rustls (not native TLS). If your deployment relies on bundled roots (e.g. minimal containers without a CA bundle), install a CA bundle or open an issue — restoring bundled roots would require a preconfigured rustls client
 - New default-on feature `wire-color` gates the `colored`/`colored_json` dependencies; build with `default-features = false` for plain-text wire output
 - Wire debug request ids are now per-`Client` (previously a process-global counter)
 - Minor dependency bumps: tokio 1.48 → 1.52, proptest 1.9 → 1.11, utoipa 5.4 → 5.5
@@ -307,6 +308,15 @@ matching google-genai). This is a comprehensive breaking migration.
 - Error response bodies are now visible in wire output (`WireEvent::ErrorBody`); previously `LOUD_WIRE=1` showed only the status line for failed requests
 - Wire output no longer panics when truncating multi-byte UTF-8 content (`data`/`signature` fields and non-JSON bodies truncate on character boundaries)
 - Request bodies are no longer serialized for wire debugging when it is disabled (previously every request paid the serialization cost even without `LOUD_WIRE`)
+- Antigravity: the stdio handshake now rejects reply frames whose declared length exceeds 4 MiB before allocating (a non-harness binary can no longer trigger an unbounded allocation; it fails with `HandshakeFailed` instead)
+- Antigravity: a turn that exceeds `with_turn_timeout` is now halted on the harness and its remaining events drained before `AntigravityError::Timeout` is returned; previously the abandoned turn kept running and its buffered events (including its terminal state) desynced the next `chat`/`send_streaming`, which could return the previous turn's output
+- Antigravity: turns started by `add_trigger` deliveries are now halted and their events discarded by the next `chat`/`send_streaming` before it sends its input; previously the unconsumed trigger turn's buffered events were misattributed to the user's turn, shifting every later response by one turn. Trigger-turn output is not surfaced (documented in `docs/ANTIGRAVITY.md`)
+- Antigravity: unrecognized harness tool confirmations now **fail closed** — a confirmation whose action fields this client does not recognize (e.g. a builtin newer than the pinned harness) is approved only when a policy rule (`allow_all()` or an exact rule naming the unknown wire field) or the `on_pre_tool` hook allows it, with a `warn!` either way. Previously any unmappable confirmation was auto-approved, bypassing deny policies. Genuine pre-request notifications (steps with no action payload) remain auto-approved — the concrete call still gets its own policy check
+- Streaming image, video, and document deltas now accumulate into a single content block (matching audio behavior) instead of producing one block per chunk
+- Streaming responses whose terminal event omits usage now fall back to the cumulative usage from the last `step.stop` event, so `response.usage()` stays populated
+- `RemoteEnvironment`, `EnvironmentSource`, and `AllowlistEntry` now preserve unknown wire fields via an Evergreen `extra` field (roundtrip-safe; breaking for exhaustive struct literals — use `..Default::default()`)
+- `LOUD_WIRE` output now fully redacts `api_key` fields (e.g. Exa/Parallel retrieval configs) instead of printing them
+- `Debug` for `Webhook` and `RotateSigningSecretResponse` now redacts `new_signing_secret` / `secret` (matching the client's `api_key` redaction precedent)
 
 ### Removed
 
