@@ -429,7 +429,7 @@ dependencies = [
 
 [[package]]
 name = "genai-rs"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -462,7 +462,7 @@ dependencies = [
 
 [[package]]
 name = "genai-rs-macros"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "proc-macro2",
  "quote",

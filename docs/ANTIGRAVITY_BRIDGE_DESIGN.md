@@ -301,3 +301,28 @@ Flagship examples demonstrating the dual-mode value:
 - Vertex endpoint config (types are present; tested path is Gemini API key).
 - Windows process-management edge cases beyond what CI covers.
 - OAuth (the SDK itself is API-key only today).
+
+## Follow-ups
+
+Beyond those noted inline above (async hooks + `workspace_only` combinator,
+background consumer for trigger turns, mockable transport trait,
+`harness fetch`):
+
+- **Announce workspace roots to the model automatically** — agents guess
+  paths today; inject the `add_workspace` roots into the conversation
+  context. Until then, document that subagents need workspace paths spelled
+  out in their instructions (they don't inherit the parent's context).
+- **Trajectory identity on `AgentEvent`s** — parent and subagent events
+  interleave indistinguishably in `send_streaming`; tag events with a
+  trajectory/subagent id. Relatedly, `ToolAction::InvokeSubagent` doesn't
+  carry the subagent's name.
+- **Accepted/denied marker on `ToolAction` events** — a policy/hook-denied
+  action currently looks identical to an executed one in event streams;
+  surface the decision on the event.
+- **Unwrap `ToolOutcome.result` from the wire envelope** — post-tool hooks
+  currently see the raw `{"result": ...}` envelope; hand them the inner
+  value.
+- **Surface harness-internal noise errors distinctly** — transient
+  harness-side error steps (retried internally, the turn continues) arrive
+  as the same unclassified `AgentEvent::Error(String)` as errors that end
+  the turn; add a severity/classification so consumers can ignore noise.

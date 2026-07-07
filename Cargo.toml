@@ -23,7 +23,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 [package]
 name = "genai-rs"
-version = "0.7.2"
+version = "0.8.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -35,7 +35,7 @@ keywords = ["gemini", "google", "ai", "llm", "genai"]
 categories = ["api-bindings", "asynchronous"]
 
 [dependencies]
-genai-rs-macros = { version = "0.7.2", path = "./genai-rs-macros" }
+genai-rs-macros = { version = "0.8.0", path = "./genai-rs-macros" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }
