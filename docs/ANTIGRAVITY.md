@@ -312,10 +312,10 @@ while let Some(event) = stream.next().await {
         AgentEvent::ToolCallDispatched { name, .. } => eprintln!("[custom tool] {name}"),
         AgentEvent::Finished(response) => { println!(); break; }
         // Transient errors are harness-internal noise (the turn continues);
-        // only `Terminal` ones are serious. Turn-ending failures arrive as
+        // only `Severe` ones matter. Turn-ending failures arrive as
         // `AntigravityError::Turn` from the call, not as this event.
         AgentEvent::Error { message, severity } => match severity {
-            ErrorSeverity::Terminal => eprintln!("[error] {message}"),
+            ErrorSeverity::Severe => eprintln!("[error] {message}"),
             _ => {} // ignore transient noise
         },
         _ => {} // non-exhaustive
@@ -332,7 +332,7 @@ while let Some(event) = stream.next().await {
   parent and subagent actions can be told apart in the interleaved stream.
 - **`Error { message, severity }`** — `severity` is an [`ErrorSeverity`].
   Transient errors are harness-internal noise (retried internally; the turn
-  continues) — essentially every error event today. `Terminal` marks a
+  continues) — essentially every error event today. `Severe` marks a
   serious mid-turn error (e.g. a fatal model-backend status that did not abort
   the turn); genuinely turn-*ending* failures surface as
   `AntigravityError::Turn` from `chat`/`send_streaming`, never as this event.

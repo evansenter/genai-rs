@@ -1179,15 +1179,13 @@ impl AntigravityAgent {
         // announced (with its `Denied` decision) at its confirmation step,
         // so `announced_actions` dedups it here; anything reaching a
         // terminal state executed, so its decision is `Allowed`.
-        if is_terminal
-            && let Some(action) = streaming::ToolAction::from_step(&step)
-            && turn.announced_actions.insert(step_key.clone())
-        {
-            turn.queue.push_back(AgentEvent::ToolAction {
-                action: Box::new(action),
-                decision: ToolDecision::Allowed,
-                trajectory_id: step.trajectory_id.clone(),
-            });
+        if is_terminal && let Some(action) = streaming::ToolAction::from_step(&step) {
+            turn.announce_tool_action(
+                &step_key,
+                action,
+                ToolDecision::Allowed,
+                step.trajectory_id.clone(),
+            );
         }
 
         // Structured output from the finish action.
@@ -1230,7 +1228,7 @@ impl AntigravityAgent {
                 // Reaching here means the turn continues: the turn-aborting
                 // case (system-source fatal HTTP code) returned above. A fatal
                 // code that did *not* abort (non-system source) is still
-                // serious, so it surfaces as `Terminal`; everything else is
+                // serious, so it surfaces as `Severe`; everything else is
                 // transient harness-internal noise (retried, model reacts).
                 let severity = classify_error_severity(http_code);
                 turn.queue
@@ -1298,15 +1296,15 @@ impl AntigravityAgent {
         let accepted = matches!(decision, PreToolDecision::Allow);
         if let PreToolDecision::Deny { reason } = &decision
             && let Some(action) = streaming::ToolAction::from_step(step)
-            && turn.announced_actions.insert(step_key.clone())
         {
-            turn.queue.push_back(AgentEvent::ToolAction {
-                action: Box::new(action),
-                decision: ToolDecision::Denied {
+            turn.announce_tool_action(
+                step_key,
+                action,
+                ToolDecision::Denied {
                     reason: reason.clone(),
                 },
-                trajectory_id: step.trajectory_id.clone(),
-            });
+                step.trajectory_id.clone(),
+            );
         }
         self.session
             .send(&InputEvent::ToolConfirmation(protocol::ToolConfirmation {
@@ -1608,11 +1606,11 @@ fn confirmation_decision(
 /// [`AgentEvent::Error`](streaming::AgentEvent). A fatal model-backend
 /// HTTP code (400/401/403) that reached the event path — i.e. did *not* abort
 /// the turn through the system-source [`AntigravityError::Turn`] path — is
-/// still serious and surfaces as [`ErrorSeverity::Terminal`]; every other
+/// still serious and surfaces as [`ErrorSeverity::Severe`]; every other
 /// error is transient harness-internal noise the turn recovers from.
 fn classify_error_severity(http_code: Option<u32>) -> ErrorSeverity {
     if http_code.is_some_and(|code| FATAL_HTTP_CODES.contains(&code)) {
-        ErrorSeverity::Terminal
+        ErrorSeverity::Severe
     } else {
         ErrorSeverity::Transient
     }
@@ -1796,6 +1794,31 @@ impl TurnState {
             .entry(step_key.clone())
             .or_default()
             .insert(kind)
+    }
+
+    /// Queues a [`AgentEvent::ToolAction`] for a step at most once, keyed on
+    /// `step_key`. The first decision seen for a step wins: a `Denied`
+    /// announcement at the confirmation step suppresses the later `Allowed`
+    /// announcement at the same step's terminal delivery (the harness
+    /// re-delivers terminal steps on every tick). Returns whether the event
+    /// was queued.
+    fn announce_tool_action(
+        &mut self,
+        step_key: &(String, u32),
+        action: streaming::ToolAction,
+        decision: ToolDecision,
+        trajectory_id: Option<String>,
+    ) -> bool {
+        if self.announced_actions.insert(step_key.clone()) {
+            self.queue.push_back(AgentEvent::ToolAction {
+                action: Box::new(action),
+                decision,
+                trajectory_id,
+            });
+            true
+        } else {
+            false
+        }
     }
 
     fn take_response(&mut self) -> ChatResponse {
@@ -2367,6 +2390,61 @@ mod agent_tests {
         );
     }
 
+    #[test]
+    fn test_denied_action_dedups_terminal_allowed_emission() {
+        // The turn-loop invariant: a denied action is announced exactly once
+        // (as Denied at its confirmation step) and is NOT re-announced as
+        // Allowed when the same step later reaches its terminal delivery.
+        // Both call sites route through `TurnState::announce_tool_action`
+        // keyed on the same step_key, so exercise it directly (the send-side
+        // I/O of `answer_tool_confirmation` is not needed to lock this).
+        let mut turn = TurnState::new(None, None);
+        let step = run_command_confirmation_step();
+        let step_key = (
+            step.trajectory_id.clone().unwrap_or_default(),
+            step.step_index.unwrap_or_default(),
+        );
+        let action = || streaming::ToolAction::from_step(&step).unwrap();
+
+        // Confirmation step: denial announced.
+        assert!(turn.announce_tool_action(
+            &step_key,
+            action(),
+            ToolDecision::Denied {
+                reason: "blocked".to_string(),
+            },
+            step.trajectory_id.clone(),
+        ));
+        // Terminal step: the same step's Allowed announcement is suppressed.
+        assert!(!turn.announce_tool_action(
+            &step_key,
+            action(),
+            ToolDecision::Allowed,
+            step.trajectory_id.clone(),
+        ));
+
+        // Exactly one event, and it is the Denied one.
+        let actions: Vec<_> = turn
+            .queue
+            .iter()
+            .filter(|e| matches!(e, AgentEvent::ToolAction { .. }))
+            .collect();
+        assert_eq!(actions.len(), 1);
+        let AgentEvent::ToolAction { decision, .. } = actions[0] else {
+            unreachable!();
+        };
+        assert!(decision.is_denied());
+
+        // A distinct step (different key) is unaffected by the dedup.
+        let other_key = ("traj-other".to_string(), 9);
+        assert!(turn.announce_tool_action(
+            &other_key,
+            action(),
+            ToolDecision::Allowed,
+            Some("traj-other".to_string()),
+        ));
+    }
+
     // -------------------------------------------------------------------
     // Error severity classification (Item: classify harness error severity)
     // -------------------------------------------------------------------
@@ -2379,7 +2457,7 @@ mod agent_tests {
         assert_eq!(classify_error_severity(Some(429)), ErrorSeverity::Transient);
         // Fatal model-backend codes that reached the event path are serious.
         for code in FATAL_HTTP_CODES {
-            assert_eq!(classify_error_severity(Some(code)), ErrorSeverity::Terminal);
+            assert_eq!(classify_error_severity(Some(code)), ErrorSeverity::Severe);
         }
     }
 

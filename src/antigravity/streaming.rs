@@ -69,10 +69,12 @@ pub enum ErrorSeverity {
     Transient,
     /// A serious error surfaced mid-turn — e.g. a fatal model-backend
     /// status (HTTP 400/401/403) that nonetheless did not abort the turn.
-    /// Turn-*ending* failures do not arrive as this event at all: they
-    /// surface as [`AntigravityError::Turn`]
-    /// from `chat`/`send_streaming`.
-    Terminal,
+    /// Despite the severity, the stream is *not* over: turn-*ending*
+    /// failures do not arrive as this event at all — they surface as
+    /// [`AntigravityError::Turn`] from `chat`/`send_streaming`. (Named
+    /// `Severe`, not `Terminal`/`Fatal`, precisely because it does not end
+    /// the turn.)
+    Severe,
 }
 
 /// One event observed while an agent turn runs.

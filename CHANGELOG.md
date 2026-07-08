@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ActionInvokeSubagent::name` field (Evergreen; `None` on harness 0.1.5,
   which emits an empty `invokeSubagent` action).
 - **Antigravity: `ToolDecision`** (`Allowed` / `Denied { reason }`) and
-  **`ErrorSeverity`** (`Transient` / `Terminal`) public enums.
+  **`ErrorSeverity`** (`Transient` / `Severe`) public enums.
 
 ### Changed
 
@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Antigravity (breaking): `AgentEvent::Error(String)`** is now
   `Error { message, severity }` so consumers can ignore transient
   harness-internal noise (retried internally; the turn continues) and react
-  only to `Terminal` errors. Turn-ending failures still surface as
+  only to `Severe` errors. Turn-ending failures still surface as
   `AntigravityError::Turn`.
 - **Antigravity (behavior): `ToolOutcome.result`** passed to post-tool hooks
   is now the inner tool result, not the raw `{"result": ...}` wire envelope

@@ -247,10 +247,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     stdout().flush()?;
                 }
                 AgentEvent::TextDelta(_) => {}
-                // Terminal errors abort the turn (surfaced as AntigravityError);
+                // Severe errors are serious but do NOT end the turn (a
+                // turn-ending failure surfaces as AntigravityError instead);
                 // transient ones are harness-internal noise safe to ignore.
                 AgentEvent::Error { message, severity } => match severity {
-                    ErrorSeverity::Terminal => eprintln!("[harness error] {message}"),
+                    ErrorSeverity::Severe => eprintln!("[harness error] {message}"),
                     _ => eprintln!("[harness noise] {message}"),
                 },
                 AgentEvent::Finished(response) => {
