@@ -84,8 +84,8 @@ persistence either.
 `add_workspace(path)` (or `with_workspace(path)` to replace) points the
 harness's built-in tools at a directory. The harness does **not** tell the
 model the workspace path, so by default `genai-rs` **announces the workspace
-root(s) to the model** — it prepends a short, clearly delimited note listing
-the absolute root(s) to the effective system instructions at send time (your
+root(s) to the model** — it appends a short, clearly delimited note listing
+the configured root(s) to the effective system instructions at send time (your
 `with_system_instructions` string is never mutated). Without this, agents
 guess paths (`/workdir`, `/workspace`, …) and wander.
 

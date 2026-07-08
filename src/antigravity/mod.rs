@@ -319,7 +319,7 @@ impl AgentBuilder {
     /// The harness points its built-in tools at the workspaces but never
     /// tells the model their absolute paths, so agents otherwise guess
     /// (`/workdir`, `/workspace`, …) and wander. When on and at least one
-    /// workspace is configured, `spawn()` prepends a short, clearly
+    /// workspace is configured, `spawn()` appends a short, clearly
     /// delimited note listing the configured root(s) to the effective system
     /// instructions (composed at send time — the string passed to
     /// [`Self::with_system_instructions`] is never mutated). The same note

@@ -10,8 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Antigravity: workspace announcement.** `add_workspace(..)` roots are now
-  announced to the model automatically — `spawn()` prepends a concise,
-  delimited note listing the absolute workspace root(s) to the effective
+  announced to the model automatically — `spawn()` appends a concise,
+  delimited note listing the configured workspace root(s) to the effective
   system instructions (the string passed to `with_system_instructions` is
   never mutated), and appends the same note to every subagent's instructions.
   Agents no longer guess workspace paths. Opt out with

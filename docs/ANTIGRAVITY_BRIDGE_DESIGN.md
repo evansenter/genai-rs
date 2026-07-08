@@ -313,7 +313,7 @@ now implemented:
   wire protocol has *no* native announcement field (`FilesystemWorkspace`
   carries only `directory`; `PermissionsConfig.enforce_workspace_validation`
   governs enforcement, not disclosure — confirmed against the shipped 0.1.5
-  descriptor), so this is prompt injection: `spawn()` prepends a delimited
+  descriptor), so this is prompt injection: `spawn()` appends a delimited
   workspace note to the effective system instructions (the stored string is
   never mutated), opt-outable via `with_workspace_announcement(false)`. The
   same note is appended to every subagent's instructions.
