@@ -79,6 +79,34 @@ escalates to SIGTERM/SIGKILL only if it lingers. Dropping the agent without
 `shutdown()` kills the harness immediately — no zombie, but no trajectory
 persistence either.
 
+## Workspaces
+
+`add_workspace(path)` (or `with_workspace(path)` to replace) points the
+harness's built-in tools at a directory. The harness does **not** tell the
+model the workspace path, so by default `genai-rs` **announces the workspace
+root(s) to the model** — it prepends a short, clearly delimited note listing
+the absolute root(s) to the effective system instructions at send time (your
+`with_system_instructions` string is never mutated). Without this, agents
+guess paths (`/workdir`, `/workspace`, …) and wander.
+
+```rust,ignore
+let agent = AntigravityAgent::builder()
+    .add_workspace("/path/to/repo")
+    .with_system_instructions("Audit this repo.")
+    // workspace announcement is ON by default; turn it off to ground the
+    // model yourself:
+    .with_workspace_announcement(false)
+    // ...
+    ;
+```
+
+The same note is appended to every subagent's instructions (subagent
+trajectories do not inherit the parent's context), so subagents no longer
+need the workspace path spelled out in their own `with_system_instructions`.
+The wire protocol has no native workspace-announcement field
+(`FilesystemWorkspace` carries only the `directory`; `enforce_workspace_validation`
+governs *enforcement*, not disclosure), so this is prompt-level grounding.
+
 ## Built-in tools (capabilities)
 
 The harness executes its own tool suite; you choose which tools the agent
@@ -168,7 +196,11 @@ wire — verified against the pinned harness proto). Two edge cases:
   anything it cannot map.
 
 `on_post_tool` observes completed custom tool calls (and harness-side
-post-tool hook callbacks) for audit logging.
+post-tool hook callbacks) for audit logging. `ToolOutcome.result` is the
+**inner** tool result, not the `{"result": ...}` wire envelope the harness
+receives: a scalar return `X` arrives as its string form (or `X` serialized
+when non-string), and an object return is passed through serialized. Failures
+populate `ToolOutcome.error` instead.
 
 ## Custom tools — the same `#[tool]` functions as the Interactions API
 
@@ -255,26 +287,55 @@ Rules (matching the reference SDK):
   subagent.
 - Subagent activity surfaces in streams as `AgentEvent::ToolAction` with
   `ToolAction::InvokeSubagent`, plus the subagent trajectory's own deltas.
+  The `ToolAction` event carries the subagent's `trajectory_id` so its
+  actions can be told apart from the parent's. `ToolAction::subagent_name()`
+  exposes the invoked subagent's name **if the harness reports it** —
+  harness 0.1.5 emits an empty `invokeSubagent` action (verified via
+  `LOUD_WIRE`), so it is `None` there; the typed field is future-proofing.
 
 ## Streaming
 
 ```rust,ignore
 use futures_util::StreamExt;
-use genai_rs::antigravity::AgentEvent;
+use genai_rs::antigravity::{AgentEvent, ErrorSeverity};
 
 let mut stream = agent.send_streaming("Refactor src/lib.rs").await?;
 while let Some(event) = stream.next().await {
     match event? {
         AgentEvent::TextDelta(t) => print!("{t}"),
         AgentEvent::ThinkingDelta(_) => {}
-        AgentEvent::ToolAction(a) => eprintln!("[harness tool] {a:?}"),
+        AgentEvent::ToolAction { action, decision, trajectory_id } => {
+            // `decision` distinguishes executed from policy/hook-denied
+            // actions; `trajectory_id` tells parent and subagent actions apart.
+            eprintln!("[harness tool] {action:?} ({decision:?}) traj={trajectory_id:?}");
+        }
         AgentEvent::ToolCallDispatched { name, .. } => eprintln!("[custom tool] {name}"),
         AgentEvent::Finished(response) => { println!(); break; }
-        AgentEvent::Error(e) => eprintln!("[error] {e}"),
+        // Transient errors are harness-internal noise (the turn continues);
+        // only `Terminal` ones are serious. Turn-ending failures arrive as
+        // `AntigravityError::Turn` from the call, not as this event.
+        AgentEvent::Error { message, severity } => match severity {
+            ErrorSeverity::Terminal => eprintln!("[error] {message}"),
+            _ => {} // ignore transient noise
+        },
         _ => {} // non-exhaustive
     }
 }
 ```
+
+### Event decisions, trajectory identity, and error severity
+
+- **`ToolAction { action, decision, trajectory_id }`** — `decision` is a
+  [`ToolDecision`] (`Allowed`, or `Denied { reason }`): a policy- or
+  hook-blocked harness action is otherwise indistinguishable from an executed
+  one. `trajectory_id` identifies the (sub)trajectory the action ran in, so
+  parent and subagent actions can be told apart in the interleaved stream.
+- **`Error { message, severity }`** — `severity` is an [`ErrorSeverity`].
+  Transient errors are harness-internal noise (retried internally; the turn
+  continues) — essentially every error event today. `Terminal` marks a
+  serious mid-turn error (e.g. a fatal model-backend status that did not abort
+  the turn); genuinely turn-*ending* failures surface as
+  `AntigravityError::Turn` from `chat`/`send_streaming`, never as this event.
 
 The stream borrows the agent mutably for the turn. To cancel from another
 task, take a handle first:

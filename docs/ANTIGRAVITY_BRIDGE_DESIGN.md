@@ -304,25 +304,40 @@ Flagship examples demonstrating the dual-mode value:
 
 ## Follow-ups
 
-Beyond those noted inline above (async hooks + `workspace_only` combinator,
-background consumer for trigger turns, mockable transport trait,
-`harness fetch`):
+### Done (repo_auditor ergonomics pass)
 
-- **Announce workspace roots to the model automatically** — agents guess
-  paths today; inject the `add_workspace` roots into the conversation
-  context. Until then, document that subagents need workspace paths spelled
-  out in their instructions (they don't inherit the parent's context).
-- **Trajectory identity on `AgentEvent`s** — parent and subagent events
-  interleave indistinguishably in `send_streaming`; tag events with a
-  trajectory/subagent id. Relatedly, `ToolAction::InvokeSubagent` doesn't
-  carry the subagent's name.
-- **Accepted/denied marker on `ToolAction` events** — a policy/hook-denied
-  action currently looks identical to an executed one in event streams;
-  surface the decision on the event.
-- **Unwrap `ToolOutcome.result` from the wire envelope** — post-tool hooks
-  currently see the raw `{"result": ...}` envelope; hand them the inner
-  value.
-- **Surface harness-internal noise errors distinctly** — transient
-  harness-side error steps (retried internally, the turn continues) arrive
-  as the same unclassified `AgentEvent::Error(String)` as errors that end
-  the turn; add a severity/classification so consumers can ignore noise.
+The five ergonomics follow-ups discovered while building `repo_auditor` are
+now implemented:
+
+- ~~**Announce workspace roots to the model automatically**~~ — done. The
+  wire protocol has *no* native announcement field (`FilesystemWorkspace`
+  carries only `directory`; `PermissionsConfig.enforce_workspace_validation`
+  governs enforcement, not disclosure — confirmed against the shipped 0.1.5
+  descriptor), so this is prompt injection: `spawn()` prepends a delimited
+  workspace note to the effective system instructions (the stored string is
+  never mutated), opt-outable via `with_workspace_announcement(false)`. The
+  same note is appended to every subagent's instructions.
+- ~~**Trajectory identity on `AgentEvent`s**~~ — done. The `ToolAction`
+  event is now a struct variant carrying `trajectory_id: Option<String>`.
+  `ToolAction::InvokeSubagent` gained a typed `name` field + a
+  `subagent_name()` accessor; harness 0.1.5 emits an empty `invokeSubagent`
+  action on the wire (verified via `LOUD_WIRE`), so the name is `None` there
+  and the field is forward-compatible (Evergreen `extra` preserves anything
+  a future harness adds).
+- ~~**Accepted/denied marker on `ToolAction` events**~~ — done. The
+  `ToolAction` event carries a `ToolDecision` (`Allowed` / `Denied{reason}`),
+  wired from the confirmation/policy decision path.
+- ~~**Unwrap `ToolOutcome.result` from the wire envelope**~~ — done. Post-tool
+  hooks receive the inner value, not the `{"result": ...}` envelope.
+- ~~**Surface harness-internal noise errors distinctly**~~ — done.
+  `AgentEvent::Error` is now `{ message, severity }` with an `ErrorSeverity`
+  (`Transient` / `Terminal`); turn-ending failures still go through the
+  `AntigravityError::Turn` path.
+
+### Still open
+
+- **Async hooks** + the `workspace_only` policy combinator.
+- **Background consumer for trigger turns** (surface trigger-turn output via
+  a documented channel/callback instead of halt-and-drain).
+- **Mockable transport trait** (unit-test protocol logic without the binary).
+- **`harness fetch`** (download + extract the matching wheel binary).

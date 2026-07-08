@@ -12,6 +12,69 @@ use super::protocol::{
 };
 use super::{AntigravityError, ChatResponse};
 
+/// Whether a harness-side tool action was executed or blocked by this
+/// client's policy/hook layer.
+///
+/// Surfaced on [`AgentEvent::ToolAction`] so consumers can tell an executed
+/// action apart from one a policy rule or the pre-tool hook rejected — the
+/// two are otherwise indistinguishable in the event stream.
+///
+/// This enum is `#[non_exhaustive]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ToolDecision {
+    /// The action was approved and executed by the harness.
+    Allowed,
+    /// The action was blocked before execution by a policy rule or the
+    /// pre-tool hook; `reason` is the message surfaced to the model.
+    Denied {
+        /// Why the action was blocked.
+        reason: String,
+    },
+}
+
+impl ToolDecision {
+    /// Whether the action was approved and executed.
+    #[must_use]
+    pub const fn is_allowed(&self) -> bool {
+        matches!(self, Self::Allowed)
+    }
+
+    /// Whether the action was blocked before execution.
+    #[must_use]
+    pub const fn is_denied(&self) -> bool {
+        matches!(self, Self::Denied { .. })
+    }
+
+    /// The denial reason, when the action was blocked.
+    #[must_use]
+    pub fn denial_reason(&self) -> Option<&str> {
+        match self {
+            Self::Denied { reason } => Some(reason),
+            Self::Allowed => None,
+        }
+    }
+}
+
+/// Severity of a harness-reported [`AgentEvent::Error`].
+///
+/// This enum is `#[non_exhaustive]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ErrorSeverity {
+    /// A transient, harness-internal error: the harness retries or the
+    /// model reacts and the turn continues. Consumers can safely treat
+    /// these as noise (log at a low level, keep streaming). This is the
+    /// severity of essentially every error event today.
+    Transient,
+    /// A serious error surfaced mid-turn — e.g. a fatal model-backend
+    /// status (HTTP 400/401/403) that nonetheless did not abort the turn.
+    /// Turn-*ending* failures do not arrive as this event at all: they
+    /// surface as [`AntigravityError::Turn`]
+    /// from `chat`/`send_streaming`.
+    Terminal,
+}
+
 /// One event observed while an agent turn runs.
 ///
 /// This enum is `#[non_exhaustive]`: new event kinds may be added in future
@@ -23,8 +86,20 @@ pub enum AgentEvent {
     TextDelta(String),
     /// Incremental thinking text.
     ThinkingDelta(String),
-    /// A harness-side tool action completed (details in the action).
-    ToolAction(Box<ToolAction>),
+    /// A harness-side tool action was observed. `decision` records whether
+    /// it executed or was blocked by this client's policy/hook layer;
+    /// `trajectory_id` identifies the (sub)trajectory it belongs to, so
+    /// parent and subagent actions can be told apart in the interleaved
+    /// stream.
+    ToolAction {
+        /// The action's details.
+        action: Box<ToolAction>,
+        /// Whether the action executed or was blocked.
+        decision: ToolDecision,
+        /// The trajectory this action belongs to (subagents run in their
+        /// own trajectory); `None` when the harness omitted the id.
+        trajectory_id: Option<String>,
+    },
     /// A custom (client-executed) tool was dispatched and its result
     /// returned to the harness.
     ToolCallDispatched {
@@ -35,10 +110,17 @@ pub enum AgentEvent {
     },
     /// The turn finished; carries the assembled response.
     Finished(Box<ChatResponse>),
-    /// The harness reported an error step. Fatal configuration errors
-    /// (HTTP 400/401/403 from the model backend) abort the turn with
-    /// [`AntigravityError::Turn`] instead.
-    Error(String),
+    /// The harness reported an error step. `severity` classifies whether it
+    /// is transient harness-internal noise or a serious mid-turn error (see
+    /// [`ErrorSeverity`]). Fatal configuration errors that abort the turn
+    /// surface as [`AntigravityError::Turn`]
+    /// from the turn call instead of as this event.
+    Error {
+        /// The error message reported by the harness.
+        message: String,
+        /// How serious the error is.
+        severity: ErrorSeverity,
+    },
     /// An event this crate does not recognize (Evergreen).
     Unknown {
         /// The unrecognized oneof field name.
@@ -185,6 +267,18 @@ impl ToolAction {
         }
     }
 
+    /// The invoked subagent's name, for [`Self::InvokeSubagent`] actions
+    /// that carry it. Returns `None` for other actions and on harness
+    /// versions that do not report the name (see
+    /// [`ActionInvokeSubagent`]).
+    #[must_use]
+    pub fn subagent_name(&self) -> Option<&str> {
+        match self {
+            Self::InvokeSubagent(a) => a.name.as_deref(),
+            _ => None,
+        }
+    }
+
     /// The action's arguments as JSON (for policy predicates and hooks).
     #[must_use]
     pub fn args(&self) -> Value {
@@ -286,6 +380,44 @@ mod tests {
         let action = ToolAction::from_step(&step).unwrap();
         assert_eq!(action.tool_name(), "mcp_git_status");
         assert_eq!(action.args()["repo"], ".");
+    }
+
+    #[test]
+    fn test_subagent_name_accessor_and_roundtrip() {
+        // 0.1.5 emits an empty invokeSubagent: name is None.
+        let empty: ActionInvokeSubagent = serde_json::from_str("{}").unwrap();
+        assert_eq!(empty.name, None);
+        let action = ToolAction::InvokeSubagent(empty);
+        assert_eq!(action.subagent_name(), None);
+        // Non-subagent actions never report a name.
+        assert_eq!(
+            ToolAction::RunCommand(ActionRunCommand::default()).subagent_name(),
+            None
+        );
+        // A future harness that emits a name surfaces it, and roundtrips.
+        let named = ActionInvokeSubagent {
+            name: Some("file_auditor".to_string()),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&named).unwrap();
+        assert_eq!(json["name"], "file_auditor");
+        let back: ActionInvokeSubagent = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            ToolAction::InvokeSubagent(back).subagent_name(),
+            Some("file_auditor")
+        );
+    }
+
+    #[test]
+    fn test_tool_decision_helpers() {
+        assert!(ToolDecision::Allowed.is_allowed());
+        assert!(!ToolDecision::Allowed.is_denied());
+        assert_eq!(ToolDecision::Allowed.denial_reason(), None);
+        let denied = ToolDecision::Denied {
+            reason: "nope".to_string(),
+        };
+        assert!(denied.is_denied());
+        assert_eq!(denied.denial_reason(), Some("nope"));
     }
 
     #[test]

@@ -74,9 +74,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 AgentEvent::ToolCallDispatched { name, .. } => {
                     println!("\n[custom tool dispatched: {name}]");
                 }
-                AgentEvent::ToolAction(action) => println!("\n[harness action: {action:?}]"),
+                AgentEvent::ToolAction {
+                    action, decision, ..
+                } => println!("\n[harness action ({decision:?}): {action:?}]"),
                 AgentEvent::Finished(_) => break,
-                AgentEvent::Error(message) => eprintln!("\n[error: {message}]"),
+                AgentEvent::Error { message, severity } => {
+                    eprintln!("\n[error ({severity:?}): {message}]");
+                }
                 _ => {}
             }
         }
