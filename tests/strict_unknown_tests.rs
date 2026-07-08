@@ -1,15 +1,17 @@
 //! Tests for strict-unknown feature flag behavior
 //!
 //! These tests verify that the `strict-unknown` feature flag correctly modifies
-//! deserialization behavior for unknown content types.
+//! deserialization behavior for unknown content and step types.
 //!
 //! When `strict-unknown` is DISABLED (default):
 //! - Unknown content types are captured in `Content::Unknown` variants
+//! - Unknown step types are captured in `Step::Unknown` variants
 //! - Deserialization succeeds even for unrecognized types
 //! - Unknown variants can be serialized back (round-trip support)
 //!
 //! When `strict-unknown` is ENABLED:
 //! - Unknown content types cause deserialization errors
+//! - Unknown step types cause deserialization errors
 //! - Error messages clearly indicate the unknown type and strict mode
 //!
 //! # Test Organization
@@ -31,7 +33,7 @@
 //! cargo test --test strict_unknown_tests --features strict-unknown
 //! ```
 
-use genai_rs::Content;
+use genai_rs::{Content, Step};
 use serde_json::json;
 
 // =============================================================================
@@ -177,6 +179,93 @@ mod graceful_handling {
             panic!("Expected Unknown variant for missing type");
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Step graceful handling (revision 2026-05-20)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn unknown_step_type_deserializes_successfully() {
+        let json = r#"{"type": "future_step", "data": "test", "extra_field": 42}"#;
+        let result: Result<Step, _> = serde_json::from_str(json);
+
+        assert!(
+            result.is_ok(),
+            "Unknown step type should deserialize successfully"
+        );
+
+        let step = result.unwrap();
+        assert!(
+            matches!(&step, Step::Unknown { step_type, .. } if step_type == "future_step"),
+            "Should be Unknown variant with correct step_type"
+        );
+    }
+
+    #[test]
+    fn unknown_step_preserves_all_data() {
+        let json = json!({
+            "type": "new_tool_step",
+            "call_id": "call_1",
+            "payload": {"a": 1}
+        });
+
+        let step: Step = serde_json::from_value(json).unwrap();
+
+        if let Step::Unknown { step_type, data } = step {
+            assert_eq!(step_type, "new_tool_step");
+            assert_eq!(data["call_id"], "call_1");
+            assert_eq!(data["payload"]["a"], 1);
+        } else {
+            panic!("Expected Unknown variant");
+        }
+    }
+
+    #[test]
+    fn unknown_step_roundtrip_serialization() {
+        let original_json = json!({
+            "type": "experimental_step",
+            "value": 123,
+            "signature": "sig_abc"
+        });
+
+        let step: Step = serde_json::from_value(original_json.clone()).unwrap();
+        let serialized = serde_json::to_value(&step).unwrap();
+
+        assert_eq!(serialized["type"], "experimental_step");
+        assert_eq!(serialized["value"], 123);
+        assert_eq!(serialized["signature"], "sig_abc");
+    }
+
+    #[test]
+    fn mixed_known_and_unknown_steps_all_captured() {
+        let steps: Vec<Step> = serde_json::from_value(json!([
+            {"type": "user_input", "content": [{"type": "text", "text": "hi"}]},
+            {"type": "unknown_step_a", "data": "a"},
+            {"type": "model_output", "content": [{"type": "text", "text": "hello"}]}
+        ]))
+        .unwrap();
+
+        assert_eq!(steps.len(), 3);
+        assert!(matches!(&steps[0], Step::UserInput { .. }));
+        assert!(matches!(
+            &steps[1],
+            Step::Unknown { step_type, .. } if step_type == "unknown_step_a"
+        ));
+        assert!(matches!(&steps[2], Step::ModelOutput { .. }));
+    }
+
+    #[test]
+    fn step_missing_type_field_handled_gracefully() {
+        let json = json!({"no_type_field": "value"});
+        let result: Result<Step, _> = serde_json::from_value(json);
+
+        assert!(result.is_ok());
+        if let Step::Unknown { step_type, .. } = result.unwrap() {
+            assert_eq!(step_type, "<missing type>");
+        } else {
+            panic!("Expected Unknown variant for missing type");
+        }
+    }
 }
 
 // =============================================================================
@@ -261,12 +350,6 @@ mod strict_mode {
             .expect("Text should deserialize in strict mode");
         assert!(matches!(text, Content::Text { .. }));
 
-        // Thought
-        let thought: Content =
-            serde_json::from_value(json!({"type": "thought", "text": "thinking..."}))
-                .expect("Thought should deserialize in strict mode");
-        assert!(matches!(thought, Content::Thought { .. }));
-
         // Image
         let image: Content = serde_json::from_value(json!({
             "type": "image",
@@ -276,14 +359,25 @@ mod strict_mode {
         .expect("Image should deserialize in strict mode");
         assert!(matches!(image, Content::Image { .. }));
 
-        // FunctionCall
-        let func_call: Content = serde_json::from_value(json!({
-            "type": "function_call",
-            "name": "test_func",
-            "arguments": {}
+        // Audio (with the new sample_rate/channels fields)
+        let audio: Content = serde_json::from_value(json!({
+            "type": "audio",
+            "data": "base64data",
+            "mime_type": "audio/wav",
+            "sample_rate": 24000,
+            "channels": 1
         }))
-        .expect("FunctionCall should deserialize in strict mode");
-        assert!(matches!(func_call, Content::FunctionCall { .. }));
+        .expect("Audio should deserialize in strict mode");
+        assert!(matches!(audio, Content::Audio { .. }));
+
+        // Document
+        let document: Content = serde_json::from_value(json!({
+            "type": "document",
+            "data": "base64data",
+            "mime_type": "application/pdf"
+        }))
+        .expect("Document should deserialize in strict mode");
+        assert!(matches!(document, Content::Document { .. }));
     }
 
     #[test]
@@ -300,6 +394,101 @@ mod strict_mode {
             "Array containing unknown type should fail in strict mode"
         );
     }
+
+    // -------------------------------------------------------------------------
+    // Step strict handling (revision 2026-05-20): strict-unknown applies to
+    // unknown Step types the same way it applies to Content.
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn unknown_step_type_causes_deserialization_error() {
+        let json = r#"{"type": "future_step", "data": "test"}"#;
+        let result: Result<Step, _> = serde_json::from_str(json);
+
+        assert!(
+            result.is_err(),
+            "Unknown step type should fail deserialization in strict mode"
+        );
+    }
+
+    #[test]
+    fn step_error_message_contains_type_and_guidance() {
+        let json = r#"{"type": "experimental_step_type", "data": "test"}"#;
+        let result: Result<Step, _> = serde_json::from_str(json);
+
+        let err = result.expect_err("Should fail in strict mode");
+        let err_msg = err.to_string();
+
+        assert!(
+            err_msg.contains("experimental_step_type"),
+            "Error message should contain the unknown step type. Got: {}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains("strict") || err_msg.contains("Strict"),
+            "Error message should mention strict mode. Got: {}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains("strict-unknown") || err_msg.contains("feature"),
+            "Error message should mention the feature flag. Got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn known_steps_still_deserialize_correctly() {
+        let user: Step = serde_json::from_value(json!({
+            "type": "user_input",
+            "content": [{"type": "text", "text": "hi"}]
+        }))
+        .expect("user_input should deserialize in strict mode");
+        assert!(matches!(user, Step::UserInput { .. }));
+
+        let model: Step = serde_json::from_value(json!({
+            "type": "model_output",
+            "content": [{"type": "text", "text": "hello"}]
+        }))
+        .expect("model_output should deserialize in strict mode");
+        assert!(matches!(model, Step::ModelOutput { .. }));
+
+        let call: Step = serde_json::from_value(json!({
+            "type": "function_call",
+            "id": "call_1",
+            "name": "get_weather",
+            "arguments": {"city": "Paris"}
+        }))
+        .expect("function_call should deserialize in strict mode");
+        assert!(matches!(call, Step::FunctionCall { .. }));
+    }
+
+    #[test]
+    fn fails_on_any_unknown_step_in_array() {
+        let result: Result<Vec<Step>, _> = serde_json::from_value(json!([
+            {"type": "user_input", "content": [{"type": "text", "text": "hi"}]},
+            {"type": "unknown_middle_step", "data": "x"},
+            {"type": "model_output", "content": []}
+        ]));
+
+        assert!(
+            result.is_err(),
+            "Array containing unknown step type should fail in strict mode"
+        );
+    }
+
+    #[test]
+    fn model_output_with_unknown_content_fails() {
+        // Unknown Content nested inside a known Step also fails in strict mode.
+        let result: Result<Step, _> = serde_json::from_value(json!({
+            "type": "model_output",
+            "content": [{"type": "future_content", "data": "x"}]
+        }));
+
+        assert!(
+            result.is_err(),
+            "Step containing unknown content should fail in strict mode"
+        );
+    }
 }
 
 // =============================================================================
@@ -314,24 +503,34 @@ mod common {
         // Text
         let _: Content = serde_json::from_value(json!({"type": "text", "text": "hello"})).unwrap();
 
-        // Thought (contains signature, not text - per wire format)
-        let _: Content =
-            serde_json::from_value(json!({"type": "thought", "signature": "Eq0JCqoJ..."})).unwrap();
-
-        // ThoughtSignature
-        let _: Content =
-            serde_json::from_value(json!({"type": "thought_signature", "signature": "sig123"}))
-                .unwrap();
+        // Text with annotations
+        let _: Content = serde_json::from_value(json!({
+            "type": "text",
+            "text": "hello",
+            "annotations": [{
+                "type": "url_citation",
+                "url": "https://example.com",
+                "title": "Example",
+                "start_index": 0,
+                "end_index": 5
+            }]
+        }))
+        .unwrap();
 
         // Image
         let _: Content =
             serde_json::from_value(json!({"type": "image", "data": "x", "mime_type": "image/png"}))
                 .unwrap();
 
-        // Audio
-        let _: Content =
-            serde_json::from_value(json!({"type": "audio", "data": "x", "mime_type": "audio/mp3"}))
-                .unwrap();
+        // Audio (including the new sample_rate/channels fields)
+        let _: Content = serde_json::from_value(json!({
+            "type": "audio",
+            "data": "x",
+            "mime_type": "audio/wav",
+            "sample_rate": 24000,
+            "channels": 1
+        }))
+        .unwrap();
 
         // Video
         let _: Content =
@@ -343,83 +542,156 @@ mod common {
             json!({"type": "document", "data": "x", "mime_type": "application/pdf"}),
         )
         .unwrap();
+    }
 
-        // FunctionCall
-        let _: Content =
-            serde_json::from_value(json!({"type": "function_call", "name": "fn", "arguments": {}}))
-                .unwrap();
-
-        // FunctionResult
-        let _: Content = serde_json::from_value(
-            json!({"type": "function_result", "name": "fn", "call_id": "1", "result": {}}),
-        )
-        .unwrap();
-
-        // CodeExecutionCall
-        let _: Content = serde_json::from_value(
-            json!({"type": "code_execution_call", "id": "1", "language": "PYTHON", "code": "print(1)"}),
-        )
-        .unwrap();
-
-        // CodeExecutionResult
-        let _: Content = serde_json::from_value(json!({
-            "type": "code_execution_result",
-            "call_id": "1",
-            "outcome": "OUTCOME_OK",
-            "output": "1"
+    #[test]
+    fn all_known_step_types_deserialize() {
+        // UserInput
+        let _: Step = serde_json::from_value(json!({
+            "type": "user_input",
+            "content": [{"type": "text", "text": "hi"}]
         }))
         .unwrap();
 
-        // GoogleSearchCall
-        let _: Content = serde_json::from_value(json!({
+        // ModelOutput
+        let _: Step = serde_json::from_value(json!({
+            "type": "model_output",
+            "content": [{"type": "text", "text": "hello"}]
+        }))
+        .unwrap();
+
+        // Thought (signature + optional summary)
+        let _: Step = serde_json::from_value(json!({
+            "type": "thought",
+            "signature": "Eq0JCqoJ...",
+            "summary": [{"type": "text", "text": "Reasoning about the question"}]
+        }))
+        .unwrap();
+
+        // FunctionCall
+        let _: Step = serde_json::from_value(json!({
+            "type": "function_call",
+            "id": "call_1",
+            "name": "get_weather",
+            "arguments": {"city": "Paris"}
+        }))
+        .unwrap();
+
+        // FunctionResult
+        let _: Step = serde_json::from_value(json!({
+            "type": "function_result",
+            "call_id": "call_1",
+            "name": "get_weather",
+            "result": {"temp": 22},
+            "is_error": false
+        }))
+        .unwrap();
+
+        // CodeExecutionCall (language/code nested under arguments)
+        let _: Step = serde_json::from_value(json!({
+            "type": "code_execution_call",
+            "id": "exec_1",
+            "arguments": {"language": "python", "code": "print(1)"},
+            "signature": "sig1"
+        }))
+        .unwrap();
+
+        // CodeExecutionResult
+        let _: Step = serde_json::from_value(json!({
+            "type": "code_execution_result",
+            "call_id": "exec_1",
+            "result": "1",
+            "is_error": false,
+            "signature": "sig2"
+        }))
+        .unwrap();
+
+        // UrlContextCall (urls nested under arguments)
+        let _: Step = serde_json::from_value(json!({
+            "type": "url_context_call",
+            "id": "ctx_1",
+            "arguments": {"urls": ["https://example.com"]}
+        }))
+        .unwrap();
+
+        // UrlContextResult
+        let _: Step = serde_json::from_value(json!({
+            "type": "url_context_result",
+            "call_id": "ctx_1",
+            "result": [{"url": "https://example.com", "status": "success"}]
+        }))
+        .unwrap();
+
+        // GoogleSearchCall (queries nested under arguments)
+        let _: Step = serde_json::from_value(json!({
             "type": "google_search_call",
-            "id": "test-id",
-            "arguments": {"queries": ["test query"]}
+            "id": "search_1",
+            "arguments": {"queries": ["test query"]},
+            "search_type": "web_search"
         }))
         .unwrap();
 
         // GoogleSearchResult
-        let _: Content = serde_json::from_value(json!({
+        let _: Step = serde_json::from_value(json!({
             "type": "google_search_result",
-            "call_id": "test-id",
+            "call_id": "search_1",
             "result": [{"title": "Test", "url": "https://example.com"}]
         }))
         .unwrap();
 
-        // GoogleMapsCall
-        let _: Content = serde_json::from_value(json!({
+        // McpServerToolCall
+        let _: Step = serde_json::from_value(json!({
+            "type": "mcp_server_tool_call",
+            "id": "mcp_1",
+            "name": "lookup",
+            "server_name": "kb",
+            "arguments": {"q": "rust"}
+        }))
+        .unwrap();
+
+        // McpServerToolResult
+        let _: Step = serde_json::from_value(json!({
+            "type": "mcp_server_tool_result",
+            "call_id": "mcp_1",
+            "name": "lookup",
+            "server_name": "kb",
+            "result": {"answer": 42}
+        }))
+        .unwrap();
+
+        // FileSearchCall
+        let _: Step = serde_json::from_value(json!({
+            "type": "file_search_call",
+            "id": "fs_1"
+        }))
+        .unwrap();
+
+        // FileSearchResult
+        let _: Step = serde_json::from_value(json!({
+            "type": "file_search_result",
+            "call_id": "fs_1",
+            "result": [{"text": "chunk"}]
+        }))
+        .unwrap();
+
+        // GoogleMapsCall (queries nested under arguments)
+        let _: Step = serde_json::from_value(json!({
             "type": "google_maps_call",
-            "id": "maps-call-123",
-            "arguments": {"queries": ["coffee shops near Times Square"]},
+            "id": "maps_1",
+            "arguments": {"queries": ["coffee near Times Square"]},
             "signature": "ErIE..."
         }))
         .unwrap();
 
         // GoogleMapsResult
-        let _: Content = serde_json::from_value(json!({
+        let _: Step = serde_json::from_value(json!({
             "type": "google_maps_result",
-            "call_id": "maps-123",
+            "call_id": "maps_1",
             "result": [{
                 "places": [{"name": "Central Park", "place_id": "abc123"}],
                 "widget_context_token": "token456"
             }],
             "signature": "SigABC..."
-        }))
-        .unwrap();
-
-        // UrlContextCall (wire format has id + arguments.urls)
-        let _: Content = serde_json::from_value(json!({
-            "type": "url_context_call",
-            "id": "ctx_123",
-            "arguments": {"urls": ["https://example.com"]}
-        }))
-        .unwrap();
-
-        // UrlContextResult (wire format has call_id + result array)
-        let _: Content = serde_json::from_value(json!({
-            "type": "url_context_result",
-            "call_id": "ctx_123",
-            "result": [{"url": "https://example.com", "status": "success"}]
         }))
         .unwrap();
     }
@@ -434,13 +706,6 @@ mod common {
         assert_eq!(json["type"], "text");
         assert_eq!(json["text"], "hello");
 
-        let thought = Content::Thought {
-            signature: Some("Eq0JCqoJ...signature".to_string()),
-        };
-        let json = serde_json::to_value(&thought).unwrap();
-        assert_eq!(json["type"], "thought");
-        assert_eq!(json["signature"], "Eq0JCqoJ...signature");
-
         let image = Content::Image {
             data: Some("b64".to_string()),
             uri: None,
@@ -451,5 +716,41 @@ mod common {
         assert_eq!(json["type"], "image");
         assert_eq!(json["data"], "b64");
         assert_eq!(json["mime_type"], "image/png");
+
+        let audio = Content::Audio {
+            data: Some("b64".to_string()),
+            uri: None,
+            mime_type: Some("audio/wav".to_string()),
+            sample_rate: Some(24000),
+            channels: Some(1),
+        };
+        let json = serde_json::to_value(&audio).unwrap();
+        assert_eq!(json["type"], "audio");
+        assert_eq!(json["sample_rate"], 24000);
+        assert_eq!(json["channels"], 1);
+    }
+
+    #[test]
+    fn known_steps_roundtrip_correctly() {
+        let thought = Step::Thought {
+            signature: Some("Eq0JCqoJ...signature".to_string()),
+            summary: vec![],
+        };
+        let json = serde_json::to_value(&thought).unwrap();
+        assert_eq!(json["type"], "thought");
+        assert_eq!(json["signature"], "Eq0JCqoJ...signature");
+
+        let call = Step::function_call("call_1", "get_weather", json!({"city": "Paris"}));
+        let json = serde_json::to_value(&call).unwrap();
+        assert_eq!(json["type"], "function_call");
+        assert_eq!(json["id"], "call_1");
+        assert_eq!(json["name"], "get_weather");
+        assert_eq!(json["arguments"]["city"], "Paris");
+
+        let model = Step::model_text("hello");
+        let json = serde_json::to_value(&model).unwrap();
+        assert_eq!(json["type"], "model_output");
+        assert_eq!(json["content"][0]["type"], "text");
+        assert_eq!(json["content"][0]["text"], "hello");
     }
 }

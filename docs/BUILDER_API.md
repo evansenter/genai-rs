@@ -11,6 +11,7 @@ This guide covers the `InteractionBuilder` fluent API, including method naming c
 - [Validation Errors](#validation-errors)
 - [Storage Constraints](#storage-constraints)
 - [Best Practices](#best-practices)
+- [Retrieving Stored Interactions](#retrieving-stored-interactions)
 
 ## Overview
 
@@ -43,11 +44,15 @@ Methods follow a consistent naming pattern based on their behavior:
 | `with_model()` | with | replaces | Mutually exclusive with `with_agent()` |
 | `with_agent()` | with | replaces | Mutually exclusive with `with_model()` |
 | `with_agent_config()` | with | replaces | Requires `with_agent()` |
-| `with_system_instruction()` | with | replaces | |
+| `with_system_instruction()` | with | replaces | Plain string; not inherited across turns |
 | `with_timeout()` | with | replaces | |
+| `with_service_tier(ServiceTier)` | with | replaces | `Flex`/`Standard`/`Priority` (wire: lowercase `"flex"`/`"standard"`/`"priority"`) |
+| `with_cached_content(impl Into<String>)` | with | replaces | References an explicit context cache (e.g. `"cachedContents/xyz"`) |
+| `with_webhook_config(WebhookConfig)` | with | replaces | Per-request webhook routing (`uris` + `user_metadata`) |
+| `with_environment(impl Into<EnvironmentSpec>)` | with | replaces | Environment ID string or typed `RemoteEnvironment` |
 | **Input** |
 | `with_text()` | with | replaces | Composes with `with_history()` |
-| `with_history()` | with | replaces | Composes with `with_text()` |
+| `with_history(Vec<Step>)` | with | replaces | Composes with `with_text()` |
 | `with_content()` | with | replaces | For multimodal; incompatible with history |
 | **Tools** |
 | `add_function()` | add | accumulates | Single function declaration |
@@ -65,12 +70,26 @@ Methods follow a consistent naming pattern based on their behavior:
 | ~~`with_file_search()`~~ | — | — | **Removed** — use `add_tool(FileSearchConfig::new(stores))` |
 | ~~`with_file_search_config()`~~ | — | — | **Removed** — use `add_tool(FileSearchConfig::new(stores))` |
 | **Generation Config** |
-| `with_allowed_tools(Vec<String>)` | with | replaces | Restricts model to named tools |
+| `with_function_calling_mode()` | with | replaces | Auto/Any/None/Validated (wire: lowercase `"auto"`/`"any"`/`"none"`/`"validated"`); sets `tool_choice` to the plain-mode form |
+| `with_tool_choice(ToolChoice)` | with | replaces | Sets the full `tool_choice` union directly; escape hatch for custom shapes |
+| `with_allowed_tools(Vec<String>)` | with | replaces | Restricts model to named tools; sets `tool_choice` to the `AllowedTools` restriction object (preserves a previously set mode) |
 | `with_image_config(ImageConfig)` | with | replaces | Image generation aspect ratio and size |
-| `with_function_calling_mode()` | with | replaces | Auto/Any/None/Validated |
+| `with_video_config(VideoConfig)` | with | replaces | Video generation task mode (`generation_config.video_config`) |
+| `with_speech_config(SpeechConfig)` | with | replaces | Single-voice TTS (sends a single-entry `speech_config` list) |
+| `with_speech_configs(Vec<SpeechConfig>)` | with | replaces | Full multi-speaker `speech_config` list |
+| `add_speech_config(SpeechConfig)` | add | accumulates | Appends one speaker config |
 | `with_thinking_level()` | with | replaces | Chain-of-thought reasoning level |
 | `with_seed()` | with | replaces | Deterministic output |
 | `with_stop_sequences()` | with | replaces | Halt generation on sequences |
+| `with_presence_penalty(f32)` | with | replaces | Penalizes tokens already present; range [-2.0, 2.0] |
+| `with_frequency_penalty(f32)` | with | replaces | Penalizes tokens by frequency; range [-2.0, 2.0] |
+| **Response Format & Modalities** |
+| `with_response_format(impl Into<ResponseFormat>)` | with | replaces | Typed format (text/audio/image/video) or a raw JSON schema `serde_json::Value` (maps to the text/`application/json` form) |
+| `with_response_formats(Vec<ResponseFormat>)` | with | replaces | List form — one format per output modality |
+| `with_response_modalities(Vec<String>)` | with | replaces | Requested output modalities |
+| `with_image_output()` / `with_audio_output()` / `with_video_output()` | with | replaces | Modality shortcuts |
+
+Note: `GenerationConfig` no longer has a `top_k` field (removed in API revision 2026-05-20), so there is no `with_top_k()` builder method. `FileSearchConfig::with_top_k()` (a file-search retrieval setting) is unrelated and still exists.
 
 ### Tool Configuration Structs
 
@@ -79,10 +98,17 @@ For tools with optional configuration, use a config struct with `add_tool()`:
 | Config Struct | Required Fields | Optional Methods |
 |---|---|---|
 | `GoogleSearchConfig` | (none) | `.with_search_types(Vec<SearchType>)` |
-| `GoogleMapsConfig` | (none) | `.with_widget()` |
-| `McpServerConfig` | `name`, `url` | `.with_allowed_tools(...)`, `.with_headers(...)` |
-| `ComputerUseConfig` | (none) | `.excluding(Vec<String>)` |
+| `GoogleMapsConfig` | (none) | `.with_widget()`, `.with_location(latitude, longitude)` |
+| `McpServerConfig` | `name`, `url` | `.with_allowed_tools(Vec<String>)`, `.with_allowed_tools_config(Vec<AllowedTools>)`, `.with_headers(...)` |
+| `ComputerUseConfig` | (none) | `.with_environment(env)`, `.excluding(Vec<String>)`, `.with_prompt_injection_detection(bool)`, `.disabling_safety_policies(Vec<String>)` |
 | `FileSearchConfig` | `store_names` | `.with_top_k(i32)`, `.with_metadata_filter(String)` |
+| `RetrievalConfig` | (none) | `.with_vertex_ai_search(...)`, `.with_rag_store(...)`, `.with_exa_ai_search(...)`, `.with_parallel_ai_search(...)`, `.with_retrieval_types(Vec<RetrievalType>)` |
+
+Notes:
+
+- `ComputerUseConfig::with_environment()` accepts `"browser"` (default), `"mobile"`, or `"desktop"`.
+- `McpServerConfig::with_allowed_tools(Vec<String>)` wraps the names into a single `AllowedTools` entry; use `.with_allowed_tools_config(Vec<AllowedTools>)` to supply pre-built `AllowedTools` objects (e.g. with a mode via `AllowedTools::new(tools).with_mode(mode)`).
+- Each `RetrievalConfig::with_*` backend method also enables the corresponding `RetrievalType`, keeping `retrieval_types` in sync; `.with_retrieval_types()` is the explicit escape hatch.
 
 **Convention**: Prefer struct variants with optional fields over unit variants when the API has configuration options. This avoids breaking changes when adding fields later.
 
@@ -92,9 +118,9 @@ The builder has three ways to set the input content:
 
 | Method | Purpose | Composes With |
 |--------|---------|---------------|
-| `with_text(str)` | Simple text message | `with_history()` |
-| `with_history(Vec<Turn>)` | Conversation history | `with_text()` |
-| `with_content(Vec<Content>)` | Multimodal content | — |
+| `with_text(str)` | Simple text message | `with_history()`, `with_content()` |
+| `with_history(Vec<Step>)` | Conversation history | `with_text()` |
+| `with_content(Vec<Content>)` | Multimodal content | `with_text()` |
 | `conversation()...done()` | Fluent conversation builder | — |
 
 ### How Inputs Compose at Build Time
@@ -104,13 +130,16 @@ content_input set?
 ├── Yes
 │   └── history set?
 │       ├── Yes → ERROR (incompatible)
-│       └── No  → Content([...content_items])
+│       └── No
+│           └── current_message set?
+│               ├── Yes → Content([Content::text(message), ...content_items])
+│               └── No  → Content([...content_items])
 └── No
     └── history set?
         ├── Yes
         │   └── current_message set?
-        │       ├── Yes → Turns([...history, Turn::user(text)])
-        │       └── No  → Turns([...history])
+        │       ├── Yes → Steps([...history, Step::user_text(message)])
+        │       └── No  → Steps([...history])
         └── No
             └── current_message set?
                 ├── Yes → Text(message)
@@ -191,22 +220,22 @@ client.interaction()
     .build()  // Returns Err!
 ```
 
-**Workaround**: For multimodal multi-turn, build `Turn` objects with content arrays:
+**Workaround**: For multimodal multi-turn, build `Step` objects with content arrays:
 
 ```rust,ignore
-use genai_rs::{Turn, TurnContent, Content, Role};
+use genai_rs::{Step, Content};
 
-let multimodal_turn = Turn {
-    role: Role::User,
-    content: TurnContent::Parts(vec![
-        Content::text("What's in this image?"),
-        Content::image_data(base64_data, "image/png"),
-    ]),
-};
+let multimodal_step = Step::user_input(vec![
+    Content::text("What's in this image?"),
+    Content::image_data(base64_data, "image/png"),
+]);
+
+let mut history = existing_history;
+history.push(multimodal_step);
 
 client.interaction()
     .with_model("gemini-3-flash-preview")
-    .with_history(vec![...history, multimodal_turn])
+    .with_history(history)
     .create()
     .await?;
 ```
@@ -298,7 +327,7 @@ Prefer the specific method for your use case:
 ```rust,ignore
 // Good: Clear intent
 .with_text("Hello")  // Simple text
-.with_history(turns)  // Multi-turn
+.with_history(steps)  // Multi-turn (Vec<Step>)
 .with_content(vec![Content::text("Question"), Content::image_data(...)]) // Multimodal
 
 // Avoid: Generic method is less clear
@@ -341,7 +370,7 @@ let response = client.execute(request).await?;
 
 ### 4. Use ConversationBuilder for Inline Conversations
 
-For test fixtures or inline conversation construction:
+For test fixtures or inline conversation construction. `.user()` and `.model()` produce `user_input`/`model_output` `Step`s under the hood:
 
 ```rust,ignore
 let response = client.interaction()
@@ -354,6 +383,15 @@ let response = client.interaction()
     .create()
     .await?;
 ```
+
+## Retrieving Stored Interactions
+
+When storage is enabled, interactions can be fetched back by ID via the `Client`:
+
+| Method | Behavior |
+|--------|----------|
+| `client.get_interaction(id)` | Fetches the interaction; response `input` field is `None` |
+| `client.get_interaction_with_input(id)` | Fetches with `include_input=true` so the response's `input: Option<InteractionInput>` is populated |
 
 ## Related Documentation
 

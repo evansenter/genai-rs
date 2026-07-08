@@ -31,12 +31,12 @@ mod common;
 use common::{
     consume_auto_function_stream, consume_stream, extended_test_timeout, get_client,
     get_time_function, get_weather_function, interaction_builder, is_long_conversation_api_error,
-    retry_on_any_error, stateful_builder, test_timeout, validate_response_semantically,
-    with_timeout,
+    is_safety_block_error, retry_on_any_error, stateful_builder, test_timeout,
+    validate_response_semantically, with_timeout,
 };
 use genai_rs::{
-    CallableFunction, Content, FunctionDeclaration, FunctionExecutionResult, GenaiError,
-    InteractionInput, InteractionStatus, ThinkingLevel,
+    CallableFunction, FunctionDeclaration, FunctionExecutionResult, GenaiError, InteractionStatus,
+    Step, ThinkingLevel,
 };
 use genai_rs_macros::tool;
 use serde_json::json;
@@ -174,17 +174,17 @@ mod basic {
             let call = &calls[0];
             println!("Function called: {} with args: {}", call.name, call.args);
             assert_eq!(call.name, "get_server_status");
-            assert!(call.id.is_some(), "Should have call ID");
+            assert!(!call.id.is_empty(), "Should have call ID");
 
-            let result = Content::function_result(
+            let result = Step::function_result(
                 "get_server_status",
-                call.id.unwrap().to_string(),
+                call.id.to_string(),
                 json!({"status": "online", "uptime": "99.9%"}),
             );
 
             let response2 = stateful_builder(&client)
                 .with_previous_interaction(response.id.as_ref().expect("id should exist"))
-                .with_content(vec![result])
+                .with_history(vec![result])
                 .add_function(status_func)
                 .create()
                 .await
@@ -273,15 +273,15 @@ mod basic {
         }
 
         let call = &calls[0];
-        let error_result = Content::function_result(
+        let error_result = Step::function_result(
             "get_secret_data",
-            call.id.unwrap().to_string(),
+            call.id.to_string(),
             json!({"error": "Access denied: insufficient permissions"}),
         );
 
         let response2 = stateful_builder(&client)
             .with_previous_interaction(response1.id.as_ref().expect("id should exist"))
-            .with_content(vec![error_result])
+            .with_history(vec![error_result])
             .add_function(failing_func)
             .create()
             .await
@@ -393,7 +393,7 @@ mod parallel {
 
             for call in &function_calls {
                 println!("  Function: {} (id: {:?})", call.name, call.id);
-                assert!(call.id.is_some(), "Function call should have an ID");
+                assert!(!call.id.is_empty(), "Function call should have an ID");
             }
 
             if function_calls.len() >= 2 {
@@ -489,9 +489,9 @@ mod parallel {
                         "get_time" => json!({"timezone": "CET", "time": "14:30"}),
                         _ => json!({"result": "ok"}),
                     };
-                    Content::function_result(
+                    Step::function_result(
                         call.name.to_string(),
-                        call.id.expect("Should have ID").to_string(),
+                        call.id.to_string(),
                         result_data,
                     )
                 })
@@ -501,7 +501,7 @@ mod parallel {
 
             let response2 = stateful_builder(&client)
                 .with_previous_interaction(response1.id.as_ref().expect("id should exist"))
-                .with_content(results)
+                .with_history(results)
                 .create()
                 .await
                 .expect("Parallel results turn failed - tools should not be required");
@@ -543,13 +543,7 @@ mod parallel {
             let calls: Vec<_> = response1
                 .function_calls()
                 .iter()
-                .map(|c| {
-                    (
-                        c.name.to_string(),
-                        c.id.map(|s| s.to_string()),
-                        c.args.clone(),
-                    )
-                })
+                .map(|c| (c.name.to_string(), c.id.to_string(), c.args.clone()))
                 .collect();
 
             if calls.len() >= 2 {
@@ -563,18 +557,14 @@ mod parallel {
                         "get_time" => json!({"timezone": "JST", "time": "14:30"}),
                         _ => json!({"result": "unknown"}),
                     };
-                    results.push(Content::function_result(
-                        name,
-                        id.as_ref().expect("call should have ID"),
-                        result,
-                    ));
+                    results.push(Step::function_result(name.clone(), id.clone(), result));
                 }
 
                 let response2 = client
                     .interaction()
                     .with_model("gemini-3-flash-preview")
                     .with_previous_interaction(response1.id.as_ref().expect("id required"))
-                    .with_content(results)
+                    .with_history(results)
                     .create()
                     .await
                     .expect("Function result turn failed - order might matter?");
@@ -622,13 +612,7 @@ mod parallel {
             let calls: Vec<_> = response1
                 .function_calls()
                 .iter()
-                .map(|c| {
-                    (
-                        c.name.to_string(),
-                        c.id.map(|s| s.to_string()),
-                        c.args.clone(),
-                    )
-                })
+                .map(|c| (c.name.to_string(), c.id.to_string(), c.args.clone()))
                 .collect();
 
             if !calls.is_empty() {
@@ -643,18 +627,14 @@ mod parallel {
                         }
                         _ => json!({"result": "ok"}),
                     };
-                    results.push(Content::function_result(
-                        name,
-                        id.as_ref().expect("call should have ID"),
-                        result,
-                    ));
+                    results.push(Step::function_result(name.clone(), id.clone(), result));
                 }
 
                 let response2 = client
                     .interaction()
                     .with_model("gemini-3-flash-preview")
                     .with_previous_interaction(response1.id.as_ref().expect("id required"))
-                    .with_content(results)
+                    .with_history(results)
                     .create()
                     .await
                     .expect("Function result turn failed");
@@ -730,15 +710,15 @@ mod sequential {
 
             // Step 2: Provide first function result
             let call1 = &calls1[0];
-            let result1 = Content::function_result(
+            let result1 = Step::function_result(
                 call1.name.to_string(),
-                call1.id.unwrap().to_string(),
+                call1.id.to_string(),
                 json!({"city": "Tokyo", "temperature": 22.0, "unit": "celsius"}),
             );
 
             let response2 = stateful_builder(&client)
                 .with_previous_interaction(response1.id.as_ref().expect("id should exist"))
-                .with_content(vec![result1])
+                .with_history(vec![result1])
                 .add_functions(vec![get_weather.clone(), convert_temp.clone()])
                 .create()
                 .await
@@ -754,15 +734,15 @@ mod sequential {
                     call2.name, call2.args
                 );
 
-                let result2 = Content::function_result(
+                let result2 = Step::function_result(
                     call2.name.to_string(),
-                    call2.id.unwrap().to_string(),
+                    call2.id.to_string(),
                     json!({"value": 71.6, "unit": "fahrenheit"}),
                 );
 
                 let response3 = stateful_builder(&client)
                     .with_previous_interaction(response2.id.as_ref().expect("id should exist"))
-                    .with_content(vec![result2])
+                    .with_history(vec![result2])
                     .add_functions(vec![get_weather, convert_temp])
                     .create()
                     .await
@@ -808,16 +788,16 @@ mod sequential {
             }
 
             let call = &calls[0];
-            let result = Content::function_result(
+            let result = Step::function_result(
                 call.name.to_string(),
-                call.id.expect("Should have ID").to_string(),
+                call.id.to_string(),
                 json!({"city": "Tokyo", "temperature": "22°C", "conditions": "sunny"}),
             );
 
             // Step 2: Provide function result WITHOUT resending tools
             let response2 = stateful_builder(&client)
                 .with_previous_interaction(response1.id.as_ref().expect("id should exist"))
-                .with_content(vec![result])
+                .with_history(vec![result])
                 .create()
                 .await
                 .expect("Function result turn failed - tools should not be required");
@@ -883,17 +863,13 @@ mod sequential {
                             "get_weather" => json!({"city": "Tokyo", "temperature": "22°C", "conditions": "sunny"}),
                             _ => json!({"result": "ok"}),
                         };
-                        Content::function_result(
-                            call.name.clone(),
-                            call.id.as_ref().expect("Should have ID").clone(),
-                            result_data,
-                        )
+                        Step::function_result(call.name.clone(), call.id.clone(), result_data)
                     })
                     .collect();
 
                 let next_response = stateful_builder(&client)
                     .with_previous_interaction(current_response.id.as_ref().expect("id should exist"))
-                    .with_content(results)
+                    .with_history(results)
                     .create()
                     .await
                     .expect("Compositional chain step failed");
@@ -1335,13 +1311,12 @@ mod stateless {
                     .build(),
             ];
 
-            let mut history: Vec<genai_rs::Content> =
-                vec![Content::text("What's the weather in Tokyo?")];
+            let mut history: Vec<Step> = vec![Step::user_text("What's the weather in Tokyo?")];
 
             let response1 = client
                 .interaction()
                 .with_model("gemini-3-flash-preview")
-                .with_input(InteractionInput::Content(history.clone()))
+                .with_history(history.clone())
                 .add_functions(functions.clone())
                 .with_store_disabled()
                 .create()
@@ -1354,17 +1329,18 @@ mod stateless {
                 "Expected function call for weather query"
             );
 
+            // Replay the model's output steps (function calls plus any thought
+            // signatures) before appending the function results.
+            history.extend(response1.output_steps());
             for call in &calls {
-                let call_id = call.id.expect("Function call should have ID");
-                history.push(Content::function_call(call.name, call.args.clone()));
                 let result = json!({"city": "Tokyo", "temperature": "22°C", "conditions": "sunny"});
-                history.push(Content::function_result(call.name, call_id, result));
+                history.push(Step::function_result(call.name, call.id, result));
             }
 
             let response2 = client
                 .interaction()
                 .with_model("gemini-3-flash-preview")
-                .with_input(InteractionInput::Content(history.clone()))
+                .with_history(history.clone())
                 .add_functions(functions.clone())
                 .with_store_disabled()
                 .create()
@@ -1403,13 +1379,13 @@ mod stateless {
             .required(vec!["city".to_string()])
             .build();
 
-        let history: Vec<genai_rs::Content> = vec![Content::text("What's the weather in Paris?")];
+        let history: Vec<Step> = vec![Step::user_text("What's the weather in Paris?")];
 
         // Stateless with thinking enabled, force function calling
         let response = client
             .interaction()
             .with_model("gemini-3-flash-preview")
-            .with_input(InteractionInput::Content(history))
+            .with_history(history)
             .add_function(get_weather)
             .with_thinking_level(ThinkingLevel::Medium)
             .with_function_calling_mode(FunctionCallingMode::Any)
@@ -1480,12 +1456,12 @@ mod thinking {
 
         let call = &function_calls[0];
         println!("Turn 1 function call: {} (id: {:?})", call.name, call.id);
-        assert!(call.id.is_some(), "Function call must have an id");
+        assert!(!call.id.is_empty(), "Function call must have an id");
 
         // Turn 2: Provide function result
-        let function_result = Content::function_result(
+        let function_result = Step::function_result(
             "get_weather",
-            call.id.expect("call_id should exist").to_string(),
+            call.id.to_string(),
             json!({"temperature": "18°C", "conditions": "rainy", "precipitation": "80%", "humidity": "85%"}),
         );
 
@@ -1493,7 +1469,7 @@ mod thinking {
         let response2 = retry_request!([client, prev_id, get_weather, function_result] => {
             stateful_builder(&client)
                 .with_previous_interaction(&prev_id)
-                .with_content(vec![function_result])
+                .with_history(vec![function_result])
                 .add_function(get_weather)
                 .with_thinking_level(ThinkingLevel::Medium)
                 .with_store_enabled()
@@ -1581,18 +1557,14 @@ mod thinking {
                 "get_time" => json!({"time": "14:30", "timezone": "JST", "date": "2025-01-15"}),
                 _ => json!({"status": "unknown function"}),
             };
-            results.push(Content::function_result(
-                call.name,
-                call.id.expect("call should have ID"),
-                result_data,
-            ));
+            results.push(Step::function_result(call.name, call.id, result_data));
         }
 
         let prev_id = response1.id.clone().expect("id should exist");
         let response2 = retry_request!([client, prev_id, get_weather, get_time, results] => {
             stateful_builder(&client)
                 .with_previous_interaction(&prev_id)
-                .with_content(results)
+                .with_history(results)
                 .add_functions(vec![get_weather, get_time])
                 .with_thinking_level(ThinkingLevel::Medium)
                 .with_store_enabled()
@@ -1654,9 +1626,9 @@ mod thinking {
             }
 
             let call = &function_calls[0];
-            let function_result = Content::function_result(
+            let function_result = Step::function_result(
                 "get_weather",
-                call.id.expect("call should have ID"),
+                call.id,
                 json!({"temperature": "15°C", "conditions": "sunny"}),
             );
 
@@ -1668,7 +1640,7 @@ mod thinking {
                 retry_request!([client, prev_id, get_weather_fn, fn_result, level_clone] => {
                     stateful_builder(&client)
                         .with_previous_interaction(&prev_id)
-                        .with_content(vec![fn_result])
+                        .with_history(vec![fn_result])
                         .add_function(get_weather_fn)
                         .with_thinking_level(level_clone)
                         .create()
@@ -1730,9 +1702,9 @@ mod thinking {
         println!("Function call: {} (id: {:?})", call.name, call.id);
 
         // Turn 2: Provide result
-        let function_result = Content::function_result(
+        let function_result = Step::function_result(
             "get_weather",
-            call.id.expect("call_id should exist"),
+            call.id,
             json!({"temperature": "22°C", "conditions": "clear", "humidity": "45%"}),
         );
 
@@ -1742,7 +1714,7 @@ mod thinking {
         let response2 = retry_request!([client, prev_id, get_weather_fn, fn_result] => {
             stateful_builder(&client)
                 .with_previous_interaction(&prev_id)
-                .with_content(vec![fn_result])
+                .with_history(vec![fn_result])
                 .add_function(get_weather_fn)
                 .create()
                 .await
@@ -1805,15 +1777,15 @@ mod thinking {
 
         // Turn 2: Stream the follow-up
         let call = &function_calls[0];
-        let function_result = Content::function_result(
+        let function_result = Step::function_result(
             "get_weather",
-            call.id.expect("call should have ID"),
+            call.id,
             json!({"temperature": "18°C", "conditions": "rainy", "precipitation": "85%", "humidity": "90%"}),
         );
 
         let stream2 = stateful_builder(&client)
             .with_previous_interaction(response1.id.as_ref().expect("id should exist"))
-            .with_content(vec![function_result])
+            .with_history(vec![function_result])
             .add_function(get_weather)
             .with_thinking_level(ThinkingLevel::Medium)
             .with_store_enabled()
@@ -1936,16 +1908,16 @@ mod thinking {
             println!("Step 1 function call: {} (id: {:?})", call1.name, call1.id);
 
             // Provide result
-            let result1 = Content::function_result(
+            let result1 = Step::function_result(
                 "get_weather",
-                call1.id.unwrap().to_string(),
+                call1.id.to_string(),
                 json!({"temperature": "22°C"}),
             );
 
             // Step 2
             let response2 = stateful_builder(&client)
                 .with_previous_interaction(response1.id.as_ref().expect("id should exist"))
-                .with_content(vec![result1])
+                .with_history(vec![result1])
                 .with_text("Now what about Paris?")
                 .add_function(get_weather.clone())
                 .with_thinking_level(ThinkingLevel::Low)
@@ -2056,7 +2028,7 @@ mod thinking {
 
         // Verify all calls have IDs
         for call in &calls1 {
-            assert!(call.id.is_some(), "Function call should have ID");
+            assert!(!call.id.is_empty(), "Function call should have ID");
         }
 
         // =========================================================================
@@ -2091,11 +2063,7 @@ mod thinking {
                 _ => json!({"status": "unknown function"}),
             };
 
-            results1.push(Content::function_result(
-                call.name,
-                call.id.expect("call should have ID"),
-                result_data,
-            ));
+            results1.push(Step::function_result(call.name, call.id, result_data));
         }
 
         let prev_id = response1.id.clone().expect("id should exist");
@@ -2104,7 +2072,7 @@ mod thinking {
         let response2 = retry_request!([client, prev_id, functions, results] => {
             stateful_builder(&client)
                 .with_previous_interaction(&prev_id)
-                .with_content(results)
+                .with_history(results)
                 .add_functions(functions)
                 .with_thinking_level(ThinkingLevel::Medium)
                 .with_store_enabled()
@@ -2158,11 +2126,7 @@ mod thinking {
                     _ => json!({"status": "ok"}),
                 };
 
-                results2.push(Content::function_result(
-                    call.name,
-                    call.id.expect("call should have ID"),
-                    result_data,
-                ));
+                results2.push(Step::function_result(call.name, call.id, result_data));
             }
 
             let prev_id = response2.id.clone().expect("id should exist");
@@ -2171,7 +2135,7 @@ mod thinking {
             let response3 = retry_request!([client, prev_id, functions, results] => {
                 stateful_builder(&client)
                     .with_previous_interaction(&prev_id)
-                    .with_content(results)
+                    .with_history(results)
                     .add_functions(functions)
                     .with_thinking_level(ThinkingLevel::Medium)
                     .with_store_enabled()
@@ -2404,7 +2368,7 @@ mod multiturn {
         // Execute functions manually
         let mut results = Vec::new();
         for call in &function_calls {
-            let call_id = call.id.expect("Function call should have ID");
+            let call_id = call.id;
             let result = match call.name {
                 "get_weather" => {
                     json!({"city": "London", "temperature": "15°C", "conditions": "cloudy"})
@@ -2412,7 +2376,7 @@ mod multiturn {
                 "get_time" => json!({"timezone": "GMT", "time": "14:30:00"}),
                 _ => json!({"error": "Unknown function"}),
             };
-            results.push(Content::function_result(
+            results.push(Step::function_result(
                 call.name.to_string(),
                 call_id.to_string(),
                 result,
@@ -2424,7 +2388,7 @@ mod multiturn {
             .interaction()
             .with_model("gemini-3-flash-preview")
             .with_previous_interaction(response1.id.as_ref().expect("Should have ID"))
-            .with_content(results)
+            .with_history(results)
             .add_functions(functions.clone())
             .with_store_enabled()
             .create()
@@ -2649,9 +2613,9 @@ mod multiturn {
 
         // Return error result
         let call = &function_calls[0];
-        let error_result = Content::function_result(
+        let error_result = Step::function_result(
             "get_secret_data".to_string(),
-            call.id.expect("Should have ID").to_string(),
+            call.id.to_string(),
             json!({"error": "Permission denied: insufficient privileges for key 'test123'"}),
         );
 
@@ -2660,7 +2624,7 @@ mod multiturn {
             .interaction()
             .with_model("gemini-3-flash-preview")
             .with_previous_interaction(response1.id.as_ref().expect("Should have ID"))
-            .with_content(vec![error_result])
+            .with_history(vec![error_result])
             .add_function(secret_function)
             .with_store_enabled()
             .create()
@@ -2901,6 +2865,12 @@ mod builtins_multiturn {
                     println!("URL Context tool not available - skipping test");
                     return;
                 }
+                if is_safety_block_error(&e) {
+                    // The backend intermittently classifies the fetched page
+                    // content as a safety violation (observed live 2026-07).
+                    eprintln!("Turn 1 blocked by content safety filter - test inconclusive: {e:?}");
+                    return;
+                }
                 panic!("Turn 1 failed unexpectedly: {:?}", e);
             }
         };
@@ -2940,6 +2910,12 @@ mod builtins_multiturn {
             Err(e) => {
                 if is_long_conversation_api_error(&e) {
                     println!("API limitation encountered: {:?}", e);
+                    return;
+                }
+                if is_safety_block_error(&e) {
+                    // The backend intermittently classifies the fetched page
+                    // content as a safety violation (observed live 2026-07).
+                    eprintln!("Turn 2 blocked by content safety filter - test inconclusive: {e:?}");
                     return;
                 }
                 panic!("Turn 2 failed unexpectedly: {:?}", e);

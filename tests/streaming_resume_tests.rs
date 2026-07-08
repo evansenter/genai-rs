@@ -158,14 +158,14 @@ async fn test_get_interaction_stream() {
                 }
 
                 match event.chunk {
-                    StreamChunk::Delta(delta) => {
+                    StreamChunk::StepDelta { delta, .. } => {
                         delta_count += 1;
                         if let Some(text) = delta.as_text() {
                             collected_text.push_str(text);
                             print!("{}", text);
                         }
                     }
-                    StreamChunk::Complete(resp) => {
+                    StreamChunk::Completed(resp) => {
                         println!("\n[GET stream complete: {:?}]", resp.id);
                         final_response = Some(resp);
                     }
@@ -232,12 +232,12 @@ async fn test_stream_event_wrapper_preserves_chunks() {
 
                 // Verify event structure
                 match &event.chunk {
-                    StreamChunk::Delta(_) => {
+                    StreamChunk::StepDelta { .. } => {
                         saw_delta = true;
                         // Delta events should have event_id from API
                         // (though it may be None for some events)
                     }
-                    StreamChunk::Complete(response) => {
+                    StreamChunk::Completed(response) => {
                         saw_complete = true;
                         // Complete should have the full response
                         assert!(response.status == InteractionStatus::Completed);
@@ -304,7 +304,7 @@ async fn test_stream_resume_with_last_event_id() {
             if let Some(ref eid) = event.event_id {
                 all_event_ids.push(eid.clone());
             }
-            if let StreamChunk::Delta(delta) = event.chunk
+            if let StreamChunk::StepDelta { delta, .. } = event.chunk
                 && let Some(text) = delta.as_text()
             {
                 full_text.push_str(text);
@@ -344,7 +344,7 @@ async fn test_stream_resume_with_last_event_id() {
             if let Some(ref eid) = event.event_id {
                 resumed_event_ids.push(eid.clone());
             }
-            if let StreamChunk::Delta(delta) = event.chunk
+            if let StreamChunk::StepDelta { delta, .. } = event.chunk
                 && let Some(text) = delta.as_text()
             {
                 resumed_text.push_str(text);

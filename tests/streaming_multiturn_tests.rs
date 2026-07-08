@@ -14,7 +14,7 @@
 mod common;
 
 use common::{consume_stream, get_client, stateful_builder, validate_response_semantically};
-use genai_rs::{Content, FunctionDeclaration, InteractionStatus};
+use genai_rs::{FunctionDeclaration, InteractionStatus, Step};
 use serde_json::json;
 
 // =============================================================================
@@ -126,9 +126,9 @@ async fn test_streaming_multi_turn_function_calling() {
     println!("Function call: {} with args: {:?}", call.name, call.args);
 
     // Turn 2: Provide function result
-    let function_result = Content::function_result(
+    let function_result = Step::function_result(
         "get_weather",
-        call.id.expect("Function call should have ID").to_string(),
+        call.id.to_string(),
         json!({"temperature": "18°C", "conditions": "rainy", "humidity": "85%"}),
     );
 
@@ -136,7 +136,7 @@ async fn test_streaming_multi_turn_function_calling() {
     let response2 = retry_request!([client, prev_id, function_result, get_weather] => {
         stateful_builder(&client)
             .with_previous_interaction(&prev_id)
-            .with_content(vec![function_result])
+            .with_history(vec![function_result])
             .add_function(get_weather)
             .with_store_enabled()
             .create()

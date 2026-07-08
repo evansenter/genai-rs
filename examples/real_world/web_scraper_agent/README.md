@@ -28,13 +28,11 @@ client.interaction()
 
 ### Source Attribution
 
-Access grounding metadata for transparency:
+Access grounding steps for transparency:
 
 ```rust
-if let Some(metadata) = response.google_search_metadata() {
-    for chunk in &metadata.grounding_chunks {
-        println!("{} - {}", chunk.web.title, chunk.web.domain);
-    }
+for source in response.google_search_results() {
+    println!("{} - {}", source.title, source.url);
 }
 ```
 

@@ -15,7 +15,7 @@
 //!
 //! # Model Support
 //!
-//! Image generation requires a model that supports the IMAGE response modality.
+//! Image generation requires a model that supports the "image" response modality.
 //! Currently supported: `gemini-3-pro-image-preview`
 //!
 //! # Regional Availability
@@ -168,15 +168,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("✅ Image Generation Demo Complete\n");
 
     println!("--- Key Takeaways ---");
-    println!("• with_image_output() sets response modality to IMAGE");
+    println!("• with_image_output() sets response modality to \"image\"");
     println!("• Requires gemini-3-pro-image-preview model");
     println!("• response.first_image_bytes() extracts the first image");
     println!("• response.images() iterator for multiple images with metadata\n");
 
     println!("--- What You'll See with LOUD_WIRE=1 ---");
-    println!("  [REQ#1] POST with input + responseModalities:[\"IMAGE\"]");
+    println!("  [REQ#1] POST with input + response_modalities:[\"image\"]");
     println!("  [RES#1] completed: base64-encoded image data (truncated in logs)\n");
-    println!("  [REQ#2] POST with input + responseModalities:[\"IMAGE\"]");
+    println!("  [REQ#2] POST with input + response_modalities:[\"image\"]");
     println!("  [RES#2] completed: base64-encoded image data\n");
 
     println!("--- Production Considerations ---");

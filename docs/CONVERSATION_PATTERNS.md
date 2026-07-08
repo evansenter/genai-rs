@@ -1,13 +1,13 @@
 # Conversation Patterns Guide
 
-This guide covers patterns for multi-turn conversations, including stateless approaches using Turn arrays and the ConversationBuilder.
+This guide covers patterns for multi-turn conversations, including stateless approaches using Step arrays and the ConversationBuilder.
 
 ## Table of Contents
 
 - [Overview](#overview)
 - [Stateful vs Stateless](#stateful-vs-stateless)
 - [ConversationBuilder](#conversationbuilder)
-- [Turn Arrays](#turn-arrays)
+- [Step Arrays](#step-arrays)
 - [Dynamic History Management](#dynamic-history-management)
 - [Advanced Patterns](#advanced-patterns)
 - [Choosing an Approach](#choosing-an-approach)
@@ -20,7 +20,7 @@ This guide covers patterns for multi-turn conversations, including stateless app
 |----------|--------------|----------|
 | **Stateful** (`previous_interaction_id`) | Server-side | Simple apps, persistent context |
 | **ConversationBuilder** | Client-side | Inline conversation construction |
-| **Turn Arrays** (`with_history()`) | Client-side | External history, custom management |
+| **Step Arrays** (`with_history()`) | Client-side | External history, custom management |
 
 ## Stateful vs Stateless
 
@@ -28,7 +28,9 @@ This guide covers patterns for multi-turn conversations, including stateless app
 
 The server maintains conversation history:
 
-```rust,ignore
+```rust,no_run
+# use genai_rs::Client;
+# async fn example(client: &Client) -> Result<(), genai_rs::GenaiError> {
 // Turn 1: Start conversation
 let response1 = client
     .interaction()
@@ -49,6 +51,8 @@ let response2 = client
     .await?;
 
 // Model responds: "Your name is Alice"
+# Ok(())
+# }
 ```
 
 **Pros**: Simple, no history management needed
@@ -56,13 +60,15 @@ let response2 = client
 
 ### Stateless (Client History)
 
-You manage conversation history:
+You manage conversation history as a `Vec<Step>`:
 
-```rust,ignore
+```rust,no_run
+# use genai_rs::{Client, Step};
+# async fn example(client: &Client) -> Result<(), genai_rs::GenaiError> {
 let history = vec![
-    Turn::user("My name is Alice"),
-    Turn::model("Nice to meet you, Alice!"),
-    Turn::user("What's my name?"),
+    Step::user_text("My name is Alice"),
+    Step::model_text("Nice to meet you, Alice!"),
+    Step::user_text("What's my name?"),
 ];
 
 let response = client
@@ -71,6 +77,8 @@ let response = client
     .with_history(history)
     .create()
     .await?;
+# Ok(())
+# }
 ```
 
 **Pros**: Full control, no server storage needed, portable
@@ -78,11 +86,13 @@ let response = client
 
 ## ConversationBuilder
 
-Fluent API for inline conversation construction.
+Fluent API for inline conversation construction. `.user()` and `.model()` produce `user_input`/`model_output` `Step`s under the hood.
 
 ### Basic Usage
 
-```rust,ignore
+```rust,no_run
+# use genai_rs::Client;
+# async fn example(client: &Client) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
     .with_model("gemini-3-flash-preview")
@@ -95,11 +105,15 @@ let response = client
     .await?;
 
 // Model responds about 4 * 3 = 12
+# Ok(())
+# }
 ```
 
 ### With System Instructions
 
-```rust,ignore
+```rust,no_run
+# use genai_rs::Client;
+# async fn example(client: &Client) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
     .with_model("gemini-3-flash-preview")
@@ -111,50 +125,53 @@ let response = client
     .done()
     .create()
     .await?;
+# Ok(())
+# }
 ```
 
 ### With Multimodal Content
 
-```rust,ignore
-use genai_rs::{Content, Turn, TurnContent};
+For multimodal history, build a `user_input` step from content blocks with `Step::user_input()`:
 
-// Build multimodal turn manually
-let multimodal_turn = Turn {
-    role: Role::User,
-    content: TurnContent::Parts(vec![
-        Content::text("What's in this image?"),
-        Content::image_data(base64_image, "image/png"),
-    ]),
-};
+```rust,no_run
+# use genai_rs::{Client, Content, Step};
+# async fn example(client: &Client, base64_image: String) -> Result<(), genai_rs::GenaiError> {
+// Build a multimodal user step
+let multimodal_step = Step::user_input(vec![
+    Content::text("What's in this image?"),
+    Content::image_data(base64_image, "image/png"),
+]);
 
 let response = client
     .interaction()
     .with_model("gemini-3-flash-preview")
-    .with_history(vec![multimodal_turn])
+    .with_history(vec![multimodal_step])
     .create()
     .await?;
+# Ok(())
+# }
 ```
 
-## Turn Arrays
+## Step Arrays
 
-Direct array of Turn objects for external history management.
+Direct array of `Step` objects for external history management.
 
-### Creating Turns
+### Creating Steps
 
-```rust,ignore
-use genai_rs::Turn;
-
-// Simple text turns
-let user_turn = Turn::user("Hello!");
-let model_turn = Turn::model("Hi there! How can I help?");
+```rust,no_run
+# use genai_rs::{Client, Step};
+# async fn example(client: &Client) -> Result<(), genai_rs::GenaiError> {
+// Simple text steps
+let user_step = Step::user_text("Hello!");
+let model_step = Step::model_text("Hi there! How can I help?");
 
 // Build history
 let history = vec![
-    Turn::user("I'm planning a trip to Tokyo"),
-    Turn::model("Tokyo is wonderful! What aspects interest you?"),
-    Turn::user("I love food and temples"),
-    Turn::model("Great choices! For food, try Tsukiji for sushi..."),
-    Turn::user("What's one must-see temple?"),
+    Step::user_text("I'm planning a trip to Tokyo"),
+    Step::model_text("Tokyo is wonderful! What aspects interest you?"),
+    Step::user_text("I love food and temples"),
+    Step::model_text("Great choices! For food, try Tsukiji for sushi..."),
+    Step::user_text("What's one must-see temple?"),
 ];
 
 let response = client
@@ -163,6 +180,8 @@ let response = client
     .with_history(history)
     .create()
     .await?;
+# Ok(())
+# }
 ```
 
 ### From External Sources
@@ -171,13 +190,13 @@ let response = client
 // Load from database
 let db_history = load_conversation_from_db(conversation_id)?;
 
-let history: Vec<Turn> = db_history
+let history: Vec<Step> = db_history
     .iter()
     .map(|msg| {
         if msg.is_user {
-            Turn::user(&msg.content)
+            Step::user_text(&msg.content)
         } else {
-            Turn::model(&msg.content)
+            Step::model_text(&msg.content)
         }
     })
     .collect();
@@ -196,8 +215,11 @@ Build history incrementally during a conversation.
 
 ### Chat Loop Pattern
 
-```rust,ignore
-let mut history: Vec<Turn> = Vec::new();
+```rust,no_run
+# use genai_rs::{Client, Step};
+# fn get_user_input() -> Result<String, genai_rs::GenaiError> { Ok("quit".to_string()) }
+# async fn example(client: &Client) -> Result<(), genai_rs::GenaiError> {
+let mut history: Vec<Step> = Vec::new();
 
 loop {
     // Get user input
@@ -207,7 +229,7 @@ loop {
     }
 
     // Add user message to history
-    history.push(Turn::user(&user_input));
+    history.push(Step::user_text(user_input));
 
     // Send full history
     let response = client
@@ -217,27 +239,31 @@ loop {
         .create()
         .await?;
 
-    let model_response = response.as_text().unwrap_or("No response");
-    println!("Model: {}", model_response);
+    println!("Model: {}", response.as_text().unwrap_or("No response"));
 
-    // Add model response to history
-    history.push(Turn::model(model_response));
+    // Add ALL output steps to history. output_steps() returns thoughts,
+    // function calls, and model output, so thought signatures and tool
+    // state are replayed on the next turn.
+    history.extend(response.output_steps());
 }
+# Ok(())
+# }
 ```
 
 ### Sliding Window
 
-Limit context to recent turns to manage token costs:
+Limit context to recent steps to manage token costs:
 
-```rust,ignore
-const MAX_TURNS: usize = 10;
+```rust
+# use genai_rs::Step;
+const MAX_STEPS: usize = 10;
 
-fn add_to_history(history: &mut Vec<Turn>, turn: Turn) {
-    history.push(turn);
+fn add_to_history(history: &mut Vec<Step>, step: Step) {
+    history.push(step);
 
-    // Keep only recent turns
-    if history.len() > MAX_TURNS {
-        history.drain(0..history.len() - MAX_TURNS);
+    // Keep only recent steps
+    if history.len() > MAX_STEPS {
+        history.drain(0..history.len() - MAX_STEPS);
     }
 }
 ```
@@ -246,25 +272,30 @@ fn add_to_history(history: &mut Vec<Turn>, turn: Turn) {
 
 Summarize old context to preserve information while reducing tokens:
 
-```rust,ignore
+```rust,no_run
+# use genai_rs::{Client, GenaiError, Step};
 async fn summarize_and_trim(
     client: &Client,
-    history: &mut Vec<Turn>,
-    max_turns: usize,
+    history: &mut Vec<Step>,
+    max_steps: usize,
 ) -> Result<(), GenaiError> {
-    if history.len() <= max_turns {
+    if history.len() <= max_steps {
         return Ok(());
     }
 
-    // Extract old turns to summarize
-    let old_turns: Vec<_> = history.drain(0..history.len() - max_turns + 1).collect();
+    // Extract old steps to summarize
+    let old_steps: Vec<_> = history.drain(0..history.len() - max_steps + 1).collect();
 
     // Generate summary
     let summary_prompt = format!(
         "Summarize this conversation in 2-3 sentences:\n{}",
-        old_turns
+        old_steps
             .iter()
-            .map(|t| format!("{}: {}", t.role, t.content))
+            .map(|step| format!(
+                "{}: {}",
+                step.step_type(),
+                step.as_text().unwrap_or("[non-text step]")
+            ))
             .collect::<Vec<_>>()
             .join("\n")
     );
@@ -277,8 +308,8 @@ async fn summarize_and_trim(
         .await?;
 
     // Insert summary as context at the beginning
-    history.insert(0, Turn::user("Previous conversation summary:"));
-    history.insert(1, Turn::model(summary.as_text().unwrap_or("...")));
+    history.insert(0, Step::user_text("Previous conversation summary:"));
+    history.insert(1, Step::model_text(summary.as_text().unwrap_or("...")));
 
     Ok(())
 }
@@ -288,7 +319,11 @@ async fn summarize_and_trim(
 
 ### Combining with System Instructions
 
-```rust,ignore
+System instructions are not inherited across turns by the API — set them explicitly per request:
+
+```rust,no_run
+# use genai_rs::{Client, Step};
+# async fn example(client: &Client, history: Vec<Step>) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
     .with_model("gemini-3-flash-preview")
@@ -296,11 +331,13 @@ let response = client
     .with_history(history)
     .create()
     .await?;
+# Ok(())
+# }
 ```
 
 ### With Function Calling
 
-Turn arrays work with all features:
+Step arrays work with all features:
 
 ```rust,ignore
 use genai_rs_macros::tool;
@@ -321,9 +358,10 @@ let response = client
 
 ### With Streaming
 
-```rust,ignore
-use futures_util::StreamExt;
-
+```rust,no_run
+# use genai_rs::{Client, Step};
+# use futures_util::StreamExt;
+# async fn example(client: &Client, history: Vec<Step>) -> Result<(), genai_rs::GenaiError> {
 let mut stream = client
     .interaction()
     .with_model("gemini-3-flash-preview")
@@ -333,26 +371,29 @@ let mut stream = client
 while let Some(result) = stream.next().await {
     // Process stream events
 }
+# Ok(())
+# }
 ```
 
 ### Branching Conversations
 
 Create conversation branches by cloning history:
 
-```rust,ignore
+```rust
+# use genai_rs::Step;
 let base_history = vec![
-    Turn::user("I want to learn a programming language"),
-    Turn::model("Great! What's your goal?"),
-    Turn::user("I want to build web applications"),
+    Step::user_text("I want to learn a programming language"),
+    Step::model_text("Great! What's your goal?"),
+    Step::user_text("I want to build web applications"),
 ];
 
 // Branch 1: Explore Rust
 let mut rust_branch = base_history.clone();
-rust_branch.push(Turn::user("Tell me about Rust for web development"));
+rust_branch.push(Step::user_text("Tell me about Rust for web development"));
 
 // Branch 2: Explore TypeScript
 let mut ts_branch = base_history.clone();
-ts_branch.push(Turn::user("Tell me about TypeScript for web development"));
+ts_branch.push(Step::user_text("Tell me about TypeScript for web development"));
 
 // Both branches maintain the same context up to the branching point
 ```
@@ -362,12 +403,12 @@ ts_branch.push(Turn::user("Tell me about TypeScript for web development"));
 | Scenario | Recommended Approach |
 |----------|---------------------|
 | Simple chatbot | Stateful (`previous_interaction_id`) |
-| Serverless/Lambda | Stateless (Turn arrays) |
-| Custom history storage | Turn arrays with `with_history()` |
+| Serverless/Lambda | Stateless (Step arrays) |
+| Custom history storage | Step arrays with `with_history()` |
 | Inline test conversations | ConversationBuilder |
-| Migration from other APIs | Turn arrays (convert existing format) |
-| Context window management | Turn arrays with sliding window |
-| Conversation branching | Turn arrays (clone and modify) |
+| Migration from other APIs | Step arrays (convert existing format) |
+| Context window management | Step arrays with sliding window |
+| Conversation branching | Step arrays (clone and modify) |
 
 ### Decision Tree
 
@@ -383,18 +424,16 @@ Need persistent server storage?
 
 ## Wire Format
 
-Both ConversationBuilder and `with_history()` produce the same wire format:
+Both ConversationBuilder and `with_history()` produce the same wire format — an array of steps tagged by `type`:
 
 ```json
 {
   "model": "gemini-3-flash-preview",
-  "input": {
-    "turns": [
-      { "role": "user", "parts": [{ "text": "Hello" }] },
-      { "role": "model", "parts": [{ "text": "Hi!" }] },
-      { "role": "user", "parts": [{ "text": "How are you?" }] }
-    ]
-  }
+  "input": [
+    { "type": "user_input", "content": [{ "type": "text", "text": "Hello" }] },
+    { "type": "model_output", "content": [{ "type": "text", "text": "Hi!" }] },
+    { "type": "user_input", "content": [{ "type": "text", "text": "How are you?" }] }
+  ]
 }
 ```
 

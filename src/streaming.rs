@@ -29,8 +29,8 @@
 //!     }
 //!
 //!     match &event.chunk {
-//!         AutoFunctionStreamChunk::Delta(content) => {
-//!             if let Some(t) = content.as_text() {
+//!         AutoFunctionStreamChunk::Delta(delta) => {
+//!             if let Some(t) = delta.as_text() {
 //!                 print!("{}", t);
 //!             }
 //!         }
@@ -52,7 +52,7 @@
 
 use std::time::Duration;
 
-use crate::{Content, InteractionResponse};
+use crate::{InteractionResponse, StepDelta};
 use serde::{Deserialize, Serialize};
 
 /// A function call that is about to be executed.
@@ -116,8 +116,10 @@ impl PendingFunctionCall {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum AutoFunctionStreamChunk {
-    /// Incremental content from the model (text, thoughts, etc.)
-    Delta(Content),
+    /// Incremental step payload from the model (text fragments,
+    /// `arguments_delta` function-argument fragments, thought summaries and
+    /// signatures, tool call/result deltas, ...)
+    Delta(StepDelta),
 
     /// Function calls detected, about to execute.
     ///
@@ -322,13 +324,13 @@ impl<'de> Deserialize<'de> for AutoFunctionStreamChunk {
         match chunk_type {
             "delta" => {
                 let data = extract_data_field(&value, "Delta");
-                let content: Content = serde_json::from_value(data).map_err(|e| {
+                let delta: StepDelta = serde_json::from_value(data).map_err(|e| {
                     serde::de::Error::custom(format!(
                         "Failed to deserialize AutoFunctionStreamChunk::Delta data: {}",
                         e
                     ))
                 })?;
-                Ok(Self::Delta(content))
+                Ok(Self::Delta(delta))
             }
             "executing_functions" => {
                 let data = extract_data_field(&value, "ExecutingFunctions");
@@ -453,8 +455,8 @@ impl<'de> Deserialize<'de> for AutoFunctionStreamChunk {
 ///     }
 ///
 ///     match &event.chunk {
-///         AutoFunctionStreamChunk::Delta(content) => {
-///             if let Some(text) = content.as_text() {
+///         AutoFunctionStreamChunk::Delta(delta) => {
+///             if let Some(text) = delta.as_text() {
 ///                 print!("{}", text);
 ///             }
 ///         }
@@ -801,8 +803,8 @@ impl AutoFunctionResult {
 ///     let event = event?;
 ///
 ///     // Process deltas for UI updates
-///     if let AutoFunctionStreamChunk::Delta(content) = &event.chunk {
-///         if let Some(text) = content.as_text() {
+///     if let AutoFunctionStreamChunk::Delta(delta) = &event.chunk {
+///         if let Some(text) = delta.as_text() {
 ///             print!("{}", text);
 ///         }
 ///     }
@@ -905,9 +907,8 @@ mod tests {
     #[test]
     fn test_auto_function_stream_chunk_variants() {
         // Test that Delta and FunctionResults variants can be created
-        let _delta = AutoFunctionStreamChunk::Delta(Content::Text {
-            text: Some("Hello".to_string()),
-            annotations: None,
+        let _delta = AutoFunctionStreamChunk::Delta(StepDelta::Text {
+            text: "Hello".to_string(),
         });
 
         let _results = AutoFunctionStreamChunk::FunctionResults(vec![FunctionExecutionResult {
@@ -918,7 +919,7 @@ mod tests {
             duration: Duration::from_millis(10),
         }]);
 
-        // Note: ExecutingFunctions and Complete require InteractionResponse which is harder to construct in tests
+        let _complete = AutoFunctionStreamChunk::Complete(InteractionResponse::default());
     }
 
     #[test]
@@ -949,10 +950,9 @@ mod tests {
 
     #[test]
     fn test_auto_function_stream_chunk_serialization_roundtrip() {
-        // Test Delta variant roundtrip
-        let delta = AutoFunctionStreamChunk::Delta(Content::Text {
-            text: Some("Hello, world!".to_string()),
-            annotations: None,
+        // Test Delta variant roundtrip (payload is the StepDelta wire form)
+        let delta = AutoFunctionStreamChunk::Delta(StepDelta::Text {
+            text: "Hello, world!".to_string(),
         });
 
         let json_str = serde_json::to_string(&delta).expect("Serialization should succeed");
@@ -960,12 +960,17 @@ mod tests {
         assert!(json_str.contains("delta"), "Should contain variant name");
         assert!(json_str.contains("Hello, world!"), "Should contain text");
 
+        // The delta payload uses the StepDelta wire form: {"type":"text","text":"..."}
+        let value: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(value["data"]["type"], "text");
+        assert_eq!(value["data"]["text"], "Hello, world!");
+
         let deserialized: AutoFunctionStreamChunk =
             serde_json::from_str(&json_str).expect("Deserialization should succeed");
 
         match deserialized {
-            AutoFunctionStreamChunk::Delta(content) => {
-                assert_eq!(content.as_text(), Some("Hello, world!"));
+            AutoFunctionStreamChunk::Delta(delta) => {
+                assert_eq!(delta.as_text(), Some("Hello, world!"));
             }
             _ => panic!("Expected Delta variant"),
         }
@@ -1042,20 +1047,9 @@ mod tests {
             response: crate::InteractionResponse {
                 id: Some("interaction-abc123".to_string()),
                 model: Some("gemini-3-flash-preview".to_string()),
-                agent: None,
-                input: vec![Content::Text {
-                    text: Some("What's the weather in Paris and London?".to_string()),
-                    annotations: None,
-                }],
-                outputs: vec![
-                    Content::Text {
-                        text: Some("Based on the weather data:".to_string()),
-                        annotations: None,
-                    },
-                    Content::Text {
-                        text: Some("Paris is 18°C and London is 15°C.".to_string()),
-                        annotations: None,
-                    },
+                steps: vec![
+                    crate::Step::model_text("Based on the weather data:"),
+                    crate::Step::model_text("Paris is 18°C and London is 15°C."),
                 ],
                 status: InteractionStatus::Completed,
                 usage: Some(crate::UsageMetadata {
@@ -1064,12 +1058,8 @@ mod tests {
                     total_tokens: Some(80),
                     ..Default::default()
                 }),
-                tools: None,
-                grounding_metadata: None,
-                url_context_metadata: None,
                 previous_interaction_id: Some("prev-interaction-xyz".to_string()),
-                created: None,
-                updated: None,
+                ..Default::default()
             },
             executions: vec![
                 FunctionExecutionResult::new(
@@ -1168,24 +1158,13 @@ mod tests {
             response: crate::InteractionResponse {
                 id: Some("interaction-stuck".to_string()),
                 model: Some("gemini-3-flash-preview".to_string()),
-                agent: None,
-                input: vec![Content::Text {
-                    text: Some("What's the weather?".to_string()),
-                    annotations: None,
-                }],
-                outputs: vec![Content::FunctionCall {
-                    id: Some("call-stuck".to_string()),
-                    name: "get_weather".to_string(),
-                    args: json!({"city": "Tokyo"}),
-                }],
+                steps: vec![crate::Step::function_call(
+                    "call-stuck",
+                    "get_weather",
+                    json!({"city": "Tokyo"}),
+                )],
                 status: InteractionStatus::Completed,
-                usage: None,
-                tools: None,
-                grounding_metadata: None,
-                url_context_metadata: None,
-                previous_interaction_id: None,
-                created: None,
-                updated: None,
+                ..Default::default()
             },
             executions: vec![FunctionExecutionResult::new(
                 "get_weather",
@@ -1219,15 +1198,8 @@ mod tests {
             "response": {
                 "id": "interaction-old",
                 "model": "gemini-3-flash-preview",
-                "agent": null,
-                "input": [],
-                "outputs": [],
-                "status": "COMPLETED",
-                "usage": null,
-                "tools": null,
-                "grounding_metadata": null,
-                "url_context_metadata": null,
-                "previous_interaction_id": null
+                "steps": [],
+                "status": "completed"
             },
             "executions": []
         }"#;
@@ -1250,21 +1222,13 @@ mod tests {
         let response = crate::InteractionResponse {
             id: Some("interaction-max-loops".to_string()),
             model: Some("gemini-3-flash-preview".to_string()),
-            agent: None,
-            input: vec![],
-            outputs: vec![Content::FunctionCall {
-                id: Some("call-pending".to_string()),
-                name: "stuck_function".to_string(),
-                args: json!({}),
-            }],
+            steps: vec![crate::Step::function_call(
+                "call-pending",
+                "stuck_function",
+                json!({}),
+            )],
             status: InteractionStatus::Completed,
-            usage: None,
-            tools: None,
-            grounding_metadata: None,
-            url_context_metadata: None,
-            previous_interaction_id: None,
-            created: None,
-            updated: None,
+            ..Default::default()
         };
 
         let chunk = AutoFunctionStreamChunk::MaxLoopsReached(response);
@@ -1319,17 +1283,8 @@ mod tests {
         let response = crate::InteractionResponse {
             id: Some("max-loops-response".to_string()),
             model: Some("gemini-3-flash-preview".to_string()),
-            agent: None,
-            input: vec![],
-            outputs: vec![],
             status: InteractionStatus::Completed,
-            usage: None,
-            tools: None,
-            grounding_metadata: None,
-            url_context_metadata: None,
-            previous_interaction_id: None,
-            created: None,
-            updated: None,
+            ..Default::default()
         };
 
         let max_loops_chunk = AutoFunctionStreamChunk::MaxLoopsReached(response);
@@ -1348,9 +1303,8 @@ mod tests {
     #[test]
     fn test_auto_function_stream_event_with_event_id_roundtrip() {
         let event = AutoFunctionStreamEvent::new(
-            AutoFunctionStreamChunk::Delta(Content::Text {
-                text: Some("Hello from auto-function".to_string()),
-                annotations: None,
+            AutoFunctionStreamChunk::Delta(StepDelta::Text {
+                text: "Hello from auto-function".to_string(),
             }),
             Some("evt_auto_abc123".to_string()),
         );
@@ -1404,9 +1358,8 @@ mod tests {
     fn test_auto_function_stream_event_with_empty_event_id() {
         // Edge case: empty string event_id should still serialize/deserialize
         let event = AutoFunctionStreamEvent::new(
-            AutoFunctionStreamChunk::Delta(Content::Text {
-                text: Some("Test".to_string()),
-                annotations: None,
+            AutoFunctionStreamChunk::Delta(StepDelta::Text {
+                text: "Test".to_string(),
             }),
             Some(String::new()),
         );
@@ -1452,17 +1405,8 @@ mod tests {
             response: crate::InteractionResponse {
                 id: Some("interaction-new".to_string()),
                 model: Some("gemini-3-flash-preview".to_string()),
-                agent: None,
-                input: vec![],
-                outputs: vec![],
                 status: InteractionStatus::Completed,
-                usage: None,
-                tools: None,
-                grounding_metadata: None,
-                url_context_metadata: None,
-                previous_interaction_id: None,
-                created: None,
-                updated: None,
+                ..Default::default()
             },
             pending_calls: vec![
                 PendingFunctionCall::new("func1", "call-1", json!({"a": 1})),

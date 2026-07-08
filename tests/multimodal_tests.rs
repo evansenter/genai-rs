@@ -458,10 +458,14 @@ mod mixed_content {
         let text = response.as_text().unwrap();
         println!("Comparison response: {}", text);
 
-        // Should mention differences or colors - use semantic validation
+        // Should mention differences or colors - use semantic validation.
+        // Deliberately omit the ground-truth colors from the context: naming
+        // them invites the validator to fail the response over color-perception
+        // quibbles (e.g. calling the blue square "purple"), which isn't what
+        // this test checks.
         assert_response_semantic(
             &client,
-            "Showed two colored squares (red and blue) and asked to compare them",
+            "Showed two colored squares and asked to compare them",
             text,
             "Does this response compare two colors or mention that the images are different?",
         )
@@ -1274,14 +1278,17 @@ mod text_to_speech {
             input: InteractionInput::Text("Hello from nested config test.".to_string()),
             previous_interaction_id: None,
             tools: None,
-            response_modalities: Some(vec!["AUDIO".to_string()]),
+            response_modalities: Some(vec!["audio".to_string()]),
             response_format: None,
-            response_mime_type: None,
             generation_config: None,
             stream: None,
             background: None,
             store: None,
             system_instruction: None,
+            service_tier: None,
+            cached_content: None,
+            webhook_config: None,
+            environment: None,
         };
 
         let mut request_json = serde_json::to_value(&request).expect("Serialize request");
@@ -1317,9 +1324,9 @@ mod text_to_speech {
         println!("\n=== Testing FLAT SpeechConfig format ===");
 
         let flat_gen_config = GenerationConfig {
-            speech_config: Some(genai_rs::SpeechConfig::with_voice_and_language(
+            speech_config: Some(vec![genai_rs::SpeechConfig::with_voice_and_language(
                 "Kore", "en-US",
-            )),
+            )]),
             ..Default::default()
         };
 
@@ -1330,14 +1337,17 @@ mod text_to_speech {
             input: InteractionInput::Text("Hello from flat config test.".to_string()),
             previous_interaction_id: None,
             tools: None,
-            response_modalities: Some(vec!["AUDIO".to_string()]),
+            response_modalities: Some(vec!["audio".to_string()]),
             response_format: None,
-            response_mime_type: None,
             generation_config: Some(flat_gen_config),
             stream: None,
             background: None,
             store: None,
             system_instruction: None,
+            service_tier: None,
+            cached_content: None,
+            webhook_config: None,
+            environment: None,
         };
 
         let flat_json = serde_json::to_value(&flat_request).expect("Serialize flat request");

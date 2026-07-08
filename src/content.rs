@@ -1,152 +1,467 @@
-//! Core content types for the Interactions API.
+//! Content types for the Interactions API.
 //!
-//! This module contains `Content`, the primary enum representing all content
-//! types that can appear in API requests and responses, along with its custom serialization
-//! and deserialization implementations.
+//! Under API revision 2026-05-20, [`Content`] models the media block union
+//! used inside `user_input` / `model_output` steps: text, image, audio,
+//! video, and document. Tool calls, tool results, and thoughts are NOT
+//! content — they are typed [`Step`](crate::Step) variants.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 // =============================================================================
-// Annotation Types (for Text Content with Citations)
+// Annotations (typed citations)
 // =============================================================================
 
-/// An annotation linking a text span to its source.
+/// A review snippet attached to a place citation.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ReviewSnippet {
+    /// Title of the review.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// URL of the review.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Identifier of the review.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review_id: Option<String>,
+}
+
+/// A citation annotation attached to text content.
 ///
-/// Annotations provide citation information for specific portions of generated text,
-/// typically appearing when using grounding tools like `GoogleSearch` or `UrlContext`.
+/// Annotations link byte ranges of the text (`start_index..end_index`,
+/// UTF-8 byte offsets) to their sources. Revision 2026-05-20 uses a
+/// discriminated union over `type`: `url_citation`, `file_citation`, and
+/// `place_citation`.
 ///
-/// # Byte Indices
+/// # Forward Compatibility
 ///
-/// **Important:** The `start_index` and `end_index` fields are **byte positions** (not
-/// character indices) in the text content. This matches the UTF-8 byte offsets used
-/// by the Gemini API. For multi-byte characters (like emoji or non-ASCII text), you
-/// may need to use byte-slicing rather than character indexing.
+/// `#[non_exhaustive]`; unrecognized annotation types deserialize into
+/// [`Annotation::Unknown`] with the full JSON preserved.
 ///
 /// # Example
 ///
 /// ```no_run
-/// # use genai_rs::{InteractionResponse, Annotation};
+/// # use genai_rs::{Annotation, InteractionResponse};
 /// # let response: InteractionResponse = todo!();
-/// // Get all annotations from the response
+/// let text = response.all_text();
 /// for annotation in response.all_annotations() {
-///     println!(
-///         "Text at bytes {}..{} sourced from: {}",
-///         annotation.start_index,
-///         annotation.end_index,
-///         annotation.source.as_deref().unwrap_or("<no source>")
-///     );
-/// }
-/// ```
-///
-/// # Extracting Annotated Text
-///
-/// To extract the annotated substring from the response text:
-///
-/// ```no_run
-/// # use genai_rs::{InteractionResponse, Annotation};
-/// # let response: InteractionResponse = todo!();
-/// # let annotation: &Annotation = todo!();
-/// if let Some(text) = response.as_text() {
-///     // Use byte slicing since indices are byte positions
-///     let bytes = text.as_bytes();
-///     if annotation.end_index <= bytes.len() {
-///         if let Ok(span) = std::str::from_utf8(&bytes[annotation.start_index..annotation.end_index]) {
-///             println!("Cited text: {}", span);
+///     match annotation {
+///         Annotation::UrlCitation { url, title, .. } => {
+///             println!("Source: {:?} ({:?})", title, url);
 ///         }
+///         Annotation::Unknown { annotation_type, .. } => {
+///             println!("Unknown annotation type: {}", annotation_type);
+///         }
+///         _ => {}
+///     }
+///     if let Some(span) = annotation.extract_span(&text) {
+///         println!("  Cited text: {}", span);
 ///     }
 /// }
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
-pub struct Annotation {
-    /// Start of the segment in the text (byte position, inclusive).
-    ///
-    /// This is a byte offset into the UTF-8 encoded text, not a character index.
-    #[serde(default)]
-    pub start_index: usize,
-
-    /// End of the segment in the text (byte position, exclusive).
-    ///
-    /// This is a byte offset into the UTF-8 encoded text, not a character index.
-    #[serde(default)]
-    pub end_index: usize,
-
-    /// Source attributed for this portion of the text.
-    ///
-    /// This could be a URL, title, or other identifier depending on the grounding
-    /// tool used (e.g., `GoogleSearch` or `UrlContext`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
+pub enum Annotation {
+    /// A citation of a web source (`type: "url_citation"`).
+    UrlCitation {
+        /// The cited URL.
+        url: Option<String>,
+        /// Title of the cited page.
+        title: Option<String>,
+        /// Start of the cited span (UTF-8 byte offset, inclusive).
+        start_index: usize,
+        /// End of the cited span (UTF-8 byte offset, exclusive).
+        end_index: usize,
+    },
+    /// A citation of an uploaded/retrieved document (`type: "file_citation"`).
+    FileCitation {
+        /// URI of the cited document.
+        document_uri: Option<String>,
+        /// Name of the cited file.
+        file_name: Option<String>,
+        /// Source store or origin of the file.
+        source: Option<String>,
+        /// Custom metadata attached to the document.
+        custom_metadata: Option<serde_json::Value>,
+        /// Page number of the citation, if applicable.
+        page_number: Option<u32>,
+        /// Media identifier within the document.
+        media_id: Option<String>,
+        /// Start of the cited span (UTF-8 byte offset, inclusive).
+        start_index: usize,
+        /// End of the cited span (UTF-8 byte offset, exclusive).
+        end_index: usize,
+    },
+    /// A citation of a Google Maps place (`type: "place_citation"`).
+    PlaceCitation {
+        /// Google Maps place identifier.
+        place_id: Option<String>,
+        /// Name of the place.
+        name: Option<String>,
+        /// URL of the place.
+        url: Option<String>,
+        /// Review snippets supporting the citation.
+        review_snippets: Vec<ReviewSnippet>,
+        /// Start of the cited span (UTF-8 byte offset, inclusive).
+        start_index: usize,
+        /// End of the cited span (UTF-8 byte offset, exclusive).
+        end_index: usize,
+    },
+    /// Unknown annotation type for forward compatibility.
+    Unknown {
+        /// The unrecognized type name from the API.
+        annotation_type: String,
+        /// The full JSON data, preserved for debugging and roundtrip.
+        data: serde_json::Value,
+    },
 }
 
 impl Annotation {
-    /// Creates a new annotation with the given span indices and optional source.
-    ///
-    /// # Arguments
-    ///
-    /// * `start_index` - Start of the segment in the text (byte position, inclusive)
-    /// * `end_index` - End of the segment in the text (byte position, exclusive)
-    /// * `source` - Optional source attribution (URL, title, or identifier)
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// # use genai_rs::Annotation;
-    /// let annotation = Annotation::new(0, 10, Some("https://example.com".to_string()));
-    /// assert_eq!(annotation.start_index, 0);
-    /// assert_eq!(annotation.end_index, 10);
-    /// assert!(annotation.has_source());
-    /// ```
+    /// Creates a URL citation annotation.
     #[must_use]
-    pub fn new(start_index: usize, end_index: usize, source: Option<String>) -> Self {
-        Self {
+    pub fn url_citation(
+        url: impl Into<String>,
+        title: Option<String>,
+        start_index: usize,
+        end_index: usize,
+    ) -> Self {
+        Self::UrlCitation {
+            url: Some(url.into()),
+            title,
             start_index,
             end_index,
-            source,
         }
     }
 
-    /// Returns the byte length of the annotated span.
-    ///
-    /// This is equivalent to `end_index - start_index`.
+    /// Check if this is an unknown annotation type.
     #[must_use]
-    pub fn byte_len(&self) -> usize {
-        self.end_index.saturating_sub(self.start_index)
+    pub const fn is_unknown(&self) -> bool {
+        matches!(self, Self::Unknown { .. })
     }
 
-    /// Returns `true` if this annotation has a source attribution.
+    /// Returns the annotation type name if this is an unknown annotation.
     #[must_use]
-    pub fn has_source(&self) -> bool {
-        self.source.is_some()
+    pub fn unknown_annotation_type(&self) -> Option<&str> {
+        match self {
+            Self::Unknown {
+                annotation_type, ..
+            } => Some(annotation_type),
+            _ => None,
+        }
+    }
+
+    /// Returns the raw JSON data if this is an unknown annotation.
+    #[must_use]
+    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::Unknown { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+
+    /// Start of the annotated span (UTF-8 byte offset, inclusive).
+    ///
+    /// Returns `None` for [`Annotation::Unknown`] without a numeric
+    /// `start_index` field.
+    #[must_use]
+    pub fn start_index(&self) -> Option<usize> {
+        match self {
+            Self::UrlCitation { start_index, .. }
+            | Self::FileCitation { start_index, .. }
+            | Self::PlaceCitation { start_index, .. } => Some(*start_index),
+            Self::Unknown { data, .. } => data
+                .get("start_index")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize),
+        }
+    }
+
+    /// End of the annotated span (UTF-8 byte offset, exclusive).
+    #[must_use]
+    pub fn end_index(&self) -> Option<usize> {
+        match self {
+            Self::UrlCitation { end_index, .. }
+            | Self::FileCitation { end_index, .. }
+            | Self::PlaceCitation { end_index, .. } => Some(*end_index),
+            Self::Unknown { data, .. } => data
+                .get("end_index")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize),
+        }
+    }
+
+    /// Returns the primary source identifier for this annotation, if any.
+    ///
+    /// - `url_citation` → the URL
+    /// - `file_citation` → the document URI (or file name)
+    /// - `place_citation` → the place URL (or place ID)
+    #[must_use]
+    pub fn source(&self) -> Option<&str> {
+        match self {
+            Self::UrlCitation { url, .. } => url.as_deref(),
+            Self::FileCitation {
+                document_uri,
+                file_name,
+                ..
+            } => document_uri.as_deref().or(file_name.as_deref()),
+            Self::PlaceCitation { url, place_id, .. } => url.as_deref().or(place_id.as_deref()),
+            Self::Unknown { .. } => None,
+        }
     }
 
     /// Extracts the annotated substring from the given text.
     ///
-    /// Returns `None` if the indices are out of bounds or if the byte slice
-    /// doesn't form valid UTF-8.
-    ///
-    /// # Arguments
-    ///
-    /// * `text` - The full text content to extract from
+    /// Returns `None` if the indices are missing, out of bounds, or don't
+    /// fall on valid UTF-8 boundaries.
     ///
     /// # Example
     ///
     /// ```
     /// # use genai_rs::Annotation;
-    /// let annotation = Annotation::new(0, 5, Some("https://example.com".to_string()));
-    ///
-    /// let text = "Hello, world!";
-    /// assert_eq!(annotation.extract_span(text), Some("Hello"));
+    /// let annotation = Annotation::url_citation("https://example.com", None, 0, 5);
+    /// assert_eq!(annotation.extract_span("Hello, world!"), Some("Hello"));
     /// ```
     #[must_use]
     pub fn extract_span<'a>(&self, text: &'a str) -> Option<&'a str> {
+        let start = self.start_index()?;
+        let end = self.end_index()?;
         let bytes = text.as_bytes();
-        if self.end_index <= bytes.len() && self.start_index <= self.end_index {
-            std::str::from_utf8(&bytes[self.start_index..self.end_index]).ok()
+        if end <= bytes.len() && start <= end {
+            std::str::from_utf8(&bytes[start..end]).ok()
         } else {
             None
+        }
+    }
+}
+
+impl Serialize for Annotation {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeMap;
+
+        let mut map = serializer.serialize_map(None)?;
+        match self {
+            Self::UrlCitation {
+                url,
+                title,
+                start_index,
+                end_index,
+            } => {
+                map.serialize_entry("type", "url_citation")?;
+                if let Some(u) = url {
+                    map.serialize_entry("url", u)?;
+                }
+                if let Some(t) = title {
+                    map.serialize_entry("title", t)?;
+                }
+                map.serialize_entry("start_index", start_index)?;
+                map.serialize_entry("end_index", end_index)?;
+            }
+            Self::FileCitation {
+                document_uri,
+                file_name,
+                source,
+                custom_metadata,
+                page_number,
+                media_id,
+                start_index,
+                end_index,
+            } => {
+                map.serialize_entry("type", "file_citation")?;
+                if let Some(d) = document_uri {
+                    map.serialize_entry("document_uri", d)?;
+                }
+                if let Some(f) = file_name {
+                    map.serialize_entry("file_name", f)?;
+                }
+                if let Some(s) = source {
+                    map.serialize_entry("source", s)?;
+                }
+                if let Some(c) = custom_metadata {
+                    map.serialize_entry("custom_metadata", c)?;
+                }
+                if let Some(p) = page_number {
+                    map.serialize_entry("page_number", p)?;
+                }
+                if let Some(m) = media_id {
+                    map.serialize_entry("media_id", m)?;
+                }
+                map.serialize_entry("start_index", start_index)?;
+                map.serialize_entry("end_index", end_index)?;
+            }
+            Self::PlaceCitation {
+                place_id,
+                name,
+                url,
+                review_snippets,
+                start_index,
+                end_index,
+            } => {
+                map.serialize_entry("type", "place_citation")?;
+                if let Some(p) = place_id {
+                    map.serialize_entry("place_id", p)?;
+                }
+                if let Some(n) = name {
+                    map.serialize_entry("name", n)?;
+                }
+                if let Some(u) = url {
+                    map.serialize_entry("url", u)?;
+                }
+                if !review_snippets.is_empty() {
+                    map.serialize_entry("review_snippets", review_snippets)?;
+                }
+                map.serialize_entry("start_index", start_index)?;
+                map.serialize_entry("end_index", end_index)?;
+            }
+            Self::Unknown {
+                annotation_type,
+                data,
+            } => {
+                map.serialize_entry("type", annotation_type)?;
+                match data {
+                    serde_json::Value::Object(obj) => {
+                        for (key, value) in obj {
+                            if key != "type" {
+                                map.serialize_entry(key, value)?;
+                            }
+                        }
+                    }
+                    other if !other.is_null() => {
+                        map.serialize_entry("data", other)?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Annotation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+
+        #[derive(Deserialize)]
+        #[serde(tag = "type", rename_all = "snake_case")]
+        #[allow(clippy::enum_variant_names)]
+        enum KnownAnnotation {
+            UrlCitation {
+                #[serde(default)]
+                url: Option<String>,
+                #[serde(default)]
+                title: Option<String>,
+                #[serde(default)]
+                start_index: usize,
+                #[serde(default)]
+                end_index: usize,
+            },
+            FileCitation {
+                #[serde(default)]
+                document_uri: Option<String>,
+                #[serde(default)]
+                file_name: Option<String>,
+                #[serde(default)]
+                source: Option<String>,
+                #[serde(default)]
+                custom_metadata: Option<serde_json::Value>,
+                #[serde(default)]
+                page_number: Option<u32>,
+                #[serde(default)]
+                media_id: Option<String>,
+                #[serde(default)]
+                start_index: usize,
+                #[serde(default)]
+                end_index: usize,
+            },
+            PlaceCitation {
+                #[serde(default)]
+                place_id: Option<String>,
+                #[serde(default)]
+                name: Option<String>,
+                #[serde(default)]
+                url: Option<String>,
+                #[serde(default)]
+                review_snippets: Vec<ReviewSnippet>,
+                #[serde(default)]
+                start_index: usize,
+                #[serde(default)]
+                end_index: usize,
+            },
+        }
+
+        match serde_json::from_value::<KnownAnnotation>(value.clone()) {
+            Ok(known) => Ok(match known {
+                KnownAnnotation::UrlCitation {
+                    url,
+                    title,
+                    start_index,
+                    end_index,
+                } => Annotation::UrlCitation {
+                    url,
+                    title,
+                    start_index,
+                    end_index,
+                },
+                KnownAnnotation::FileCitation {
+                    document_uri,
+                    file_name,
+                    source,
+                    custom_metadata,
+                    page_number,
+                    media_id,
+                    start_index,
+                    end_index,
+                } => Annotation::FileCitation {
+                    document_uri,
+                    file_name,
+                    source,
+                    custom_metadata,
+                    page_number,
+                    media_id,
+                    start_index,
+                    end_index,
+                },
+                KnownAnnotation::PlaceCitation {
+                    place_id,
+                    name,
+                    url,
+                    review_snippets,
+                    start_index,
+                    end_index,
+                } => Annotation::PlaceCitation {
+                    place_id,
+                    name,
+                    url,
+                    review_snippets,
+                    start_index,
+                    end_index,
+                },
+            }),
+            Err(parse_error) => {
+                let annotation_type = value
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("<missing type>")
+                    .to_string();
+
+                tracing::warn!(
+                    "Encountered unknown Annotation type '{}'. Parse error: {}. \
+                     The annotation will be preserved in the Unknown variant.",
+                    annotation_type,
+                    parse_error
+                );
+
+                Ok(Annotation::Unknown {
+                    annotation_type,
+                    data: value,
+                })
+            }
         }
     }
 }
@@ -163,9 +478,9 @@ impl Annotation {
 /// # Example
 ///
 /// ```no_run
-/// # use genai_rs::{Content, GoogleSearchResultItem};
-/// # let content: Content = todo!();
-/// if let Content::GoogleSearchResult { result, .. } = content {
+/// # use genai_rs::{Step, GoogleSearchResultItem};
+/// # let step: Step = todo!();
+/// if let Step::GoogleSearchResult { result, .. } = step {
 ///     for item in result {
 ///         println!("Source: {} - {}", item.title, item.url);
 ///     }
@@ -174,13 +489,24 @@ impl Annotation {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GoogleSearchResultItem {
-    /// Title of the search result (often the domain name)
+    /// Title of the search result (often the domain name).
+    ///
+    /// Empty when the wire item omits it — the live API returns items that
+    /// carry only `search_suggestions` (verified 2026-07). Empty values are
+    /// skipped on serialize so replayed history matches the wire.
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub title: String,
-    /// URL of the source (typically a grounding redirect URL)
+    /// URL of the source (typically a grounding redirect URL).
+    ///
+    /// Empty when the wire item omits it; skipped on serialize when empty.
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub url: String,
     /// The rendered content from the source (if available)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rendered_content: Option<String>,
+    /// Search suggestions rendering payload (if provided by the API)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_suggestions: Option<String>,
 }
 
 impl GoogleSearchResultItem {
@@ -191,6 +517,7 @@ impl GoogleSearchResultItem {
             title: title.into(),
             url: url.into(),
             rendered_content: None,
+            search_suggestions: None,
         }
     }
 
@@ -222,6 +549,9 @@ pub struct Place {
     /// Unique identifier for this place
     #[serde(skip_serializing_if = "Option::is_none")]
     pub place_id: Option<String>,
+    /// URL of the place
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
     /// Latitude coordinate
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lat: Option<f64>,
@@ -243,6 +573,9 @@ pub struct Place {
     /// Phone number
     #[serde(skip_serializing_if = "Option::is_none")]
     pub phone_number: Option<String>,
+    /// Review snippets supporting this place
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review_snippets: Option<Vec<ReviewSnippet>>,
     /// Additional fields not yet modeled (Evergreen forward compatibility)
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
@@ -269,14 +602,15 @@ pub struct GoogleMapsResultItem {
 
 /// A single result from a URL Context fetch.
 ///
-/// Contains the status of the URL fetch operation.
+/// Contains the status of the URL fetch operation. Known status values under
+/// revision 2026-05-20 are `success`, `error`, `paywall`, and `unsafe`.
 ///
 /// # Example
 ///
 /// ```no_run
-/// # use genai_rs::{Content, UrlContextResultItem};
-/// # let content: Content = todo!();
-/// if let Content::UrlContextResult { result, .. } = content {
+/// # use genai_rs::{Step, UrlContextResultItem};
+/// # let step: Step = todo!();
+/// if let Step::UrlContextResult { result, .. } = step {
 ///     for item in result {
 ///         println!("URL: {} - Status: {}", item.url, item.status);
 ///     }
@@ -287,7 +621,7 @@ pub struct GoogleMapsResultItem {
 pub struct UrlContextResultItem {
     /// The URL that was fetched
     pub url: String,
-    /// Status of the fetch operation (e.g., "success", "error", "unsafe")
+    /// Status of the fetch operation (e.g., "success", "error", "paywall", "unsafe")
     pub status: String,
 }
 
@@ -318,6 +652,12 @@ impl UrlContextResultItem {
     pub fn is_unsafe(&self) -> bool {
         self.status == "unsafe"
     }
+
+    /// Returns `true` if the URL was behind a paywall.
+    #[must_use]
+    pub fn is_paywall(&self) -> bool {
+        self.status == "paywall"
+    }
 }
 
 // =============================================================================
@@ -332,9 +672,9 @@ impl UrlContextResultItem {
 /// # Example
 ///
 /// ```no_run
-/// # use genai_rs::{Content, FileSearchResultItem};
-/// # let content: Content = todo!();
-/// if let Content::FileSearchResult { result, .. } = content {
+/// # use genai_rs::{Step, FileSearchResultItem};
+/// # let step: Step = todo!();
+/// if let Step::FileSearchResult { result, .. } = step {
 ///     for item in result {
 ///         println!("Match from '{}': {}", item.store, item.text);
 ///     }
@@ -376,36 +716,18 @@ impl FileSearchResultItem {
 
 /// Programming language for code execution.
 ///
-/// This enum represents the programming language used in code execution requests.
 /// Currently only Python is supported by the Gemini API.
+///
+/// # Wire Format
+///
+/// Revision 2026-05-20 uses lowercase: `"python"`. The legacy uppercase
+/// `"PYTHON"` is still accepted on deserialization for robustness.
 ///
 /// # Forward Compatibility (Evergreen Philosophy)
 ///
-/// This enum is marked `#[non_exhaustive]`, which means:
-/// - Match statements must include a wildcard arm (`_ => ...`)
-/// - New variants may be added in minor version updates without breaking your code
-///
-/// When the API returns a language value that this library doesn't recognize,
-/// it will be captured as `CodeExecutionLanguage::Unknown` rather than causing a
-/// deserialization error. This follows the
-/// [Evergreen spec](https://github.com/google-deepmind/evergreen-spec)
-/// philosophy of graceful degradation.
-///
-/// # Example
-///
-/// ```no_run
-/// # use genai_rs::{Content, CodeExecutionLanguage};
-/// # let content: Content = todo!();
-/// if let Content::CodeExecutionCall { language, code, .. } = content {
-///     match language {
-///         CodeExecutionLanguage::Python => println!("Python code: {}", code),
-///         CodeExecutionLanguage::Unknown { language_type, .. } => {
-///             println!("Unknown language '{}': {}", language_type, code);
-///         }
-///         _ => println!("Other language: {}", code),
-///     }
-/// }
-/// ```
+/// This enum is marked `#[non_exhaustive]`; unknown languages are captured as
+/// `CodeExecutionLanguage::Unknown` rather than causing a deserialization
+/// error.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CodeExecutionLanguage {
@@ -413,9 +735,6 @@ pub enum CodeExecutionLanguage {
     #[default]
     Python,
     /// Unknown language (for forward compatibility).
-    ///
-    /// This variant captures any unrecognized language values from the API,
-    /// allowing the library to handle new languages gracefully.
     ///
     /// The `language_type` field contains the unrecognized language string,
     /// and `data` contains the full JSON value for debugging.
@@ -463,7 +782,7 @@ impl Serialize for CodeExecutionLanguage {
         S: serde::Serializer,
     {
         match self {
-            Self::Python => serializer.serialize_str("PYTHON"),
+            Self::Python => serializer.serialize_str("python"),
             Self::Unknown { language_type, .. } => serializer.serialize_str(language_type),
         }
     }
@@ -477,7 +796,8 @@ impl<'de> Deserialize<'de> for CodeExecutionLanguage {
         let value = serde_json::Value::deserialize(deserializer)?;
 
         match value.as_str() {
-            Some("PYTHON") => Ok(Self::Python),
+            // Spec wire format is lowercase; accept legacy uppercase too.
+            Some("python") | Some("PYTHON") => Ok(Self::Python),
             Some(other) => {
                 tracing::warn!(
                     "Encountered unknown CodeExecutionLanguage '{}'. \
@@ -510,7 +830,7 @@ impl<'de> Deserialize<'de> for CodeExecutionLanguage {
 impl fmt::Display for CodeExecutionLanguage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Python => write!(f, "PYTHON"),
+            Self::Python => write!(f, "python"),
             Self::Unknown { language_type, .. } => write!(f, "{}", language_type),
         }
     }
@@ -533,15 +853,8 @@ impl fmt::Display for CodeExecutionLanguage {
 ///
 /// # Forward Compatibility (Evergreen Philosophy)
 ///
-/// This enum is marked `#[non_exhaustive]`, which means:
-/// - Match statements must include a wildcard arm (`_ => ...`)
-/// - New variants may be added in minor version updates without breaking your code
-///
-/// When the API returns a resolution value that this library doesn't recognize,
-/// it will be captured as `Resolution::Unknown` rather than causing a
-/// deserialization error. This follows the
-/// [Evergreen spec](https://github.com/google-deepmind/evergreen-spec)
-/// philosophy of graceful degradation.
+/// This enum is marked `#[non_exhaustive]`; unknown values are captured as
+/// `Resolution::Unknown` rather than causing a deserialization error.
 ///
 /// # Example
 ///
@@ -570,9 +883,6 @@ pub enum Resolution {
     /// Highest token cost, maximum fidelity
     UltraHigh,
     /// Unknown resolution (for forward compatibility).
-    ///
-    /// This variant captures any unrecognized resolution values from the API,
-    /// allowing the library to handle new resolutions gracefully.
     ///
     /// The `resolution_type` field contains the unrecognized resolution string,
     /// and `data` contains the JSON value (typically the same string).
@@ -688,42 +998,31 @@ impl fmt::Display for Resolution {
     }
 }
 
-/// Content object for Interactions API - uses flat structure with type field.
+/// Content block for the Interactions API (revision 2026-05-20).
 ///
-/// This enum represents all content types that can appear in API requests and responses.
-/// It includes an `Unknown` variant for forward compatibility with new API content types.
+/// Content is the media union used inside `user_input` and `model_output`
+/// steps: `text`, `image`, `audio`, `video`, and `document`. Tool calls, tool
+/// results, and thoughts are represented as [`Step`](crate::Step) variants,
+/// not content.
 ///
 /// # Forward Compatibility
 ///
-/// This enum is marked `#[non_exhaustive]`, which means:
-/// - Match statements must include a wildcard arm (`_ => ...`)
-/// - New variants may be added in minor version updates without breaking your code
-///
-/// When the API returns a content type that this library doesn't recognize, it will be
-/// captured as `Content::Unknown` rather than causing a deserialization error.
-/// This allows your code to continue working even when Google adds new content types.
-///
-/// Use [`super::InteractionResponse::has_unknown`] and [`super::InteractionResponse::unknown_content`]
-/// to detect and inspect unknown content.
+/// This enum is marked `#[non_exhaustive]`; unrecognized content types are
+/// captured as [`Content::Unknown`] rather than causing a deserialization
+/// error, and roundtrip losslessly.
 ///
 /// # Example
 ///
 /// ```no_run
 /// # use genai_rs::{Content, InteractionResponse};
 /// # let response: InteractionResponse = todo!();
-/// for content in &response.outputs {
+/// for content in response.output_contents() {
 ///     match content {
-///         Content::Text { text, annotations } => {
-///             println!("Text: {:?}", text);
-///             if let Some(annots) = annotations {
-///                 println!("  {} annotations", annots.len());
-///             }
-///         }
-///         Content::FunctionCall { name, .. } => println!("Function: {}", name),
+///         Content::Text { text, .. } => println!("Text: {:?}", text),
+///         Content::Image { mime_type, .. } => println!("Image: {:?}", mime_type),
 ///         Content::Unknown { content_type, .. } => {
 ///             println!("Unknown content type: {}", content_type);
 ///         }
-///         // Required due to #[non_exhaustive] - handles future variants
 ///         _ => {}
 ///     }
 /// }
@@ -733,55 +1032,52 @@ impl fmt::Display for Resolution {
 pub enum Content {
     /// Text content with optional source annotations.
     ///
-    /// Annotations are present when grounding tools like `GoogleSearch` or `UrlContext`
-    /// provide citation information linking text spans to their sources.
+    /// Annotations are present when grounding tools like `GoogleSearch` or
+    /// `UrlContext` provide citation information linking text spans to their
+    /// sources.
     Text {
         /// The text content.
         ///
-        /// This is `Option<String>` because during streaming, `content.start` events
-        /// announce the content type before any text arrives. The actual text is
-        /// delivered in subsequent `content.delta` events. For non-streaming responses
-        /// and delta events, this will always be `Some`.
+        /// `Option<String>` because streaming may announce a text block
+        /// before any text arrives. For non-streaming responses this is
+        /// always `Some`.
         text: Option<String>,
         /// Source annotations for portions of the text.
-        ///
-        /// Present when the response includes citation information from grounding tools.
-        /// Use [`annotations()`](Self::annotations) for convenient access.
         annotations: Option<Vec<Annotation>>,
     },
-    /// Thought content (internal reasoning).
-    ///
-    /// Contains a cryptographic signature for verification of the thinking process.
-    /// The actual thought text is not exposed in the API response - only the signature
-    /// which can be used to validate that the response was generated through the
-    /// model's reasoning process.
-    ///
-    /// The `signature` field is `Option<String>` because `content.start` events
-    /// announce the type before the signature arrives via `content.delta`.
-    Thought { signature: Option<String> },
-    /// Thought signature (cryptographic signature for thought verification)
-    ///
-    /// This variant typically appears only during streaming responses, providing
-    /// a cryptographic signature that verifies the authenticity of thought content.
-    ThoughtSignature { signature: String },
     /// Image content
     Image {
+        /// Base64-encoded image data.
         data: Option<String>,
+        /// URI reference (e.g., Files API URI).
         uri: Option<String>,
+        /// MIME type (e.g., `image/png`).
         mime_type: Option<String>,
+        /// Processing resolution.
         resolution: Option<Resolution>,
     },
     /// Audio content
     Audio {
+        /// Base64-encoded audio data.
         data: Option<String>,
+        /// URI reference (e.g., Files API URI).
         uri: Option<String>,
+        /// MIME type (e.g., `audio/wav`).
         mime_type: Option<String>,
+        /// Sample rate in Hz (e.g., 24000 for TTS output).
+        sample_rate: Option<u32>,
+        /// Number of audio channels (e.g., 1 for mono).
+        channels: Option<u32>,
     },
     /// Video content
     Video {
+        /// Base64-encoded video data.
         data: Option<String>,
+        /// URI reference (e.g., Files API URI).
         uri: Option<String>,
+        /// MIME type (e.g., `video/mp4`).
         mime_type: Option<String>,
+        /// Processing resolution.
         resolution: Option<Resolution>,
     },
     /// Document content for file-based inputs.
@@ -790,333 +1086,25 @@ pub enum Content {
     /// for understanding text, images, charts, and tables. Other formats like TXT, Markdown,
     /// HTML, and XML are processed as plain text only, losing visual structure.
     Document {
+        /// Base64-encoded document data.
         data: Option<String>,
+        /// URI reference (e.g., Files API URI).
         uri: Option<String>,
+        /// MIME type (e.g., `application/pdf`).
         mime_type: Option<String>,
-    },
-    /// Function call (output from model)
-    FunctionCall {
-        /// Unique identifier for this function call
-        id: Option<String>,
-        name: String,
-        args: serde_json::Value,
-    },
-    /// Function result (input to model with execution result)
-    FunctionResult {
-        /// Function name (optional per API spec)
-        name: Option<String>,
-        /// The call_id from the FunctionCall being responded to
-        call_id: String,
-        result: serde_json::Value,
-        /// Indicates if the function execution resulted in an error
-        is_error: Option<bool>,
-    },
-    /// Code execution call (model requesting code execution)
-    ///
-    /// This variant appears when the model initiates code execution
-    /// via the `CodeExecution` built-in tool.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use genai_rs::{Content, CodeExecutionLanguage};
-    /// # let content: Content = todo!();
-    /// if let Content::CodeExecutionCall { id, language, code } = content {
-    ///     println!("Executing {:?} code (id: {:?}): {}", language, id, code);
-    /// }
-    /// ```
-    CodeExecutionCall {
-        /// Unique identifier for this code execution call (optional per API spec)
-        id: Option<String>,
-        /// Programming language (currently only Python is supported)
-        language: CodeExecutionLanguage,
-        /// Source code to execute
-        code: String,
-    },
-    /// Code execution result (returned after code runs)
-    ///
-    /// Contains the result of executed code from the `CodeExecution` tool.
-    ///
-    /// # Security Note
-    ///
-    /// When displaying results to end users, check `is_error` first. Error
-    /// results may contain stack traces or system information that shouldn't be exposed
-    /// directly to users without sanitization.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use genai_rs::Content;
-    /// # let content: Content = todo!();
-    /// if let Content::CodeExecutionResult { is_error, result, .. } = content {
-    ///     if is_error {
-    ///         eprintln!("Error: {}", result);
-    ///     } else {
-    ///         println!("Result: {}", result);
-    ///     }
-    /// }
-    /// ```
-    CodeExecutionResult {
-        /// The call_id matching the CodeExecutionCall this result is for (optional per API spec)
-        call_id: Option<String>,
-        /// Whether the code execution resulted in an error
-        is_error: bool,
-        /// The output of the code execution (stdout for success, error message for failure)
-        result: String,
-    },
-    /// Google Search call (model requesting a search)
-    ///
-    /// Appears when the model initiates a Google Search via the `GoogleSearch` tool.
-    /// The model may execute multiple queries in a single call.
-    GoogleSearchCall {
-        /// Unique identifier for this search call (used to match with result)
-        id: String,
-        /// Search queries executed by the model
-        queries: Vec<String>,
-    },
-    /// Google Search result (grounding data from search)
-    ///
-    /// Contains the results returned by the `GoogleSearch` built-in tool.
-    /// Each result includes a title and URL for the source.
-    GoogleSearchResult {
-        /// ID of the corresponding GoogleSearchCall
-        call_id: String,
-        /// Search results with source information
-        result: Vec<GoogleSearchResultItem>,
-    },
-    /// URL Context call (model requesting URL content)
-    ///
-    /// Appears when the model requests URL content via the `UrlContext` tool.
-    UrlContextCall {
-        /// Unique identifier for this URL context call
-        id: String,
-        /// URLs to fetch (extracted from arguments.urls in wire format)
-        urls: Vec<String>,
-    },
-    /// URL Context result (fetched content from URL)
-    ///
-    /// Contains the results from the `UrlContext` built-in tool.
-    UrlContextResult {
-        /// ID of the corresponding UrlContextCall
-        call_id: String,
-        /// Results for each URL that was fetched
-        result: Vec<UrlContextResultItem>,
-    },
-    /// File Search result (semantic search results from document stores)
-    ///
-    /// Contains the results returned by the `FileSearch` built-in tool.
-    /// Each result includes the title, extracted text, and source store name.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use genai_rs::{Content, FileSearchResultItem};
-    /// # let content: Content = todo!();
-    /// if let Content::FileSearchResult { call_id, result } = content {
-    ///     println!("Results for call {}: {} matches", call_id, result.len());
-    ///     for item in result {
-    ///         println!("  {}: {}", item.title, item.text);
-    ///     }
-    /// }
-    /// ```
-    FileSearchResult {
-        /// ID of the corresponding file search call
-        call_id: String,
-        /// Search results with extracted text and source information
-        result: Vec<FileSearchResultItem>,
-    },
-    /// Google Maps call (model requesting location data)
-    ///
-    /// Appears when the model initiates a Google Maps query via the `GoogleMaps` tool.
-    GoogleMapsCall {
-        /// Unique identifier for this maps call (used to match with result)
-        id: String,
-        /// Location queries executed by the model
-        queries: Vec<String>,
-        /// Signature for backend validation (opaque, pass through unchanged)
-        signature: Option<String>,
-    },
-    /// Google Maps result (location data from the Maps tool)
-    ///
-    /// Contains the results returned by the `GoogleMaps` built-in tool.
-    /// Each result includes places with location details and an optional widget token.
-    GoogleMapsResult {
-        /// ID of the corresponding Google Maps call
-        call_id: String,
-        /// Maps results with place information
-        result: Vec<GoogleMapsResultItem>,
-        /// Signature for backend validation (opaque, pass through unchanged)
-        signature: Option<String>,
-    },
-    /// Computer use call (model requesting browser interaction)
-    ///
-    /// Appears when the model initiates browser automation via the `ComputerUse` tool.
-    ///
-    /// # Security Considerations
-    ///
-    /// Computer use calls allow the model to interact with web browsers on your behalf.
-    /// Always review calls before execution in production environments, especially when:
-    /// - Accessing sensitive websites (banking, admin panels)
-    /// - Performing state-changing operations (form submissions, purchases)
-    /// - Working with untrusted user input
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use genai_rs::Content;
-    /// # let content: Content = todo!();
-    /// if let Content::ComputerUseCall { id, action, parameters } = content {
-    ///     println!("Browser action '{}' requested (id: {})", action, id);
-    ///     println!("Parameters: {:?}", parameters);
-    /// }
-    /// ```
-    ComputerUseCall {
-        /// Unique identifier for this computer use call
-        id: String,
-        /// The browser action to perform (e.g., "navigate", "click", "type")
-        action: String,
-        /// Action-specific parameters
-        parameters: serde_json::Value,
-    },
-    /// Computer use result (returned after browser interaction)
-    ///
-    /// Contains the outcome of a browser action executed via the `ComputerUse` tool.
-    ///
-    /// # Security Note
-    ///
-    /// Results may contain sensitive information like:
-    /// - Screenshots of the current page
-    /// - DOM content from visited pages
-    /// - Cookie or session data
-    ///
-    /// Sanitize output before displaying to end users.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use genai_rs::Content;
-    /// # let content: Content = todo!();
-    /// if let Content::ComputerUseResult { success, output, error, .. } = content {
-    ///     if success {
-    ///         println!("Action succeeded: {:?}", output);
-    ///     } else {
-    ///         eprintln!("Action failed: {:?}", error);
-    ///     }
-    /// }
-    /// ```
-    ComputerUseResult {
-        /// References the `id` field from the corresponding `ComputerUseCall` variant.
-        call_id: String,
-        /// Whether the action succeeded
-        success: bool,
-        /// Action output data (may include page content, extracted data, etc.)
-        output: Option<serde_json::Value>,
-        /// Error message if action failed
-        error: Option<String>,
-        /// Optional screenshot data (base64-encoded image)
-        screenshot: Option<String>,
     },
     /// Unknown content type for forward compatibility.
     ///
     /// This variant captures content types that the library doesn't recognize yet.
-    /// This can happen when Google adds new features to the API before this library
-    /// is updated to support them.
-    ///
     /// The `content_type` field contains the unrecognized type string from the API,
     /// and `data` contains the full JSON object for inspection or debugging.
     ///
-    /// # When This Occurs
-    ///
-    /// - New API features not yet supported by this library
-    /// - Beta features in testing
-    /// - Region-specific content types
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use genai_rs::Content;
-    /// # let content: Content = todo!();
-    /// if let Content::Unknown { content_type, data } = content {
-    ///     eprintln!("Encountered unknown type '{}': {:?}", content_type, data);
-    /// }
-    /// ```
-    ///
     /// # Serialization Behavior
     ///
-    /// Unknown variants can be serialized back to JSON, enabling round-trip in
-    /// multi-turn conversations. The serialization follows these rules:
-    ///
-    /// 1. **Type field**: The `content_type` becomes the `"type"` field in output
-    /// 2. **Object data**: If `data` is a JSON object, its fields are flattened
-    ///    into the output (excluding any existing `"type"` field to avoid duplicates)
-    /// 3. **Non-object data**: If `data` is a non-object value (array, string, etc.),
-    ///    it's placed under a `"data"` key
-    /// 4. **Null data**: Omitted entirely from the output
-    ///
-    /// ## Example: Object Data (Common Case)
-    ///
-    /// ```
-    /// # use genai_rs::Content;
-    /// # use serde_json::json;
-    /// let content = Content::Unknown {
-    ///     content_type: "new_feature".to_string(),
-    ///     data: json!({"field1": "value1", "field2": 42}),
-    /// };
-    /// // Serializes to: {"type": "new_feature", "field1": "value1", "field2": 42}
-    /// ```
-    ///
-    /// ## Example: Duplicate Type Field
-    ///
-    /// If `data` contains a `"type"` field, it's excluded during serialization
-    /// (the `content_type` takes precedence):
-    ///
-    /// ```
-    /// # use genai_rs::Content;
-    /// # use serde_json::json;
-    /// let content = Content::Unknown {
-    ///     content_type: "my_type".to_string(),
-    ///     data: json!({"type": "ignored", "value": 123}),
-    /// };
-    /// // Serializes to: {"type": "my_type", "value": 123}
-    /// // Note: "type": "ignored" is not included
-    /// ```
-    ///
-    /// ## Example: Non-Object Data
-    ///
-    /// ```
-    /// # use genai_rs::Content;
-    /// # use serde_json::json;
-    /// let content = Content::Unknown {
-    ///     content_type: "array_type".to_string(),
-    ///     data: json!([1, 2, 3]),
-    /// };
-    /// // Serializes to: {"type": "array_type", "data": [1, 2, 3]}
-    /// ```
-    ///
-    /// # Field Ordering
-    ///
-    /// **Note:** Field ordering is not preserved during round-trip serialization,
-    /// but all field **values** are fully preserved. When serializing an `Unknown`
-    /// variant, the `"type"` field is always written first, followed by the remaining
-    /// fields from `data`. This means the output field order may differ from the
-    /// original API response.
-    ///
-    /// This has **no practical impact** on API compatibility because JSON objects
-    /// are inherently unordered per RFC 8259. The Gemini API does not depend on
-    /// field ordering.
-    ///
-    /// If you need to preserve the exact original field ordering (e.g., for logging
-    /// or debugging purposes), access the raw `data` field directly via
-    /// [`unknown_data()`](Self::unknown_data) instead of re-serializing the variant.
-    ///
-    /// # Manual Construction
-    ///
-    /// While Unknown variants are typically created by deserialization, you can
-    /// construct them manually for testing or edge cases. Note that:
-    ///
-    /// - The `content_type` can be any string (including empty, though not recommended)
-    /// - The `data` can be any valid JSON value
-    /// - For multi-turn conversations, the serialized form must match what the API expects
+    /// Unknown variants serialize back to JSON with `content_type` as the
+    /// `"type"` field and the remaining `data` fields flattened alongside it,
+    /// enabling lossless roundtrip in multi-turn conversations. Non-object
+    /// `data` is placed under a `"data"` key; null data is omitted.
     Unknown {
         /// The unrecognized type name from the API
         content_type: String,
@@ -1148,20 +1136,6 @@ impl Serialize for Content {
                 }
                 map.end()
             }
-            Self::Thought { signature } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "thought")?;
-                if let Some(s) = signature {
-                    map.serialize_entry("signature", s)?;
-                }
-                map.end()
-            }
-            Self::ThoughtSignature { signature } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "thought_signature")?;
-                map.serialize_entry("signature", signature)?;
-                map.end()
-            }
             Self::Image {
                 data,
                 uri,
@@ -1188,6 +1162,8 @@ impl Serialize for Content {
                 data,
                 uri,
                 mime_type,
+                sample_rate,
+                channels,
             } => {
                 let mut map = serializer.serialize_map(None)?;
                 map.serialize_entry("type", "audio")?;
@@ -1199,6 +1175,12 @@ impl Serialize for Content {
                 }
                 if let Some(m) = mime_type {
                     map.serialize_entry("mime_type", m)?;
+                }
+                if let Some(sr) = sample_rate {
+                    map.serialize_entry("sample_rate", sr)?;
+                }
+                if let Some(c) = channels {
+                    map.serialize_entry("channels", c)?;
                 }
                 map.end()
             }
@@ -1242,165 +1224,6 @@ impl Serialize for Content {
                 }
                 map.end()
             }
-            Self::FunctionCall { id, name, args } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "function_call")?;
-                if let Some(i) = id {
-                    map.serialize_entry("id", i)?;
-                }
-                map.serialize_entry("name", name)?;
-                map.serialize_entry("arguments", args)?;
-                map.end()
-            }
-            Self::FunctionResult {
-                name,
-                call_id,
-                result,
-                is_error,
-            } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "function_result")?;
-                if let Some(n) = name {
-                    map.serialize_entry("name", n)?;
-                }
-                map.serialize_entry("call_id", call_id)?;
-                map.serialize_entry("result", result)?;
-                if let Some(err) = is_error {
-                    map.serialize_entry("is_error", err)?;
-                }
-                map.end()
-            }
-            Self::CodeExecutionCall { id, language, code } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "code_execution_call")?;
-                if let Some(i) = id {
-                    map.serialize_entry("id", i)?;
-                }
-                // Wire format nests language and code inside arguments object
-                let arguments = serde_json::json!({
-                    "language": language,
-                    "code": code
-                });
-                map.serialize_entry("arguments", &arguments)?;
-                map.end()
-            }
-            Self::CodeExecutionResult {
-                call_id,
-                is_error,
-                result,
-            } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "code_execution_result")?;
-                if let Some(cid) = call_id {
-                    map.serialize_entry("call_id", cid)?;
-                }
-                map.serialize_entry("is_error", is_error)?;
-                map.serialize_entry("result", result)?;
-                map.end()
-            }
-            Self::GoogleSearchCall { id, queries } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "google_search_call")?;
-                map.serialize_entry("id", id)?;
-                // Serialize as nested arguments.queries to match API format
-                let arguments = serde_json::json!({ "queries": queries });
-                map.serialize_entry("arguments", &arguments)?;
-                map.end()
-            }
-            Self::GoogleMapsCall {
-                id,
-                queries,
-                signature,
-            } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "google_maps_call")?;
-                map.serialize_entry("id", id)?;
-                // Serialize as nested arguments.queries to match API format
-                let arguments = serde_json::json!({ "queries": queries });
-                map.serialize_entry("arguments", &arguments)?;
-                if let Some(sig) = signature {
-                    map.serialize_entry("signature", sig)?;
-                }
-                map.end()
-            }
-            Self::GoogleSearchResult { call_id, result } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "google_search_result")?;
-                map.serialize_entry("call_id", call_id)?;
-                map.serialize_entry("result", result)?;
-                map.end()
-            }
-            Self::UrlContextCall { id, urls } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "url_context_call")?;
-                map.serialize_entry("id", id)?;
-                // Wire format nests urls inside arguments object
-                let arguments = serde_json::json!({ "urls": urls });
-                map.serialize_entry("arguments", &arguments)?;
-                map.end()
-            }
-            Self::UrlContextResult { call_id, result } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "url_context_result")?;
-                map.serialize_entry("call_id", call_id)?;
-                map.serialize_entry("result", result)?;
-                map.end()
-            }
-            Self::FileSearchResult { call_id, result } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "file_search_result")?;
-                map.serialize_entry("call_id", call_id)?;
-                map.serialize_entry("result", result)?;
-                map.end()
-            }
-            Self::GoogleMapsResult {
-                call_id,
-                result,
-                signature,
-            } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "google_maps_result")?;
-                map.serialize_entry("call_id", call_id)?;
-                map.serialize_entry("result", result)?;
-                if let Some(sig) = signature {
-                    map.serialize_entry("signature", sig)?;
-                }
-                map.end()
-            }
-            Self::ComputerUseCall {
-                id,
-                action,
-                parameters,
-            } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "computer_use_call")?;
-                map.serialize_entry("id", id)?;
-                map.serialize_entry("action", action)?;
-                map.serialize_entry("parameters", parameters)?;
-                map.end()
-            }
-            Self::ComputerUseResult {
-                call_id,
-                success,
-                output,
-                error,
-                screenshot,
-            } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "computer_use_result")?;
-                map.serialize_entry("call_id", call_id)?;
-                map.serialize_entry("success", success)?;
-                if let Some(out) = output {
-                    map.serialize_entry("output", out)?;
-                }
-                if let Some(err) = error {
-                    map.serialize_entry("error", err)?;
-                }
-                if let Some(ss) = screenshot {
-                    map.serialize_entry("screenshot", ss)?;
-                }
-                map.end()
-            }
             Self::Unknown { content_type, data } => {
                 // For Unknown, merge the content_type into the data object
                 let mut map = serializer.serialize_map(None)?;
@@ -1431,7 +1254,6 @@ impl Content {
     /// Extract the text content, if this is a Text variant with non-empty text.
     ///
     /// Returns `Some` only for `Text` variants with non-empty text.
-    /// Returns `None` for all other variants including `Thought`.
     #[must_use]
     pub fn as_text(&self) -> Option<&str> {
         match self {
@@ -1447,21 +1269,6 @@ impl Content {
     ///
     /// Annotations are typically present when using grounding tools like
     /// `GoogleSearch` or `UrlContext`.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use genai_rs::{Content, Annotation};
-    /// # let content: Content = todo!();
-    /// if let Some(annotations) = content.annotations() {
-    ///     for annotation in annotations {
-    ///         println!("Source: {:?} for bytes {}..{}",
-    ///             annotation.source,
-    ///             annotation.start_index,
-    ///             annotation.end_index);
-    ///     }
-    /// }
-    /// ```
     #[must_use]
     pub fn annotations(&self) -> Option<&[Annotation]> {
         match self {
@@ -1473,43 +1280,34 @@ impl Content {
         }
     }
 
-    /// Extract the thought signature, if this is a Thought variant with a signature.
-    ///
-    /// The signature is a cryptographic value used for verification of the thinking
-    /// process. The actual thought text is not exposed in API responses.
-    ///
-    /// Returns `Some` only for `Thought` variants with a non-empty signature.
-    /// Returns `None` for all other variants including `ThoughtSignature`.
-    #[must_use]
-    pub fn thought_signature(&self) -> Option<&str> {
-        match self {
-            Self::Thought { signature: Some(s) } if !s.is_empty() => Some(s),
-            _ => None,
-        }
-    }
-
     /// Check if this is a Text content type.
     #[must_use]
     pub const fn is_text(&self) -> bool {
         matches!(self, Self::Text { .. })
     }
 
-    /// Check if this is a Thought content type.
+    /// Check if this is an Image content type.
     #[must_use]
-    pub const fn is_thought(&self) -> bool {
-        matches!(self, Self::Thought { .. })
+    pub const fn is_image(&self) -> bool {
+        matches!(self, Self::Image { .. })
     }
 
-    /// Check if this is a ThoughtSignature content type.
+    /// Check if this is an Audio content type.
     #[must_use]
-    pub const fn is_thought_signature(&self) -> bool {
-        matches!(self, Self::ThoughtSignature { .. })
+    pub const fn is_audio(&self) -> bool {
+        matches!(self, Self::Audio { .. })
     }
 
-    /// Check if this is a FunctionCall content type.
+    /// Check if this is a Video content type.
     #[must_use]
-    pub const fn is_function_call(&self) -> bool {
-        matches!(self, Self::FunctionCall { .. })
+    pub const fn is_video(&self) -> bool {
+        matches!(self, Self::Video { .. })
+    }
+
+    /// Check if this is a Document content type.
+    #[must_use]
+    pub const fn is_document(&self) -> bool {
+        matches!(self, Self::Document { .. })
     }
 
     /// Returns `true` if this is an unknown content type.
@@ -1519,72 +1317,6 @@ impl Content {
     #[must_use]
     pub const fn is_unknown(&self) -> bool {
         matches!(self, Self::Unknown { .. })
-    }
-
-    /// Check if this is a CodeExecutionCall content type.
-    #[must_use]
-    pub const fn is_code_execution_call(&self) -> bool {
-        matches!(self, Self::CodeExecutionCall { .. })
-    }
-
-    /// Check if this is a CodeExecutionResult content type.
-    #[must_use]
-    pub const fn is_code_execution_result(&self) -> bool {
-        matches!(self, Self::CodeExecutionResult { .. })
-    }
-
-    /// Check if this is a GoogleSearchCall content type.
-    #[must_use]
-    pub const fn is_google_search_call(&self) -> bool {
-        matches!(self, Self::GoogleSearchCall { .. })
-    }
-
-    /// Check if this is a GoogleSearchResult content type.
-    #[must_use]
-    pub const fn is_google_search_result(&self) -> bool {
-        matches!(self, Self::GoogleSearchResult { .. })
-    }
-
-    /// Check if this is a FileSearchResult content type.
-    #[must_use]
-    pub const fn is_file_search_result(&self) -> bool {
-        matches!(self, Self::FileSearchResult { .. })
-    }
-
-    /// Check if this is a GoogleMapsCall content type.
-    #[must_use]
-    pub const fn is_google_maps_call(&self) -> bool {
-        matches!(self, Self::GoogleMapsCall { .. })
-    }
-
-    /// Check if this is a GoogleMapsResult content type.
-    #[must_use]
-    pub const fn is_google_maps_result(&self) -> bool {
-        matches!(self, Self::GoogleMapsResult { .. })
-    }
-
-    /// Check if this is a UrlContextCall content type.
-    #[must_use]
-    pub const fn is_url_context_call(&self) -> bool {
-        matches!(self, Self::UrlContextCall { .. })
-    }
-
-    /// Check if this is a UrlContextResult content type.
-    #[must_use]
-    pub const fn is_url_context_result(&self) -> bool {
-        matches!(self, Self::UrlContextResult { .. })
-    }
-
-    /// Check if this is a ComputerUseCall content type.
-    #[must_use]
-    pub const fn is_computer_use_call(&self) -> bool {
-        matches!(self, Self::ComputerUseCall { .. })
-    }
-
-    /// Check if this is a ComputerUseResult content type.
-    #[must_use]
-    pub const fn is_computer_use_result(&self) -> bool {
-        matches!(self, Self::ComputerUseResult { .. })
     }
 
     /// Returns the content type name if this is an unknown content type.
@@ -1612,9 +1344,6 @@ impl Content {
     // =========================================================================
     // Content Constructors
     // =========================================================================
-    //
-    // These associated functions create Content variants for sending
-    // to the API. They replace the standalone functions in interactions_api.rs.
 
     /// Creates text content.
     ///
@@ -1631,159 +1360,6 @@ impl Content {
         Self::Text {
             text: Some(text.into()),
             annotations: None,
-        }
-    }
-
-    /// Creates thought content with a signature.
-    ///
-    /// **Note:** Thought content is typically OUTPUT from the model, not user input.
-    /// The signature is a cryptographic value for verification. This constructor
-    /// is provided for completeness but rarely needed in typical usage.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use genai_rs::Content;
-    ///
-    /// let thought = Content::thought("signature_value_here");
-    /// assert!(thought.is_thought());
-    /// ```
-    #[must_use]
-    pub fn thought(signature: impl Into<String>) -> Self {
-        Self::Thought {
-            signature: Some(signature.into()),
-        }
-    }
-
-    /// Creates a function call content with an optional ID.
-    ///
-    /// Use this when you need to specify a call ID, typically when echoing function calls back
-    /// in manual conversation construction.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use genai_rs::Content;
-    /// use serde_json::json;
-    ///
-    /// let call = Content::function_call_with_id(
-    ///     Some("call_123"),
-    ///     "get_weather",
-    ///     json!({"location": "San Francisco"})
-    /// );
-    /// assert!(call.is_function_call());
-    /// ```
-    #[must_use]
-    pub fn function_call_with_id(
-        id: Option<impl Into<String>>,
-        name: impl Into<String>,
-        args: serde_json::Value,
-    ) -> Self {
-        Self::FunctionCall {
-            id: id.map(|s| s.into()),
-            name: name.into(),
-            args,
-        }
-    }
-
-    /// Creates a function call content (without call ID).
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use genai_rs::Content;
-    /// use serde_json::json;
-    ///
-    /// let call = Content::function_call(
-    ///     "get_weather",
-    ///     json!({"location": "San Francisco"})
-    /// );
-    /// assert!(call.is_function_call());
-    /// ```
-    #[must_use]
-    pub fn function_call(name: impl Into<String>, args: serde_json::Value) -> Self {
-        Self::function_call_with_id(None::<String>, name, args)
-    }
-
-    /// Creates a function result content.
-    ///
-    /// This is the correct way to send function execution results back to the Interactions API.
-    /// The call_id must match the id from the FunctionCall you're responding to.
-    ///
-    /// # Panics
-    ///
-    /// Will log a warning if call_id is empty or whitespace-only, as this may cause
-    /// API errors when the server tries to match the result to a function call.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use genai_rs::Content;
-    /// use serde_json::json;
-    ///
-    /// let result = Content::function_result(
-    ///     "get_weather",
-    ///     "call_abc123",
-    ///     json!({"temperature": "72F", "conditions": "sunny"})
-    /// );
-    /// ```
-    #[must_use]
-    pub fn function_result(
-        name: impl Into<String>,
-        call_id: impl Into<String>,
-        result: serde_json::Value,
-    ) -> Self {
-        let function_name = name.into();
-        let call_id_str = call_id.into();
-
-        // Validate call_id is not empty
-        if call_id_str.trim().is_empty() {
-            tracing::warn!(
-                "Empty call_id provided for function result '{}'. \
-                 This may cause the API to fail to match the result to its function call.",
-                function_name
-            );
-        }
-
-        Self::FunctionResult {
-            name: Some(function_name),
-            call_id: call_id_str,
-            result,
-            is_error: None,
-        }
-    }
-
-    /// Creates function result content indicating an error.
-    ///
-    /// Use this when function execution fails and you need to report the error
-    /// back to the model.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use genai_rs::Content;
-    /// use serde_json::json;
-    ///
-    /// let error_result = Content::function_result_error(
-    ///     "get_weather",
-    ///     "call_abc123",
-    ///     json!({"error": "API rate limit exceeded"})
-    /// );
-    /// ```
-    #[must_use]
-    pub fn function_result_error(
-        name: impl Into<String>,
-        call_id: impl Into<String>,
-        result: serde_json::Value,
-    ) -> Self {
-        let function_name = name.into();
-        let call_id_str = call_id.into();
-
-        Self::FunctionResult {
-            name: Some(function_name),
-            call_id: call_id_str,
-            result,
-            is_error: Some(true),
         }
     }
 
@@ -1810,15 +1386,6 @@ impl Content {
     }
 
     /// Creates image content from base64-encoded data with specified resolution.
-    ///
-    /// # Resolution Trade-offs
-    ///
-    /// | Level | Token Cost | Detail |
-    /// |-------|-----------|--------|
-    /// | Low | Lowest | Basic shapes and colors |
-    /// | Medium | Moderate | Standard detail |
-    /// | High | Higher | Fine details visible |
-    /// | UltraHigh | Highest | Maximum fidelity |
     ///
     /// # Example
     ///
@@ -1847,20 +1414,12 @@ impl Content {
 
     /// Creates image content from a URI.
     ///
-    /// # Arguments
-    ///
-    /// * `uri` - The URI of the image
-    /// * `mime_type` - The MIME type (required by the API for URI-based content)
-    ///
     /// # Example
     ///
     /// ```
     /// use genai_rs::Content;
     ///
-    /// let image = Content::image_uri(
-    ///     "https://example.com/image.png",
-    ///     "image/png"
-    /// );
+    /// let image = Content::image_uri("files/abc123", "image/png");
     /// ```
     #[must_use]
     pub fn image_uri(uri: impl Into<String>, mime_type: impl Into<String>) -> Self {
@@ -1873,18 +1432,6 @@ impl Content {
     }
 
     /// Creates image content from a URI with specified resolution.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use genai_rs::{Content, Resolution};
-    ///
-    /// let image = Content::image_uri_with_resolution(
-    ///     "https://example.com/image.png",
-    ///     "image/png",
-    ///     Resolution::Low  // Use low resolution to reduce token cost
-    /// );
-    /// ```
     #[must_use]
     pub fn image_uri_with_resolution(
         uri: impl Into<String>,
@@ -1906,10 +1453,7 @@ impl Content {
     /// ```
     /// use genai_rs::Content;
     ///
-    /// let audio = Content::audio_data(
-    ///     "base64encodeddata...",
-    ///     "audio/mp3"
-    /// );
+    /// let audio = Content::audio_data("base64encodeddata...", "audio/wav");
     /// ```
     #[must_use]
     pub fn audio_data(data: impl Into<String>, mime_type: impl Into<String>) -> Self {
@@ -1917,25 +1461,19 @@ impl Content {
             data: Some(data.into()),
             uri: None,
             mime_type: Some(mime_type.into()),
+            sample_rate: None,
+            channels: None,
         }
     }
 
     /// Creates audio content from a URI.
-    ///
-    /// # Arguments
-    ///
-    /// * `uri` - The URI of the audio file
-    /// * `mime_type` - The MIME type (required by the API for URI-based content)
     ///
     /// # Example
     ///
     /// ```
     /// use genai_rs::Content;
     ///
-    /// let audio = Content::audio_uri(
-    ///     "https://example.com/audio.mp3",
-    ///     "audio/mp3"
-    /// );
+    /// let audio = Content::audio_uri("files/abc123", "audio/mp3");
     /// ```
     #[must_use]
     pub fn audio_uri(uri: impl Into<String>, mime_type: impl Into<String>) -> Self {
@@ -1943,6 +1481,8 @@ impl Content {
             data: None,
             uri: Some(uri.into()),
             mime_type: Some(mime_type.into()),
+            sample_rate: None,
+            channels: None,
         }
     }
 
@@ -1953,10 +1493,7 @@ impl Content {
     /// ```
     /// use genai_rs::Content;
     ///
-    /// let video = Content::video_data(
-    ///     "base64encodeddata...",
-    ///     "video/mp4"
-    /// );
+    /// let video = Content::video_data("base64encodeddata...", "video/mp4");
     /// ```
     #[must_use]
     pub fn video_data(data: impl Into<String>, mime_type: impl Into<String>) -> Self {
@@ -1969,18 +1506,6 @@ impl Content {
     }
 
     /// Creates video content from base64-encoded data with specified resolution.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use genai_rs::{Content, Resolution};
-    ///
-    /// let video = Content::video_data_with_resolution(
-    ///     "base64encodeddata...",
-    ///     "video/mp4",
-    ///     Resolution::Low  // Use low resolution to reduce token cost for long videos
-    /// );
-    /// ```
     #[must_use]
     pub fn video_data_with_resolution(
         data: impl Into<String>,
@@ -1997,20 +1522,12 @@ impl Content {
 
     /// Creates video content from a URI.
     ///
-    /// # Arguments
-    ///
-    /// * `uri` - The URI of the video file
-    /// * `mime_type` - The MIME type (required by the API for URI-based content)
-    ///
     /// # Example
     ///
     /// ```
     /// use genai_rs::Content;
     ///
-    /// let video = Content::video_uri(
-    ///     "https://example.com/video.mp4",
-    ///     "video/mp4"
-    /// );
+    /// let video = Content::video_uri("files/abc123", "video/mp4");
     /// ```
     #[must_use]
     pub fn video_uri(uri: impl Into<String>, mime_type: impl Into<String>) -> Self {
@@ -2023,18 +1540,6 @@ impl Content {
     }
 
     /// Creates video content from a URI with specified resolution.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use genai_rs::{Content, Resolution};
-    ///
-    /// let video = Content::video_uri_with_resolution(
-    ///     "https://example.com/video.mp4",
-    ///     "video/mp4",
-    ///     Resolution::Medium
-    /// );
-    /// ```
     #[must_use]
     pub fn video_uri_with_resolution(
         uri: impl Into<String>,
@@ -2051,17 +1556,12 @@ impl Content {
 
     /// Creates document content from base64-encoded data.
     ///
-    /// Use this for PDF files and other document formats.
-    ///
     /// # Example
     ///
     /// ```
     /// use genai_rs::Content;
     ///
-    /// let document = Content::document_data(
-    ///     "base64encodeddata...",
-    ///     "application/pdf"
-    /// );
+    /// let doc = Content::document_data("base64encodeddata...", "application/pdf");
     /// ```
     #[must_use]
     pub fn document_data(data: impl Into<String>, mime_type: impl Into<String>) -> Self {
@@ -2074,22 +1574,12 @@ impl Content {
 
     /// Creates document content from a URI.
     ///
-    /// Use this for PDF files and other document formats accessible via URI.
-    ///
-    /// # Arguments
-    ///
-    /// * `uri` - The URI of the document
-    /// * `mime_type` - The MIME type (required by the API for URI-based content)
-    ///
     /// # Example
     ///
     /// ```
     /// use genai_rs::Content;
     ///
-    /// let document = Content::document_uri(
-    ///     "https://example.com/document.pdf",
-    ///     "application/pdf"
-    /// );
+    /// let doc = Content::document_uri("files/abc123", "application/pdf");
     /// ```
     #[must_use]
     pub fn document_uri(uri: impl Into<String>, mime_type: impl Into<String>) -> Self {
@@ -2149,6 +1639,8 @@ impl Content {
                 data: None,
                 uri: Some(uri_str),
                 mime_type: Some(mime_str),
+                sample_rate: None,
+                channels: None,
             }
         } else if mime_str.starts_with("video/") {
             Self::Video {
@@ -2171,10 +1663,6 @@ impl Content {
     ///
     /// Use this to reference files uploaded via the Files API. The content type
     /// is inferred from the file's MIME type (image, audio, video, or document).
-    ///
-    /// # Arguments
-    ///
-    /// * `file` - The uploaded file metadata from the Files API
     ///
     /// # Example
     ///
@@ -2221,20 +1709,10 @@ impl Content {
     ///     .with_resolution(Resolution::Low);
     /// ```
     ///
-    /// # Resolution Trade-offs
-    ///
-    /// | Level | Token Cost | Detail Level |
-    /// |-------|------------|--------------|
-    /// | Low | Lowest | Basic shapes and colors |
-    /// | Medium | Moderate | Standard detail (default) |
-    /// | High | Higher | Fine details visible |
-    /// | UltraHigh | Highest | Maximum fidelity |
-    ///
     /// # Behavior on Non-Media Content
     ///
-    /// For content types that don't support resolution (Text, Audio, Document,
-    /// FunctionCall, etc.), this method logs a warning and returns the content
-    /// unchanged.
+    /// For content types that don't support resolution (Text, Audio, Document),
+    /// this method logs a warning and returns the content unchanged.
     #[must_use]
     pub fn with_resolution(self, resolution: Resolution) -> Self {
         match self {
@@ -2269,91 +1747,6 @@ impl Content {
             }
         }
     }
-
-    /// Creates a function result from this function call.
-    ///
-    /// This builder method enables fluent patterns for handling function calls:
-    ///
-    /// ```
-    /// use genai_rs::Content;
-    /// use serde_json::json;
-    ///
-    /// // Given a function call content
-    /// let call = Content::function_call_with_id(
-    ///     Some("call_123"),
-    ///     "get_weather",
-    ///     json!({"location": "San Francisco"})
-    /// );
-    ///
-    /// // Execute the function and create the result
-    /// let result = call.with_result(json!({"temperature": "72F", "conditions": "sunny"}));
-    /// assert!(matches!(result, Content::FunctionResult { .. }));
-    /// ```
-    ///
-    /// # Behavior on Non-FunctionCall Content
-    ///
-    /// For content types other than `FunctionCall`, this method logs a warning
-    /// and returns the original content unchanged.
-    ///
-    /// # Error Results
-    ///
-    /// To indicate a function execution error, use [`with_result_error`](Self::with_result_error)
-    /// instead.
-    #[must_use]
-    pub fn with_result(self, result: serde_json::Value) -> Self {
-        match &self {
-            Self::FunctionCall { id, name, .. } => Self::FunctionResult {
-                name: Some(name.clone()),
-                call_id: id.clone().unwrap_or_default(),
-                result,
-                is_error: None,
-            },
-            _ => {
-                tracing::warn!(
-                    "with_result() called on non-FunctionCall content type. \
-                     This method is only valid for FunctionCall content."
-                );
-                self
-            }
-        }
-    }
-
-    /// Creates a function error result from this function call.
-    ///
-    /// Use this when function execution fails and you need to report the error
-    /// back to the model.
-    ///
-    /// ```
-    /// use genai_rs::Content;
-    /// use serde_json::json;
-    ///
-    /// let call = Content::function_call_with_id(
-    ///     Some("call_123"),
-    ///     "get_weather",
-    ///     json!({"location": "San Francisco"})
-    /// );
-    ///
-    /// // Report execution error
-    /// let error = call.with_result_error(json!({"error": "API rate limit exceeded"}));
-    /// ```
-    #[must_use]
-    pub fn with_result_error(self, result: serde_json::Value) -> Self {
-        match &self {
-            Self::FunctionCall { id, name, .. } => Self::FunctionResult {
-                name: Some(name.clone()),
-                call_id: id.clone().unwrap_or_default(),
-                result,
-                is_error: Some(true),
-            },
-            _ => {
-                tracing::warn!(
-                    "with_result_error() called on non-FunctionCall content type. \
-                     This method is only valid for FunctionCall content."
-                );
-                self
-            }
-        }
-    }
 }
 
 // Custom Deserialize implementation to handle unknown content types gracefully.
@@ -2381,13 +1774,6 @@ impl<'de> Deserialize<'de> for Content {
                 #[serde(default)]
                 annotations: Option<Vec<Annotation>>,
             },
-            Thought {
-                signature: Option<String>,
-            },
-            ThoughtSignature {
-                #[serde(default)]
-                signature: String,
-            },
             Image {
                 data: Option<String>,
                 uri: Option<String>,
@@ -2398,6 +1784,10 @@ impl<'de> Deserialize<'de> for Content {
                 data: Option<String>,
                 uri: Option<String>,
                 mime_type: Option<String>,
+                #[serde(default)]
+                sample_rate: Option<u32>,
+                #[serde(default)]
+                channels: Option<u32>,
             },
             Video {
                 data: Option<String>,
@@ -2410,106 +1800,12 @@ impl<'de> Deserialize<'de> for Content {
                 uri: Option<String>,
                 mime_type: Option<String>,
             },
-            FunctionCall {
-                #[serde(default)]
-                id: Option<String>,
-                // In streaming, content.start events may not include name yet
-                #[serde(default)]
-                name: Option<String>,
-                #[serde(rename = "arguments", default)]
-                args: serde_json::Value,
-            },
-            FunctionResult {
-                name: Option<String>,
-                call_id: String,
-                result: serde_json::Value,
-                is_error: Option<bool>,
-            },
-            CodeExecutionCall {
-                #[serde(default)]
-                id: Option<String>,
-                // API returns language/code in the arguments object
-                #[serde(default)]
-                language: Option<CodeExecutionLanguage>,
-                #[serde(default)]
-                code: Option<String>,
-                // Fallback for old API format
-                #[serde(default)]
-                arguments: Option<serde_json::Value>,
-            },
-            CodeExecutionResult {
-                #[serde(default)]
-                call_id: Option<String>,
-                #[serde(default)]
-                is_error: Option<bool>,
-                #[serde(default)]
-                result: Option<String>,
-            },
-            GoogleSearchCall {
-                id: String,
-                #[serde(default)]
-                arguments: Option<serde_json::Value>,
-            },
-            GoogleSearchResult {
-                call_id: String,
-                #[serde(default)]
-                result: Vec<GoogleSearchResultItem>,
-            },
-            UrlContextCall {
-                id: String,
-                #[serde(default)]
-                arguments: Option<serde_json::Value>,
-            },
-            UrlContextResult {
-                call_id: String,
-                #[serde(default)]
-                result: Vec<UrlContextResultItem>,
-            },
-            FileSearchResult {
-                call_id: String,
-                #[serde(default)]
-                result: Vec<FileSearchResultItem>,
-            },
-            GoogleMapsCall {
-                id: String,
-                #[serde(default)]
-                arguments: Option<serde_json::Value>,
-                #[serde(default)]
-                signature: Option<String>,
-            },
-            GoogleMapsResult {
-                call_id: String,
-                #[serde(default)]
-                result: Vec<GoogleMapsResultItem>,
-                #[serde(default)]
-                signature: Option<String>,
-            },
-            ComputerUseCall {
-                id: String,
-                action: String,
-                #[serde(default)]
-                parameters: Option<serde_json::Value>,
-            },
-            ComputerUseResult {
-                call_id: String,
-                success: bool,
-                #[serde(default)]
-                output: Option<serde_json::Value>,
-                #[serde(default)]
-                error: Option<String>,
-                #[serde(default)]
-                screenshot: Option<String>,
-            },
         }
 
         // Try to deserialize as a known type
         match serde_json::from_value::<KnownContent>(value.clone()) {
             Ok(known) => Ok(match known {
                 KnownContent::Text { text, annotations } => Content::Text { text, annotations },
-                KnownContent::Thought { signature } => Content::Thought { signature },
-                KnownContent::ThoughtSignature { signature } => {
-                    Content::ThoughtSignature { signature }
-                }
                 KnownContent::Image {
                     data,
                     uri,
@@ -2525,10 +1821,14 @@ impl<'de> Deserialize<'de> for Content {
                     data,
                     uri,
                     mime_type,
+                    sample_rate,
+                    channels,
                 } => Content::Audio {
                     data,
                     uri,
                     mime_type,
+                    sample_rate,
+                    channels,
                 },
                 KnownContent::Video {
                     data,
@@ -2549,201 +1849,6 @@ impl<'de> Deserialize<'de> for Content {
                     data,
                     uri,
                     mime_type,
-                },
-                KnownContent::FunctionCall { id, name, args } => {
-                    // In streaming, content.start may not include name yet;
-                    // deltas will fill it in. Use empty string as placeholder.
-                    Content::FunctionCall {
-                        id,
-                        name: name.unwrap_or_default(),
-                        args,
-                    }
-                }
-                KnownContent::FunctionResult {
-                    name,
-                    call_id,
-                    result,
-                    is_error,
-                } => Content::FunctionResult {
-                    name,
-                    call_id,
-                    result,
-                    is_error,
-                },
-                KnownContent::CodeExecutionCall {
-                    id,
-                    language,
-                    code,
-                    arguments,
-                } => {
-                    // Prefer direct fields, fall back to parsing arguments
-                    if let (Some(lang), Some(source)) = (language, code) {
-                        Content::CodeExecutionCall {
-                            id,
-                            language: lang,
-                            code: source,
-                        }
-                    } else if let Some(args) = arguments {
-                        // Parse old format: {"language": "PYTHON", "code": "..."}
-                        // Code is required - if missing, treat as Unknown per Evergreen philosophy
-                        let source = match args.get("code").and_then(|v| v.as_str()) {
-                            Some(code) => code.to_string(),
-                            None => {
-                                tracing::warn!(
-                                    "CodeExecutionCall arguments missing required 'code' field for id: {:?}. \
-                                     Treating as Unknown variant to preserve data for debugging.",
-                                    id
-                                );
-                                return Ok(Content::Unknown {
-                                    content_type: "code_execution_call".to_string(),
-                                    data: value.clone(),
-                                });
-                            }
-                        };
-
-                        // Language defaults to Python if missing or malformed (most common case)
-                        let lang = match args.get("language") {
-                            Some(lang_value) => {
-                                match serde_json::from_value::<CodeExecutionLanguage>(
-                                    lang_value.clone(),
-                                ) {
-                                    Ok(lang) => lang,
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            "CodeExecutionCall has invalid language value for id: {:?}, \
-                                             defaulting to Python. Parse error: {}",
-                                            id,
-                                            e
-                                        );
-                                        CodeExecutionLanguage::Python
-                                    }
-                                }
-                            }
-                            None => CodeExecutionLanguage::Python,
-                        };
-
-                        Content::CodeExecutionCall {
-                            id,
-                            language: lang,
-                            code: source,
-                        }
-                    } else {
-                        // Malformed CodeExecutionCall - treat as Unknown to preserve data
-                        // per Evergreen philosophy (see CLAUDE.md). This avoids silently
-                        // degrading to an empty code string which could cause subtle bugs.
-                        tracing::warn!(
-                            "CodeExecutionCall missing both direct fields and arguments for id: {:?}. \
-                             Treating as Unknown variant to preserve data for debugging.",
-                            id
-                        );
-                        Content::Unknown {
-                            content_type: "code_execution_call".to_string(),
-                            data: value.clone(),
-                        }
-                    }
-                }
-                KnownContent::CodeExecutionResult {
-                    call_id,
-                    is_error,
-                    result,
-                } => Content::CodeExecutionResult {
-                    call_id,
-                    // Default to false (success) when is_error is not provided
-                    is_error: is_error.unwrap_or(false),
-                    result: result.unwrap_or_default(),
-                },
-                KnownContent::GoogleSearchCall { id, arguments } => {
-                    // Extract queries from arguments.queries
-                    let queries = arguments
-                        .as_ref()
-                        .and_then(|args| args.get("queries"))
-                        .and_then(|q| q.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        })
-                        .unwrap_or_default();
-
-                    Content::GoogleSearchCall { id, queries }
-                }
-                KnownContent::GoogleSearchResult { call_id, result } => {
-                    Content::GoogleSearchResult { call_id, result }
-                }
-                KnownContent::UrlContextCall { id, arguments } => {
-                    // Extract urls from arguments.urls
-                    let urls = arguments
-                        .as_ref()
-                        .and_then(|args| args.get("urls"))
-                        .and_then(|u| u.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        })
-                        .unwrap_or_default();
-
-                    Content::UrlContextCall { id, urls }
-                }
-                KnownContent::UrlContextResult { call_id, result } => {
-                    Content::UrlContextResult { call_id, result }
-                }
-                KnownContent::FileSearchResult { call_id, result } => {
-                    Content::FileSearchResult { call_id, result }
-                }
-                KnownContent::GoogleMapsCall {
-                    id,
-                    arguments,
-                    signature,
-                } => {
-                    // Extract queries from arguments.queries (same as GoogleSearchCall)
-                    let queries = arguments
-                        .as_ref()
-                        .and_then(|args| args.get("queries"))
-                        .and_then(|q| q.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        })
-                        .unwrap_or_default();
-
-                    Content::GoogleMapsCall {
-                        id,
-                        queries,
-                        signature,
-                    }
-                }
-                KnownContent::GoogleMapsResult {
-                    call_id,
-                    result,
-                    signature,
-                } => Content::GoogleMapsResult {
-                    call_id,
-                    result,
-                    signature,
-                },
-                KnownContent::ComputerUseCall {
-                    id,
-                    action,
-                    parameters,
-                } => Content::ComputerUseCall {
-                    id,
-                    action,
-                    parameters: parameters.unwrap_or(serde_json::Value::Null),
-                },
-                KnownContent::ComputerUseResult {
-                    call_id,
-                    success,
-                    output,
-                    error,
-                    screenshot,
-                } => Content::ComputerUseResult {
-                    call_id,
-                    success,
-                    output,
-                    error,
-                    screenshot,
                 },
             }),
             Err(parse_error) => {

@@ -21,7 +21,7 @@
 //! Set the `GEMINI_API_KEY` environment variable with your API key.
 
 use futures_util::StreamExt;
-use genai_rs::{AutoFunctionStreamChunk, CallableFunction, Client};
+use genai_rs::{AutoFunctionStreamChunk, CallableFunction, Client, StepDelta};
 use genai_rs_macros::tool;
 use std::env;
 use std::io::{Write, stdout};
@@ -110,6 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut function_count = 0;
     let mut delta_count = 0;
+    let mut arguments_delta_count = 0;
     let mut last_event_id: Option<String> = None;
 
     while let Some(result) = stream.next().await {
@@ -122,15 +123,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 match &event.chunk {
-                    AutoFunctionStreamChunk::Delta(content) => {
+                    AutoFunctionStreamChunk::Delta(delta) => {
                         delta_count += 1;
                         // Print text content as it arrives
-                        if let Some(t) = content.as_text() {
+                        if let Some(t) = delta.as_text() {
                             print!("{}", t);
                             stdout().flush()?;
                         }
+                        // NEW in revision 2026-05-20: function-call arguments stream
+                        // incrementally as ArgumentsDelta fragments before execution
+                        if let Some(fragment) = delta.as_arguments_delta() {
+                            arguments_delta_count += 1;
+                            print!("[args… {}]", fragment);
+                            stdout().flush()?;
+                        }
                         // Show thoughts if present (signatures are verification tokens, not readable)
-                        if content.thought_signature().is_some() {
+                        if let StepDelta::ThoughtSignature {
+                            signature: Some(_), ..
+                        } = delta
+                        {
                             print!("\n[Thinking...]");
                             stdout().flush()?;
                         }
@@ -188,6 +199,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n--- Statistics ---");
     println!("Total delta chunks: {}", delta_count);
+    println!(
+        "Function-argument delta fragments: {}",
+        arguments_delta_count
+    );
     println!("Functions executed: {}", function_count);
     if let Some(event_id) = &last_event_id {
         println!("Last event_id: {}", event_id);
@@ -202,7 +217,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Key Takeaways ---");
     println!("• create_stream_with_auto_functions() combines streaming + auto-execution");
     println!("• AutoFunctionStreamEvent wraps chunk + event_id for resume support");
-    println!("• Delta events from API have event_id, client events (ExecutingFunctions) don't");
+    println!("• Delta chunks carry StepDelta values (text, thought, arguments_delta, ...)");
+    println!("• StepDelta::ArgumentsDelta streams function-call arguments as they generate");
     println!("• ExecutingFunctions/FunctionResults show function lifecycle events");
     println!("• Functions execute between streaming rounds, then response continues\n");
 

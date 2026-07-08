@@ -8,7 +8,7 @@
 //! Run with: cargo run --example url_context
 
 use futures_util::StreamExt;
-use genai_rs::{Client, GenaiError, StreamChunk, UrlRetrievalStatus};
+use genai_rs::{Client, GenaiError, StreamChunk};
 use std::env;
 use std::error::Error;
 use std::io::{Write, stdout};
@@ -45,21 +45,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
             println!("Interaction ID: {:?}", response.id);
             println!("Status: {:?}", response.status);
 
-            // 4. Check URL context metadata (retrieval status for each URL)
-            if let Some(metadata) = response.url_context_metadata() {
-                println!("\nURL Context Metadata:");
-                for entry in &metadata.url_metadata {
-                    let status_str = match entry.url_retrieval_status {
-                        UrlRetrievalStatus::Success => "Success",
-                        UrlRetrievalStatus::Unsafe => "Unsafe (blocked)",
-                        UrlRetrievalStatus::Error => "Error",
-                        UrlRetrievalStatus::Unspecified => "Unspecified",
-                        _ => "Unknown", // Handle future status values
-                    };
-                    println!("  {} - {}", entry.retrieved_url, status_str);
+            // 4. Check URL context steps (requested URLs + retrieval status)
+            let requested_urls = response.url_context_call_urls();
+            if !requested_urls.is_empty() {
+                println!("\nURLs requested:");
+                for url in &requested_urls {
+                    println!("  {url}");
                 }
+            }
+            let url_results = response.url_context_results();
+            if url_results.is_empty() {
+                println!("\nNo URL context results in response");
             } else {
-                println!("\nNo URL context metadata in response");
+                println!("\nURL Context Results:");
+                for result in &url_results {
+                    for item in result.items {
+                        // status is e.g. "success", "error", "paywall", "unsafe"
+                        println!("  {} - {}", item.url, item.status);
+                    }
+                }
             }
 
             // 5. Display the model's response
@@ -77,7 +81,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         println!(
                             "  \"{}...\" → {}",
                             &span[..span.len().min(50)],
-                            annotation.source.as_deref().unwrap_or("<no source>")
+                            annotation.source().unwrap_or("<no source>")
                         );
                     }
                 }
@@ -138,13 +142,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     while let Some(result) = stream.next().await {
         match result {
             Ok(event) => match event.chunk {
-                StreamChunk::Delta(content) => {
-                    if let Some(text) = content.as_text() {
+                StreamChunk::StepDelta { delta, .. } => {
+                    if let Some(text) = delta.as_text() {
                         print!("{}", text);
                         stdout().flush()?;
                     }
                 }
-                StreamChunk::Complete(response) => {
+                StreamChunk::Completed(response) => {
                     println!("\n");
                     final_response = Some(response);
                 }
@@ -157,18 +161,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    // Show URL context metadata from final response
-    if let Some(metadata) = final_response
-        .as_ref()
-        .and_then(|r| r.url_context_metadata())
-    {
-        println!("URLs fetched:");
-        for entry in &metadata.url_metadata {
-            let status = match entry.url_retrieval_status {
-                UrlRetrievalStatus::Success => "Success",
-                _ => "Other",
-            };
-            println!("  {} - {}", entry.retrieved_url, status);
+    // Show URL context results from final response
+    if let Some(response) = final_response.as_ref() {
+        let url_results = response.url_context_results();
+        if !url_results.is_empty() {
+            println!("URLs fetched:");
+            for result in &url_results {
+                for item in result.items {
+                    let status = if item.is_success() {
+                        "Success"
+                    } else {
+                        "Other"
+                    };
+                    println!("  {} - {}", item.url, status);
+                }
+            }
         }
     }
 
@@ -180,22 +187,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     println!("--- Key Takeaways ---");
     println!("• with_url_context() enables server-side URL fetching and analysis");
-    println!("• response.url_context_metadata() provides retrieval status per URL");
+    println!("• response.url_context_call_urls() lists the URLs the model requested");
+    println!("• response.url_context_results() provides retrieval status per URL");
     println!("• response.all_annotations() links text spans to fetched URL sources");
-    println!("• UrlRetrievalStatus: Success, Error, Unsafe (blocked), Unspecified");
+    println!("• Status values: success, error, paywall, unsafe");
     println!("• Works with both streaming and non-streaming requests\n");
 
     println!("--- What You'll See with LOUD_WIRE=1 ---");
     println!("Non-streaming:");
-    println!("  [REQ#1] POST with input + urlContext tool");
-    println!("  [RES#1] completed: text + urlContextMetadata with fetch status\n");
+    println!("  [REQ#1] POST with input + url_context tool");
+    println!("  [RES#1] completed: url_context_call + url_context_result + model_output steps\n");
     println!("Streaming:");
-    println!("  [REQ#2] POST streaming with input + urlContext tool");
-    println!("  [RES#2] SSE stream: text deltas → completed with urlContextMetadata\n");
+    println!("  [REQ#2] POST streaming with input + url_context tool");
+    println!("  [RES#2] SSE stream: step deltas → completed with url_context steps\n");
 
     println!("--- Production Considerations ---");
     println!("• URL context may not be available for all models/regions");
-    println!("• Check UrlRetrievalStatus to handle fetch failures gracefully");
+    println!("• Check item.status / is_success() to handle fetch failures gracefully");
     println!("• Unsafe URLs are blocked for security reasons");
     println!("• URL content is cached server-side - repeated calls may be faster");
 

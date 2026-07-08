@@ -13,7 +13,7 @@
 //! 1. Send a request with function declarations using `create()` (not `create_with_auto_functions()`)
 //! 2. Check if the response contains function calls with `response.has_function_calls()`
 //! 3. Execute the functions yourself
-//! 4. Send results back using `Content::function_result()` and `with_previous_interaction()`
+//! 4. Send results back using `Step::function_result()` and `with_previous_interaction()`
 //! 5. Repeat until the model returns a text response
 //!
 //! # Comparison with Auto Function Calling
@@ -35,7 +35,7 @@
 //!
 //! Set the `GEMINI_API_KEY` environment variable with your API key.
 
-use genai_rs::{Client, Content, FunctionDeclaration};
+use genai_rs::{Client, FunctionDeclaration, Step};
 use serde_json::json;
 use std::env;
 
@@ -127,20 +127,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let result = execute_function(call.name, call.args);
             println!("    Result: {}", result);
 
-            // Build function result content
-            // Note: call_id is required for multi-turn function calling. It's always present
-            // when store=true (the default), but may be None with store=false.
-            let call_id = call.id.ok_or_else(|| {
-                format!(
-                    "Function call '{}' is missing call_id. Ensure store=true for multi-turn.",
-                    call.name
-                )
-            })?;
-            results.push(Content::function_result(
-                call.name.to_string(),
-                call_id,
-                result,
-            ));
+            // Build a function result step (call.id links the result to the call)
+            results.push(Step::function_result(call.name, call.id, result));
         }
 
         // Send results back to the model
@@ -153,7 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .interaction()
             .with_model("gemini-3-flash-preview")
             .with_previous_interaction(prev_id) // Continue the conversation
-            .with_content(results)
+            .with_history(results) // function_result steps as input
             .add_functions(functions.clone()) // Keep functions available
             .create()
             .await?;
@@ -181,7 +169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Key Takeaways ---");
     println!("• Use create() (not create_with_auto_functions()) for manual control");
     println!("• Check response.has_function_calls() to detect pending calls");
-    println!("• Execute functions yourself, then send results with Content::function_result()");
+    println!("• Execute functions yourself, then send results with Step::function_result()");
     println!("• Use with_previous_interaction() to maintain conversation context\n");
 
     println!("--- What You'll See with LOUD_WIRE=1 ---");

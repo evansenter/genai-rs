@@ -12,10 +12,10 @@ use crate::{InteractionInput, InteractionResponse, StreamChunk, UsageMetadata};
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
 use serde_json::{Value, json};
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 
-use crate::Content;
 use crate::GenaiError;
+use crate::Step;
 use crate::ToolService;
 use crate::function_calling::{CallableFunction, FunctionRegistry, get_global_function_registry};
 use crate::streaming::{
@@ -27,22 +27,6 @@ use super::InteractionBuilder;
 
 /// Default maximum iterations for auto function calling.
 pub(crate) const DEFAULT_MAX_FUNCTION_CALL_LOOPS: usize = 5;
-
-/// Validates that a function call has a call_id and returns it.
-fn validate_call_id(call_id: Option<&str>, function_name: &str) -> Result<String, GenaiError> {
-    call_id
-        .ok_or_else(|| {
-            error!(
-                "Function call '{}' is missing required call_id field.",
-                function_name
-            );
-            GenaiError::MalformedResponse(format!(
-                "Function call '{}' is missing required call_id field",
-                function_name
-            ))
-        })
-        .map(|id| id.to_string())
-}
 
 /// Builds a map of callable functions from a ToolService for efficient lookup.
 fn build_service_function_map(
@@ -381,8 +365,7 @@ impl<'a> InteractionBuilder<'a> {
             debug!("Executing {} function call(s)", function_calls.len());
 
             for call in function_calls {
-                // Validate that we have a call_id (required by API)
-                let call_id = validate_call_id(call.id, call.name)?;
+                let call_id = call.id.to_string();
 
                 // Execute the function with timing
                 let start = Instant::now();
@@ -405,8 +388,9 @@ impl<'a> InteractionBuilder<'a> {
                     duration,
                 ));
 
-                // Add function result (only the result, not the call - server has it via previous_interaction_id)
-                function_results.push(Content::function_result(
+                // Add function result step (only the result, not the call -
+                // the server has the call via previous_interaction_id)
+                function_results.push(Step::function_result(
                     call.name.to_string(),
                     call_id,
                     result,
@@ -420,7 +404,7 @@ impl<'a> InteractionBuilder<'a> {
             // Create new request with function results
             // The server maintains function call context via previous_interaction_id
             request.previous_interaction_id = response.id;
-            request.input = InteractionInput::Content(function_results);
+            request.input = InteractionInput::Steps(function_results);
         }
 
         // Max loops reached - return partial result with whatever we have
@@ -470,7 +454,7 @@ impl<'a> InteractionBuilder<'a> {
     /// # Example
     ///
     /// ```no_run
-    /// # use genai_rs::{Client, AutoFunctionStreamChunk, Content};
+    /// # use genai_rs::{Client, AutoFunctionStreamChunk};
     /// # use futures_util::StreamExt;
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -485,8 +469,8 @@ impl<'a> InteractionBuilder<'a> {
     ///     let event = result?;
     ///     // event.event_id can be saved for stream resume support
     ///     match event.chunk {
-    ///         AutoFunctionStreamChunk::Delta(content) => {
-    ///             if let Content::Text { text: Some(t), .. } = content {
+    ///         AutoFunctionStreamChunk::Delta(delta) => {
+    ///             if let Some(t) = delta.as_text() {
     ///                 print!("{}", t);
     ///             }
     ///         }
@@ -604,8 +588,6 @@ impl<'a> InteractionBuilder<'a> {
                 // Stream this iteration's response
                 let mut stream = client.execute_stream(request.clone());
                 let mut complete_response: Option<InteractionResponse> = None;
-                // Accumulate function calls from deltas (streaming API may not include them in Complete)
-                let mut accumulated_calls: Vec<(Option<String>, String, serde_json::Value)> = Vec::new();
                 // Track last event_id for resume support
                 let mut last_event_id: Option<String> = None;
 
@@ -634,18 +616,25 @@ impl<'a> InteractionBuilder<'a> {
                         last_event_id = event.event_id.clone();
                     }
                     match event.chunk {
-                        StreamChunk::Delta(delta) => {
-                            // Check for function calls in delta
-                            if let crate::Content::FunctionCall { id, name, args, .. } = &delta {
-                                accumulated_calls.push((id.clone(), name.clone(), args.clone()));
-                            }
+                        StreamChunk::StepDelta { delta, .. } => {
+                            // Forward all step deltas, including arguments_delta
+                            // fragments for streaming function-call arguments.
                             yield AutoFunctionStreamEvent::new(
                                 AutoFunctionStreamChunk::Delta(delta),
                                 event.event_id,
                             );
                         }
-                        StreamChunk::Complete(response) => {
+                        StreamChunk::Completed(response) => {
+                            // The HTTP layer accumulates step.start/delta/stop
+                            // events into the Completed response's steps, so
+                            // response.function_calls() is fully populated here.
                             complete_response = Some(response);
+                        }
+                        StreamChunk::Error { message, code } => {
+                            tracing::warn!(
+                                "Streaming error during auto-function loop: {} (code: {:?})",
+                                message, code
+                            );
                         }
                         // Log unknown chunk types for observability, but continue for forward compatibility
                         StreamChunk::Unknown { chunk_type, .. } => {
@@ -683,17 +672,11 @@ impl<'a> InteractionBuilder<'a> {
                     ))?;
                 }
 
-                // Check for function calls from two possible sources:
-                // 1. response.function_calls(): Populated when the Complete event includes
-                //    FunctionCall content items (typical for non-streaming or when the API
-                //    batches function calls into the final response)
-                // 2. accumulated_calls: Populated from Delta events during streaming when
-                //    the API sends FunctionCall content incrementally via deltas
-                //
-                // We check both because API behavior may vary; prefer Complete response
-                // data when available as it represents the finalized state.
+                // Function calls come from the Completed response's steps
+                // (assembled by the HTTP layer from step.start/step.delta
+                // events, including streamed arguments_delta fragments).
                 let response_function_calls = response.function_calls();
-                let has_function_calls = !response_function_calls.is_empty() || !accumulated_calls.is_empty();
+                let has_function_calls = !response_function_calls.is_empty();
 
                 // If no function calls, we're done!
                 if !has_function_calls {
@@ -710,24 +693,10 @@ impl<'a> InteractionBuilder<'a> {
                     return;
                 }
 
-                // Determine which function calls to execute.
-                // Prefer response.function_calls() if available (finalized data),
-                // fall back to accumulated deltas otherwise.
-                let calls_to_execute: Vec<(String, String, serde_json::Value)> = if !response_function_calls.is_empty() {
-                    let mut calls = Vec::new();
-                    for call in &response_function_calls {
-                        let call_id = validate_call_id(call.id, call.name)?;
-                        calls.push((call_id, call.name.to_string(), call.args.clone()));
-                    }
-                    calls
-                } else {
-                    let mut calls = Vec::new();
-                    for (id, name, args) in &accumulated_calls {
-                        let call_id = validate_call_id(id.as_deref(), name)?;
-                        calls.push((call_id, name.clone(), args.clone()));
-                    }
-                    calls
-                };
+                let calls_to_execute: Vec<(String, String, serde_json::Value)> = response_function_calls
+                    .iter()
+                    .map(|call| (call.id.to_string(), call.name.to_string(), call.args.clone()))
+                    .collect();
 
                 // Signal that we're executing functions with pending call info
                 debug!("Executing {} function call(s)", calls_to_execute.len());
@@ -744,8 +713,8 @@ impl<'a> InteractionBuilder<'a> {
                     None,
                 );
 
-                // Build function results for next iteration
-                let mut function_results_content = Vec::new();
+                // Build function result steps for next iteration
+                let mut function_result_steps = Vec::new();
                 let mut execution_results = Vec::new();
 
                 for (call_id, name, args) in &calls_to_execute {
@@ -773,8 +742,8 @@ impl<'a> InteractionBuilder<'a> {
                         duration,
                     ));
 
-                    // Add function result content for API
-                    function_results_content.push(Content::function_result(
+                    // Add function result step for the API
+                    function_result_steps.push(Step::function_result(
                         name.clone(),
                         call_id.clone(),
                         result,
@@ -793,7 +762,7 @@ impl<'a> InteractionBuilder<'a> {
 
                 // Create new request with function results
                 request.previous_interaction_id = response.id;
-                request.input = InteractionInput::Content(function_results_content);
+                request.input = InteractionInput::Steps(function_result_steps);
             }
 
             // Max loops reached - yield partial result with the last response
@@ -831,45 +800,47 @@ impl<'a> InteractionBuilder<'a> {
 mod tests {
     use super::*;
 
+    // NOTE: The old validate_call_id() helper was removed in the 2026-05-20
+    // revision: function-call ids are now required on the wire (Step::FunctionCall
+    // carries `id: String`), so there is no Option to validate. These tests cover
+    // the remaining pure helpers in this module instead.
+
     #[test]
-    fn test_validate_call_id_with_valid_id() {
-        let result = validate_call_id(Some("call_123"), "get_weather");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "call_123");
+    fn test_build_service_function_map_without_service() {
+        let map = build_service_function_map(&None);
+        assert!(map.is_empty(), "No tool service should yield an empty map");
     }
 
-    #[test]
-    fn test_validate_call_id_with_empty_id() {
-        // Empty string is technically valid - the model controls the value
-        let result = validate_call_id(Some(""), "get_weather");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "");
-    }
+    #[tokio::test]
+    async fn test_execute_function_not_found_returns_error_json() {
+        // A function missing from both the service map and the global registry
+        // must produce a recoverable JSON error (sent back to the model),
+        // not a hard failure.
+        let service_functions: HashMap<String, Arc<dyn CallableFunction>> = HashMap::new();
+        let registry = get_global_function_registry();
 
-    #[test]
-    fn test_validate_call_id_with_none() {
-        let result = validate_call_id(None, "get_weather");
-        assert!(result.is_err());
+        let result = execute_function(
+            "__genai_rs_test_nonexistent_function__",
+            json!({"arg": 1}),
+            &service_functions,
+            registry,
+        )
+        .await;
 
-        match result.unwrap_err() {
-            GenaiError::MalformedResponse(msg) => {
-                assert!(msg.contains("get_weather"));
-                assert!(msg.contains("call_id"));
-            }
-            other => panic!("Expected MalformedResponse, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_validate_call_id_error_includes_function_name() {
-        let result = validate_call_id(None, "calculate_sum");
-        assert!(result.is_err());
-
-        let error_msg = format!("{}", result.unwrap_err());
+        let error = result
+            .get("error")
+            .and_then(|v| v.as_str())
+            .expect("Missing function should produce an error object");
         assert!(
-            error_msg.contains("calculate_sum"),
-            "Error should include function name: {}",
-            error_msg
+            error.contains("__genai_rs_test_nonexistent_function__"),
+            "Error should name the missing function: {}",
+            error
         );
+    }
+
+    #[test]
+    fn test_default_max_function_call_loops() {
+        // Documented default used by with_max_function_call_loops() tests
+        assert_eq!(DEFAULT_MAX_FUNCTION_CALL_LOOPS, 5);
     }
 }

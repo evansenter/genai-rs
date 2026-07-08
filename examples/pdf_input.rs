@@ -118,14 +118,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     while let Some(result) = stream.next().await {
         match result {
             Ok(event) => match event.chunk {
-                StreamChunk::Delta(content) => {
-                    if let Some(text) = content.as_text() {
+                StreamChunk::StepDelta { delta, .. } => {
+                    if let Some(text) = delta.as_text() {
                         print!("{}", text);
                         // Flush each chunk immediately for real-time streaming effect
                         stdout().flush()?;
                     }
                 }
-                StreamChunk::Complete(response) => {
+                StreamChunk::Completed(response) => {
                     println!("\n");
                     if let Some(usage) = response.usage {
                         if let Some(input) = usage.total_input_tokens {

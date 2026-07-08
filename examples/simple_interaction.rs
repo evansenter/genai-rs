@@ -31,13 +31,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
             println!("Interaction ID: {:?}", response.id);
             println!("Status: {:?}", response.status);
 
-            if !response.outputs.is_empty() {
+            if !response.steps.is_empty() {
                 println!("\nModel Output:");
-                for output in &response.outputs {
-                    if let Some(t) = output.as_text() {
-                        println!("{t}");
-                    } else if output.thought_signature().is_some() {
-                        println!("[Thought] (signature present)");
+                for step in &response.steps {
+                    match step {
+                        genai_rs::Step::ModelOutput { .. } => {
+                            if let Some(t) = step.as_text() {
+                                println!("{t}");
+                            }
+                        }
+                        genai_rs::Step::Thought {
+                            signature: Some(_), ..
+                        } => {
+                            println!("[Thought] (signature present)");
+                        }
+                        _ => {}
                     }
                 }
             }

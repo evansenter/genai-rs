@@ -90,13 +90,13 @@ cargo test --test ui_tests
 
 ### Canary Tests
 
-Early-warning tests that detect when the API returns new content types.
+Early-warning tests that detect when the API returns new step or content types.
 
 ```bash
 cargo nextest run --test api_canary_tests --run-ignored all
 ```
 
-**Purpose**: When Google adds new content types, these tests fail to alert us to add support.
+**Purpose**: When Google adds new step or content types, these tests fail to alert us to add support.
 
 **Note**: Skipped when `--features strict-unknown` is enabled.
 
@@ -452,20 +452,20 @@ assert!(schema.contains("\"type\": \"string\""));
 assert!(email.contains("@"));
 ```
 
-### Unknown Content Checks
+### Unknown Step Checks
 
 For forward-compatibility testing:
 
 ```rust,ignore
-// Verify no unknown content (canary test)
+// Verify no unknown steps or content (canary test)
 assert!(!response.has_unknown(),
     "API returned unknown types: {:?}",
-    response.content_summary().unknown_types);
+    response.step_summary().unknown_types);
 
 // Or handle gracefully
 if response.has_unknown() {
-    for (type_name, data) in response.unknown_content() {
-        log::warn!("Unknown content type: {} = {:?}", type_name, data);
+    for (type_name, data) in response.unknown_steps() {
+        log::warn!("Unknown step type: {} = {:?}", type_name, data);
     }
 }
 ```

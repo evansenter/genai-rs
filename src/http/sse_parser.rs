@@ -2,9 +2,10 @@
 ///
 /// This module provides generic utilities for parsing SSE streams from the Gemini API.
 /// SSE format consists of lines starting with "data: " followed by JSON payloads.
+use super::context::HttpContext;
 use super::error_helpers::format_json_parse_error;
-use super::loud_wire;
 use crate::errors::GenaiError;
+use crate::wire::WireEvent;
 use async_stream::try_stream;
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt};
@@ -20,6 +21,9 @@ use tracing::debug;
 /// - Extracts "data: " prefixed lines
 /// - Deserializes JSON payloads
 ///
+/// Wire inspectors installed on the client see every `data:` payload and
+/// every `event:` line as [`WireEvent::SseFrame`] events.
+///
 /// # Type Parameters
 ///
 /// * `T` - The type to deserialize each SSE data payload into
@@ -27,7 +31,8 @@ use tracing::debug;
 /// # Arguments
 ///
 /// * `byte_stream` - An async stream of byte chunks from the HTTP response
-/// * `request_id` - Request ID for LOUD_WIRE correlation
+/// * `ctx` - HTTP context carrying the wire inspectors
+/// * `request_id` - Request ID for wire-event correlation
 ///
 /// # Returns
 ///
@@ -37,19 +42,20 @@ use tracing::debug;
 ///
 /// ```ignore
 /// let byte_stream = response.bytes_stream();
-/// let parsed_stream = parse_sse_stream::<MyResponseType>(byte_stream, request_id);
+/// let parsed_stream = parse_sse_stream::<MyResponseType>(byte_stream, ctx, request_id);
 ///
 /// while let Some(result) = parsed_stream.next().await {
 ///     let response = result?;
 ///     // Process response...
 /// }
 /// ```
-pub fn parse_sse_stream<T>(
-    byte_stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send,
-    request_id: usize,
-) -> impl Stream<Item = Result<T, GenaiError>> + Send
+pub fn parse_sse_stream<'a, T>(
+    byte_stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'a,
+    ctx: &'a HttpContext,
+    request_id: u64,
+) -> impl Stream<Item = Result<T, GenaiError>> + Send + 'a
 where
-    T: DeserializeOwned + Send,
+    T: DeserializeOwned + Send + 'a,
 {
     try_stream! {
         futures_util::pin_mut!(byte_stream);
@@ -73,14 +79,31 @@ where
                     if !json_data.is_empty() && json_data != "[DONE]" {
                         debug!("SSE raw data: {}", json_data);
 
-                        // LOUD_WIRE: Log SSE chunk
-                        loud_wire::log_sse_chunk(request_id, json_data);
+                        if ctx.has_inspectors() {
+                            ctx.emit(WireEvent::SseFrame {
+                                id: request_id,
+                                event_type: None,
+                                data: json_data.to_string(),
+                            });
+                        }
 
                         let parsed: T = serde_json::from_str(json_data).map_err(|e| {
                             let context_msg = format_json_parse_error(json_data, e);
                             GenaiError::Parse(context_msg)
                         })?;
                         yield parsed;
+                    }
+                } else if let Some(event_type) = line.strip_prefix("event:") {
+                    // Surface event-type lines to wire inspectors. The
+                    // Interactions API carries its event type inside the data
+                    // payload, so these are informational only.
+                    let event_type = event_type.trim_start();
+                    if !event_type.is_empty() && ctx.has_inspectors() {
+                        ctx.emit(WireEvent::SseFrame {
+                            id: request_id,
+                            event_type: Some(event_type.to_string()),
+                            data: String::new(),
+                        });
                     }
                 }
             }
@@ -91,12 +114,79 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wire::WireInspector;
     use futures_util::{pin_mut, stream};
     use serde::Deserialize;
+    use std::sync::{Arc, Mutex};
 
     #[derive(Debug, Deserialize, PartialEq)]
     struct TestMessage {
         text: String,
+    }
+
+    /// Context with no inspectors installed (the default configuration).
+    fn test_ctx() -> HttpContext {
+        HttpContext::new(reqwest::Client::new(), "test-key".to_string(), vec![])
+    }
+
+    /// Test inspector that records every event it receives.
+    struct Collector {
+        events: Mutex<Vec<WireEvent>>,
+    }
+
+    impl WireInspector for Collector {
+        fn on_event(&self, event: &WireEvent) {
+            self.events.lock().unwrap().push(event.clone());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_sse_stream_emits_wire_frames() {
+        let collector = Arc::new(Collector {
+            events: Mutex::new(Vec::new()),
+        });
+        let ctx = HttpContext::new(
+            reqwest::Client::new(),
+            "test-key".to_string(),
+            vec![collector.clone()],
+        );
+
+        let data = b"event: message\ndata: {\"text\":\"Hello\"}\n\ndata: {\"text\":\"World\"}\n\n"
+            .to_vec();
+        let byte_stream = stream::iter(vec![Ok(Bytes::from(data))]);
+
+        let parsed_stream = parse_sse_stream::<TestMessage>(byte_stream, &ctx, 42);
+        pin_mut!(parsed_stream);
+        while let Some(result) = parsed_stream.next().await {
+            result.unwrap();
+        }
+
+        let events = collector.events.lock().unwrap();
+        assert_eq!(events.len(), 3, "expected event: line + 2 data frames");
+        match &events[0] {
+            WireEvent::SseFrame {
+                id,
+                event_type,
+                data,
+            } => {
+                assert_eq!(*id, 42);
+                assert_eq!(event_type.as_deref(), Some("message"));
+                assert!(data.is_empty());
+            }
+            other => panic!("expected SseFrame, got {other:?}"),
+        }
+        match &events[1] {
+            WireEvent::SseFrame {
+                id,
+                event_type,
+                data,
+            } => {
+                assert_eq!(*id, 42);
+                assert_eq!(*event_type, None);
+                assert_eq!(data, r#"{"text":"Hello"}"#);
+            }
+            other => panic!("expected SseFrame, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -105,7 +195,8 @@ mod tests {
         let data = b"data: {\"text\":\"Hello\"}\n\n".to_vec();
         let byte_stream = stream::iter(vec![Ok(Bytes::from(data))]);
 
-        let parsed_stream = parse_sse_stream::<TestMessage>(byte_stream, 0);
+        let ctx = test_ctx();
+        let parsed_stream = parse_sse_stream::<TestMessage>(byte_stream, &ctx, 0);
         pin_mut!(parsed_stream);
 
         let result = parsed_stream.next().await;
@@ -121,7 +212,8 @@ mod tests {
         let data = b"data: {\"text\":\"First\"}\n\ndata: {\"text\":\"Second\"}\n\n".to_vec();
         let byte_stream = stream::iter(vec![Ok(Bytes::from(data))]);
 
-        let parsed_stream = parse_sse_stream::<TestMessage>(byte_stream, 0);
+        let ctx = test_ctx();
+        let parsed_stream = parse_sse_stream::<TestMessage>(byte_stream, &ctx, 0);
         pin_mut!(parsed_stream);
 
         let first = parsed_stream.next().await.unwrap().unwrap();
@@ -138,7 +230,8 @@ mod tests {
         let chunk2 = b"xt\":\"Hello\"}\n\n".to_vec();
         let byte_stream = stream::iter(vec![Ok(Bytes::from(chunk1)), Ok(Bytes::from(chunk2))]);
 
-        let parsed_stream = parse_sse_stream::<TestMessage>(byte_stream, 0);
+        let ctx = test_ctx();
+        let parsed_stream = parse_sse_stream::<TestMessage>(byte_stream, &ctx, 0);
         pin_mut!(parsed_stream);
 
         let message = parsed_stream.next().await.unwrap().unwrap();
@@ -151,7 +244,8 @@ mod tests {
         let data = b": comment\ndata: {\"text\":\"Hello\"}\n\nevent: test\n\n".to_vec();
         let byte_stream = stream::iter(vec![Ok(Bytes::from(data))]);
 
-        let parsed_stream = parse_sse_stream::<TestMessage>(byte_stream, 0);
+        let ctx = test_ctx();
+        let parsed_stream = parse_sse_stream::<TestMessage>(byte_stream, &ctx, 0);
         pin_mut!(parsed_stream);
 
         let message = parsed_stream.next().await.unwrap().unwrap();
@@ -167,7 +261,8 @@ mod tests {
         let data = b"data: \ndata: {\"text\":\"Hello\"}\n\n".to_vec();
         let byte_stream = stream::iter(vec![Ok(Bytes::from(data))]);
 
-        let parsed_stream = parse_sse_stream::<TestMessage>(byte_stream, 0);
+        let ctx = test_ctx();
+        let parsed_stream = parse_sse_stream::<TestMessage>(byte_stream, &ctx, 0);
         pin_mut!(parsed_stream);
 
         let message = parsed_stream.next().await.unwrap().unwrap();
@@ -180,7 +275,8 @@ mod tests {
         let data = b"data: {invalid json}\n\n".to_vec();
         let byte_stream = stream::iter(vec![Ok(Bytes::from(data))]);
 
-        let parsed_stream = parse_sse_stream::<TestMessage>(byte_stream, 0);
+        let ctx = test_ctx();
+        let parsed_stream = parse_sse_stream::<TestMessage>(byte_stream, &ctx, 0);
         pin_mut!(parsed_stream);
 
         let result = parsed_stream.next().await.unwrap();
@@ -196,7 +292,8 @@ mod tests {
         let data = format!("data: {{\"text\":\"{}\"}}\n\n", large_text);
         let byte_stream = stream::iter(vec![Ok(Bytes::from(data))]);
 
-        let parsed_stream = parse_sse_stream::<TestMessage>(byte_stream, 0);
+        let ctx = test_ctx();
+        let parsed_stream = parse_sse_stream::<TestMessage>(byte_stream, &ctx, 0);
         pin_mut!(parsed_stream);
 
         let result = parsed_stream.next().await;
@@ -214,7 +311,8 @@ mod tests {
         }
 
         let byte_stream = stream::iter(vec![Ok(Bytes::from(data))]);
-        let parsed_stream = parse_sse_stream::<TestMessage>(byte_stream, 0);
+        let ctx = test_ctx();
+        let parsed_stream = parse_sse_stream::<TestMessage>(byte_stream, &ctx, 0);
         pin_mut!(parsed_stream);
 
         let mut count = 0;
@@ -238,7 +336,8 @@ mod tests {
             .collect();
 
         let byte_stream = stream::iter(chunks);
-        let parsed_stream = parse_sse_stream::<TestMessage>(byte_stream, 0);
+        let ctx = test_ctx();
+        let parsed_stream = parse_sse_stream::<TestMessage>(byte_stream, &ctx, 0);
         pin_mut!(parsed_stream);
 
         let message = parsed_stream.next().await.unwrap().unwrap();
@@ -251,7 +350,8 @@ mod tests {
         let data = b"data: {\"text\":\"First\"}\n\ndata: {\"text\":\"Second\"}\r\n\r\ndata: {\"text\":\"Third\"}\n\n".to_vec();
         let byte_stream = stream::iter(vec![Ok(Bytes::from(data))]);
 
-        let parsed_stream = parse_sse_stream::<TestMessage>(byte_stream, 0);
+        let ctx = test_ctx();
+        let parsed_stream = parse_sse_stream::<TestMessage>(byte_stream, &ctx, 0);
         pin_mut!(parsed_stream);
 
         let first = parsed_stream.next().await.unwrap().unwrap();
@@ -270,7 +370,8 @@ mod tests {
         let data = b"data: {\"text\":\"Hello \\u4e16\\u754c \\ud83c\\udf0d\"}\n\n".to_vec();
         let byte_stream = stream::iter(vec![Ok(Bytes::from(data))]);
 
-        let parsed_stream = parse_sse_stream::<TestMessage>(byte_stream, 0);
+        let ctx = test_ctx();
+        let parsed_stream = parse_sse_stream::<TestMessage>(byte_stream, &ctx, 0);
         pin_mut!(parsed_stream);
 
         let message = parsed_stream.next().await.unwrap().unwrap();

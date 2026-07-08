@@ -69,38 +69,73 @@ pub use errors::GenaiError;
 pub mod content;
 pub use content::{
     Annotation, CodeExecutionLanguage, Content, FileSearchResultItem, GoogleMapsResultItem,
-    GoogleSearchResultItem, Place, Resolution, UrlContextResultItem,
+    GoogleSearchResultItem, Place, Resolution, ReviewSnippet, UrlContextResultItem,
 };
+
+// Step types (revision 2026-05-20 response model)
+pub mod steps;
+pub use steps::{FunctionResultPayload, Step, StepDelta, StepError};
 
 // Request types (includes agent configuration)
 pub mod request;
 pub use request::{
     AgentConfig, DeepResearchConfig, DynamicConfig, GenerationConfig, ImageAspectRatio,
-    ImageConfig, ImageSize, InteractionInput, InteractionRequest, Role, SpeechConfig,
-    ThinkingLevel, ThinkingSummaries, Turn, TurnContent,
+    ImageConfig, ImageSize, InteractionInput, InteractionRequest, Role, ServiceTier, SpeechConfig,
+    ThinkingLevel, ThinkingSummaries, TurnContent, VideoConfig, VideoTask, Visualization,
+};
+
+// Typed response_format union (text/audio/image/video + list form)
+pub mod response_format;
+pub use response_format::{ResponseDelivery, ResponseFormat, ResponseFormatSpec};
+
+// Environment types (environment request field, agent base_environment)
+pub mod environment;
+pub use environment::{
+    AllowlistEntry, EnvironmentSource, EnvironmentSpec, NetworkConfig, RemoteEnvironment,
+    SourceType,
+};
+
+// Agents resource (/v1beta/agents)
+pub mod agents;
+pub use agents::{Agent, AgentListResponse};
+
+// Webhooks resource (/v1beta/webhooks) and per-request webhook_config
+pub mod webhooks;
+pub use webhooks::{
+    RevocationBehavior, RotateSigningSecretResponse, SigningSecret, Webhook, WebhookConfig,
+    WebhookEvent, WebhookListResponse, WebhookState, WebhookUpdate,
 };
 
 // Response types
 pub mod response;
 pub use response::{
-    AudioInfo, CodeExecutionCallInfo, CodeExecutionResultInfo, ContentSummary, FunctionCallInfo,
-    FunctionResultInfo, GoogleMapsResultInfo, GroundingChunk, GroundingMetadata, ImageInfo,
-    InteractionResponse, InteractionStatus, ModalityTokens, OwnedFunctionCallInfo,
-    UrlContextMetadata, UrlContextResultInfo, UrlMetadataEntry, UrlRetrievalStatus, UsageMetadata,
-    WebSource,
+    AudioInfo, CodeExecutionCallInfo, CodeExecutionResultInfo, FunctionCallInfo,
+    FunctionResultInfo, GoogleMapsResultInfo, GroundingToolCount, ImageInfo, InteractionResponse,
+    InteractionStatus, ModalityTokens, OwnedFunctionCallInfo, StepSummary, UrlContextResultInfo,
+    UsageMetadata,
 };
 
 // Tool types (function declarations, built-in tools)
 pub mod tools;
 pub use tools::{
-    ComputerUseConfig, FileSearchConfig, FunctionCallingMode, FunctionDeclaration,
-    FunctionDeclarationBuilder, FunctionParameters, GoogleMapsConfig, GoogleSearchConfig,
-    McpServerConfig, SearchType, Tool,
+    AllowedTools, ComputerUseConfig, ExaAiSearchConfig, FileSearchConfig, FunctionCallingMode,
+    FunctionDeclaration, FunctionDeclarationBuilder, FunctionParameters, GoogleMapsConfig,
+    GoogleSearchConfig, HybridSearchConfig, McpServerConfig, ParallelAiSearchConfig, RagFilter,
+    RagRanking, RagResource, RagRetrievalConfig, RagStoreConfig, RetrievalConfig, RetrievalType,
+    SearchType, Tool, ToolChoice, VertexAiSearchConfig,
 };
 
 // Wire streaming types (from API)
 pub mod wire_streaming;
-pub use wire_streaming::{InteractionStreamEvent, StreamChunk, StreamEvent};
+pub use wire_streaming::{InteractionStreamEvent, StreamChunk, StreamEvent, StreamMetadata};
+
+// Wire-level inspection (WireEvent, WireInspector, built-in inspectors)
+pub mod wire;
+
+// Native client for Google's Antigravity localharness agent runtime
+// (feature = "antigravity"). See docs/ANTIGRAVITY.md.
+#[cfg(feature = "antigravity")]
+pub mod antigravity;
 
 // Files API types
 pub use http::files::{
@@ -193,6 +228,10 @@ mod doc_tests {
 
     // Detailed guides in docs/
     doc_comment!(include_str!("../docs/AGENTS_AND_BACKGROUND.md"));
+    // ANTIGRAVITY.md uses only `rust,ignore` code blocks: the doctest
+    // harness runs without the `antigravity` feature, so its snippets are
+    // compile-checked by the feature-gated example and tests instead.
+    doc_comment!(include_str!("../docs/ANTIGRAVITY.md"));
     doc_comment!(include_str!("../docs/BUILT_IN_TOOLS.md"));
     doc_comment!(include_str!("../docs/CONFIGURATION.md"));
     doc_comment!(include_str!("../docs/CONVERSATION_PATTERNS.md"));

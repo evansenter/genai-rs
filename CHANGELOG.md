@@ -7,31 +7,583 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-07
+
+This release migrates the crate to Interactions API wire revision
+**2026-05-20** (the steps model), adds the remaining 2026-05-20 API surface
+(webhooks, environments + agents, the retrieval tool, typed response
+formats, video generation config, multi-speaker TTS, Deep Research
+options), introduces a structured wire-inspection layer
+(`genai_rs::wire`), and ships a new off-by-default `antigravity` feature —
+a native Rust client for Google's Antigravity `localharness` agent
+runtime. It is a deliberately breaking release; see the migration guide
+below.
+
+> **Verification**: wire shapes were derived from Google's generated
+> `google-genai` 2.10 API bindings and covered with fixture + proptest
+> roundtrip tests. Both the core revision and the phase-2 surface were
+> verified live 2026-07 with a real `GEMINI_API_KEY` (`LOUD_WIRE=1`
+> against `generativelanguage.googleapis.com`): revision accepted, steps
+> model and snake_case field naming confirmed, `function_call`
+> `signature` discovered and modeled, lowercase response modalities and
+> the `response_mime_type` rejection confirmed; webhooks full
+> CRUD/ping/rotate, environments, typed response formats, multi-speaker
+> TTS, deep-research knobs, and the video config schema all exercised
+> live. Live findings (details in `docs/INTERACTIONS_API_GAP.md` /
+> `docs/ENUM_WIRE_FORMATS.md`): `VideoTask` gained a live-discovered
+> `Extend` variant; webhook `:ping` accepts the empty `{}` body and PATCH
+> `update_mask` is optional and observed to be ignored (the body scopes
+> the update); several knobs are Vertex-only and rejected by the Gemini
+> API (`Tool::Retrieval`, `enable_bigquery_tool`, video `gcs_uri`);
+> audio/image response formats are inline-only today (audio
+> `mime_type`/`delivery` and image `delivery` rejected; image `mime_type`
+> limited to `image/jpeg`); Veo models are not served by the Interactions
+> API; and agent creation is gated on standard API keys (agent `tools`
+> accept only `code_execution`/`google_search`/`url_context`).
+
+### Migration guide (0.7 → 0.8)
+
+**Steps replace `Turn` and `outputs`.** `InteractionResponse.outputs:
+Vec<Content>` is now `steps: Vec<Step>`, and `Turn` /
+`InteractionInput::Turns` are gone — conversation history is a step list.
+Convenience accessors (`as_text()`, `function_calls()`, `images()`, ...)
+keep working unchanged.
+
+```rust
+// Before
+.with_history(vec![Turn::user("hi"), Turn::model("Hello!")])
+
+// After
+let mut history = vec![Step::user_text("hi")];
+history.extend(response.output_steps()); // replay prior model output
+```
+
+**Function-call signatures MUST be replayed.** `function_call` (and
+thought) steps carry an opaque `signature` the API rejects stateless
+replay without. Never reconstruct model turns by hand — extend history
+with `response.output_steps()`, which preserves signatures.
+
+**Response modalities are lowercase.** The API rejects `"IMAGE"`/`"AUDIO"`;
+`with_image_output()`/`with_audio_output()` now send `"image"`/`"audio"`
+and `with_response_modalities()` normalizes to lowercase. No code change
+needed unless you passed uppercase strings you also match on elsewhere.
+
+**`response_mime_type` is gone** (the API rejects the field in every
+form). Use `with_response_format()` — passing a JSON schema implies JSON
+output:
+
+```rust
+// Before
+.with_response_mime_type("application/json").with_response_format(schema)
+// After
+.with_response_format(schema)
+```
+
+**`with_response_format()` now takes `impl Into<ResponseFormat>`.** Raw
+`serde_json::Value` schemas keep compiling (they convert to
+`ResponseFormat::Text { mime_type: "application/json", schema }`); pass
+typed `ResponseFormat` variants for audio/image/video output, or
+`with_response_formats(Vec<ResponseFormat>)` for the list form.
+
+**`speech_config` is now a list** (`Option<Vec<SpeechConfig>>`,
+multi-speaker TTS). `with_speech_config(single)` still compiles and sends
+a one-entry list; use `with_speech_configs()` / `add_speech_config()` for
+multi-speaker dialogue.
+
+**`tool_choice` is a typed union.** The top-level
+`generation_config.allowed_tools: Vec<String>` was removed;
+`with_allowed_tools(vec![...])` now emits the spec's
+`{"allowed_tools": {"mode", "tools"}}` object, and
+`with_tool_choice(ToolChoice::...)` sets the lowercase mode strings
+(`auto|any|none|validated`) directly.
+
+**reqwest 0.13 changed TLS trust anchors.** Certificates are now verified
+against the **OS trust store** (`rustls-platform-verifier`) instead of
+bundled Mozilla roots. Scratch/distroless containers without a CA bundle
+will fail TLS — install one (e.g. `ca-certificates`). The TLS stack is
+still rustls.
+
 ### Added
 
-- `InteractionStatus::Incomplete` variant for interactions that end before completion
-- `ImageConfig` with `ImageAspectRatio` and `ImageSize` enums for image generation configuration
-- `allowed_tools` field on `GenerationConfig` for restricting which tools the model can call
-- Google Maps built-in tool support (`Tool::GoogleMaps`, `GoogleMapsConfig`, `GoogleMapsCall`, `GoogleMapsResult` content types)
-- `SearchType` enum for Google Search `search_types` configuration
-- `allowed_tools` and `headers` optional fields on `Tool::McpServer`
-- Unified `add_tool(impl Into<Tool>)` method on `InteractionBuilder`
-- Tool configuration structs: `GoogleMapsConfig`, `GoogleSearchConfig`, `McpServerConfig`, `ComputerUseConfig`, `FileSearchConfig`
-- `with_google_maps()` shorthand on `InteractionBuilder`
-- `Place` struct with Evergreen forward-compatible `extra` field
-- `GoogleMapsResultInfo` view type and response accessors (`has_google_maps_results()`, `google_maps_results()`)
+#### Interactions API revision 2026-05-20
+
+- Every Interactions API request now sends `Api-Revision: 2026-05-20`
+  (create/get/delete/cancel, streaming included; the Files API is
+  unrevisioned, matching google-genai). Header constants live in
+  `src/http/common.rs`.
+- New types: `Step`, `StepDelta`, `StepError`, `FunctionResultPayload`,
+  `StepSummary`, the `Annotation` citation union + `ReviewSnippet`,
+  `ToolChoice` + `AllowedTools`, `ServiceTier`, `GroundingToolCount`,
+  `StreamMetadata`.
+- New response accessors: `output_contents()`, `output_steps()`,
+  `thought_summaries()`, `unknown_steps()`; `Step`/`StepDelta` accessors
+  (`as_text()`, `signature()`, `step_type()`, `as_arguments_delta()`,
+  ...); `StreamChunk::delta_text()` convenience.
+- `InteractionResponse` gained `environment_id`, `output_text`, a typed
+  optional `input`, and a `Default` impl. It also now models `object`
+  (`"interaction"`), `service_tier` (the effective billing tier), and the
+  `webhook_config` echo — all returned by the live API and previously
+  dropped silently.
+- `InteractionStatus`: first-class `BudgetExceeded` (`"budget_exceeded"`)
+  and new `Incomplete` variant for interactions that end before
+  completion.
+- `service_tier` request field + `with_service_tier()`
+  (`flex | standard | priority` + Unknown).
+- `cached_content` request field + `with_cached_content()` (explicit
+  caching).
+- `presence_penalty` / `frequency_penalty` generation config fields +
+  `with_presence_penalty()` / `with_frequency_penalty()`.
+- `include_input` query param support:
+  `Client::get_interaction_with_input()`.
+- `UsageMetadata.grounding_tool_count: Vec<GroundingToolCount>` +
+  `grounding_count_for_tool()`.
+- `AudioInfo::sample_rate()` / `channels()` (and `Content::Audio` gained
+  `sample_rate` and `channels`); `GoogleSearchResultItem.search_suggestions`;
+  `Place.url` / `review_snippets`.
+
+#### Webhooks
+
+- Full `/v1beta/webhooks` resource client: `Client::create_webhook()`,
+  `get_webhook()`, `list_webhooks()`, `update_webhook()` (with
+  `update_mask`), `delete_webhook()`, `ping_webhook()`, and
+  `rotate_webhook_signing_secret()` (with `RevocationBehavior`).
+- New types in `src/webhooks.rs`: `Webhook`, `WebhookUpdate`,
+  `SigningSecret`, `WebhookListResponse`, `RotateSigningSecretResponse`,
+  and Evergreen enums `WebhookEvent` (`batch.succeeded/expired/failed`,
+  `interaction.requires_action/completed/failed`, `video.generated`) and
+  `WebhookState` (`enabled`, `disabled`,
+  `disabled_due_to_failed_deliveries`).
+- Per-request webhook routing: `webhook_config {uris, user_metadata}` on
+  `InteractionRequest` + `InteractionBuilder::with_webhook_config()`.
+  The API echoes it back on the create response (verified live 2026-07);
+  `InteractionResponse.webhook_config` models the echo.
+- Webhook/agent endpoints send the same `Api-Revision: 2026-05-20` header
+  as interactions (matching google-genai, which applies the revision
+  header globally).
+
+#### Environments and Agents resource
+
+- `environment` field on `InteractionRequest` +
+  `InteractionBuilder::with_environment()`, accepting a string environment
+  ID or a typed `RemoteEnvironment` (`EnvironmentSpec` union). New types in
+  `src/environment.rs`: `EnvironmentSource` (sources
+  `gcs|inline|repository|skill_registry` via `SourceType`),
+  `NetworkConfig` (`"disabled"` | `{allowlist}` union), `AllowlistEntry`
+  (domain wildcard + header-injection `transform`).
+- `/v1beta/agents` resource client: `Client::create_agent()`,
+  `get_agent()`, `list_agents()` (`page_size`/`page_token`/`parent`),
+  `delete_agent()`; `Agent` type (`id`, `base_agent`,
+  `system_instruction`, `description`, `tools`, `base_environment`) in
+  `src/agents.rs`.
+
+#### Retrieval tool
+
+- `Tool::Retrieval` with `RetrievalType`
+  (`vertex_ai_search|rag_store|exa_ai_search|parallel_ai_search` +
+  Unknown) and per-backend configs: `VertexAiSearchConfig`
+  (`engine`/`datastores`), `ExaAiSearchConfig`/`ParallelAiSearchConfig`
+  (`api_key`/`custom_config`), `RagStoreConfig` (`rag_resources`,
+  deprecated `similarity_top_k`/`vector_distance_threshold`,
+  `rag_retrieval_config` with `top_k`/`hybrid_search`/`filter`/`ranking`).
+- `RetrievalConfig` builder for `add_tool()` that keeps `retrieval_types`
+  in sync with the configured backends. Note: rejected as Vertex-only by
+  the Gemini API (verified live 2026-07).
+
+#### Video generation and Deep Research config
+
+- `generation_config.video_config {task}` (`VideoConfig` + `VideoTask`
+  enum: `text_to_video|image_to_video|reference_to_video|edit|extend` +
+  Unknown; `extend` discovered via the API's live validation error
+  2026-07), `with_video_config()`, and the `with_video_output()` modality
+  shortcut (`response_modalities: ["video"]`).
+- `DeepResearchConfig::with_visualization(Visualization)` (`off|auto` +
+  Unknown), `with_collaborative_planning(bool)`, and
+  `with_bigquery_tool(bool)` (Vertex-only); managed agent IDs (incl.
+  `deep-research-preview-04-2026`, `deep-research-max-preview-04-2026`,
+  `antigravity-preview-05-2026`) documented in
+  `docs/AGENTS_AND_BACKGROUND.md`.
+
+#### Built-in tool configuration
+
+- Google Maps built-in tool support: `Tool::GoogleMaps` (with
+  `latitude`/`longitude`), `google_maps_call`/`google_maps_result` steps,
+  `GoogleMapsResultInfo` view type, response accessors
+  (`has_google_maps_results()`, `google_maps_results()`), `Place` struct
+  (with Evergreen forward-compatible `extra` field), and the
+  `with_google_maps()` shorthand.
+- `SearchType` enum for Google Search `search_types` configuration, incl.
+  `SearchType::EnterpriseWebSearch`.
+- `Tool::McpServer` gained optional `allowed_tools` (`[{mode, tools}]`
+  per the spec) and `headers` fields.
+- `Tool::ComputerUse` gained `enable_prompt_injection_detection` and
+  `disabled_safety_policies`; documented `mobile`/`desktop` environments;
+  `ComputerUseConfig::with_environment()` /
+  `with_prompt_injection_detection()` / `disabling_safety_policies()`.
+- Unified `add_tool(impl Into<Tool>)` on `InteractionBuilder` with tool
+  configuration structs: `GoogleMapsConfig`, `GoogleSearchConfig`,
+  `McpServerConfig`, `ComputerUseConfig`, `FileSearchConfig`.
+
+#### Wire inspection (`genai_rs::wire`)
+
+- Public `genai_rs::wire` module for structured wire-level inspection:
+  - `WireEvent` (requests, response status/bodies, error bodies, SSE
+    frames, file uploads) with per-client request-id correlation.
+  - `WireInspector` trait and `ClientBuilder::add_wire_inspector()`
+    (multiple inspectors supported).
+  - `LoudWirePrinter` built-in inspector — the colored stderr printer
+    behind `LOUD_WIRE=1` (unchanged UX: the env var, now read at `Client`
+    construction, installs it automatically).
+  - `TracingForwarder` built-in inspector — forwards wire events to
+    `tracing` at `DEBUG` under the new `genai_rs::wire` target
+    (`RUST_LOG=genai_rs::wire=debug`).
+- SSE `event:` lines are now surfaced to wire inspectors as
+  `WireEvent::SseFrame { event_type, .. }`.
+
+#### Antigravity (new `antigravity` feature, off by default)
+
+- Native `genai_rs::antigravity` client for Google's Antigravity
+  `localharness` agent runtime (see `docs/ANTIGRAVITY.md`):
+  - `AntigravityAgent::builder()` — spawn the harness binary (discovery
+    via `ANTIGRAVITY_HARNESS_PATH`, python3 site-packages, or `PATH`),
+    stdio handshake, localhost WebSocket, conversation init; pinned to
+    `google-antigravity` 0.1.5 (`SUPPORTED_HARNESS_VERSION`).
+  - `agent.chat()` and `agent.send_streaming()` (`AgentEvent`:
+    text/thinking deltas, structured `ToolAction`s, custom tool
+    dispatches, `Finished`, Evergreen `Unknown`), `CancelHandle`, turn
+    timeouts, graceful `shutdown()` with SIGTERM/SIGKILL escalation.
+  - Custom tools reuse the existing `#[tool]`/`FunctionRegistry`/
+    `ToolService` machinery; harness built-ins gated via `Capabilities`
+    (read-only by default).
+  - Tool policies (`policy::allow/deny/confirm/allow_all/deny_all`)
+    evaluated Rust-side before every dispatch, plus
+    `on_pre_tool`/`on_post_tool` hooks; spawn-time safety gate refuses
+    write-capable tools or MCP servers without a policy or hook (parity
+    with the Python SDK).
+  - MCP server config (`McpServer::stdio`/`McpServer::http`), structured
+    output via `with_response_schema`, session persistence/resume via
+    `with_save_dir` + `with_conversation_id`.
+  - Proto-JSON protocol types under `antigravity::protocol` with
+    Evergreen unknown-variant preservation throughout.
+  - New `WireEvent` variants `HarnessSpawn`, `WsSend`, `WsReceive`,
+    `HarnessStderr` (LOUD_WIRE and wire inspectors cover harness
+    sessions).
+  - Client-side triggers: `AgentBuilder::add_trigger(TriggerConfig)`
+    spawns a per-trigger timer task that injects an `automated_trigger`
+    message every interval, delivered only while the agent is idle
+    (firings that come due mid-turn are deferred until the turn ends;
+    missed intervals collapse into a single delivery). Tasks stop cleanly
+    on `shutdown()`/drop; zero intervals are rejected at `spawn()`.
+  - Subagent registration: `AgentBuilder::add_subagent(Subagent)` sends
+    static `custom_subagents` in the conversation init (name, description,
+    appended-style system instructions, per-subagent `Capabilities`,
+    custom tools referenced by name). `spawn()` validates that referenced
+    custom tools are registered on the parent agent and that subagent
+    names are unique; nested subagents are force-disabled (harness
+    limitation, reference-SDK parity).
+
+#### New examples
+
+- `examples/webhooks_and_background.rs` — webhook resource lifecycle +
+  per-request webhook routing (runs without an API key, printing request
+  shapes).
+- `examples/retrieval_grounding.rs` — retrieval tool over Vertex AI
+  Search, RAG store, and Exa.ai backends.
+- `examples/antigravity_agent.rs` — Antigravity harness walkthrough
+  (requires `--features antigravity`).
+- `examples/real_world/repo_auditor/` — end-to-end Antigravity bridge
+  application: repo workspace, read-only built-ins, custom `#[tool]`
+  severity classifier, subagents, structured report output.
 
 ### Changed
 
-- `Tool::GoogleSearch` is now a struct variant with optional `search_types` field (was unit variant)
-- `Tool::McpServer` has additional optional fields `allowed_tools` and `headers`
-- Proptest roundtrip comparisons use `serde_json::Value` for HashMap key order independence
+#### Breaking — response model (`outputs` → `steps`)
+
+- `InteractionResponse.outputs: Vec<Content>` replaced by
+  `steps: Vec<Step>`. `Step` is a new `#[non_exhaustive]` tagged union
+  (`user_input`, `model_output`, `thought`, `function_call`,
+  `function_result`, `code_execution_call/result`,
+  `url_context_call/result`, `google_search_call/result`,
+  `mcp_server_tool_call/result`, `file_search_call/result`,
+  `google_maps_call/result`, plus the standard `Unknown { step_type,
+  data }` variant). Tool call/result and thought steps carry opaque
+  `signature` fields that must be replayed unchanged.
+- Convenience accessors (`as_text()`, `all_text()`, `function_calls()`,
+  `images()`, `audios()`, `code_execution_*()`, `google_search_*()`,
+  `url_context_*()`, `file_search_results()`, `google_maps_results()`,
+  `thought_signatures()`, annotations helpers) are reimplemented over
+  steps and keep working.
+- `Content` slimmed to the spec content union: `Text`, `Image`, `Audio`,
+  `Video`, `Document`, `Unknown`. All tool/thought `Content` variants were
+  removed (they are `Step`s now).
+- `Annotation` is now a typed citation union: `UrlCitation`,
+  `FileCitation`, `PlaceCitation` (with `ReviewSnippet`s), plus `Unknown`.
+  Byte-offset `extract_span()` is preserved.
+- `InteractionResponse` serializes uniformly in snake_case (the previous
+  `camelCase` rename was wrong for this API).
+- `content_summary()`/`ContentSummary` replaced by
+  `step_summary()`/`StepSummary`.
+- `FunctionCallInfo.id` is now `&str` (required by the spec);
+  `FunctionResultInfo.result` is a typed `FunctionResultPayload`
+  (string | JSON | content blocks union).
+
+#### Breaking — SSE lifecycle
+
+- Wire events migrated from `interaction.start` /
+  `content.start|delta|stop` / `interaction.complete` to
+  `interaction.created`, `interaction.status_update`, `step.start`,
+  `step.delta`, `step.stop`, `interaction.completed`, and `error`.
+- `StreamChunk` variants renamed/reshaped: `Created { interaction }`,
+  `StepStart { index, step }`, `StepDelta { index, delta: StepDelta }`,
+  `StepStop { index, usage, step_usage }` (per-step usage), and
+  `Completed(InteractionResponse)`. Stream termination keys on
+  `interaction.completed` / `error`.
+- New `StepDelta` payload union: `text`, `image`, `audio` (with
+  `rate`/`sample_rate`/`channels`), `video`, `document`,
+  `thought_summary`, `thought_signature`, `text_annotation_delta`,
+  `arguments_delta` (function-call arguments now stream incrementally),
+  built-in tool call/result deltas, `function_result`, and `Unknown`.
+- The HTTP layer accumulates `step.start`/`step.delta`/`step.stop` into
+  the final `Completed` response (including parsing streamed
+  `arguments_delta` fragments into `FunctionCall.arguments`), so
+  `response.function_calls()` and `as_text()` work after streaming.
+  Lifecycle `metadata.total_usage` is folded into the completed response
+  when the payload omits usage.
+- `AutoFunctionStreamChunk::Delta` now carries `StepDelta` (exposing
+  `arguments_delta` in the auto-function stream); the auto-function
+  streaming loop and `last_event_id` resume work over the new events.
+
+#### Breaking — input model & requests
+
+- `Turn` and `InteractionInput::Turns` removed (deprecated in the spec).
+  Conversation history is represented as steps:
+  `InteractionInput::Steps(Vec<Step>)`, `with_history(Vec<Step>)`,
+  `Step::user_text()` / `Step::model_text()` /
+  `InteractionResponse::output_steps()`. `ConversationBuilder` keeps its
+  fluent `.user()`/`.model()`/`.turn()` API but produces steps.
+- `system_instruction` is a plain `Option<String>` per the spec.
+- `generation_config.tool_choice` is a typed union `ToolChoice`: a
+  lowercase mode string (`auto|any|none|validated`) or
+  `{"allowed_tools": {"mode", "tools"}}`. The crate's previous top-level
+  `generation_config.allowed_tools: Vec<String>` was removed;
+  `with_allowed_tools()` now produces the object form. New
+  `with_tool_choice()` escape hatch.
+- `interactions_api` helper constructors renamed `*_content` → `*_step`
+  and return `Step`.
+
+#### Breaking — typed `response_format`
+
+- `InteractionRequest.response_format` is now a typed
+  `Option<ResponseFormatSpec>` (single object or list) instead of raw
+  `serde_json::Value`. `ResponseFormat` is a tagged union:
+  `Text{mime_type, schema}`, `Audio{mime_type, delivery, sample_rate,
+  bit_rate}`, `Image{mime_type, delivery, aspect_ratio, image_size}`,
+  `Video{delivery, gcs_uri, aspect_ratio, duration}`, plus Unknown;
+  `ResponseDelivery` is `inline|uri` + Unknown.
+- `with_response_format()` now takes `impl Into<ResponseFormat>` — raw
+  `serde_json::Value` schemas keep compiling and convert to
+  `ResponseFormat::Text{mime_type: "application/json", schema}` (the
+  typed equivalent of the old wire shape). New
+  `with_response_formats(Vec<ResponseFormat>)` for the list form.
+- Raw schema dicts received on the wire (no recognized `type` tag)
+  roundtrip losslessly through `ResponseFormat::Unknown`.
+- `ImageConfig` with `ImageAspectRatio` and `ImageSize` enums for image
+  generation configuration.
+
+#### Breaking — multi-speaker TTS (`speech_config` list)
+
+- `GenerationConfig.speech_config` is now `Option<Vec<SpeechConfig>>` to
+  match the spec's list wire format (multi-speaker TTS). The legacy
+  single-object wire form is still accepted on deserialize.
+- Builder: `with_speech_config(single)` keeps working (sends a one-entry
+  list); new `with_speech_configs(Vec<SpeechConfig>)` and
+  `add_speech_config()` for multi-speaker dialogue.
+
+#### Breaking — dependencies
+
+- `reqwest` upgraded 0.12 → 0.13 (`GenaiError::Http(reqwest::Error)` and
+  `ResumableUpload` methods expose reqwest types publicly). MSRV is
+  unchanged (Rust 1.88).
+  - TLS **trust roots** changed with the upgrade: reqwest 0.13 removed
+    the bundled-Mozilla-roots feature (`rustls-tls-webpki-roots`); its
+    `rustls` feature now verifies certificates against the **OS trust
+    store** via `rustls-platform-verifier`. The TLS stack is still rustls
+    (not native TLS). If your deployment relies on bundled roots (e.g.
+    minimal containers without a CA bundle), install a CA bundle or open
+    an issue — restoring bundled roots would require a preconfigured
+    rustls client.
+- Minor dependency bumps: tokio 1.48 → 1.52, proptest 1.9 → 1.11,
+  utoipa 5.4 → 5.5.
+
+#### Other changes
+
+- `Tool::GoogleSearch` is now a struct variant with optional
+  `search_types` field (was unit variant).
+- New default-on feature `wire-color` gates the `colored`/`colored_json`
+  dependencies; build with `default-features = false` for plain-text wire
+  output.
+- Wire debug request ids are now per-`Client` (previously a
+  process-global counter).
+- Proptest roundtrip comparisons use `serde_json::Value` for HashMap key
+  order independence.
+
+### Fixed
+
+#### Spec/implementation disagreements (verified live)
+
+- **BREAKING**: `Step::FunctionCall` and `Step::FunctionResult` gained a
+  `signature: Option<String>` field (verified live 2026-07: the API
+  returns `signature` on `function_call` steps and rejects stateless
+  replay of history that omits it; the generated SDK bindings do not list
+  it on `function_call`). Existing constructors set it to `None`; it is
+  preserved on deserialize/serialize roundtrip.
+- Response modalities are now sent lowercase: `with_image_output()` /
+  `with_audio_output()` send `"image"` / `"audio"` (previously `"IMAGE"` /
+  `"AUDIO"`, which the API rejects — supported values are `text`,
+  `image`, `audio`, `video`, `document`; verified live 2026-07).
+  `with_response_modalities()` normalizes provided values to lowercase.
+- `FunctionCallingMode` now serializes lowercase (`"auto"`, ...); legacy
+  UPPERCASE still accepted on deserialize.
+- `CodeExecutionLanguage` now serializes `"python"` (was `"PYTHON"`);
+  legacy accepted on deserialize.
+- `Tool::ComputerUse` `excluded_predefined_functions` now serializes
+  snake_case (was `excludedPredefinedFunctions`); legacy alias accepted
+  on deserialize.
+- MCP server `allowed_tools` is now `[{mode, tools}]`
+  (`Vec<AllowedTools>`) per the spec (was `[String]`).
+- `InteractionResponse` no longer serializes camelCase field names.
+- Live `google_search_result` items can carry only `search_suggestions`;
+  the non-optional `title`/`url` fields previously synthesized empty
+  strings on stateless replay and are now skip-serialized when empty, so
+  captured live responses roundtrip byte-identically.
+- `NetworkConfig::Allowlist` now preserves sibling keys next to
+  `allowlist` on roundtrip (Evergreen) via a struct variant with an
+  `extra` map — construct with the new `NetworkConfig::allowlist(entries)`
+  helper. Previously an unmodeled sibling field (e.g. a future
+  `default_policy`) was silently dropped on deserialize.
+
+#### Streaming & wire
+
+- Streaming image, video, and document deltas now accumulate into a
+  single content block (matching audio behavior) instead of producing one
+  block per chunk.
+- Streaming responses whose terminal event omits usage now fall back to
+  the cumulative usage from the last `step.stop` event, so
+  `response.usage()` stays populated.
+- Error response bodies are now visible in wire output
+  (`WireEvent::ErrorBody`); previously `LOUD_WIRE=1` showed only the
+  status line for failed requests.
+- Wire output no longer panics when truncating multi-byte UTF-8 content
+  (`data`/`signature` fields and non-JSON bodies truncate on character
+  boundaries).
+- Request bodies are no longer serialized for wire debugging when it is
+  disabled (previously every request paid the serialization cost even
+  without `LOUD_WIRE`).
+
+#### Evergreen roundtrip
+
+- `RemoteEnvironment`, `EnvironmentSource`, and `AllowlistEntry` now
+  preserve unknown wire fields via an Evergreen `extra` field
+  (roundtrip-safe; breaking for exhaustive struct literals — use
+  `..Default::default()`).
+
+#### Antigravity
+
+- The stdio handshake now rejects reply frames whose declared length
+  exceeds 4 MiB before allocating (a non-harness binary can no longer
+  trigger an unbounded allocation; it fails with `HandshakeFailed`
+  instead).
+- A turn that exceeds `with_turn_timeout` is now halted on the harness
+  and its remaining events drained before `AntigravityError::Timeout` is
+  returned; previously the abandoned turn kept running and its buffered
+  events (including its terminal state) desynced the next
+  `chat`/`send_streaming`, which could return the previous turn's output.
+- Turns started by `add_trigger` deliveries are now halted and their
+  events discarded by the next `chat`/`send_streaming` before it sends
+  its input; previously the unconsumed trigger turn's buffered events
+  were misattributed to the user's turn, shifting every later response by
+  one turn. Trigger-turn output is not surfaced (documented in
+  `docs/ANTIGRAVITY.md`).
+- A cancelled *subagent* trajectory no longer fails the parent's whole
+  turn (mirroring the existing subagent-idle handling); subagent failures
+  surface through their step errors. Main-trajectory cancellation still
+  fails the turn with `AntigravityError::Turn`.
+- The harness stderr drain no longer stops permanently on a non-UTF-8
+  line (it now reads bytes and replaces invalid sequences lossily); a
+  stopped drain could let the stderr pipe fill and deadlock the child —
+  the drain's whole purpose at the wrong-binary trust boundary.
+- Closed a race between trigger delivery and turn begin: a trigger that
+  had passed its idle check could deliver its message *after*
+  `chat`/`send_streaming` marked the agent busy and consumed the
+  trigger-fired flag, injecting an `automated_trigger` into the user's
+  turn window with nobody left to drain the resulting harness turn. The
+  fire decision and turn begin are now mutually exclusive (shared lock +
+  idle re-check under it).
+- Unrecognized harness tool confirmations now **fail closed** — a
+  confirmation whose action fields this client does not recognize (e.g. a
+  builtin newer than the pinned harness) is approved only when a policy
+  rule (`allow_all()` or an exact rule naming the unknown wire field) or
+  the `on_pre_tool` hook allows it, with a `warn!` either way. Previously
+  any unmappable confirmation was auto-approved, bypassing deny policies.
+  Genuine pre-request notifications (steps with no action payload) remain
+  auto-approved — the concrete call still gets its own policy check.
 
 ### Removed
 
-- `with_computer_use()` and `with_computer_use_excluding()` — use `add_tool(ComputerUseConfig::new())`
-- `add_mcp_server()` — use `add_tool(McpServerConfig::new(name, url))`
-- `with_file_search()` and `with_file_search_config()` — use `add_tool(FileSearchConfig::new(stores))`
+- **BREAKING**: `response_mime_type` removed outright — the
+  `InteractionRequest` field and
+  `InteractionBuilder::with_response_mime_type()` (previously
+  `#[deprecated]`). Live verification (2026-07) showed the API rejects
+  every request carrying the field: alone it returns 400 "responseFormat
+  must be set when responseMimeType is set", the same 400 is returned
+  even when `response_format` IS set (raw-schema or typed form), and
+  camelCase `responseMimeType` gets "Unknown parameter" — the field is
+  dead server-side, so no working code can be using it. Use
+  `with_response_format()` alone; passing a JSON schema implies JSON
+  output.
+- **BREAKING**: `Turn` and `InteractionInput::Turns` (deprecated in the
+  spec) — history is steps now; see the migration guide.
+- **BREAKING**: `ComputerUseCall`/`ComputerUseResult` content dropped
+  entirely (computer use surfaces as `function_call` steps).
+- **BREAKING**: `generation_config.top_k` removed (dropped from the
+  spec).
+- **BREAKING**: `UsageMetadata.total_reasoning_tokens` removed (not in
+  the spec; use `total_thought_tokens`) and
+  `InteractionResponse::reasoning_tokens()` removed in favor of
+  `thought_tokens()`.
+- Speculative `grounding_metadata`/`url_context_metadata` response fields
+  (and `GroundingMetadata`, `GroundingChunk`, `WebSource`,
+  `UrlContextMetadata`, `UrlMetadataEntry`, `UrlRetrievalStatus` types) —
+  not part of the Interactions API; grounding data lives in steps and
+  typed annotations.
+- `with_computer_use()` and `with_computer_use_excluding()` — use
+  `add_tool(ComputerUseConfig::new())`.
+- `add_mcp_server()` — use `add_tool(McpServerConfig::new(name, url))`.
+- `with_file_search()` and `with_file_search_config()` — use
+  `add_tool(FileSearchConfig::new(stores))`.
+
+### Security
+
+- Wire-inspection redaction now covers webhook signing secrets
+  (`new_signing_secret` on create, `secret` on rotate — one-time values),
+  and `TracingForwarder` applies the same redaction/truncation as
+  `LoudWirePrinter` to request/response/error bodies and SSE frames
+  (previously it forwarded them raw to `tracing`, bypassing redaction
+  entirely — including the Exa/Parallel retrieval `api_key` fields).
+- The Antigravity WS-send inspection copy now redacts every value inside
+  `env`, `headers`, and `httpHeaders` maps (MCP stdio env secrets,
+  `Authorization` bearer tokens, model-endpoint headers), not just
+  `apiKey`. The harness/API still receives the originals; only inspector
+  copies are redacted.
+- `LOUD_WIRE` output now fully redacts `api_key` fields (e.g.
+  Exa/Parallel retrieval configs) instead of printing them.
+- Wire-inspection redaction now recurses into `data`/`signature` keys
+  whose values are objects or arrays (e.g. Evergreen `Unknown` payloads
+  preserved under a `data` key), so secrets nested inside them are
+  redacted; previously such subtrees were skipped entirely by both
+  `LoudWirePrinter` and `TracingForwarder`.
+- `Debug` for `Webhook` and `RotateSigningSecretResponse` now redacts
+  `new_signing_secret` / `secret` (matching the client's `api_key`
+  redaction precedent).
 
 ## [0.7.2] - 2026-01-17
 

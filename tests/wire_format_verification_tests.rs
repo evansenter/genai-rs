@@ -1,7 +1,7 @@
 //! Wire format verification tests
 //!
 //! These tests verify that our serialization/deserialization matches the wire formats
-//! documented in `docs/ENUM_WIRE_FORMATS.md`.
+//! documented in `docs/ENUM_WIRE_FORMATS.md` (Interactions API revision 2026-05-20).
 //!
 //! Each test corresponds to a documented wire format and ensures:
 //! 1. Deserialization from wire format works correctly
@@ -11,8 +11,8 @@
 //! When adding new enums or updating wire formats, add corresponding tests here.
 
 use genai_rs::{
-    Content, FunctionCallingMode, InteractionStatus, Resolution, Role, ThinkingLevel,
-    ThinkingSummaries,
+    Annotation, CodeExecutionLanguage, Content, FunctionCallingMode, InteractionStatus, Resolution,
+    Role, SearchType, ServiceTier, Step, ThinkingLevel, ThinkingSummaries, ToolChoice,
 };
 use serde_json::json;
 
@@ -152,34 +152,55 @@ mod thinking_level {
 
 // =============================================================================
 // FunctionCallingMode Wire Format Tests
-// Per docs: SCREAMING_CASE - "AUTO", "ANY", "NONE", "VALIDATED"
+// Revision 2026-05-20: lowercase - "auto", "any", "none", "validated".
+// Legacy SCREAMING_CASE is still accepted on deserialization.
 // =============================================================================
 
 mod function_calling_mode {
     use super::*;
 
     #[test]
-    fn serializes_to_screaming_case() {
+    fn serializes_to_lowercase() {
         assert_eq!(
             serde_json::to_value(FunctionCallingMode::Auto).unwrap(),
-            "AUTO"
+            "auto"
         );
         assert_eq!(
             serde_json::to_value(FunctionCallingMode::Any).unwrap(),
-            "ANY"
+            "any"
         );
         assert_eq!(
             serde_json::to_value(FunctionCallingMode::None).unwrap(),
-            "NONE"
+            "none"
         );
         assert_eq!(
             serde_json::to_value(FunctionCallingMode::Validated).unwrap(),
-            "VALIDATED"
+            "validated"
         );
     }
 
     #[test]
-    fn deserializes_from_screaming_case() {
+    fn deserializes_from_lowercase() {
+        assert!(matches!(
+            serde_json::from_value::<FunctionCallingMode>(json!("auto")).unwrap(),
+            FunctionCallingMode::Auto
+        ));
+        assert!(matches!(
+            serde_json::from_value::<FunctionCallingMode>(json!("any")).unwrap(),
+            FunctionCallingMode::Any
+        ));
+        assert!(matches!(
+            serde_json::from_value::<FunctionCallingMode>(json!("none")).unwrap(),
+            FunctionCallingMode::None
+        ));
+        assert!(matches!(
+            serde_json::from_value::<FunctionCallingMode>(json!("validated")).unwrap(),
+            FunctionCallingMode::Validated
+        ));
+    }
+
+    #[test]
+    fn deserializes_from_legacy_screaming_case() {
         assert!(matches!(
             serde_json::from_value::<FunctionCallingMode>(json!("AUTO")).unwrap(),
             FunctionCallingMode::Auto
@@ -217,8 +238,231 @@ mod function_calling_mode {
 }
 
 // =============================================================================
+// ToolChoice Wire Format Tests
+// Union: plain lowercase string (mode) OR {"allowed_tools": {"mode", "tools"}}
+// =============================================================================
+
+mod tool_choice {
+    use super::*;
+
+    #[test]
+    fn mode_serializes_as_plain_string() {
+        let choice = ToolChoice::Mode(FunctionCallingMode::Auto);
+        assert_eq!(serde_json::to_value(&choice).unwrap(), json!("auto"));
+
+        let choice = ToolChoice::Mode(FunctionCallingMode::Validated);
+        assert_eq!(serde_json::to_value(&choice).unwrap(), json!("validated"));
+    }
+
+    #[test]
+    fn allowed_tools_serializes_as_object() {
+        let choice = ToolChoice::allowed_tools(
+            Some(FunctionCallingMode::Any),
+            vec!["get_weather".to_string(), "get_time".to_string()],
+        );
+        let json = serde_json::to_value(&choice).unwrap();
+        assert_eq!(
+            json,
+            json!({
+                "allowed_tools": {
+                    "mode": "any",
+                    "tools": ["get_weather", "get_time"]
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn allowed_tools_without_mode_omits_mode_key() {
+        let choice = ToolChoice::allowed_tools(None, vec!["get_weather".to_string()]);
+        let json = serde_json::to_value(&choice).unwrap();
+        assert_eq!(json, json!({"allowed_tools": {"tools": ["get_weather"]}}));
+    }
+
+    #[test]
+    fn deserializes_string_as_mode() {
+        let choice: ToolChoice = serde_json::from_value(json!("any")).unwrap();
+        assert!(matches!(choice, ToolChoice::Mode(FunctionCallingMode::Any)));
+    }
+
+    #[test]
+    fn deserializes_object_as_allowed_tools() {
+        let choice: ToolChoice = serde_json::from_value(json!({
+            "allowed_tools": {"mode": "auto", "tools": ["a", "b"]}
+        }))
+        .unwrap();
+        match choice {
+            ToolChoice::AllowedTools(allowed) => {
+                assert!(matches!(allowed.mode, Some(FunctionCallingMode::Auto)));
+                assert_eq!(allowed.tools, vec!["a".to_string(), "b".to_string()]);
+            }
+            other => panic!("Expected AllowedTools, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn roundtrip_both_shapes() {
+        for choice in [
+            ToolChoice::Mode(FunctionCallingMode::None),
+            ToolChoice::allowed_tools(
+                Some(FunctionCallingMode::Any),
+                vec!["get_weather".to_string()],
+            ),
+        ] {
+            let json = serde_json::to_value(&choice).unwrap();
+            let back: ToolChoice = serde_json::from_value(json).unwrap();
+            assert_eq!(choice, back);
+        }
+    }
+}
+
+// =============================================================================
+// ServiceTier Wire Format Tests
+// Per docs: lowercase - "flex", "standard", "priority"
+// =============================================================================
+
+mod service_tier {
+    use super::*;
+
+    #[test]
+    fn serializes_to_lowercase() {
+        assert_eq!(serde_json::to_value(ServiceTier::Flex).unwrap(), "flex");
+        assert_eq!(
+            serde_json::to_value(ServiceTier::Standard).unwrap(),
+            "standard"
+        );
+        assert_eq!(
+            serde_json::to_value(ServiceTier::Priority).unwrap(),
+            "priority"
+        );
+    }
+
+    #[test]
+    fn deserializes_from_lowercase() {
+        assert!(matches!(
+            serde_json::from_value::<ServiceTier>(json!("flex")).unwrap(),
+            ServiceTier::Flex
+        ));
+        assert!(matches!(
+            serde_json::from_value::<ServiceTier>(json!("standard")).unwrap(),
+            ServiceTier::Standard
+        ));
+        assert!(matches!(
+            serde_json::from_value::<ServiceTier>(json!("priority")).unwrap(),
+            ServiceTier::Priority
+        ));
+    }
+
+    #[test]
+    fn roundtrip_all_variants() {
+        for variant in [
+            ServiceTier::Flex,
+            ServiceTier::Standard,
+            ServiceTier::Priority,
+        ] {
+            let json = serde_json::to_value(&variant).unwrap();
+            let back: ServiceTier = serde_json::from_value(json).unwrap();
+            assert_eq!(variant, back);
+        }
+    }
+}
+
+// =============================================================================
+// SearchType Wire Format Tests
+// Per docs: snake_case - "web_search", "image_search", "enterprise_web_search"
+// =============================================================================
+
+mod search_type {
+    use super::*;
+
+    #[test]
+    fn serializes_to_snake_case() {
+        assert_eq!(
+            serde_json::to_value(SearchType::WebSearch).unwrap(),
+            "web_search"
+        );
+        assert_eq!(
+            serde_json::to_value(SearchType::ImageSearch).unwrap(),
+            "image_search"
+        );
+        assert_eq!(
+            serde_json::to_value(SearchType::EnterpriseWebSearch).unwrap(),
+            "enterprise_web_search"
+        );
+    }
+
+    #[test]
+    fn deserializes_from_snake_case() {
+        assert!(matches!(
+            serde_json::from_value::<SearchType>(json!("web_search")).unwrap(),
+            SearchType::WebSearch
+        ));
+        assert!(matches!(
+            serde_json::from_value::<SearchType>(json!("image_search")).unwrap(),
+            SearchType::ImageSearch
+        ));
+        assert!(matches!(
+            serde_json::from_value::<SearchType>(json!("enterprise_web_search")).unwrap(),
+            SearchType::EnterpriseWebSearch
+        ));
+    }
+
+    #[test]
+    fn roundtrip_all_variants() {
+        for variant in [
+            SearchType::WebSearch,
+            SearchType::ImageSearch,
+            SearchType::EnterpriseWebSearch,
+        ] {
+            let json = serde_json::to_value(&variant).unwrap();
+            let back: SearchType = serde_json::from_value(json).unwrap();
+            assert_eq!(variant, back);
+        }
+    }
+}
+
+// =============================================================================
+// CodeExecutionLanguage Wire Format Tests
+// Revision 2026-05-20: lowercase "python"; legacy "PYTHON" accepted on read.
+// =============================================================================
+
+mod code_execution_language {
+    use super::*;
+
+    #[test]
+    fn serializes_to_lowercase() {
+        assert_eq!(
+            serde_json::to_value(CodeExecutionLanguage::Python).unwrap(),
+            "python"
+        );
+    }
+
+    #[test]
+    fn deserializes_from_lowercase() {
+        assert!(matches!(
+            serde_json::from_value::<CodeExecutionLanguage>(json!("python")).unwrap(),
+            CodeExecutionLanguage::Python
+        ));
+    }
+
+    #[test]
+    fn deserializes_from_legacy_uppercase() {
+        assert!(matches!(
+            serde_json::from_value::<CodeExecutionLanguage>(json!("PYTHON")).unwrap(),
+            CodeExecutionLanguage::Python
+        ));
+    }
+
+    #[test]
+    fn display_prints_lowercase() {
+        assert_eq!(CodeExecutionLanguage::Python.to_string(), "python");
+    }
+}
+
+// =============================================================================
 // InteractionStatus Wire Format Tests
-// Per docs: snake_case - "completed", "in_progress", "requires_action", etc.
+// Per docs: snake_case - "completed", "in_progress", "requires_action",
+// "failed", "cancelled", "budget_exceeded"
 // =============================================================================
 
 mod interaction_status {
@@ -246,6 +490,10 @@ mod interaction_status {
             serde_json::from_value::<InteractionStatus>(json!("cancelled")).unwrap(),
             InteractionStatus::Cancelled
         ));
+        assert!(matches!(
+            serde_json::from_value::<InteractionStatus>(json!("budget_exceeded")).unwrap(),
+            InteractionStatus::BudgetExceeded
+        ));
     }
 
     #[test]
@@ -270,6 +518,15 @@ mod interaction_status {
             serde_json::to_value(InteractionStatus::Cancelled).unwrap(),
             "cancelled"
         );
+        assert_eq!(
+            serde_json::to_value(InteractionStatus::BudgetExceeded).unwrap(),
+            "budget_exceeded"
+        );
+    }
+
+    #[test]
+    fn default_is_in_progress() {
+        assert_eq!(InteractionStatus::default(), InteractionStatus::InProgress);
     }
 }
 
@@ -371,7 +628,8 @@ mod role {
 
 // =============================================================================
 // Content Wire Format Tests
-// Per docs: snake_case type field - "text", "function_call", etc.
+// Per docs: snake_case type field - "text", "image", "audio", "video",
+// "document". Tool calls/results are Steps in revision 2026-05-20.
 // =============================================================================
 
 mod interaction_content {
@@ -388,61 +646,6 @@ mod interaction_content {
     }
 
     #[test]
-    fn function_call_uses_snake_case_type() {
-        let content = Content::FunctionCall {
-            id: Some("call_123".to_string()),
-            name: "test".to_string(),
-            args: json!({}),
-        };
-        let json = serde_json::to_value(&content).unwrap();
-        assert_eq!(json["type"], "function_call");
-    }
-
-    #[test]
-    fn function_result_uses_snake_case_type() {
-        let content = Content::FunctionResult {
-            call_id: "call_123".to_string(),
-            name: Some("test".to_string()),
-            result: json!({"output": "result"}),
-            is_error: None,
-        };
-        let json = serde_json::to_value(&content).unwrap();
-        assert_eq!(json["type"], "function_result");
-    }
-
-    #[test]
-    fn thought_uses_snake_case_type() {
-        let content = Content::Thought {
-            signature: Some("Eq0JCqoJ...signature".to_string()),
-        };
-        let json = serde_json::to_value(&content).unwrap();
-        assert_eq!(json["type"], "thought");
-        assert_eq!(json["signature"], "Eq0JCqoJ...signature");
-    }
-
-    #[test]
-    fn code_execution_call_uses_snake_case_type() {
-        let content = Content::CodeExecutionCall {
-            id: Some("exec_123".to_string()),
-            language: genai_rs::CodeExecutionLanguage::Python,
-            code: "print('hello')".to_string(),
-        };
-        let json = serde_json::to_value(&content).unwrap();
-        assert_eq!(json["type"], "code_execution_call");
-    }
-
-    #[test]
-    fn code_execution_result_uses_snake_case_type() {
-        let content = Content::CodeExecutionResult {
-            call_id: Some("exec_123".to_string()),
-            is_error: false,
-            result: "hello".to_string(),
-        };
-        let json = serde_json::to_value(&content).unwrap();
-        assert_eq!(json["type"], "code_execution_result");
-    }
-
-    #[test]
     fn image_uses_snake_case_type() {
         let content = Content::Image {
             data: None,
@@ -455,14 +658,18 @@ mod interaction_content {
     }
 
     #[test]
-    fn audio_uses_snake_case_type() {
+    fn audio_uses_snake_case_type_with_sample_rate_and_channels() {
         let content = Content::Audio {
             data: None,
             uri: Some("gs://bucket/audio.mp3".to_string()),
             mime_type: Some("audio/mpeg".to_string()),
+            sample_rate: Some(24000),
+            channels: Some(1),
         };
         let json = serde_json::to_value(&content).unwrap();
         assert_eq!(json["type"], "audio");
+        assert_eq!(json["sample_rate"], 24000);
+        assert_eq!(json["channels"], 1);
     }
 
     #[test]
@@ -486,5 +693,243 @@ mod interaction_content {
         };
         let json = serde_json::to_value(&content).unwrap();
         assert_eq!(json["type"], "document");
+    }
+}
+
+// =============================================================================
+// Step Wire Format Tests
+// Per docs: snake_case type tag; call steps nest string-array arguments under
+// an "arguments" object; function_call keeps id/name/arguments at top level.
+// =============================================================================
+
+mod step {
+    use super::*;
+
+    #[test]
+    fn user_input_wire_format() {
+        let step = Step::user_text("hi");
+        let json = serde_json::to_value(&step).unwrap();
+        assert_eq!(json["type"], "user_input");
+        assert_eq!(json["content"][0]["type"], "text");
+        assert_eq!(json["content"][0]["text"], "hi");
+    }
+
+    #[test]
+    fn model_output_wire_format() {
+        let step = Step::model_text("hello");
+        let json = serde_json::to_value(&step).unwrap();
+        assert_eq!(json["type"], "model_output");
+        assert_eq!(json["content"][0]["text"], "hello");
+    }
+
+    #[test]
+    fn thought_wire_format() {
+        let step = Step::Thought {
+            signature: Some("sig123".to_string()),
+            summary: vec![],
+        };
+        let json = serde_json::to_value(&step).unwrap();
+        assert_eq!(json["type"], "thought");
+        assert_eq!(json["signature"], "sig123");
+    }
+
+    #[test]
+    fn function_call_keeps_arguments_at_top_level() {
+        let step = Step::function_call("call_1", "get_weather", json!({"city": "Paris"}));
+        let json = serde_json::to_value(&step).unwrap();
+        assert_eq!(json["type"], "function_call");
+        assert_eq!(json["id"], "call_1");
+        assert_eq!(json["name"], "get_weather");
+        assert_eq!(json["arguments"]["city"], "Paris");
+    }
+
+    #[test]
+    fn function_result_wire_format() {
+        let step = Step::function_result("get_weather", "call_1", json!({"temp": 22}));
+        let json = serde_json::to_value(&step).unwrap();
+        assert_eq!(json["type"], "function_result");
+        assert_eq!(json["call_id"], "call_1");
+        assert_eq!(json["name"], "get_weather");
+        assert_eq!(json["result"]["temp"], 22);
+    }
+
+    #[test]
+    fn code_execution_call_nests_language_and_code_in_arguments() {
+        let step = Step::CodeExecutionCall {
+            id: "exec_1".to_string(),
+            language: CodeExecutionLanguage::Python,
+            code: "print(1)".to_string(),
+            signature: None,
+        };
+        let json = serde_json::to_value(&step).unwrap();
+        assert_eq!(json["type"], "code_execution_call");
+        assert_eq!(json["id"], "exec_1");
+        assert_eq!(json["arguments"]["language"], "python");
+        assert_eq!(json["arguments"]["code"], "print(1)");
+    }
+
+    #[test]
+    fn url_context_call_nests_urls_in_arguments() {
+        let step = Step::UrlContextCall {
+            id: "ctx_1".to_string(),
+            urls: vec!["https://example.com".to_string()],
+            signature: None,
+        };
+        let json = serde_json::to_value(&step).unwrap();
+        assert_eq!(json["type"], "url_context_call");
+        assert_eq!(json["arguments"]["urls"][0], "https://example.com");
+    }
+
+    #[test]
+    fn google_search_call_nests_queries_in_arguments() {
+        let step = Step::GoogleSearchCall {
+            id: "search_1".to_string(),
+            queries: vec!["rust serde".to_string()],
+            search_type: Some(SearchType::WebSearch),
+            signature: None,
+        };
+        let json = serde_json::to_value(&step).unwrap();
+        assert_eq!(json["type"], "google_search_call");
+        assert_eq!(json["arguments"]["queries"][0], "rust serde");
+        assert_eq!(json["search_type"], "web_search");
+    }
+
+    #[test]
+    fn google_maps_call_nests_queries_in_arguments() {
+        let step = Step::GoogleMapsCall {
+            id: "maps_1".to_string(),
+            queries: vec!["coffee".to_string()],
+            signature: Some("sig".to_string()),
+        };
+        let json = serde_json::to_value(&step).unwrap();
+        assert_eq!(json["type"], "google_maps_call");
+        assert_eq!(json["arguments"]["queries"][0], "coffee");
+        assert_eq!(json["signature"], "sig");
+    }
+
+    #[test]
+    fn roundtrip_representative_steps() {
+        let steps = vec![
+            Step::user_text("hi"),
+            Step::model_text("hello"),
+            Step::Thought {
+                signature: Some("sig".to_string()),
+                summary: vec![],
+            },
+            Step::function_call("call_1", "fn", json!({"a": 1})),
+            Step::function_result("fn", "call_1", json!({"b": 2})),
+            Step::CodeExecutionCall {
+                id: "exec_1".to_string(),
+                language: CodeExecutionLanguage::Python,
+                code: "print(1)".to_string(),
+                signature: None,
+            },
+            Step::CodeExecutionResult {
+                call_id: "exec_1".to_string(),
+                result: "1".to_string(),
+                is_error: false,
+                signature: None,
+            },
+            Step::UrlContextCall {
+                id: "ctx_1".to_string(),
+                urls: vec!["https://example.com".to_string()],
+                signature: None,
+            },
+            Step::GoogleSearchCall {
+                id: "search_1".to_string(),
+                queries: vec!["q".to_string()],
+                search_type: Some(SearchType::WebSearch),
+                signature: None,
+            },
+        ];
+
+        for step in steps {
+            let json = serde_json::to_value(&step).unwrap();
+            let back: Step = serde_json::from_value(json).unwrap();
+            assert_eq!(step, back, "Step should roundtrip losslessly");
+        }
+    }
+}
+
+// =============================================================================
+// Annotation Wire Format Tests
+// Tagged union: "url_citation", "file_citation", "place_citation"
+// =============================================================================
+
+mod annotation {
+    use super::*;
+
+    #[test]
+    fn url_citation_wire_format() {
+        let annotation =
+            Annotation::url_citation("https://example.com", Some("Example".to_string()), 0, 5);
+        let json = serde_json::to_value(&annotation).unwrap();
+        assert_eq!(json["type"], "url_citation");
+        assert_eq!(json["url"], "https://example.com");
+        assert_eq!(json["title"], "Example");
+        assert_eq!(json["start_index"], 0);
+        assert_eq!(json["end_index"], 5);
+    }
+
+    #[test]
+    fn url_citation_deserializes() {
+        let annotation: Annotation = serde_json::from_value(json!({
+            "type": "url_citation",
+            "url": "https://example.com",
+            "title": "Example",
+            "start_index": 3,
+            "end_index": 9
+        }))
+        .unwrap();
+        assert!(matches!(annotation, Annotation::UrlCitation { .. }));
+        assert_eq!(annotation.start_index(), Some(3));
+        assert_eq!(annotation.end_index(), Some(9));
+        assert_eq!(annotation.source(), Some("https://example.com"));
+    }
+
+    #[test]
+    fn file_citation_deserializes() {
+        let annotation: Annotation = serde_json::from_value(json!({
+            "type": "file_citation",
+            "document_uri": "files/doc123",
+            "file_name": "report.pdf",
+            "page_number": 4,
+            "start_index": 0,
+            "end_index": 10
+        }))
+        .unwrap();
+        assert!(matches!(annotation, Annotation::FileCitation { .. }));
+        assert_eq!(annotation.source(), Some("files/doc123"));
+    }
+
+    #[test]
+    fn place_citation_deserializes() {
+        let annotation: Annotation = serde_json::from_value(json!({
+            "type": "place_citation",
+            "place_id": "abc123",
+            "name": "Central Park",
+            "url": "https://maps.example.com/abc123",
+            "review_snippets": [],
+            "start_index": 0,
+            "end_index": 12
+        }))
+        .unwrap();
+        assert!(matches!(annotation, Annotation::PlaceCitation { .. }));
+        assert_eq!(annotation.source(), Some("https://maps.example.com/abc123"));
+    }
+
+    #[test]
+    fn annotation_roundtrips() {
+        let annotation =
+            Annotation::url_citation("https://example.com", Some("T".to_string()), 1, 4);
+        let json = serde_json::to_value(&annotation).unwrap();
+        let back: Annotation = serde_json::from_value(json).unwrap();
+        assert_eq!(annotation, back);
+    }
+
+    #[test]
+    fn extract_span_uses_indices() {
+        let annotation = Annotation::url_citation("https://example.com", None, 0, 5);
+        assert_eq!(annotation.extract_span("Hello, world!"), Some("Hello"));
     }
 }

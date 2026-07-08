@@ -1,4 +1,16 @@
-//! Unit tests for InteractionResponse, UsageMetadata, ContentSummary, InteractionStatus, and helpers.
+//! Unit tests for InteractionResponse, UsageMetadata, StepSummary,
+//! InteractionStatus, and helpers (API revision 2026-05-20).
+//!
+//! The response model carries a `steps: Vec<Step>` array instead of the
+//! launch-era `outputs: Vec<Content>`; the helper tests below exercise the
+//! same behaviors against the step model.
+//!
+//! Removed coverage (types deleted from the API surface):
+//! - `GroundingMetadata` / `GroundingChunk` / `WebSource` and
+//!   `UrlContextMetadata` / `UrlMetadataEntry` / `UrlRetrievalStatus` tests —
+//!   grounding data now arrives as typed steps and text annotations.
+//! - `reasoning_tokens()` / `UsageMetadata.total_reasoning_tokens` tests —
+//!   the field was removed; `total_thought_tokens` remains.
 
 use super::*;
 
@@ -9,8 +21,10 @@ fn test_deserialize_interaction_response_completed() {
     let response_json = r#"{
         "id": "interaction_123",
         "model": "gemini-3-flash-preview",
-        "input": [{"type": "text", "text": "Hello"}],
-        "outputs": [{"type": "text", "text": "Hi there!"}],
+        "steps": [
+            {"type": "user_input", "content": [{"type": "text", "text": "Hello"}]},
+            {"type": "model_output", "content": [{"type": "text", "text": "Hi there!"}]}
+        ],
         "status": "completed",
         "usage": {
             "total_input_tokens": 5,
@@ -25,8 +39,8 @@ fn test_deserialize_interaction_response_completed() {
     assert_eq!(response.id.as_deref(), Some("interaction_123"));
     assert_eq!(response.model.as_deref(), Some("gemini-3-flash-preview"));
     assert_eq!(response.status, InteractionStatus::Completed);
-    assert_eq!(response.input.len(), 1);
-    assert_eq!(response.outputs.len(), 1);
+    assert_eq!(response.steps.len(), 2);
+    assert_eq!(response.as_text(), Some("Hi there!"));
     assert!(response.usage.is_some());
     let usage = response.usage.unwrap();
     assert_eq!(usage.total_input_tokens, Some(5));
@@ -46,7 +60,7 @@ fn test_deserialize_usage_metadata_partial() {
     assert_eq!(usage.total_input_tokens, None);
     assert_eq!(usage.total_output_tokens, None);
     assert_eq!(usage.total_cached_tokens, None);
-    assert_eq!(usage.total_reasoning_tokens, None);
+    assert_eq!(usage.total_thought_tokens, None);
     assert_eq!(usage.total_tool_use_tokens, None);
 }
 
@@ -82,6 +96,36 @@ fn test_usage_metadata_has_data() {
     assert!(with_cached.has_data());
 }
 
+#[test]
+fn test_usage_metadata_grounding_tool_count() {
+    // grounding_tool_count is new in revision 2026-05-20
+    let json = r#"{
+        "total_tokens": 100,
+        "grounding_tool_count": [
+            {"type": "google_search", "count": 2},
+            {"type": "google_maps", "count": 1}
+        ]
+    }"#;
+    let usage: UsageMetadata = serde_json::from_str(json).expect("Deserialization failed");
+
+    assert!(usage.has_data());
+    let counts = usage.grounding_tool_count.as_ref().expect("Should exist");
+    assert_eq!(counts.len(), 2);
+    assert_eq!(counts[0].tool_type.as_deref(), Some("google_search"));
+    assert_eq!(counts[0].count, Some(2));
+
+    assert_eq!(usage.grounding_count_for_tool("google_search"), Some(2));
+    assert_eq!(usage.grounding_count_for_tool("google_maps"), Some(1));
+    assert_eq!(usage.grounding_count_for_tool("retrieval"), None);
+
+    // The wire field is "type" (snake_case)
+    let reserialized = serde_json::to_value(&usage).unwrap();
+    assert_eq!(
+        reserialized["grounding_tool_count"][0]["type"],
+        "google_search"
+    );
+}
+
 // --- Response Helper Tests ---
 
 #[test]
@@ -89,26 +133,12 @@ fn test_interaction_response_text() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::Text {
-                text: Some("Hello".to_string()),
-                annotations: None,
-            },
-            Content::Text {
-                text: Some("World".to_string()),
-                annotations: None,
-            },
-        ],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![Step::model_output(vec![
+            Content::text("Hello"),
+            Content::text("World"),
+        ])],
+        ..Default::default()
     };
 
     assert_eq!(response.as_text(), Some("Hello"));
@@ -118,34 +148,37 @@ fn test_interaction_response_text() {
 }
 
 #[test]
+fn test_interaction_response_text_output_text_fallback() {
+    // as_text()/all_text() fall back to the API-provided output_text field
+    // when no text-bearing steps are present.
+    let response = InteractionResponse {
+        status: InteractionStatus::Completed,
+        output_text: Some("Fallback text".to_string()),
+        ..Default::default()
+    };
+
+    assert_eq!(response.as_text(), Some("Fallback text"));
+    assert_eq!(response.all_text(), "Fallback text");
+    assert!(response.has_text());
+}
+
+#[test]
 fn test_interaction_response_thoughts() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::Thought {
-                signature: Some("sig_1".to_string()),
-            },
-            Content::Thought {
-                signature: Some("sig_2".to_string()),
-            },
-            Content::Text {
-                text: Some("The answer is 42.".to_string()),
-                annotations: None,
-            },
-            // Thought with None signature should be filtered out
-            Content::Thought { signature: None },
-        ],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![
+            Step::thought("sig_1"),
+            Step::thought("sig_2"),
+            Step::model_text("The answer is 42."),
+            // Thought with None signature should be filtered out
+            Step::Thought {
+                signature: None,
+                summary: vec![],
+            },
+        ],
+        ..Default::default()
     };
 
     assert!(response.has_thoughts());
@@ -155,7 +188,7 @@ fn test_interaction_response_thoughts() {
     assert_eq!(signatures[0], "sig_1");
     assert_eq!(signatures[1], "sig_2");
 
-    // Verify text() still works (only returns Text content)
+    // Verify as_text() still works (only returns model output text)
     assert_eq!(response.as_text(), Some("The answer is 42."));
 }
 
@@ -164,20 +197,9 @@ fn test_interaction_response_no_thoughts() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Text {
-            text: Some("Just text, no thoughts.".to_string()),
-            annotations: None,
-        }],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![Step::model_text("Just text, no thoughts.")],
+        ..Default::default()
     };
 
     assert!(!response.has_thoughts());
@@ -186,81 +208,86 @@ fn test_interaction_response_no_thoughts() {
 }
 
 #[test]
+fn test_interaction_response_thought_summaries() {
+    let response = InteractionResponse {
+        status: InteractionStatus::Completed,
+        steps: vec![
+            Step::Thought {
+                signature: Some("sig".to_string()),
+                summary: vec![Content::text("Summarized reasoning")],
+            },
+            Step::model_text("Answer"),
+        ],
+        ..Default::default()
+    };
+
+    let summaries: Vec<_> = response.thought_summaries().collect();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].as_text(), Some("Summarized reasoning"));
+}
+
+#[test]
 fn test_interaction_response_function_calls() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::FunctionCall {
-                id: Some("call_001".to_string()),
-                name: "get_weather".to_string(),
-                args: serde_json::json!({"location": "Paris"}),
-            },
-            Content::FunctionCall {
-                id: Some("call_002".to_string()),
+        status: InteractionStatus::Completed,
+        steps: vec![
+            Step::function_call(
+                "call_001",
+                "get_weather",
+                serde_json::json!({"location": "Paris"}),
+            ),
+            // Signature-bearing call (the API returns `signature` on
+            // function_call steps; verified live 2026-07) still surfaces
+            // through the accessor.
+            Step::FunctionCall {
+                id: "call_002".to_string(),
                 name: "get_time".to_string(),
-                args: serde_json::json!({"timezone": "UTC"}),
+                arguments: serde_json::json!({"timezone": "UTC"}),
+                signature: Some("sig-abc".to_string()),
             },
         ],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        ..Default::default()
     };
 
     let calls = response.function_calls();
     assert_eq!(calls.len(), 2);
-    // FunctionCallInfo struct fields
-    assert_eq!(calls[0].id, Some("call_001"));
+    // FunctionCallInfo struct fields (id is now a required &str)
+    assert_eq!(calls[0].id, "call_001");
     assert_eq!(calls[0].name, "get_weather");
     assert_eq!(calls[0].args["location"], "Paris");
-    assert_eq!(calls[1].id, Some("call_002"));
+    assert_eq!(calls[1].id, "call_002");
     assert_eq!(calls[1].name, "get_time");
     assert!(response.has_function_calls());
     assert!(!response.has_text());
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
-fn test_function_call_missing_id() {
-    // Test that function calls with missing id are correctly captured as None.
-    // This scenario should not normally occur (API contract requires call_id),
-    // but if it does, the auto-function loop will return an error.
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::FunctionCall {
-            id: None, // Missing call_id - should be captured correctly
-            name: "get_weather".to_string(),
-            args: serde_json::json!({"location": "Tokyo"}),
-        }],
-        status: InteractionStatus::RequiresAction,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
-    };
+fn test_function_call_step_without_id_becomes_unknown() {
+    // The 2026-05-20 spec requires an id on function_call steps. A payload
+    // missing it can no longer be represented as Step::FunctionCall (the old
+    // Content model used Option<String>), so it degrades gracefully to
+    // Step::Unknown with the data preserved.
+    let response_json = r#"{
+        "id": "test_id",
+        "model": "gemini-3-flash-preview",
+        "steps": [
+            {"type": "function_call", "name": "get_weather", "arguments": {"location": "Tokyo"}}
+        ],
+        "status": "requires_action"
+    }"#;
 
-    let calls = response.function_calls();
-    assert_eq!(calls.len(), 1);
-    // Verify that missing id is correctly captured as None
-    assert_eq!(calls[0].id, None);
-    assert_eq!(calls[0].name, "get_weather");
-    assert_eq!(calls[0].args["location"], "Tokyo");
+    let response: InteractionResponse =
+        serde_json::from_str(response_json).expect("Should deserialize");
 
-    // The auto-function loop in request_builder.rs will return an error
-    // when it encounters a function call with None id, since call_id is
-    // required to send function results back to the API.
+    assert!(response.function_calls().is_empty());
+    assert!(response.has_unknown());
+    let unknowns = response.unknown_steps();
+    assert_eq!(unknowns.len(), 1);
+    assert_eq!(unknowns[0].0, "function_call");
+    assert_eq!(unknowns[0].1["name"], "get_weather");
 }
 
 #[test]
@@ -268,31 +295,13 @@ fn test_interaction_response_mixed_content() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::Text {
-                text: Some("Let me check".to_string()),
-                annotations: None,
-            },
-            Content::FunctionCall {
-                id: Some("call_mixed".to_string()),
-                name: "check_status".to_string(),
-                args: serde_json::json!({}),
-            },
-            Content::Text {
-                text: Some("Done!".to_string()),
-                annotations: None,
-            },
-        ],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![
+            Step::model_text("Let me check"),
+            Step::function_call("call_mixed", "check_status", serde_json::json!({})),
+            Step::model_text("Done!"),
+        ],
+        ..Default::default()
     };
 
     assert_eq!(response.as_text(), Some("Let me check"));
@@ -303,21 +312,13 @@ fn test_interaction_response_mixed_content() {
 }
 
 #[test]
-fn test_interaction_response_empty_outputs() {
+fn test_interaction_response_empty_steps() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![],
+        ..Default::default()
     };
 
     assert_eq!(response.as_text(), None);
@@ -334,38 +335,27 @@ fn test_interaction_response_has_unknown() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::Text {
-                text: Some("Here's the result:".to_string()),
-                annotations: None,
-            },
-            Content::Unknown {
-                content_type: "code_execution_result".to_string(),
+        status: InteractionStatus::Completed,
+        steps: vec![
+            Step::model_text("Here's the result:"),
+            Step::Unknown {
+                step_type: "future_step_type".to_string(),
                 data: serde_json::json!({
-                    "type": "code_execution_result",
+                    "type": "future_step_type",
                     "outcome": "success",
                     "output": "42"
                 }),
             },
         ],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        ..Default::default()
     };
 
     assert!(response.has_unknown());
     assert!(response.has_text());
 
-    let unknowns = response.unknown_content();
+    let unknowns = response.unknown_steps();
     assert_eq!(unknowns.len(), 1);
-    assert_eq!(unknowns[0].0, "code_execution_result");
+    assert_eq!(unknowns[0].0, "future_step_type");
     assert_eq!(unknowns[0].1["outcome"], "success");
 }
 
@@ -374,77 +364,46 @@ fn test_interaction_response_no_unknown() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Text {
-            text: Some("Normal response".to_string()),
-            annotations: None,
-        }],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![Step::model_text("Normal response")],
+        ..Default::default()
     };
 
     assert!(!response.has_unknown());
-    assert!(response.unknown_content().is_empty());
+    assert!(response.unknown_steps().is_empty());
 }
 
-// --- ContentSummary Tests ---
+// --- StepSummary Tests ---
 
 #[test]
-fn test_content_summary() {
+fn test_step_summary() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::Text {
-                text: Some("Text 1".to_string()),
-                annotations: None,
-            },
-            Content::Text {
-                text: Some("Text 2".to_string()),
-                annotations: None,
-            },
-            Content::Thought {
-                signature: Some("sig_thinking".to_string()),
-            },
-            Content::FunctionCall {
-                id: Some("call_1".to_string()),
-                name: "test_fn".to_string(),
-                args: serde_json::json!({}),
-            },
-            Content::Unknown {
-                content_type: "type_a".to_string(),
+        status: InteractionStatus::Completed,
+        steps: vec![
+            Step::model_output(vec![Content::text("Text 1"), Content::text("Text 2")]),
+            Step::thought("sig_thinking"),
+            Step::function_call("call_1", "test_fn", serde_json::json!({})),
+            Step::Unknown {
+                step_type: "type_a".to_string(),
                 data: serde_json::json!({"type": "type_a"}),
             },
-            Content::Unknown {
-                content_type: "type_b".to_string(),
+            Step::Unknown {
+                step_type: "type_b".to_string(),
                 data: serde_json::json!({"type": "type_b"}),
             },
-            Content::Unknown {
-                content_type: "type_a".to_string(), // Duplicate type
+            Step::Unknown {
+                step_type: "type_a".to_string(), // Duplicate type
                 data: serde_json::json!({"type": "type_a", "extra": true}),
             },
         ],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        ..Default::default()
     };
 
-    let summary = response.content_summary();
+    let summary = response.step_summary();
 
+    assert_eq!(summary.model_output_count, 1);
     assert_eq!(summary.text_count, 2);
     assert_eq!(summary.thought_count, 1);
     assert_eq!(summary.function_call_count, 1);
@@ -455,24 +414,16 @@ fn test_content_summary() {
 }
 
 #[test]
-fn test_content_summary_empty() {
+fn test_step_summary_empty() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![],
+        ..Default::default()
     };
 
-    let summary = response.content_summary();
+    let summary = response.step_summary();
 
     assert_eq!(summary.text_count, 0);
     assert_eq!(summary.unknown_count, 0);
@@ -480,9 +431,9 @@ fn test_content_summary_empty() {
 }
 
 #[test]
-fn test_content_summary_display() {
-    // Test Display for ContentSummary with various counts
-    let summary = ContentSummary {
+fn test_step_summary_display() {
+    // Test Display for StepSummary with various counts
+    let summary = StepSummary {
         text_count: 2,
         thought_count: 1,
         code_execution_call_count: 1,
@@ -500,14 +451,14 @@ fn test_content_summary_display() {
 }
 
 #[test]
-fn test_content_summary_display_empty() {
-    let summary = ContentSummary::default();
+fn test_step_summary_display_empty() {
+    let summary = StepSummary::default();
     assert_eq!(format!("{}", summary), "empty");
 }
 
 #[test]
-fn test_content_summary_display_with_unknown() {
-    let summary = ContentSummary {
+fn test_step_summary_display_with_unknown() {
+    let summary = StepSummary {
         unknown_count: 2,
         unknown_types: vec!["new_type_a".to_string(), "new_type_b".to_string()],
         ..Default::default()
@@ -519,56 +470,58 @@ fn test_content_summary_display_with_unknown() {
 }
 
 #[test]
-fn test_content_summary_with_built_in_tools() {
+fn test_step_summary_with_built_in_tools() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::CodeExecutionCall {
-                id: Some("call_1".to_string()),
+        status: InteractionStatus::Completed,
+        steps: vec![
+            Step::CodeExecutionCall {
+                id: "call_1".to_string(),
                 language: CodeExecutionLanguage::Python,
                 code: "print(1)".to_string(),
+                signature: None,
             },
-            Content::CodeExecutionCall {
-                id: Some("call_2".to_string()),
+            Step::CodeExecutionCall {
+                id: "call_2".to_string(),
                 language: CodeExecutionLanguage::Python,
                 code: "print(2)".to_string(),
+                signature: None,
             },
-            Content::CodeExecutionResult {
-                call_id: Some("call_1".to_string()),
+            Step::CodeExecutionResult {
+                call_id: "call_1".to_string(),
                 is_error: false,
                 result: "1\n2\n".to_string(),
+                signature: None,
             },
-            Content::GoogleSearchCall {
+            Step::GoogleSearchCall {
                 id: "search1".to_string(),
                 queries: vec!["test".to_string()],
+                search_type: None,
+                signature: None,
             },
-            Content::GoogleSearchResult {
+            Step::GoogleSearchResult {
                 call_id: "search1".to_string(),
                 result: vec![],
+                is_error: None,
+                signature: None,
             },
-            Content::UrlContextCall {
+            Step::UrlContextCall {
                 id: "ctx_123".to_string(),
                 urls: vec!["https://example.com".to_string()],
+                signature: None,
             },
-            Content::UrlContextResult {
+            Step::UrlContextResult {
                 call_id: "ctx_123".to_string(),
                 result: vec![],
+                is_error: None,
+                signature: None,
             },
         ],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        ..Default::default()
     };
 
-    let summary = response.content_summary();
+    let summary = response.step_summary();
 
     assert_eq!(summary.code_execution_call_count, 2);
     assert_eq!(summary.code_execution_result_count, 1);
@@ -586,49 +539,40 @@ fn test_interaction_response_code_execution_helpers() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::Text {
-                text: Some("Here's the code:".to_string()),
-                annotations: None,
-            },
-            Content::CodeExecutionCall {
-                id: Some("call_123".to_string()),
+        status: InteractionStatus::Completed,
+        steps: vec![
+            Step::model_text("Here's the code:"),
+            Step::CodeExecutionCall {
+                id: "call_123".to_string(),
                 language: CodeExecutionLanguage::Python,
                 code: "print(42)".to_string(),
+                signature: None,
             },
-            Content::CodeExecutionResult {
-                call_id: Some("call_123".to_string()),
+            Step::CodeExecutionResult {
+                call_id: "call_123".to_string(),
                 is_error: false,
                 result: "42\n".to_string(),
+                signature: None,
             },
         ],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        ..Default::default()
     };
 
     assert!(response.has_code_execution_calls());
     assert!(response.has_code_execution_results());
     assert!(!response.has_unknown());
 
-    // Test code_execution_calls helper
+    // Test code_execution_calls helper (id is now a required &str)
     let code_blocks = response.code_execution_calls();
     assert_eq!(code_blocks.len(), 1);
-    assert_eq!(code_blocks[0].id, Some("call_123"));
+    assert_eq!(code_blocks[0].id, "call_123");
     assert_eq!(code_blocks[0].language, CodeExecutionLanguage::Python);
     assert_eq!(code_blocks[0].code, "print(42)");
 
     // Test code_execution_results helper
     let results = response.code_execution_results();
     assert_eq!(results.len(), 1);
-    assert_eq!(results[0].call_id, Some("call_123"));
+    assert_eq!(results[0].call_id, "call_123");
     assert!(!results[0].is_error);
     assert_eq!(results[0].result, "42\n");
 
@@ -638,31 +582,20 @@ fn test_interaction_response_code_execution_helpers() {
 
 #[test]
 fn test_interaction_response_google_search_helpers() {
-    use super::content::GoogleSearchResultItem;
-
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::GoogleSearchResult {
+        status: InteractionStatus::Completed,
+        steps: vec![
+            Step::GoogleSearchResult {
                 call_id: "call123".to_string(),
                 result: vec![GoogleSearchResultItem::new("Test", "https://example.com")],
+                is_error: None,
+                signature: None,
             },
-            Content::Text {
-                text: Some("Based on search results...".to_string()),
-                annotations: None,
-            },
+            Step::model_text("Based on search results..."),
         ],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        ..Default::default()
     };
 
     assert!(response.has_google_search_results());
@@ -678,20 +611,14 @@ fn test_interaction_response_url_context_helpers() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::UrlContextResult {
+        status: InteractionStatus::Completed,
+        steps: vec![Step::UrlContextResult {
             call_id: "ctx_123".to_string(),
             result: vec![UrlContextResultItem::new("https://example.com", "success")],
+            is_error: None,
+            signature: None,
         }],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        ..Default::default()
     };
 
     assert!(response.has_url_context_results());
@@ -706,15 +633,12 @@ fn test_interaction_response_url_context_helpers() {
 
 #[test]
 fn test_interaction_response_google_maps_helpers() {
-    use super::content::{GoogleMapsResultItem, Place};
-
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::GoogleMapsResult {
+        status: InteractionStatus::Completed,
+        steps: vec![
+            Step::GoogleMapsResult {
                 call_id: "maps_123".to_string(),
                 signature: None,
                 result: vec![GoogleMapsResultItem {
@@ -724,29 +648,14 @@ fn test_interaction_response_google_maps_helpers() {
                         place_id: Some("ChIJLU7jZClu5kcR".to_string()),
                         lat: Some(48.8584),
                         lng: Some(2.2945),
-                        types: None,
-                        rating: None,
-                        user_ratings_total: None,
-                        website: None,
-                        phone_number: None,
-                        extra: serde_json::Map::new(),
+                        ..Default::default()
                     }]),
                     widget_context_token: Some("token123".to_string()),
                 }],
             },
-            Content::Text {
-                text: Some("Here are the maps results.".to_string()),
-                annotations: None,
-            },
+            Step::model_text("Here are the maps results."),
         ],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        ..Default::default()
     };
 
     assert!(response.has_google_maps_results());
@@ -770,182 +679,13 @@ fn test_interaction_response_google_maps_helpers_empty() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Text {
-            text: Some("No maps here.".to_string()),
-            annotations: None,
-        }],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![Step::model_text("No maps here.")],
+        ..Default::default()
     };
 
     assert!(!response.has_google_maps_results());
     assert!(response.google_maps_results().is_empty());
-}
-
-// --- URL Context Metadata Tests ---
-
-#[test]
-fn test_deserialize_url_context_metadata() {
-    // Test full deserialization with all statuses
-    let json = r#"{
-        "urlMetadata": [
-            {
-                "retrievedUrl": "https://example.com",
-                "urlRetrievalStatus": "URL_RETRIEVAL_STATUS_SUCCESS"
-            },
-            {
-                "retrievedUrl": "https://blocked.com",
-                "urlRetrievalStatus": "URL_RETRIEVAL_STATUS_UNSAFE"
-            },
-            {
-                "retrievedUrl": "https://failed.com",
-                "urlRetrievalStatus": "URL_RETRIEVAL_STATUS_ERROR"
-            }
-        ]
-    }"#;
-
-    let metadata: UrlContextMetadata = serde_json::from_str(json).expect("Failed to deserialize");
-
-    assert_eq!(metadata.url_metadata.len(), 3);
-
-    assert_eq!(
-        metadata.url_metadata[0].retrieved_url,
-        "https://example.com"
-    );
-    assert_eq!(
-        metadata.url_metadata[0].url_retrieval_status,
-        UrlRetrievalStatus::Success
-    );
-
-    assert_eq!(
-        metadata.url_metadata[1].retrieved_url,
-        "https://blocked.com"
-    );
-    assert_eq!(
-        metadata.url_metadata[1].url_retrieval_status,
-        UrlRetrievalStatus::Unsafe
-    );
-
-    assert_eq!(metadata.url_metadata[2].retrieved_url, "https://failed.com");
-    assert_eq!(
-        metadata.url_metadata[2].url_retrieval_status,
-        UrlRetrievalStatus::Error
-    );
-}
-
-#[test]
-fn test_deserialize_url_context_metadata_empty() {
-    // Test empty url_metadata array
-    let json = r#"{"urlMetadata": []}"#;
-    let metadata: UrlContextMetadata = serde_json::from_str(json).expect("Failed to deserialize");
-    assert!(metadata.url_metadata.is_empty());
-}
-
-#[test]
-fn test_deserialize_url_context_metadata_missing_field() {
-    // Test missing urlMetadata field (should default to empty vec)
-    let json = r#"{}"#;
-    let metadata: UrlContextMetadata = serde_json::from_str(json).expect("Failed to deserialize");
-    assert!(metadata.url_metadata.is_empty());
-}
-
-#[test]
-fn test_url_retrieval_status_serialization_roundtrip() {
-    // Test all enum variants roundtrip correctly
-    let statuses = vec![
-        UrlRetrievalStatus::Unspecified,
-        UrlRetrievalStatus::Success,
-        UrlRetrievalStatus::Unsafe,
-        UrlRetrievalStatus::Error,
-    ];
-
-    for status in statuses {
-        let serialized = serde_json::to_string(&status).expect("Failed to serialize");
-        let deserialized: UrlRetrievalStatus =
-            serde_json::from_str(&serialized).expect("Failed to deserialize");
-        assert_eq!(status, deserialized);
-    }
-}
-
-#[test]
-fn test_url_retrieval_status_known_variants_wire_format() {
-    // Verify exact wire format for all known variants
-    let variants = [
-        (
-            UrlRetrievalStatus::Unspecified,
-            "URL_RETRIEVAL_STATUS_UNSPECIFIED",
-        ),
-        (UrlRetrievalStatus::Success, "URL_RETRIEVAL_STATUS_SUCCESS"),
-        (UrlRetrievalStatus::Unsafe, "URL_RETRIEVAL_STATUS_UNSAFE"),
-        (UrlRetrievalStatus::Error, "URL_RETRIEVAL_STATUS_ERROR"),
-    ];
-
-    for (status, expected_wire) in variants {
-        let serialized = serde_json::to_string(&status).expect("Should serialize");
-        assert_eq!(serialized, format!(r#""{}""#, expected_wire));
-
-        let deserialized: UrlRetrievalStatus =
-            serde_json::from_str(&serialized).expect("Should deserialize");
-        assert_eq!(deserialized, status);
-        assert!(!deserialized.is_unknown());
-    }
-}
-
-#[test]
-fn test_url_retrieval_status_helper_methods() {
-    assert!(UrlRetrievalStatus::Success.is_success());
-    assert!(!UrlRetrievalStatus::Success.is_error());
-
-    assert!(!UrlRetrievalStatus::Error.is_success());
-    assert!(UrlRetrievalStatus::Error.is_error());
-
-    assert!(!UrlRetrievalStatus::Unsafe.is_success());
-    assert!(UrlRetrievalStatus::Unsafe.is_error());
-
-    assert!(!UrlRetrievalStatus::Unspecified.is_success());
-    assert!(!UrlRetrievalStatus::Unspecified.is_error());
-}
-
-#[cfg(not(feature = "strict-unknown"))]
-#[test]
-fn test_url_retrieval_status_unknown_deserialization() {
-    // Simulate a new status the library doesn't know about
-    let unknown_json = r#""URL_RETRIEVAL_STATUS_PENDING""#;
-    let status: UrlRetrievalStatus =
-        serde_json::from_str(unknown_json).expect("Should deserialize as Unknown");
-
-    assert!(status.is_unknown());
-    assert!(!status.is_success());
-    assert!(!status.is_error()); // Unknown status is neither success nor error
-
-    // Verify helper methods
-    assert_eq!(
-        status.unknown_status_type(),
-        Some("URL_RETRIEVAL_STATUS_PENDING")
-    );
-    assert!(status.unknown_data().is_some());
-
-    // Verify roundtrip serialization preserves the value
-    let reserialized = serde_json::to_string(&status).expect("Should serialize");
-    assert_eq!(reserialized, r#""URL_RETRIEVAL_STATUS_PENDING""#);
-}
-
-#[cfg(not(feature = "strict-unknown"))]
-#[test]
-fn test_url_retrieval_status_unknown_display() {
-    let unknown = UrlRetrievalStatus::Unknown {
-        status_type: "URL_RETRIEVAL_STATUS_FUTURE".to_string(),
-        data: serde_json::Value::String("URL_RETRIEVAL_STATUS_FUTURE".to_string()),
-    };
-    assert_eq!(format!("{}", unknown), "URL_RETRIEVAL_STATUS_FUTURE");
 }
 
 // --- Function Result Helpers ---
@@ -955,34 +695,21 @@ fn test_interaction_response_function_results() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::FunctionResult {
-                name: Some("get_weather".to_string()),
-                call_id: "call_001".to_string(),
-                result: serde_json::json!({"temp": 72, "unit": "F"}),
-                is_error: None,
-            },
-            Content::FunctionResult {
-                name: Some("get_time".to_string()),
-                call_id: "call_002".to_string(),
-                result: serde_json::json!({"time": "14:30", "zone": "UTC"}),
-                is_error: None,
-            },
-            Content::Text {
-                text: Some("Here are the results".to_string()),
-                annotations: None,
-            },
-        ],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![
+            Step::function_result(
+                "get_weather",
+                "call_001",
+                serde_json::json!({"temp": 72, "unit": "F"}),
+            ),
+            Step::function_result(
+                "get_time",
+                "call_002",
+                serde_json::json!({"time": "14:30", "zone": "UTC"}),
+            ),
+            Step::model_text("Here are the results"),
+        ],
+        ..Default::default()
     };
 
     assert!(response.has_function_results());
@@ -992,9 +719,25 @@ fn test_interaction_response_function_results() {
     assert_eq!(results.len(), 2);
     assert_eq!(results[0].name, Some("get_weather"));
     assert_eq!(results[0].call_id, "call_001");
-    assert_eq!(results[0].result["temp"], 72);
+    // result is now a FunctionResultPayload
+    assert_eq!(results[0].result.as_json().unwrap()["temp"], 72);
     assert_eq!(results[1].name, Some("get_time"));
     assert_eq!(results[1].call_id, "call_002");
+}
+
+#[test]
+fn test_interaction_response_function_results_text_payload() {
+    // Function results may carry a plain string payload
+    let response = InteractionResponse {
+        status: InteractionStatus::Completed,
+        steps: vec![Step::function_result("echo", "call_003", "plain output")],
+        ..Default::default()
+    };
+
+    let results = response.function_results();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].result.as_text(), Some("plain output"));
+    assert!(results[0].is_error.is_none());
 }
 
 #[test]
@@ -1002,20 +745,9 @@ fn test_interaction_response_no_function_results() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Text {
-            text: Some("Just text".to_string()),
-            annotations: None,
-        }],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![Step::model_text("Just text")],
+        ..Default::default()
     };
 
     assert!(!response.has_function_results());
@@ -1029,30 +761,23 @@ fn test_interaction_response_google_search_call_helpers() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::GoogleSearchCall {
+        status: InteractionStatus::Completed,
+        steps: vec![
+            Step::GoogleSearchCall {
                 id: "search1".to_string(),
                 queries: vec!["Rust programming language".to_string()],
+                search_type: None,
+                signature: None,
             },
-            Content::GoogleSearchCall {
+            Step::GoogleSearchCall {
                 id: "search2".to_string(),
                 queries: vec!["async await Rust".to_string()],
+                search_type: None,
+                signature: None,
             },
-            Content::Text {
-                text: Some("Search results...".to_string()),
-                annotations: None,
-            },
+            Step::model_text("Search results..."),
         ],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        ..Default::default()
     };
 
     assert!(response.has_google_search_calls());
@@ -1075,20 +800,9 @@ fn test_interaction_response_no_google_search_calls() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Text {
-            text: Some("No search".to_string()),
-            annotations: None,
-        }],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![Step::model_text("No search")],
+        ..Default::default()
     };
 
     assert!(!response.has_google_search_calls());
@@ -1103,29 +817,23 @@ fn test_interaction_response_url_context_call_helpers() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::UrlContextCall {
+        status: InteractionStatus::Completed,
+        steps: vec![
+            Step::UrlContextCall {
                 id: "ctx_1".to_string(),
                 urls: vec!["https://docs.rs".to_string()],
+                signature: None,
             },
-            Content::UrlContextCall {
+            Step::UrlContextCall {
                 id: "ctx_2".to_string(),
                 urls: vec![
                     "https://rust-lang.org".to_string(),
                     "https://crates.io".to_string(),
                 ],
+                signature: None,
             },
         ],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        ..Default::default()
     };
 
     assert!(response.has_url_context_calls());
@@ -1146,17 +854,9 @@ fn test_interaction_response_no_url_context_calls() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![],
+        ..Default::default()
     };
 
     assert!(!response.has_url_context_calls());
@@ -1171,35 +871,29 @@ fn test_interaction_response_code_execution_call_singular() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::CodeExecutionCall {
-                id: Some("call_first".to_string()),
+        status: InteractionStatus::Completed,
+        steps: vec![
+            Step::CodeExecutionCall {
+                id: "call_first".to_string(),
                 language: CodeExecutionLanguage::Python,
                 code: "print('first')".to_string(),
+                signature: None,
             },
-            Content::CodeExecutionCall {
-                id: Some("call_second".to_string()),
+            Step::CodeExecutionCall {
+                id: "call_second".to_string(),
                 language: CodeExecutionLanguage::Python,
                 code: "print('second')".to_string(),
+                signature: None,
             },
         ],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        ..Default::default()
     };
 
     // Test code_execution_call() - returns first one
     let call = response.code_execution_call();
     assert!(call.is_some());
     let call = call.unwrap();
-    assert_eq!(call.id, Some("call_first"));
+    assert_eq!(call.id, "call_first");
     assert_eq!(call.language, CodeExecutionLanguage::Python);
     assert_eq!(call.code, "print('first')");
 }
@@ -1209,142 +903,12 @@ fn test_interaction_response_no_code_execution_call() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Text {
-            text: Some("No code".to_string()),
-            annotations: None,
-        }],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![Step::model_text("No code")],
+        ..Default::default()
     };
 
     assert!(response.code_execution_call().is_none());
-}
-
-// --- Metadata Helpers ---
-
-#[test]
-fn test_interaction_response_google_search_metadata_helpers() {
-    use super::GroundingMetadata;
-
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Text {
-            text: Some("Response grounded with search".to_string()),
-            annotations: None,
-        }],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: Some(GroundingMetadata {
-            web_search_queries: vec!["Rust language".to_string()],
-            grounding_chunks: vec![],
-        }),
-        url_context_metadata: None,
-        created: None,
-        updated: None,
-    };
-
-    assert!(response.has_google_search_metadata());
-
-    let metadata = response.google_search_metadata();
-    assert!(metadata.is_some());
-    let metadata = metadata.unwrap();
-    assert_eq!(metadata.web_search_queries, vec!["Rust language"]);
-}
-
-#[test]
-fn test_interaction_response_no_google_search_metadata() {
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
-    };
-
-    assert!(!response.has_google_search_metadata());
-    assert!(response.google_search_metadata().is_none());
-}
-
-#[test]
-fn test_interaction_response_url_context_metadata_helpers() {
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: Some(UrlContextMetadata {
-            url_metadata: vec![UrlMetadataEntry {
-                retrieved_url: "https://example.com".to_string(),
-                url_retrieval_status: UrlRetrievalStatus::Success,
-            }],
-        }),
-        created: None,
-        updated: None,
-    };
-
-    assert!(response.has_url_context_metadata());
-
-    let metadata = response.url_context_metadata();
-    assert!(metadata.is_some());
-    let metadata = metadata.unwrap();
-    assert_eq!(metadata.url_metadata.len(), 1);
-    assert_eq!(
-        metadata.url_metadata[0].retrieved_url,
-        "https://example.com"
-    );
-    assert_eq!(
-        metadata.url_metadata[0].url_retrieval_status,
-        UrlRetrievalStatus::Success
-    );
-}
-
-#[test]
-fn test_interaction_response_no_url_context_metadata() {
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
-    };
-
-    assert!(!response.has_url_context_metadata());
-    assert!(response.url_context_metadata().is_none());
 }
 
 #[test]
@@ -1352,42 +916,33 @@ fn test_interaction_response_code_execution_calls_plural() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::CodeExecutionCall {
-                id: Some("call_1".to_string()),
+        status: InteractionStatus::Completed,
+        steps: vec![
+            Step::CodeExecutionCall {
+                id: "call_1".to_string(),
                 language: CodeExecutionLanguage::Python,
                 code: "print('first')".to_string(),
+                signature: None,
             },
-            Content::CodeExecutionCall {
-                id: Some("call_2".to_string()),
+            Step::CodeExecutionCall {
+                id: "call_2".to_string(),
                 language: CodeExecutionLanguage::Python,
                 code: "print('second')".to_string(),
+                signature: None,
             },
-            Content::Text {
-                text: Some("Results".to_string()),
-                annotations: None,
-            },
+            Step::model_text("Results"),
         ],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        ..Default::default()
     };
 
     assert!(response.has_code_execution_calls());
 
     let calls = response.code_execution_calls();
     assert_eq!(calls.len(), 2);
-    assert_eq!(calls[0].id, Some("call_1"));
+    assert_eq!(calls[0].id, "call_1");
     assert_eq!(calls[0].language, CodeExecutionLanguage::Python);
     assert_eq!(calls[0].code, "print('first')");
-    assert_eq!(calls[1].id, Some("call_2"));
+    assert_eq!(calls[1].id, "call_2");
     assert_eq!(calls[1].language, CodeExecutionLanguage::Python);
     assert_eq!(calls[1].code, "print('second')");
 }
@@ -1397,38 +952,32 @@ fn test_interaction_response_code_execution_results() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::CodeExecutionResult {
-                call_id: Some("call_1".to_string()),
+        status: InteractionStatus::Completed,
+        steps: vec![
+            Step::CodeExecutionResult {
+                call_id: "call_1".to_string(),
                 is_error: false,
                 result: "first output".to_string(),
+                signature: None,
             },
-            Content::CodeExecutionResult {
-                call_id: Some("call_2".to_string()),
+            Step::CodeExecutionResult {
+                call_id: "call_2".to_string(),
                 is_error: true,
                 result: "error message".to_string(),
+                signature: None,
             },
         ],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        ..Default::default()
     };
 
     assert!(response.has_code_execution_results());
 
     let results = response.code_execution_results();
     assert_eq!(results.len(), 2);
-    assert_eq!(results[0].call_id, Some("call_1"));
+    assert_eq!(results[0].call_id, "call_1");
     assert!(!results[0].is_error);
     assert_eq!(results[0].result, "first output");
-    assert_eq!(results[1].call_id, Some("call_2"));
+    assert_eq!(results[1].call_id, "call_2");
     assert!(results[1].is_error);
     assert_eq!(results[1].result, "error message");
 
@@ -1442,20 +991,9 @@ fn test_interaction_response_no_code_execution_results() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Text {
-            text: Some("No code".to_string()),
-            annotations: None,
-        }],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![Step::model_text("No code")],
+        ..Default::default()
     };
 
     assert!(!response.has_code_execution_results());
@@ -1468,34 +1006,28 @@ fn test_interaction_response_google_search_results() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::GoogleSearchResult {
+        status: InteractionStatus::Completed,
+        steps: vec![
+            Step::GoogleSearchResult {
                 call_id: "search1".to_string(),
-                result: vec![GoogleSearchResultItem {
-                    title: "Rust Lang".to_string(),
-                    url: "https://rust-lang.org".to_string(),
-                    rendered_content: None,
-                }],
+                result: vec![GoogleSearchResultItem::new(
+                    "Rust Lang",
+                    "https://rust-lang.org",
+                )],
+                is_error: None,
+                signature: None,
             },
-            Content::GoogleSearchResult {
+            Step::GoogleSearchResult {
                 call_id: "search2".to_string(),
-                result: vec![GoogleSearchResultItem {
-                    title: "Cargo".to_string(),
-                    url: "https://doc.rust-lang.org/cargo/".to_string(),
-                    rendered_content: None,
-                }],
+                result: vec![GoogleSearchResultItem::new(
+                    "Cargo",
+                    "https://doc.rust-lang.org/cargo/",
+                )],
+                is_error: None,
+                signature: None,
             },
         ],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        ..Default::default()
     };
 
     assert!(response.has_google_search_results());
@@ -1511,17 +1043,9 @@ fn test_interaction_response_no_google_search_results() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![],
+        ..Default::default()
     };
 
     assert!(!response.has_google_search_results());
@@ -1533,29 +1057,25 @@ fn test_interaction_response_url_context_results() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::UrlContextResult {
+        status: InteractionStatus::Completed,
+        steps: vec![
+            Step::UrlContextResult {
                 call_id: "ctx_1".to_string(),
                 result: vec![
                     UrlContextResultItem::new("https://docs.rs", "success"),
                     UrlContextResultItem::new("https://crates.io", "success"),
                 ],
+                is_error: None,
+                signature: None,
             },
-            Content::UrlContextResult {
+            Step::UrlContextResult {
                 call_id: "ctx_2".to_string(),
                 result: vec![UrlContextResultItem::new("https://blocked.com", "error")],
+                is_error: None,
+                signature: None,
             },
         ],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        ..Default::default()
     };
 
     assert!(response.has_url_context_results());
@@ -1576,114 +1096,95 @@ fn test_interaction_response_no_url_context_results() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![],
+        ..Default::default()
     };
 
     assert!(!response.has_url_context_results());
     assert!(response.url_context_results().is_empty());
 }
 
-/// Comprehensive roundtrip test for InteractionResponse with all content types.
+/// Comprehensive roundtrip test for InteractionResponse with many step types.
 ///
-/// This test verifies that complex responses with multiple content types,
-/// function calls, thoughts, and metadata can be serialized and deserialized
-/// without data loss. This is critical for save/resume semantics.
+/// This test verifies that complex responses with multiple step types,
+/// function calls, thoughts, and tool activity can be serialized and
+/// deserialized without data loss. This is critical for save/resume semantics.
 #[test]
 fn test_interaction_response_complex_roundtrip() {
-    // Build a response with many different content types
+    // Build a response with many different step types
     let response = InteractionResponse {
         id: Some("complex-interaction-xyz".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![
-            Content::Text {
-                text: Some("Analyze this and call the weather function".to_string()),
-                annotations: None,
-            },
-            Content::Image {
-                mime_type: Some("image/png".to_string()),
-                data: Some("base64encodeddata".to_string()),
-                uri: None,
-                resolution: None,
-            },
-        ],
-        outputs: vec![
+        status: InteractionStatus::Completed,
+        steps: vec![
             // Thought with signature (thinking models)
-            Content::Thought {
-                signature: Some("sig_thinking".to_string()),
-            },
-            Content::ThoughtSignature {
-                signature: "thought-sig-abc123".to_string(),
-            },
+            Step::thought("thought-sig-abc123"),
             // Function call
-            Content::FunctionCall {
-                id: Some("call-func-001".to_string()),
-                name: "get_weather".to_string(),
-                args: serde_json::json!({"city": "Tokyo", "units": "celsius"}),
-            },
+            Step::function_call(
+                "call-func-001",
+                "get_weather",
+                serde_json::json!({"city": "Tokyo", "units": "celsius"}),
+            ),
             // Function result
-            Content::FunctionResult {
-                call_id: "call-func-001".to_string(),
-                name: Some("get_weather".to_string()),
-                result: serde_json::json!({"temp": 22, "conditions": "sunny"}),
-                is_error: None,
-            },
+            Step::function_result(
+                "get_weather",
+                "call-func-001",
+                serde_json::json!({"temp": 22, "conditions": "sunny"}),
+            ),
             // Code execution
-            Content::CodeExecutionCall {
-                id: Some("code-exec-001".to_string()),
+            Step::CodeExecutionCall {
+                id: "code-exec-001".to_string(),
                 language: CodeExecutionLanguage::Python,
                 code: "print(2 + 2)".to_string(),
+                signature: None,
             },
-            Content::CodeExecutionResult {
-                call_id: Some("code-exec-001".to_string()),
+            Step::CodeExecutionResult {
+                call_id: "code-exec-001".to_string(),
                 is_error: false,
                 result: "4".to_string(),
+                signature: None,
             },
             // Google search
-            Content::GoogleSearchCall {
+            Step::GoogleSearchCall {
                 id: "gsearch-001".to_string(),
                 queries: vec!["weather in Tokyo".to_string()],
+                search_type: None,
+                signature: None,
             },
-            Content::GoogleSearchResult {
+            Step::GoogleSearchResult {
                 call_id: "gsearch-001".to_string(),
-                result: vec![GoogleSearchResultItem {
-                    title: "Tokyo Weather".to_string(),
-                    url: "https://weather.example.com/tokyo".to_string(),
-                    rendered_content: None,
-                }],
+                result: vec![GoogleSearchResultItem::new(
+                    "Tokyo Weather",
+                    "https://weather.example.com/tokyo",
+                )],
+                is_error: None,
+                signature: None,
             },
             // URL context
-            Content::UrlContextCall {
+            Step::UrlContextCall {
                 id: "ctx_123".to_string(),
                 urls: vec!["https://example.com".to_string()],
+                signature: None,
             },
-            Content::UrlContextResult {
+            Step::UrlContextResult {
                 call_id: "ctx_123".to_string(),
                 result: vec![UrlContextResultItem::new("https://example.com", "success")],
+                is_error: None,
+                signature: None,
             },
-            // Final text response
-            Content::Text {
-                text: Some("The weather in Tokyo is 22°C and sunny.".to_string()),
-                annotations: None,
-            },
+            // Final model output (text + image)
+            Step::model_output(vec![
+                Content::text("The weather in Tokyo is 22°C and sunny."),
+                Content::image_data("base64encodeddata", "image/png"),
+            ]),
         ],
-        status: InteractionStatus::Completed,
         usage: Some(UsageMetadata {
             total_input_tokens: Some(150),
             total_output_tokens: Some(200),
             total_tokens: Some(350),
             total_cached_tokens: Some(50),
-            total_reasoning_tokens: Some(30),
+            total_thought_tokens: Some(30),
             total_tool_use_tokens: Some(20),
             ..Default::default()
         }),
@@ -1692,24 +1193,7 @@ fn test_interaction_response_complex_roundtrip() {
             crate::Tool::CodeExecution,
         ]),
         previous_interaction_id: Some("previous-interaction-abc".to_string()),
-        grounding_metadata: Some(GroundingMetadata {
-            grounding_chunks: vec![GroundingChunk {
-                web: WebSource {
-                    title: "Weather Report".to_string(),
-                    uri: "https://weather.example.com".to_string(),
-                    domain: "weather.example.com".to_string(),
-                },
-            }],
-            web_search_queries: vec!["tokyo weather".to_string()],
-        }),
-        url_context_metadata: Some(UrlContextMetadata {
-            url_metadata: vec![UrlMetadataEntry {
-                retrieved_url: "https://example.com".to_string(),
-                url_retrieval_status: UrlRetrievalStatus::Success,
-            }],
-        }),
-        created: None,
-        updated: None,
+        ..Default::default()
     };
 
     // Serialize to JSON
@@ -1740,7 +1224,7 @@ fn test_interaction_response_complex_roundtrip() {
     assert!(json_str.contains("print(2 + 2)"), "Should contain code");
     assert!(
         json_str.contains("weather.example.com"),
-        "Should contain grounding URI"
+        "Should contain search result URL"
     );
     assert!(
         json_str.contains("previous-interaction-abc"),
@@ -1763,24 +1247,38 @@ fn test_interaction_response_complex_roundtrip() {
         Some("previous-interaction-abc".to_string())
     );
 
-    // Verify input
-    assert_eq!(deserialized.input.len(), 2);
+    // Verify steps have correct count
+    assert_eq!(deserialized.steps.len(), 10);
 
-    // Verify outputs have correct count
-    assert_eq!(deserialized.outputs.len(), 11);
+    // Verify thought signature survived
+    let signatures: Vec<_> = deserialized.thought_signatures().collect();
+    assert_eq!(signatures, vec!["thought-sig-abc123"]);
 
     // Verify function calls are accessible
     let function_calls = deserialized.function_calls();
     assert_eq!(function_calls.len(), 1);
     assert_eq!(function_calls[0].name, "get_weather");
-    assert_eq!(function_calls[0].id, Some("call-func-001"));
+    assert_eq!(function_calls[0].id, "call-func-001");
     assert_eq!(function_calls[0].args["city"], "Tokyo");
+
+    // Verify function results
+    let function_results = deserialized.function_results();
+    assert_eq!(function_results.len(), 1);
+    assert_eq!(
+        function_results[0].result.as_json().unwrap()["conditions"],
+        "sunny"
+    );
 
     // Verify code execution results
     let code_results = deserialized.code_execution_results();
     assert_eq!(code_results.len(), 1);
     assert!(!code_results[0].is_error);
     assert_eq!(code_results[0].result, "4");
+
+    // Verify Google Search results
+    let search_results = deserialized.google_search_results();
+    assert_eq!(search_results.len(), 1);
+    assert_eq!(search_results[0].title, "Tokyo Weather");
 
     // Verify URL context results
     let url_results = deserialized.url_context_results();
@@ -1789,43 +1287,21 @@ fn test_interaction_response_complex_roundtrip() {
     assert_eq!(url_results[0].items.len(), 1);
     assert!(url_results[0].items[0].is_success());
 
+    // Verify model output text and image survived
+    assert_eq!(
+        deserialized.as_text(),
+        Some("The weather in Tokyo is 22°C and sunny.")
+    );
+    assert!(deserialized.has_images());
+
     // Verify usage metadata
     let usage = deserialized.usage.expect("Should have usage");
     assert_eq!(usage.total_input_tokens, Some(150));
     assert_eq!(usage.total_output_tokens, Some(200));
     assert_eq!(usage.total_tokens, Some(350));
     assert_eq!(usage.total_cached_tokens, Some(50));
-    assert_eq!(usage.total_reasoning_tokens, Some(30));
+    assert_eq!(usage.total_thought_tokens, Some(30));
     assert_eq!(usage.total_tool_use_tokens, Some(20));
-
-    // Verify grounding metadata
-    let grounding = deserialized
-        .grounding_metadata
-        .expect("Should have grounding");
-    assert_eq!(grounding.grounding_chunks.len(), 1);
-    assert_eq!(grounding.grounding_chunks[0].web.title, "Weather Report");
-    assert_eq!(
-        grounding.grounding_chunks[0].web.uri,
-        "https://weather.example.com"
-    );
-    assert_eq!(
-        grounding.web_search_queries,
-        vec!["tokyo weather".to_string()]
-    );
-
-    // Verify URL context metadata
-    let url_meta = deserialized
-        .url_context_metadata
-        .expect("Should have URL metadata");
-    assert_eq!(url_meta.url_metadata.len(), 1);
-    assert_eq!(
-        url_meta.url_metadata[0].retrieved_url,
-        "https://example.com"
-    );
-    assert_eq!(
-        url_meta.url_metadata[0].url_retrieval_status,
-        UrlRetrievalStatus::Success
-    );
 
     // Verify tools
     let tools = deserialized.tools.expect("Should have tools");
@@ -1834,7 +1310,7 @@ fn test_interaction_response_complex_roundtrip() {
     assert!(matches!(tools[1], crate::Tool::CodeExecution));
 }
 
-// --- InteractionStatus Unknown Variant Tests ---
+// --- InteractionStatus Tests ---
 
 #[test]
 fn test_interaction_status_unknown_deserialize() {
@@ -1892,6 +1368,23 @@ fn test_interaction_status_known_types_not_unknown() {
 }
 
 #[test]
+fn test_interaction_status_budget_exceeded() {
+    // BudgetExceeded is new in revision 2026-05-20; wire format "budget_exceeded"
+    let status: InteractionStatus =
+        serde_json::from_str(r#""budget_exceeded""#).expect("Should deserialize");
+    assert_eq!(status, InteractionStatus::BudgetExceeded);
+    assert!(!status.is_unknown());
+
+    let reserialized = serde_json::to_string(&status).expect("Should serialize");
+    assert_eq!(reserialized, r#""budget_exceeded""#);
+}
+
+#[test]
+fn test_interaction_status_default_is_in_progress() {
+    assert_eq!(InteractionStatus::default(), InteractionStatus::InProgress);
+}
+
+#[test]
 fn test_interaction_status_non_string_handled() {
     // Edge case: API returns non-string (shouldn't happen but code handles it)
     let json = r#"42"#;
@@ -1917,8 +1410,7 @@ fn test_interaction_response_deserialize_without_id() {
     // This test verifies that we can deserialize such responses correctly.
     let json = r#"{
         "model": "gemini-3-flash-preview",
-        "input": [{"type": "text", "text": "Hello"}],
-        "outputs": [{"type": "text", "text": "Hi there!"}],
+        "steps": [{"type": "model_output", "content": [{"type": "text", "text": "Hi there!"}]}],
         "status": "completed"
     }"#;
 
@@ -1928,7 +1420,7 @@ fn test_interaction_response_deserialize_without_id() {
     assert!(response.id.is_none(), "ID should be None when not present");
     assert_eq!(response.model, Some("gemini-3-flash-preview".to_string()));
     assert_eq!(response.status, InteractionStatus::Completed);
-    assert!(!response.outputs.is_empty());
+    assert!(!response.steps.is_empty());
 }
 
 #[test]
@@ -1938,8 +1430,7 @@ fn test_interaction_response_deserialize_with_id() {
     let json = r#"{
         "id": "interaction-abc123",
         "model": "gemini-3-flash-preview",
-        "input": [{"type": "text", "text": "Hello"}],
-        "outputs": [{"type": "text", "text": "Hi there!"}],
+        "steps": [{"type": "model_output", "content": [{"type": "text", "text": "Hi there!"}]}],
         "status": "completed"
     }"#;
 
@@ -1962,20 +1453,9 @@ fn test_interaction_response_serialize_without_id() {
     let response = InteractionResponse {
         id: None,
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Text {
-            text: Some("Hello".to_string()),
-            annotations: None,
-        }],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        previous_interaction_id: None,
-        created: None,
-        updated: None,
+        steps: vec![Step::model_text("Hello")],
+        ..Default::default()
     };
 
     let json = serde_json::to_string(&response).expect("Serialization should succeed");
@@ -1993,20 +1473,9 @@ fn test_interaction_response_roundtrip_without_id() {
     let original = InteractionResponse {
         id: None,
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Text {
-            text: Some("Test response".to_string()),
-            annotations: None,
-        }],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        previous_interaction_id: None,
-        created: None,
-        updated: None,
+        steps: vec![Step::model_text("Test response")],
+        ..Default::default()
     };
 
     let json = serde_json::to_string(&original).expect("Serialization should succeed");
@@ -2025,21 +1494,13 @@ fn test_function_call_info_to_owned() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::FunctionCall {
-            id: Some("call_123".to_string()),
-            name: "get_weather".to_string(),
-            args: serde_json::json!({"city": "Tokyo", "units": "celsius"}),
-        }],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![Step::function_call(
+            "call_123",
+            "get_weather",
+            serde_json::json!({"city": "Tokyo", "units": "celsius"}),
+        )],
+        ..Default::default()
     };
 
     let calls = response.function_calls();
@@ -2048,41 +1509,11 @@ fn test_function_call_info_to_owned() {
     // Convert to owned
     let owned = calls[0].to_owned();
 
-    // Verify all fields are correctly converted
-    assert_eq!(owned.id, Some("call_123".to_string()));
+    // Verify all fields are correctly converted (id is an owned String now)
+    assert_eq!(owned.id, "call_123");
     assert_eq!(owned.name, "get_weather");
     assert_eq!(owned.args["city"], "Tokyo");
     assert_eq!(owned.args["units"], "celsius");
-}
-
-#[test]
-fn test_function_call_info_to_owned_none_fields() {
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::FunctionCall {
-            id: None,
-            name: "simple_function".to_string(),
-            args: serde_json::json!({}),
-        }],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
-    };
-
-    let calls = response.function_calls();
-    let owned = calls[0].to_owned();
-
-    assert_eq!(owned.id, None);
-    assert_eq!(owned.name, "simple_function");
-    assert_eq!(owned.args, serde_json::json!({}));
 }
 
 #[test]
@@ -2092,28 +1523,12 @@ fn test_owned_function_call_info_outlives_response() {
         let response = InteractionResponse {
             id: Some("test_id".to_string()),
             model: Some("gemini-3-flash-preview".to_string()),
-            agent: None,
-            input: vec![],
-            outputs: vec![
-                Content::FunctionCall {
-                    id: Some("call_1".to_string()),
-                    name: "func_a".to_string(),
-                    args: serde_json::json!({"x": 1}),
-                },
-                Content::FunctionCall {
-                    id: Some("call_2".to_string()),
-                    name: "func_b".to_string(),
-                    args: serde_json::json!({"y": 2}),
-                },
-            ],
             status: InteractionStatus::RequiresAction,
-            usage: None,
-            tools: None,
-            previous_interaction_id: None,
-            grounding_metadata: None,
-            url_context_metadata: None,
-            created: None,
-            updated: None,
+            steps: vec![
+                Step::function_call("call_1", "func_a", serde_json::json!({"x": 1})),
+                Step::function_call("call_2", "func_b", serde_json::json!({"y": 2})),
+            ],
+            ..Default::default()
         };
 
         // Convert to owned before response goes out of scope
@@ -2126,6 +1541,7 @@ fn test_owned_function_call_info_outlives_response() {
 
     // owned_calls is still valid and usable
     assert_eq!(owned_calls.len(), 2);
+    assert_eq!(owned_calls[0].id, "call_1");
     assert_eq!(owned_calls[0].name, "func_a");
     assert_eq!(owned_calls[0].args["x"], 1);
     assert_eq!(owned_calls[1].name, "func_b");
@@ -2135,7 +1551,7 @@ fn test_owned_function_call_info_outlives_response() {
 #[test]
 fn test_owned_function_call_info_serialization_roundtrip() {
     let owned = OwnedFunctionCallInfo {
-        id: Some("call_xyz".to_string()),
+        id: "call_xyz".to_string(),
         name: "my_function".to_string(),
         args: serde_json::json!({"key": "value", "number": 42}),
     };
@@ -2159,7 +1575,7 @@ fn test_owned_function_call_info_serialization_roundtrip() {
 #[test]
 fn test_owned_function_call_info_clone() {
     let owned = OwnedFunctionCallInfo {
-        id: Some("call_id".to_string()),
+        id: "call_id".to_string(),
         name: "cloneable".to_string(),
         args: serde_json::json!({"data": [1, 2, 3]}),
     };
@@ -2174,19 +1590,19 @@ fn test_owned_function_call_info_clone() {
 #[test]
 fn test_owned_function_call_info_equality() {
     let owned1 = OwnedFunctionCallInfo {
-        id: Some("same_id".to_string()),
+        id: "same_id".to_string(),
         name: "same_name".to_string(),
         args: serde_json::json!({"same": true}),
     };
 
     let owned2 = OwnedFunctionCallInfo {
-        id: Some("same_id".to_string()),
+        id: "same_id".to_string(),
         name: "same_name".to_string(),
         args: serde_json::json!({"same": true}),
     };
 
     let different = OwnedFunctionCallInfo {
-        id: Some("different_id".to_string()),
+        id: "different_id".to_string(),
         name: "same_name".to_string(),
         args: serde_json::json!({"same": true}),
     };
@@ -2203,24 +1619,17 @@ fn test_interaction_response_has_annotations() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Text {
-            text: Some("According to the source, climate change is accelerating.".to_string()),
-            annotations: Some(vec![Annotation {
-                start_index: 19,
-                end_index: 25,
-                source: Some("https://climate.gov".to_string()),
-            }]),
-        }],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![Step::model_output(vec![Content::Text {
+            text: Some("According to the source, climate change is accelerating.".to_string()),
+            annotations: Some(vec![Annotation::url_citation(
+                "https://climate.gov",
+                None,
+                19,
+                25,
+            )]),
+        }])],
+        ..Default::default()
     };
 
     assert!(response.has_annotations());
@@ -2232,20 +1641,9 @@ fn test_interaction_response_no_annotations() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Text {
-            text: Some("Plain text without citations.".to_string()),
-            annotations: None,
-        }],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![Step::model_text("Plain text without citations.")],
+        ..Default::default()
     };
 
     assert!(!response.has_annotations());
@@ -2257,20 +1655,12 @@ fn test_interaction_response_empty_annotations_not_counted() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Text {
+        status: InteractionStatus::Completed,
+        steps: vec![Step::model_output(vec![Content::Text {
             text: Some("Text with empty annotations.".to_string()),
             annotations: Some(vec![]), // Empty array
-        }],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        }])],
+        ..Default::default()
     };
 
     assert!(!response.has_annotations());
@@ -2278,70 +1668,46 @@ fn test_interaction_response_empty_annotations_not_counted() {
 
 #[test]
 fn test_interaction_response_all_annotations() {
-    // Response with multiple text outputs, each with annotations
+    // Response with multiple text blocks, each with annotations
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::Text {
-                text: Some("First claim from source A.".to_string()),
-                annotations: Some(vec![Annotation {
-                    start_index: 0,
-                    end_index: 11,
-                    source: Some("https://source-a.com".to_string()),
-                }]),
-            },
-            Content::Thought {
-                signature: Some("sig_thinking".to_string()),
-            },
-            Content::Text {
-                text: Some("Second and third claims.".to_string()),
-                annotations: Some(vec![
-                    Annotation {
-                        start_index: 0,
-                        end_index: 6,
-                        source: Some("https://source-b.com".to_string()),
-                    },
-                    Annotation {
-                        start_index: 11,
-                        end_index: 16,
-                        source: Some("https://source-c.com".to_string()),
-                    },
-                ]),
-            },
-            Content::Text {
-                text: Some("Text without annotations.".to_string()),
-                annotations: None,
-            },
-        ],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![
+            Step::model_output(vec![Content::Text {
+                text: Some("First claim from source A.".to_string()),
+                annotations: Some(vec![Annotation::url_citation(
+                    "https://source-a.com",
+                    None,
+                    0,
+                    11,
+                )]),
+            }]),
+            Step::thought("sig_thinking"),
+            Step::model_output(vec![
+                Content::Text {
+                    text: Some("Second and third claims.".to_string()),
+                    annotations: Some(vec![
+                        Annotation::url_citation("https://source-b.com", None, 0, 6),
+                        Annotation::url_citation("https://source-c.com", None, 11, 16),
+                    ]),
+                },
+                Content::Text {
+                    text: Some("Text without annotations.".to_string()),
+                    annotations: None,
+                },
+            ]),
+        ],
+        ..Default::default()
     };
 
     let annotations: Vec<_> = response.all_annotations().collect();
 
-    // Should collect all 3 annotations from the two Text outputs with annotations
+    // Should collect all 3 annotations from the two Text blocks with annotations
     assert_eq!(annotations.len(), 3);
-    assert_eq!(
-        annotations[0].source.as_deref(),
-        Some("https://source-a.com")
-    );
-    assert_eq!(
-        annotations[1].source.as_deref(),
-        Some("https://source-b.com")
-    );
-    assert_eq!(
-        annotations[2].source.as_deref(),
-        Some("https://source-c.com")
-    );
+    assert_eq!(annotations[0].source(), Some("https://source-a.com"));
+    assert_eq!(annotations[1].source(), Some("https://source-b.com"));
+    assert_eq!(annotations[2].source(), Some("https://source-c.com"));
 }
 
 #[test]
@@ -2350,27 +1716,12 @@ fn test_interaction_response_all_annotations_empty() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::Text {
-                text: Some("No annotations here.".to_string()),
-                annotations: None,
-            },
-            Content::FunctionCall {
-                id: Some("call_1".to_string()),
-                name: "test".to_string(),
-                args: serde_json::json!({}),
-            },
-        ],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![
+            Step::model_text("No annotations here."),
+            Step::function_call("call_1", "test", serde_json::json!({})),
+        ],
+        ..Default::default()
     };
 
     let count = response.all_annotations().count();
@@ -2383,76 +1734,55 @@ fn test_interaction_response_all_annotations_skips_non_text() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::Image {
-                data: Some("base64".to_string()),
-                uri: None,
-                mime_type: Some("image/png".to_string()),
-                resolution: None,
-            },
-            Content::CodeExecutionResult {
-                call_id: Some("call_1".to_string()),
+        status: InteractionStatus::Completed,
+        steps: vec![
+            Step::model_output(vec![
+                Content::image_data("base64", "image/png"),
+                Content::Text {
+                    text: Some("Only text has annotations.".to_string()),
+                    annotations: Some(vec![Annotation::url_citation(
+                        "https://example.com",
+                        None,
+                        0,
+                        4,
+                    )]),
+                },
+            ]),
+            Step::CodeExecutionResult {
+                call_id: "call_1".to_string(),
                 is_error: false,
                 result: "result".to_string(),
-            },
-            Content::Text {
-                text: Some("Only text has annotations.".to_string()),
-                annotations: Some(vec![Annotation {
-                    start_index: 0,
-                    end_index: 4,
-                    source: Some("https://example.com".to_string()),
-                }]),
+                signature: None,
             },
         ],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        ..Default::default()
     };
 
     let annotations: Vec<_> = response.all_annotations().collect();
 
     // Should only find the one annotation from the Text content
     assert_eq!(annotations.len(), 1);
-    assert_eq!(
-        annotations[0].source.as_deref(),
-        Some("https://example.com")
-    );
+    assert_eq!(annotations[0].source(), Some("https://example.com"));
 }
 
 // --- File Search Result Helper Tests ---
-
-use super::content::FileSearchResultItem;
 
 #[test]
 fn test_interaction_response_has_file_search_results() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::FileSearchResult {
+        status: InteractionStatus::Completed,
+        steps: vec![Step::FileSearchResult {
             call_id: "call_123".to_string(),
             result: vec![FileSearchResultItem {
                 title: "Technical Doc".to_string(),
                 text: "Relevant content...".to_string(),
                 store: "stores/my-store".to_string(),
             }],
+            signature: None,
         }],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        ..Default::default()
     };
 
     assert!(response.has_file_search_results());
@@ -2463,20 +1793,9 @@ fn test_interaction_response_no_file_search_results() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Text {
-            text: Some("No file search here".to_string()),
-            annotations: None,
-        }],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![Step::model_text("No file search here")],
+        ..Default::default()
     };
 
     assert!(!response.has_file_search_results());
@@ -2487,10 +1806,9 @@ fn test_interaction_response_file_search_results_extraction() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::FileSearchResult {
+        status: InteractionStatus::Completed,
+        steps: vec![
+            Step::FileSearchResult {
                 call_id: "call_1".to_string(),
                 result: vec![
                     FileSearchResultItem {
@@ -2504,34 +1822,26 @@ fn test_interaction_response_file_search_results_extraction() {
                         store: "stores/store-a".to_string(),
                     },
                 ],
+                signature: None,
             },
-            Content::Text {
-                text: Some("Summary of search results".to_string()),
-                annotations: None,
-            },
-            Content::FileSearchResult {
+            Step::model_text("Summary of search results"),
+            Step::FileSearchResult {
                 call_id: "call_2".to_string(),
                 result: vec![FileSearchResultItem {
                     title: "Doc 3".to_string(),
                     text: "Content from doc 3".to_string(),
                     store: "stores/store-b".to_string(),
                 }],
+                signature: None,
             },
         ],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        ..Default::default()
     };
 
     assert!(response.has_file_search_results());
 
     let results = response.file_search_results();
-    // Should collect all items from both FileSearchResult outputs
+    // Should collect all items from both FileSearchResult steps
     assert_eq!(results.len(), 3);
     assert_eq!(results[0].title, "Doc 1");
     assert_eq!(results[1].title, "Doc 2");
@@ -2545,23 +1855,16 @@ fn test_interaction_response_file_search_results_empty_results() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::FileSearchResult {
+        status: InteractionStatus::Completed,
+        steps: vec![Step::FileSearchResult {
             call_id: "call_empty".to_string(),
             result: vec![], // Empty results array
+            signature: None,
         }],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        ..Default::default()
     };
 
-    // has_file_search_results returns true if the content type exists
+    // has_file_search_results returns true if the step type exists
     assert!(response.has_file_search_results());
 
     // But file_search_results returns empty vec since result array is empty
@@ -2573,6 +1876,17 @@ fn test_interaction_response_file_search_results_empty_results() {
 // ImageInfo and images() Tests
 // =============================================================================
 
+/// Builds a completed response with the given content in one model_output step.
+fn model_output_response(content: Vec<Content>) -> InteractionResponse {
+    InteractionResponse {
+        id: Some("test_id".to_string()),
+        model: Some("gemini-3-flash-preview".to_string()),
+        status: InteractionStatus::Completed,
+        steps: vec![Step::model_output(content)],
+        ..Default::default()
+    }
+}
+
 #[test]
 fn test_image_info_bytes_decodes_valid_base64() {
     use base64::Engine as _;
@@ -2580,26 +1894,7 @@ fn test_image_info_bytes_decodes_valid_base64() {
     let png_bytes = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
     let base64_data = base64::engine::general_purpose::STANDARD.encode(png_bytes);
 
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Image {
-            data: Some(base64_data),
-            uri: None,
-            mime_type: Some("image/png".to_string()),
-            resolution: None,
-        }],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
-    };
+    let response = model_output_response(vec![Content::image_data(base64_data, "image/png")]);
 
     let images: Vec<_> = response.images().collect();
     assert_eq!(images.len(), 1);
@@ -2610,26 +1905,10 @@ fn test_image_info_bytes_decodes_valid_base64() {
 
 #[test]
 fn test_image_info_bytes_invalid_base64() {
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Image {
-            data: Some("not valid base64!!!".to_string()),
-            uri: None,
-            mime_type: Some("image/png".to_string()),
-            resolution: None,
-        }],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
-    };
+    let response = model_output_response(vec![Content::image_data(
+        "not valid base64!!!",
+        "image/png",
+    )]);
 
     let images: Vec<_> = response.images().collect();
     assert_eq!(images.len(), 1);
@@ -2640,34 +1919,15 @@ fn test_image_info_bytes_invalid_base64() {
 
 #[test]
 fn test_image_info_mime_type() {
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::Image {
-                data: Some("YWJj".to_string()), // "abc" in base64
-                uri: None,
-                mime_type: Some("image/jpeg".to_string()),
-                resolution: None,
-            },
-            Content::Image {
-                data: Some("ZGVm".to_string()), // "def" in base64
-                uri: None,
-                mime_type: None,
-                resolution: None,
-            },
-        ],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
-    };
+    let response = model_output_response(vec![
+        Content::image_data("YWJj", "image/jpeg"), // "abc" in base64
+        Content::Image {
+            data: Some("ZGVm".to_string()), // "def" in base64
+            uri: None,
+            mime_type: None,
+            resolution: None,
+        },
+    ]);
 
     let images: Vec<_> = response.images().collect();
     assert_eq!(images.len(), 2);
@@ -2678,189 +1938,54 @@ fn test_image_info_mime_type() {
 
 #[test]
 fn test_image_info_extension_jpeg() {
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Image {
-            data: Some("YWJj".to_string()),
-            uri: None,
-            mime_type: Some("image/jpeg".to_string()),
-            resolution: None,
-        }],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
-    };
-
+    let response = model_output_response(vec![Content::image_data("YWJj", "image/jpeg")]);
     let images: Vec<_> = response.images().collect();
     assert_eq!(images[0].extension(), "jpg");
 }
 
 #[test]
 fn test_image_info_extension_jpg_alternate() {
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Image {
-            data: Some("YWJj".to_string()),
-            uri: None,
-            mime_type: Some("image/jpg".to_string()),
-            resolution: None,
-        }],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
-    };
-
+    let response = model_output_response(vec![Content::image_data("YWJj", "image/jpg")]);
     let images: Vec<_> = response.images().collect();
     assert_eq!(images[0].extension(), "jpg");
 }
 
 #[test]
 fn test_image_info_extension_png() {
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Image {
-            data: Some("YWJj".to_string()),
-            uri: None,
-            mime_type: Some("image/png".to_string()),
-            resolution: None,
-        }],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
-    };
-
+    let response = model_output_response(vec![Content::image_data("YWJj", "image/png")]);
     let images: Vec<_> = response.images().collect();
     assert_eq!(images[0].extension(), "png");
 }
 
 #[test]
 fn test_image_info_extension_webp() {
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Image {
-            data: Some("YWJj".to_string()),
-            uri: None,
-            mime_type: Some("image/webp".to_string()),
-            resolution: None,
-        }],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
-    };
-
+    let response = model_output_response(vec![Content::image_data("YWJj", "image/webp")]);
     let images: Vec<_> = response.images().collect();
     assert_eq!(images[0].extension(), "webp");
 }
 
 #[test]
 fn test_image_info_extension_gif() {
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Image {
-            data: Some("YWJj".to_string()),
-            uri: None,
-            mime_type: Some("image/gif".to_string()),
-            resolution: None,
-        }],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
-    };
-
+    let response = model_output_response(vec![Content::image_data("YWJj", "image/gif")]);
     let images: Vec<_> = response.images().collect();
     assert_eq!(images[0].extension(), "gif");
 }
 
 #[test]
 fn test_image_info_extension_unknown_defaults_to_png() {
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Image {
-            data: Some("YWJj".to_string()),
-            uri: None,
-            mime_type: Some("image/tiff".to_string()), // Unknown type
-            resolution: None,
-        }],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
-    };
-
+    let response = model_output_response(vec![Content::image_data("YWJj", "image/tiff")]);
     let images: Vec<_> = response.images().collect();
     assert_eq!(images[0].extension(), "png"); // Defaults to png for unknown types
 }
 
 #[test]
 fn test_image_info_extension_none_mime_type_defaults_to_png() {
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Image {
-            data: Some("YWJj".to_string()),
-            uri: None,
-            mime_type: None,
-            resolution: None,
-        }],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
-    };
-
+    let response = model_output_response(vec![Content::Image {
+        data: Some("YWJj".to_string()),
+        uri: None,
+        mime_type: None,
+        resolution: None,
+    }]);
     let images: Vec<_> = response.images().collect();
     assert_eq!(images[0].extension(), "png"); // Defaults to png when no MIME type
 }
@@ -2870,45 +1995,17 @@ fn test_images_iterator_returns_only_images_with_data() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::Text {
-                text: Some("Text content".to_string()),
-                annotations: None,
-            },
-            Content::Image {
-                data: Some("YWJj".to_string()), // Has data - should be included
-                uri: None,
-                mime_type: Some("image/png".to_string()),
-                resolution: None,
-            },
-            Content::Image {
-                data: None, // No data - URI-based image, should be excluded
-                uri: Some("https://example.com/image.png".to_string()),
-                mime_type: Some("image/png".to_string()),
-                resolution: None,
-            },
-            Content::Image {
-                data: Some("ZGVm".to_string()), // Has data - should be included
-                uri: None,
-                mime_type: Some("image/jpeg".to_string()),
-                resolution: None,
-            },
-            Content::FunctionCall {
-                id: None,
-                name: "test".to_string(),
-                args: serde_json::json!({}),
-            },
-        ],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![
+            Step::model_output(vec![
+                Content::text("Text content"),
+                Content::image_data("YWJj", "image/png"), // Has data - included
+                Content::image_uri("https://example.com/image.png", "image/png"), // URI-based - excluded
+                Content::image_data("ZGVm", "image/jpeg"), // Has data - included
+            ]),
+            Step::function_call("call_x", "test", serde_json::json!({})),
+        ],
+        ..Default::default()
     };
 
     let images: Vec<_> = response.images().collect();
@@ -2923,25 +2020,9 @@ fn test_images_iterator_empty_when_no_images() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::Text {
-                text: Some("Just text".to_string()),
-                annotations: None,
-            },
-            Content::Thought {
-                signature: Some("sig_thought".to_string()),
-            },
-        ],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![Step::model_text("Just text"), Step::thought("sig_thought")],
+        ..Default::default()
     };
 
     let images: Vec<_> = response.images().collect();
@@ -2949,21 +2030,13 @@ fn test_images_iterator_empty_when_no_images() {
 }
 
 #[test]
-fn test_images_iterator_empty_outputs() {
+fn test_images_iterator_empty_steps() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![],
+        ..Default::default()
     };
 
     let images: Vec<_> = response.images().collect();
@@ -2979,42 +2052,17 @@ fn test_audios_iterator_returns_only_audios_with_data() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-2.5-pro-preview-tts".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::Text {
-                text: Some("Text content".to_string()),
-                annotations: None,
-            },
-            Content::Audio {
-                data: Some("YWJj".to_string()), // Has data - should be included
-                uri: None,
-                mime_type: Some("audio/L16;codec=pcm;rate=24000".to_string()),
-            },
-            Content::Audio {
-                data: None, // No data - URI-based audio, should be excluded
-                uri: Some("https://example.com/audio.mp3".to_string()),
-                mime_type: Some("audio/mp3".to_string()),
-            },
-            Content::Audio {
-                data: Some("ZGVm".to_string()), // Has data - should be included
-                uri: None,
-                mime_type: Some("audio/wav".to_string()),
-            },
-            Content::FunctionCall {
-                id: None,
-                name: "test".to_string(),
-                args: serde_json::json!({}),
-            },
-        ],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![
+            Step::model_output(vec![
+                Content::text("Text content"),
+                Content::audio_data("YWJj", "audio/L16;codec=pcm;rate=24000"), // Has data - included
+                Content::audio_uri("https://example.com/audio.mp3", "audio/mp3"), // URI-based - excluded
+                Content::audio_data("ZGVm", "audio/wav"), // Has data - included
+            ]),
+            Step::function_call("call_y", "test", serde_json::json!({})),
+        ],
+        ..Default::default()
     };
 
     let audios: Vec<_> = response.audios().collect();
@@ -3032,25 +2080,9 @@ fn test_audios_iterator_empty_when_no_audios() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::Text {
-                text: Some("Just text".to_string()),
-                annotations: None,
-            },
-            Content::Thought {
-                signature: Some("sig_thought".to_string()),
-            },
-        ],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![Step::model_text("Just text"), Step::thought("sig_thought")],
+        ..Default::default()
     };
 
     let audios: Vec<_> = response.audios().collect();
@@ -3058,21 +2090,13 @@ fn test_audios_iterator_empty_when_no_audios() {
 }
 
 #[test]
-fn test_audios_iterator_empty_outputs() {
+fn test_audios_iterator_empty_steps() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-2.5-pro-preview-tts".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![],
+        ..Default::default()
     };
 
     let audios: Vec<_> = response.audios().collect();
@@ -3081,36 +2105,11 @@ fn test_audios_iterator_empty_outputs() {
 
 #[test]
 fn test_first_audio() {
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("gemini-2.5-pro-preview-tts".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::Text {
-                text: Some("Hello".to_string()),
-                annotations: None,
-            },
-            Content::Audio {
-                data: Some("Zmlyc3Q=".to_string()),
-                uri: None,
-                mime_type: Some("audio/L16;codec=pcm;rate=24000".to_string()),
-            },
-            Content::Audio {
-                data: Some("c2Vjb25k".to_string()),
-                uri: None,
-                mime_type: Some("audio/wav".to_string()),
-            },
-        ],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
-    };
+    let response = model_output_response(vec![
+        Content::text("Hello"),
+        Content::audio_data("Zmlyc3Q=", "audio/L16;codec=pcm;rate=24000"),
+        Content::audio_data("c2Vjb25k", "audio/wav"),
+    ]);
 
     let first = response.first_audio();
     assert!(first.is_some());
@@ -3120,75 +2119,45 @@ fn test_first_audio() {
 }
 
 #[test]
-fn test_first_audio_none_when_empty() {
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Text {
-            text: Some("No audio here".to_string()),
-            annotations: None,
-        }],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
-    };
+fn test_audio_info_sample_rate_and_channels() {
+    // The new Audio fields flow through to AudioInfo accessors
+    let response = model_output_response(vec![Content::Audio {
+        data: Some("YXVkaW8=".to_string()),
+        uri: None,
+        mime_type: Some("audio/wav".to_string()),
+        sample_rate: Some(24000),
+        channels: Some(1),
+    }]);
 
+    let audio = response.first_audio().expect("Should have audio");
+    assert_eq!(audio.sample_rate(), Some(24000));
+    assert_eq!(audio.channels(), Some(1));
+
+    // Absent fields report None
+    let response = model_output_response(vec![Content::audio_data("YXVkaW8=", "audio/wav")]);
+    let audio = response.first_audio().expect("Should have audio");
+    assert_eq!(audio.sample_rate(), None);
+    assert_eq!(audio.channels(), None);
+}
+
+#[test]
+fn test_first_audio_none_when_empty() {
+    let response = model_output_response(vec![Content::text("No audio here")]);
     assert!(response.first_audio().is_none());
 }
 
 #[test]
 fn test_has_audio_true() {
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("gemini-2.5-pro-preview-tts".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Audio {
-            data: Some("YXVkaW8=".to_string()),
-            uri: None,
-            mime_type: Some("audio/L16;codec=pcm;rate=24000".to_string()),
-        }],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
-    };
-
+    let response = model_output_response(vec![Content::audio_data(
+        "YXVkaW8=",
+        "audio/L16;codec=pcm;rate=24000",
+    )]);
     assert!(response.has_audio());
 }
 
 #[test]
 fn test_has_audio_false_when_no_audio() {
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Text {
-            text: Some("Text only".to_string()),
-            annotations: None,
-        }],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
-    };
-
+    let response = model_output_response(vec![Content::text("Text only")]);
     assert!(!response.has_audio());
 }
 
@@ -3196,91 +2165,168 @@ fn test_has_audio_false_when_no_audio() {
 fn test_has_audio_false_when_uri_only() {
     // URI-based audio (no data) should not count as "having audio"
     // since the audios() iterator only includes data-based audio
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("gemini-2.5-pro-preview-tts".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Audio {
-            data: None,
-            uri: Some("https://example.com/audio.mp3".to_string()),
-            mime_type: Some("audio/mp3".to_string()),
-        }],
-        status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
-    };
-
+    let response = model_output_response(vec![Content::audio_uri(
+        "https://example.com/audio.mp3",
+        "audio/mp3",
+    )]);
     assert!(!response.has_audio());
 }
 
 // =============================================================================
-// as_model_turn() Tests
+// output_steps() Tests (replaces the launch-era as_model_turn())
 // =============================================================================
 
 #[test]
-fn test_as_model_turn_creates_model_turn() {
+fn test_output_steps_returns_owned_steps() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![Content::Text {
-            text: Some("Response text".to_string()),
-            annotations: None,
-        }],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![Step::model_text("Response text")],
+        ..Default::default()
     };
 
-    let turn = response.as_model_turn();
-    assert!(turn.is_model());
-    assert!(!turn.is_user());
+    let steps = response.output_steps();
+    assert_eq!(steps.len(), 1);
+    assert!(matches!(steps[0], Step::ModelOutput { .. }));
+    assert_eq!(steps[0].as_text(), Some("Response text"));
+
+    // The returned steps are owned clones; the response is untouched
+    assert_eq!(response.steps.len(), 1);
 }
 
 #[test]
-fn test_as_model_turn_includes_all_outputs() {
+fn test_output_steps_extends_history() {
+    // The documented multi-turn pattern: history.extend(response.output_steps())
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
         model: Some("gemini-3-flash-preview".to_string()),
-        agent: None,
-        input: vec![],
-        outputs: vec![
-            Content::Text {
-                text: Some("First part".to_string()),
-                annotations: None,
-            },
-            Content::Text {
-                text: Some("Second part".to_string()),
-                annotations: None,
-            },
-        ],
         status: InteractionStatus::Completed,
-        usage: None,
-        tools: None,
-        previous_interaction_id: None,
-        grounding_metadata: None,
-        url_context_metadata: None,
-        created: None,
-        updated: None,
+        steps: vec![
+            Step::thought("sig"),
+            Step::model_output(vec![
+                Content::text("First part"),
+                Content::text("Second part"),
+            ]),
+        ],
+        ..Default::default()
     };
 
-    let turn = response.as_model_turn();
-    // The turn should contain all outputs
-    if let Some(parts) = turn.content().as_parts() {
-        assert_eq!(parts.len(), 2);
-    } else {
-        panic!("Expected Parts variant");
-    }
+    let mut history = vec![Step::user_text("What is 2+2?")];
+    history.extend(response.output_steps());
+    history.push(Step::user_text("Now multiply that by 3"));
+
+    assert_eq!(history.len(), 4);
+    assert!(matches!(history[0], Step::UserInput { .. }));
+    assert!(matches!(history[1], Step::Thought { .. }));
+    assert!(matches!(history[2], Step::ModelOutput { .. }));
+    assert_eq!(history[2].content().unwrap().len(), 2);
+    assert!(matches!(history[3], Step::UserInput { .. }));
+}
+
+#[test]
+fn test_output_contents_iterates_model_output_only() {
+    let response = InteractionResponse {
+        status: InteractionStatus::Completed,
+        steps: vec![
+            Step::user_input(vec![Content::text("user text")]),
+            Step::model_output(vec![Content::text("model text")]),
+            Step::function_call("call_1", "fn", serde_json::json!({})),
+        ],
+        ..Default::default()
+    };
+
+    let contents: Vec<_> = response.output_contents().collect();
+    // Only content from model_output steps is included
+    assert_eq!(contents.len(), 1);
+    assert_eq!(contents[0].as_text(), Some("model text"));
+}
+
+#[test]
+fn test_deserialize_response_object_and_service_tier() {
+    // The live API (Api-Revision 2026-05-20, verified 2026-07) returns
+    // `object: "interaction"` and echoes the effective `service_tier` on
+    // every response. Both must roundtrip losslessly.
+    let wire = serde_json::json!({
+        "id": "interaction_123",
+        "object": "interaction",
+        "model": "gemini-3-flash-preview",
+        "service_tier": "standard",
+        "status": "completed",
+        "steps": [
+            {"type": "model_output", "content": [{"type": "text", "text": "hi"}]}
+        ]
+    });
+
+    let response: InteractionResponse =
+        serde_json::from_value(wire.clone()).expect("Deserialization failed");
+    assert_eq!(response.object.as_deref(), Some("interaction"));
+    assert_eq!(response.service_tier, Some(crate::ServiceTier::Standard));
+
+    // Lossless roundtrip: re-serialization matches the wire JSON exactly.
+    let roundtripped = serde_json::to_value(&response).expect("Serialization failed");
+    assert_eq!(roundtripped, wire);
+}
+
+#[test]
+fn test_response_object_and_service_tier_absent_are_skipped() {
+    // Responses without these fields (e.g. local fixtures) must not emit them.
+    let response = InteractionResponse {
+        status: InteractionStatus::Completed,
+        ..Default::default()
+    };
+    assert_eq!(response.object, None);
+    assert_eq!(response.service_tier, None);
+    let json = serde_json::to_value(&response).unwrap();
+    assert!(json.get("object").is_none());
+    assert!(json.get("service_tier").is_none());
+}
+
+#[test]
+fn test_deserialize_response_webhook_config_echo() {
+    // The live API (Api-Revision 2026-05-20, verified 2026-07) echoes the
+    // request's webhook_config verbatim on the create response for
+    // background interactions. It must roundtrip losslessly.
+    let wire = serde_json::json!({
+        "id": "interaction_123",
+        "object": "interaction",
+        "model": "gemini-3-flash-preview",
+        "status": "in_progress",
+        "steps": [],
+        "webhook_config": {
+            "uris": ["https://example.com/hook"],
+            "user_metadata": {"job": "nightly"}
+        }
+    });
+
+    let response: InteractionResponse =
+        serde_json::from_value(wire.clone()).expect("Deserialization failed");
+    let config = response
+        .webhook_config
+        .as_ref()
+        .expect("webhook_config echo");
+    assert_eq!(
+        config.uris.as_deref(),
+        Some(&["https://example.com/hook".to_string()][..])
+    );
+    assert_eq!(
+        config.user_metadata,
+        Some(serde_json::json!({"job": "nightly"}))
+    );
+
+    // Lossless roundtrip: re-serialization matches the wire JSON exactly.
+    let roundtripped = serde_json::to_value(&response).expect("Serialization failed");
+    assert_eq!(roundtripped, wire);
+
+    // Absent field is skipped on serialize.
+    let bare = InteractionResponse {
+        status: InteractionStatus::Completed,
+        ..Default::default()
+    };
+    assert!(
+        serde_json::to_value(&bare)
+            .unwrap()
+            .get("webhook_config")
+            .is_none()
+    );
 }

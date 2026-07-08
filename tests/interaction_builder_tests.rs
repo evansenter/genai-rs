@@ -33,9 +33,7 @@ mod basic {
                 text: Some("Second message".to_string()),
                 annotations: None,
             },
-            Content::Thought {
-                signature: Some("Eq0JCq...signature".to_string()),
-            },
+            Content::image_data("base64data", "image/png"),
         ]);
 
         let builder = client
@@ -146,7 +144,8 @@ mod basic {
             temperature: Some(2.0),        // Max value
             max_output_tokens: Some(8192), // High value
             top_p: Some(1.0),              // Max value
-            top_k: Some(40),
+            presence_penalty: Some(2.0),   // Max value
+            frequency_penalty: Some(-2.0), // Min value
             thinking_level: None,
             ..Default::default()
         };
@@ -208,7 +207,6 @@ mod basic {
             temperature: Some(0.7),
             max_output_tokens: Some(1024),
             top_p: Some(0.95),
-            top_k: Some(40),
             thinking_level: Some(ThinkingLevel::Low),
             ..Default::default()
         };
@@ -220,7 +218,7 @@ mod basic {
             .with_system_instruction("Be helpful")
             .add_function(func)
             .with_generation_config(config)
-            .with_response_modalities(vec!["TEXT".to_string()])
+            .with_response_modalities(vec!["text".to_string()])
             .with_background(true)
             .with_store_disabled();
 
@@ -258,12 +256,7 @@ mod basic {
             .with_system_instruction("Focus on Rust");
 
         let request = basic.build().expect("Should build successfully");
-        match request.system_instruction {
-            Some(InteractionInput::Text(text)) => {
-                assert_eq!(text, "Focus on Rust");
-            }
-            _ => panic!("Expected Text system_instruction"),
-        }
+        assert_eq!(request.system_instruction.as_deref(), Some("Focus on Rust"));
 
         // With previous interaction (follow-up)
         let followup = client
@@ -274,12 +267,10 @@ mod basic {
             .with_system_instruction("Focus on testing");
 
         let request = followup.build().expect("Should build successfully");
-        match request.system_instruction {
-            Some(InteractionInput::Text(text)) => {
-                assert_eq!(text, "Focus on testing");
-            }
-            _ => panic!("Expected Text system_instruction"),
-        }
+        assert_eq!(
+            request.system_instruction.as_deref(),
+            Some("Focus on testing")
+        );
 
         // With store disabled
         let store_disabled = client
@@ -290,12 +281,7 @@ mod basic {
             .with_system_instruction("Be concise");
 
         let request = store_disabled.build().expect("Should build successfully");
-        match request.system_instruction {
-            Some(InteractionInput::Text(text)) => {
-                assert_eq!(text, "Be concise");
-            }
-            _ => panic!("Expected Text system_instruction"),
-        }
+        assert_eq!(request.system_instruction.as_deref(), Some("Be concise"));
     }
 
     #[test]
@@ -312,12 +298,10 @@ mod basic {
 
         let request = builder.build().expect("Should build successfully");
 
-        match request.system_instruction {
-            Some(InteractionInput::Text(text)) => {
-                assert_eq!(text, "You are a helpful coding assistant");
-            }
-            _ => panic!("Expected system_instruction to be set"),
-        }
+        assert_eq!(
+            request.system_instruction.as_deref(),
+            Some("You are a helpful coding assistant")
+        );
     }
 
     #[test]
@@ -334,12 +318,10 @@ mod basic {
 
         let request = builder.build().expect("Should build successfully");
 
-        match request.system_instruction {
-            Some(InteractionInput::Text(text)) => {
-                assert_eq!(text, "Second instruction");
-            }
-            _ => panic!("Expected system_instruction to be overwritten"),
-        }
+        assert_eq!(
+            request.system_instruction.as_deref(),
+            Some("Second instruction")
+        );
     }
 }
 
@@ -1009,7 +991,6 @@ mod multimodal {
             temperature: Some(0.7),
             max_output_tokens: Some(1024),
             top_p: None,
-            top_k: None,
             thinking_level: None,
             ..Default::default()
         };
@@ -1197,6 +1178,199 @@ mod multimodal {
                 ));
             }
             _ => panic!("Expected Document variant for text/plain"),
+        }
+    }
+}
+
+mod new_request_options {
+    use crate::common::DEFAULT_MODEL;
+    use genai_rs::{Client, FunctionCallingMode, InteractionInput, ServiceTier, Step, ToolChoice};
+    use serde_json::json;
+
+    #[test]
+    fn test_with_service_tier_sets_field_and_wire_format() {
+        // ServiceTier serializes as a lowercase string on the wire
+        let client = Client::new("test-api-key".to_string());
+
+        for (tier, wire) in [
+            (ServiceTier::Flex, "flex"),
+            (ServiceTier::Standard, "standard"),
+            (ServiceTier::Priority, "priority"),
+        ] {
+            let request = client
+                .interaction()
+                .with_model(DEFAULT_MODEL)
+                .with_text("Hello")
+                .with_service_tier(tier.clone())
+                .build()
+                .expect("Should build successfully");
+
+            assert_eq!(request.service_tier, Some(tier));
+
+            let value = serde_json::to_value(&request).expect("Should serialize");
+            assert_eq!(value["service_tier"], json!(wire));
+        }
+    }
+
+    #[test]
+    fn test_with_cached_content_sets_field_and_wire_format() {
+        let client = Client::new("test-api-key".to_string());
+
+        let request = client
+            .interaction()
+            .with_model(DEFAULT_MODEL)
+            .with_text("Hello")
+            .with_cached_content("cachedContents/xyz")
+            .build()
+            .expect("Should build successfully");
+
+        assert_eq!(
+            request.cached_content.as_deref(),
+            Some("cachedContents/xyz")
+        );
+
+        let value = serde_json::to_value(&request).expect("Should serialize");
+        assert_eq!(value["cached_content"], json!("cachedContents/xyz"));
+    }
+
+    #[test]
+    fn test_with_presence_and_frequency_penalty() {
+        let client = Client::new("test-api-key".to_string());
+
+        let request = client
+            .interaction()
+            .with_model(DEFAULT_MODEL)
+            .with_text("Hello")
+            .with_presence_penalty(0.5)
+            .with_frequency_penalty(-0.25)
+            .build()
+            .expect("Should build successfully");
+
+        let config = request
+            .generation_config
+            .as_ref()
+            .expect("Should have generation config");
+        assert_eq!(config.presence_penalty, Some(0.5));
+        assert_eq!(config.frequency_penalty, Some(-0.25));
+
+        let value = serde_json::to_value(&request).expect("Should serialize");
+        assert_eq!(value["generation_config"]["presence_penalty"], json!(0.5));
+        assert_eq!(
+            value["generation_config"]["frequency_penalty"],
+            json!(-0.25)
+        );
+    }
+
+    #[test]
+    fn test_with_tool_choice_mode_serializes_lowercase_string() {
+        // ToolChoice::Mode serializes as a plain lowercase string on the wire
+        let client = Client::new("test-api-key".to_string());
+
+        for (mode, wire) in [
+            (FunctionCallingMode::Auto, "auto"),
+            (FunctionCallingMode::Any, "any"),
+            (FunctionCallingMode::None, "none"),
+            (FunctionCallingMode::Validated, "validated"),
+        ] {
+            let request = client
+                .interaction()
+                .with_model(DEFAULT_MODEL)
+                .with_text("Hello")
+                .with_tool_choice(ToolChoice::Mode(mode.clone()))
+                .build()
+                .expect("Should build successfully");
+
+            let config = request
+                .generation_config
+                .as_ref()
+                .expect("Should have generation config");
+            assert_eq!(config.tool_choice, Some(ToolChoice::Mode(mode)));
+
+            let value = serde_json::to_value(&request).expect("Should serialize");
+            assert_eq!(value["generation_config"]["tool_choice"], json!(wire));
+        }
+    }
+
+    #[test]
+    fn test_with_tool_choice_allowed_tools_serializes_object() {
+        // ToolChoice::AllowedTools serializes as {"allowed_tools": {"mode": ..., "tools": [...]}}
+        let client = Client::new("test-api-key".to_string());
+
+        let request = client
+            .interaction()
+            .with_model(DEFAULT_MODEL)
+            .with_text("Hello")
+            .with_tool_choice(ToolChoice::allowed_tools(
+                Some(FunctionCallingMode::Any),
+                vec!["get_weather".to_string()],
+            ))
+            .build()
+            .expect("Should build successfully");
+
+        let value = serde_json::to_value(&request).expect("Should serialize");
+        assert_eq!(
+            value["generation_config"]["tool_choice"],
+            json!({"allowed_tools": {"mode": "any", "tools": ["get_weather"]}})
+        );
+    }
+
+    #[test]
+    fn test_with_allowed_tools_sets_tool_choice_object() {
+        // with_allowed_tools wraps the names in ToolChoice::AllowedTools with no mode
+        let client = Client::new("test-api-key".to_string());
+
+        let request = client
+            .interaction()
+            .with_model(DEFAULT_MODEL)
+            .with_text("Hello")
+            .with_allowed_tools(vec!["get_weather".to_string(), "get_time".to_string()])
+            .build()
+            .expect("Should build successfully");
+
+        let config = request
+            .generation_config
+            .as_ref()
+            .expect("Should have generation config");
+        match &config.tool_choice {
+            Some(ToolChoice::AllowedTools(allowed)) => {
+                assert!(allowed.mode.is_none());
+                assert_eq!(allowed.tools, vec!["get_weather", "get_time"]);
+            }
+            other => panic!("Expected ToolChoice::AllowedTools, got {other:?}"),
+        }
+
+        // No mode set: the "mode" key is omitted on the wire
+        let value = serde_json::to_value(&request).expect("Should serialize");
+        assert_eq!(
+            value["generation_config"]["tool_choice"],
+            json!({"allowed_tools": {"tools": ["get_weather", "get_time"]}})
+        );
+    }
+
+    #[test]
+    fn test_with_history_steps_composes_input() {
+        // with_history takes Vec<Step>; a trailing with_text becomes a final user_input step
+        let client = Client::new("test-api-key".to_string());
+
+        let request = client
+            .interaction()
+            .with_model(DEFAULT_MODEL)
+            .with_history(vec![
+                Step::user_text("What is the capital of France?"),
+                Step::model_text("The capital of France is Paris."),
+            ])
+            .with_text("And of Germany?")
+            .build()
+            .expect("Should build successfully");
+
+        match &request.input {
+            InteractionInput::Steps(steps) => {
+                assert_eq!(steps.len(), 3, "history + current message");
+                assert!(matches!(steps[0], Step::UserInput { .. }));
+                assert!(matches!(steps[1], Step::ModelOutput { .. }));
+                assert!(matches!(steps[2], Step::UserInput { .. }));
+            }
+            _ => panic!("Expected InteractionInput::Steps variant"),
         }
     }
 }

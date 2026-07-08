@@ -23,10 +23,10 @@ Use for situations where the operation cannot continue and needs user interventi
 
 **Examples from codebase:**
 ```rust,ignore
-// Missing required call_id field (src/request_builder/auto_functions.rs)
-error!(
-    "Function call '{}' is missing required call_id field.",
-    function_name
+// File processing failed on the server (src/client.rs)
+tracing::error!(
+    "File '{}' processing failed: code={:?}, message={}",
+    file.name, error_code, error_msg
 );
 ```
 
@@ -60,13 +60,12 @@ tracing::warn!(
     path.display(), size_mb
 );
 
-// Unknown API type (src/content.rs)
+// Unknown API type (src/steps.rs)
 tracing::warn!(
-    "Encountered unknown Content type '{}'. \
-     Parse error: {}. \
+    "Encountered unknown Step type '{}'. Parse error: {}. \
      This may indicate a new API feature or a malformed response. \
-     The content will be preserved in the Unknown variant.",
-    content_type, parse_error
+     The step will be preserved in the Unknown variant.",
+    step_type, parse_error
 );
 
 // Validation warning (src/tools.rs)
@@ -105,12 +104,12 @@ fn log_response_body<T: std::fmt::Debug + serde::Serialize>(body: &T) {
 
 // Interaction lifecycle (src/client.rs)
 tracing::debug!("Creating interaction");
-tracing::debug!("Interaction created: ID={}", response.id);
+tracing::debug!("Interaction created: ID={:?}", response.id);
 
 // SSE events (src/http/interactions.rs)
 debug!(
-    "SSE event received: event_type={:?}, has_delta={}, has_interaction={}...",
-    event.event_type, event.delta.is_some(), event.interaction.is_some()
+    "SSE event received: event_type={:?}, index={:?}, event_id={:?}",
+    event.event_type, event.index, event.event_id
 );
 
 // Auto-function loop lifecycle (src/request_builder/auto_functions.rs)
@@ -176,6 +175,8 @@ All Evergreen-pattern `Unknown` variants log when encountered:
 | Type | Location |
 |------|----------|
 | `Content::Unknown` | `src/content.rs` |
+| `Step::Unknown` | `src/steps.rs` |
+| `StepDelta::Unknown` | `src/steps.rs` |
 | `InteractionStatus::Unknown` | `src/response.rs` |
 | `Tool::Unknown` | `src/tools.rs` |
 | `StreamChunk::Unknown` | `src/wire_streaming.rs` |
@@ -190,7 +191,7 @@ All Evergreen-pattern `Unknown` variants log when encountered:
 | Large file (>20MB) | `src/multimodal.rs::load_and_encode_file()` |
 | Empty function name | `src/tools.rs::build()` |
 | Missing required parameters | `src/tools.rs::build()` |
-| Empty call_id/thought_signature | `src/interactions_api.rs` |
+| Duplicate function registration | `src/function_calling.rs::register_raw()` |
 | max_function_call_loops=0 | `src/request_builder/mod.rs` |
 | Function execution failure | `src/request_builder/auto_functions.rs` |
 | Function not found in registry | `src/request_builder/auto_functions.rs` |
@@ -203,10 +204,10 @@ The following operations silently handle edge cases and may benefit from logging
 
 | Operation | Current Behavior | Recommendation |
 |-----------|------------------|----------------|
-| SSE lifecycle events | Silently skipped | Keep silent (expected behavior) |
-| Unknown SSE events with interaction field | `warn` logged | ✅ Already logged |
-| CodeExecutionCall language fallback | `warn` logged | ✅ Already logged |
-| Unknown InteractionInput variant | `warn` logged | ✅ Already logged |
+| Malformed SSE lifecycle events (missing fields) | `warn` logged, event dropped | ✅ Already logged |
+| Unknown SSE event types | Logged, preserved as `StreamChunk::Unknown` | ✅ Already logged |
+| Streamed `arguments_delta` that fails JSON parsing | `warn` logged, raw string preserved | ✅ Already logged |
+| Unknown enum string values (Evergreen) | `warn` logged, preserved in `Unknown` variants | ✅ Already logged |
 
 ## Sensitive Data Handling
 
@@ -245,7 +246,7 @@ pub async fn execute(&self, request: InteractionRequest) -> Result<InteractionRe
 
 // Structured event logging
 tracing::debug!(
-    interaction_id = %response.id,
+    interaction_id = ?response.id,
     model = ?response.model,
     "Interaction created"
 );
@@ -273,7 +274,7 @@ Use consistent message formatting:
 ```rust,ignore
 // Good: Action-oriented with key=value context
 tracing::debug!("Creating interaction");
-tracing::debug!("Interaction created: ID={}", response.id);
+tracing::debug!("Interaction created: ID={:?}", response.id);
 tracing::warn!("File '{}' is {:.1}MB which exceeds the recommended 20MB limit...", path, size);
 
 // Good: Explains why something is unusual
@@ -285,7 +286,7 @@ tracing::warn!(
 
 // Good: Structured fields for machine parsing
 tracing::debug!(
-    interaction_id = %response.id,
+    interaction_id = ?response.id,
     status = ?response.status,
     "Interaction retrieved"
 );
@@ -347,6 +348,97 @@ For zero-config debugging of raw API traffic, use the `LOUD_WIRE` environment va
 LOUD_WIRE=1 cargo run --example simple_interaction
 ```
 
+`LOUD_WIRE` is checked once, when the `Client` is constructed. Setting it
+installs a `LoudWirePrinter` wire inspector on the client automatically —
+it is sugar for the wire inspection API described below.
+
+### Wire Inspection API
+
+`LOUD_WIRE` output is built on the public `genai_rs::wire` module. Every wire
+interaction — outgoing request (with JSON body), response status, response
+body, **error response body**, SSE frame, and file upload — is surfaced as a
+structured `wire::WireEvent`. Implement `wire::WireInspector` to observe them,
+and register inspectors on the client builder (multiple allowed; each
+receives every event):
+
+```rust,no_run
+use genai_rs::Client;
+use genai_rs::wire::{WireEvent, WireInspector};
+use std::sync::Arc;
+
+struct RequestCounter;
+
+impl WireInspector for RequestCounter {
+    fn on_event(&self, event: &WireEvent) {
+        if let WireEvent::Request { id, method, url, .. } = event {
+            eprintln!("request #{id}: {method} {url}");
+        }
+    }
+}
+
+# fn main() -> Result<(), genai_rs::GenaiError> {
+let client = Client::builder("api-key".to_string())
+    .add_wire_inspector(Arc::new(RequestCounter))
+    .build()?;
+# Ok(())
+# }
+```
+
+Key properties:
+
+- **Correlation**: every event carries a per-client request `id`; all events
+  for one HTTP request share it (this is the `N` in `[REQ#N]`/`[RES#N]`).
+- **Zero cost when unused**: with no inspectors installed, the library skips
+  event construction entirely (request bodies are never serialized for
+  inspection).
+- **Synchronous**: inspectors run on the request path — keep them fast and
+  non-blocking.
+
+Built-in inspectors:
+
+| Inspector | Behavior |
+|-----------|----------|
+| `wire::LoudWirePrinter` | Colored, pretty-printed stderr output (what `LOUD_WIRE=1` installs) |
+| `wire::TracingForwarder` | Forwards events to `tracing` at `DEBUG` under target `genai_rs::wire` |
+
+### Forwarding Wire Events to tracing
+
+To route raw wire traffic through your existing `tracing` pipeline instead of
+stderr, register a `TracingForwarder` and enable the `genai_rs::wire` target
+(also exported as `wire::TRACING_TARGET`):
+
+```rust,no_run
+use genai_rs::Client;
+use genai_rs::wire::TracingForwarder;
+use std::sync::Arc;
+
+# fn main() -> Result<(), genai_rs::GenaiError> {
+let client = Client::builder("api-key".to_string())
+    .add_wire_inspector(Arc::new(TracingForwarder::new()))
+    .build()?;
+# Ok(())
+# }
+```
+
+```bash
+# Wire events only
+RUST_LOG=genai_rs::wire=debug cargo run --example simple_interaction
+
+# Library debug logs + wire events
+RUST_LOG=genai_rs=debug,genai_rs::wire=debug cargo run --example simple_interaction
+```
+
+Events are emitted with structured fields (`kind`, `id`, `method`, `url`,
+`status`, and the JSON `body` serialized as a string), so JSON subscribers
+and log aggregators can filter and parse them.
+
+### The wire-color Feature
+
+Colored `LoudWirePrinter` output uses the `colored` and `colored_json`
+crates behind the default-on `wire-color` feature. Build with
+`default-features = false` to drop those dependencies; output falls back to
+plain pretty-printed text.
+
 ### LOUD_WIRE vs RUST_LOG
 
 | Feature | RUST_LOG | LOUD_WIRE |
@@ -391,5 +483,9 @@ LOUD_WIRE=1 cargo run --example simple_interaction
   - Odd requests: Yellow `[REQ#1]`, Cyan `[RES#1]`
   - Even requests: Green `[REQ#2]`, Magenta `[RES#2]`
 - **SSE chunks** are shown in blue for streaming responses
+- **Error response bodies** are printed in full (`Error (429): {...}`), so
+  failed requests are as inspectable as successful ones
 - **Base64 data** is truncated: `"data": "AAAA..."`
 - **File uploads** show progress: `>>> UPLOAD "video.mp4" (video/mp4, 150.25 MB)`
+
+Request ids are per-`Client` (each client counts from `#1`).

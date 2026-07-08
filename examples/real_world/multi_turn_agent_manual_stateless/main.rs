@@ -32,7 +32,7 @@
 //!
 //! Set the `GEMINI_API_KEY` environment variable with your API key.
 
-use genai_rs::{Client, Content, FunctionDeclaration, InteractionInput};
+use genai_rs::{Client, FunctionDeclaration, Step};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -257,8 +257,8 @@ fn get_function_declarations() -> Vec<FunctionDeclaration> {
 /// and does NOT use `previous_interaction_id`. All state is managed client-side.
 struct StatelessSupportSession {
     client: Client,
-    /// Full conversation history maintained locally
-    conversation_history: Vec<Content>,
+    /// Full conversation history maintained locally (as steps)
+    conversation_history: Vec<Step>,
     functions: Vec<FunctionDeclaration>,
     system_instruction: String,
 }
@@ -280,14 +280,14 @@ impl StatelessSupportSession {
     /// 2. We use `with_store_disabled()` on every request
     async fn process_message(&mut self, message: &str) -> Result<String, Box<dyn Error>> {
         // Add user message to history
-        self.conversation_history.push(Content::text(message));
+        self.conversation_history.push(Step::user_text(message));
 
         // Build request with full history
         let mut response = self
             .client
             .interaction()
             .with_model("gemini-3-flash-preview")
-            .with_input(InteractionInput::Content(self.conversation_history.clone()))
+            .with_history(self.conversation_history.clone())
             .add_functions(self.functions.clone())
             .with_system_instruction(&self.system_instruction)
             .with_store_disabled() // <-- Key: no server-side state
@@ -311,20 +311,19 @@ impl StatelessSupportSession {
 
             // Process each function call
             for call in &function_calls {
-                let call_id = call
-                    .id
-                    .ok_or("Missing call_id - required for function results")?;
-
-                // Add function call to history
-                self.conversation_history
-                    .push(Content::function_call(call.name, call.args.clone()));
+                // Add the function call step to history (echo the model's call)
+                self.conversation_history.push(Step::function_call(
+                    call.id,
+                    call.name,
+                    call.args.clone(),
+                ));
 
                 // Execute the function
                 let result = execute_function(call.name, call.args);
 
-                // Add function result to history
+                // Add the function result step to history
                 self.conversation_history
-                    .push(Content::function_result(call.name, call_id, result));
+                    .push(Step::function_result(call.name, call.id, result));
             }
 
             // Send updated history back to model
@@ -332,7 +331,7 @@ impl StatelessSupportSession {
                 .client
                 .interaction()
                 .with_model("gemini-3-flash-preview")
-                .with_input(InteractionInput::Content(self.conversation_history.clone()))
+                .with_history(self.conversation_history.clone())
                 .add_functions(self.functions.clone())
                 .with_system_instruction(&self.system_instruction)
                 .with_store_disabled()
@@ -340,9 +339,9 @@ impl StatelessSupportSession {
                 .await?;
         }
 
-        // Add model's final response to history
+        // Add model's output steps to history (preserves thoughts/signatures)
+        self.conversation_history.extend(response.output_steps());
         if let Some(text) = response.as_text() {
-            self.conversation_history.push(Content::text(text));
             Ok(text.to_string())
         } else {
             Ok("I apologize, but I couldn't process that request.".to_string())

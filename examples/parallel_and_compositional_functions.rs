@@ -25,7 +25,7 @@
 //! ```
 
 use futures_util::future::join_all;
-use genai_rs::{Client, Content, FunctionDeclaration};
+use genai_rs::{Client, FunctionDeclaration, Step};
 use serde_json::{Value, json};
 use std::env;
 use std::error::Error;
@@ -227,19 +227,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         let results = join_all(futures).await;
 
-        // Build function result contents in the same order as the calls.
+        // Build function result steps in the same order as the calls.
         // While the API appears to correlate by call_id (not position), this
         // behavior is undocumented, so we maintain order as a best practice.
-        let result_contents: Vec<_> = calls
+        let result_steps: Vec<_> = calls
             .iter()
             .zip(results.iter())
-            .map(|(call, result)| {
-                Content::function_result(
-                    call.name,
-                    call.id.expect("Function call should have an ID"),
-                    result.clone(),
-                )
-            })
+            .map(|(call, result)| Step::function_result(call.name, call.id, result.clone()))
             .collect();
 
         // Send results back - no need to resend tools on function result turns
@@ -247,7 +241,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .interaction()
             .with_model("gemini-3-flash-preview")
             .with_previous_interaction(response.id.as_ref().unwrap())
-            .with_content(result_contents) // Just the results, no tools needed
+            .with_history(result_steps) // Just the result steps, no tools needed
             .create()
             .await?;
     }
@@ -301,16 +295,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         let results = join_all(futures).await;
 
-        let result_contents: Vec<_> = calls
+        let result_steps: Vec<_> = calls
             .iter()
             .zip(results.iter())
-            .map(|(call, result)| {
-                Content::function_result(
-                    call.name,
-                    call.id.expect("Function call should have an ID"),
-                    result.clone(),
-                )
-            })
+            .map(|(call, result)| Step::function_result(call.name, call.id, result.clone()))
             .collect();
 
         // For user message turns, we'd need to resend tools
@@ -319,7 +307,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .interaction()
             .with_model("gemini-3-flash-preview")
             .with_previous_interaction(response.id.as_ref().unwrap())
-            .with_content(result_contents)
+            .with_history(result_steps)
             .create()
             .await?;
     }

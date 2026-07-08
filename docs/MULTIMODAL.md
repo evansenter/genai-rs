@@ -23,6 +23,8 @@ Gemini supports multimodal inputs through three methods:
 | URI reference | Files API uploads | Large files |
 | File helpers | Ergonomic file loading | Varies |
 
+Under API revision 2026-05-20, `Content` is purely *data* content: `Text`, `Image`, `Audio`, `Video`, `Document` (plus an `Unknown` fallback). Tool activity (function calls, code execution, search, etc.) and thoughts are `Step` variants in `response.steps`, not `Content`. Use `content.is_image()`, `is_audio()`, `is_video()`, and `is_document()` to check content kinds.
+
 ## Images
 
 ### Method 1: Content Constructors with with_content() (Recommended)
@@ -147,6 +149,14 @@ if let Some(audio) = response.first_audio() {
     let bytes = audio.bytes()?;
     std::fs::write("output.wav", &bytes)?;
     println!("Saved audio: {} bytes", bytes.len());
+
+    // Playback metadata, if reported by the API
+    if let Some(rate) = audio.sample_rate() {
+        println!("Sample rate: {} Hz", rate);
+    }
+    if let Some(channels) = audio.channels() {
+        println!("Channels: {}", channels);
+    }
 }
 
 // Iterate multiple audio outputs
@@ -196,7 +206,9 @@ let response = client
 
 // From Files API URI (for large videos)
 let file = client.upload_file("large_video.mp4").await?;
-client.wait_for_file_active(&file.name, Duration::from_secs(120)).await?;
+let file = client
+    .wait_for_file_ready(&file, Duration::from_secs(2), Duration::from_secs(120))
+    .await?;
 
 let response = client
     .interaction()
@@ -288,14 +300,23 @@ let file = client.upload_file("large_video.mp4").await?;
 println!("Uploaded: {}", file.name);
 println!("URI: {}", file.uri);
 
-// With custom display name
+// With explicit MIME type (when extension-based detection isn't suitable)
 let file = client
-    .upload_file_with_options("data.csv", Some("Q4 Sales Data"))
+    .upload_file_with_mime("data.bin", "application/octet-stream")
     .await?;
 
-// Chunked upload for very large files
+// From bytes in memory, with an optional display name
 let file = client
-    .upload_file_chunked("huge_video.mp4", 10 * 1024 * 1024)  // 10MB chunks
+    .upload_file_bytes(csv_bytes, "text/csv", Some("Q4 Sales Data"))
+    .await?;
+
+// Chunked (streaming) upload for very large files.
+// Returns the metadata plus a resume handle for interrupted uploads.
+let (file, _resume_handle) = client.upload_file_chunked("huge_video.mp4").await?;
+
+// Custom chunk size (default: 8MB)
+let (file, _resume_handle) = client
+    .upload_file_chunked_with_options("huge_video.mp4", "video/mp4", 16 * 1024 * 1024)
     .await?;
 ```
 
@@ -304,18 +325,19 @@ let file = client
 Videos and some documents require processing time:
 
 ```rust,ignore
-// Wait up to 2 minutes for file to be ready
-client
-    .wait_for_file_active(&file.name, Duration::from_secs(120))
+// Poll every 2 seconds, waiting up to 2 minutes for the file to be ready
+let file = client
+    .wait_for_file_ready(&file, Duration::from_secs(2), Duration::from_secs(120))
     .await?;
 
-// Check state manually
+// Or check state manually
 let metadata = client.get_file(&file.name).await?;
-match metadata.state {
-    FileState::Active => println!("Ready to use"),
-    FileState::Processing => println!("Still processing..."),
-    FileState::Failed => println!("Processing failed"),
-    _ => {}
+if metadata.is_active() {
+    println!("Ready to use");
+} else if metadata.is_processing() {
+    println!("Still processing...");
+} else if metadata.is_failed() {
+    println!("Processing failed");
 }
 ```
 
@@ -336,10 +358,15 @@ let response = client
 ### List and Delete
 
 ```rust,ignore
-// List all uploaded files
-let files = client.list_files(None).await?;
-for file in files.files {
-    println!("{}: {} ({})", file.name, file.display_name, file.state);
+// List all uploaded files (page_size, page_token)
+let response = client.list_files(None, None).await?;
+for file in response.files {
+    println!(
+        "{}: {} ({})",
+        file.name,
+        file.display_name.as_deref().unwrap_or(""),
+        file.mime_type
+    );
 }
 
 // Delete a file
@@ -428,6 +455,8 @@ use genai_rs::Content;
 let content = Content::audio_data(base64, "audio/mp3");
 let content = Content::audio_uri(uri, "audio/mp3");
 ```
+
+`Content::Audio` also carries optional `sample_rate` and `channels` fields. The constructors leave them unset; the API populates them on audio it returns (see `AudioInfo::sample_rate()` / `channels()` on responses).
 
 ### Video
 

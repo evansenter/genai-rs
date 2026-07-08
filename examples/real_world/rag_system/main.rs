@@ -83,7 +83,7 @@ impl DocumentStore {
             .collect();
 
         // Sort by score descending
-        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        scored.sort_by_key(|entry| std::cmp::Reverse(entry.1));
 
         // Return top-k results
         scored

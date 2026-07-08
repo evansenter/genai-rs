@@ -11,6 +11,7 @@ This guide covers function calling fundamentals in `genai-rs`, including the `#[
 - [Manual Function Handling](#manual-function-handling)
 - [FunctionDeclaration Builder](#functiondeclaration-builder)
 - [Function Calling Modes](#function-calling-modes)
+- [Streaming Function Call Arguments](#streaming-function-call-arguments)
 - [Parallel and Compositional Calls](#parallel-and-compositional-calls)
 - [Best Practices](#best-practices)
 
@@ -228,9 +229,20 @@ For full control over execution, handle function calls manually.
 
 ### Manual Loop Pattern
 
-```rust,ignore
-use genai_rs::{Content, FunctionDeclaration};
+Function calls arrive as `Step::FunctionCall { id, name, arguments }` steps. Send
+results back as `Step::FunctionResult` steps built with `Step::function_result()`,
+which accepts any `Into<FunctionResultPayload>` (a `serde_json::Value`, `&str`,
+`String`, or `Vec<Content>`):
 
+```rust,no_run
+use genai_rs::{Client, FunctionDeclaration, Step};
+use serde_json::json;
+
+# async fn run() -> Result<(), Box<dyn std::error::Error>> {
+# let client = Client::new("api-key".to_string());
+# fn execute_my_function(_name: &str, _args: &serde_json::Value) -> serde_json::Value {
+#     json!({"temp": "22C"})
+# }
 // Define declarations (schemas only)
 let get_weather = FunctionDeclaration::builder("get_weather")
     .description("Get weather for a city")
@@ -253,28 +265,33 @@ while response.has_function_calls() {
 
     for call in response.function_calls() {
         // YOUR execution logic here
-        let result = execute_my_function(&call.name, &call.args);
+        let result = execute_my_function(call.name, call.args);
 
-        results.push(Content::function_result(
-            call.name.clone(),
-            call.id.unwrap(),  // Required for multi-turn
+        results.push(Step::function_result(
+            call.name,
+            call.id,  // Required; correlates the result to its call
             result,
         ));
     }
 
-    // Send results back
+    // Send results back as function_result steps
     response = client
         .interaction()
         .with_model("gemini-3-flash-preview")
         .with_previous_interaction(response.id.as_ref().unwrap())
-        .with_content(results)
+        .with_history(results)
         .create()
         .await?;
 }
 
 // Final text response
 println!("{}", response.as_text().unwrap());
+# Ok(())
+# }
 ```
+
+For failed executions, use `Step::function_result_error(name, call_id, result)`
+which sets `is_error: true` on the step.
 
 ### When to Use Manual Handling
 
@@ -290,17 +307,17 @@ println!("{}", response.as_text().unwrap());
 // Example: Rate limiting
 for call in response.function_calls() {
     rate_limiter.acquire().await;  // Wait for rate limit
-    let result = execute_function(&call.name, &call.args);
+    let result = execute_function(call.name, call.args);
     // ...
 }
 
 // Example: Circuit breaker
 for call in response.function_calls() {
-    if circuit_breaker.is_open(&call.name) {
-        results.push(error_result(&call));
+    if circuit_breaker.is_open(call.name) {
+        results.push(Step::function_result_error(call.name, call.id, "circuit open"));
         continue;
     }
-    let result = execute_function(&call.name, &call.args);
+    let result = execute_function(call.name, call.args);
     // ...
 }
 ```
@@ -421,6 +438,64 @@ client.interaction()
 | `None` | Cannot call functions | Disable temporarily |
 | `Validated` | Schema-strict output | High reliability needs |
 
+On the wire, modes serialize as lowercase strings (`"auto"`, `"any"`, `"none"`,
+`"validated"`) in `generation_config.tool_choice`.
+
+### Tool Choice
+
+`with_function_calling_mode()` is a convenience over the underlying
+`generation_config.tool_choice` union, which is `Option<ToolChoice>`:
+
+- `ToolChoice::Mode(FunctionCallingMode)` serializes as a plain lowercase string
+  (e.g., `"auto"`)
+- `ToolChoice::AllowedTools(AllowedTools)` serializes as
+  `{"allowed_tools": {"mode": ..., "tools": [...]}}` and restricts the model to a
+  named subset of the declared tools
+
+```rust,no_run
+use genai_rs::{AllowedTools, Client, FunctionCallingMode, ToolChoice};
+
+# async fn run() -> Result<(), Box<dyn std::error::Error>> {
+# let client = Client::new("api-key".to_string());
+// Set the union directly
+let builder = client.interaction()
+    .with_tool_choice(ToolChoice::Mode(FunctionCallingMode::Auto));
+
+// Restrict to a subset of tools (convenience method)
+let builder = client.interaction()
+    .with_allowed_tools(vec!["get_weather".to_string()]);
+
+// Restrict to a subset AND force a call among them
+let builder = client.interaction()
+    .with_tool_choice(ToolChoice::allowed_tools(
+        Some(FunctionCallingMode::Any),
+        vec!["get_weather".to_string(), "get_time".to_string()],
+    ));
+
+// Equivalent, via the AllowedTools builder
+let builder = client.interaction()
+    .with_tool_choice(ToolChoice::AllowedTools(
+        AllowedTools::new(vec!["get_weather".to_string()])
+            .with_mode(FunctionCallingMode::Any),
+    ));
+# let _ = builder;
+# Ok(())
+# }
+```
+
+Note: `with_allowed_tools(Vec<String>)` sets the `AllowedTools` form of
+`tool_choice` (preserving any previously set mode).
+
+## Streaming Function Call Arguments
+
+When streaming, function-call arguments arrive incrementally as
+`StepDelta::ArgumentsDelta` chunks (JSON fragments). The HTTP layer assembles
+the streamed `step.start`/`step.delta`/`step.stop` events into the final
+`StreamChunk::Completed(response)`, including parsing the accumulated argument
+fragments into `Step::FunctionCall { arguments, .. }` — so
+`response.function_calls()` works on the completed response after streaming,
+exactly as in the non-streaming case. See [Streaming API](STREAMING_API.md).
+
 ## Parallel and Compositional Calls
 
 ### Parallel Execution
@@ -440,12 +515,17 @@ use futures::future::join_all;
 let futures: Vec<_> = response.function_calls()
     .iter()
     .map(|call| async {
-        let result = execute_function(&call.name, &call.args).await;
-        (call.id.unwrap(), call.name.clone(), result)
+        let result = execute_function(call.name, call.args).await;
+        (call.id.to_string(), call.name.to_string(), result)
     })
     .collect();
 
 let results = join_all(futures).await;
+
+// Build one Step::function_result per call and send them back together
+let result_steps: Vec<_> = results.into_iter()
+    .map(|(id, name, result)| Step::function_result(name, id, result))
+    .collect();
 ```
 
 ### Compositional (Chained) Calls

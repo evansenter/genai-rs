@@ -61,33 +61,43 @@ let response = client.interaction()
 
 ### Stateless Mode (`store: false`)
 
-```rust,ignore
-let mut history: Vec<Content> = vec![];
+Conversation history is a `Vec<Step>`. Build it with `Step` constructors and
+extend it with `response.output_steps()` after each turn:
+
+```rust,no_run
+use genai_rs::{Client, Step};
+
+# async fn run() -> Result<(), Box<dyn std::error::Error>> {
+# let client = Client::new("api-key".to_string());
+let mut history: Vec<Step> = vec![];
 
 // First turn
-history.push(Content::text("Hi, I'm Alice"));
+history.push(Step::user_text("Hi, I'm Alice"));
 
 let response = client.interaction()
     .with_model("gemini-3-flash-preview")
-    .with_input(InteractionInput::Content(history.clone()))
+    .with_history(history.clone())
     .with_system_instruction("You are a helpful assistant")
     .with_store_disabled()  // No server state
     .create()
     .await?;
 
-// Add response to history
-history.push(Content::text(response.as_text().unwrap()));
+// Replay the model's steps (text, thoughts, tool calls) into history
+history.extend(response.output_steps());
 
 // Second turn - must include full history
-history.push(Content::text("What's my name?"));
+history.push(Step::user_text("What's my name?"));
 
 let response = client.interaction()
     .with_model("gemini-3-flash-preview")
-    .with_input(InteractionInput::Content(history.clone()))
+    .with_history(history.clone())
     .with_system_instruction("You are a helpful assistant")
     .with_store_disabled()
     .create()
     .await?;
+# let _ = response;
+# Ok(())
+# }
 ```
 
 **Characteristics:**
@@ -263,19 +273,15 @@ for _ in 0..MAX_ITERATIONS {
 
     let mut results = Vec::new();
     for call in &calls {
-        let call_id = call.id.ok_or("Missing call_id")?;
+        // call.id is a required &str on FunctionCallInfo
         let result = execute_function(call.name, call.args);
-        results.push(Content::function_result(
-            call.name.to_string(),
-            call_id.to_string(),
-            result,
-        ));
+        results.push(Step::function_result(call.name, call.id, result));
     }
 
     response = client.interaction()
         .with_model("gemini-3-flash-preview")
         .with_previous_interaction(response.id.as_ref().unwrap())
-        .with_content(results)
+        .with_history(results)
         .create()
         .await?;
 }
@@ -305,11 +311,11 @@ let results: Vec<_> = futures::future::join_all(
     calls.iter().map(|call| execute_function(call))
 ).await;
 
-// Send all results back together
-let result_contents: Vec<_> = calls.iter().zip(results.iter())
-    .map(|(call, result)| Content::function_result(
+// Send all results back together as function_result steps
+let result_steps: Vec<_> = calls.iter().zip(results.iter())
+    .map(|(call, result)| Step::function_result(
         call.name,
-        call.id.unwrap(),
+        call.id,
         result.clone(),
     ))
     .collect();
@@ -317,7 +323,7 @@ let result_contents: Vec<_> = calls.iter().zip(results.iter())
 // Function result turn - no need to resend tools
 response = client.interaction()
     .with_previous_interaction(&response.id.unwrap())
-    .with_content(result_contents)
+    .with_history(result_steps)
     .create()
     .await?;
 ```
@@ -433,12 +439,12 @@ When sending function results back to the model, you do NOT need to resend tools
 
 ```rust,ignore
 // After model requests function calls...
-let results = execute_functions(&calls);
+let results: Vec<Step> = execute_functions(&calls);  // Step::function_result steps
 
 // Function result turn - no tools needed
 response = client.interaction()
     .with_previous_interaction(&response.id.unwrap())
-    .with_content(results)  // Just the function results
+    .with_history(results)  // Just the function_result steps
     .create()
     .await?;
 ```
@@ -449,21 +455,22 @@ The model remembers available tools within the same interaction chain. Only new 
 
 > **Key Finding**: Thought signatures ARE present in Interactions API responses, but in a **different location** than the `generateContent` docs describe. See [INTERACTIONS_API_FEEDBACK.md](./INTERACTIONS_API_FEEDBACK.md#1-thought-signatures-location-differs-from-generatecontent) for details.
 
-The Gemini API returns "thought" outputs when thinking is enabled. Here's what we know:
+The Gemini API returns `thought` steps when thinking is enabled. Here's what we know:
 
 ### What They Are
 
-Thought signatures are cryptographic proofs that thoughts haven't been modified. In the **Interactions API**, they appear on the `thought` output:
+Thought signatures are cryptographic proofs that thoughts haven't been modified. In the **Interactions API**, they appear on the `thought` step — in the SDK, `Step::Thought { signature, summary }`. Tool-call steps (e.g., `code_execution_call`, `google_search_call`) also carry an optional `signature` field:
 
 ```json
 {
-  "outputs": [
+  "steps": [
     {
       "type": "thought",
       "signature": "EtYFCtMF..."    // <-- Signature is HERE
     },
     {
       "type": "function_call",
+      "id": "call_abc123",
       "name": "get_weather",        // <-- NOT here (differs from generateContent)
       "arguments": {"city": "Paris"}
     }
@@ -476,9 +483,16 @@ Thought signatures are cryptographic proofs that thoughts haven't been modified.
 | API | Signature Location |
 |-----|-------------------|
 | `generateContent` (per docs) | On `function_call` as `thought_signature` field |
-| Interactions API (actual) | On `thought` output as `signature` field |
+| Interactions API (actual) | On the `thought` step as `signature` field, **and** on the `function_call` step as `signature` |
 
-Our testing confirms signatures are present on thought outputs across all configurations:
+> **Verified live 2026-07 (revision 2026-05-20)**: `function_call` steps now
+> carry their own `signature` field, and the API **rejects stateless replay**
+> of a `function_call` step that omits it. Replay `response.output_steps()`
+> verbatim (as shown below) and both the thought and function-call
+> signatures are preserved automatically. The per-configuration table below
+> records earlier findings from before this revision.
+
+Earlier testing confirmed signatures are present on thought steps across all configurations:
 
 | Configuration | Sig on Thought? | Sig on FC? | Test |
 |---------------|-----------------|------------|------|
@@ -491,25 +505,22 @@ Our testing confirms signatures are present on thought outputs across all config
 
 ### Practical Implications
 
-**For function calling**: You do NOT need to handle thought signatures on function calls:
+**For stateless multi-turn**: Replay signatures by extending your history with `response.output_steps()`. This includes the `Step::Thought` steps verbatim (carrying their `signature`) alongside the `Step::FunctionCall` steps (which carry their own `signature`, required by the API on replay), so the reasoning chain validates on the next request:
 
 ```rust,ignore
-// This works fine - no thought signature needed on FC
+// Replay the model's full turn - Thought steps carry the signature
+history.extend(response.output_steps());
+
+// Then execute and append your function results
 for call in response.function_calls() {
-    let call_id = call.id.ok_or("Missing call_id")?;
-
-    // Just add the function call (no thought signature)
-    history.push(function_call_content(call.name, call.args.clone()));
-
-    // Execute and add result
     let result = execute_function(call.name, call.args);
-    history.push(Content::function_result(call.name, call_id, result));
+    history.push(Step::function_result(call.name, call.id, result));
 }
 ```
 
 **For thought echo**: Echoing thoughts back to the model works **without** including signatures. See `test_thought_echo_manual_history` in `tests/interactions_api_tests.rs`.
 
-**For compliance/auditing**: Capture signatures from `Content::Thought { signature }`. The signature IS populated on thought outputs.
+**For compliance/auditing**: Capture signatures from `Step::Thought { signature, .. }`, or use the `response.thought_signatures()` helper to iterate all populated signatures. The signature IS populated on thought steps.
 
 ### Tests
 
@@ -573,32 +584,30 @@ The match pattern is verbose but clear about the two distinct states.
 ```rust,ignore
 struct StatelessSession {
     client: Client,
-    history: Vec<Content>,
+    history: Vec<Step>,
     functions: Vec<FunctionDeclaration>,
     system_instruction: String,
 }
 
 impl StatelessSession {
     async fn process(&mut self, message: &str) -> Result<String, Error> {
-        self.history.push(Content::text(message));
+        self.history.push(Step::user_text(message));
 
-        let mut response = self.client.interaction()
+        let response = self.client.interaction()
             .with_model("gemini-3-flash-preview")
-            .with_input(InteractionInput::Content(self.history.clone()))
+            .with_history(self.history.clone())
             .add_functions(self.functions.clone())
             .with_system_instruction(&self.system_instruction)
             .with_store_disabled()
             .create()
             .await?;
 
-        // Handle function calls...
+        // Handle function calls (execute, push Step::function_result, re-send)...
 
-        if let Some(text) = response.as_text() {
-            self.history.push(Content::text(text));
-            Ok(text.to_string())
-        } else {
-            Ok(String::new())
-        }
+        // Replay the model's steps (including thoughts with signatures)
+        self.history.extend(response.output_steps());
+
+        Ok(response.as_text().unwrap_or("").to_string())
     }
 }
 ```

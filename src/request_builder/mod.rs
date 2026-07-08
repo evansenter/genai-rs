@@ -10,10 +10,11 @@ use std::time::Duration;
 use tracing::debug;
 
 use crate::{
-    AgentConfig, Content, DeepResearchConfig, FunctionCallingMode, FunctionDeclaration,
-    GenerationConfig, ImageConfig, InteractionInput, InteractionRequest, InteractionResponse, Role,
-    SpeechConfig, StreamEvent, ThinkingLevel, ThinkingSummaries, Tool as InternalTool, Turn,
-    TurnContent,
+    AgentConfig, Content, DeepResearchConfig, EnvironmentSpec, FunctionCallingMode,
+    FunctionDeclaration, GenerationConfig, ImageConfig, InteractionInput, InteractionRequest,
+    InteractionResponse, ResponseFormat, ResponseFormatSpec, ServiceTier, SpeechConfig, Step,
+    StreamEvent, ThinkingLevel, ThinkingSummaries, Tool as InternalTool, ToolChoice, VideoConfig,
+    WebhookConfig,
 };
 use futures_util::{StreamExt, stream::BoxStream};
 
@@ -78,8 +79,8 @@ pub struct InteractionBuilder<'a> {
     model: Option<String>,
     agent: Option<String>,
     agent_config: Option<AgentConfig>,
-    /// Conversation history (set by `with_history()`)
-    history: Vec<Turn>,
+    /// Conversation history as steps (set by `with_history()`)
+    history: Vec<Step>,
     /// Current user message (set by `with_text()`)
     current_message: Option<String>,
     /// Content input for function results (set by `with_content()`)
@@ -87,13 +88,16 @@ pub struct InteractionBuilder<'a> {
     previous_interaction_id: Option<String>,
     tools: Option<Vec<InternalTool>>,
     response_modalities: Option<Vec<String>>,
-    response_format: Option<serde_json::Value>,
-    response_mime_type: Option<String>,
+    response_format: Option<ResponseFormatSpec>,
     generation_config: Option<GenerationConfig>,
-    speech_config: Option<SpeechConfig>,
+    speech_configs: Option<Vec<SpeechConfig>>,
     background: Option<bool>,
     store: Option<bool>,
-    system_instruction: Option<InteractionInput>,
+    system_instruction: Option<String>,
+    service_tier: Option<ServiceTier>,
+    cached_content: Option<String>,
+    webhook_config: Option<WebhookConfig>,
+    environment: Option<EnvironmentSpec>,
     /// Maximum iterations for auto function calling loop
     max_function_call_loops: usize,
     /// Tool service for dependency-injected functions
@@ -115,9 +119,10 @@ impl std::fmt::Debug for InteractionBuilder<'_> {
             .field("tools", &self.tools)
             .field("response_modalities", &self.response_modalities)
             .field("response_format", &self.response_format)
-            .field("response_mime_type", &self.response_mime_type)
             .field("generation_config", &self.generation_config)
-            .field("speech_config", &self.speech_config)
+            .field("speech_configs", &self.speech_configs)
+            .field("webhook_config", &self.webhook_config)
+            .field("environment", &self.environment)
             .field("background", &self.background)
             .field("store", &self.store)
             .field("system_instruction", &self.system_instruction)
@@ -147,12 +152,15 @@ impl<'a> InteractionBuilder<'a> {
             tools: None,
             response_modalities: None,
             response_format: None,
-            response_mime_type: None,
             generation_config: None,
-            speech_config: None,
+            speech_configs: None,
             background: None,
             store: None,
             system_instruction: None,
+            service_tier: None,
+            cached_content: None,
+            webhook_config: None,
+            environment: None,
             max_function_call_loops: DEFAULT_MAX_FUNCTION_CALL_LOOPS,
             tool_service: None,
             timeout: None,
@@ -386,7 +394,7 @@ impl<'a> InteractionBuilder<'a> {
     /// This is a convenience method that dispatches to the appropriate setter:
     /// - `InteractionInput::Text(text)` → `with_text(text)`
     /// - `InteractionInput::Content(content)` → `with_content(content)`
-    /// - `InteractionInput::Turns(turns)` → `with_history(turns)`
+    /// - `InteractionInput::Steps(steps)` → `with_history(steps)`
     ///
     /// For direct usage, prefer the specific methods (`with_text()`, `with_content()`,
     /// `with_history()`) for clarity.
@@ -399,8 +407,8 @@ impl<'a> InteractionBuilder<'a> {
             InteractionInput::Content(content) => {
                 self.content_input = Some(content);
             }
-            InteractionInput::Turns(turns) => {
-                self.history = turns;
+            InteractionInput::Steps(steps) => {
+                self.history = steps;
             }
         }
         self
@@ -413,12 +421,12 @@ impl<'a> InteractionBuilder<'a> {
     /// - `with_text()` sets the current user message to append
     ///
     /// The order doesn't matter - at build time, the history and current message
-    /// are composed into `[...history, Turn::user(current_message)]`.
+    /// are composed into `[...history, Step::user_text(current_message)]`.
     ///
     /// # Example
     ///
     /// ```no_run
-    /// # use genai_rs::{Client, Turn};
+    /// # use genai_rs::{Client, Step};
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::new("api-key".to_string());
@@ -432,13 +440,13 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// // With conversation history - both orders are equivalent
     /// let history = vec![
-    ///     Turn::user("What is 2+2?"),
-    ///     Turn::model("4"),
+    ///     Step::user_text("What is 2+2?"),
+    ///     Step::model_text("4"),
     /// ];
     /// let response = client.interaction()
     ///     .with_model("gemini-3-flash-preview")
     ///     .with_history(history)
-    ///     .with_text("And times 3?")  // Appended as final user turn
+    ///     .with_text("And times 3?")  // Appended as final user_input step
     ///     .create()
     ///     .await?;
     /// # Ok(())
@@ -483,7 +491,7 @@ impl<'a> InteractionBuilder<'a> {
     /// ```
     #[must_use]
     pub fn with_system_instruction(mut self, instruction: impl Into<String>) -> Self {
-        self.system_instruction = Some(InteractionInput::Text(instruction.into()));
+        self.system_instruction = Some(instruction.into());
         self
     }
 
@@ -494,22 +502,24 @@ impl<'a> InteractionBuilder<'a> {
     /// # Panics / Errors
     ///
     /// Calling `build()` will return an error if `with_content()` is combined with
-    /// `with_history()`. If you need to combine function results with conversation
-    /// history, include them in the history via [`Turn`] objects instead.
+    /// `with_history()`. To combine multimodal content with conversation
+    /// history, wrap the content in a [`Step::user_input`] and use
+    /// [`with_history()`](Self::with_history) instead. For function results,
+    /// use `with_history(vec![Step::function_result(...)])`.
     ///
     /// # Example
     /// ```no_run
     /// # use genai_rs::{Client, Content};
-    /// # use serde_json::json;
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::builder("api_key".to_string()).build()?;
     ///
-    /// let result = Content::function_result("my_func", "call_123", json!({"data": "result"}));
-    ///
     /// let response = client.interaction()
     ///     .with_model("gemini-3-flash-preview")
-    ///     .with_content(vec![result])
+    ///     .with_content(vec![
+    ///         Content::text("Describe this image"),
+    ///         Content::image_uri("files/abc", "image/png"),
+    ///     ])
     ///     .create()
     ///     .await?;
     /// # Ok(())
@@ -521,14 +531,14 @@ impl<'a> InteractionBuilder<'a> {
         self
     }
 
-    /// Sets the conversation history from an explicit array of turns.
+    /// Sets the conversation history from an explicit array of steps.
     ///
     /// This can be combined with [`with_text()`](Self::with_text) to build a conversation:
-    /// - `with_history()` sets the conversation history (previous turns)
+    /// - `with_history()` sets the conversation history (previous steps)
     /// - `with_text()` sets the current user message to append
     ///
     /// The order doesn't matter - at build time, the history and current message
-    /// are composed into `[...history, Turn::user(current_message)]`.
+    /// are composed into `[...history, Step::user_text(current_message)]`.
     ///
     /// This enables multi-turn conversations without relying on server-side
     /// storage via `previous_interaction_id`. Useful for:
@@ -537,36 +547,28 @@ impl<'a> InteractionBuilder<'a> {
     /// - Custom history management (e.g., sliding window, summarization)
     /// - Testing with controlled conversation states
     ///
+    /// Steps from a previous response (including `thought` steps whose
+    /// signatures validate the reasoning chain) can be replayed directly via
+    /// [`InteractionResponse::output_steps()`](crate::InteractionResponse::output_steps).
+    ///
     /// # Example
     ///
     /// ```no_run
-    /// use genai_rs::{Client, Turn};
+    /// use genai_rs::{Client, Step};
     ///
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::new("api-key".to_string());
     ///
-    /// // History-only (last turn must be a user message)
+    /// // History-only (last step should be a user message)
     /// let history = vec![
-    ///     Turn::user("What is 2+2?"),
-    ///     Turn::model("2+2 equals 4."),
-    ///     Turn::user("And what's that times 3?"),
+    ///     Step::user_text("What is 2+2?"),
+    ///     Step::model_text("2+2 equals 4."),
+    ///     Step::user_text("And what's that times 3?"),
     /// ];
     /// let response = client.interaction()
     ///     .with_model("gemini-3-flash-preview")
     ///     .with_history(history)
-    ///     .create()
-    ///     .await?;
-    ///
-    /// // History + current message (order doesn't matter)
-    /// let history = vec![
-    ///     Turn::user("What is 2+2?"),
-    ///     Turn::model("4"),
-    /// ];
-    /// let response = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
-    ///     .with_history(history)
-    ///     .with_text("And times 3?")  // Appended as final user turn
     ///     .create()
     ///     .await?;
     ///
@@ -575,8 +577,8 @@ impl<'a> InteractionBuilder<'a> {
     /// # }
     /// ```
     #[must_use]
-    pub fn with_history(mut self, turns: Vec<Turn>) -> Self {
-        self.history = turns;
+    pub fn with_history(mut self, steps: Vec<Step>) -> Self {
+        self.history = steps;
         self
     }
 
@@ -619,7 +621,7 @@ impl<'a> InteractionBuilder<'a> {
     pub fn conversation(self) -> ConversationBuilder<'a> {
         ConversationBuilder {
             parent: self,
-            turns: Vec::new(),
+            steps: Vec::new(),
         }
     }
 
@@ -781,7 +783,7 @@ impl<'a> InteractionBuilder<'a> {
     /// This adds the built-in `GoogleSearch` tool which allows the model to
     /// search the web and ground its responses in real-time information.
     /// Grounding metadata will be available in the response via
-    /// [`InteractionResponse::google_search_metadata`].
+    /// [`InteractionResponse::google_search_results`].
     ///
     /// # Example
     ///
@@ -800,18 +802,18 @@ impl<'a> InteractionBuilder<'a> {
     ///     .create()
     ///     .await?;
     ///
-    /// // Access grounding metadata
-    /// if let Some(metadata) = response.google_search_metadata() {
-    ///     println!("Search queries: {:?}", metadata.web_search_queries);
-    ///     for chunk in &metadata.grounding_chunks {
-    ///         println!("Source: {}", chunk.web.uri);
-    ///     }
+    /// // Access grounding data from steps
+    /// for query in response.google_search_calls() {
+    ///     println!("Search query: {}", query);
+    /// }
+    /// for result in response.google_search_results() {
+    ///     println!("Source: {} - {}", result.title, result.url);
     /// }
     /// # Ok(())
     /// # }
     /// ```
     ///
-    /// [`InteractionResponse::google_search_metadata`]: crate::InteractionResponse::google_search_metadata
+    /// [`InteractionResponse::google_search_results`]: crate::InteractionResponse::google_search_results
     #[must_use]
     pub fn with_google_search(mut self) -> Self {
         self.push_tool(InternalTool::GoogleSearch { search_types: None });
@@ -845,6 +847,8 @@ impl<'a> InteractionBuilder<'a> {
     #[must_use]
     pub fn with_google_maps(mut self) -> Self {
         self.push_tool(InternalTool::GoogleMaps {
+            latitude: None,
+            longitude: None,
             enable_widget: None,
         });
         self
@@ -901,7 +905,7 @@ impl<'a> InteractionBuilder<'a> {
     /// This adds the built-in `UrlContext` tool which allows the model to
     /// fetch and analyze content from URLs provided in the prompt.
     /// URL context metadata will be available in the response via
-    /// [`InteractionResponse::url_context_metadata`].
+    /// [`InteractionResponse::url_context_results`].
     ///
     /// # Limitations
     ///
@@ -927,29 +931,32 @@ impl<'a> InteractionBuilder<'a> {
     ///     .create()
     ///     .await?;
     ///
-    /// // Access URL context metadata
-    /// if let Some(metadata) = response.url_context_metadata() {
-    ///     for entry in &metadata.url_metadata {
-    ///         println!("URL: {} - Status: {:?}",
-    ///             entry.retrieved_url,
-    ///             entry.url_retrieval_status);
+    /// // Access URL context results from steps
+    /// for result in response.url_context_results() {
+    ///     for item in result.items {
+    ///         println!("URL: {} - Status: {}", item.url, item.status);
     ///     }
     /// }
     /// # Ok(())
     /// # }
     /// ```
     ///
-    /// [`InteractionResponse::url_context_metadata`]: crate::InteractionResponse::url_context_metadata
+    /// [`InteractionResponse::url_context_results`]: crate::InteractionResponse::url_context_results
     #[must_use]
     pub fn with_url_context(mut self) -> Self {
         self.push_tool(InternalTool::UrlContext);
         self
     }
 
-    /// Sets response modalities (e.g., ["IMAGE"]).
+    /// Sets response modalities (e.g., `["image"]`).
+    ///
+    /// The API is case-sensitive and only accepts lowercase modality names
+    /// (`text`, `image`, `audio`, `video`, `document` — verified live), so
+    /// each provided value is lowercased before being sent. The list stays
+    /// `Vec<String>` (open enum) so new modalities pass through unchanged.
     #[must_use]
     pub fn with_response_modalities(mut self, modalities: Vec<String>) -> Self {
-        self.response_modalities = Some(modalities);
+        self.response_modalities = Some(modalities.into_iter().map(|m| m.to_lowercase()).collect());
         self
     }
 
@@ -957,7 +964,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// This is a convenience method equivalent to:
     /// ```ignore
-    /// .with_response_modalities(vec!["IMAGE".to_string()])
+    /// .with_response_modalities(vec!["image".to_string()])
     /// ```
     ///
     /// Use this when you want the model to generate images. Requires a model
@@ -989,14 +996,14 @@ impl<'a> InteractionBuilder<'a> {
     /// ```
     #[must_use]
     pub fn with_image_output(self) -> Self {
-        self.with_response_modalities(vec!["IMAGE".to_string()])
+        self.with_response_modalities(vec!["image".to_string()])
     }
 
     /// Configures the request to return audio output.
     ///
     /// This is a convenience method equivalent to:
     /// ```ignore
-    /// .with_response_modalities(vec!["AUDIO".to_string()])
+    /// .with_response_modalities(vec!["audio".to_string()])
     /// ```
     ///
     /// Use this when you want the model to generate speech audio. Requires a model
@@ -1033,13 +1040,17 @@ impl<'a> InteractionBuilder<'a> {
     /// ```
     #[must_use]
     pub fn with_audio_output(self) -> Self {
-        self.with_response_modalities(vec!["AUDIO".to_string()])
+        self.with_response_modalities(vec!["audio".to_string()])
     }
 
-    /// Sets speech configuration for text-to-speech output.
+    /// Sets a single speech configuration for text-to-speech output,
+    /// replacing any previously set speaker configs.
     ///
     /// Use this to customize voice, language, and speaker settings when
-    /// generating audio output.
+    /// generating audio output. On the wire, `speech_config` is a list; this
+    /// method sends a single-entry list. For multi-speaker TTS use
+    /// [`with_speech_configs()`](Self::with_speech_configs) or
+    /// [`add_speech_config()`](Self::add_speech_config).
     ///
     /// # Example
     ///
@@ -1069,7 +1080,60 @@ impl<'a> InteractionBuilder<'a> {
     /// ```
     #[must_use]
     pub fn with_speech_config(mut self, config: SpeechConfig) -> Self {
-        self.speech_config = Some(config);
+        self.speech_configs = Some(vec![config]);
+        self
+    }
+
+    /// Sets the full list of speaker configurations for multi-speaker
+    /// text-to-speech, replacing any previously set configs.
+    ///
+    /// Each entry's `speaker` should match a speaker name given in the
+    /// prompt.
+    ///
+    /// The list wire form was verified live (2026-07): a two-speaker
+    /// request returns a single combined `audio/l16` stream. The API does
+    /// not echo `speech_config` back on reads (`include_input` was observed
+    /// to be a no-op), so the echo shape could not be observed.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{Client, SpeechConfig};
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::new("api-key".to_string());
+    ///
+    /// let response = client
+    ///     .interaction()
+    ///     .with_model("gemini-2.5-pro-preview-tts")
+    ///     .with_text("Alice: Hi Bob!\nBob: Hey Alice, how are you?")
+    ///     .with_audio_output()
+    ///     .with_speech_configs(vec![
+    ///         SpeechConfig { voice: Some("Kore".into()), language: Some("en-US".into()), speaker: Some("Alice".into()) },
+    ///         SpeechConfig { voice: Some("Puck".into()), language: Some("en-US".into()), speaker: Some("Bob".into()) },
+    ///     ])
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_speech_configs(mut self, configs: Vec<SpeechConfig>) -> Self {
+        self.speech_configs = Some(configs);
+        self
+    }
+
+    /// Adds one speaker configuration, accumulating for multi-speaker
+    /// text-to-speech.
+    ///
+    /// See [`with_speech_configs()`](Self::with_speech_configs) for the
+    /// replace-all form.
+    #[must_use]
+    pub fn add_speech_config(mut self, config: SpeechConfig) -> Self {
+        self.speech_configs
+            .get_or_insert_with(Vec::new)
+            .push(config);
         self
     }
 
@@ -1107,6 +1171,155 @@ impl<'a> InteractionBuilder<'a> {
             .generation_config
             .get_or_insert_with(GenerationConfig::default);
         gen_config.image_config = Some(config);
+        self
+    }
+
+    /// Sets the video generation configuration
+    /// (`generation_config.video_config`).
+    ///
+    /// Controls the video generation task mode. Combine with
+    /// [`with_video_output()`](Self::with_video_output) and optionally a
+    /// video [`ResponseFormat`] for delivery options.
+    ///
+    /// Live availability note (2026-07): Veo models (e.g.
+    /// `veo-3.1-generate-preview`) are listed by `/v1beta/models` with only
+    /// the legacy `predictLongRunning` method and return
+    /// `404 "Model ... not found"` from the Interactions API; no
+    /// Interactions-served model supported the `video` response modality at
+    /// verification time. The `video_config` field itself is schema-valid
+    /// (its `task` enum is validated server-side).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{Client, VideoConfig, VideoTask};
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::new("api-key".to_string());
+    ///
+    /// let response = client
+    ///     .interaction()
+    ///     .with_model("veo-3.1-generate-preview")
+    ///     .with_text("A hummingbird hovering over a flower, slow motion")
+    ///     .with_video_output()
+    ///     .with_video_config(VideoConfig::new().with_task(VideoTask::TextToVideo))
+    ///     .with_background(true)
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_video_config(mut self, config: VideoConfig) -> Self {
+        let gen_config = self
+            .generation_config
+            .get_or_insert_with(GenerationConfig::default);
+        gen_config.video_config = Some(config);
+        self
+    }
+
+    /// Configures the request to return video output.
+    ///
+    /// This is a convenience method equivalent to:
+    /// ```ignore
+    /// .with_response_modalities(vec!["video".to_string()])
+    /// ```
+    ///
+    /// Requires a model that supports video generation. Video generation
+    /// typically runs in the background — pair with `with_background(true)`
+    /// and poll or use webhooks (`video.generated` event) for completion.
+    /// See `docs/OUTPUT_MODALITIES.md`.
+    #[must_use]
+    pub fn with_video_output(self) -> Self {
+        self.with_response_modalities(vec!["video".to_string()])
+    }
+
+    /// Sets per-request webhook routing.
+    ///
+    /// Events for this request are delivered to the config's URIs instead of
+    /// the registered webhooks, with optional user metadata echoed on each
+    /// event.
+    ///
+    /// The API **requires** [`with_background(true)`](Self::with_background)
+    /// when a webhook config is set (verified live: requests are rejected
+    /// with HTTP 400 `"background=true is required when webhook_config is
+    /// specified."` otherwise).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{Client, WebhookConfig};
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::new("api-key".to_string());
+    ///
+    /// let response = client
+    ///     .interaction()
+    ///     .with_agent("deep-research-preview-04-2026")
+    ///     .with_text("Research the history of quantum computing")
+    ///     .with_background(true)
+    ///     .with_webhook_config(
+    ///         WebhookConfig::new()
+    ///             .with_uris(vec!["https://example.com/hooks/genai".to_string()])
+    ///             .with_user_metadata(serde_json::json!({"job_id": "job-42"})),
+    ///     )
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_webhook_config(mut self, config: WebhookConfig) -> Self {
+        self.webhook_config = Some(config);
+        self
+    }
+
+    /// Sets the environment for this interaction.
+    ///
+    /// Accepts a string environment ID (e.g., from a previous response's
+    /// `environment_id`) or a typed
+    /// [`RemoteEnvironment`](crate::RemoteEnvironment) with sources and a
+    /// network allowlist.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{Client, EnvironmentSource, RemoteEnvironment};
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::new("api-key".to_string());
+    ///
+    /// // Typed remote environment
+    /// let response = client
+    ///     .interaction()
+    ///     .with_agent("antigravity-preview-05-2026")
+    ///     .with_text("Run the test suite")
+    ///     .with_environment(
+    ///         RemoteEnvironment::new()
+    ///             .add_source(EnvironmentSource::repository("github.com/org/repo", "/workspace")),
+    ///     )
+    ///     .create()
+    ///     .await?;
+    ///
+    /// // Or reuse an environment by ID on the next turn
+    /// let env_id = response.environment_id.clone().unwrap_or_default();
+    /// let follow_up = client
+    ///     .interaction()
+    ///     .with_agent("antigravity-preview-05-2026")
+    ///     .with_previous_interaction(response.id.clone().unwrap_or_default())
+    ///     .with_text("Now fix the failing test")
+    ///     .with_environment(env_id)
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_environment(mut self, environment: impl Into<EnvironmentSpec>) -> Self {
+        self.environment = Some(environment.into());
         self
     }
 
@@ -1226,9 +1439,75 @@ impl<'a> InteractionBuilder<'a> {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Typed Formats
+    ///
+    /// Beyond raw JSON schemas, this accepts any
+    /// [`ResponseFormat`] — audio, image, and video
+    /// output formats included. A raw `serde_json::Value` schema converts to
+    /// `ResponseFormat::Text { mime_type: "application/json", schema }`
+    /// (the pre-0.8 wire behavior wrapped in the typed union). For the list
+    /// form use [`with_response_formats()`](Self::with_response_formats).
+    ///
+    /// ```no_run
+    /// # use genai_rs::{Client, ResponseDelivery, ResponseFormat};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let client = Client::new("api-key".to_string());
+    /// let response = client
+    ///     .interaction()
+    ///     .with_model("gemini-2.5-pro-preview-tts")
+    ///     .with_text("Read this aloud")
+    ///     .with_audio_output()
+    ///     .with_response_format(ResponseFormat::Audio {
+    ///         mime_type: Some("audio/mp3".to_string()),
+    ///         delivery: Some(ResponseDelivery::Inline),
+    ///         sample_rate: Some(24000),
+    ///         bit_rate: None,
+    ///     })
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
-    pub fn with_response_format(mut self, format: serde_json::Value) -> Self {
-        self.response_format = Some(format);
+    pub fn with_response_format(mut self, format: impl Into<ResponseFormat>) -> Self {
+        self.response_format = Some(ResponseFormatSpec::Single(format.into()));
+        self
+    }
+
+    /// Sets a list of response formats (one per requested output modality).
+    ///
+    /// Use with [`with_response_modalities()`](Self::with_response_modalities)
+    /// when requesting multiple output modalities.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use genai_rs::{Client, ResponseFormat};
+    /// # use serde_json::json;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let client = Client::new("api-key".to_string());
+    /// let response = client
+    ///     .interaction()
+    ///     .with_model("gemini-3-pro-image-preview")
+    ///     .with_text("A labeled diagram of a volcano")
+    ///     .with_response_formats(vec![
+    ///         ResponseFormat::text_plain(),
+    ///         ResponseFormat::Image {
+    ///             mime_type: Some("image/jpeg".to_string()),
+    ///             delivery: None,
+    ///             aspect_ratio: None,
+    ///             image_size: None,
+    ///         },
+    ///     ])
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_response_formats(mut self, formats: Vec<ResponseFormat>) -> Self {
+        self.response_format = Some(ResponseFormatSpec::List(formats));
         self
     }
 
@@ -1421,7 +1700,22 @@ impl<'a> InteractionBuilder<'a> {
         let config = self
             .generation_config
             .get_or_insert_with(GenerationConfig::default);
-        config.tool_choice = Some(mode);
+        config.tool_choice = Some(ToolChoice::Mode(mode));
+        self
+    }
+
+    /// Sets the full `tool_choice` union directly.
+    ///
+    /// Prefer [`with_function_calling_mode()`](Self::with_function_calling_mode)
+    /// for the plain-mode form and [`with_allowed_tools()`](Self::with_allowed_tools)
+    /// for the restriction form; this method is the escape hatch for custom
+    /// shapes.
+    #[must_use]
+    pub fn with_tool_choice(mut self, tool_choice: ToolChoice) -> Self {
+        let config = self
+            .generation_config
+            .get_or_insert_with(GenerationConfig::default);
+        config.tool_choice = Some(tool_choice);
         self
     }
 
@@ -1450,41 +1744,83 @@ impl<'a> InteractionBuilder<'a> {
         let config = self
             .generation_config
             .get_or_insert_with(GenerationConfig::default);
-        config.allowed_tools = Some(tool_names);
+        // Preserve any previously-set mode when upgrading to the object form.
+        let mode = match config.tool_choice.take() {
+            Some(ToolChoice::Mode(mode)) => Some(mode),
+            Some(ToolChoice::AllowedTools(allowed)) => allowed.mode,
+            _ => None,
+        };
+        config.tool_choice = Some(ToolChoice::allowed_tools(mode, tool_names));
         self
     }
 
-    /// Sets the response MIME type for structured output.
-    ///
-    /// Required when using `with_response_format()` with a JSON schema.
-    /// Typically "application/json" for structured JSON output.
+    /// Sets the latency/priority service tier for this request.
     ///
     /// # Example
     /// ```no_run
-    /// # use genai_rs::Client;
-    /// # use serde_json::json;
+    /// # use genai_rs::{Client, ServiceTier};
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = Client::builder("api-key".to_string()).build()?;
-    /// let response = client
-    ///     .interaction()
+    /// # let client = Client::new("key".to_string());
+    /// let response = client.interaction()
     ///     .with_model("gemini-3-flash-preview")
-    ///     .with_text("Generate user data")
-    ///     .with_response_mime_type("application/json")
-    ///     .with_response_format(json!({
-    ///         "type": "object",
-    ///         "properties": {
-    ///             "name": {"type": "string"},
-    ///             "age": {"type": "integer"}
-    ///         }
-    ///     }))
+    ///     .with_text("Hello")
+    ///     .with_service_tier(ServiceTier::Flex)
     ///     .create()
     ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
     #[must_use]
-    pub fn with_response_mime_type(mut self, mime_type: impl Into<String>) -> Self {
-        self.response_mime_type = Some(mime_type.into());
+    pub fn with_service_tier(mut self, tier: ServiceTier) -> Self {
+        self.service_tier = Some(tier);
+        self
+    }
+
+    /// References an explicit context cache for this request.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use genai_rs::Client;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let client = Client::new("key".to_string());
+    /// let response = client.interaction()
+    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_text("Summarize the cached document")
+    ///     .with_cached_content("cachedContents/xyz")
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_cached_content(mut self, cached_content: impl Into<String>) -> Self {
+        self.cached_content = Some(cached_content.into());
+        self
+    }
+
+    /// Sets the presence penalty (range [-2.0, 2.0]).
+    ///
+    /// Positive values penalize tokens that already appeared in the text,
+    /// increasing the likelihood of new topics.
+    #[must_use]
+    pub fn with_presence_penalty(mut self, penalty: f32) -> Self {
+        let config = self
+            .generation_config
+            .get_or_insert_with(GenerationConfig::default);
+        config.presence_penalty = Some(penalty);
+        self
+    }
+
+    /// Sets the frequency penalty (range [-2.0, 2.0]).
+    ///
+    /// Positive values penalize tokens proportionally to their frequency in
+    /// the text so far, reducing repetition.
+    #[must_use]
+    pub fn with_frequency_penalty(mut self, penalty: f32) -> Self {
+        let config = self
+            .generation_config
+            .get_or_insert_with(GenerationConfig::default);
+        config.frequency_penalty = Some(penalty);
         self
     }
 
@@ -1616,8 +1952,9 @@ impl<'a> InteractionBuilder<'a> {
     /// Creates a streaming interaction that yields chunks as they arrive.
     ///
     /// Returns a stream of `StreamChunk` items:
-    /// - `StreamChunk::Delta`: Incremental content (text or thought)
-    /// - `StreamChunk::Complete`: The final complete interaction response
+    /// - `StreamChunk::StepDelta`: Incremental step payload (text, thought
+    ///   signatures, streaming function-call arguments, ...)
+    /// - `StreamChunk::Completed`: The final complete interaction response
     ///
     /// # Timeout Behavior
     ///
@@ -1678,12 +2015,12 @@ impl<'a> InteractionBuilder<'a> {
     ///     let event = event?;
     ///     // event.event_id can be saved for stream resumption
     ///     match &event.chunk {
-    ///         StreamChunk::Delta(delta) => {
+    ///         StreamChunk::StepDelta { delta, .. } => {
     ///             if let Some(text) = delta.as_text() {
     ///                 print!("{}", text);
     ///             }
     ///         }
-    ///         StreamChunk::Complete(response) => {
+    ///         StreamChunk::Completed(response) => {
     ///             println!("\nFinal response ID: {:?}", response.id);
     ///         }
     ///         _ => {} // Handle unknown future variants
@@ -1774,8 +2111,8 @@ impl<'a> InteractionBuilder<'a> {
         if self.content_input.is_some() && !self.history.is_empty() {
             return Err(GenaiError::InvalidInput(
                 "Content input (with_content()) cannot be combined with with_history(). \
-                 For multimodal multi-turn conversations, build Turn objects with content arrays \
-                 instead."
+                 For multimodal multi-turn conversations, wrap the content in \
+                 Step::user_input(...) and include it in the history instead."
                     .to_string(),
             ));
         }
@@ -1792,7 +2129,7 @@ impl<'a> InteractionBuilder<'a> {
         // Compose input from the separate fields
         // Priority: content_input > history > current_message
         // - content_input + current_message: merge (text prepended to content)
-        // - history + current_message: merge (text appended as user turn)
+        // - history + current_message: merge (text appended as user_input step)
         let input = if let Some(mut content) = self.content_input {
             // Content input mode (single-turn multimodal)
             // If there's also a current_message, prepend it as text content
@@ -1809,12 +2146,12 @@ impl<'a> InteractionBuilder<'a> {
                     ));
                 }
                 (true, Some(msg)) => InteractionInput::Text(msg),
-                (false, None) => InteractionInput::Turns(self.history),
+                (false, None) => InteractionInput::Steps(self.history),
                 (false, Some(msg)) => {
-                    // Compose: history + current message as final user turn
-                    let mut turns = self.history;
-                    turns.push(Turn::user(msg));
-                    InteractionInput::Turns(turns)
+                    // Compose: history + current message as final user_input step
+                    let mut steps = self.history;
+                    steps.push(Step::user_text(msg));
+                    InteractionInput::Steps(steps)
                 }
             }
         };
@@ -1835,8 +2172,8 @@ impl<'a> InteractionBuilder<'a> {
             _ => {} // Valid: exactly one is set
         }
 
-        // Merge speech_config into generation_config if present
-        let generation_config = match (self.generation_config, self.speech_config) {
+        // Merge speech_configs into generation_config if present
+        let generation_config = match (self.generation_config, self.speech_configs) {
             (Some(mut config), Some(speech)) => {
                 config.speech_config = Some(speech);
                 Some(config)
@@ -1857,12 +2194,15 @@ impl<'a> InteractionBuilder<'a> {
             tools: self.tools,
             response_modalities: self.response_modalities,
             response_format: self.response_format,
-            response_mime_type: self.response_mime_type,
             generation_config,
             stream: None, // Set by create() vs create_stream()
             background: self.background,
             store: self.store,
             system_instruction: self.system_instruction,
+            service_tier: self.service_tier,
+            cached_content: self.cached_content,
+            webhook_config: self.webhook_config,
+            environment: self.environment,
         })
     }
 }
@@ -1901,13 +2241,13 @@ impl<'a> InteractionBuilder<'a> {
 /// ```
 pub struct ConversationBuilder<'a> {
     parent: InteractionBuilder<'a>,
-    turns: Vec<Turn>,
+    steps: Vec<Step>,
 }
 
 impl<'a> ConversationBuilder<'a> {
     /// Adds a user message to the conversation.
     ///
-    /// Accepts any type that can be converted to [`TurnContent`], including:
+    /// Accepts any type that can be converted to [`TurnContent`](crate::TurnContent), including:
     /// - `&str` or `String` for text content
     /// - `Vec<Content>` for multimodal content
     ///
@@ -1932,8 +2272,11 @@ impl<'a> ConversationBuilder<'a> {
     /// # }
     /// ```
     #[must_use]
-    pub fn user(mut self, content: impl Into<TurnContent>) -> Self {
-        self.turns.push(Turn::user(content));
+    pub fn user(mut self, content: impl Into<crate::TurnContent>) -> Self {
+        self.steps.push(match content.into() {
+            crate::TurnContent::Text(text) => Step::user_text(text),
+            crate::TurnContent::Parts(parts) => Step::user_input(parts),
+        });
         self
     }
 
@@ -1942,7 +2285,7 @@ impl<'a> ConversationBuilder<'a> {
     /// Use this to include previous model responses in the conversation history.
     /// The model will use this context when generating its next response.
     ///
-    /// Accepts any type that can be converted to [`TurnContent`], including:
+    /// Accepts any type that can be converted to [`TurnContent`](crate::TurnContent), including:
     /// - `&str` or `String` for text content
     /// - `Vec<Content>` for multimodal content
     ///
@@ -1969,8 +2312,11 @@ impl<'a> ConversationBuilder<'a> {
     /// # }
     /// ```
     #[must_use]
-    pub fn model(mut self, content: impl Into<TurnContent>) -> Self {
-        self.turns.push(Turn::model(content));
+    pub fn model(mut self, content: impl Into<crate::TurnContent>) -> Self {
+        self.steps.push(match content.into() {
+            crate::TurnContent::Text(text) => Step::model_text(text),
+            crate::TurnContent::Parts(parts) => Step::model_output(parts),
+        });
         self
     }
 
@@ -2002,14 +2348,18 @@ impl<'a> ConversationBuilder<'a> {
     /// # }
     /// ```
     #[must_use]
-    pub fn turn(mut self, role: Role, content: impl Into<TurnContent>) -> Self {
-        self.turns.push(Turn::new(role, content));
-        self
+    pub fn turn(self, role: crate::Role, content: impl Into<crate::TurnContent>) -> Self {
+        match role {
+            crate::Role::Model => self.model(content),
+            // User and unknown roles are treated as user input; the wire has
+            // no role field on steps, only the step type.
+            _ => self.user(content),
+        }
     }
 
     /// Finishes building the conversation and returns to the parent [`InteractionBuilder`].
     ///
-    /// The accumulated turns are set as the input for the interaction.
+    /// The accumulated steps are set as the input for the interaction.
     ///
     /// # Example
     ///
@@ -2034,7 +2384,7 @@ impl<'a> ConversationBuilder<'a> {
     #[must_use]
     pub fn done(self) -> InteractionBuilder<'a> {
         let mut parent = self.parent;
-        parent.history = self.turns;
+        parent.history = self.steps;
         parent
     }
 }

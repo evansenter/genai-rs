@@ -146,7 +146,7 @@ where
 ///         .await?;
 ///
 ///     // Check if we got an image (not text)
-///     if resp.outputs.iter().any(|o| matches!(o, Content::Image { .. })) {
+///     if resp.has_images() {
 ///         Ok(resp)
 ///     } else {
 ///         Err(anyhow::anyhow!("No image in response"))
@@ -543,27 +543,36 @@ pub async fn consume_stream(
                 }
 
                 match event.chunk {
-                    StreamChunk::Delta(delta) => {
+                    StreamChunk::StepStart { step, .. } => {
+                        if matches!(step, genai_rs::Step::FunctionCall { .. }) {
+                            result.saw_function_call = true;
+                        }
+                        if matches!(step, genai_rs::Step::Thought { .. }) {
+                            result.saw_thought = true;
+                        }
+                    }
+                    StreamChunk::StepDelta { delta, .. } => {
                         result.delta_count += 1;
                         if let Some(text) = delta.as_text() {
                             result.collected_text.push_str(text);
                             print!("{}", text);
                         }
-                        if delta.is_function_call() {
+                        if delta.as_arguments_delta().is_some() {
                             result.saw_function_call = true;
                         }
-                        if delta.is_thought() {
+                        if let genai_rs::StepDelta::ThoughtSignature { signature } = &delta {
                             result.saw_thought = true;
-                            // Thoughts contain cryptographic signatures, not readable text
-                            if let Some(sig) = delta.thought_signature() {
+                            result.saw_thought_signature = true;
+                            // Thoughts carry opaque signatures, not readable text
+                            if let Some(sig) = signature {
                                 result.collected_thoughts.push_str(sig);
                             }
                         }
-                        if delta.is_thought_signature() {
-                            result.saw_thought_signature = true;
+                        if matches!(delta, genai_rs::StepDelta::ThoughtSummary { .. }) {
+                            result.saw_thought = true;
                         }
                     }
-                    StreamChunk::Complete(response) => {
+                    StreamChunk::Completed(response) => {
                         println!("\nStream complete: {:?}", response.id);
                         result.final_response = Some(response);
                     }
@@ -659,12 +668,18 @@ pub async fn consume_auto_function_stream(
                             result.collected_text.push_str(text);
                             print!("{}", text);
                         }
-                        if delta.is_thought() {
-                            result.saw_thought = true;
-                            // Thoughts contain cryptographic signatures, not readable text
-                            if let Some(sig) = delta.thought_signature() {
-                                result.collected_thoughts.push_str(sig);
+                        match &delta {
+                            genai_rs::StepDelta::ThoughtSignature { signature } => {
+                                result.saw_thought = true;
+                                // Thoughts carry opaque signatures, not readable text
+                                if let Some(sig) = signature {
+                                    result.collected_thoughts.push_str(sig);
+                                }
                             }
+                            genai_rs::StepDelta::ThoughtSummary { .. } => {
+                                result.saw_thought = true;
+                            }
+                            _ => {}
                         }
                     }
                     AutoFunctionStreamChunk::ExecutingFunctions { pending_calls, .. } => {
@@ -1040,4 +1055,23 @@ pub fn get_time_function() -> genai_rs::FunctionDeclaration {
 pub fn is_long_conversation_api_error(error: &GenaiError) -> bool {
     let error_str = format!("{:?}", error);
     error_str.contains("UTF-8") || error_str.contains("spanner") || error_str.contains("truncated")
+}
+
+/// Checks if an error is the API's content safety block
+/// (400 "Request blocked due to safety violations").
+///
+/// Built-in tools that pull in external content (URL context, search) can
+/// intermittently trip this when the backend classifies the fetched content
+/// as unsafe — observed live 2026-07 with URL context. Tests should treat
+/// this as inconclusive and skip rather than fail.
+#[allow(dead_code)]
+pub fn is_safety_block_error(error: &GenaiError) -> bool {
+    match error {
+        GenaiError::Api {
+            status_code,
+            message,
+            ..
+        } => *status_code == 400 && message.to_lowercase().contains("safety violation"),
+        _ => false,
+    }
 }

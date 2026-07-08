@@ -56,8 +56,10 @@ LOUD_WIRE=1 cargo run --example <example_name>
 | `google_search` | Real-time web grounding | Beginner |
 | `code_execution` | Run Python in sandbox | Beginner |
 | `url_context` | Fetch and analyze web pages | Beginner |
+| `google_maps` | Location-grounded responses with place data | Beginner |
 | `computer_use` | Browser automation | Advanced |
 | `file_search` | Semantic document retrieval | Intermediate |
+| `retrieval_grounding` | Retrieval tool (Vertex AI Search, RAG store, Exa.ai/Parallel.ai) | Advanced |
 
 ### Multimodal Input
 
@@ -83,7 +85,8 @@ LOUD_WIRE=1 cargo run --example <example_name>
 | Example | Description | Difficulty |
 |---------|-------------|------------|
 | `stateful_interaction` | Server-side context with `previous_interaction_id` | Beginner |
-| `explicit_turns` | Client-side history with Turn arrays | Intermediate |
+| `explicit_turns` | Client-side history with `Step` arrays | Intermediate |
+| `response_passthrough` | Feed `response.output_steps()` back as history | Intermediate |
 | `thought_echo` | Manual thought handling in multi-turn | Advanced |
 
 ### Advanced Features
@@ -92,7 +95,9 @@ LOUD_WIRE=1 cargo run --example <example_name>
 |---------|-------------|------------|
 | `thinking` | Chain-of-thought reasoning levels | Intermediate |
 | `deep_research` | Long-running research agent | Advanced |
+| `webhooks_and_background` | Webhook resource CRUD + per-request webhook routing | Advanced |
 | `cancel_interaction` | Cancel background tasks | Intermediate |
+| `antigravity_agent` | Local Antigravity harness agent with Rust tools and policies (`--features antigravity`) | Advanced |
 
 ### Real-World Applications
 
@@ -108,6 +113,7 @@ Located in `examples/real_world/`:
 | `testing_assistant/` | Test generation from code | Intermediate |
 | `data_analysis/` | CSV data analysis with functions | Intermediate |
 | `rag_system/` | Retrieval-augmented generation | Advanced |
+| `repo_auditor/` | Agentic security audit on the Antigravity harness: subagent, policies, structured report (`--features antigravity`) | Advanced |
 
 ## Example Details
 
@@ -155,7 +161,7 @@ Full control over the function execution loop.
 ```bash
 cargo run --example manual_function_calling
 ```
-**Learn**: Manual loop, `Content::function_result()`, custom execution logic.
+**Learn**: Manual loop, `Step::function_result()`, custom execution logic.
 
 #### tool_service
 Dependency injection for functions that need shared state.
@@ -178,7 +184,7 @@ Use real-time web data for grounded responses.
 ```bash
 cargo run --example google_search
 ```
-**Learn**: `with_google_search()`, grounding metadata.
+**Learn**: `with_google_search()`, `google_search_calls()`/`google_search_results()` steps.
 
 #### code_execution
 Run Python code in a sandboxed environment.
@@ -193,6 +199,16 @@ Fetch and analyze web page content.
 cargo run --example url_context
 ```
 **Learn**: `with_url_context()`, web content analysis.
+
+#### retrieval_grounding
+Ground responses in external retrieval backends.
+```bash
+cargo run --example retrieval_grounding
+```
+**Learn**: `RetrievalConfig`, `VertexAiSearchConfig`, `RagStoreConfig` (+
+`RagRetrievalConfig` hybrid search/filter/ranking), `ExaAiSearchConfig`.
+**Note**: Runs without credentials (prints request shapes); live call needs
+`GEMINI_API_KEY` + `VERTEX_AI_SEARCH_ENGINE`.
 
 ### Multimodal Examples
 
@@ -233,7 +249,7 @@ Enforce JSON schema on responses.
 ```bash
 cargo run --example structured_output
 ```
-**Learn**: `with_response_format()`, `with_response_mime_type()`.
+**Learn**: `with_response_format()`.
 
 ### Advanced Examples
 
@@ -250,6 +266,15 @@ Long-running research with background execution.
 cargo run --example deep_research
 ```
 **Learn**: `with_agent()`, `with_background()`, polling patterns.
+
+#### webhooks_and_background
+Push-based completion via webhooks instead of polling.
+```bash
+cargo run --example webhooks_and_background
+```
+**Learn**: `create_webhook()`/`ping_webhook()`/`rotate_webhook_signing_secret()`,
+`WebhookEvent`, `with_webhook_config()` on background interactions.
+**Note**: Runs without `GEMINI_API_KEY` (prints request shapes).
 
 #### cancel_interaction
 Cancel in-progress background tasks.
@@ -268,6 +293,7 @@ cargo run --example cancel_interaction
 | `computer_use` | Computer Use capability access |
 | `file_search` | Pre-configured file search store |
 | `google_search` | Google Search grounding access |
+| `antigravity_agent`, `repo_auditor` | `localharness` binary (`pip install google-antigravity==0.1.5`) + `--features antigravity` |
 
 ## Example Progression
 

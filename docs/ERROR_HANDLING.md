@@ -23,8 +23,8 @@ use genai_rs::GenaiError;
 match client.interaction().create().await {
     Ok(response) => { /* success */ }
     Err(e) => match e {
-        GenaiError::Api { status_code, message, request_id } => {
-            // HTTP error from API
+        GenaiError::Api { status_code, message, request_id, retry_after } => {
+            // HTTP error from API (retry_after populated for 429 responses)
         }
         GenaiError::Http(e) => {
             // Network/connection error
@@ -68,16 +68,15 @@ Errors from function execution (client-side function calling).
 use genai_rs::FunctionError;
 
 match result {
-    Err(FunctionError::NotFound(name)) => {
-        println!("Function '{}' not registered", name);
+    Err(FunctionError::ArgumentMismatch(msg)) => {
+        println!("Arguments didn't match the schema: {}", msg);
     }
-    Err(FunctionError::Execution { name, source }) => {
-        println!("Function '{}' failed: {}", name, source);
+    Err(FunctionError::ExecutionError(source)) => {
+        println!("Function failed: {}", source);
     }
-    Err(FunctionError::InvalidArguments { name, message }) => {
-        println!("Invalid args for '{}': {}", name, message);
+    _ => {
+        // Future variants (non_exhaustive)
     }
-    _ => {}
 }
 ```
 
@@ -87,7 +86,7 @@ match result {
 
 ```rust,ignore
 match client.interaction().create().await {
-    Err(GenaiError::Api { status_code, message, request_id }) => {
+    Err(GenaiError::Api { status_code, message, request_id, .. }) => {
         match status_code {
             400 => {
                 // Bad request - check your parameters
@@ -126,6 +125,10 @@ match client.interaction().create().await {
     _ => {}
 }
 ```
+
+For 429 responses, the `Api` variant also carries a `retry_after` field parsed
+from the `Retry-After` header; `GenaiError::retry_after()` exposes it as a
+`Duration` (see [Retry Patterns](RETRY_PATTERNS.md)).
 
 ### Using request_id
 
@@ -301,13 +304,16 @@ where
 
 ## Function Calling Errors
 
-### Registration Errors
+### Missing Functions
 
-```rust,ignore
-// Function not found - usually a typo or missing registration
-Err(FunctionError::NotFound(name)) => {
-    panic!("Function '{}' not registered - check #[tool] or with_function()", name);
-}
+The auto-function loop does not fail when the model calls a function that isn't
+registered. Instead it sends an error result back to the model
+(`{"error": "Function '<name>' is not available or not found."}`) so the
+conversation can continue. A missing function is usually a typo or a missing
+`#[tool]` / `with_function()` registration — watch the logs for:
+
+```text
+Function not found in registry or tool service: function='...'
 ```
 
 ### Execution Errors
@@ -331,9 +337,9 @@ async fn fetch_data(url: String) -> Result<String, String> {
 ### Argument Parsing Errors
 
 ```rust,ignore
-Err(FunctionError::InvalidArguments { name, message }) => {
+Err(FunctionError::ArgumentMismatch(message)) => {
     // Model sent arguments that don't match the schema
-    log::warn!("Model sent invalid args for {}: {}", name, message);
+    log::warn!("Model sent invalid args: {}", message);
     // Usually recoverable - model will retry with corrected args
 }
 ```
@@ -387,23 +393,24 @@ while let Some(result) = stream.next().await {
 
 ### Stream Resume on Error
 
-Streams support resumption via `event_id`:
+Streams support resumption via `event_id`. Track the interaction ID (from the
+`Created` chunk) and the last received `event_id`, then resume with
+`client.get_interaction_stream(interaction_id, last_event_id)`:
 
 ```rust,ignore
-let mut last_event_id = None;
+let mut interaction_id: Option<String> = None;
+let mut last_event_id: Option<String> = None;
 let mut collected_text = String::new();
 
 loop {
-    let mut stream = if let Some(ref event_id) = last_event_id {
+    let mut stream = if let (Some(id), Some(event_id)) = (&interaction_id, &last_event_id) {
         // Resume from last known position
-        client.interaction()
-            .with_model("gemini-3-flash-preview")
-            .with_text("Continue...")
-            .resume_stream(event_id)
+        client.get_interaction_stream(id, Some(event_id))
     } else {
         client.interaction()
             .with_model("gemini-3-flash-preview")
             .with_text("Tell me a story")
+            .with_store_enabled()  // Required to resume by interaction ID
             .create_stream()
     };
 
@@ -413,13 +420,15 @@ loop {
                 if let Some(id) = &event.event_id {
                     last_event_id = Some(id.clone());
                 }
-                if let StreamChunk::Delta(delta) = event.chunk {
-                    if let Some(text) = delta.as_text() {
-                        collected_text.push_str(text);
-                    }
+                if let Some(text) = event.chunk.delta_text() {
+                    collected_text.push_str(text);
                 }
-                if let StreamChunk::Complete(_) = event.chunk {
-                    return Ok(collected_text);
+                match event.chunk {
+                    StreamChunk::Created { interaction } => {
+                        interaction_id = interaction.id.clone();
+                    }
+                    StreamChunk::Completed(_) => return Ok(collected_text),
+                    _ => {}
                 }
             }
             Err(e) if should_retry(&e) => {
@@ -446,7 +455,7 @@ match result {
     Err(GenaiError::Api { status_code: 429, request_id, .. }) => {
         warn!("Rate limited (request: {:?}), backing off", request_id);
     }
-    Err(GenaiError::Api { status_code, message, request_id }) if status_code >= 500 => {
+    Err(GenaiError::Api { status_code, message, request_id, .. }) if status_code >= 500 => {
         error!("Server error {} (request: {:?}): {}",
                status_code, request_id, message);
     }

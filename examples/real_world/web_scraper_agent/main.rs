@@ -127,15 +127,19 @@ impl WebResearchAgent {
             .create()
             .await?;
 
-        // Display grounding metadata
-        if let Some(metadata) = response.google_search_metadata() {
+        // Display grounding steps
+        let queries = response.google_search_calls();
+        if !queries.is_empty() {
             println!("🔍 Search queries used:");
-            for query in &metadata.web_search_queries {
+            for query in &queries {
                 println!("   • {}", query);
             }
-            println!("📚 Sources retrieved: {}", metadata.grounding_chunks.len());
-            for chunk in metadata.grounding_chunks.iter().take(3) {
-                println!("   • {} [{}]", chunk.web.title, chunk.web.domain);
+        }
+        let sources = response.google_search_results();
+        if !sources.is_empty() {
+            println!("📚 Sources retrieved: {}", sources.len());
+            for source in sources.iter().take(3) {
+                println!("   • {} [{}]", source.title, source.url);
             }
             println!();
         }
@@ -200,11 +204,9 @@ impl WebResearchAgent {
             .await?;
 
         // Show grounding info
-        if let Some(metadata) = response.google_search_metadata() {
-            println!(
-                "🔍 Grounded with {} sources",
-                metadata.grounding_chunks.len()
-            );
+        let sources = response.google_search_results();
+        if !sources.is_empty() {
+            println!("🔍 Grounded with {} sources", sources.len());
         }
 
         let text = response.as_text().ok_or("No response text")?;
@@ -231,18 +233,19 @@ impl WebResearchAgent {
         while let Some(result) = stream.next().await {
             match result {
                 Ok(event) => match event.chunk {
-                    StreamChunk::Delta(content) => {
-                        if let Some(text) = content.as_text() {
+                    StreamChunk::StepDelta { delta, .. } => {
+                        if let Some(text) = delta.as_text() {
                             print!("{}", text);
                             stdout().flush()?;
                         }
                     }
-                    StreamChunk::Complete(response) => {
+                    StreamChunk::Completed(response) => {
                         println!("\n");
-                        if let Some(metadata) = response.google_search_metadata() {
+                        let sources = response.google_search_results();
+                        if !sources.is_empty() {
                             println!("--- Sources ---");
-                            for (i, chunk) in metadata.grounding_chunks.iter().take(5).enumerate() {
-                                println!("{}. {} - {}", i + 1, chunk.web.title, chunk.web.domain);
+                            for (i, source) in sources.iter().take(5).enumerate() {
+                                println!("{}. {} - {}", i + 1, source.title, source.url);
                             }
                         }
                     }
@@ -282,10 +285,11 @@ impl WebResearchAgent {
             .await?;
 
         // Show sources used
-        if let Some(metadata) = response.google_search_metadata() {
-            println!("📰 Sources consulted: {}", metadata.grounding_chunks.len());
-            for chunk in metadata.grounding_chunks.iter().take(3) {
-                println!("   • {}", chunk.web.domain);
+        let sources = response.google_search_results();
+        if !sources.is_empty() {
+            println!("📰 Sources consulted: {}", sources.len());
+            for source in sources.iter().take(3) {
+                println!("   • {}", source.url);
             }
             println!();
         }

@@ -41,15 +41,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
         Ok(response) => {
             println!("Status: {:?}", response.status);
 
-            // Check for computer use calls in the response
-            for content in &response.outputs {
-                if content.is_computer_use_call() {
-                    println!("\nComputer Use Call detected:");
-                    println!("  Content: {:?}", content);
-                }
-                if content.is_computer_use_result() {
-                    println!("\nComputer Use Result:");
-                    println!("  Content: {:?}", content);
+            // Computer-use actions surface as function_call steps with
+            // predefined function names (e.g. navigate, click_at, type_text_at)
+            for call in response.function_calls() {
+                println!("\nComputer Use action requested:");
+                println!("  {}({}) [id: {}]", call.name, call.args, call.id);
+            }
+
+            // Or iterate raw steps for full detail
+            for step in &response.steps {
+                if let genai_rs::Step::FunctionCall { name, .. } = step {
+                    println!("  [step] function_call: {name}");
                 }
             }
 
@@ -64,12 +66,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    // 3. Computer Use with Exclusions - Restrict dangerous actions
-    println!("\n=== Computer Use: With Excluded Functions ===\n");
+    // 3. Computer Use with Exclusions and safety configuration
+    println!("\n=== Computer Use: Exclusions + Safety Configuration ===\n");
 
     let prompt2 = "Check the current weather on weather.gov for Washington DC.";
     println!("Prompt: {prompt2}\n");
-    println!("Excluded functions: submit_form, download\n");
+    println!("Environment: browser; excluded functions: submit_form, download\n");
 
     match client
         .interaction()
@@ -77,7 +79,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_text(prompt2)
         .add_tool(
             ComputerUseConfig::new()
-                .excluding(vec!["submit_form".to_string(), "download".to_string()]),
+                .with_environment("browser") // "browser", "mobile", or "desktop"
+                .excluding(vec!["submit_form".to_string(), "download".to_string()])
+                .with_prompt_injection_detection(true),
         )
         .create()
         .await
@@ -85,9 +89,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         Ok(response) => {
             println!("Status: {:?}", response.status);
 
-            // Display summary of response contents
-            let summary = response.content_summary();
-            println!("Content summary: {}", summary);
+            // Display summary of response steps
+            let summary = response.step_summary();
+            println!("Step summary: {}", summary);
 
             // Display the model's response
             if let Some(text) = response.as_text() {
@@ -107,20 +111,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     println!("--- Key Takeaways ---");
     println!("  add_tool(ComputerUseConfig::new()) enables server-side browser automation");
-    println!("  ComputerUseConfig::new().excluding(...) restricts specific browser actions");
-    println!("  is_computer_use_call() checks if model requested a browser action");
-    println!("  is_computer_use_result() checks for action results");
-    println!("  content_summary() shows computer_use_call/result counts\n");
+    println!("  with_environment(...) targets \"browser\", \"mobile\", or \"desktop\"");
+    println!("  excluding(...) restricts specific predefined actions");
+    println!("  with_prompt_injection_detection(true) enables injection screening");
+    println!("  disabling_safety_policies(...) opts out of specific safety confirmations");
+    println!("  Actions arrive as Step::FunctionCall - use response.function_calls()");
+    println!("  step_summary() shows function_call counts\n");
 
     println!("--- What You'll See with LOUD_WIRE=1 ---");
-    println!("  [REQ#1] POST with input + computerUse tool");
-    println!("  [RES#1] completed: computer_use_call → computer_use_result → text");
-    println!("  [REQ#2] POST with input + computerUse (excludedPredefinedFunctions)");
+    println!("  [REQ#1] POST with input + computer_use tool");
+    println!(
+        "  [RES#1] completed/requires_action: function_call steps (predefined actions) + text"
+    );
+    println!("  [REQ#2] POST with input + computer_use (excluded_predefined_functions)");
     println!("  [RES#2] completed: actions within allowed functions\n");
 
     println!("--- Production Considerations ---");
     println!("  SECURITY: Review all browser actions before execution");
     println!("  SECURITY: Use ComputerUseConfig::new().excluding() to block dangerous actions");
+    println!("  SECURITY: Keep prompt injection detection enabled for untrusted pages");
     println!("  SECURITY: Never expose computer use to untrusted user input");
     println!("  AUDIT: Log all computer use activities for compliance");
     println!("  AVAILABILITY: Feature may require specific model/account access");

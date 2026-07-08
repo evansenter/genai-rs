@@ -50,9 +50,10 @@
 //! ```
 
 use super::common::API_KEY_HEADER;
-use super::error_helpers::{check_response, deserialize_with_context};
-use super::loud_wire;
+use super::context::HttpContext;
+use super::error_helpers::{check_response, check_response_wire, deserialize_with_context};
 use crate::errors::GenaiError;
+use crate::wire::WireEvent;
 use chrono::{DateTime, Utc};
 use reqwest::Client as ReqwestClient;
 use serde::{Deserialize, Serialize};
@@ -336,8 +337,7 @@ const MAX_FILE_SIZE: u64 = 2_147_483_648;
 ///
 /// # Arguments
 ///
-/// * `http_client` - The HTTP client to use
-/// * `api_key` - API key for authentication
+/// * `ctx` - HTTP context (client, API key, wire inspectors)
 /// * `file_data` - Raw bytes of the file
 /// * `mime_type` - MIME type of the file
 /// * `display_name` - Optional display name for the file
@@ -346,8 +346,7 @@ const MAX_FILE_SIZE: u64 = 2_147_483_648;
 ///
 /// Returns an error if the upload fails or the response cannot be parsed.
 pub async fn upload_file(
-    http_client: &ReqwestClient,
-    api_key: &str,
+    ctx: &HttpContext,
     file_data: Vec<u8>,
     mime_type: &str,
     display_name: Option<&str>,
@@ -375,17 +374,18 @@ pub async fn upload_file(
         display_name
     );
 
-    // LOUD_WIRE: Log upload start
     // Note: This function receives raw bytes, not a file path, so we can only use
     // the display_name if provided. For file path context, use the chunked upload
-    // variants which preserve and log the original file path.
-    let request_id = loud_wire::next_request_id();
-    loud_wire::log_upload_start(
-        request_id,
-        display_name.unwrap_or("(unnamed)"),
-        mime_type,
-        file_size,
-    );
+    // variants which preserve and surface the original file path.
+    let request_id = ctx.next_request_id();
+    if ctx.has_inspectors() {
+        ctx.emit(WireEvent::UploadStart {
+            id: request_id,
+            file_name: display_name.unwrap_or("(unnamed)").to_string(),
+            mime_type: mime_type.to_string(),
+            size_bytes: file_size,
+        });
+    }
 
     // Step 1: Start the resumable upload
     let metadata = if let Some(name) = display_name {
@@ -394,9 +394,10 @@ pub async fn upload_file(
         serde_json::json!({ "file": {} })
     };
 
-    let start_response = http_client
+    let start_response = ctx
+        .http_client
         .post(UPLOAD_URL)
-        .header(API_KEY_HEADER, api_key)
+        .header(API_KEY_HEADER, &ctx.api_key)
         .header("X-Goog-Upload-Protocol", "resumable")
         .header("X-Goog-Upload-Command", "start")
         .header("X-Goog-Upload-Header-Content-Length", file_size.to_string())
@@ -406,7 +407,7 @@ pub async fn upload_file(
         .send()
         .await?;
 
-    let start_response = check_response(start_response).await?;
+    let start_response = check_response_wire(start_response, ctx, request_id).await?;
 
     // Extract the upload URL from the response headers
     let upload_url = start_response
@@ -421,7 +422,8 @@ pub async fn upload_file(
     tracing::debug!("Got upload URL, uploading file data...");
 
     // Step 2: Upload the file bytes
-    let upload_response = http_client
+    let upload_response = ctx
+        .http_client
         .post(&upload_url)
         .header("X-Goog-Upload-Offset", "0")
         .header("X-Goog-Upload-Command", "upload, finalize")
@@ -430,7 +432,7 @@ pub async fn upload_file(
         .send()
         .await?;
 
-    let upload_response = check_response(upload_response).await?;
+    let upload_response = check_response_wire(upload_response, ctx, request_id).await?;
     let response_text = upload_response.text().await.map_err(GenaiError::Http)?;
     let file_response: FileUploadResponse =
         deserialize_with_context(&response_text, "FileUploadResponse")?;
@@ -441,8 +443,12 @@ pub async fn upload_file(
         file_response.file.uri
     );
 
-    // LOUD_WIRE: Log upload complete
-    loud_wire::log_upload_complete(request_id, &file_response.file.uri);
+    if ctx.has_inspectors() {
+        ctx.emit(WireEvent::UploadComplete {
+            id: request_id,
+            uri: file_response.file.uri.clone(),
+        });
+    }
 
     Ok(file_response.file)
 }
@@ -470,10 +476,9 @@ pub async fn upload_file(
 /// use genai_rs::{ResumableUpload, upload_file_chunked};
 /// use std::time::Duration;
 ///
-/// // Start a streaming upload
+/// // Start a streaming upload (ctx is the client's internal HttpContext)
 /// let (file, upload) = upload_file_chunked(
-///     &http_client,
-///     "api-key",
+///     &ctx,
 ///     "large_video.mp4",
 ///     "video/mp4",
 ///     Some("my-video"),
@@ -634,8 +639,7 @@ pub const DEFAULT_CHUNK_SIZE: usize = 8 * 1024 * 1024; // 8 MB
 ///
 /// # Arguments
 ///
-/// * `http_client` - The HTTP client to use
-/// * `api_key` - API key for authentication
+/// * `ctx` - HTTP context (client, API key, wire inspectors)
 /// * `path` - Path to the file to upload
 /// * `mime_type` - MIME type of the file
 /// * `display_name` - Optional display name for the file
@@ -665,12 +669,10 @@ pub const DEFAULT_CHUNK_SIZE: usize = 8 * 1024 * 1024; // 8 MB
 /// use genai_rs::upload_file_chunked;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let http_client = reqwest::Client::new();
-///
 /// // Upload a large video file without loading it all into memory
+/// // (ctx is the client's internal HttpContext)
 /// let (file, _upload_handle) = upload_file_chunked(
-///     &http_client,
-///     "api-key",
+///     &ctx,
 ///     "large_video.mp4",
 ///     "video/mp4",
 ///     Some("my-video"),
@@ -681,21 +683,13 @@ pub const DEFAULT_CHUNK_SIZE: usize = 8 * 1024 * 1024; // 8 MB
 /// # }
 /// ```
 pub async fn upload_file_chunked(
-    http_client: &ReqwestClient,
-    api_key: &str,
+    ctx: &HttpContext,
     path: impl AsRef<Path>,
     mime_type: &str,
     display_name: Option<&str>,
 ) -> Result<(FileMetadata, ResumableUpload), GenaiError> {
-    upload_file_chunked_with_chunk_size(
-        http_client,
-        api_key,
-        path,
-        mime_type,
-        display_name,
-        DEFAULT_CHUNK_SIZE,
-    )
-    .await
+    upload_file_chunked_with_chunk_size(ctx, path, mime_type, display_name, DEFAULT_CHUNK_SIZE)
+        .await
 }
 
 /// Uploads a file using chunked transfer with a custom chunk size.
@@ -706,8 +700,7 @@ pub async fn upload_file_chunked(
 ///
 /// # Arguments
 ///
-/// * `http_client` - The HTTP client to use
-/// * `api_key` - API key for authentication
+/// * `ctx` - HTTP context (client, API key, wire inspectors)
 /// * `path` - Path to the file to upload
 /// * `mime_type` - MIME type of the file
 /// * `display_name` - Optional display name for the file
@@ -717,8 +710,7 @@ pub async fn upload_file_chunked(
 ///
 /// Returns an error if the file cannot be read or the upload fails.
 pub async fn upload_file_chunked_with_chunk_size(
-    http_client: &ReqwestClient,
-    api_key: &str,
+    ctx: &HttpContext,
     path: impl AsRef<Path>,
     mime_type: &str,
     display_name: Option<&str>,
@@ -761,12 +753,18 @@ pub async fn upload_file_chunked_with_chunk_size(
         chunk_size
     );
 
-    // LOUD_WIRE: Log chunked upload start
-    let request_id = loud_wire::next_request_id();
-    let loud_wire_name = display_name
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| path.to_string_lossy().into_owned());
-    loud_wire::log_upload_start(request_id, &loud_wire_name, mime_type, file_size);
+    let request_id = ctx.next_request_id();
+    if ctx.has_inspectors() {
+        let file_name = display_name
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| path.to_string_lossy().into_owned());
+        ctx.emit(WireEvent::UploadStart {
+            id: request_id,
+            file_name,
+            mime_type: mime_type.to_string(),
+            size_bytes: file_size,
+        });
+    }
 
     // Step 1: Start the resumable upload session
     let metadata_json = if let Some(name) = display_name {
@@ -775,9 +773,10 @@ pub async fn upload_file_chunked_with_chunk_size(
         serde_json::json!({ "file": {} })
     };
 
-    let start_response = http_client
+    let start_response = ctx
+        .http_client
         .post(UPLOAD_URL)
-        .header(API_KEY_HEADER, api_key)
+        .header(API_KEY_HEADER, &ctx.api_key)
         .header("X-Goog-Upload-Protocol", "resumable")
         .header("X-Goog-Upload-Command", "start")
         .header("X-Goog-Upload-Header-Content-Length", file_size.to_string())
@@ -787,7 +786,7 @@ pub async fn upload_file_chunked_with_chunk_size(
         .send()
         .await?;
 
-    let start_response = check_response(start_response).await?;
+    let start_response = check_response_wire(start_response, ctx, request_id).await?;
 
     // Extract the upload URL from the response headers
     let upload_url = start_response
@@ -819,7 +818,8 @@ pub async fn upload_file_chunked_with_chunk_size(
     let body = reqwest::Body::wrap_stream(stream);
 
     // Step 3: Upload the file bytes using streaming
-    let upload_response = http_client
+    let upload_response = ctx
+        .http_client
         .post(&upload_url)
         .header("X-Goog-Upload-Offset", "0")
         .header("X-Goog-Upload-Command", "upload, finalize")
@@ -828,7 +828,7 @@ pub async fn upload_file_chunked_with_chunk_size(
         .send()
         .await?;
 
-    let upload_response = check_response(upload_response).await?;
+    let upload_response = check_response_wire(upload_response, ctx, request_id).await?;
     let response_text = upload_response.text().await.map_err(GenaiError::Http)?;
     let file_response: FileUploadResponse =
         deserialize_with_context(&response_text, "FileUploadResponse")?;
@@ -839,8 +839,12 @@ pub async fn upload_file_chunked_with_chunk_size(
         file_response.file.uri
     );
 
-    // LOUD_WIRE: Log upload complete
-    loud_wire::log_upload_complete(request_id, &file_response.file.uri);
+    if ctx.has_inspectors() {
+        ctx.emit(WireEvent::UploadComplete {
+            id: request_id,
+            uri: file_response.file.uri.clone(),
+        });
+    }
 
     Ok((file_response.file, resumable_upload))
 }
@@ -849,40 +853,36 @@ pub async fn upload_file_chunked_with_chunk_size(
 ///
 /// # Arguments
 ///
-/// * `http_client` - The HTTP client to use
-/// * `api_key` - API key for authentication
+/// * `ctx` - HTTP context (client, API key, wire inspectors)
 /// * `file_name` - The resource name of the file (e.g., "files/abc123")
 ///
 /// # Errors
 ///
 /// Returns an error if the request fails or the file doesn't exist.
-pub async fn get_file(
-    http_client: &ReqwestClient,
-    api_key: &str,
-    file_name: &str,
-) -> Result<FileMetadata, GenaiError> {
+pub async fn get_file(ctx: &HttpContext, file_name: &str) -> Result<FileMetadata, GenaiError> {
     tracing::debug!("Getting file metadata: {}", file_name);
 
     let url = format!("{BASE_URL}/{API_VERSION}/{file_name}");
 
-    // LOUD_WIRE: Log outgoing request
-    let request_id = loud_wire::next_request_id();
-    loud_wire::log_request(request_id, "GET", &url, None);
+    let request_id = ctx.next_request_id();
+    ctx.emit_request(request_id, "GET", &url, None);
 
-    let response = http_client
+    let response = ctx
+        .http_client
         .get(&url)
-        .header(API_KEY_HEADER, api_key)
+        .header(API_KEY_HEADER, &ctx.api_key)
         .send()
         .await?;
 
-    // LOUD_WIRE: Log response status
-    loud_wire::log_response_status(request_id, response.status().as_u16());
+    ctx.emit(WireEvent::ResponseStatus {
+        id: request_id,
+        status: response.status().as_u16(),
+    });
 
-    let response = check_response(response).await?;
+    let response = check_response_wire(response, ctx, request_id).await?;
     let response_text = response.text().await.map_err(GenaiError::Http)?;
 
-    // LOUD_WIRE: Log response body
-    loud_wire::log_response_body(request_id, &response_text);
+    ctx.emit_response_body(request_id, &response_text);
 
     let file: FileMetadata = deserialize_with_context(&response_text, "FileMetadata")?;
 
@@ -895,8 +895,7 @@ pub async fn get_file(
 ///
 /// # Arguments
 ///
-/// * `http_client` - The HTTP client to use
-/// * `api_key` - API key for authentication
+/// * `ctx` - HTTP context (client, API key, wire inspectors)
 /// * `page_size` - Optional maximum number of files to return
 /// * `page_token` - Optional token for pagination
 ///
@@ -904,8 +903,7 @@ pub async fn get_file(
 ///
 /// Returns an error if the request fails.
 pub async fn list_files(
-    http_client: &ReqwestClient,
-    api_key: &str,
+    ctx: &HttpContext,
     page_size: Option<u32>,
     page_token: Option<&str>,
 ) -> Result<ListFilesResponse, GenaiError> {
@@ -928,24 +926,25 @@ pub async fn list_files(
         url.push_str(&format!("{separator}pageToken={token}"));
     }
 
-    // LOUD_WIRE: Log outgoing request
-    let request_id = loud_wire::next_request_id();
-    loud_wire::log_request(request_id, "GET", &url, None);
+    let request_id = ctx.next_request_id();
+    ctx.emit_request(request_id, "GET", &url, None);
 
-    let response = http_client
+    let response = ctx
+        .http_client
         .get(&url)
-        .header(API_KEY_HEADER, api_key)
+        .header(API_KEY_HEADER, &ctx.api_key)
         .send()
         .await?;
 
-    // LOUD_WIRE: Log response status
-    loud_wire::log_response_status(request_id, response.status().as_u16());
+    ctx.emit(WireEvent::ResponseStatus {
+        id: request_id,
+        status: response.status().as_u16(),
+    });
 
-    let response = check_response(response).await?;
+    let response = check_response_wire(response, ctx, request_id).await?;
     let response_text = response.text().await.map_err(GenaiError::Http)?;
 
-    // LOUD_WIRE: Log response body
-    loud_wire::log_response_body(request_id, &response_text);
+    ctx.emit_response_body(request_id, &response_text);
 
     let list_response: ListFilesResponse =
         deserialize_with_context(&response_text, "ListFilesResponse")?;
@@ -959,36 +958,33 @@ pub async fn list_files(
 ///
 /// # Arguments
 ///
-/// * `http_client` - The HTTP client to use
-/// * `api_key` - API key for authentication
+/// * `ctx` - HTTP context (client, API key, wire inspectors)
 /// * `file_name` - The resource name of the file to delete (e.g., "files/abc123")
 ///
 /// # Errors
 ///
 /// Returns an error if the request fails or the file doesn't exist.
-pub async fn delete_file(
-    http_client: &ReqwestClient,
-    api_key: &str,
-    file_name: &str,
-) -> Result<(), GenaiError> {
+pub async fn delete_file(ctx: &HttpContext, file_name: &str) -> Result<(), GenaiError> {
     tracing::debug!("Deleting file: {}", file_name);
 
     let url = format!("{BASE_URL}/{API_VERSION}/{file_name}");
 
-    // LOUD_WIRE: Log outgoing request
-    let request_id = loud_wire::next_request_id();
-    loud_wire::log_request(request_id, "DELETE", &url, None);
+    let request_id = ctx.next_request_id();
+    ctx.emit_request(request_id, "DELETE", &url, None);
 
-    let response = http_client
+    let response = ctx
+        .http_client
         .delete(&url)
-        .header(API_KEY_HEADER, api_key)
+        .header(API_KEY_HEADER, &ctx.api_key)
         .send()
         .await?;
 
-    // LOUD_WIRE: Log response status
-    loud_wire::log_response_status(request_id, response.status().as_u16());
+    ctx.emit(WireEvent::ResponseStatus {
+        id: request_id,
+        status: response.status().as_u16(),
+    });
 
-    check_response(response).await?;
+    check_response_wire(response, ctx, request_id).await?;
 
     tracing::debug!("File deleted successfully");
 

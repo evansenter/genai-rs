@@ -4,12 +4,12 @@
 //! where text is printed as it arrives rather than waiting for the complete response.
 //!
 //! It shows how to handle all streaming event types:
-//! - `Start`: Interaction accepted, provides early access to interaction ID
+//! - `Created`: Interaction accepted, provides early access to interaction ID
 //! - `StatusUpdate`: Status changes during processing
-//! - `ContentStart`: Content generation begins for an output
-//! - `Delta`: Incremental content (text, thought, function_call)
-//! - `ContentStop`: Content generation ends for an output
-//! - `Complete`: Final complete interaction response
+//! - `StepStart`: A new step begins (model output, thought, tool call, ...)
+//! - `StepDelta`: Incremental step content (text, thought summary, function args)
+//! - `StepStop`: Step ends, with optional per-step usage
+//! - `Completed`: Final complete interaction response
 //! - `Error`: Error occurred during streaming
 //!
 //! # Running
@@ -28,7 +28,7 @@
 //! Set the `GEMINI_API_KEY` environment variable with your API key.
 
 use futures_util::StreamExt;
-use genai_rs::{Client, StreamChunk};
+use genai_rs::{Client, StepDelta, StreamChunk};
 use std::env;
 use std::io::{self, Write};
 
@@ -54,11 +54,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .create_stream();
 
     // Track statistics for each event type
-    let mut start_count = 0;
+    let mut created_count = 0;
     let mut status_update_count = 0;
-    let mut content_start_count = 0;
+    let mut step_start_count = 0;
     let mut delta_count = 0;
-    let mut content_stop_count = 0;
+    let mut step_stop_count = 0;
     let mut complete_count = 0;
     let mut total_chars = 0;
     let mut interaction_id: Option<String> = None;
@@ -76,12 +76,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 match &event.chunk {
-                    StreamChunk::Start { interaction } => {
-                        // Interaction has started - provides early access to interaction ID
-                        start_count += 1;
+                    StreamChunk::Created { interaction } => {
+                        // Interaction has been created - provides early access to interaction ID
+                        created_count += 1;
                         interaction_id = interaction.id.clone();
                         eprintln!(
-                            "[Start] Interaction started: id={:?}, status={:?}",
+                            "[Created] Interaction created: id={:?}, status={:?}",
                             interaction.id, interaction.status
                         );
                     }
@@ -93,18 +93,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         status_update_count += 1;
                         eprintln!("[StatusUpdate] id={}, status={:?}", id, status);
                     }
-                    StreamChunk::ContentStart {
-                        index,
-                        content_type,
-                    } => {
-                        // Content generation begins for an output position
-                        content_start_count += 1;
+                    StreamChunk::StepStart { index, step } => {
+                        // A new step begins at this output position
+                        step_start_count += 1;
                         eprintln!(
-                            "[ContentStart] index={}, content_type={:?}",
-                            index, content_type
+                            "[StepStart] index={}, step_type={}",
+                            index,
+                            step.step_type()
                         );
                     }
-                    StreamChunk::Delta(delta) => {
+                    StreamChunk::StepDelta { index: _, delta } => {
                         delta_count += 1;
                         // Print text deltas as they arrive
                         if let Some(text) = delta.as_text() {
@@ -112,18 +110,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             io::stdout().flush()?; // Flush to show immediately
                             total_chars += text.len();
                         }
-                        // Handle thought deltas (thinking mode)
-                        // Note: Thoughts contain cryptographic signatures, not readable text
-                        if delta.is_thought() && delta.thought_signature().is_some() {
+                        // Handle thought signature deltas (thinking mode)
+                        // Note: Signatures are cryptographic tokens, not readable text
+                        if let StepDelta::ThoughtSignature {
+                            signature: Some(_), ..
+                        } = delta
+                        {
                             eprintln!("[Thought] (signature present)");
                         }
                     }
-                    StreamChunk::ContentStop { index } => {
-                        // Content generation ends for an output position
-                        content_stop_count += 1;
-                        eprintln!("\n[ContentStop] index={}", index);
+                    StreamChunk::StepStop {
+                        index,
+                        usage: _,
+                        step_usage,
+                    } => {
+                        // Step ends at this output position
+                        step_stop_count += 1;
+                        eprintln!(
+                            "\n[StepStop] index={}, has_step_usage={}",
+                            index,
+                            step_usage.is_some()
+                        );
                     }
-                    StreamChunk::Complete(response) => {
+                    StreamChunk::Completed(response) => {
                         // Final response with full metadata
                         complete_count += 1;
                         println!("\n");
@@ -156,11 +165,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n--- Stream Stats ---");
     println!("Interaction ID: {:?}", interaction_id);
-    println!("Start events: {}", start_count);
+    println!("Created events: {}", created_count);
     println!("StatusUpdate events: {}", status_update_count);
-    println!("ContentStart events: {}", content_start_count);
-    println!("Delta chunks received: {}", delta_count);
-    println!("ContentStop events: {}", content_stop_count);
+    println!("StepStart events: {}", step_start_count);
+    println!("StepDelta chunks received: {}", delta_count);
+    println!("StepStop events: {}", step_stop_count);
     println!("Complete events: {}", complete_count);
     println!("Total characters: {}", total_chars);
     if let Some(event_id) = &last_event_id {
@@ -179,26 +188,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Key Takeaways ---");
     println!("• create_stream() returns a Stream of StreamEvent (chunk + event_id)");
     println!("• StreamChunk event lifecycle:");
-    println!("    1. Start - Interaction accepted (provides early access to ID)");
+    println!("    1. Created - Interaction accepted (provides early access to ID)");
     println!("    2. StatusUpdate - Status changes (for background/agent interactions)");
-    println!("    3. ContentStart - Content generation begins (with index and type)");
-    println!("    4. Delta - Incremental text/thought content");
-    println!("    5. ContentStop - Content generation ends");
-    println!("    6. Complete - Final response with usage metadata");
+    println!("    3. StepStart - Step begins (with index and step type)");
+    println!("    4. StepDelta - Incremental text/thought/function-arg content");
+    println!("    5. StepStop - Step ends (with optional per-step usage)");
+    println!("    6. Completed - Final response with usage metadata");
     println!("• Error events indicate terminal failures");
     println!("• event_id can be saved for stream resumption after disconnection\n");
 
     println!("--- What You'll See with LOUD_WIRE=1 ---");
     println!("  [REQ#1] POST with input text + model + store:true");
     println!(
-        "  [RES#1] SSE stream: interaction.start → content.start → content.delta(s) → content.stop → interaction.complete\n"
+        "  [RES#1] SSE stream: interaction.created → step.start → step.delta(s) → step.stop → interaction.completed\n"
     );
 
     println!("--- Production Considerations ---");
     println!("• Handle stream errors gracefully (connection drops, timeouts)");
     println!("• Use buffering strategies for high-frequency deltas");
     println!("• Save event_id to resume streams after network interruptions");
-    println!("• StreamChunk::Complete contains the same data as non-streaming response");
+    println!("• StreamChunk::Completed contains the same data as non-streaming response");
     println!("• Use chunk.interaction_id() to track which interaction events belong to\n");
 
     println!("--- Resume Pattern ---");

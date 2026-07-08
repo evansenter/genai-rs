@@ -23,7 +23,7 @@
 //! Higher levels produce more detailed reasoning but consume more tokens.
 
 use futures_util::StreamExt;
-use genai_rs::{Client, StreamChunk, ThinkingLevel, ThinkingSummaries};
+use genai_rs::{Client, StepDelta, StreamChunk, ThinkingLevel, ThinkingSummaries};
 use std::env;
 use std::io::{Write, stdout};
 
@@ -72,20 +72,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Final Answer:\n{}\n", text);
     }
 
-    // Show content summary
-    let summary = response.content_summary();
+    // Show step summary
+    let summary = response.step_summary();
     println!(
-        "Content: {} thought blocks, {} text blocks\n",
+        "Steps: {} thought steps, {} text blocks\n",
         summary.thought_count, summary.text_count
     );
 
-    // Show token usage for reasoning
-    if let Some(reasoning) = response
-        .usage
-        .as_ref()
-        .and_then(|u| u.total_reasoning_tokens)
-    {
-        println!("Reasoning tokens: {}", reasoning);
+    // Show token usage for thinking
+    if let Some(thought_tokens) = response.thought_tokens() {
+        println!("Thought tokens: {}", thought_tokens);
     }
 
     // ==========================================================================
@@ -106,13 +102,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .create()
         .await?;
 
-    // ThinkingSummaries::Auto provides summarized reasoning in outputs
+    // ThinkingSummaries::Auto provides summarized reasoning in thought steps
     if response.has_thoughts() {
         let thought_count = response.thought_signatures().count();
         println!(
-            "Received {} thought block(s) with summaries enabled",
+            "Received {} thought step(s) with summaries enabled",
             thought_count
         );
+        for summary_content in response.thought_summaries() {
+            if let Some(text) = summary_content.as_text() {
+                println!("  Thought summary: {}", text);
+            }
+        }
     }
 
     if let Some(text) = response.as_text() {
@@ -124,11 +125,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Answer: {}\n", preview);
     }
 
-    // Show reasoning tokens
-    if let Some(usage) = &response.usage
-        && let Some(reasoning) = usage.total_reasoning_tokens
-    {
-        println!("Reasoning tokens: {}", reasoning);
+    // Show thought tokens
+    if let Some(thought_tokens) = response.thought_tokens() {
+        println!("Thought tokens: {}", thought_tokens);
     }
 
     // ==========================================================================
@@ -153,7 +152,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .create()
             .await?;
 
-        let summary = response.content_summary();
+        let summary = response.step_summary();
 
         if response.has_thoughts() {
             // Thoughts contain cryptographic signatures, not readable text
@@ -175,13 +174,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             summary.thought_count, summary.text_count
         );
 
-        if let Some(usage) = &response.usage {
-            if let Some(reasoning) = usage.total_reasoning_tokens {
-                println!("Reasoning tokens used: {}", reasoning);
-            }
-            if let Some(total) = usage.total_output_tokens {
-                println!("Total output tokens: {}", total);
-            }
+        if let Some(thought_tokens) = response.thought_tokens() {
+            println!("Thought tokens used: {}", thought_tokens);
+        }
+        if let Some(total) = response.usage.as_ref().and_then(|u| u.total_output_tokens) {
+            println!("Total output tokens: {}", total);
         }
         println!();
     }
@@ -206,28 +203,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     while let Some(result) = stream.next().await {
         match result {
             Ok(event) => match event.chunk {
-                StreamChunk::Delta(content) => {
-                    // Thoughts contain signatures, not readable text
-                    if content.thought_signature().is_some() {
+                StreamChunk::StepDelta { delta, .. } => match delta {
+                    // Signatures are cryptographic tokens, not readable text
+                    StepDelta::ThoughtSignature { .. } => {
                         if !in_thought {
                             print!("\n[THINKING] (signature present) ");
                             in_thought = true;
                         }
                         stdout().flush()?;
-                    } else if let Some(t) = content.as_text() {
-                        if in_thought {
-                            println!("\n[END THINKING]\n");
-                            in_thought = false;
-                            print!("[ANSWER] ");
+                    }
+                    // Thought summaries stream as readable content
+                    StepDelta::ThoughtSummary { content } => {
+                        if !in_thought {
+                            print!("\n[THINKING] ");
+                            in_thought = true;
                         }
-                        print!("{}", t);
+                        if let Some(t) = content.as_ref().and_then(|c| c.as_text()) {
+                            print!("{}", t);
+                        }
                         stdout().flush()?;
                     }
-                    // ThoughtSignature (thought authenticity verification) is silently ignored
-                }
-                StreamChunk::Complete(response) => {
+                    _ => {
+                        if let Some(t) = delta.as_text() {
+                            if in_thought {
+                                println!("\n[END THINKING]\n");
+                                in_thought = false;
+                                print!("[ANSWER] ");
+                            }
+                            print!("{}", t);
+                            stdout().flush()?;
+                        }
+                    }
+                },
+                StreamChunk::Completed(response) => {
                     println!("\n");
-                    let summary = response.content_summary();
+                    let summary = response.step_summary();
                     println!(
                         "Complete: {} thoughts, {} text blocks",
                         summary.thought_count, summary.text_count
@@ -255,7 +265,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  1. Use 'medium' for general problem-solving");
     println!("  2. Use 'high' for math, logic, and complex reasoning");
     println!("  3. Check response.has_thoughts() before iterating");
-    println!("  4. Monitor total_reasoning_tokens in usage for cost tracking");
+    println!("  4. Monitor response.thought_tokens() for cost tracking");
 
     // =========================================================================
     // Summary
@@ -273,13 +283,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- What You'll See with LOUD_WIRE=1 ---");
     println!("Non-streaming:");
     println!("  [REQ#1] POST with input + thinkingConfig(medium)");
-    println!("  [RES#1] completed: thoughts + text (usage includes reasoningTokens)\n");
+    println!("  [RES#1] completed: thought steps + model_output (usage includes thought tokens)\n");
     println!("Streaming:");
     println!("  [REQ#2] POST streaming with input + thinkingConfig");
-    println!("  [RES#2] SSE stream: thought deltas → text deltas → completed\n");
+    println!("  [RES#2] SSE stream: thought summary/signature deltas → text deltas → completed\n");
 
     println!("--- Production Considerations ---");
-    println!("• Monitor total_reasoning_tokens in usage for cost tracking");
+    println!("• Monitor response.thought_tokens() for cost tracking");
     println!("• Use 'high' for math, logic, and complex reasoning tasks");
     println!("• Thought content may be internal (not exposed) in some cases");
     println!("• ThoughtSignature provides authenticity verification");

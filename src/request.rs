@@ -6,7 +6,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
 use crate::content::Content;
-use crate::tools::{FunctionCallingMode, Tool};
+use crate::environment::EnvironmentSpec;
+use crate::response_format::ResponseFormatSpec;
+use crate::steps::Step;
+use crate::tools::{Tool, ToolChoice};
+use crate::webhooks::WebhookConfig;
 
 /// Role in a conversation turn.
 ///
@@ -196,102 +200,8 @@ impl TurnContent {
     }
 }
 
-/// A single turn in a multi-turn conversation.
-///
-/// Represents one message in a conversation, containing the role (who sent it)
-/// and the content of the message.
-///
-/// # Example
-///
-/// ```
-/// use genai_rs::{Turn, Role, TurnContent};
-///
-/// // Create a user turn with text
-/// let user_turn = Turn::user("What is 2+2?");
-///
-/// // Create a model turn with text
-/// let model_turn = Turn::model("2+2 equals 4.");
-///
-/// // Create a turn with explicit role and content
-/// let turn = Turn::new(Role::User, "Hello!");
-///
-/// // Access via getters
-/// assert!(matches!(turn.role(), &Role::User));
-/// assert_eq!(turn.content().as_text(), Some("Hello!"));
-/// ```
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Turn {
-    role: Role,
-    content: TurnContent,
-}
-
-impl Turn {
-    /// Creates a new turn with the given role and content.
-    pub fn new(role: Role, content: impl Into<TurnContent>) -> Self {
-        Self {
-            role,
-            content: content.into(),
-        }
-    }
-
-    /// Returns a reference to the role of this turn.
-    #[must_use]
-    pub fn role(&self) -> &Role {
-        &self.role
-    }
-
-    /// Returns a reference to the content of this turn.
-    #[must_use]
-    pub fn content(&self) -> &TurnContent {
-        &self.content
-    }
-
-    /// Creates a user turn with the given content.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use genai_rs::Turn;
-    ///
-    /// let turn = Turn::user("What is the capital of France?");
-    /// ```
-    pub fn user(content: impl Into<TurnContent>) -> Self {
-        Self::new(Role::User, content)
-    }
-
-    /// Creates a model turn with the given content.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use genai_rs::Turn;
-    ///
-    /// let turn = Turn::model("The capital of France is Paris.");
-    /// ```
-    pub fn model(content: impl Into<TurnContent>) -> Self {
-        Self::new(Role::Model, content)
-    }
-
-    /// Returns `true` if this is a user turn.
-    #[must_use]
-    pub fn is_user(&self) -> bool {
-        *self.role() == Role::User
-    }
-
-    /// Returns `true` if this is a model turn.
-    #[must_use]
-    pub fn is_model(&self) -> bool {
-        *self.role() == Role::Model
-    }
-
-    /// Returns the text content if this turn contains text.
-    #[must_use]
-    pub fn as_text(&self) -> Option<&str> {
-        self.content().as_text()
-    }
-}
-
-/// Input for an interaction - can be a simple string, array of content, or turns.
+/// Input for an interaction - a simple string, an array of content blocks,
+/// or an array of steps (conversation history).
 ///
 /// This enum is marked `#[non_exhaustive]` for forward compatibility.
 /// New input types may be added in future versions.
@@ -299,35 +209,104 @@ impl Turn {
 /// # Variants
 ///
 /// - `Text`: Simple text input for single-turn conversations
-/// - `Content`: Array of content objects for multimodal input
-/// - `Turns`: Array of turns for explicit multi-turn conversations
+/// - `Content`: Array of content blocks for multimodal input
+/// - `Steps`: Array of [`Step`]s — the canonical multi-turn/history form
+///   under API revision 2026-05-20 (replaces the deprecated `Turn` array)
 ///
 /// # Example
 ///
 /// ```
-/// use genai_rs::{InteractionInput, Turn};
+/// use genai_rs::{InteractionInput, Step};
 ///
 /// // Simple text
 /// let input = InteractionInput::Text("Hello!".to_string());
 ///
-/// // Multi-turn conversation
-/// let turns = vec![
-///     Turn::user("What is 2+2?"),
-///     Turn::model("2+2 equals 4."),
-///     Turn::user("And what's that times 3?"),
+/// // Multi-turn conversation history as steps
+/// let steps = vec![
+///     Step::user_text("What is 2+2?"),
+///     Step::model_text("2+2 equals 4."),
+///     Step::user_text("And what's that times 3?"),
 /// ];
-/// let input = InteractionInput::Turns(turns);
+/// let input = InteractionInput::Steps(steps);
 /// ```
-#[derive(Clone, Serialize, Deserialize, Debug)]
-#[serde(untagged)]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum InteractionInput {
     /// Simple text input
     Text(String),
-    /// Array of content objects
+    /// Array of content blocks (single-turn multimodal input)
     Content(Vec<Content>),
-    /// Array of turns for multi-turn conversations
-    Turns(Vec<Turn>),
+    /// Array of steps (multi-turn conversation history, function results,
+    /// thought signatures, ...)
+    Steps(Vec<Step>),
+}
+
+impl Serialize for InteractionInput {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Text(t) => serializer.serialize_str(t),
+            Self::Content(c) => c.serialize(serializer),
+            Self::Steps(s) => s.serialize(serializer),
+        }
+    }
+}
+
+/// The set of `type` tags that identify a content block (as opposed to a step).
+const CONTENT_TYPE_TAGS: &[&str] = &["text", "image", "audio", "video", "document"];
+
+impl<'de> Deserialize<'de> for InteractionInput {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::String(s) => Ok(Self::Text(s)),
+            serde_json::Value::Array(items) => {
+                // Decide between [Content] and [Step] by inspecting element
+                // type tags. Elements with content tags (text/image/...) are
+                // content blocks; everything else (user_input, function_call,
+                // unknown future types, ...) is treated as steps, the
+                // canonical revision 2026-05-20 form.
+                let is_content = items.iter().all(|item| {
+                    item.get("type")
+                        .and_then(|t| t.as_str())
+                        .is_some_and(|t| CONTENT_TYPE_TAGS.contains(&t))
+                });
+                if is_content && !items.is_empty() {
+                    let contents = serde_json::from_value(serde_json::Value::Array(items))
+                        .map_err(serde::de::Error::custom)?;
+                    Ok(Self::Content(contents))
+                } else {
+                    let steps = serde_json::from_value(serde_json::Value::Array(items))
+                        .map_err(serde::de::Error::custom)?;
+                    Ok(Self::Steps(steps))
+                }
+            }
+            other @ serde_json::Value::Object(_) => {
+                // A single content or step object.
+                let is_content = other
+                    .get("type")
+                    .and_then(|t| t.as_str())
+                    .is_some_and(|t| CONTENT_TYPE_TAGS.contains(&t));
+                if is_content {
+                    let content: Content =
+                        serde_json::from_value(other).map_err(serde::de::Error::custom)?;
+                    Ok(Self::Content(vec![content]))
+                } else {
+                    let step: Step =
+                        serde_json::from_value(other).map_err(serde::de::Error::custom)?;
+                    Ok(Self::Steps(vec![step]))
+                }
+            }
+            other => Err(serde::de::Error::custom(format!(
+                "InteractionInput must be a string, array, or object; got {other}"
+            ))),
+        }
+    }
 }
 
 /// Thinking level for chain-of-thought reasoning.
@@ -487,8 +466,6 @@ pub struct GenerationConfig {
     pub max_output_tokens: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub top_k: Option<i32>,
     /// Thinking level for chain-of-thought reasoning
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_level: Option<ThinkingLevel>,
@@ -510,32 +487,71 @@ pub struct GenerationConfig {
     pub thinking_summaries: Option<ThinkingSummaries>,
     /// Controls function calling behavior.
     ///
-    /// This field determines how the model uses declared tools/functions:
-    /// - `Auto` (default): Model decides whether to call functions
-    /// - `Any`: Model must call a function
-    /// - `None`: Function calling is disabled
-    /// - `Validated`: Ensures schema adherence for both function calls and natural language
+    /// Either a plain mode string (`auto|any|none|validated`) or an
+    /// `allowed_tools` restriction object. See [`ToolChoice`].
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_choice: Option<FunctionCallingMode>,
-    /// Optional list of specific tool names the model is allowed to call.
-    /// When set, restricts the model to only calling the named tools.
+    pub tool_choice: Option<ToolChoice>,
+    /// Positive values penalize tokens that already appeared in the text,
+    /// increasing the likelihood of new topics. Range: [-2.0, 2.0].
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub allowed_tools: Option<Vec<String>>,
+    pub presence_penalty: Option<f32>,
+    /// Positive values penalize tokens proportionally to their frequency in
+    /// the text so far, reducing repetition. Range: [-2.0, 2.0].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frequency_penalty: Option<f32>,
     /// Speech configuration for text-to-speech audio output.
     ///
-    /// Required when using `AUDIO` response modality.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub speech_config: Option<SpeechConfig>,
+    /// Required when using the `audio` response modality. The wire format is
+    /// a **list** of speaker configurations: a single entry for single-voice
+    /// TTS, multiple entries (each with a distinct `speaker` name matching
+    /// the prompt) for multi-speaker TTS.
+    ///
+    /// A legacy single-object wire form is still accepted on deserialize.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_speech_configs"
+    )]
+    pub speech_config: Option<Vec<SpeechConfig>>,
     /// Image generation configuration.
     ///
     /// Controls aspect ratio and size for image generation output.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_config: Option<ImageConfig>,
+    /// Video generation configuration.
+    ///
+    /// Controls the video generation task mode when using the `video`
+    /// response modality.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub video_config: Option<VideoConfig>,
+}
+
+/// Deserializes `speech_config` from either the spec list form or the legacy
+/// single-object form.
+fn deserialize_speech_configs<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<SpeechConfig>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum ListOrSingle {
+        List(Vec<SpeechConfig>),
+        Single(SpeechConfig),
+    }
+
+    Ok(
+        Option::<ListOrSingle>::deserialize(deserializer)?.map(|value| match value {
+            ListOrSingle::List(list) => list,
+            ListOrSingle::Single(single) => vec![single],
+        }),
+    )
 }
 
 /// Speech configuration for text-to-speech audio output.
 ///
-/// Configure voice, language, and speaker settings when using `AUDIO` response modality.
+/// Configure voice, language, and speaker settings when using the `audio` response modality.
 ///
 /// # Example
 ///
@@ -886,6 +902,160 @@ impl<'de> Deserialize<'de> for ImageSize {
     }
 }
 
+/// Task mode for video generation.
+///
+/// If not specified, the model automatically determines the appropriate mode
+/// based on the provided text prompt and input media.
+///
+/// This enum is marked `#[non_exhaustive]` for forward compatibility.
+///
+/// # Wire Format
+///
+/// Serializes as lowercase snake_case strings: `"text_to_video"`,
+/// `"image_to_video"`, `"reference_to_video"`, `"edit"`, `"extend"`.
+/// The full value list was confirmed live (2026-07) via the API's own
+/// validation error for `generation_config.video_config.task`.
+///
+/// # Evergreen Pattern
+///
+/// Unknown values from the API deserialize into the `Unknown` variant,
+/// preserving the original data for debugging and roundtrip serialization.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum VideoTask {
+    /// Generate a video from a text prompt.
+    TextToVideo,
+    /// Generate a video from an input image.
+    ImageToVideo,
+    /// Generate a video from reference media.
+    ReferenceToVideo,
+    /// Edit an existing video.
+    Edit,
+    /// Extend an existing video.
+    Extend,
+    /// Unknown variant for forward compatibility (Evergreen pattern)
+    Unknown {
+        /// The unrecognized task type from the API
+        task_type: String,
+        /// The full JSON data, preserved for debugging and roundtrip serialization
+        data: serde_json::Value,
+    },
+}
+
+impl VideoTask {
+    /// Returns true if this is an unknown video task.
+    #[must_use]
+    pub const fn is_unknown(&self) -> bool {
+        matches!(self, Self::Unknown { .. })
+    }
+
+    /// Returns the task type name if this is an unknown video task.
+    #[must_use]
+    pub fn unknown_task_type(&self) -> Option<&str> {
+        match self {
+            Self::Unknown { task_type, .. } => Some(task_type),
+            _ => None,
+        }
+    }
+
+    /// Returns the preserved data if this is an unknown video task.
+    #[must_use]
+    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::Unknown { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for VideoTask {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::TextToVideo => serializer.serialize_str("text_to_video"),
+            Self::ImageToVideo => serializer.serialize_str("image_to_video"),
+            Self::ReferenceToVideo => serializer.serialize_str("reference_to_video"),
+            Self::Edit => serializer.serialize_str("edit"),
+            Self::Extend => serializer.serialize_str("extend"),
+            Self::Unknown { task_type, .. } => serializer.serialize_str(task_type),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for VideoTask {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value.as_str() {
+            Some("text_to_video") => Ok(Self::TextToVideo),
+            Some("image_to_video") => Ok(Self::ImageToVideo),
+            Some("reference_to_video") => Ok(Self::ReferenceToVideo),
+            Some("edit") => Ok(Self::Edit),
+            Some("extend") => Ok(Self::Extend),
+            Some(other) => {
+                tracing::warn!(
+                    "Encountered unknown VideoTask '{}' - using Unknown variant (Evergreen)",
+                    other
+                );
+                Ok(Self::Unknown {
+                    task_type: other.to_string(),
+                    data: value,
+                })
+            }
+            None => {
+                let task_type = format!("<non-string: {}>", value);
+                tracing::warn!(
+                    "VideoTask received non-string value: {}. \
+                     Preserving in Unknown variant.",
+                    value
+                );
+                Ok(Self::Unknown {
+                    task_type,
+                    data: value,
+                })
+            }
+        }
+    }
+}
+
+/// Configuration for video generation output
+/// (`generation_config.video_config`).
+///
+/// # Example
+///
+/// ```
+/// use genai_rs::{VideoConfig, VideoTask};
+///
+/// let config = VideoConfig::new().with_task(VideoTask::TextToVideo);
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VideoConfig {
+    /// Optional task mode for video generation. When unset, the model picks
+    /// the mode based on the prompt and input media.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<VideoTask>,
+}
+
+impl VideoConfig {
+    /// Creates an empty video config (model chooses the task mode).
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the video generation task mode.
+    #[must_use]
+    pub fn with_task(mut self, task: VideoTask) -> Self {
+        self.task = Some(task);
+        self
+    }
+}
+
 /// Request body for the Interactions API endpoint.
 ///
 /// This type represents a fully-constructed interaction request that can be
@@ -974,20 +1144,17 @@ pub struct InteractionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<Tool>>,
 
-    /// Response modalities (e.g., ["IMAGE"])
+    /// Response modalities (e.g., ["image"]; the API only accepts lowercase)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_modalities: Option<Vec<String>>,
 
-    /// JSON schema for structured output
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub response_format: Option<serde_json::Value>,
-
-    /// Response MIME type for structured output.
+    /// Typed response format(s) for structured/media output.
     ///
-    /// Required when using `response_format` with a JSON schema.
-    /// Typically "application/json".
+    /// A single [`ResponseFormat`](crate::ResponseFormat) or a list of them
+    /// (see [`ResponseFormatSpec`]). For the common JSON-schema case use
+    /// [`InteractionBuilder::with_response_format()`](crate::InteractionBuilder::with_response_format).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub response_mime_type: Option<String>,
+    pub response_format: Option<ResponseFormatSpec>,
 
     /// Model configuration
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1005,9 +1172,146 @@ pub struct InteractionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub store: Option<bool>,
 
-    /// System instruction for the model
+    /// System instruction for the model (plain string per the API spec)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub system_instruction: Option<InteractionInput>,
+    pub system_instruction: Option<String>,
+
+    /// Latency/priority tier for processing this request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<ServiceTier>,
+
+    /// Name of an explicit context cache to use for this request
+    /// (e.g., `cachedContents/xyz`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cached_content: Option<String>,
+
+    /// Per-request webhook routing: deliver this request's events to the
+    /// given URIs (instead of the registered webhooks) with optional
+    /// user metadata echoed on each event.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub webhook_config: Option<WebhookConfig>,
+
+    /// Environment for the interaction: a string environment ID or a typed
+    /// remote environment (sources + network allowlist).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment: Option<EnvironmentSpec>,
+}
+
+/// Latency/priority service tier for a request.
+///
+/// This enum is marked `#[non_exhaustive]` for forward compatibility.
+///
+/// # Wire Format
+///
+/// Serializes as lowercase strings: `"flex"`, `"standard"`, `"priority"`.
+///
+/// # Evergreen Pattern
+///
+/// Unknown values from the API deserialize into the `Unknown` variant,
+/// preserving the original data for debugging and roundtrip serialization.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum ServiceTier {
+    /// Flexible latency, lower cost.
+    Flex,
+    /// Standard processing.
+    Standard,
+    /// Prioritized processing.
+    Priority,
+    /// Unknown variant for forward compatibility (Evergreen pattern)
+    Unknown {
+        /// The unrecognized tier type from the API
+        tier_type: String,
+        /// The raw JSON value, preserved for debugging and roundtrip
+        data: serde_json::Value,
+    },
+}
+
+impl ServiceTier {
+    /// Returns true if this is an unknown service tier.
+    #[must_use]
+    pub const fn is_unknown(&self) -> bool {
+        matches!(self, Self::Unknown { .. })
+    }
+
+    /// Returns the tier type name if this is an unknown service tier.
+    #[must_use]
+    pub fn unknown_tier_type(&self) -> Option<&str> {
+        match self {
+            Self::Unknown { tier_type, .. } => Some(tier_type),
+            _ => None,
+        }
+    }
+
+    /// Returns the preserved data if this is an unknown service tier.
+    #[must_use]
+    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::Unknown { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for ServiceTier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Flex => write!(f, "flex"),
+            Self::Standard => write!(f, "standard"),
+            Self::Priority => write!(f, "priority"),
+            Self::Unknown { tier_type, .. } => write!(f, "{}", tier_type),
+        }
+    }
+}
+
+impl Serialize for ServiceTier {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Flex => serializer.serialize_str("flex"),
+            Self::Standard => serializer.serialize_str("standard"),
+            Self::Priority => serializer.serialize_str("priority"),
+            Self::Unknown { tier_type, .. } => serializer.serialize_str(tier_type),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ServiceTier {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value.as_str() {
+            Some("flex") => Ok(Self::Flex),
+            Some("standard") => Ok(Self::Standard),
+            Some("priority") => Ok(Self::Priority),
+            Some(other) => {
+                tracing::warn!(
+                    "Encountered unknown ServiceTier '{}' - using Unknown variant (Evergreen)",
+                    other
+                );
+                Ok(Self::Unknown {
+                    tier_type: other.to_string(),
+                    data: value,
+                })
+            }
+            None => {
+                let tier_type = format!("<non-string: {}>", value);
+                tracing::warn!(
+                    "ServiceTier received non-string value: {}. \
+                     Preserving in Unknown variant.",
+                    value
+                );
+                Ok(Self::Unknown {
+                    tier_type,
+                    data: value,
+                })
+            }
+        }
+    }
 }
 
 // =============================================================================
@@ -1233,23 +1537,142 @@ impl AgentConfig {
     }
 }
 
+/// Visualization mode for the Deep Research agent.
+///
+/// Controls whether the agent includes visualizations in its response.
+///
+/// This enum is marked `#[non_exhaustive]` for forward compatibility.
+///
+/// # Wire Format
+///
+/// Serializes as lowercase strings: `"off"`, `"auto"`.
+///
+/// # Evergreen Pattern
+///
+/// Unknown values from the API deserialize into the `Unknown` variant,
+/// preserving the original data for debugging and roundtrip serialization.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum Visualization {
+    /// No visualizations in the response.
+    Off,
+    /// The agent decides when to include visualizations.
+    Auto,
+    /// Unknown variant for forward compatibility (Evergreen pattern)
+    Unknown {
+        /// The unrecognized visualization type from the API
+        visualization_type: String,
+        /// The raw JSON value, preserved for debugging and roundtrip
+        data: serde_json::Value,
+    },
+}
+
+impl Visualization {
+    /// Returns true if this is an unknown visualization mode.
+    #[must_use]
+    pub const fn is_unknown(&self) -> bool {
+        matches!(self, Self::Unknown { .. })
+    }
+
+    /// Returns the visualization type name if this is an unknown mode.
+    #[must_use]
+    pub fn unknown_visualization_type(&self) -> Option<&str> {
+        match self {
+            Self::Unknown {
+                visualization_type, ..
+            } => Some(visualization_type),
+            _ => None,
+        }
+    }
+
+    /// Returns the preserved data if this is an unknown mode.
+    #[must_use]
+    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::Unknown { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for Visualization {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Off => serializer.serialize_str("off"),
+            Self::Auto => serializer.serialize_str("auto"),
+            Self::Unknown {
+                visualization_type, ..
+            } => serializer.serialize_str(visualization_type),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Visualization {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value.as_str() {
+            Some("off") => Ok(Self::Off),
+            Some("auto") => Ok(Self::Auto),
+            Some(other) => {
+                tracing::warn!(
+                    "Encountered unknown Visualization '{}' - using Unknown variant (Evergreen)",
+                    other
+                );
+                Ok(Self::Unknown {
+                    visualization_type: other.to_string(),
+                    data: value,
+                })
+            }
+            None => {
+                let visualization_type = format!("<non-string: {}>", value);
+                tracing::warn!(
+                    "Visualization received non-string value: {}. \
+                     Preserving in Unknown variant.",
+                    value
+                );
+                Ok(Self::Unknown {
+                    visualization_type,
+                    data: value,
+                })
+            }
+        }
+    }
+}
+
 /// Configuration for Deep Research agent.
 ///
 /// Deep Research agent performs comprehensive research tasks
-/// and can optionally include thinking summaries.
+/// and can optionally include thinking summaries, visualizations,
+/// collaborative planning, and BigQuery access.
+///
+/// Known Deep Research agent IDs: `deep-research-pro-preview-12-2025`,
+/// `deep-research-preview-04-2026`, `deep-research-max-preview-04-2026`.
+/// See `docs/AGENTS_AND_BACKGROUND.md`.
 ///
 /// # Example
 ///
 /// ```
-/// use genai_rs::{AgentConfig, DeepResearchConfig, ThinkingSummaries};
+/// use genai_rs::{AgentConfig, DeepResearchConfig, ThinkingSummaries, Visualization};
 ///
 /// let config: AgentConfig = DeepResearchConfig::new()
 ///     .with_thinking_summaries(ThinkingSummaries::Auto)
+///     .with_visualization(Visualization::Auto)
+///     .with_collaborative_planning(true)
+///     .with_bigquery_tool(true)
 ///     .into();
 /// ```
 #[derive(Clone, Debug, Default)]
 pub struct DeepResearchConfig {
     thinking_summaries: Option<ThinkingSummaries>,
+    visualization: Option<Visualization>,
+    collaborative_planning: Option<bool>,
+    enable_bigquery_tool: Option<bool>,
 }
 
 impl DeepResearchConfig {
@@ -1267,6 +1690,35 @@ impl DeepResearchConfig {
         self.thinking_summaries = Some(summaries);
         self
     }
+
+    /// Set the visualization mode (`off` | `auto`).
+    #[must_use]
+    pub fn with_visualization(mut self, visualization: Visualization) -> Self {
+        self.visualization = Some(visualization);
+        self
+    }
+
+    /// Enable (or disable) human-in-the-loop planning.
+    ///
+    /// When `true`, the agent first returns a research plan and only proceeds
+    /// after the user confirms the plan in the next turn.
+    #[must_use]
+    pub fn with_collaborative_planning(mut self, enabled: bool) -> Self {
+        self.collaborative_planning = Some(enabled);
+        self
+    }
+
+    /// Enable (or disable) the BigQuery tool for the Deep Research agent.
+    ///
+    /// Server-side constraint (verified live 2026-07): the Gemini API
+    /// rejects `agent_config.enable_bigquery_tool` — "not available on the
+    /// Gemini API but it is available on the Gemini Enterprise Agent
+    /// Platform" (Vertex-only).
+    #[must_use]
+    pub fn with_bigquery_tool(mut self, enabled: bool) -> Self {
+        self.enable_bigquery_tool = Some(enabled);
+        self
+    }
 }
 
 impl From<DeepResearchConfig> for AgentConfig {
@@ -1279,6 +1731,25 @@ impl From<DeepResearchConfig> for AgentConfig {
         if let Some(ts) = config.thinking_summaries {
             // Use agent_config format (THINKING_SUMMARIES_*), not generation_config format (auto/none)
             map.insert("thinking_summaries".into(), ts.to_agent_config_value());
+        }
+        if let Some(visualization) = config.visualization {
+            map.insert(
+                "visualization".into(),
+                serde_json::to_value(&visualization)
+                    .expect("Visualization serialization is infallible"),
+            );
+        }
+        if let Some(planning) = config.collaborative_planning {
+            map.insert(
+                "collaborative_planning".into(),
+                serde_json::Value::Bool(planning),
+            );
+        }
+        if let Some(bigquery) = config.enable_bigquery_tool {
+            map.insert(
+                "enable_bigquery_tool".into(),
+                serde_json::Value::Bool(bigquery),
+            );
         }
         AgentConfig(serde_json::Value::Object(map))
     }
@@ -1737,38 +2208,135 @@ mod tests {
     }
 
     // =========================================================================
-    // GenerationConfig allowed_tools Tests
+    // GenerationConfig tool_choice / penalty Tests
     // =========================================================================
 
     #[test]
-    fn test_generation_config_allowed_tools_serializes() {
+    fn test_generation_config_tool_choice_mode_serializes_lowercase() {
         let config = GenerationConfig {
-            allowed_tools: Some(vec!["get_weather".to_string(), "get_time".to_string()]),
+            tool_choice: Some(ToolChoice::Mode(crate::tools::FunctionCallingMode::Any)),
             ..Default::default()
         };
 
-        let json = serde_json::to_string(&config).expect("Serialization failed");
-        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-
-        let tools = value["allowed_tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 2);
-        assert_eq!(tools[0], "get_weather");
-        assert_eq!(tools[1], "get_time");
+        let value = serde_json::to_value(&config).unwrap();
+        assert_eq!(value["tool_choice"], "any");
     }
 
     #[test]
-    fn test_generation_config_allowed_tools_omitted_when_none() {
+    fn test_generation_config_tool_choice_allowed_tools_object() {
         let config = GenerationConfig {
-            allowed_tools: None,
+            tool_choice: Some(ToolChoice::allowed_tools(
+                Some(crate::tools::FunctionCallingMode::Any),
+                vec!["get_weather".to_string(), "get_time".to_string()],
+            )),
             ..Default::default()
         };
 
-        let json = serde_json::to_string(&config).expect("Serialization failed");
-        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-
+        let value = serde_json::to_value(&config).unwrap();
+        assert_eq!(value["tool_choice"]["allowed_tools"]["mode"], "any");
+        assert_eq!(
+            value["tool_choice"]["allowed_tools"]["tools"][0],
+            "get_weather"
+        );
         assert!(
             value.get("allowed_tools").is_none(),
-            "allowed_tools should be omitted when None"
+            "top-level allowed_tools was removed from generation_config"
         );
+    }
+
+    #[test]
+    fn test_generation_config_penalties_serialize() {
+        let config = GenerationConfig {
+            presence_penalty: Some(0.5),
+            frequency_penalty: Some(-0.5),
+            ..Default::default()
+        };
+        let value = serde_json::to_value(&config).unwrap();
+        assert_eq!(value["presence_penalty"], 0.5);
+        assert_eq!(value["frequency_penalty"], -0.5);
+    }
+
+    #[test]
+    fn test_generation_config_has_no_top_k() {
+        // top_k was dropped from the 2026-05-20 spec; ensure it never serializes.
+        let config = GenerationConfig {
+            temperature: Some(0.3),
+            ..Default::default()
+        };
+        let value = serde_json::to_value(&config).unwrap();
+        assert!(value.get("top_k").is_none());
+    }
+
+    // =========================================================================
+    // ServiceTier Tests
+    // =========================================================================
+
+    #[test]
+    fn test_service_tier_roundtrip() {
+        for (tier, wire) in [
+            (ServiceTier::Flex, "\"flex\""),
+            (ServiceTier::Standard, "\"standard\""),
+            (ServiceTier::Priority, "\"priority\""),
+        ] {
+            assert_eq!(serde_json::to_string(&tier).unwrap(), wire);
+            let parsed: ServiceTier = serde_json::from_str(wire).unwrap();
+            assert_eq!(parsed, tier);
+        }
+    }
+
+    #[test]
+    fn test_service_tier_unknown_roundtrip() {
+        let unknown: ServiceTier = serde_json::from_str("\"turbo\"").unwrap();
+        assert!(unknown.is_unknown());
+        assert_eq!(unknown.unknown_tier_type(), Some("turbo"));
+        assert!(unknown.unknown_data().is_some());
+        assert_eq!(serde_json::to_string(&unknown).unwrap(), "\"turbo\"");
+    }
+
+    // =========================================================================
+    // InteractionInput Tests
+    // =========================================================================
+
+    #[test]
+    fn test_interaction_input_text_roundtrip() {
+        let input = InteractionInput::Text("Hello".into());
+        let json = serde_json::to_string(&input).unwrap();
+        assert_eq!(json, "\"Hello\"");
+        let back: InteractionInput = serde_json::from_str(&json).unwrap();
+        assert!(matches!(back, InteractionInput::Text(t) if t == "Hello"));
+    }
+
+    #[test]
+    fn test_interaction_input_content_array_roundtrip() {
+        let json = r#"[{"type":"text","text":"hi"},{"type":"image","uri":"files/x","mime_type":"image/png"}]"#;
+        let input: InteractionInput = serde_json::from_str(json).unwrap();
+        match &input {
+            InteractionInput::Content(c) => assert_eq!(c.len(), 2),
+            other => panic!("Expected Content, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_interaction_input_steps_array_roundtrip() {
+        let json = r#"[
+            {"type":"user_input","content":[{"type":"text","text":"hi"}]},
+            {"type":"model_output","content":[{"type":"text","text":"hello"}]},
+            {"type":"function_result","call_id":"c1","result":"done"}
+        ]"#;
+        let input: InteractionInput = serde_json::from_str(json).unwrap();
+        match &input {
+            InteractionInput::Steps(s) => assert_eq!(s.len(), 3),
+            other => panic!("Expected Steps, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_interaction_input_single_content_object() {
+        let json = r#"{"type":"text","text":"hi"}"#;
+        let input: InteractionInput = serde_json::from_str(json).unwrap();
+        match &input {
+            InteractionInput::Content(c) => assert_eq!(c.len(), 1),
+            other => panic!("Expected Content, got {other:?}"),
+        }
     }
 }

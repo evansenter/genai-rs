@@ -14,7 +14,7 @@ impl ApiVersion {
 }
 
 // --- URL Construction ---
-const BASE_URL_PREFIX: &str = "https://generativelanguage.googleapis.com";
+pub(crate) const BASE_URL_PREFIX: &str = "https://generativelanguage.googleapis.com";
 
 /// Header name for API key authentication.
 ///
@@ -23,6 +23,24 @@ const BASE_URL_PREFIX: &str = "https://generativelanguage.googleapis.com";
 /// - Keys are not leaked in error messages containing URLs
 /// - Matches Google Cloud API best practices
 pub const API_KEY_HEADER: &str = "X-Goog-Api-Key";
+
+/// Header name for the Interactions API wire revision.
+///
+/// The Interactions API is date-revisioned: the value of this header selects
+/// the wire protocol (response shapes, SSE event lifecycle, enum casing).
+pub(crate) const API_REVISION_HEADER: &str = "Api-Revision";
+
+/// The Interactions API revision this crate implements.
+///
+/// Revision `2026-05-20` introduces the steps response model
+/// (`steps: [Step...]` instead of `outputs: [Content...]`), the
+/// `interaction.created` / `step.*` / `interaction.completed` SSE lifecycle,
+/// lowercase enum wire formats, and the `tool_choice` union.
+///
+/// Sent on every Interactions API request (create/get/delete/cancel,
+/// streaming included). The Files API does not take a revision header
+/// (matching google-genai, whose files client is unrevisioned).
+pub(crate) const API_REVISION: &str = "2026-05-20";
 
 /// Represents different API endpoints for the Interactions API
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +55,8 @@ pub enum Endpoint<'a> {
         stream: bool,
         /// Resume streaming from this event ID (only valid when stream=true)
         last_event_id: Option<&'a str>,
+        /// Include the original input in the response
+        include_input: bool,
     },
     /// Delete an interaction by ID
     DeleteInteraction { id: &'a str },
@@ -80,10 +100,24 @@ impl Endpoint<'_> {
     fn query_params(&self) -> Option<String> {
         match self {
             Self::GetInteraction {
-                stream: true,
-                last_event_id: Some(event_id),
+                stream,
+                last_event_id,
+                include_input,
                 ..
-            } => Some(format!("last_event_id={}", urlencoding::encode(event_id))),
+            } => {
+                let mut parts = Vec::new();
+                if *stream && let Some(event_id) = last_event_id {
+                    parts.push(format!("last_event_id={}", urlencoding::encode(event_id)));
+                }
+                if *include_input {
+                    parts.push("include_input=true".to_string());
+                }
+                if parts.is_empty() {
+                    None
+                } else {
+                    Some(parts.join("&"))
+                }
+            }
             _ => None,
         }
     }
@@ -159,6 +193,7 @@ mod tests {
             id: "interaction-123",
             stream: false,
             last_event_id: None,
+            include_input: false,
         };
         let url = construct_endpoint_url(endpoint);
 
@@ -177,6 +212,7 @@ mod tests {
             id: "interaction-123",
             stream: true,
             last_event_id: None,
+            include_input: false,
         };
         let url = construct_endpoint_url(endpoint);
 
@@ -194,6 +230,7 @@ mod tests {
             id: "interaction-123",
             stream: true,
             last_event_id: Some("evt_abc123"),
+            include_input: false,
         };
         let url = construct_endpoint_url(endpoint);
 
@@ -212,6 +249,7 @@ mod tests {
             id: "interaction-123",
             stream: true,
             last_event_id: Some("evt+abc&123=test"),
+            include_input: false,
         };
         let url = construct_endpoint_url(endpoint);
 
@@ -227,6 +265,7 @@ mod tests {
             id: "interaction-123",
             stream: false,
             last_event_id: Some("evt_should_be_ignored"),
+            include_input: false,
         };
         let url = construct_endpoint_url(endpoint);
 
@@ -270,7 +309,8 @@ mod tests {
             Endpoint::GetInteraction {
                 id: "test",
                 stream: true,
-                last_event_id: None
+                last_event_id: None,
+                include_input: false,
             }
             .requires_sse()
         );
@@ -278,7 +318,8 @@ mod tests {
             !Endpoint::GetInteraction {
                 id: "test",
                 stream: false,
-                last_event_id: None
+                last_event_id: None,
+                include_input: false,
             }
             .requires_sse()
         );
@@ -302,11 +343,13 @@ mod tests {
             id: "test-id",
             stream: false,
             last_event_id: None,
+            include_input: false,
         };
         let endpoint4 = Endpoint::GetInteraction {
             id: "test-id",
             stream: false,
             last_event_id: None,
+            include_input: false,
         };
         assert_eq!(endpoint3, endpoint4);
 
@@ -314,6 +357,7 @@ mod tests {
             id: "different-id",
             stream: false,
             last_event_id: None,
+            include_input: false,
         };
         assert_ne!(endpoint3, endpoint5);
 
@@ -322,6 +366,7 @@ mod tests {
             id: "test-id",
             stream: true,
             last_event_id: Some("evt_123"),
+            include_input: false,
         };
         assert_ne!(endpoint3, endpoint6);
     }

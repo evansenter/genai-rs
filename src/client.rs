@@ -1,5 +1,8 @@
 use crate::GenaiError;
+use crate::http::context::HttpContext;
+use crate::wire::{LoudWirePrinter, WireInspector};
 use reqwest::Client as ReqwestClient;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Logs a request body at debug level, preferring JSON format when possible.
@@ -21,9 +24,9 @@ fn log_response_body<T: std::fmt::Debug + serde::Serialize>(body: &T) {
 /// The main client for interacting with the Google Generative AI API.
 #[derive(Clone)]
 pub struct Client {
-    pub(crate) api_key: String,
-    #[allow(clippy::struct_field_names)]
-    pub(crate) http_client: ReqwestClient,
+    /// Shared HTTP context: reqwest client, API key, wire inspectors, and
+    /// the request-id counter for wire-event correlation.
+    pub(crate) http: HttpContext,
 }
 
 // Custom Debug implementation that redacts the API key for security.
@@ -32,9 +35,18 @@ impl std::fmt::Debug for Client {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Client")
             .field("api_key", &"[REDACTED]")
-            .field("http_client", &self.http_client)
+            .field("http_client", &self.http.http_client)
             .finish()
     }
+}
+
+/// Appends a [`LoudWirePrinter`] when the `LOUD_WIRE` environment variable is
+/// set. Checked once at `Client` construction time.
+fn with_env_inspectors(mut inspectors: Vec<Arc<dyn WireInspector>>) -> Vec<Arc<dyn WireInspector>> {
+    if std::env::var("LOUD_WIRE").is_ok() {
+        inspectors.push(Arc::new(LoudWirePrinter::new()));
+    }
+    inspectors
 }
 
 /// Builder for `Client` instances.
@@ -55,6 +67,7 @@ pub struct ClientBuilder {
     api_key: String,
     timeout: Option<Duration>,
     connect_timeout: Option<Duration>,
+    wire_inspectors: Vec<Arc<dyn WireInspector>>,
 }
 
 // Custom Debug implementation that redacts the API key for security.
@@ -64,6 +77,7 @@ impl std::fmt::Debug for ClientBuilder {
             .field("api_key", &"[REDACTED]")
             .field("timeout", &self.timeout)
             .field("connect_timeout", &self.connect_timeout)
+            .field("wire_inspectors", &self.wire_inspectors.len())
             .finish()
     }
 }
@@ -121,6 +135,32 @@ impl ClientBuilder {
         self
     }
 
+    /// Adds a wire inspector that observes raw API traffic.
+    ///
+    /// Inspectors receive a [`crate::wire::WireEvent`] for every request,
+    /// response, error body, SSE frame, and file upload. Multiple inspectors
+    /// may be registered; each receives every event. When the `LOUD_WIRE`
+    /// environment variable is set, a [`crate::wire::LoudWirePrinter`] is
+    /// appended automatically at `build()` time.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use genai_rs::Client;
+    /// use genai_rs::wire::TracingForwarder;
+    /// use std::sync::Arc;
+    ///
+    /// let client = Client::builder("api_key".to_string())
+    ///     .add_wire_inspector(Arc::new(TracingForwarder::new()))
+    ///     .build()?;
+    /// # Ok::<(), genai_rs::GenaiError>(())
+    /// ```
+    #[must_use]
+    pub fn add_wire_inspector(mut self, inspector: Arc<dyn WireInspector>) -> Self {
+        self.wire_inspectors.push(inspector);
+        self
+    }
+
     /// Builds the `Client`.
     ///
     /// # Errors
@@ -143,8 +183,11 @@ impl ClientBuilder {
             .map_err(|e| GenaiError::ClientBuild(e.to_string()))?;
 
         Ok(Client {
-            api_key: self.api_key,
-            http_client,
+            http: HttpContext::new(
+                http_client,
+                self.api_key,
+                with_env_inspectors(self.wire_inspectors),
+            ),
         })
     }
 }
@@ -161,6 +204,7 @@ impl Client {
             api_key,
             timeout: None,
             connect_timeout: None,
+            wire_inspectors: Vec::new(),
         }
     }
 
@@ -172,8 +216,11 @@ impl Client {
     #[must_use]
     pub fn new(api_key: String) -> Self {
         Self {
-            api_key,
-            http_client: ReqwestClient::new(),
+            http: HttpContext::new(
+                ReqwestClient::new(),
+                api_key,
+                with_env_inspectors(Vec::new()),
+            ),
         }
     }
 
@@ -235,27 +282,16 @@ impl Client {
     ///
     /// ```no_run
     /// use genai_rs::Client;
-    /// use genai_rs::{InteractionRequest, InteractionInput};
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::new("your-api-key".to_string());
     ///
-    /// let request = InteractionRequest {
-    ///     model: Some("gemini-3-flash-preview".to_string()),
-    ///     agent: None,
-    ///     agent_config: None,
-    ///     input: InteractionInput::Text("Hello, world!".to_string()),
-    ///     previous_interaction_id: None,
-    ///     tools: None,
-    ///     response_modalities: None,
-    ///     response_format: None,
-    ///     response_mime_type: None,
-    ///     generation_config: None,
-    ///     stream: None,
-    ///     background: None,
-    ///     store: None,
-    ///     system_instruction: None,
-    /// };
+    /// // Build a reusable request with the builder, then execute it.
+    /// let request = client
+    ///     .interaction()
+    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_text("Hello, world!")
+    ///     .build()?;
     ///
     /// let response = client.execute(request).await?;
     /// println!("Interaction ID: {:?}", response.id);
@@ -267,27 +303,16 @@ impl Client {
     ///
     /// ```no_run
     /// use genai_rs::{Client, StreamChunk};
-    /// use genai_rs::{InteractionRequest, InteractionInput};
     /// use futures_util::StreamExt;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::builder("api_key".to_string()).build()?;
-    /// let request = InteractionRequest {
-    ///     model: Some("gemini-3-flash-preview".to_string()),
-    ///     agent: None,
-    ///     agent_config: None,
-    ///     input: InteractionInput::Text("Count to 5".to_string()),
-    ///     previous_interaction_id: None,
-    ///     tools: None,
-    ///     response_modalities: None,
-    ///     response_format: None,
-    ///     response_mime_type: None,
-    ///     generation_config: None,
-    ///     stream: Some(true),
-    ///     background: None,
-    ///     store: None,
-    ///     system_instruction: None,
-    /// };
+    /// let mut request = client
+    ///     .interaction()
+    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_text("Count to 5")
+    ///     .build()?;
+    /// request.stream = Some(true);
     ///
     /// let mut last_event_id = None;
     /// let mut stream = client.execute_stream(request);
@@ -295,12 +320,12 @@ impl Client {
     ///     let event = result?;
     ///     last_event_id = event.event_id.clone();  // Track for resume
     ///     match event.chunk {
-    ///         StreamChunk::Delta(delta) => {
+    ///         StreamChunk::StepDelta { delta, .. } => {
     ///             if let Some(text) = delta.as_text() {
     ///                 print!("{}", text);
     ///             }
     ///         }
-    ///         StreamChunk::Complete(response) => {
+    ///         StreamChunk::Completed(response) => {
     ///             println!("\nDone! ID: {:?}", response.id);
     ///         }
     ///         _ => {} // Handle unknown future variants
@@ -346,12 +371,7 @@ impl Client {
         tracing::debug!("Creating interaction");
         log_request_body(&request);
 
-        let response = crate::http::interactions::create_interaction(
-            &self.http_client,
-            &self.api_key,
-            request,
-        )
-        .await?;
+        let response = crate::http::interactions::create_interaction(&self.http, request).await?;
 
         log_response_body(&response);
         tracing::debug!("Interaction created: ID={:?}", response.id);
@@ -386,12 +406,12 @@ impl Client {
     /// while let Some(result) = stream.next().await {
     ///     let event = result?;
     ///     match event.chunk {
-    ///         StreamChunk::Delta(delta) => {
+    ///         StreamChunk::StepDelta { delta, .. } => {
     ///             if let Some(text) = delta.as_text() {
     ///                 print!("{}", text);
     ///             }
     ///         }
-    ///         StreamChunk::Complete(response) => {
+    ///         StreamChunk::Completed(response) => {
     ///             println!("\nDone!");
     ///         }
     ///         _ => {}
@@ -410,11 +430,7 @@ impl Client {
         tracing::debug!("Creating streaming interaction");
         log_request_body(&request);
 
-        let stream = crate::http::interactions::create_interaction_stream(
-            &self.http_client,
-            &self.api_key,
-            request,
-        );
+        let stream = crate::http::interactions::create_interaction_stream(&self.http, request);
 
         stream
             .map(move |result| {
@@ -450,12 +466,40 @@ impl Client {
     ) -> Result<crate::InteractionResponse, GenaiError> {
         tracing::debug!("Getting interaction: ID={interaction_id}");
 
-        let response = crate::http::interactions::get_interaction(
-            &self.http_client,
-            &self.api_key,
-            interaction_id,
-        )
-        .await?;
+        let response =
+            crate::http::interactions::get_interaction(&self.http, interaction_id, false).await?;
+
+        log_response_body(&response);
+        tracing::debug!("Retrieved interaction: status={:?}", response.status);
+
+        Ok(response)
+    }
+
+    /// Retrieves an existing interaction by its ID, including the original input.
+    ///
+    /// Like [`get_interaction()`](Self::get_interaction), but sets the
+    /// `include_input=true` query parameter so the response's `input` field is
+    /// populated.
+    ///
+    /// Live behavior note (2026-07): the parameter is accepted, but the
+    /// Gemini API was observed to return identical responses with and
+    /// without it — no `input` echo (and no `generation_config` echo) was
+    /// observed on completed interactions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The HTTP request fails
+    /// - Response parsing fails
+    /// - The API returns an error
+    pub async fn get_interaction_with_input(
+        &self,
+        interaction_id: &str,
+    ) -> Result<crate::InteractionResponse, GenaiError> {
+        tracing::debug!("Getting interaction (with input): ID={interaction_id}");
+
+        let response =
+            crate::http::interactions::get_interaction(&self.http, interaction_id, true).await?;
 
         log_response_body(&response);
         tracing::debug!("Retrieved interaction: status={:?}", response.status);
@@ -498,12 +542,12 @@ impl Client {
     ///     let event = result?;
     ///     println!("Event ID: {:?}", event.event_id);
     ///     match event.chunk {
-    ///         StreamChunk::Delta(delta) => {
+    ///         StreamChunk::StepDelta { delta, .. } => {
     ///             if let Some(text) = delta.as_text() {
     ///                 print!("{}", text);
     ///             }
     ///         }
-    ///         StreamChunk::Complete(response) => {
+    ///         StreamChunk::Completed(response) => {
     ///             println!("\nDone! Status: {:?}", response.status);
     ///         }
     ///         _ => {}
@@ -526,8 +570,7 @@ impl Client {
         );
 
         let stream = crate::http::interactions::get_interaction_stream(
-            &self.http_client,
-            &self.api_key,
+            &self.http,
             interaction_id,
             last_event_id,
         );
@@ -562,12 +605,7 @@ impl Client {
     pub async fn delete_interaction(&self, interaction_id: &str) -> Result<(), GenaiError> {
         tracing::debug!("Deleting interaction: ID={interaction_id}");
 
-        crate::http::interactions::delete_interaction(
-            &self.http_client,
-            &self.api_key,
-            interaction_id,
-        )
-        .await?;
+        crate::http::interactions::delete_interaction(&self.http, interaction_id).await?;
 
         tracing::debug!("Interaction deleted successfully");
 
@@ -632,17 +670,261 @@ impl Client {
     ) -> Result<crate::InteractionResponse, GenaiError> {
         tracing::debug!("Cancelling interaction: ID={interaction_id}");
 
-        let response = crate::http::interactions::cancel_interaction(
-            &self.http_client,
-            &self.api_key,
-            interaction_id,
-        )
-        .await?;
+        let response =
+            crate::http::interactions::cancel_interaction(&self.http, interaction_id).await?;
 
         log_response_body(&response);
         tracing::debug!("Interaction cancelled: status={:?}", response.status);
 
         Ok(response)
+    }
+
+    // --- Webhooks resource methods (`/v1beta/webhooks`) ---
+
+    /// Registers a new webhook.
+    ///
+    /// The returned webhook includes `new_signing_secret` — only populated on
+    /// create — which is used to verify event payload signatures. Store it
+    /// securely; it is not returned again.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails, the API returns an error,
+    /// or response parsing fails.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{Client, Webhook, WebhookEvent};
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::new("api-key".to_string());
+    ///
+    /// let webhook = client.create_webhook(
+    ///     &Webhook::new(
+    ///         "https://example.com/hooks/genai",
+    ///         vec![WebhookEvent::InteractionCompleted, WebhookEvent::InteractionFailed],
+    ///     )
+    ///     .with_name("my-hook"),
+    /// ).await?;
+    ///
+    /// println!("Created {:?}; secret: {:?}", webhook.id, webhook.new_signing_secret);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn create_webhook(
+        &self,
+        webhook: &crate::Webhook,
+    ) -> Result<crate::Webhook, GenaiError> {
+        crate::http::webhooks::create_webhook(&self.http, webhook).await
+    }
+
+    /// Retrieves a registered webhook by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the webhook doesn't exist, the HTTP request fails,
+    /// or response parsing fails.
+    pub async fn get_webhook(&self, webhook_id: &str) -> Result<crate::Webhook, GenaiError> {
+        crate::http::webhooks::get_webhook(&self.http, webhook_id).await
+    }
+
+    /// Lists registered webhooks.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_size` - Optional maximum number of webhooks per page.
+    /// * `page_token` - Optional token from a previous list call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails or response parsing fails.
+    pub async fn list_webhooks(
+        &self,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+    ) -> Result<crate::WebhookListResponse, GenaiError> {
+        crate::http::webhooks::list_webhooks(&self.http, page_size, page_token).await
+    }
+
+    /// Updates a registered webhook.
+    ///
+    /// # Arguments
+    ///
+    /// * `webhook_id` - The webhook to update.
+    /// * `update` - The fields to change (only set fields are sent).
+    /// * `update_mask` - Optional comma-separated list of fields to update
+    ///   (e.g. `"uri,subscribed_events"`).
+    ///
+    /// Live behavior note (2026-07): `update_mask` is not required — PATCH
+    /// applies exactly the fields present in the body. The mask was also
+    /// observed to be ignored when supplied (fields outside the mask still
+    /// updated), so rely on the partial body, not the mask, to scope updates.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the webhook doesn't exist, the HTTP request fails,
+    /// or response parsing fails.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{Client, WebhookState, WebhookUpdate};
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let client = Client::new("api-key".to_string());
+    /// // Temporarily disable a webhook
+    /// let updated = client.update_webhook(
+    ///     "wh-123",
+    ///     &WebhookUpdate::new().with_state(WebhookState::Disabled),
+    ///     Some("state"),
+    /// ).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn update_webhook(
+        &self,
+        webhook_id: &str,
+        update: &crate::WebhookUpdate,
+        update_mask: Option<&str>,
+    ) -> Result<crate::Webhook, GenaiError> {
+        crate::http::webhooks::update_webhook(&self.http, webhook_id, update, update_mask).await
+    }
+
+    /// Deletes a registered webhook.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the webhook doesn't exist or the HTTP request fails.
+    pub async fn delete_webhook(&self, webhook_id: &str) -> Result<(), GenaiError> {
+        crate::http::webhooks::delete_webhook(&self.http, webhook_id).await
+    }
+
+    /// Sends a test event to a webhook (`:ping`).
+    ///
+    /// Use this to verify your endpoint receives and validates deliveries
+    /// before relying on it for real events.
+    ///
+    /// Live behavior note (2026-07): the RPC accepts an empty JSON body
+    /// (`{}`, which this client sends) and returns `{}` on success even
+    /// when the destination URI is unreachable.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the webhook doesn't exist or the HTTP request fails.
+    pub async fn ping_webhook(&self, webhook_id: &str) -> Result<(), GenaiError> {
+        crate::http::webhooks::ping_webhook(&self.http, webhook_id).await
+    }
+
+    /// Rotates a webhook's signing secret (`:rotateSigningSecret`).
+    ///
+    /// Returns the newly generated secret. Pass a
+    /// [`RevocationBehavior`](crate::RevocationBehavior) to control whether
+    /// previous secrets stay valid for 24 hours (safe rollover) or are
+    /// revoked immediately; `None` uses the API default.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the webhook doesn't exist, the HTTP request fails,
+    /// or response parsing fails.
+    pub async fn rotate_webhook_signing_secret(
+        &self,
+        webhook_id: &str,
+        revocation_behavior: Option<crate::RevocationBehavior>,
+    ) -> Result<crate::RotateSigningSecretResponse, GenaiError> {
+        crate::http::webhooks::rotate_signing_secret(&self.http, webhook_id, revocation_behavior)
+            .await
+    }
+
+    // --- Agents resource methods (`/v1beta/agents`) ---
+
+    /// Creates a custom agent.
+    ///
+    /// Once created, run the agent with
+    /// [`InteractionBuilder::with_agent()`](crate::InteractionBuilder::with_agent)
+    /// using its ID.
+    ///
+    /// Live behavior notes (2026-07):
+    /// - Agent creation was rejected with a generic
+    ///   `400 "Request contains an invalid argument."` for every payload
+    ///   tried on a standard Gemini API key (even schema-valid ones), which
+    ///   suggests the resource is allowlisted/gated. Field names are still
+    ///   validated first (snake_case: `id`, `base_agent`,
+    ///   `system_instruction`, `description`, `tools`, `base_environment`).
+    /// - `tools` on an agent only accepts `code_execution`, `google_search`,
+    ///   and `url_context` (per the API's own validation error).
+    /// - Managed agent IDs (e.g. `deep-research-preview-04-2026`) are not
+    ///   retrievable through `GET /v1beta/agents/{id}` (404).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails, the API returns an error,
+    /// or response parsing fails.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{Agent, Client, Tool};
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::new("api-key".to_string());
+    ///
+    /// let agent = client.create_agent(
+    ///     &Agent::new("customer-sentinel")
+    ///         .with_system_instruction("You monitor customer feedback.")
+    ///         .add_tool(Tool::CodeExecution),
+    /// ).await?;
+    ///
+    /// // Run it
+    /// let response = client.interaction()
+    ///     .with_agent(agent.id.as_deref().unwrap_or("customer-sentinel"))
+    ///     .with_text("Summarize this week's feedback")
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn create_agent(&self, agent: &crate::Agent) -> Result<crate::Agent, GenaiError> {
+        crate::http::agents::create_agent(&self.http, agent).await
+    }
+
+    /// Retrieves an agent by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the agent doesn't exist, the HTTP request fails,
+    /// or response parsing fails.
+    pub async fn get_agent(&self, agent_id: &str) -> Result<crate::Agent, GenaiError> {
+        crate::http::agents::get_agent(&self.http, agent_id).await
+    }
+
+    /// Lists agents.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_size` - Optional maximum number of agents per page.
+    /// * `page_token` - Optional token from a previous list call.
+    /// * `parent` - Optional parent resource filter.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails or response parsing fails.
+    pub async fn list_agents(
+        &self,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+        parent: Option<&str>,
+    ) -> Result<crate::AgentListResponse, GenaiError> {
+        crate::http::agents::list_agents(&self.http, page_size, page_token, parent).await
+    }
+
+    /// Deletes an agent by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the agent doesn't exist or the HTTP request fails.
+    pub async fn delete_agent(&self, agent_id: &str) -> Result<(), GenaiError> {
+        crate::http::agents::delete_agent(&self.http, agent_id).await
     }
 
     // --- Files API methods ---
@@ -725,14 +1007,8 @@ impl Client {
             mime_type
         );
 
-        crate::http::files::upload_file(
-            &self.http_client,
-            &self.api_key,
-            file_data,
-            mime_type,
-            display_name.as_deref(),
-        )
-        .await
+        crate::http::files::upload_file(&self.http, file_data, mime_type, display_name.as_deref())
+            .await
     }
 
     /// Uploads a file with an explicit MIME type.
@@ -780,14 +1056,8 @@ impl Client {
             mime_type
         );
 
-        crate::http::files::upload_file(
-            &self.http_client,
-            &self.api_key,
-            file_data,
-            mime_type,
-            display_name.as_deref(),
-        )
-        .await
+        crate::http::files::upload_file(&self.http, file_data, mime_type, display_name.as_deref())
+            .await
     }
 
     /// Uploads file bytes directly with a specified MIME type.
@@ -827,14 +1097,7 @@ impl Client {
             display_name
         );
 
-        crate::http::files::upload_file(
-            &self.http_client,
-            &self.api_key,
-            data,
-            mime_type,
-            display_name,
-        )
-        .await
+        crate::http::files::upload_file(&self.http, data, mime_type, display_name).await
     }
 
     /// Gets metadata for an uploaded file.
@@ -863,7 +1126,7 @@ impl Client {
     /// # }
     /// ```
     pub async fn get_file(&self, file_name: &str) -> Result<crate::FileMetadata, GenaiError> {
-        crate::http::files::get_file(&self.http_client, &self.api_key, file_name).await
+        crate::http::files::get_file(&self.http, file_name).await
     }
 
     /// Lists all uploaded files.
@@ -888,8 +1151,7 @@ impl Client {
         page_size: Option<u32>,
         page_token: Option<&str>,
     ) -> Result<crate::ListFilesResponse, GenaiError> {
-        crate::http::files::list_files(&self.http_client, &self.api_key, page_size, page_token)
-            .await
+        crate::http::files::list_files(&self.http, page_size, page_token).await
     }
 
     /// Deletes an uploaded file.
@@ -914,7 +1176,7 @@ impl Client {
     /// # }
     /// ```
     pub async fn delete_file(&self, file_name: &str) -> Result<(), GenaiError> {
-        crate::http::files::delete_file(&self.http_client, &self.api_key, file_name).await
+        crate::http::files::delete_file(&self.http, file_name).await
     }
 
     /// Uploads a file using chunked transfer to minimize memory usage.
@@ -1000,8 +1262,7 @@ impl Client {
         );
 
         crate::http::files::upload_file_chunked(
-            &self.http_client,
-            &self.api_key,
+            &self.http,
             path,
             mime_type,
             display_name.as_deref(),
@@ -1052,8 +1313,7 @@ impl Client {
         );
 
         crate::http::files::upload_file_chunked(
-            &self.http_client,
-            &self.api_key,
+            &self.http,
             path,
             mime_type,
             display_name.as_deref(),
@@ -1112,8 +1372,7 @@ impl Client {
         );
 
         crate::http::files::upload_file_chunked_with_chunk_size(
-            &self.http_client,
-            &self.api_key,
+            &self.http,
             path,
             mime_type,
             display_name.as_deref(),
@@ -1251,7 +1510,7 @@ mod tests {
     #[test]
     fn test_client_builder_default() {
         let client = Client::builder("test_key".to_string()).build().unwrap();
-        assert_eq!(client.api_key, "test_key");
+        assert_eq!(client.http.api_key, "test_key");
     }
 
     #[test]
@@ -1260,7 +1519,7 @@ mod tests {
             .with_timeout(Duration::from_secs(120))
             .build()
             .unwrap();
-        assert_eq!(client.api_key, "test_key");
+        assert_eq!(client.http.api_key, "test_key");
         // Note: We can't easily inspect the reqwest client's timeout,
         // but this test verifies the builder chain works
     }
@@ -1271,7 +1530,7 @@ mod tests {
             .with_connect_timeout(Duration::from_secs(10))
             .build()
             .unwrap();
-        assert_eq!(client.api_key, "test_key");
+        assert_eq!(client.http.api_key, "test_key");
     }
 
     #[test]
@@ -1281,13 +1540,13 @@ mod tests {
             .with_connect_timeout(Duration::from_secs(10))
             .build()
             .unwrap();
-        assert_eq!(client.api_key, "test_key");
+        assert_eq!(client.http.api_key, "test_key");
     }
 
     #[test]
     fn test_client_new() {
         let client = Client::new("test_key".to_string());
-        assert_eq!(client.api_key, "test_key");
+        assert_eq!(client.http.api_key, "test_key");
     }
 
     #[test]
@@ -1313,6 +1572,46 @@ mod tests {
     fn test_client_builder_returns_result() {
         let result = Client::builder("test_key".to_string()).build();
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_add_wire_inspector_accumulates() {
+        struct Noop;
+        impl WireInspector for Noop {
+            fn on_event(&self, _event: &crate::wire::WireEvent) {}
+        }
+
+        let client = Client::builder("test_key".to_string())
+            .add_wire_inspector(Arc::new(Noop))
+            .add_wire_inspector(Arc::new(Noop))
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            client.http.inspectors.len(),
+            2,
+            "add_wire_inspector should accumulate, not replace"
+        );
+    }
+
+    #[test]
+    fn test_loud_wire_env_installs_printer() {
+        // SAFETY: test-only env mutation. No other test reads LOUD_WIRE, and
+        // an extra printer on an unrelated concurrently-built client is
+        // harmless (nothing sends requests in unit tests).
+        unsafe { std::env::set_var("LOUD_WIRE", "1") };
+        let with_env = Client::builder("test_key".to_string()).build().unwrap();
+        unsafe { std::env::remove_var("LOUD_WIRE") };
+        let without_env = Client::builder("test_key".to_string()).build().unwrap();
+
+        assert!(
+            with_env.http.has_inspectors(),
+            "LOUD_WIRE should install a LoudWirePrinter at construction"
+        );
+        assert!(
+            !without_env.http.has_inspectors(),
+            "no inspectors expected without LOUD_WIRE or add_wire_inspector"
+        );
     }
 
     #[test]

@@ -13,12 +13,15 @@ fn test_serialize_create_interaction_request_with_model() {
         tools: None,
         response_modalities: None,
         response_format: None,
-        response_mime_type: None,
         generation_config: None,
         stream: None,
         background: None,
         store: None,
         system_instruction: None,
+        service_tier: None,
+        cached_content: None,
+        webhook_config: None,
+        environment: None,
     };
 
     let json = serde_json::to_string(&request).expect("Serialization failed");
@@ -35,15 +38,16 @@ fn test_generation_config_serialization() {
         temperature: Some(0.7),
         max_output_tokens: Some(500),
         top_p: Some(0.9),
-        top_k: Some(40),
         thinking_level: Some(ThinkingLevel::Medium),
         seed: None,
         stop_sequences: None,
         thinking_summaries: None,
         tool_choice: None,
-        allowed_tools: None,
+        presence_penalty: None,
+        frequency_penalty: None,
         speech_config: None,
         image_config: None,
+        video_config: None,
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -60,15 +64,16 @@ fn test_generation_config_new_fields_serialization() {
         temperature: None,
         max_output_tokens: None,
         top_p: None,
-        top_k: None,
         thinking_level: Some(ThinkingLevel::High),
         seed: Some(42),
         stop_sequences: Some(vec!["END".to_string(), "---".to_string()]),
         thinking_summaries: Some(ThinkingSummaries::Auto),
         tool_choice: None,
-        allowed_tools: None,
+        presence_penalty: Some(0.5),
+        frequency_penalty: Some(-0.25),
         speech_config: None,
         image_config: None,
+        video_config: None,
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -79,6 +84,8 @@ fn test_generation_config_new_fields_serialization() {
     assert_eq!(value["stop_sequences"][1], "---");
     assert_eq!(value["thinking_summaries"], "auto");
     assert_eq!(value["thinking_level"], "high");
+    assert_eq!(value["presence_penalty"], 0.5);
+    assert_eq!(value["frequency_penalty"], -0.25);
 }
 
 #[test]
@@ -87,15 +94,16 @@ fn test_generation_config_roundtrip() {
         temperature: Some(0.5),
         max_output_tokens: Some(1000),
         top_p: Some(0.95),
-        top_k: Some(50),
         thinking_level: Some(ThinkingLevel::Low),
         seed: Some(123456789),
         stop_sequences: Some(vec!["STOP".to_string()]),
         thinking_summaries: Some(ThinkingSummaries::None),
-        tool_choice: None,
-        allowed_tools: None,
+        tool_choice: Some(ToolChoice::Mode(FunctionCallingMode::Auto)),
+        presence_penalty: Some(1.5),
+        frequency_penalty: Some(0.25),
         speech_config: None,
         image_config: None,
+        video_config: None,
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -105,11 +113,53 @@ fn test_generation_config_roundtrip() {
     assert_eq!(deserialized.temperature, config.temperature);
     assert_eq!(deserialized.max_output_tokens, config.max_output_tokens);
     assert_eq!(deserialized.top_p, config.top_p);
-    assert_eq!(deserialized.top_k, config.top_k);
     assert_eq!(deserialized.thinking_level, config.thinking_level);
     assert_eq!(deserialized.seed, config.seed);
     assert_eq!(deserialized.stop_sequences, config.stop_sequences);
     assert_eq!(deserialized.thinking_summaries, config.thinking_summaries);
+    assert_eq!(deserialized.tool_choice, config.tool_choice);
+    assert_eq!(deserialized.presence_penalty, config.presence_penalty);
+    assert_eq!(deserialized.frequency_penalty, config.frequency_penalty);
+}
+
+#[test]
+fn test_tool_choice_mode_serializes_lowercase() {
+    // FunctionCallingMode wire format is lowercase per revision 2026-05-20
+    let config = GenerationConfig {
+        tool_choice: Some(ToolChoice::Mode(FunctionCallingMode::Auto)),
+        ..Default::default()
+    };
+
+    let value = serde_json::to_value(&config).expect("Serialization failed");
+    assert_eq!(value["tool_choice"], "auto");
+
+    let config = GenerationConfig {
+        tool_choice: Some(ToolChoice::Mode(FunctionCallingMode::Validated)),
+        ..Default::default()
+    };
+    let value = serde_json::to_value(&config).expect("Serialization failed");
+    assert_eq!(value["tool_choice"], "validated");
+}
+
+#[test]
+fn test_tool_choice_allowed_tools_roundtrip() {
+    let config = GenerationConfig {
+        tool_choice: Some(ToolChoice::allowed_tools(
+            Some(FunctionCallingMode::Any),
+            vec!["get_weather".to_string(), "get_time".to_string()],
+        )),
+        ..Default::default()
+    };
+
+    let value = serde_json::to_value(&config).expect("Serialization failed");
+    assert_eq!(value["tool_choice"]["allowed_tools"]["mode"], "any");
+    assert_eq!(
+        value["tool_choice"]["allowed_tools"]["tools"][0],
+        "get_weather"
+    );
+
+    let deserialized: GenerationConfig =
+        serde_json::from_value(value).expect("Deserialization failed");
     assert_eq!(deserialized.tool_choice, config.tool_choice);
 }
 
@@ -301,6 +351,36 @@ fn test_thinking_summaries_object_form_deserialization() {
 }
 
 // =============================================================================
+// ServiceTier Tests
+// =============================================================================
+
+#[test]
+fn test_service_tier_serialization() {
+    assert_eq!(
+        serde_json::to_string(&ServiceTier::Flex).unwrap(),
+        "\"flex\""
+    );
+    assert_eq!(
+        serde_json::to_string(&ServiceTier::Standard).unwrap(),
+        "\"standard\""
+    );
+    assert_eq!(
+        serde_json::to_string(&ServiceTier::Priority).unwrap(),
+        "\"priority\""
+    );
+}
+
+#[test]
+fn test_service_tier_unknown_roundtrip() {
+    // Unknown tiers deserialize to Unknown with data preserved (Evergreen principle)
+    let unknown: ServiceTier = serde_json::from_str("\"turbo\"").unwrap();
+    assert!(unknown.is_unknown());
+
+    let json = serde_json::to_string(&unknown).expect("Serialization failed");
+    assert_eq!(json, "\"turbo\"");
+}
+
+// =============================================================================
 // AgentConfig Tests
 // =============================================================================
 
@@ -433,12 +513,15 @@ fn test_create_interaction_request_with_agent_config() {
         tools: None,
         response_modalities: None,
         response_format: None,
-        response_mime_type: None,
         generation_config: None,
         stream: None,
         background: Some(true),
         store: Some(true),
         system_instruction: None,
+        service_tier: None,
+        cached_content: None,
+        webhook_config: None,
+        environment: None,
     };
 
     let json = serde_json::to_string(&request).expect("Serialization failed");
@@ -509,7 +592,6 @@ fn test_interaction_request_roundtrip() {
         tools: None,
         response_modalities: None,
         response_format: None,
-        response_mime_type: Some("text/plain".to_string()),
         generation_config: Some(GenerationConfig {
             temperature: Some(0.7),
             max_output_tokens: Some(100),
@@ -518,7 +600,11 @@ fn test_interaction_request_roundtrip() {
         stream: Some(true),
         background: None,
         store: Some(true),
-        system_instruction: Some(InteractionInput::Text("Be helpful.".to_string())),
+        system_instruction: Some("Be helpful.".to_string()),
+        service_tier: Some(ServiceTier::Flex),
+        cached_content: Some("cachedContents/xyz".to_string()),
+        webhook_config: None,
+        environment: None,
     };
 
     // Serialize to JSON
@@ -535,9 +621,11 @@ fn test_interaction_request_roundtrip() {
         original.previous_interaction_id,
         deserialized.previous_interaction_id
     );
-    assert_eq!(original.response_mime_type, deserialized.response_mime_type);
     assert_eq!(original.stream, deserialized.stream);
     assert_eq!(original.store, deserialized.store);
+    assert_eq!(original.system_instruction, deserialized.system_instruction);
+    assert_eq!(original.service_tier, deserialized.service_tier);
+    assert_eq!(original.cached_content, deserialized.cached_content);
 
     // Verify generation_config roundtrips
     let orig_config = original.generation_config.as_ref().unwrap();
@@ -553,10 +641,6 @@ fn test_interaction_request_roundtrip() {
         format!("{:?}", original.input),
         format!("{:?}", deserialized.input)
     );
-    assert_eq!(
-        format!("{:?}", original.system_instruction),
-        format!("{:?}", deserialized.system_instruction)
-    );
 }
 
 #[test]
@@ -569,18 +653,24 @@ fn test_response_format_serializes_as_snake_case() {
         previous_interaction_id: None,
         tools: None,
         response_modalities: None,
-        response_format: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "name": { "type": "string" }
-            }
-        })),
-        response_mime_type: None,
+        response_format: Some(
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" }
+                }
+            })
+            .into(),
+        ),
         generation_config: None,
         stream: None,
         background: None,
         store: None,
         system_instruction: None,
+        service_tier: None,
+        cached_content: None,
+        webhook_config: None,
+        environment: None,
     };
 
     let json = serde_json::to_string(&request).expect("Serialization failed");
@@ -605,4 +695,208 @@ fn test_response_format_serializes_as_snake_case() {
         roundtripped.response_format.is_some(),
         "response_format should survive serialization roundtrip"
     );
+}
+
+// =============================================================================
+// InteractionInput Tests (Steps variant, revision 2026-05-20)
+// =============================================================================
+
+#[test]
+fn test_interaction_input_steps_serialization() {
+    let input = InteractionInput::Steps(vec![
+        Step::user_text("What is 2+2?"),
+        Step::model_text("2+2 equals 4."),
+    ]);
+
+    let value = serde_json::to_value(&input).expect("Serialization failed");
+    assert!(value.is_array());
+    assert_eq!(value[0]["type"], "user_input");
+    assert_eq!(value[0]["content"][0]["text"], "What is 2+2?");
+    assert_eq!(value[1]["type"], "model_output");
+    assert_eq!(value[1]["content"][0]["text"], "2+2 equals 4.");
+}
+
+#[test]
+fn test_interaction_input_steps_roundtrip() {
+    let json = r#"[
+        {"type": "user_input", "content": [{"type": "text", "text": "Hi"}]},
+        {"type": "function_call", "id": "call-1", "name": "get_weather", "arguments": {"city": "Paris"}}
+    ]"#;
+
+    let input: InteractionInput = serde_json::from_str(json).expect("Deserialization failed");
+    match &input {
+        InteractionInput::Steps(steps) => {
+            assert_eq!(steps.len(), 2);
+            assert!(matches!(steps[0], Step::UserInput { .. }));
+            assert!(matches!(steps[1], Step::FunctionCall { .. }));
+        }
+        other => panic!("Expected Steps input, got {:?}", other),
+    }
+
+    // Roundtrip preserves shape
+    let reserialized = serde_json::to_value(&input).expect("Serialization failed");
+    assert_eq!(reserialized[1]["name"], "get_weather");
+}
+
+#[test]
+fn test_interaction_input_content_deserializes_by_type_tag() {
+    // Elements with content-type tags deserialize to the Content variant
+    let json = r#"[{"type": "text", "text": "Hello"}]"#;
+    let input: InteractionInput = serde_json::from_str(json).expect("Deserialization failed");
+    assert!(
+        matches!(input, InteractionInput::Content(_)),
+        "Expected Content input, got {:?}",
+        input
+    );
+}
+
+// ============================================================================
+// speech_config list wire form / video_config / new request fields
+// ============================================================================
+
+#[test]
+fn test_speech_config_wire_form_is_list() {
+    let config = GenerationConfig {
+        speech_config: Some(vec![SpeechConfig::with_voice_and_language("Kore", "en-US")]),
+        ..Default::default()
+    };
+    let value = serde_json::to_value(&config).unwrap();
+    assert!(value["speech_config"].is_array());
+    assert_eq!(value["speech_config"][0]["voice"], "Kore");
+}
+
+#[test]
+fn test_speech_config_deserializes_legacy_single_object() {
+    // Pre-2026-05-20 payloads carried a single object; still accepted.
+    let json = r#"{"speech_config": {"voice": "Kore", "language": "en-US"}}"#;
+    let config: GenerationConfig = serde_json::from_str(json).unwrap();
+    let speech = config.speech_config.unwrap();
+    assert_eq!(speech.len(), 1);
+    assert_eq!(speech[0].voice.as_deref(), Some("Kore"));
+}
+
+#[test]
+fn test_speech_config_deserializes_list() {
+    let json = r#"{"speech_config": [
+        {"voice": "Kore", "speaker": "Alice"},
+        {"voice": "Puck", "speaker": "Bob"}
+    ]}"#;
+    let config: GenerationConfig = serde_json::from_str(json).unwrap();
+    let speech = config.speech_config.unwrap();
+    assert_eq!(speech.len(), 2);
+    assert_eq!(speech[1].speaker.as_deref(), Some("Bob"));
+}
+
+#[test]
+fn test_video_config_wire_shape() {
+    let config = GenerationConfig {
+        video_config: Some(VideoConfig::new().with_task(VideoTask::ImageToVideo)),
+        ..Default::default()
+    };
+    let value = serde_json::to_value(&config).unwrap();
+    assert_eq!(value["video_config"]["task"], "image_to_video");
+}
+
+#[test]
+fn test_video_task_roundtrip_and_unknown() {
+    for (task, wire) in [
+        (VideoTask::TextToVideo, "\"text_to_video\""),
+        (VideoTask::ImageToVideo, "\"image_to_video\""),
+        (VideoTask::ReferenceToVideo, "\"reference_to_video\""),
+        (VideoTask::Edit, "\"edit\""),
+        (VideoTask::Extend, "\"extend\""),
+    ] {
+        assert_eq!(serde_json::to_string(&task).unwrap(), wire);
+        let parsed: VideoTask = serde_json::from_str(wire).unwrap();
+        assert_eq!(parsed, task);
+    }
+
+    let unknown: VideoTask = serde_json::from_str("\"frame_interpolation\"").unwrap();
+    assert!(unknown.is_unknown());
+    assert_eq!(unknown.unknown_task_type(), Some("frame_interpolation"));
+    assert!(unknown.unknown_data().is_some());
+    assert_eq!(
+        serde_json::to_string(&unknown).unwrap(),
+        "\"frame_interpolation\""
+    );
+}
+
+#[test]
+fn test_visualization_roundtrip_and_unknown() {
+    for (visualization, wire) in [
+        (Visualization::Off, "\"off\""),
+        (Visualization::Auto, "\"auto\""),
+    ] {
+        assert_eq!(serde_json::to_string(&visualization).unwrap(), wire);
+        let parsed: Visualization = serde_json::from_str(wire).unwrap();
+        assert_eq!(parsed, visualization);
+    }
+
+    let unknown: Visualization = serde_json::from_str("\"interactive\"").unwrap();
+    assert!(unknown.is_unknown());
+    assert_eq!(unknown.unknown_visualization_type(), Some("interactive"));
+    assert!(unknown.unknown_data().is_some());
+    assert_eq!(serde_json::to_string(&unknown).unwrap(), "\"interactive\"");
+}
+
+#[test]
+fn test_deep_research_config_full_wire_shape() {
+    let config: AgentConfig = DeepResearchConfig::new()
+        .with_thinking_summaries(ThinkingSummaries::Auto)
+        .with_visualization(Visualization::Off)
+        .with_collaborative_planning(true)
+        .with_bigquery_tool(true)
+        .into();
+
+    let value = serde_json::to_value(&config).unwrap();
+    assert_eq!(value["type"], "deep-research");
+    assert_eq!(value["thinking_summaries"], "THINKING_SUMMARIES_AUTO");
+    assert_eq!(value["visualization"], "off");
+    assert_eq!(value["collaborative_planning"], true);
+    assert_eq!(value["enable_bigquery_tool"], true);
+}
+
+#[test]
+fn test_request_with_webhook_config_and_environment_wire_shape() {
+    use crate::environment::{EnvironmentSource, RemoteEnvironment};
+    use crate::webhooks::WebhookConfig;
+
+    let request = InteractionRequest {
+        model: Some("gemini-3-flash-preview".to_string()),
+        agent: None,
+        agent_config: None,
+        input: InteractionInput::Text("Hello".to_string()),
+        previous_interaction_id: None,
+        tools: None,
+        response_modalities: None,
+        response_format: None,
+        generation_config: None,
+        stream: None,
+        background: Some(true),
+        store: None,
+        system_instruction: None,
+        service_tier: None,
+        cached_content: None,
+        webhook_config: Some(
+            WebhookConfig::new().with_uris(vec!["https://example.com/hook".to_string()]),
+        ),
+        environment: Some(
+            RemoteEnvironment::new()
+                .add_source(EnvironmentSource::inline("/etc/motd", "hello"))
+                .into(),
+        ),
+    };
+
+    let value = serde_json::to_value(&request).unwrap();
+    assert_eq!(
+        value["webhook_config"]["uris"][0],
+        "https://example.com/hook"
+    );
+    assert_eq!(value["environment"]["type"], "remote");
+    assert_eq!(value["environment"]["sources"][0]["type"], "inline");
+
+    // Roundtrip preserves the new fields
+    let back: InteractionRequest = serde_json::from_value(value).unwrap();
+    assert!(back.webhook_config.is_some());
+    assert!(back.environment.is_some());
 }

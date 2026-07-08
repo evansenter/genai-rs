@@ -105,10 +105,11 @@ fn test_interaction_builder_with_system_instruction() {
         .with_text("Hello")
         .with_system_instruction("You are a helpful assistant");
 
-    assert!(matches!(
-        builder.system_instruction,
-        Some(crate::InteractionInput::Text(_))
-    ));
+    // System instruction is a plain string per the 2026-05-20 API revision
+    assert_eq!(
+        builder.system_instruction.as_deref(),
+        Some("You are a helpful assistant")
+    );
 }
 
 #[test]
@@ -118,7 +119,6 @@ fn test_interaction_builder_with_generation_config() {
         temperature: Some(0.7),
         max_output_tokens: Some(1000),
         top_p: Some(0.9),
-        top_k: Some(40),
         thinking_level: Some(ThinkingLevel::Medium),
         ..Default::default()
     };
@@ -229,7 +229,9 @@ fn test_interaction_builder_with_google_maps() {
     assert!(matches!(
         tools[0],
         Tool::GoogleMaps {
-            enable_widget: None
+            enable_widget: None,
+            latitude: None,
+            longitude: None,
         }
     ));
 }
@@ -254,7 +256,8 @@ fn test_interaction_builder_add_tool_with_configs() {
     assert!(matches!(
         tools[1],
         Tool::GoogleMaps {
-            enable_widget: Some(true)
+            enable_widget: Some(true),
+            ..
         }
     ));
     assert!(matches!(tools[2], Tool::ComputerUse { .. }));
@@ -350,9 +353,11 @@ fn test_interaction_builder_with_response_modalities() {
         .with_text("Generate an image")
         .with_response_modalities(vec!["IMAGE".to_string()]);
 
+    // Modalities are normalized to lowercase - the API is case-sensitive and
+    // rejects uppercase values (verified live).
     assert_eq!(
         builder.response_modalities.as_ref().unwrap(),
-        &vec!["IMAGE".to_string()]
+        &vec!["image".to_string()]
     );
 }
 
@@ -627,62 +632,62 @@ async fn test_auto_functions_allows_store_default() {
     );
 }
 
-// --- Turn Array Input Tests ---
+// --- Step Array Input Tests ---
 
 #[test]
 fn test_interaction_builder_with_history() {
-    use crate::Turn;
+    use crate::Step;
 
     let client = create_test_client();
-    let turns = vec![
-        Turn::user("What is 2+2?"),
-        Turn::model("2+2 equals 4."),
-        Turn::user("And what's that times 3?"),
+    let steps = vec![
+        Step::user_text("What is 2+2?"),
+        Step::model_text("2+2 equals 4."),
+        Step::user_text("And what's that times 3?"),
     ];
 
     let builder = client
         .interaction()
         .with_model("gemini-3-flash-preview")
-        .with_history(turns);
+        .with_history(steps);
 
     assert_eq!(builder.history.len(), 3);
 }
 
 #[test]
 fn test_interaction_builder_build_with_history() {
-    use crate::Turn;
+    use crate::Step;
 
     let client = create_test_client();
-    let turns = vec![
-        Turn::user("Hello"),
-        Turn::model("Hi there!"),
-        Turn::user("How are you?"),
+    let steps = vec![
+        Step::user_text("Hello"),
+        Step::model_text("Hi there!"),
+        Step::user_text("How are you?"),
     ];
 
     let builder = client
         .interaction()
         .with_model("gemini-3-flash-preview")
-        .with_history(turns);
+        .with_history(steps);
 
     let result = builder.build();
     assert!(result.is_ok());
 
     let request = result.unwrap();
     assert_eq!(request.model.as_deref(), Some("gemini-3-flash-preview"));
-    assert!(matches!(request.input, crate::InteractionInput::Turns(_)));
+    assert!(matches!(request.input, crate::InteractionInput::Steps(_)));
 }
 
 #[test]
-fn test_interaction_builder_with_single_turn() {
-    use crate::Turn;
+fn test_interaction_builder_with_single_step() {
+    use crate::Step;
 
     let client = create_test_client();
-    let turns = vec![Turn::user("Hello")];
+    let steps = vec![Step::user_text("Hello")];
 
     let builder = client
         .interaction()
         .with_model("gemini-3-flash-preview")
-        .with_history(turns);
+        .with_history(steps);
 
     let result = builder.build();
     assert!(result.is_ok());
@@ -692,10 +697,10 @@ fn test_interaction_builder_with_single_turn() {
 
 #[test]
 fn test_with_history_then_with_text_composes_correctly() {
-    use crate::{InteractionInput, Role, Turn};
+    use crate::{InteractionInput, Step};
 
     let client = create_test_client();
-    let history = vec![Turn::user("Hello"), Turn::model("Hi there!")];
+    let history = vec![Step::user_text("Hello"), Step::model_text("Hi there!")];
 
     let builder = client
         .interaction()
@@ -706,24 +711,24 @@ fn test_with_history_then_with_text_composes_correctly() {
     // Build should compose history + current_message
     let request = builder.build().expect("Build should succeed");
 
-    // Verify the input is Turns with 3 items
+    // Verify the input is Steps with 3 items
     match &request.input {
-        InteractionInput::Turns(turns) => {
-            assert_eq!(turns.len(), 3, "Should have 3 turns");
-            assert_eq!(*turns[0].role(), Role::User);
-            assert_eq!(*turns[1].role(), Role::Model);
-            assert_eq!(*turns[2].role(), Role::User);
+        InteractionInput::Steps(steps) => {
+            assert_eq!(steps.len(), 3, "Should have 3 steps");
+            assert!(matches!(steps[0], Step::UserInput { .. }));
+            assert!(matches!(steps[1], Step::ModelOutput { .. }));
+            assert!(matches!(steps[2], Step::UserInput { .. }));
         }
-        _ => panic!("Expected Turns input"),
+        _ => panic!("Expected Steps input"),
     }
 }
 
 #[test]
 fn test_with_text_then_with_history_composes_correctly() {
-    use crate::{InteractionInput, Role, Turn};
+    use crate::{InteractionInput, Step};
 
     let client = create_test_client();
-    let history = vec![Turn::user("Hello"), Turn::model("Hi there!")];
+    let history = vec![Step::user_text("Hello"), Step::model_text("Hi there!")];
 
     // Order reversed - should produce same result
     let builder = client
@@ -734,24 +739,24 @@ fn test_with_text_then_with_history_composes_correctly() {
 
     let request = builder.build().expect("Build should succeed");
 
-    // Verify the input is Turns with 3 items (history + current)
+    // Verify the input is Steps with 3 items (history + current)
     match &request.input {
-        InteractionInput::Turns(turns) => {
-            assert_eq!(turns.len(), 3, "Should have 3 turns");
-            assert_eq!(*turns[0].role(), Role::User);
-            assert_eq!(*turns[1].role(), Role::Model);
-            assert_eq!(*turns[2].role(), Role::User); // Current message appended
+        InteractionInput::Steps(steps) => {
+            assert_eq!(steps.len(), 3, "Should have 3 steps");
+            assert!(matches!(steps[0], Step::UserInput { .. }));
+            assert!(matches!(steps[1], Step::ModelOutput { .. }));
+            assert!(matches!(steps[2], Step::UserInput { .. })); // Current message appended
         }
-        _ => panic!("Expected Turns input"),
+        _ => panic!("Expected Steps input"),
     }
 }
 
 #[test]
 fn test_history_and_text_order_independent() {
-    use crate::Turn;
+    use crate::Step;
 
     let client = create_test_client();
-    let history = vec![Turn::user("First"), Turn::model("Response")];
+    let history = vec![Step::user_text("First"), Step::model_text("Response")];
 
     // Build in one order
     let req1 = client
@@ -779,7 +784,7 @@ fn test_history_and_text_order_independent() {
 
 #[test]
 fn test_conversation_builder_then_with_text() {
-    use crate::{InteractionInput, Role};
+    use crate::{InteractionInput, Step};
 
     let client = create_test_client();
 
@@ -794,15 +799,15 @@ fn test_conversation_builder_then_with_text() {
 
     let request = builder.build().expect("Build should succeed");
 
-    // Should have 3 turns: original 2 + appended current message
+    // Should have 3 steps: original 2 + appended current message
     match &request.input {
-        InteractionInput::Turns(turns) => {
-            assert_eq!(turns.len(), 3, "Should have 3 turns");
-            assert_eq!(*turns[0].role(), Role::User);
-            assert_eq!(*turns[1].role(), Role::Model);
-            assert_eq!(*turns[2].role(), Role::User);
+        InteractionInput::Steps(steps) => {
+            assert_eq!(steps.len(), 3, "Should have 3 steps");
+            assert!(matches!(steps[0], Step::UserInput { .. }));
+            assert!(matches!(steps[1], Step::ModelOutput { .. }));
+            assert!(matches!(steps[2], Step::UserInput { .. }));
         }
-        _ => panic!("Expected Turns input"),
+        _ => panic!("Expected Steps input"),
     }
 }
 
@@ -828,11 +833,11 @@ fn test_with_text_only_produces_text_input() {
 }
 
 #[test]
-fn test_with_history_only_produces_turns_input() {
-    use crate::{InteractionInput, Turn};
+fn test_with_history_only_produces_steps_input() {
+    use crate::{InteractionInput, Step};
 
     let client = create_test_client();
-    let history = vec![Turn::user("Hello"), Turn::model("Hi!")];
+    let history = vec![Step::user_text("Hello"), Step::model_text("Hi!")];
 
     let request = client
         .interaction()
@@ -841,21 +846,21 @@ fn test_with_history_only_produces_turns_input() {
         .build()
         .expect("Build should succeed");
 
-    // Should produce Turns input
+    // Should produce Steps input
     match &request.input {
-        InteractionInput::Turns(turns) => {
-            assert_eq!(turns.len(), 2);
+        InteractionInput::Steps(steps) => {
+            assert_eq!(steps.len(), 2);
         }
-        _ => panic!("Expected Turns input"),
+        _ => panic!("Expected Steps input"),
     }
 }
 
 #[test]
 fn test_chained_preserves_history_and_current_message() {
-    use crate::Turn;
+    use crate::Step;
 
     let client = create_test_client();
-    let history = vec![Turn::user("Hello"), Turn::model("Hi!")];
+    let history = vec![Step::user_text("Hello"), Step::model_text("Hi!")];
 
     let builder = client
         .interaction()
@@ -872,10 +877,10 @@ fn test_chained_preserves_history_and_current_message() {
 
 #[test]
 fn test_store_disabled_preserves_history_and_current_message() {
-    use crate::Turn;
+    use crate::Step;
 
     let client = create_test_client();
-    let history = vec![Turn::user("Hello"), Turn::model("Hi!")];
+    let history = vec![Step::user_text("Hello"), Step::model_text("Hi!")];
 
     let builder = client
         .interaction()
@@ -892,10 +897,10 @@ fn test_store_disabled_preserves_history_and_current_message() {
 
 #[test]
 fn test_with_content_cannot_combine_with_history() {
-    use crate::{Content, Turn};
+    use crate::{Content, Step};
 
     let client = create_test_client();
-    let history = vec![Turn::user("Hello"), Turn::model("Hi!")];
+    let history = vec![Step::user_text("Hello"), Step::model_text("Hi!")];
     let content = vec![Content::Text {
         text: Some("test".to_string()),
         annotations: None,
@@ -1004,7 +1009,7 @@ fn test_with_content_alone_works() {
 
 #[test]
 fn test_conversation_builder_fluent_api() {
-    use crate::Role;
+    use crate::Step;
 
     let client = create_test_client();
     let builder = client
@@ -1016,16 +1021,16 @@ fn test_conversation_builder_fluent_api() {
         .user("And what's that times 3?")
         .done();
 
-    // Verify the history has correct length and roles
+    // Verify the history has correct length and step types
     assert_eq!(builder.history.len(), 3);
-    assert_eq!(*builder.history[0].role(), Role::User);
-    assert_eq!(*builder.history[1].role(), Role::Model);
-    assert_eq!(*builder.history[2].role(), Role::User);
+    assert!(matches!(builder.history[0], Step::UserInput { .. }));
+    assert!(matches!(builder.history[1], Step::ModelOutput { .. }));
+    assert!(matches!(builder.history[2], Step::UserInput { .. }));
 }
 
 #[test]
 fn test_conversation_builder_with_parts_content() {
-    use crate::{Content, TurnContent};
+    use crate::{Content, Step, TurnContent};
 
     let client = create_test_client();
     let parts = vec![Content::Text {
@@ -1040,9 +1045,14 @@ fn test_conversation_builder_with_parts_content() {
         .user(TurnContent::Parts(parts))
         .done();
 
-    // Verify the history has 1 turn with parts content
+    // Verify the history has 1 user_input step wrapping the parts
     assert_eq!(builder.history.len(), 1);
-    assert!(builder.history[0].content().is_parts());
+    assert!(matches!(builder.history[0], Step::UserInput { .. }));
+    let content = builder.history[0]
+        .content()
+        .expect("user_input step should expose content");
+    assert_eq!(content.len(), 1);
+    assert_eq!(content[0].as_text(), Some("What is in this image?"));
 }
 
 #[test]
@@ -1262,6 +1272,8 @@ fn test_with_image_config_merges_with_existing_generation_config() {
 
 #[test]
 fn test_interaction_builder_with_allowed_tools() {
+    use crate::ToolChoice;
+
     let client = create_test_client();
     let builder = client
         .interaction()
@@ -1269,9 +1281,355 @@ fn test_interaction_builder_with_allowed_tools() {
         .with_text("Get weather")
         .with_allowed_tools(vec!["get_weather".to_string(), "get_time".to_string()]);
 
+    // with_allowed_tools() now populates generation_config.tool_choice
     let config = builder.generation_config.as_ref().unwrap();
     assert_eq!(
-        config.allowed_tools,
-        Some(vec!["get_weather".to_string(), "get_time".to_string()])
+        config.tool_choice,
+        Some(ToolChoice::allowed_tools(
+            None,
+            vec!["get_weather".to_string(), "get_time".to_string()]
+        ))
     );
+}
+
+#[test]
+fn test_interaction_builder_with_allowed_tools_preserves_mode() {
+    use crate::{FunctionCallingMode, ToolChoice};
+
+    let client = create_test_client();
+    let builder = client
+        .interaction()
+        .with_model("gemini-3-flash-preview")
+        .with_text("Get weather")
+        .with_tool_choice(ToolChoice::Mode(FunctionCallingMode::Any))
+        .with_allowed_tools(vec!["get_weather".to_string()]);
+
+    // A previously-set mode is preserved when upgrading to the object form
+    let config = builder.generation_config.as_ref().unwrap();
+    assert_eq!(
+        config.tool_choice,
+        Some(ToolChoice::allowed_tools(
+            Some(FunctionCallingMode::Any),
+            vec!["get_weather".to_string()]
+        ))
+    );
+}
+
+// ============================================================================
+// Webhook config / environment / response format / speech / video builders
+// ============================================================================
+
+#[test]
+fn test_builder_with_webhook_config() {
+    use crate::WebhookConfig;
+
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-3-flash-preview")
+        .with_text("Hello")
+        .with_webhook_config(
+            WebhookConfig::new()
+                .with_uris(vec!["https://example.com/hook".to_string()])
+                .with_user_metadata(json!({"job": 1})),
+        )
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    assert_eq!(
+        value["webhook_config"]["uris"][0],
+        "https://example.com/hook"
+    );
+    assert_eq!(value["webhook_config"]["user_metadata"]["job"], 1);
+}
+
+#[test]
+fn test_builder_with_environment_id() {
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-3-flash-preview")
+        .with_text("Hello")
+        .with_environment("environments/env-123")
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    assert_eq!(value["environment"], "environments/env-123");
+}
+
+#[test]
+fn test_builder_with_typed_remote_environment() {
+    use crate::{AllowlistEntry, EnvironmentSource, NetworkConfig, RemoteEnvironment};
+
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-3-flash-preview")
+        .with_text("Hello")
+        .with_environment(
+            RemoteEnvironment::new()
+                .add_source(EnvironmentSource::gcs("gs://bucket", "/data"))
+                .with_network(NetworkConfig::allowlist(vec![AllowlistEntry::new(
+                    "*.googleapis.com",
+                )])),
+        )
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    assert_eq!(value["environment"]["type"], "remote");
+    assert_eq!(value["environment"]["sources"][0]["type"], "gcs");
+    assert_eq!(
+        value["environment"]["network"]["allowlist"][0]["domain"],
+        "*.googleapis.com"
+    );
+}
+
+#[test]
+fn test_builder_with_response_format_raw_schema_maps_to_text() {
+    // Backward compatibility: raw serde_json::Value schemas keep working and
+    // now serialize inside the typed text format.
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-3-flash-preview")
+        .with_text("Generate data")
+        .with_response_format(json!({
+            "type": "object",
+            "properties": {"name": {"type": "string"}}
+        }))
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    assert_eq!(value["response_format"]["type"], "text");
+    assert_eq!(value["response_format"]["mime_type"], "application/json");
+    assert_eq!(
+        value["response_format"]["schema"]["properties"]["name"]["type"],
+        "string"
+    );
+}
+
+#[test]
+fn test_builder_with_response_format_typed_variant() {
+    use crate::{ResponseDelivery, ResponseFormat};
+
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-2.5-pro-preview-tts")
+        .with_text("Read aloud")
+        .with_response_format(ResponseFormat::Audio {
+            mime_type: Some("audio/mp3".to_string()),
+            delivery: Some(ResponseDelivery::Inline),
+            sample_rate: Some(24000),
+            bit_rate: None,
+        })
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    assert_eq!(value["response_format"]["type"], "audio");
+    assert_eq!(value["response_format"]["mime_type"], "audio/mp3");
+    assert_eq!(value["response_format"]["delivery"], "inline");
+    assert_eq!(value["response_format"]["sample_rate"], 24000);
+}
+
+#[test]
+fn test_builder_with_response_formats_list() {
+    use crate::ResponseFormat;
+
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-3-pro-image-preview")
+        .with_text("A diagram")
+        .with_response_formats(vec![
+            ResponseFormat::text_plain(),
+            ResponseFormat::Image {
+                mime_type: Some("image/jpeg".to_string()),
+                delivery: None,
+                aspect_ratio: None,
+                image_size: None,
+            },
+        ])
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    let formats = value["response_format"].as_array().expect("list form");
+    assert_eq!(formats.len(), 2);
+    assert_eq!(formats[0]["type"], "text");
+    assert_eq!(formats[1]["type"], "image");
+}
+
+#[test]
+fn test_builder_with_speech_config_serializes_as_single_entry_list() {
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-2.5-pro-preview-tts")
+        .with_text("Hello")
+        .with_speech_config(SpeechConfig::with_voice_and_language("Kore", "en-US"))
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    let speech = value["generation_config"]["speech_config"]
+        .as_array()
+        .expect("speech_config must be a list on the wire");
+    assert_eq!(speech.len(), 1);
+    assert_eq!(speech[0]["voice"], "Kore");
+    assert_eq!(speech[0]["language"], "en-US");
+}
+
+#[test]
+fn test_builder_multi_speaker_speech_configs() {
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-2.5-pro-preview-tts")
+        .with_text("Alice: hi\nBob: hey")
+        .add_speech_config(SpeechConfig {
+            voice: Some("Kore".to_string()),
+            language: Some("en-US".to_string()),
+            speaker: Some("Alice".to_string()),
+        })
+        .add_speech_config(SpeechConfig {
+            voice: Some("Puck".to_string()),
+            language: Some("en-US".to_string()),
+            speaker: Some("Bob".to_string()),
+        })
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    let speech = value["generation_config"]["speech_config"]
+        .as_array()
+        .expect("speech_config must be a list on the wire");
+    assert_eq!(speech.len(), 2);
+    assert_eq!(speech[0]["speaker"], "Alice");
+    assert_eq!(speech[1]["speaker"], "Bob");
+}
+
+#[test]
+fn test_builder_with_speech_configs_replaces() {
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-2.5-pro-preview-tts")
+        .with_text("Hello")
+        .add_speech_config(SpeechConfig::with_voice("Kore"))
+        .with_speech_configs(vec![SpeechConfig::with_voice("Puck")])
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    let speech = value["generation_config"]["speech_config"]
+        .as_array()
+        .unwrap();
+    assert_eq!(speech.len(), 1, "with_speech_configs replaces");
+    assert_eq!(speech[0]["voice"], "Puck");
+}
+
+#[test]
+fn test_builder_with_video_config_and_output() {
+    use crate::{VideoConfig, VideoTask};
+
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("veo-3.1-generate-preview")
+        .with_text("A hummingbird in slow motion")
+        .with_video_output()
+        .with_video_config(VideoConfig::new().with_task(VideoTask::TextToVideo))
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    assert_eq!(value["response_modalities"][0], "video");
+    assert_eq!(
+        value["generation_config"]["video_config"]["task"],
+        "text_to_video"
+    );
+}
+
+#[test]
+fn test_builder_retrieval_tool() {
+    use crate::{RetrievalConfig, VertexAiSearchConfig};
+
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-3-flash-preview")
+        .with_text("Search internal docs")
+        .add_tool(
+            RetrievalConfig::new()
+                .with_vertex_ai_search(VertexAiSearchConfig::new().with_engine("engines/e")),
+        )
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    assert_eq!(value["tools"][0]["type"], "retrieval");
+    assert_eq!(value["tools"][0]["retrieval_types"][0], "vertex_ai_search");
+    assert_eq!(
+        value["tools"][0]["vertex_ai_search_config"]["engine"],
+        "engines/e"
+    );
+}
+
+#[test]
+fn test_builder_deep_research_config_new_fields() {
+    use crate::Visualization;
+
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_agent("deep-research-preview-04-2026")
+        .with_text("Research something")
+        .with_agent_config(
+            DeepResearchConfig::new()
+                .with_thinking_summaries(ThinkingSummaries::Auto)
+                .with_visualization(Visualization::Auto)
+                .with_collaborative_planning(true)
+                .with_bigquery_tool(false),
+        )
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    let config = &value["agent_config"];
+    assert_eq!(config["type"], "deep-research");
+    assert_eq!(config["thinking_summaries"], "THINKING_SUMMARIES_AUTO");
+    assert_eq!(config["visualization"], "auto");
+    assert_eq!(config["collaborative_planning"], true);
+    assert_eq!(config["enable_bigquery_tool"], false);
+}
+
+#[test]
+fn test_builder_request_roundtrip_with_new_fields() {
+    use crate::{EnvironmentSpec, ResponseFormat, WebhookConfig};
+
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-3-flash-preview")
+        .with_text("Hello")
+        .with_webhook_config(WebhookConfig::new().with_uris(vec!["https://x.example".into()]))
+        .with_environment("env-1")
+        .with_response_format(ResponseFormat::json_schema(json!({"type": "object"})))
+        .build()
+        .unwrap();
+
+    let json = serde_json::to_string(&request).unwrap();
+    let back: InteractionRequest = serde_json::from_str(&json).unwrap();
+    assert!(matches!(
+        back.environment,
+        Some(EnvironmentSpec::Id(ref id)) if id == "env-1"
+    ));
+    assert!(back.webhook_config.is_some());
+    assert!(back.response_format.is_some());
 }

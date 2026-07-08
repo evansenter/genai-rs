@@ -143,13 +143,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     while let Some(result) = stream.next().await {
         match result {
             Ok(event) => match event.chunk {
-                StreamChunk::Delta(content) => {
-                    if let Some(text) = content.as_text() {
+                StreamChunk::StepDelta { delta, .. } => {
+                    if let Some(text) = delta.as_text() {
                         print!("{}", text);
                         stdout().flush()?;
                     }
                 }
-                StreamChunk::Complete(_) => {
+                StreamChunk::Completed(_) => {
                     println!("\n");
                 }
                 _ => {} // Handle unknown variants
