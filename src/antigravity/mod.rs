@@ -1679,6 +1679,11 @@ fn build_system_instructions(
 /// hooks want the inner `X` (its string form, or the value serialized when
 /// non-string). A verbatim object return (any shape other than a lone
 /// `result` key) is passed through serialized.
+///
+/// Edge case: a custom tool that legitimately returns a single-key object
+/// `{"result": X}` is indistinguishable from a wrapped scalar and will be
+/// unwrapped to `X` — the same inherent ambiguity as the dispatcher's
+/// scalar-wrapping. Return a multi-key object to preserve the outer shape.
 fn unwrap_result_value(value: &Value) -> String {
     if let Value::Object(map) = value
         && map.len() == 1
