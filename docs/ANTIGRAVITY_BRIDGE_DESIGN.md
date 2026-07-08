@@ -230,7 +230,9 @@ let mut steps = agent.send_streaming("Refactor src/lib.rs").await?;
 while let Some(event) = steps.next().await {
     match event? {
         AgentEvent::TextDelta(t) => print!("{t}"),
-        AgentEvent::ToolAction(a) => eprintln!("[tool] {a:?}"),
+        AgentEvent::ToolAction { action, decision, .. } => {
+            eprintln!("[tool] {action:?} ({decision:?})");
+        }
         AgentEvent::Finished(r) => break,
         _ => {}
     }

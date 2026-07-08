@@ -1221,15 +1221,21 @@ impl AntigravityAgent {
                     http_code.unwrap_or_default()
                 )));
             }
-            turn.errors.push(message.clone());
-            // Reaching here means the turn continues: the turn-aborting case
-            // (system-source fatal HTTP code) returned above. A fatal code
-            // that did *not* abort (non-system source) is still serious, so
-            // it surfaces as `Terminal`; everything else is transient
-            // harness-internal noise (retried internally, model reacts).
-            let severity = classify_error_severity(http_code);
-            turn.queue
-                .push_back(AgentEvent::Error { message, severity });
+            // An error step is terminal, so the harness re-delivers it on
+            // each tick; dedup on the step key (a dedicated set, not
+            // `announced_actions` — a step can carry both an action and an
+            // error, and the two must each surface exactly once).
+            if turn.announced_errors.insert(step_key.clone()) {
+                turn.errors.push(message.clone());
+                // Reaching here means the turn continues: the turn-aborting
+                // case (system-source fatal HTTP code) returned above. A fatal
+                // code that did *not* abort (non-system source) is still
+                // serious, so it surfaces as `Terminal`; everything else is
+                // transient harness-internal noise (retried, model reacts).
+                let severity = classify_error_severity(http_code);
+                turn.queue
+                    .push_back(AgentEvent::Error { message, severity });
+            }
         }
 
         // Thinking text accumulates from completed steps.
@@ -1745,6 +1751,7 @@ struct TurnState {
     main_trajectory: Option<String>,
     handled_waits: HashMap<(String, u32), HashSet<&'static str>>,
     announced_actions: HashSet<(String, u32)>,
+    announced_errors: HashSet<(String, u32)>,
     thought_steps: HashSet<(String, u32)>,
     final_text: Option<String>,
     thoughts: String,
@@ -1768,6 +1775,7 @@ impl TurnState {
             main_trajectory: None,
             handled_waits: HashMap::new(),
             announced_actions: HashSet::new(),
+            announced_errors: HashSet::new(),
             thought_steps: HashSet::new(),
             final_text: None,
             thoughts: String::new(),
