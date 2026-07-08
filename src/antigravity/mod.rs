@@ -320,7 +320,7 @@ impl AgentBuilder {
     /// tells the model their absolute paths, so agents otherwise guess
     /// (`/workdir`, `/workspace`, …) and wander. When on and at least one
     /// workspace is configured, `spawn()` prepends a short, clearly
-    /// delimited note listing the absolute root(s) to the effective system
+    /// delimited note listing the configured root(s) to the effective system
     /// instructions (composed at send time — the string passed to
     /// [`Self::with_system_instructions`] is never mutated). The same note
     /// is appended to each subagent's instructions, since subagent
@@ -1613,8 +1613,11 @@ fn classify_error_severity(http_code: Option<u32>) -> ErrorSeverity {
 }
 
 /// Builds the workspace-announcement note (Item: announce workspace roots).
-/// A concise, clearly delimited block listing the absolute root(s) so the
-/// model uses real paths instead of guessing.
+/// A concise, clearly delimited block listing the configured root(s) so the
+/// model uses real paths instead of guessing. The roots are announced exactly
+/// as configured (the same strings the harness roots its tools at), so the
+/// wording makes no claim about them being absolute — a caller may pass a
+/// relative path, and the model must use the same string the harness does.
 fn workspace_announcement(workspaces: &[String]) -> String {
     let roots = workspaces
         .iter()
@@ -1623,9 +1626,9 @@ fn workspace_announcement(workspaces: &[String]) -> String {
         .join("\n");
     format!(
         "=== Workspace ===\n\
-         Your workspace is rooted at the following absolute path(s). Use these \
-         exact paths for all file and directory operations; do not guess or \
-         invent workspace paths, and stay within these root(s):\n{roots}\n\
+         Your workspace is rooted at the following path(s). Use these exact \
+         paths for all file and directory operations; do not guess or invent \
+         workspace paths, and stay within these root(s):\n{roots}\n\
          === End Workspace ==="
     )
 }
