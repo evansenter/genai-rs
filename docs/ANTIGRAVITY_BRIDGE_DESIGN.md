@@ -333,7 +333,7 @@ now implemented:
   hooks receive the inner value, not the `{"result": ...}` envelope.
 - ~~**Surface harness-internal noise errors distinctly**~~ — done.
   `AgentEvent::Error` is now `{ message, severity }` with an `ErrorSeverity`
-  (`Transient` / `Terminal`); turn-ending failures still go through the
+  (`Transient` / `Severe`); turn-ending failures still go through the
   `AntigravityError::Turn` path.
 
 ### Still open
