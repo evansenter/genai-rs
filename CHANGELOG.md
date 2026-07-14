@@ -279,19 +279,6 @@ still rustls.
     names are unique; nested subagents are force-disabled (harness
     limitation, reference-SDK parity).
 
-#### New examples
-
-- `examples/webhooks_and_background.rs` — webhook resource lifecycle +
-  per-request webhook routing (runs without an API key, printing request
-  shapes).
-- `examples/retrieval_grounding.rs` — retrieval tool over Vertex AI
-  Search, RAG store, and Exa.ai backends.
-- `examples/antigravity_agent.rs` — Antigravity harness walkthrough
-  (requires `--features antigravity`).
-- `examples/real_world/repo_auditor/` — end-to-end Antigravity bridge
-  application: repo workspace, read-only built-ins, custom `#[tool]`
-  severity classifier, subagents, structured report output.
-
 - **Antigravity: workspace announcement.** `add_workspace(..)` roots are now
   announced to the model automatically — `spawn()` appends a concise,
   delimited note listing the configured workspace root(s) to the effective
@@ -305,6 +292,19 @@ still rustls.
   which emits an empty `invokeSubagent` action).
 - **Antigravity: `ToolDecision`** (`Allowed` / `Denied { reason }`) and
   **`ErrorSeverity`** (`Transient` / `Severe`) public enums.
+
+#### New examples
+
+- `examples/webhooks_and_background.rs` — webhook resource lifecycle +
+  per-request webhook routing (runs without an API key, printing request
+  shapes).
+- `examples/retrieval_grounding.rs` — retrieval tool over Vertex AI
+  Search, RAG store, and Exa.ai backends.
+- `examples/antigravity_agent.rs` — Antigravity harness walkthrough
+  (requires `--features antigravity`).
+- `examples/real_world/repo_auditor/` — end-to-end Antigravity bridge
+  application: repo workspace, read-only built-ins, custom `#[tool]`
+  severity classifier, subagents, structured report output.
 
 ### Changed
 
@@ -426,17 +426,7 @@ still rustls.
 - Minor dependency bumps: tokio 1.48 → 1.52, proptest 1.9 → 1.11,
   utoipa 5.4 → 5.5.
 
-#### Other changes
-
-- `Tool::GoogleSearch` is now a struct variant with optional
-  `search_types` field (was unit variant).
-- New default-on feature `wire-color` gates the `colored`/`colored_json`
-  dependencies; build with `default-features = false` for plain-text wire
-  output.
-- Wire debug request ids are now per-`Client` (previously a
-  process-global counter).
-- Proptest roundtrip comparisons use `serde_json::Value` for HashMap key
-  order independence.
+#### Antigravity
 
 - **Antigravity (breaking): `AgentEvent::ToolAction`** is now a struct variant
   `ToolAction { action, decision, trajectory_id }`. `decision` distinguishes
@@ -451,6 +441,18 @@ still rustls.
   is now the inner tool result, not the raw `{"result": ...}` wire envelope
   (a scalar arrives as its string form; an object is passed through
   serialized).
+
+#### Other changes
+
+- `Tool::GoogleSearch` is now a struct variant with optional
+  `search_types` field (was unit variant).
+- New default-on feature `wire-color` gates the `colored`/`colored_json`
+  dependencies; build with `default-features = false` for plain-text wire
+  output.
+- Wire debug request ids are now per-`Client` (previously a
+  process-global counter).
+- Proptest roundtrip comparisons use `serde_json::Value` for HashMap key
+  order independence.
 
 ### Fixed
 
