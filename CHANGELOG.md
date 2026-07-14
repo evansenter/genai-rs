@@ -5,41 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Added
-
-- **Antigravity: workspace announcement.** `add_workspace(..)` roots are now
-  announced to the model automatically — `spawn()` appends a concise,
-  delimited note listing the configured workspace root(s) to the effective
-  system instructions (the string passed to `with_system_instructions` is
-  never mutated), and appends the same note to every subagent's instructions.
-  Agents no longer guess workspace paths. Opt out with
-  `AgentBuilder::with_workspace_announcement(false)`. The wire protocol has no
-  native announcement field, so this is prompt-level grounding.
-- **Antigravity: `ToolAction::subagent_name()`** and a typed
-  `ActionInvokeSubagent::name` field (Evergreen; `None` on harness 0.1.5,
-  which emits an empty `invokeSubagent` action).
-- **Antigravity: `ToolDecision`** (`Allowed` / `Denied { reason }`) and
-  **`ErrorSeverity`** (`Transient` / `Severe`) public enums.
-
-### Changed
-
-- **Antigravity (breaking): `AgentEvent::ToolAction`** is now a struct variant
-  `ToolAction { action, decision, trajectory_id }`. `decision` distinguishes
-  executed actions from policy/hook-denied ones (previously indistinguishable
-  in the stream), and `trajectory_id` tells parent and subagent actions apart.
-- **Antigravity (breaking): `AgentEvent::Error(String)`** is now
-  `Error { message, severity }` so consumers can ignore transient
-  harness-internal noise (retried internally; the turn continues) and react
-  only to `Severe` errors. Turn-ending failures still surface as
-  `AntigravityError::Turn`.
-- **Antigravity (behavior): `ToolOutcome.result`** passed to post-tool hooks
-  is now the inner tool result, not the raw `{"result": ...}` wire envelope
-  (a scalar arrives as its string form; an object is passed through
-  serialized).
-
-## [0.8.0] - 2026-07-07
+## [0.8.0] - 2026-07-14
 
 This release migrates the crate to Interactions API wire revision
 **2026-05-20** (the steps model), adds the remaining 2026-05-20 API surface
@@ -313,6 +279,20 @@ still rustls.
     names are unique; nested subagents are force-disabled (harness
     limitation, reference-SDK parity).
 
+- **Antigravity: workspace announcement.** `add_workspace(..)` roots are now
+  announced to the model automatically — `spawn()` appends a concise,
+  delimited note listing the configured workspace root(s) to the effective
+  system instructions (the string passed to `with_system_instructions` is
+  never mutated), and appends the same note to every subagent's instructions.
+  Agents no longer guess workspace paths. Opt out with
+  `AgentBuilder::with_workspace_announcement(false)`. The wire protocol has no
+  native announcement field, so this is prompt-level grounding.
+- **Antigravity: `ToolAction::subagent_name()`** and a typed
+  `ActionInvokeSubagent::name` field (Evergreen; `None` on harness 0.1.5,
+  which emits an empty `invokeSubagent` action).
+- **Antigravity: `ToolDecision`** (`Allowed` / `Denied { reason }`) and
+  **`ErrorSeverity`** (`Transient` / `Severe`) public enums.
+
 #### New examples
 
 - `examples/webhooks_and_background.rs` — webhook resource lifecycle +
@@ -445,6 +425,22 @@ still rustls.
     rustls client.
 - Minor dependency bumps: tokio 1.48 → 1.52, proptest 1.9 → 1.11,
   utoipa 5.4 → 5.5.
+
+#### Antigravity
+
+- **Antigravity (breaking): `AgentEvent::ToolAction`** is now a struct variant
+  `ToolAction { action, decision, trajectory_id }`. `decision` distinguishes
+  executed actions from policy/hook-denied ones (previously indistinguishable
+  in the stream), and `trajectory_id` tells parent and subagent actions apart.
+- **Antigravity (breaking): `AgentEvent::Error(String)`** is now
+  `Error { message, severity }` so consumers can ignore transient
+  harness-internal noise (retried internally; the turn continues) and react
+  only to `Severe` errors. Turn-ending failures still surface as
+  `AntigravityError::Turn`.
+- **Antigravity (behavior): `ToolOutcome.result`** passed to post-tool hooks
+  is now the inner tool result, not the raw `{"result": ...}` wire envelope
+  (a scalar arrives as its string form; an object is passed through
+  serialized).
 
 #### Other changes
 
