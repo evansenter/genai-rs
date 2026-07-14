@@ -1759,10 +1759,22 @@ pub struct ActionCompaction {
     pub extra: Map<String, Value>,
 }
 
-/// `ActionInvokeSubagent` — subagent invocation marker (no fields).
+/// `ActionInvokeSubagent` — subagent invocation marker.
+///
+/// The invoked subagent's `name` is modeled as an optional typed field, but
+/// **harness 0.1.5 does not populate it**: the `invokeSubagent` step action
+/// is an empty message on the wire (verified with `LOUD_WIRE=1` — the step
+/// only carries the generic text `"Invoke subagent"`). The field is here so
+/// that a future harness emitting the name surfaces it without an API break;
+/// until then it stays `None`, and any unexpected field is preserved in
+/// `extra` (Evergreen).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ActionInvokeSubagent {
+    /// The invoked subagent's name, when the harness reports it (see the
+    /// type docs — `None` on harness 0.1.5).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     /// Unrecognized fields, preserved for roundtrip (Evergreen).
     #[serde(flatten)]
     pub extra: Map<String, Value>,

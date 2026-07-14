@@ -307,7 +307,15 @@ impl Subagent {
     /// Builds the wire `CustomAgent`, resolving custom tool names against
     /// the parent's declarations. Callers must have validated the names
     /// beforehand (`spawn()` does); unresolved names are skipped here.
-    pub(crate) fn to_wire(&self, parent_tools: &[protocol::Tool]) -> protocol::CustomAgent {
+    ///
+    /// `workspace_note`, when present, is appended as an extra instruction
+    /// section so the subagent learns the workspace root(s) — its trajectory
+    /// does not inherit the parent's context.
+    pub(crate) fn to_wire(
+        &self,
+        parent_tools: &[protocol::Tool],
+        workspace_note: Option<&str>,
+    ) -> protocol::CustomAgent {
         if self.capabilities.is_enabled(BuiltinTool::StartSubagent) {
             tracing::warn!(
                 "Subagent '{}' enables start_subagent, but nested subagents are not \
@@ -330,23 +338,35 @@ impl Subagent {
             })
             .collect();
 
+        // Reference SDK semantics: subagent instructions are appended
+        // sections (title "System"), never a full replacement. The
+        // workspace note (when present) is appended as its own section.
+        let mut appended_sections = Vec::new();
+        if let Some(text) = &self.system_instructions {
+            appended_sections.push(protocol::InstructionSection {
+                title: Some("System".to_string()),
+                content: Some(text.clone()),
+            });
+        }
+        if let Some(note) = workspace_note {
+            appended_sections.push(protocol::InstructionSection {
+                title: Some("Workspace".to_string()),
+                content: Some(note.to_string()),
+            });
+        }
+        let system_instructions =
+            (!appended_sections.is_empty()).then_some(protocol::SystemInstructions {
+                custom: None,
+                appended: Some(protocol::AppendedSystemInstructions {
+                    custom_identity: None,
+                    appended_sections,
+                }),
+            });
+
         protocol::CustomAgent {
             name: Some(self.name.clone()),
             description: self.description.clone(),
-            // Reference SDK semantics: subagent instructions are appended
-            // sections (title "System"), never a full replacement.
-            system_instructions: self.system_instructions.as_ref().map(|text| {
-                protocol::SystemInstructions {
-                    custom: None,
-                    appended: Some(protocol::AppendedSystemInstructions {
-                        custom_identity: None,
-                        appended_sections: vec![protocol::InstructionSection {
-                            title: Some("System".to_string()),
-                            content: Some(text.clone()),
-                        }],
-                    }),
-                }
-            }),
+            system_instructions,
             harness_side_tools: Some(harness_side_tools),
             tools,
         }
@@ -611,7 +631,7 @@ mod tests {
         let subagent = Subagent::new("auditor");
         assert_eq!(subagent.name(), "auditor");
         assert!(subagent.tool_names().is_empty());
-        let wire = subagent.to_wire(&[]);
+        let wire = subagent.to_wire(&[], None);
         assert_eq!(wire.name.as_deref(), Some("auditor"));
         assert!(wire.description.is_none());
         assert!(wire.system_instructions.is_none());
@@ -632,7 +652,7 @@ mod tests {
         assert_eq!(subagent.tool_names(), ["severity_classifier"]);
 
         let parent_tools = [parent_tool("other"), parent_tool("severity_classifier")];
-        let wire = subagent.to_wire(&parent_tools);
+        let wire = subagent.to_wire(&parent_tools, None);
         assert_eq!(wire.description.as_deref(), Some("Audits files."));
         // Instructions are appended sections (reference SDK semantics),
         // never a custom replacement.
@@ -658,12 +678,41 @@ mod tests {
     }
 
     #[test]
+    fn test_subagent_to_wire_appends_workspace_note() {
+        // With both user instructions and a workspace note, the subagent
+        // gets two appended sections; with only the note, just the note.
+        let with_both = Subagent::new("auditor")
+            .with_system_instructions("Focus on injection vectors.")
+            .to_wire(&[], Some("ROOTS: /repo"));
+        let sections = with_both
+            .system_instructions
+            .unwrap()
+            .appended
+            .unwrap()
+            .appended_sections;
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections[0].title.as_deref(), Some("System"));
+        assert_eq!(sections[1].title.as_deref(), Some("Workspace"));
+        assert_eq!(sections[1].content.as_deref(), Some("ROOTS: /repo"));
+
+        let note_only = Subagent::new("auditor").to_wire(&[], Some("ROOTS: /repo"));
+        let sections = note_only
+            .system_instructions
+            .unwrap()
+            .appended
+            .unwrap()
+            .appended_sections;
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].title.as_deref(), Some("Workspace"));
+    }
+
+    #[test]
     fn test_subagent_start_subagent_forced_off() {
         // Nested subagents are unsupported: even when explicitly enabled,
         // the wire config disables the builtin.
         let subagent = Subagent::new("nested")
             .with_capabilities(Capabilities::read_only().enable(BuiltinTool::StartSubagent));
-        let wire = subagent.to_wire(&[]);
+        let wire = subagent.to_wire(&[], None);
         assert!(!wire.harness_side_tools.unwrap().subagents.unwrap().enabled);
     }
 
@@ -673,7 +722,7 @@ mod tests {
             .with_description("Audits files.")
             .with_system_instructions("Be thorough.")
             .add_tool("severity_classifier");
-        let wire = subagent.to_wire(&[parent_tool("severity_classifier")]);
+        let wire = subagent.to_wire(&[parent_tool("severity_classifier")], None);
         let value = serde_json::to_value(&wire).unwrap();
         // Proto-JSON: camelCase fields, JSON-string schema.
         assert_eq!(

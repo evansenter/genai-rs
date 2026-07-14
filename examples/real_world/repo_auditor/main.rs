@@ -38,12 +38,14 @@
 //! [list_directory] file:///.../fixture
 //! [list_directory] file:///.../fixture/app
 //! [pre-tool hook] denied view_file on /.../fixture/.env
+//! [DENIED view_file] file:///.../fixture/.env — Secret files are off-limits; ...
+//! [harness noise] User denied permission for tool call.
 //! [start_subagent] delegated (subagent runs its own trajectory)
 //! [view_file] file:///.../fixture/app/backup.py
 //! [view_file] file:///.../fixture/app/database.py
-//! [tool] classify_severity -> {"result":"{\"category\":\"sql_injection\",\"severity\":\"critical\"}"}
-//! [tool] classify_severity -> {"result":"{\"category\":\"hardcoded_credentials\",\"severity\":\"high\"}"}
-//! [tool] classify_severity -> {"result":"{\"category\":\"command_injection\",\"severity\":\"critical\"}"}
+//! [tool] classify_severity -> {"category":"sql_injection","severity":"critical"}
+//! [tool] classify_severity -> {"category":"hardcoded_credentials","severity":"high"}
+//! [tool] classify_severity -> {"category":"command_injection","severity":"critical"}
 //! [search_directory] query="password|secret|key|token|auth|db_password"
 //! [finish] structured report received
 //!
@@ -70,8 +72,8 @@ mod report;
 use futures_util::StreamExt;
 use genai_rs::CallableFunction;
 use genai_rs::antigravity::{
-    AgentEvent, AntigravityAgent, BuiltinTool, Capabilities, PreToolDecision, Subagent, ToolAction,
-    policy,
+    AgentEvent, AntigravityAgent, BuiltinTool, Capabilities, ErrorSeverity, PreToolDecision,
+    Subagent, ToolAction, ToolDecision, policy,
 };
 use genai_rs_macros::tool;
 use std::error::Error;
@@ -114,19 +116,16 @@ const AUDITOR_INSTRUCTIONS: &str = "You are a security auditor reviewing one cod
      relative to the workspace root. Only report real vulnerabilities in \
      the project's own source code. Never touch paths outside the workspace.";
 
-/// The task prompt. The harness passes the workspace to its tools but does
-/// not announce the path to the model, so a workspace-rooted task must name
-/// it explicitly (the pre-tool hook below enforces the boundary regardless).
-fn audit_task(workspace: &str) -> String {
-    format!(
-        "Audit the project rooted at {workspace} for security vulnerabilities. \
-         Stay inside that directory. Inspect its files — including dotfiles \
-         like .env, which often hold committed secrets. Delegate the source \
-         review to the file_auditor subagent, classify each finding's \
-         severity with the classify_severity tool, then produce the \
-         structured report."
-    )
-}
+/// The task prompt. The workspace root is announced to the model
+/// automatically (`with_workspace_announcement`, on by default) and appended
+/// to the subagent's instructions too, so neither the task nor the subagent
+/// has to spell out the absolute path — the pre-tool hook still enforces the
+/// boundary regardless.
+const AUDIT_TASK: &str = "Audit this project's workspace for security vulnerabilities. \
+     Inspect its files — including dotfiles like .env, which often hold \
+     committed secrets. Delegate the source review to the file_auditor \
+     subagent, classify each finding's severity with the classify_severity \
+     tool, then produce the structured report.";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -144,20 +143,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // The subagent runs in its own trajectory with the default read-only
     // built-ins. Custom tools are referenced by name and must also be
     // registered on the parent (dispatch goes through the parent's registry).
-    // Its trajectory does not inherit the parent's context, so name the
-    // workspace root in its (appended) instructions too.
+    // Its trajectory does not inherit the parent's context, but the workspace
+    // announcement is appended to its instructions automatically, so it need
+    // not name the workspace root itself.
     let file_auditor = Subagent::new("file_auditor")
         .with_description(
             "Reviews the workspace's source files for security vulnerabilities \
              and reports each finding with its file, category, and evidence.",
         )
-        .with_system_instructions(format!(
-            "The project under review is rooted at {workspace}; use absolute \
-             paths under that directory only. Focus on injection vectors \
-             (SQL, shell) and secrets committed to source. Read the code \
-             before concluding anything; cite the exact function for each \
-             finding. Use classify_severity for severities."
-        ))
+        .with_system_instructions(
+            "Focus on injection vectors (SQL, shell) and secrets committed to \
+             source. Read the code before concluding anything; cite the exact \
+             function for each finding. Use classify_severity for severities.",
+        )
         .add_tool("classify_severity");
 
     let mut agent = AntigravityAgent::builder()
@@ -234,10 +232,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // delegation, custom-tool dispatches, and the final structured report.
     let mut final_response = None;
     {
-        let mut stream = agent.send_streaming(audit_task(&workspace)).await?;
+        let mut stream = agent.send_streaming(AUDIT_TASK).await?;
         while let Some(event) = stream.next().await {
             match event? {
-                AgentEvent::ToolAction(action) => print_action(&action),
+                AgentEvent::ToolAction {
+                    action, decision, ..
+                } => print_action(&action, &decision),
                 AgentEvent::ToolCallDispatched { name, .. } => {
                     println!("[custom tool dispatched] {name}");
                 }
@@ -247,7 +247,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     stdout().flush()?;
                 }
                 AgentEvent::TextDelta(_) => {}
-                AgentEvent::Error(message) => eprintln!("[harness error] {message}"),
+                // Severe errors are serious but do NOT end the turn (a
+                // turn-ending failure surfaces as AntigravityError instead);
+                // transient ones are harness-internal noise safe to ignore.
+                AgentEvent::Error { message, severity } => match severity {
+                    ErrorSeverity::Severe => eprintln!("[harness error] {message}"),
+                    _ => eprintln!("[harness noise] {message}"),
+                },
                 AgentEvent::Finished(response) => {
                     final_response = Some(response);
                     break;
@@ -283,6 +289,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!(
         "  WS Send: {{\"config\": ...}} - init with workspace, tools, customSubagents, finish schema"
     );
+    println!(
+        "  WS Send: {{\"config\": {{\"systemInstructions\": ...}}}} - workspace root announced to the model"
+    );
     println!("  WS Receive: {{\"initializeConversationResponse\": ...}} - cascade id");
     println!("  WS Send: {{\"userInput\": ...}} - the audit task");
     println!("  WS Receive: {{\"stepUpdate\": ...}} - listDirectory/viewFile/invokeSubagent steps");
@@ -313,8 +322,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// One concise progress line per completed harness-side tool action.
-fn print_action(action: &ToolAction) {
+/// One concise progress line per harness-side tool action. Denied actions
+/// (blocked by a policy rule or the pre-tool hook) are flagged distinctly so
+/// they don't read like executed ones.
+fn print_action(action: &ToolAction, decision: &ToolDecision) {
+    if let ToolDecision::Denied { reason } = decision {
+        // e.g. the .env view_file the pre-tool hook rejects.
+        let args = action.args();
+        let path = args["filePath"]
+            .as_str()
+            .or_else(|| args["directoryPath"].as_str())
+            .unwrap_or("");
+        println!("[DENIED {}] {path} — {reason}", action.tool_name());
+        return;
+    }
     match action {
         ToolAction::ListDirectory(a) => {
             println!(

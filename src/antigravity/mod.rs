@@ -48,7 +48,7 @@ pub use hooks::{
     Policy, PolicyDecision, PostToolHook, PreToolDecision, PreToolHook, ToolInvocation,
     ToolOutcome, policy,
 };
-pub use streaming::{AgentEvent, AgentEventStream, ToolAction};
+pub use streaming::{AgentEvent, AgentEventStream, ErrorSeverity, ToolAction, ToolDecision};
 pub use triggers::TriggerConfig;
 
 use crate::wire::{LoudWirePrinter, WireInspector};
@@ -245,6 +245,10 @@ pub struct AgentBuilder {
     inspectors: Vec<Arc<dyn WireInspector>>,
     triggers: Vec<TriggerConfig>,
     subagents: Vec<Subagent>,
+    /// Whether to announce workspace roots in the effective system
+    /// instructions. `None` means the default (on); see
+    /// [`Self::with_workspace_announcement`].
+    workspace_announcement: Option<bool>,
 }
 
 impl std::fmt::Debug for AgentBuilder {
@@ -306,6 +310,34 @@ impl AgentBuilder {
     #[must_use]
     pub fn add_workspace(mut self, directory: impl Into<String>) -> Self {
         self.workspaces.push(directory.into());
+        self
+    }
+
+    /// Controls whether the agent's configured workspace root(s) are
+    /// announced to the model. **On by default.**
+    ///
+    /// The harness points its built-in tools at the workspaces but never
+    /// tells the model their absolute paths, so agents otherwise guess
+    /// (`/workdir`, `/workspace`, …) and wander. When on and at least one
+    /// workspace is configured, `spawn()` appends a short, clearly
+    /// delimited note listing the configured root(s) to the effective system
+    /// instructions (composed at send time — the string passed to
+    /// [`Self::with_system_instructions`] is never mutated). The same note
+    /// is appended to each subagent's instructions, since subagent
+    /// trajectories do not inherit the parent's context.
+    ///
+    /// Turn it off to manage workspace grounding yourself:
+    ///
+    /// ```rust,ignore
+    /// let agent = AntigravityAgent::builder()
+    ///     .add_workspace("/repo")
+    ///     .with_workspace_announcement(false)
+    ///     // ...
+    ///     ;
+    /// ```
+    #[must_use]
+    pub fn with_workspace_announcement(mut self, announce: bool) -> Self {
+        self.workspace_announcement = Some(announce);
         self
     }
 
@@ -636,6 +668,11 @@ impl AgentBuilder {
         }
     }
 
+    /// Whether workspace announcement is enabled (default on).
+    fn announce_workspaces(&self) -> bool {
+        self.workspace_announcement.unwrap_or(true)
+    }
+
     fn build_harness_config(&self, dispatcher: &ToolDispatcher) -> protocol::HarnessConfig {
         let mut enabled_hooks = Vec::new();
         if !self.policies.is_empty() || self.pre_tool.is_some() {
@@ -666,18 +703,24 @@ impl AgentBuilder {
             .unwrap_or_default();
 
         let tools = dispatcher.harness_declarations();
+        // Announce the workspace roots to the model (opt-outable). The note
+        // is composed here at send time; the stored `system_instructions`
+        // string is never mutated. Subagents get the same note appended
+        // (their trajectories don't inherit the parent's context).
+        let workspace_note = (self.announce_workspaces() && !self.workspaces.is_empty())
+            .then(|| workspace_announcement(&self.workspaces));
         let custom_subagents = self
             .subagents
             .iter()
-            .map(|subagent| subagent.to_wire(&tools))
+            .map(|subagent| subagent.to_wire(&tools, workspace_note.as_deref()))
             .collect();
 
         protocol::HarnessConfig {
             cascade_id: self.conversation_id.clone(),
-            system_instructions: self
-                .system_instructions
-                .as_ref()
-                .map(|text| protocol::SystemInstructions::custom_text(text.clone())),
+            system_instructions: build_system_instructions(
+                self.system_instructions.as_deref(),
+                workspace_note.as_deref(),
+            ),
             tools,
             harness_side_tools: Some(self.capabilities.to_harness_side_tools()),
             compaction_threshold: None,
@@ -1132,13 +1175,17 @@ impl AntigravityAgent {
 
         let is_terminal = matches!(step.state, Some(StepState::Done) | Some(StepState::Error));
 
-        // Completed tool actions surface once, with their results populated.
-        if is_terminal
-            && let Some(action) = streaming::ToolAction::from_step(&step)
-            && turn.announced_actions.insert(step_key.clone())
-        {
-            turn.queue
-                .push_back(AgentEvent::ToolAction(Box::new(action)));
+        // Completed tool actions surface once. A denied action was already
+        // announced (with its `Denied` decision) at its confirmation step,
+        // so `announced_actions` dedups it here; anything reaching a
+        // terminal state executed, so its decision is `Allowed`.
+        if is_terminal && let Some(action) = streaming::ToolAction::from_step(&step) {
+            turn.announce_tool_action(
+                &step_key,
+                action,
+                ToolDecision::Allowed,
+                step.trajectory_id.clone(),
+            );
         }
 
         // Structured output from the finish action.
@@ -1172,8 +1219,21 @@ impl AntigravityAgent {
                     http_code.unwrap_or_default()
                 )));
             }
-            turn.errors.push(message.clone());
-            turn.queue.push_back(AgentEvent::Error(message));
+            // An error step is terminal, so the harness re-delivers it on
+            // each tick; dedup on the step key (a dedicated set, not
+            // `announced_actions` — a step can carry both an action and an
+            // error, and the two must each surface exactly once).
+            if turn.announced_errors.insert(step_key.clone()) {
+                turn.errors.push(message.clone());
+                // Reaching here means the turn continues: the turn-aborting
+                // case (system-source fatal HTTP code) returned above. A fatal
+                // code that did *not* abort (non-system source) is still
+                // serious, so it surfaces as `Severe`; everything else is
+                // transient harness-internal noise (retried, model reacts).
+                let severity = classify_error_severity(http_code);
+                turn.queue
+                    .push_back(AgentEvent::Error { message, severity });
+            }
         }
 
         // Thinking text accumulates from completed steps.
@@ -1206,7 +1266,8 @@ impl AntigravityAgent {
             if step.tool_confirmation_request.is_some()
                 && turn.mark_wait_handled(&step_key, "tool_confirmation_request")
             {
-                self.answer_tool_confirmation(&step).await?;
+                self.answer_tool_confirmation(&step, &step_key, turn)
+                    .await?;
             }
             if let Some(questions) = &step.questions_request
                 && turn.mark_wait_handled(&step_key, "questions_request")
@@ -1219,12 +1280,32 @@ impl AntigravityAgent {
     }
 
     /// Policy-checks a pending harness-side tool and replies with a
-    /// `tool_confirmation`.
+    /// `tool_confirmation`. When the decision is a denial, the blocked
+    /// action is surfaced as a [`AgentEvent::ToolAction`] with a
+    /// [`ToolDecision::Denied`] marker (deduped against the terminal-step
+    /// emission via `announced_actions`) so consumers see denied actions
+    /// distinctly — a denied action still reaches a terminal step, but with
+    /// no signal that it was blocked.
     async fn answer_tool_confirmation(
         &mut self,
         step: &StepUpdate,
+        step_key: &(String, u32),
+        turn: &mut TurnState,
     ) -> Result<(), AntigravityError> {
-        let accepted = confirmation_decision(step, &self.policy_engine, self.pre_tool.as_ref());
+        let decision = confirmation_decision(step, &self.policy_engine, self.pre_tool.as_ref());
+        let accepted = matches!(decision, PreToolDecision::Allow);
+        if let PreToolDecision::Deny { reason } = &decision
+            && let Some(action) = streaming::ToolAction::from_step(step)
+        {
+            turn.announce_tool_action(
+                step_key,
+                action,
+                ToolDecision::Denied {
+                    reason: reason.clone(),
+                },
+                step.trajectory_id.clone(),
+            );
+        }
         self.session
             .send(&InputEvent::ToolConfirmation(protocol::ToolConfirmation {
                 trajectory_id: step.trajectory_id.clone().unwrap_or_default(),
@@ -1343,13 +1424,18 @@ impl AntigravityAgent {
             PreToolDecision::Allow => {
                 let result = self.dispatcher.execute(&name, args).await;
                 if let Some(post_tool) = &self.post_tool {
+                    // Hand the hook the inner value, not the `{"result": ...}`
+                    // wire envelope the harness expects (Item: unwrap
+                    // ToolOutcome.result). The error branch keeps the
+                    // envelope's error string.
+                    let error = result
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string);
                     let outcome = ToolOutcome {
                         name: name.clone(),
-                        result: result.get("error").is_none().then(|| result.to_string()),
-                        error: result
-                            .get("error")
-                            .and_then(Value::as_str)
-                            .map(ToString::to_string),
+                        result: error.is_none().then(|| unwrap_result_value(&result)),
+                        error,
                     };
                     post_tool(&outcome);
                 }
@@ -1408,7 +1494,9 @@ impl AntigravityAgent {
             if let Some(post_tool) = &self.post_tool {
                 post_tool(&ToolOutcome {
                     name: post_tool_args.tool_name.clone().unwrap_or_default(),
-                    result: post_tool_args.result.clone(),
+                    // Unwrap the `{"result": ...}` envelope for consistency
+                    // with the custom-tool dispatch path.
+                    result: post_tool_args.result.as_deref().map(unwrap_result_string),
                     error: post_tool_args.error.clone(),
                 });
             }
@@ -1462,7 +1550,7 @@ fn confirmation_decision(
     step: &StepUpdate,
     engine: &PolicyEngine,
     pre_tool: Option<&PreToolHook>,
-) -> bool {
+) -> PreToolDecision {
     if let Some(action) = streaming::ToolAction::from_step(step) {
         let name = action.tool_name();
         let mut args = action.args();
@@ -1472,19 +1560,17 @@ fn confirmation_decision(
             args,
             id: None,
         };
-        return match hooks::decide(engine, pre_tool, &invocation) {
-            PreToolDecision::Allow => true,
-            PreToolDecision::Deny { reason } => {
-                tracing::info!("Rejecting harness tool '{name}': {reason}");
-                false
-            }
-        };
+        let decision = hooks::decide(engine, pre_tool, &invocation);
+        if let PreToolDecision::Deny { reason } = &decision {
+            tracing::info!("Rejecting harness tool '{name}': {reason}");
+        }
+        return decision;
     }
 
     if step.extra.is_empty() {
         // Case 2: genuine pre-request notification.
         tracing::debug!("Auto-approving a pre-request host-tool confirmation.");
-        return true;
+        return PreToolDecision::Allow;
     }
 
     // Case 3: unrecognized fields — evaluate policies against the first
@@ -1513,7 +1599,121 @@ fn confirmation_decision(
          Add a policy rule for the wire field name to control this explicitly.",
         if accepted { "allowing" } else { "denying" }
     );
-    accepted
+    decision
+}
+
+/// Classifies a harness error step's severity for
+/// [`AgentEvent::Error`](streaming::AgentEvent). A fatal model-backend
+/// HTTP code (400/401/403) that reached the event path — i.e. did *not* abort
+/// the turn through the system-source [`AntigravityError::Turn`] path — is
+/// still serious and surfaces as [`ErrorSeverity::Severe`]; every other
+/// error is transient harness-internal noise the turn recovers from.
+fn classify_error_severity(http_code: Option<u32>) -> ErrorSeverity {
+    if http_code.is_some_and(|code| FATAL_HTTP_CODES.contains(&code)) {
+        ErrorSeverity::Severe
+    } else {
+        ErrorSeverity::Transient
+    }
+}
+
+/// Builds the workspace-announcement note (Item: announce workspace roots).
+/// A concise, clearly delimited block listing the configured root(s) so the
+/// model uses real paths instead of guessing. The roots are announced exactly
+/// as configured (the same strings the harness roots its tools at), so the
+/// wording makes no claim about them being absolute — a caller may pass a
+/// relative path, and the model must use the same string the harness does.
+fn workspace_announcement(workspaces: &[String]) -> String {
+    let roots = workspaces
+        .iter()
+        .map(|root| format!("- {root}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "=== Workspace ===\n\
+         Your workspace is rooted at the following path(s). Use these exact \
+         paths for all file and directory operations; do not guess or invent \
+         workspace paths, and stay within these root(s):\n{roots}\n\
+         === End Workspace ==="
+    )
+}
+
+/// Composes the effective parent system instructions from the user's
+/// instructions (never mutated) and an optional workspace-announcement note.
+///
+/// - With a note and user instructions: the note is a second `custom` part
+///   (keeps the user's text intact, still fully custom).
+/// - With a note and no user instructions: the note is an *appended* section
+///   so the harness's default instructions are preserved (not replaced).
+/// - With no note: the user's instructions as fully-custom text, or `None`.
+fn build_system_instructions(
+    user_instructions: Option<&str>,
+    workspace_note: Option<&str>,
+) -> Option<protocol::SystemInstructions> {
+    match (user_instructions, workspace_note) {
+        (Some(text), Some(note)) => Some(protocol::SystemInstructions {
+            custom: Some(protocol::CustomSystemInstructions {
+                part: vec![
+                    protocol::SystemInstructionPart {
+                        text: Some(text.to_string()),
+                    },
+                    protocol::SystemInstructionPart {
+                        text: Some(note.to_string()),
+                    },
+                ],
+            }),
+            appended: None,
+        }),
+        (Some(text), None) => Some(protocol::SystemInstructions::custom_text(text.to_string())),
+        (None, Some(note)) => Some(protocol::SystemInstructions {
+            custom: None,
+            appended: Some(protocol::AppendedSystemInstructions {
+                custom_identity: None,
+                appended_sections: vec![protocol::InstructionSection {
+                    title: Some("Workspace".to_string()),
+                    content: Some(note.to_string()),
+                }],
+            }),
+        }),
+        (None, None) => None,
+    }
+}
+
+/// Unwraps the dispatcher's result envelope for a post-tool hook. A scalar
+/// tool return is wrapped as `{"result": X}` before going to the harness;
+/// hooks want the inner `X` (its string form, or the value serialized when
+/// non-string). A verbatim object return (any shape other than a lone
+/// `result` key) is passed through serialized.
+///
+/// Edge case: a custom tool that legitimately returns a single-key object
+/// `{"result": X}` is indistinguishable from a wrapped scalar and will be
+/// unwrapped to `X` — the same inherent ambiguity as the dispatcher's
+/// scalar-wrapping. Return a multi-key object to preserve the outer shape.
+fn unwrap_result_value(value: &Value) -> String {
+    if let Value::Object(map) = value
+        && map.len() == 1
+        && let Some(inner) = map.get("result")
+    {
+        return match inner {
+            Value::String(text) => text.clone(),
+            other => other.to_string(),
+        };
+    }
+    value.to_string()
+}
+
+/// Like [`unwrap_result_value`], for a harness-supplied result *string*
+/// (the `PostToolArgs.result` wire field). Only a lone-`result` JSON object
+/// envelope is unwrapped; any other payload (plain text, a multi-key object)
+/// is handed back verbatim.
+fn unwrap_result_string(raw: &str) -> String {
+    if let Ok(value) = serde_json::from_str::<Value>(raw)
+        && let Value::Object(map) = &value
+        && map.len() == 1
+        && map.contains_key("result")
+    {
+        return unwrap_result_value(&value);
+    }
+    raw.to_string()
 }
 
 // =============================================================================
@@ -1549,6 +1749,7 @@ struct TurnState {
     main_trajectory: Option<String>,
     handled_waits: HashMap<(String, u32), HashSet<&'static str>>,
     announced_actions: HashSet<(String, u32)>,
+    announced_errors: HashSet<(String, u32)>,
     thought_steps: HashSet<(String, u32)>,
     final_text: Option<String>,
     thoughts: String,
@@ -1572,6 +1773,7 @@ impl TurnState {
             main_trajectory: None,
             handled_waits: HashMap::new(),
             announced_actions: HashSet::new(),
+            announced_errors: HashSet::new(),
             thought_steps: HashSet::new(),
             final_text: None,
             thoughts: String::new(),
@@ -1592,6 +1794,31 @@ impl TurnState {
             .entry(step_key.clone())
             .or_default()
             .insert(kind)
+    }
+
+    /// Queues a [`AgentEvent::ToolAction`] for a step at most once, keyed on
+    /// `step_key`. The first decision seen for a step wins: a `Denied`
+    /// announcement at the confirmation step suppresses the later `Allowed`
+    /// announcement at the same step's terminal delivery (the harness
+    /// re-delivers terminal steps on every tick). Returns whether the event
+    /// was queued.
+    fn announce_tool_action(
+        &mut self,
+        step_key: &(String, u32),
+        action: streaming::ToolAction,
+        decision: ToolDecision,
+        trajectory_id: Option<String>,
+    ) -> bool {
+        if self.announced_actions.insert(step_key.clone()) {
+            self.queue.push_back(AgentEvent::ToolAction {
+                action: Box::new(action),
+                decision,
+                trajectory_id,
+            });
+            true
+        } else {
+            false
+        }
     }
 
     fn take_response(&mut self) -> ChatResponse {
@@ -1971,16 +2198,28 @@ mod agent_tests {
         PolicyEngine::new(policies)
     }
 
+    /// Whether a confirmation is accepted (the decision maps to `Allow`).
+    fn confirmation_accepted(
+        step: &StepUpdate,
+        engine: &PolicyEngine,
+        pre_tool: Option<&PreToolHook>,
+    ) -> bool {
+        matches!(
+            confirmation_decision(step, engine, pre_tool),
+            PreToolDecision::Allow
+        )
+    }
+
     #[test]
     fn test_confirmation_denied_for_deny_policied_known_tool() {
         let step = run_command_confirmation_step();
         // Exact deny and wildcard deny must both reject (accepted=false).
-        assert!(!confirmation_decision(
+        assert!(!confirmation_accepted(
             &step,
             &engine(vec![policy::deny("run_command")]),
             None
         ));
-        assert!(!confirmation_decision(
+        assert!(!confirmation_accepted(
             &step,
             &engine(vec![policy::deny_all()]),
             None
@@ -1990,12 +2229,12 @@ mod agent_tests {
     #[test]
     fn test_confirmation_allowed_for_allowed_known_tool() {
         let step = run_command_confirmation_step();
-        assert!(confirmation_decision(
+        assert!(confirmation_accepted(
             &step,
             &engine(vec![policy::allow_all()]),
             None
         ));
-        assert!(confirmation_decision(
+        assert!(confirmation_accepted(
             &step,
             &engine(vec![policy::deny_all(), policy::allow("run_command")]),
             None
@@ -2011,7 +2250,7 @@ mod agent_tests {
             assert_eq!(invocation.args["request_text"], "run `ls`?");
             PreToolDecision::deny("hook says no")
         });
-        assert!(!confirmation_decision(&step, &engine(vec![]), Some(&hook)));
+        assert!(!confirmation_accepted(&step, &engine(vec![]), Some(&hook)));
     }
 
     #[test]
@@ -2020,48 +2259,48 @@ mod agent_tests {
         // notification. The concrete call gets its own policy check, so
         // this is approved regardless of policy (mirrors the reference SDK).
         let step = pre_request_confirmation_step();
-        assert!(confirmation_decision(
+        assert!(confirmation_accepted(
             &step,
             &engine(vec![policy::deny_all()]),
             None
         ));
-        assert!(confirmation_decision(&step, &engine(vec![]), None));
+        assert!(confirmation_accepted(&step, &engine(vec![]), None));
     }
 
     #[test]
     fn test_confirmation_unknown_action_allowed_only_under_allow_all() {
         let step = unknown_action_confirmation_step();
         // allow_all (wildcard) approves.
-        assert!(confirmation_decision(
+        assert!(confirmation_accepted(
             &step,
             &engine(vec![policy::allow_all()]),
             None
         ));
         // Restrictive policy sets fail closed.
-        assert!(!confirmation_decision(
+        assert!(!confirmation_accepted(
             &step,
             &engine(vec![policy::deny_all()]),
             None
         ));
-        assert!(!confirmation_decision(
+        assert!(!confirmation_accepted(
             &step,
             &engine(vec![policy::deny_all(), policy::allow("run_command")]),
             None
         ));
         // No policies and no hook at all: still fail closed — an unknown
         // builtin's confirmation is its only gate.
-        assert!(!confirmation_decision(&step, &engine(vec![]), None));
+        assert!(!confirmation_accepted(&step, &engine(vec![]), None));
     }
 
     #[test]
     fn test_confirmation_unknown_action_matches_exact_rule_by_wire_field() {
         let step = unknown_action_confirmation_step();
-        assert!(confirmation_decision(
+        assert!(confirmation_accepted(
             &step,
             &engine(vec![policy::deny_all(), policy::allow("deleteEverything")]),
             None
         ));
-        assert!(!confirmation_decision(
+        assert!(!confirmation_accepted(
             &step,
             &engine(vec![policy::allow_all(), policy::deny("deleteEverything")]),
             None
@@ -2079,13 +2318,256 @@ mod agent_tests {
             assert_eq!(invocation.args["request_text"], "do the new thing?");
             PreToolDecision::Allow
         });
-        assert!(confirmation_decision(&step, &engine(vec![]), Some(&hook)));
+        assert!(confirmation_accepted(&step, &engine(vec![]), Some(&hook)));
 
         let deny_hook: PreToolHook = Arc::new(|_| PreToolDecision::deny("nope"));
-        assert!(!confirmation_decision(
+        assert!(!confirmation_accepted(
             &step,
             &engine(vec![]),
             Some(&deny_hook)
         ));
+    }
+
+    // -------------------------------------------------------------------
+    // Accepted/denied decision surfacing (Item: ToolAction decision marker)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_confirmation_decision_carries_denial_reason() {
+        let step = run_command_confirmation_step();
+        let decision = confirmation_decision(&step, &engine(vec![policy::deny_all()]), None);
+        let PreToolDecision::Deny { reason } = decision else {
+            panic!("expected a denial");
+        };
+        assert!(reason.contains("run_command"));
+        // The allowed path yields `Allow` (no reason).
+        assert_eq!(
+            confirmation_decision(&step, &engine(vec![policy::allow_all()]), None),
+            PreToolDecision::Allow
+        );
+    }
+
+    #[test]
+    fn test_denied_confirmation_emits_denied_tool_action() {
+        // A denied confirmation must surface as a ToolAction event carrying
+        // the Denied decision and the trajectory id; an allowed one must not
+        // emit at the confirmation step (it surfaces at its terminal step).
+        let mut step = run_command_confirmation_step();
+        step.trajectory_id = Some("traj-1".to_string());
+
+        let denied = matches!(
+            confirmation_decision(&step, &engine(vec![policy::deny_all()]), None),
+            PreToolDecision::Deny { .. }
+        );
+        assert!(denied);
+        // Mirror the emission the turn loop performs on a denial.
+        let action = streaming::ToolAction::from_step(&step).unwrap();
+        let event = AgentEvent::ToolAction {
+            action: Box::new(action),
+            decision: ToolDecision::Denied {
+                reason: "Denied by policy for tool 'run_command'.".to_string(),
+            },
+            trajectory_id: step.trajectory_id.clone(),
+        };
+        let AgentEvent::ToolAction {
+            decision,
+            trajectory_id,
+            ..
+        } = &event
+        else {
+            panic!("expected a ToolAction");
+        };
+        assert!(decision.is_denied());
+        assert_eq!(
+            decision.denial_reason(),
+            Some("Denied by policy for tool 'run_command'.")
+        );
+        assert_eq!(trajectory_id.as_deref(), Some("traj-1"));
+
+        assert_eq!(
+            confirmation_decision(&step, &engine(vec![policy::allow_all()]), None),
+            PreToolDecision::Allow
+        );
+    }
+
+    #[test]
+    fn test_denied_action_dedups_terminal_allowed_emission() {
+        // The turn-loop invariant: a denied action is announced exactly once
+        // (as Denied at its confirmation step) and is NOT re-announced as
+        // Allowed when the same step later reaches its terminal delivery.
+        // Both call sites route through `TurnState::announce_tool_action`
+        // keyed on the same step_key, so exercise it directly (the send-side
+        // I/O of `answer_tool_confirmation` is not needed to lock this).
+        let mut turn = TurnState::new(None, None);
+        let step = run_command_confirmation_step();
+        let step_key = (
+            step.trajectory_id.clone().unwrap_or_default(),
+            step.step_index.unwrap_or_default(),
+        );
+        let action = || streaming::ToolAction::from_step(&step).unwrap();
+
+        // Confirmation step: denial announced.
+        assert!(turn.announce_tool_action(
+            &step_key,
+            action(),
+            ToolDecision::Denied {
+                reason: "blocked".to_string(),
+            },
+            step.trajectory_id.clone(),
+        ));
+        // Terminal step: the same step's Allowed announcement is suppressed.
+        assert!(!turn.announce_tool_action(
+            &step_key,
+            action(),
+            ToolDecision::Allowed,
+            step.trajectory_id.clone(),
+        ));
+
+        // Exactly one event, and it is the Denied one.
+        let actions: Vec<_> = turn
+            .queue
+            .iter()
+            .filter(|e| matches!(e, AgentEvent::ToolAction { .. }))
+            .collect();
+        assert_eq!(actions.len(), 1);
+        let AgentEvent::ToolAction { decision, .. } = actions[0] else {
+            unreachable!();
+        };
+        assert!(decision.is_denied());
+
+        // A distinct step (different key) is unaffected by the dedup.
+        let other_key = ("traj-other".to_string(), 9);
+        assert!(turn.announce_tool_action(
+            &other_key,
+            action(),
+            ToolDecision::Allowed,
+            Some("traj-other".to_string()),
+        ));
+    }
+
+    // -------------------------------------------------------------------
+    // Error severity classification (Item: classify harness error severity)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_classify_error_severity() {
+        // No code / retryable / non-fatal codes → transient noise.
+        assert_eq!(classify_error_severity(None), ErrorSeverity::Transient);
+        assert_eq!(classify_error_severity(Some(500)), ErrorSeverity::Transient);
+        assert_eq!(classify_error_severity(Some(429)), ErrorSeverity::Transient);
+        // Fatal model-backend codes that reached the event path are serious.
+        for code in FATAL_HTTP_CODES {
+            assert_eq!(classify_error_severity(Some(code)), ErrorSeverity::Severe);
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // ToolOutcome result unwrapping (Item: unwrap the wire envelope)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_unwrap_result_value_unwraps_scalar_envelope() {
+        // {"result": "<string>"} → the inner string, verbatim.
+        assert_eq!(
+            unwrap_result_value(&serde_json::json!({"result": "hello"})),
+            "hello"
+        );
+        // {"result": <non-string>} → the inner value serialized.
+        assert_eq!(
+            unwrap_result_value(&serde_json::json!({"result": 42})),
+            "42"
+        );
+        // A verbatim object (not a lone `result` key) passes through.
+        assert_eq!(
+            unwrap_result_value(&serde_json::json!({"echo": "hi"})),
+            r#"{"echo":"hi"}"#
+        );
+        // A multi-key object that happens to contain `result` is not
+        // unwrapped (data preservation).
+        let multi = serde_json::json!({"result": 1, "other": 2});
+        assert_eq!(unwrap_result_value(&multi), multi.to_string());
+    }
+
+    #[test]
+    fn test_unwrap_result_string_unwraps_only_the_envelope() {
+        assert_eq!(unwrap_result_string(r#"{"result":"inner"}"#), "inner");
+        assert_eq!(unwrap_result_string(r#"{"result":7}"#), "7");
+        // Plain (non-JSON) harness output is handed back verbatim.
+        assert_eq!(unwrap_result_string("plain text"), "plain text");
+        // A non-envelope object stays verbatim.
+        assert_eq!(unwrap_result_string(r#"{"a":1}"#), r#"{"a":1}"#);
+    }
+
+    // -------------------------------------------------------------------
+    // Workspace announcement (Item: announce workspace roots)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_workspace_announcement_lists_roots() {
+        let note = workspace_announcement(&["/a".to_string(), "/b".to_string()]);
+        assert!(note.contains("/a"));
+        assert!(note.contains("/b"));
+        assert!(note.contains("Workspace"));
+    }
+
+    #[test]
+    fn test_build_system_instructions_composition() {
+        // User + note: two custom parts, user text unmutated and first.
+        let si = build_system_instructions(Some("Be brief."), Some("ROOTS")).unwrap();
+        let parts = si.custom.unwrap().part;
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].text.as_deref(), Some("Be brief."));
+        assert_eq!(parts[1].text.as_deref(), Some("ROOTS"));
+
+        // Note only (no user instructions): an appended section preserves
+        // the harness defaults.
+        let si = build_system_instructions(None, Some("ROOTS")).unwrap();
+        assert!(si.custom.is_none());
+        let sections = si.appended.unwrap().appended_sections;
+        assert_eq!(sections[0].title.as_deref(), Some("Workspace"));
+        assert_eq!(sections[0].content.as_deref(), Some("ROOTS"));
+
+        // User only: fully-custom single part.
+        let si = build_system_instructions(Some("Hi"), None).unwrap();
+        assert_eq!(si.custom.unwrap().part[0].text.as_deref(), Some("Hi"));
+
+        // Neither: no instructions.
+        assert!(build_system_instructions(None, None).is_none());
+    }
+
+    #[test]
+    fn test_builder_announces_workspace_by_default() {
+        let builder = AntigravityAgent::builder()
+            .with_system_instructions("Audit it.")
+            .add_workspace("/repo");
+        let dispatcher = ToolDispatcher::new(vec![], &[]);
+        let config = builder.build_harness_config(&dispatcher);
+        let parts = config.system_instructions.unwrap().custom.unwrap().part;
+        assert_eq!(parts[0].text.as_deref(), Some("Audit it."));
+        assert!(parts[1].text.as_ref().unwrap().contains("/repo"));
+    }
+
+    #[test]
+    fn test_builder_workspace_announcement_opt_out() {
+        let builder = AntigravityAgent::builder()
+            .with_system_instructions("Audit it.")
+            .add_workspace("/repo")
+            .with_workspace_announcement(false);
+        let dispatcher = ToolDispatcher::new(vec![], &[]);
+        let config = builder.build_harness_config(&dispatcher);
+        // Just the user's instruction, no announcement part.
+        let parts = config.system_instructions.unwrap().custom.unwrap().part;
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].text.as_deref(), Some("Audit it."));
+    }
+
+    #[test]
+    fn test_builder_no_workspace_no_announcement() {
+        // No workspace → nothing to announce, instructions untouched.
+        let builder = AntigravityAgent::builder().with_system_instructions("Hi");
+        let dispatcher = ToolDispatcher::new(vec![], &[]);
+        let config = builder.build_harness_config(&dispatcher);
+        let parts = config.system_instructions.unwrap().custom.unwrap().part;
+        assert_eq!(parts.len(), 1);
     }
 }
