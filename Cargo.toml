@@ -34,6 +34,16 @@ readme = "README.md"
 keywords = ["gemini", "google", "ai", "llm", "genai"]
 categories = ["api-bindings", "asynchronous"]
 
+# docs.rs builds with all features so feature-gated modules (e.g. the
+# `antigravity` bridge) appear in the published docs, with per-item
+# "Available on crate feature ... only" banners via doc_auto_cfg.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)"] }
+
 [dependencies]
 genai-rs-macros = { version = "0.8.0", path = "./genai-rs-macros" }
 serde = { workspace = true }
