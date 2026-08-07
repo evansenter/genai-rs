@@ -39,9 +39,12 @@ jobs:
           # Initialize counters
           TOTAL_RUNS=0
           FAILED_RUNS=0
-          declare -A TEST_FAILURES
-          declare -A TEST_FILES
-          declare -A TEST_CATEGORIES
+          # Initialize with =() — under `set -u`, bash treats a declared but
+          # never-assigned array as unset, so ${#TEST_FAILURES[@]} aborts the
+          # report on any week with zero CI failures.
+          declare -A TEST_FAILURES=()
+          declare -A TEST_FILES=()
+          declare -A TEST_CATEGORIES=()
 
           # Category totals
           API_ERRORS=0
