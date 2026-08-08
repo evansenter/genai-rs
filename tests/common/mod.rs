@@ -969,7 +969,9 @@ pub async fn validate_response_semantically(
 /// # Panics
 ///
 /// - If the response is not semantically valid
-/// - If the validator call fails non-transiently (4xx other than 429)
+/// - If the validator call fails with any non-retryable error (anything
+///   [`GenaiError::is_retryable`] rejects: 4xx other than 429, parse/JSON
+///   errors, malformed responses, etc.)
 ///
 /// Transient validator failures (per [`GenaiError::is_retryable`]: network
 /// errors, timeouts, 5xx, 429) are logged with a greppable
