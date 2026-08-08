@@ -3,6 +3,9 @@ members = [
     "genai-rs-macros",
 ]
 
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)"] }
+
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -41,8 +44,8 @@ categories = ["api-bindings", "asynchronous"]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)"] }
+[lints]
+workspace = true
 
 [dependencies]
 genai-rs-macros = { version = "0.8.0", path = "./genai-rs-macros" }

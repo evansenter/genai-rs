@@ -22,7 +22,7 @@ test-all:
 
 # Build documentation with warnings as errors
 docs:
-	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items
+	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --document-private-items
 
 # Clean build artifacts
 clean:

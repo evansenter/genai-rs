@@ -145,7 +145,7 @@ jobs:
       - name: Install mold linker
         run: sudo apt-get update || true; sudo apt-get install -y mold
       - name: Check documentation
-        run: cargo doc --workspace --no-deps --document-private-items
+        run: cargo doc --workspace --no-deps --all-features --document-private-items
         env:
           RUSTDOCFLAGS: -D warnings
 

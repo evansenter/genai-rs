@@ -12,7 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - docs.rs now documents all features (notably the `antigravity` module,
   which was invisible in the 0.8.0 docs because docs.rs built with default
   features only), with "Available on crate feature ... only" banners on
-  feature-gated items.
+  feature-gated items. The CI doc gate now builds with `--all-features` so
+  feature-gated docs stay under the `-D warnings` check.
+- README installation snippet now lists `async-trait` and `serde_json`,
+  required by `#[tool]`-generated code, and notes the `CallableFunction`
+  import — following the previous snippet produced a compile error on
+  first macro use.
 
 ## [0.8.0] - 2026-07-14
 
