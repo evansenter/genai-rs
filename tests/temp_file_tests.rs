@@ -468,6 +468,11 @@ fn example_fixtures_match_test_fixtures() {
         video_src.contains(TINY_MP4_BASE64),
         "examples/video_input.rs DEMO_MP4_BASE64 has drifted from tests/common TINY_MP4_BASE64"
     );
+    let pdf_src = include_str!("../examples/pdf_input.rs");
+    assert!(
+        pdf_src.contains(TINY_PDF_BASE64),
+        "examples/pdf_input.rs SAMPLE_PDF_BASE64 has drifted from tests/common TINY_PDF_BASE64"
+    );
     let image_src = include_str!("../examples/multimodal_image.rs");
     assert!(
         image_src.contains(TINY_RED_PNG_BASE64),
