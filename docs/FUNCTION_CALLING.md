@@ -72,9 +72,9 @@ fn get_time(timezone: String) -> String {
     format!(r#"{{"timezone": "{}", "time": "14:30"}}"#, timezone)
 }
 
-// Compile-checked in CI: this snippet is the canonical demonstration that
-// the macro needs both imports above plus async-trait and serde_json as
-// dependencies.
+// Compile-checked in CI as a doctest: proves both imports above are
+// required. (The async-trait / serde_json manifest requirement is only
+// provable from a fresh consumer crate — see the README note.)
 let _declaration = GetWeatherCallable.declaration();
 ```
 
