@@ -146,8 +146,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install mold linker
         run: sudo apt-get update || true; sudo apt-get install -y mold
-      - name: Check documentation
+      - name: Check documentation (all features)
         run: cargo doc --workspace --no-deps --all-features --document-private-items
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - name: Check documentation (docs.rs feature set)
+        # Mirrors [package.metadata.docs.rs] in Cargo.toml: items gated on
+        # cfg(not(feature = "strict-unknown")) render on docs.rs but are
+        # invisible to the all-features build above.
+        run: cargo doc --workspace --no-deps --features antigravity
         env:
           RUSTDOCFLAGS: -D warnings
 

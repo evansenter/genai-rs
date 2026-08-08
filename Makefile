@@ -20,9 +20,11 @@ test:
 test-all:
 	cargo nextest run --run-ignored all
 
-# Build documentation with warnings as errors
+# Build documentation with warnings as errors (all features + the docs.rs
+# feature set, which differ on strict-unknown)
 docs:
 	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --document-private-items
+	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --features antigravity
 
 # Clean build artifacts
 clean:

@@ -962,9 +962,9 @@ mod bytes_loading {
     /// The test PDF contains "Hello World" text.
     /// Uses semantic validation to verify the model correctly interprets the document.
     ///
-    /// Note: This uses lenient error handling because the extra
-    /// validate_response_semantically call is a second API round-trip that can
-    /// fail independently of the document input under test.
+    /// Note: The primary interaction asserts strictly; only the inner
+    /// validate_response_semantically call is lenient, because it is a second
+    /// API round-trip that can fail independently of the input under test.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_document_data_roundtrip() {
@@ -986,40 +986,34 @@ mod bytes_loading {
             .create()
             .await;
 
-        match result {
-            Ok(response) => {
-                println!("PDF bytes response status: {:?}", response.status);
-                assert_eq!(response.status, InteractionStatus::Completed);
-                assert!(response.has_text(), "Should have text response");
+        let response = result.expect("PDF bytes interaction failed");
+        println!("PDF bytes response status: {:?}", response.status);
+        assert_eq!(response.status, InteractionStatus::Completed);
+        assert!(response.has_text(), "Should have text response");
 
-                let text = response.as_text().unwrap();
-                println!("PDF response: {}", text);
+        let text = response.as_text().unwrap();
+        println!("PDF response: {}", text);
 
-                // Use semantic validation instead of brittle content checks
-                // Handle validation failure gracefully since it makes an additional API call
-                match validate_response_semantically(
-                    &client,
-                    "User asked about text in a PDF that contains 'Hello World'",
-                    text,
-                    "Does this response mention 'Hello', 'World', or indicate these words were found in the document?",
-                )
-                .await
-                {
-                    Ok(is_valid) => {
-                        assert!(
-                            is_valid,
-                            "Response should mention the PDF content: {}",
-                            text
-                        );
-                    }
-                    Err(e) => {
-                        println!("Semantic validation error (non-fatal): {:?}", e);
-                    }
-                }
+        // Use semantic validation instead of brittle content checks.
+        // Only this inner call stays lenient: it is a second API round-trip
+        // that can fail independently of the document input under test.
+        match validate_response_semantically(
+            &client,
+            "User asked about text in a PDF that contains 'Hello World'",
+            text,
+            "Does this response mention 'Hello', 'World', or indicate these words were found in the document?",
+        )
+        .await
+        {
+            Ok(is_valid) => {
+                assert!(
+                    is_valid,
+                    "Response should mention the PDF content: {}",
+                    text
+                );
             }
             Err(e) => {
-                // The minimal PDF might not be fully valid
-                println!("PDF bytes error (may be expected for minimal PDF): {:?}", e);
+                println!("Semantic validation error (non-fatal): {:?}", e);
             }
         }
     }

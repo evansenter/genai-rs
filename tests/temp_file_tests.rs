@@ -19,7 +19,7 @@ mod common;
 
 use base64::Engine;
 use common::{
-    TINY_MP4_BASE64, TINY_PDF_BASE64, TINY_RED_PNG_BASE64, TINY_WAV_BASE64,
+    TINY_BLUE_PNG_BASE64, TINY_MP4_BASE64, TINY_PDF_BASE64, TINY_RED_PNG_BASE64, TINY_WAV_BASE64,
     assert_response_semantic, get_client, stateful_builder,
 };
 use genai_rs::{
@@ -448,6 +448,10 @@ async fn test_audio_from_temp_file() {
 // Video File Tests
 // =============================================================================
 
+// =============================================================================
+// Fixture Drift Guard
+// =============================================================================
+
 /// Guards against the example fixture copies drifting from the canonical
 /// test fixtures. The examples embed verbatim copies of these constants and
 /// are never run in CI, so a fixture update that misses them silently sends
@@ -463,6 +467,15 @@ fn example_fixtures_match_test_fixtures() {
     assert!(
         video_src.contains(TINY_MP4_BASE64),
         "examples/video_input.rs DEMO_MP4_BASE64 has drifted from tests/common TINY_MP4_BASE64"
+    );
+    let image_src = include_str!("../examples/multimodal_image.rs");
+    assert!(
+        image_src.contains(TINY_RED_PNG_BASE64),
+        "examples/multimodal_image.rs red PNG has drifted from tests/common TINY_RED_PNG_BASE64"
+    );
+    assert!(
+        image_src.contains(TINY_BLUE_PNG_BASE64),
+        "examples/multimodal_image.rs blue PNG has drifted from tests/common TINY_BLUE_PNG_BASE64"
     );
 }
 
