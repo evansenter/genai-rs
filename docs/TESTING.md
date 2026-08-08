@@ -480,8 +480,8 @@ if response.has_unknown() {
 |----------|-------------|
 | `TINY_RED_PNG_BASE64` | 1x1 red PNG |
 | `TINY_BLUE_PNG_BASE64` | 1x1 blue PNG |
-| `TINY_WAV_BASE64` | Minimal WAV header |
-| `TINY_MP4_BASE64` | Minimal MP4 container |
+| `TINY_WAV_BASE64` | 100 frames of 16-bit mono silence (valid WAV) |
+| `TINY_MP4_BASE64` | One-frame 64x64 H.264 clip (valid MP4) |
 | `TINY_PDF_BASE64` | "Hello World" PDF |
 
 ### Test Fixtures

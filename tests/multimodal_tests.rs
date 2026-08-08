@@ -980,8 +980,9 @@ mod bytes_loading {
     /// The test PDF contains "Hello World" text.
     /// Uses semantic validation to verify the model correctly interprets the document.
     ///
-    /// Note: Like audio/video tests, this uses lenient error handling because the
-    /// minimal PDF fixture or the semantic validation call might fail.
+    /// Note: This uses lenient error handling because the extra
+    /// validate_response_semantically call is a second API round-trip that can
+    /// fail independently of the document input under test.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_document_data_roundtrip() {
