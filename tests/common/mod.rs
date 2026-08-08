@@ -1008,7 +1008,12 @@ pub async fn assert_response_semantic(
     response_text: &str,
     validation_question: &str,
 ) {
-    match validate_response_semantically(client, context, response_text, validation_question).await
+    // The validator gets the same transient retries as primary calls, so the
+    // tolerated-skip path below is a genuine last resort.
+    match retry_on_transient(DEFAULT_MAX_RETRIES, || {
+        validate_response_semantically(client, context, response_text, validation_question)
+    })
+    .await
     {
         Ok(is_valid) => assert!(
             is_valid,

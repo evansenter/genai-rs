@@ -24,8 +24,10 @@ jobs:
         run: cargo check --workspace --all-targets --all-features
       - name: Run unit tests
         run: cargo nextest run --workspace
-      - name: Run doctests
+      - name: Run doctests (default features)
         run: cargo test --workspace --doc
+      - name: Run doctests (all features)
+        run: cargo test --workspace --all-features --doc
       - name: Run integration tests
         run: cargo nextest run --workspace --run-ignored all
         env:
@@ -34,10 +36,14 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      - name: Check documentation
-        run: cargo doc --workspace --no-deps --document-private-items
+      - name: Check documentation (all features)
+        run: cargo doc --workspace --no-deps --all-features --document-private-items
         env:
           RUSTDOCFLAGS: -D warnings
+      - name: Check documentation (docs.rs feature set)
+        run: cargo doc --workspace --no-deps --features antigravity
+        env:
+          RUSTDOCFLAGS: --cfg docsrs -D warnings
 
   # Publish to crates.io
   publish:

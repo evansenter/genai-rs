@@ -510,38 +510,54 @@ async fn test_video_from_temp_file() {
 // Fixture Drift Guard
 // =============================================================================
 
-/// Guards against the example fixture copies drifting from the canonical
-/// test fixtures. The examples embed verbatim copies of these constants and
-/// are never run in CI, so a fixture update that misses them silently sends
-/// the examples down their error branch. Runs without an API key.
+/// Guards against example fixture copies drifting from the canonical test
+/// fixtures. Examples embed verbatim copies of these constants and are never
+/// run in CI, so a fixture update that misses one silently sends that
+/// example down its error branch. Runs without an API key.
 ///
-/// Covers every `*_BASE64` constant under `examples/` today — if a new
-/// example embeds a fixture copy, add it here.
+/// Self-maintaining: walks examples/*.rs for `_BASE64: &str = "..."`
+/// declarations, so a *new* example embedding a stale copy fails here too.
 #[test]
 fn example_fixtures_match_test_fixtures() {
-    let audio_src = include_str!("../examples/audio_input.rs");
+    let canonical = [
+        TINY_WAV_BASE64,
+        TINY_MP4_BASE64,
+        TINY_PDF_BASE64,
+        TINY_RED_PNG_BASE64,
+        TINY_BLUE_PNG_BASE64,
+    ];
+    let examples_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/examples");
+    let mut checked = 0;
+    let mut stack = vec![std::path::PathBuf::from(examples_dir)];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).expect("read examples dir") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                let src = std::fs::read_to_string(&path).expect("read example");
+                for line in src.lines() {
+                    if line.contains("_BASE64: &str = \"") {
+                        let value = line
+                            .split('"')
+                            .nth(1)
+                            .expect("string literal after _BASE64 declaration");
+                        assert!(
+                            canonical.contains(&value),
+                            "{} embeds a fixture copy that drifted from tests/common: {}...",
+                            path.display(),
+                            &value[..value.len().min(40)]
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+        }
+    }
     assert!(
-        audio_src.contains(TINY_WAV_BASE64),
-        "examples/audio_input.rs DEMO_WAV_BASE64 has drifted from tests/common TINY_WAV_BASE64"
-    );
-    let video_src = include_str!("../examples/video_input.rs");
-    assert!(
-        video_src.contains(TINY_MP4_BASE64),
-        "examples/video_input.rs DEMO_MP4_BASE64 has drifted from tests/common TINY_MP4_BASE64"
-    );
-    let pdf_src = include_str!("../examples/pdf_input.rs");
-    assert!(
-        pdf_src.contains(TINY_PDF_BASE64),
-        "examples/pdf_input.rs SAMPLE_PDF_BASE64 has drifted from tests/common TINY_PDF_BASE64"
-    );
-    let image_src = include_str!("../examples/multimodal_image.rs");
-    assert!(
-        image_src.contains(TINY_RED_PNG_BASE64),
-        "examples/multimodal_image.rs red PNG has drifted from tests/common TINY_RED_PNG_BASE64"
-    );
-    assert!(
-        image_src.contains(TINY_BLUE_PNG_BASE64),
-        "examples/multimodal_image.rs blue PNG has drifted from tests/common TINY_BLUE_PNG_BASE64"
+        checked >= 5,
+        "expected at least the five known fixture copies, found {checked} — \
+         did the declaration shape change?"
     );
 }
 

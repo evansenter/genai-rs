@@ -103,13 +103,17 @@ jobs:
         run: sudo apt-get update || true; sudo apt-get install -y mold
       - name: Run integration tests (${{ matrix.group }})
         run: |
-          set -e
+          set -eo pipefail
           for test in ${{ matrix.tests }}; do
             echo "::group::Running $test"
             # --success-output=final keeps passing-test output (notably the
             # SEMANTIC_VALIDATION_SKIPPED marker) greppable in CI logs.
-            cargo nextest run --test $test --run-ignored all --success-output=final
+            cargo nextest run --test $test --run-ignored all --success-output=final 2>&1 | tee "/tmp/$test.log"
             echo "::endgroup::"
+            skips=$(grep -c SEMANTIC_VALIDATION_SKIPPED "/tmp/$test.log" || true)
+            if [ "${skips:-0}" -gt 0 ]; then
+              echo "::warning::$test: $skips semantic validation(s) skipped on transient validator errors"
+            fi
           done
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -157,7 +161,7 @@ jobs:
         # rustdoc-arg) on stable: gates warnings specific to the published
         # feature set. Nightly-only breakage (docs.rs builds on nightly) is
         # covered by release checklist step 0 in CLAUDE.md, not this job.
-        run: cargo doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs
+        run: cargo doc --workspace --no-deps --features antigravity
         env:
           RUSTDOCFLAGS: --cfg docsrs -D warnings
 
