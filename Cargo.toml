@@ -39,14 +39,15 @@ readme = "README.md"
 keywords = ["gemini", "google", "ai", "llm", "genai"]
 categories = ["api-bindings", "asynchronous"]
 
-# docs.rs builds with all features so feature-gated modules (e.g. the
-# `antigravity` bridge) appear in the published docs. Per-item "Available on
-# crate feature ... only" banners come from nightly rustdoc's crate-level
-# doc(auto_cfg) default — no source attribute needed (feature(doc_auto_cfg)
-# was removed in Rust 1.92; do not re-add it). The docsrs rustdoc-arg is the
-# docs.rs convention, kept so local nightly repro matches production.
+# docs.rs builds with the antigravity feature (not all-features: that would
+# pull in strict-unknown, compiling the docs build with the crate's documented
+# Evergreen lenient behavior inverted). Per-item "Available on crate feature
+# ... only" banners come from nightly rustdoc's crate-level doc(auto_cfg)
+# default — no source attribute needed (feature(doc_auto_cfg) was removed in
+# Rust 1.92; do not re-add it). The docsrs rustdoc-arg is the docs.rs
+# convention, kept so local nightly repro matches production.
 [package.metadata.docs.rs]
-all-features = true
+features = ["antigravity"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [lints]

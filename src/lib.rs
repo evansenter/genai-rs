@@ -228,9 +228,11 @@ mod doc_tests {
 
     // Detailed guides in docs/
     doc_comment!(include_str!("../docs/AGENTS_AND_BACKGROUND.md"));
-    // ANTIGRAVITY.md uses only `rust,ignore` code blocks: the doctest
-    // harness runs without the `antigravity` feature, so its snippets are
-    // compile-checked by the feature-gated example and tests instead.
+    // ANTIGRAVITY.md uses `rust,ignore` code blocks: its snippets are
+    // fragments (undefined `agent`/`client` bindings) compile-checked via the
+    // feature-gated example and tests. The all-features doctest job could
+    // compile them if promoted to `no_run` and made self-contained — a
+    // possible future improvement.
     doc_comment!(include_str!("../docs/ANTIGRAVITY.md"));
     doc_comment!(include_str!("../docs/BUILT_IN_TOOLS.md"));
     doc_comment!(include_str!("../docs/CONFIGURATION.md"));

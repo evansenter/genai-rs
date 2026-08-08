@@ -247,7 +247,8 @@ After merging version bump PR:
    which CI never exercises — e.g. nightly-only attribute removals; a failure
    here would otherwise surface as a broken docs.rs build after the version
    is immutable on crates.io):
-   `RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo +nightly doc --workspace --no-deps --all-features`
+   `RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo +nightly doc --workspace --no-deps --features antigravity`
+   (matches the `[package.metadata.docs.rs]` feature set)
 1. **Tag the release**: `git tag -a vX.Y.Z origin/main -m "Release vX.Y.Z"`
 2. **Push tag**: `git push origin vX.Y.Z`
 3. **Create GitHub release**: `gh release create vX.Y.Z --title "vX.Y.Z" --notes "..."` (copy from CHANGELOG)

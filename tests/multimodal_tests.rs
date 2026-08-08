@@ -569,31 +569,20 @@ mod document {
             .create()
             .await;
 
-        match result {
-            Ok(response) => {
-                println!("PDF document response status: {:?}", response.status);
-                assert_eq!(response.status, InteractionStatus::Completed);
-                if response.has_text() {
-                    let text = response.as_text().unwrap();
-                    println!("PDF response: {}", text);
-                    // The minimal PDF contains "Hello World" - use semantic validation
-                    assert_response_semantic(
-                        &client,
-                        "Asked about text in a PDF that contains 'Hello World'",
-                        text,
-                        "Does this response mention 'Hello' or 'World' or indicate those words were found?",
-                    )
-                    .await;
-                }
-            }
-            Err(e) => {
-                // The minimal PDF might not be fully valid or the API might have restrictions
-                println!(
-                    "PDF document error (may be expected for minimal PDF): {:?}",
-                    e
-                );
-            }
-        }
+        let response = result.expect("PDF document interaction failed");
+        println!("PDF document response status: {:?}", response.status);
+        assert_eq!(response.status, InteractionStatus::Completed);
+        assert!(response.has_text(), "Should have text response");
+        let text = response.as_text().unwrap();
+        println!("PDF response: {}", text);
+        // The PDF contains "Hello World" - use semantic validation
+        assert_response_semantic(
+            &client,
+            "Asked about text in a PDF that contains 'Hello World'",
+            text,
+            "Does this response mention 'Hello' or 'World' or indicate those words were found?",
+        )
+        .await;
     }
 
     /// Tests combining PDF document with text question.
@@ -616,25 +605,19 @@ mod document {
             .create()
             .await;
 
-        match result {
-            Ok(response) => {
-                assert_eq!(response.status, InteractionStatus::Completed);
-                assert!(response.has_text(), "Should have text response");
-                let text = response.as_text().unwrap();
-                println!("PDF question response: {}", text);
-                // Should mention something about the PDF - use semantic validation
-                assert_response_semantic(
-                    &client,
-                    "Sent a PDF and asked if it's valid and about its structure",
-                    text,
-                    "Does this response discuss the PDF, document structure, or pages?",
-                )
-                .await;
-            }
-            Err(e) => {
-                println!("PDF with question error (may be expected): {:?}", e);
-            }
-        }
+        let response = result.expect("PDF with question interaction failed");
+        assert_eq!(response.status, InteractionStatus::Completed);
+        assert!(response.has_text(), "Should have text response");
+        let text = response.as_text().unwrap();
+        println!("PDF question response: {}", text);
+        // Should mention something about the PDF - use semantic validation
+        assert_response_semantic(
+            &client,
+            "Sent a PDF and asked if it's valid and about its structure",
+            text,
+            "Does this response discuss the PDF, document structure, or pages?",
+        )
+        .await;
     }
 }
 

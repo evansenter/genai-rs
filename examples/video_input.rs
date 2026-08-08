@@ -33,10 +33,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .interaction()
         .with_model(model_name)
         .with_content(vec![
-            Content::text(
-                "This is a demo video file. In real usage, describe what you see. \
-                 If the video is empty or corrupted, just say 'No video content detected.'",
-            ),
+            Content::text("Describe what you see in this short video clip."),
             Content::video_data(DEMO_MP4_BASE64, "video/mp4"),
         ])
         .create()
