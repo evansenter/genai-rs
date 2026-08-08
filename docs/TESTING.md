@@ -489,7 +489,9 @@ exercising them retry transient transport errors on the primary call
 (`retry_request!`, keyed on `GenaiError::is_retryable` plus the module's
 `is_transient_error` model-side-flake cases) and then assert strictly —
 a validation rejection (e.g. 400 `invalid_request`) fails loudly on the
-first attempt, while a 503 blip does not redden the suite. Semantic
+first attempt, while a 503 blip does not redden the suite. (Exceptions:
+the streaming and canary paths, where the primary call is not a single
+`create()`, remain unretried.) Semantic
 validation via `assert_response_semantic` (the suite-wide helper; one
 deliberate direct `validate_response_semantically` call remains, inside a
 retry closure that needs the verdict as a `Result`) applies the same
