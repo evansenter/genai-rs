@@ -71,6 +71,10 @@ pub fn is_transient_error(err: &GenaiError) -> bool {
 /// rejections) return immediately — a fixture the API rejects still fails
 /// loud on the first attempt.
 ///
+/// Note: inside a `with_timeout` budget, a worst case adds ~7s of backoff
+/// plus up to three extra round-trips — a sustained outage can therefore
+/// surface as a harness timeout rather than the underlying error.
+///
 /// # Arguments
 ///
 /// * `max_retries` - Maximum number of retry attempts (0 = no retries, just run once)

@@ -64,11 +64,13 @@ async fn test_image_from_temp_file() {
         image_content,
     ];
 
-    let response = stateful_builder(&client)
-        .with_input(InteractionInput::Content(contents))
-        .create()
-        .await
-        .expect("Image interaction failed");
+    let response = crate::retry_request!([client, contents] => {
+        stateful_builder(&client)
+            .with_input(InteractionInput::Content(contents))
+            .create()
+            .await
+    })
+    .expect("Image interaction failed");
 
     assert_eq!(response.status, InteractionStatus::Completed);
     assert!(response.has_text(), "Should have text response");
@@ -116,11 +118,13 @@ async fn test_image_mismatched_mime() {
         image_content,
     ];
 
-    let response = stateful_builder(&client)
-        .with_input(InteractionInput::Content(contents))
-        .create()
-        .await
-        .expect("Image interaction failed");
+    let response = crate::retry_request!([client, contents] => {
+        stateful_builder(&client)
+            .with_input(InteractionInput::Content(contents))
+            .create()
+            .await
+    })
+    .expect("Image interaction failed");
 
     assert_eq!(response.status, InteractionStatus::Completed);
     println!("Response: {:?}", response.as_text());
@@ -158,11 +162,13 @@ async fn test_pdf_from_temp_file() {
         doc_content,
     ];
 
-    let response = stateful_builder(&client)
-        .with_input(InteractionInput::Content(contents))
-        .create()
-        .await
-        .expect("PDF interaction failed");
+    let response = crate::retry_request!([client, contents] => {
+        stateful_builder(&client)
+            .with_input(InteractionInput::Content(contents))
+            .create()
+            .await
+    })
+    .expect("PDF interaction failed");
 
     assert_eq!(response.status, InteractionStatus::Completed);
     assert!(response.has_text(), "Should have text response");

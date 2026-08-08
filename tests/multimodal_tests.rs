@@ -182,22 +182,27 @@ mod image {
                 Content::image_data(TINY_RED_PNG_BASE64, "image/png"),
             ];
 
-            let response1 = stateful_builder(&client)
-                .with_input(InteractionInput::Content(contents))
-                .create()
-                .await
-                .expect("First interaction failed");
+            let response1 = crate::retry_request!([client, contents] => {
+                stateful_builder(&client)
+                    .with_input(InteractionInput::Content(contents))
+                    .create()
+                    .await
+            })
+            .expect("First interaction failed");
 
             assert_eq!(response1.status, InteractionStatus::Completed);
             println!("First response: {:?}", response1.as_text());
 
             // Second turn: ask follow-up about the same image
-            let response2 = stateful_builder(&client)
-                .with_previous_interaction(response1.id.as_ref().expect("id should exist"))
-                .with_text("Is that a warm or cool color?")
-                .create()
-                .await
-                .expect("Follow-up interaction failed");
+            let prev_id = response1.id.clone().expect("id should exist");
+            let response2 = crate::retry_request!([client, prev_id] => {
+                stateful_builder(&client)
+                    .with_previous_interaction(&prev_id)
+                    .with_text("Is that a warm or cool color?")
+                    .create()
+                    .await
+            })
+            .expect("Follow-up interaction failed");
 
             assert_eq!(response2.status, InteractionStatus::Completed);
             assert!(response2.has_text(), "Should have follow-up response");
@@ -761,16 +766,19 @@ mod file_loading {
         let image_content = image_from_file(&image_path)
             .await
             .expect("Failed to load image file");
-        let response = client
-            .interaction()
-            .with_model("gemini-3-flash-preview")
-            .with_content(vec![
-                Content::text("What color is this image? Answer with just the color name."),
-                image_content,
-            ])
-            .create()
-            .await
-            .expect("Image interaction failed");
+        let contents = vec![
+            Content::text("What color is this image? Answer with just the color name."),
+            image_content,
+        ];
+        let response = crate::retry_request!([client, contents] => {
+            client
+                .interaction()
+                .with_model("gemini-3-flash-preview")
+                .with_content(contents)
+                .create()
+                .await
+        })
+        .expect("Image interaction failed");
 
         assert_eq!(response.status, InteractionStatus::Completed);
         assert!(response.has_text(), "Should have text response");
@@ -825,19 +833,22 @@ mod file_loading {
         let blue_content = image_from_file(&blue_path)
             .await
             .expect("Failed to load blue image");
-        let response = client
-            .interaction()
-            .with_model("gemini-3-flash-preview")
-            .with_content(vec![
-                Content::text(
-                    "I'm showing you two small colored images. What colors are they? List both.",
-                ),
-                red_content,
-                blue_content,
-            ])
-            .create()
-            .await
-            .expect("Multiple images interaction failed");
+        let contents = vec![
+            Content::text(
+                "I'm showing you two small colored images. What colors are they? List both.",
+            ),
+            red_content,
+            blue_content,
+        ];
+        let response = crate::retry_request!([client, contents] => {
+            client
+                .interaction()
+                .with_model("gemini-3-flash-preview")
+                .with_content(contents)
+                .create()
+                .await
+        })
+        .expect("Multiple images interaction failed");
 
         assert_eq!(response.status, InteractionStatus::Completed);
         assert!(response.has_text(), "Should have text response");
@@ -895,16 +906,19 @@ mod bytes_loading {
 
         // Use Content::image_data() with base64-encoded data
         // The tiny PNG is well-formed and should always be processable
-        let response = client
-            .interaction()
-            .with_model("gemini-3-flash-preview")
-            .with_content(vec![
-                Content::text("What color is this image? Answer with just the color name."),
-                Content::image_data(TINY_RED_PNG_BASE64, "image/png"),
-            ])
-            .create()
-            .await
-            .expect("Image data interaction failed");
+        let contents = vec![
+            Content::text("What color is this image? Answer with just the color name."),
+            Content::image_data(TINY_RED_PNG_BASE64, "image/png"),
+        ];
+        let response = crate::retry_request!([client, contents] => {
+            client
+                .interaction()
+                .with_model("gemini-3-flash-preview")
+                .with_content(contents)
+                .create()
+                .await
+        })
+        .expect("Image data interaction failed");
 
         assert_eq!(response.status, InteractionStatus::Completed);
         assert!(response.has_text(), "Should have text response");
