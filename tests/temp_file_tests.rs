@@ -448,42 +448,6 @@ async fn test_audio_from_temp_file() {
 // Video File Tests
 // =============================================================================
 
-// =============================================================================
-// Fixture Drift Guard
-// =============================================================================
-
-/// Guards against the example fixture copies drifting from the canonical
-/// test fixtures. The examples embed verbatim copies of these constants and
-/// are never run in CI, so a fixture update that misses them silently sends
-/// the examples down their error branch. Runs without an API key.
-#[test]
-fn example_fixtures_match_test_fixtures() {
-    let audio_src = include_str!("../examples/audio_input.rs");
-    assert!(
-        audio_src.contains(TINY_WAV_BASE64),
-        "examples/audio_input.rs DEMO_WAV_BASE64 has drifted from tests/common TINY_WAV_BASE64"
-    );
-    let video_src = include_str!("../examples/video_input.rs");
-    assert!(
-        video_src.contains(TINY_MP4_BASE64),
-        "examples/video_input.rs DEMO_MP4_BASE64 has drifted from tests/common TINY_MP4_BASE64"
-    );
-    let pdf_src = include_str!("../examples/pdf_input.rs");
-    assert!(
-        pdf_src.contains(TINY_PDF_BASE64),
-        "examples/pdf_input.rs SAMPLE_PDF_BASE64 has drifted from tests/common TINY_PDF_BASE64"
-    );
-    let image_src = include_str!("../examples/multimodal_image.rs");
-    assert!(
-        image_src.contains(TINY_RED_PNG_BASE64),
-        "examples/multimodal_image.rs red PNG has drifted from tests/common TINY_RED_PNG_BASE64"
-    );
-    assert!(
-        image_src.contains(TINY_BLUE_PNG_BASE64),
-        "examples/multimodal_image.rs blue PNG has drifted from tests/common TINY_BLUE_PNG_BASE64"
-    );
-}
-
 /// Tests loading a video file from a temp file using video_from_file().
 ///
 /// Uses the TINY_MP4_BASE64 fixture (a real one-frame 64x64 H.264 clip, ~1.5KB),
@@ -522,6 +486,42 @@ async fn test_video_from_temp_file() {
     assert_eq!(response.status, InteractionStatus::Completed);
     assert!(response.has_text(), "Should have text response");
     println!("Video response: {:?}", response.as_text());
+}
+
+// =============================================================================
+// Fixture Drift Guard
+// =============================================================================
+
+/// Guards against the example fixture copies drifting from the canonical
+/// test fixtures. The examples embed verbatim copies of these constants and
+/// are never run in CI, so a fixture update that misses them silently sends
+/// the examples down their error branch. Runs without an API key.
+#[test]
+fn example_fixtures_match_test_fixtures() {
+    let audio_src = include_str!("../examples/audio_input.rs");
+    assert!(
+        audio_src.contains(TINY_WAV_BASE64),
+        "examples/audio_input.rs DEMO_WAV_BASE64 has drifted from tests/common TINY_WAV_BASE64"
+    );
+    let video_src = include_str!("../examples/video_input.rs");
+    assert!(
+        video_src.contains(TINY_MP4_BASE64),
+        "examples/video_input.rs DEMO_MP4_BASE64 has drifted from tests/common TINY_MP4_BASE64"
+    );
+    let pdf_src = include_str!("../examples/pdf_input.rs");
+    assert!(
+        pdf_src.contains(TINY_PDF_BASE64),
+        "examples/pdf_input.rs SAMPLE_PDF_BASE64 has drifted from tests/common TINY_PDF_BASE64"
+    );
+    let image_src = include_str!("../examples/multimodal_image.rs");
+    assert!(
+        image_src.contains(TINY_RED_PNG_BASE64),
+        "examples/multimodal_image.rs red PNG has drifted from tests/common TINY_RED_PNG_BASE64"
+    );
+    assert!(
+        image_src.contains(TINY_BLUE_PNG_BASE64),
+        "examples/multimodal_image.rs blue PNG has drifted from tests/common TINY_BLUE_PNG_BASE64"
+    );
 }
 
 // =============================================================================
