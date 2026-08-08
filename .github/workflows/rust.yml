@@ -157,7 +157,7 @@ jobs:
         # rustdoc-arg) on stable: gates warnings specific to the published
         # feature set. Nightly-only breakage (docs.rs builds on nightly) is
         # covered by release checklist step 0 in CLAUDE.md, not this job.
-        run: cargo doc --workspace --no-deps --features antigravity
+        run: cargo doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs
         env:
           RUSTDOCFLAGS: --cfg docsrs -D warnings
 

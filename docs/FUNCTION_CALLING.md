@@ -55,7 +55,7 @@ The simplest approach - define functions with the `#[tool]` attribute.
 
 ### Basic Usage
 
-```rust,ignore
+```rust,no_run
 use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
@@ -71,6 +71,11 @@ fn get_weather(city: String) -> String {
 fn get_time(timezone: String) -> String {
     format!(r#"{{"timezone": "{}", "time": "14:30"}}"#, timezone)
 }
+
+// Compile-checked in CI: this snippet is the canonical demonstration that
+// the macro needs both imports above plus async-trait and serde_json as
+// dependencies.
+let _declaration = GetWeatherCallable.declaration();
 ```
 
 ### Auto-Discovery and Execution

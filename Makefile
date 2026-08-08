@@ -21,10 +21,12 @@ test-all:
 	cargo nextest run --run-ignored all
 
 # Build documentation with warnings as errors (all features + the docs.rs
-# feature set, which differ on strict-unknown)
+# feature set, which differ on strict-unknown). The mirror build uses its
+# own target dir so it neither overwrites target/doc nor invalidates the
+# first build's rustdoc fingerprint.
 docs:
 	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --document-private-items
-	RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo doc --workspace --no-deps --features antigravity
+	RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs
 
 # Clean build artifacts
 clean:
