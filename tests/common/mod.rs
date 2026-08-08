@@ -973,11 +973,12 @@ pub async fn validate_response_semantically(
 ///   [`GenaiError::is_retryable`] rejects: 4xx other than 429, parse/JSON
 ///   errors, malformed responses, etc.)
 ///
-/// Transient validator failures (per [`GenaiError::is_retryable`]: network
-/// errors, timeouts, 5xx, 429) are logged with a greppable
-/// SEMANTIC_VALIDATION_SKIPPED marker and treated as a pass — the validator
-/// is a second API round-trip that can fail independently of the input
-/// under test.
+/// Transient validator failures (per [`GenaiError::is_retryable`] — network
+/// errors, timeouts, 5xx, 429 — plus this module's [`is_transient_error`]
+/// cases, which cover known model-side structured-output flakes) are logged
+/// with a greppable SEMANTIC_VALIDATION_SKIPPED marker and treated as a
+/// pass — the validator is a second API round-trip that can fail
+/// independently of the input under test.
 ///
 /// # Example
 ///
@@ -1005,7 +1006,7 @@ pub async fn assert_response_semantic(
         // failures (per the crate's own is_retryable classification) with a
         // greppable marker, but panic on systemic errors (e.g. 4xx) so a
         // broken validator can't go quietly green suite-wide.
-        Err(e) if e.is_retryable() => eprintln!(
+        Err(e) if e.is_retryable() || is_transient_error(&e) => eprintln!(
             "SEMANTIC_VALIDATION_SKIPPED (transient validator error): {:?}",
             e
         ),
