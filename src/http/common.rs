@@ -201,6 +201,15 @@ pub(crate) async fn send_and_read(
     Ok(response_text)
 }
 
+/// Serializes a body for the wire, mapping serialization errors to `Internal`.
+pub(crate) fn to_body<B: serde::Serialize>(
+    body: &B,
+) -> Result<serde_json::Value, crate::errors::GenaiError> {
+    serde_json::to_value(body).map_err(|e| {
+        crate::errors::GenaiError::Internal(format!("Failed to serialize request body: {e}"))
+    })
+}
+
 /// Appends `page_size` / `page_token` query params to a URL.
 pub(crate) fn with_paging(
     mut url: String,
@@ -224,6 +233,32 @@ pub(crate) fn with_paging(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn with_paging_no_params_leaves_url_unchanged() {
+        assert_eq!(
+            with_paging("https://x/v1beta/things".into(), None, None),
+            "https://x/v1beta/things"
+        );
+    }
+
+    #[test]
+    fn with_paging_page_size_only() {
+        assert_eq!(
+            with_paging("https://x/v1beta/things".into(), Some(10), None),
+            "https://x/v1beta/things?page_size=10"
+        );
+    }
+
+    #[test]
+    fn with_paging_percent_encodes_token() {
+        // A token with reserved characters must arrive percent-encoded, or
+        // the server sees a truncated token and silently restarts paging.
+        assert_eq!(
+            with_paging("https://x/v1beta/things".into(), Some(5), Some("a/b&c=d")),
+            "https://x/v1beta/things?page_size=5&page_token=a%2Fb%26c%3Dd"
+        );
+    }
 
     #[test]
     fn test_api_version_as_str() {

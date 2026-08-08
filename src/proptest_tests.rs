@@ -23,7 +23,7 @@ use super::environment::{
 use super::request::{
     AgentConfig, DeepResearchConfig, DynamicConfig, GenerationConfig, ImageAspectRatio,
     ImageConfig, ImageSize, InteractionInput, Role, ServiceTier, SpeechConfig, ThinkingLevel,
-    ThinkingSummaries, TurnContent, VideoConfig, VideoTask, Visualization,
+    ThinkingSummaries, TranscriptionConfig, TurnContent, VideoConfig, VideoTask, Visualization,
 };
 use super::response::{
     GroundingToolCount, InteractionResponse, InteractionStatus, ModalityTokens,
@@ -1158,6 +1158,31 @@ fn arb_speech_config() -> impl Strategy<Value = SpeechConfig> {
         })
 }
 
+fn arb_transcription_config() -> impl Strategy<Value = TranscriptionConfig> {
+    (
+        proptest::option::of(proptest::collection::vec(arb_identifier(), 0..3)),
+        proptest::option::of(proptest::collection::vec(arb_identifier(), 0..3)),
+        proptest::option::of(arb_identifier()),
+        proptest::option::of(proptest::collection::vec(arb_identifier(), 0..3)),
+        proptest::option::of(proptest::collection::vec(arb_identifier(), 0..3)),
+    )
+        .prop_map(
+            |(
+                adaptation_phrases,
+                custom_vocabulary,
+                diarization_mode,
+                language_codes,
+                timestamp_granularities,
+            )| TranscriptionConfig {
+                adaptation_phrases,
+                custom_vocabulary,
+                diarization_mode,
+                language_codes,
+                timestamp_granularities,
+            },
+        )
+}
+
 fn arb_generation_config() -> impl Strategy<Value = GenerationConfig> {
     // Split into two tuples to stay under proptest's 12-element limit
     let part1 = (
@@ -1176,6 +1201,7 @@ fn arb_generation_config() -> impl Strategy<Value = GenerationConfig> {
         proptest::option::of(proptest::collection::vec(arb_speech_config(), 1..3)),
         proptest::option::of(arb_image_config()),
         proptest::option::of(arb_video_config()),
+        proptest::option::of(arb_transcription_config()),
     );
     (part1, part2).prop_map(
         |(
@@ -1195,6 +1221,7 @@ fn arb_generation_config() -> impl Strategy<Value = GenerationConfig> {
                 speech_config,
                 image_config,
                 video_config,
+                transcription_config,
             ),
         )| {
             GenerationConfig {
@@ -1211,7 +1238,7 @@ fn arb_generation_config() -> impl Strategy<Value = GenerationConfig> {
                 speech_config,
                 image_config,
                 video_config,
-                transcription_config: None,
+                transcription_config,
             }
         },
     )

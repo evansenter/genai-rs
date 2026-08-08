@@ -1356,18 +1356,7 @@ impl AntigravityAgent {
     ) -> Result<(), AntigravityError> {
         let reply = match &self.questions {
             Some(hook) => {
-                let batch: Vec<hooks::AgentQuestion> = request
-                    .questions
-                    .iter()
-                    .map(|q| {
-                        let mc = q.multiple_choice.as_ref();
-                        hooks::AgentQuestion {
-                            question: mc.and_then(|m| m.question.clone()).unwrap_or_default(),
-                            choices: mc.map(|m| m.choices.clone()).unwrap_or_default(),
-                            is_multi_select: mc.and_then(|m| m.is_multi_select).unwrap_or(false),
-                        }
-                    })
-                    .collect();
+                let batch = map_questions(request);
                 Some(hook(&batch))
             }
             None => {
@@ -1878,6 +1867,38 @@ impl TurnState {
     }
 }
 
+/// Maps the harness's question batch into the hook-facing view.
+///
+/// `question`/`choices`/`is_multi_select` fall back to empty/false when
+/// `multiple_choice` (or an inner field) is absent — `choices` is the
+/// index space [`hooks::QuestionAnswer::Choices`] selections refer to,
+/// so the substitution is observable to the hook and pinned by tests.
+/// Free function so the mapping is unit-testable.
+fn map_questions(request: &protocol::UserQuestionsRequest) -> Vec<hooks::AgentQuestion> {
+    request
+        .questions
+        .iter()
+        .map(|q| {
+            let mc = q.multiple_choice.as_ref();
+            if mc.is_none() {
+                // A future question type (preserved in `extra`) would reach
+                // the hook as a blank multiple-choice; name it so the drift
+                // is visible (mirrors unknown-action handling).
+                tracing::warn!(
+                    "Question with no multiple_choice arm (unknown type?); \
+                     hook sees a blank question. Extra fields: {:?}",
+                    q.extra.keys().collect::<Vec<_>>()
+                );
+            }
+            hooks::AgentQuestion {
+                question: mc.and_then(|m| m.question.clone()).unwrap_or_default(),
+                choices: mc.map(|m| m.choices.clone()).unwrap_or_default(),
+                is_multi_select: mc.and_then(|m| m.is_multi_select).unwrap_or(false),
+            }
+        })
+        .collect()
+}
+
 /// Maps a questions-hook reply (or the hookless `None` fallback) onto the
 /// protocol's `cancelled`/`response` oneof.
 ///
@@ -2007,6 +2028,53 @@ mod agent_tests {
         let answers = response.response.expect("answers present").answers;
         assert_eq!(answers.len(), 1, "truncated to the question count");
         assert_eq!(answers[0].unanswered, Some(true));
+    }
+
+    #[test]
+    fn map_questions_extracts_multiple_choice_fields() {
+        let request = protocol::UserQuestionsRequest {
+            questions: vec![protocol::UserQuestion {
+                multiple_choice: Some(protocol::MultipleChoice {
+                    question: Some("Pick one".into()),
+                    choices: vec!["a".into(), "b".into()],
+                    is_multi_select: Some(true),
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let batch = map_questions(&request);
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0].question, "Pick one");
+        assert_eq!(batch[0].choices, vec!["a".to_string(), "b".to_string()]);
+        assert!(batch[0].is_multi_select);
+    }
+
+    #[test]
+    fn map_questions_defaults_when_fields_absent() {
+        // No multiple_choice at all (a future question type in `extra`).
+        let request = protocol::UserQuestionsRequest {
+            questions: vec![
+                protocol::UserQuestion::default(),
+                // multiple_choice present but sparse: is_multi_select unset.
+                protocol::UserQuestion {
+                    multiple_choice: Some(protocol::MultipleChoice {
+                        question: Some("Sparse".into()),
+                        choices: Vec::new(),
+                        is_multi_select: None,
+                    }),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let batch = map_questions(&request);
+        assert_eq!(batch.len(), 2);
+        assert!(batch[0].question.is_empty());
+        assert!(batch[0].choices.is_empty());
+        assert!(!batch[0].is_multi_select);
+        assert_eq!(batch[1].question, "Sparse");
+        assert!(!batch[1].is_multi_select);
     }
 
     #[test]

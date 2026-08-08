@@ -590,24 +590,23 @@ async fn test_environment_crud_lifecycle() {
     })
     .expect("create_environment");
     println!(
-        "Created environment: id={} status={:?}",
+        "Created environment: id={:?} status={:?}",
         created.id, created.status
     );
-    assert!(!created.id.is_empty());
+    let created_id = created.id.clone().expect("created environment has an id");
 
     // Run the read assertions in a closure so the delete below also runs
     // on the failure path — a tripped assertion must not leak the
     // environment server-side (they expire eventually, but repeated CI
     // failures would accumulate containers). Reads retry transients like
     // the neighbouring CRUD tests.
-    let created_id = created.id.clone();
     let checks = async {
         // Get: counts arrive as protobuf-JSON strings and must parse.
         let fetched = crate::retry_request!([client, created_id] => {
             client.get_environment(&created_id).await
         })
         .expect("get_environment");
-        assert_eq!(fetched.id, created.id);
+        assert_eq!(fetched.id.as_deref(), Some(created_id.as_str()));
         assert!(
             fetched.file_count.is_some(),
             "file_count should deserialize from the string wire form: {fetched:?}"
@@ -620,7 +619,10 @@ async fn test_environment_crud_lifecycle() {
         })
         .expect("list_environments");
         assert!(
-            listed.environments.iter().any(|e| e.id == created.id),
+            listed
+                .environments
+                .iter()
+                .any(|e| e.id.as_deref() == Some(created_id.as_str())),
             "created environment missing from list"
         );
     };
@@ -629,13 +631,13 @@ async fn test_environment_crud_lifecycle() {
 
     // Delete runs regardless of assertion outcome, then confirm gone.
     client
-        .delete_environment(&created.id)
+        .delete_environment(&created_id)
         .await
         .expect("delete_environment");
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }
-    let gone = client.get_environment(&created.id).await;
+    let gone = client.get_environment(&created_id).await;
     assert!(gone.is_err(), "environment should be gone after delete");
 }
 

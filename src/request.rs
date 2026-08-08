@@ -1193,6 +1193,7 @@ pub struct InteractionRequest {
     pub agent_config: Option<AgentConfig>,
 
     /// The input for this interaction
+    #[serde(default)]
     pub input: InteractionInput,
 
     /// Reference to a previous interaction for stateful conversations

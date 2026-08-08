@@ -5,7 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.8.1] - 2026-08-08
+## [0.9.0] - 2026-08-08
+
+### Changed (breaking)
+
+- `InteractionRequest` gains public `safety_settings` and `labels` fields
+  and `GenerationConfig` gains `transcription_config` — source-breaking
+  for downstream struct literals and exhaustive patterns on these
+  constructible structs, hence the minor bump (cargo treats 0.8.x as
+  compatible, so this could not ship as 0.8.1). The structs deliberately
+  remain constructible (no `#[non_exhaustive]`): per the project's
+  versioning philosophy, future field additions will take minor bumps
+  rather than trading away struct-literal ergonomics.
 
 ### Added
 

@@ -116,14 +116,24 @@ impl<'de> Deserialize<'de> for TriggerStatus {
             Some("active") => Ok(Self::Active),
             Some("paused") => Ok(Self::Paused),
             Some("error") => Ok(Self::Error),
-            Some(other) => Ok(Self::Unknown {
-                status_type: other.to_string(),
-                data: value.clone(),
-            }),
-            None => Ok(Self::Unknown {
-                status_type: String::new(),
-                data: value,
-            }),
+            Some(other) => {
+                tracing::warn!(
+                    "Encountered unknown TriggerStatus '{other}' - using Unknown variant (Evergreen)"
+                );
+                Ok(Self::Unknown {
+                    status_type: other.to_string(),
+                    data: value.clone(),
+                })
+            }
+            None => {
+                tracing::warn!(
+                    "TriggerStatus received non-string value: {value}. Preserving in Unknown variant."
+                );
+                Ok(Self::Unknown {
+                    status_type: format!("<non-string: {value}>"),
+                    data: value,
+                })
+            }
         }
     }
 }
@@ -239,14 +249,24 @@ impl<'de> Deserialize<'de> for TriggerExecutionStatus {
             Some("failed") => Ok(Self::Failed),
             Some("skipped") => Ok(Self::Skipped),
             Some("timed_out") => Ok(Self::TimedOut),
-            Some(other) => Ok(Self::Unknown {
-                status_type: other.to_string(),
-                data: value.clone(),
-            }),
-            None => Ok(Self::Unknown {
-                status_type: String::new(),
-                data: value,
-            }),
+            Some(other) => {
+                tracing::warn!(
+                    "Encountered unknown TriggerExecutionStatus '{other}' - using Unknown variant (Evergreen)"
+                );
+                Ok(Self::Unknown {
+                    status_type: other.to_string(),
+                    data: value.clone(),
+                })
+            }
+            None => {
+                tracing::warn!(
+                    "TriggerExecutionStatus received non-string value: {value}. Preserving in Unknown variant."
+                );
+                Ok(Self::Unknown {
+                    status_type: format!("<non-string: {value}>"),
+                    data: value,
+                })
+            }
         }
     }
 }
@@ -567,6 +587,16 @@ mod tests {
             serde_json::from_value(serde_json::json!({"status": "completed"})).unwrap();
         assert!(execution.id.is_none());
         assert_eq!(execution.status, Some(TriggerExecutionStatus::Completed));
+
+        // Present-but-partial interaction (identity fields without input)
+        // must also degrade rather than fail the trigger.
+        let trigger: Trigger = serde_json::from_value(serde_json::json!({
+            "id": "t2",
+            "interaction": {"agent": "my-agent"}
+        }))
+        .unwrap();
+        let interaction = trigger.interaction.expect("interaction present");
+        assert_eq!(interaction.agent.as_deref(), Some("my-agent"));
     }
 
     #[test]

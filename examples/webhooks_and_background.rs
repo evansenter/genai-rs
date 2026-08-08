@@ -137,19 +137,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
         genai_rs::EnvironmentSource::inline("/etc/motd", "hello from the environments example"),
     );
     let environment = client.create_environment(&env_request).await?;
-    println!("Created environment: {}", environment.id);
+    let env_id = environment.id.clone().unwrap_or_default();
+    println!("Created environment: {env_id}");
 
-    let listed = client.list_environments(Some(10), None).await?;
-    println!("Environments visible: {}", listed.environments.len());
+    // Print-don't-propagate between create and delete: a failed read must
+    // not exit main and leak the container (see the footer note).
+    match client.list_environments(Some(10), None).await {
+        Ok(listed) => println!("Environments visible: {}", listed.environments.len()),
+        Err(e) => println!("list_environments failed: {e}"),
+    }
+    match client.get_environment(&env_id).await {
+        Ok(fetched) => println!(
+            "Fetched: status={:?} files={:?} bytes={:?}",
+            fetched.status, fetched.file_count, fetched.size_bytes
+        ),
+        Err(e) => println!("get_environment failed: {e}"),
+    }
 
-    let fetched = client.get_environment(&environment.id).await?;
-    println!(
-        "Fetched: status={:?} files={:?} bytes={:?}",
-        fetched.status, fetched.file_count, fetched.size_bytes
-    );
-
-    client.delete_environment(&environment.id).await?;
-    println!("Deleted environment {}", environment.id);
+    client.delete_environment(&env_id).await?;
+    println!("Deleted environment {env_id}");
 
     // =========================================================================
     // Triggers: server-side scheduled interactions

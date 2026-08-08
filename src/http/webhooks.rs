@@ -4,7 +4,7 @@
 //! the webhooks resource is part of the revisioned Interactions surface
 //! (the generated google-genai bindings apply the revision header globally).
 
-use super::common::{BASE_URL_PREFIX, send_and_read};
+use super::common::{BASE_URL_PREFIX, send_and_read, to_body, with_paging};
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
 use crate::errors::GenaiError;
@@ -20,12 +20,6 @@ fn webhooks_url() -> String {
 
 fn webhook_url(id: &str) -> String {
     format!("{BASE_URL_PREFIX}/{API_VERSION}/webhooks/{id}")
-}
-
-/// Serializes a body for the wire, mapping serialization errors to `Internal`.
-fn to_body<B: serde::Serialize>(body: &B) -> Result<serde_json::Value, GenaiError> {
-    serde_json::to_value(body)
-        .map_err(|e| GenaiError::Internal(format!("Failed to serialize request body: {e}")))
 }
 
 /// Registers a new webhook (`POST /v1beta/webhooks`).
@@ -52,19 +46,7 @@ pub async fn list_webhooks(
 ) -> Result<WebhookListResponse, GenaiError> {
     tracing::debug!("Listing webhooks: page_size={page_size:?}, page_token={page_token:?}");
 
-    let mut url = webhooks_url();
-    let mut params = Vec::new();
-    if let Some(size) = page_size {
-        params.push(format!("page_size={size}"));
-    }
-    if let Some(token) = page_token {
-        params.push(format!("page_token={}", urlencoding::encode(token)));
-    }
-    if !params.is_empty() {
-        url.push('?');
-        url.push_str(&params.join("&"));
-    }
-
+    let url = with_paging(webhooks_url(), page_size, page_token);
     let text = send_and_read(ctx, "GET", &url, None).await?;
     deserialize_with_context(&text, "WebhookListResponse")
 }

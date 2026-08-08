@@ -105,14 +105,24 @@ impl<'de> Deserialize<'de> for EnvironmentStatus {
         match value.as_str() {
             Some("active") => Ok(Self::Active),
             Some("expired") => Ok(Self::Expired),
-            Some(other) => Ok(Self::Unknown {
-                status_type: other.to_string(),
-                data: value.clone(),
-            }),
-            None => Ok(Self::Unknown {
-                status_type: String::new(),
-                data: value,
-            }),
+            Some(other) => {
+                tracing::warn!(
+                    "Encountered unknown EnvironmentStatus '{other}' - using Unknown variant (Evergreen)"
+                );
+                Ok(Self::Unknown {
+                    status_type: other.to_string(),
+                    data: value.clone(),
+                })
+            }
+            None => {
+                tracing::warn!(
+                    "EnvironmentStatus received non-string value: {value}. Preserving in Unknown variant."
+                );
+                Ok(Self::Unknown {
+                    status_type: format!("<non-string: {value}>"),
+                    data: value,
+                })
+            }
         }
     }
 }
@@ -143,10 +153,12 @@ where
 
 /// An execution environment for an agent, as returned by the
 /// `/v1beta/environments` resource.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
 pub struct Environment {
     /// Output only. The ID of the environment.
-    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     /// The file sources materialized into the environment.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sources: Option<Vec<EnvironmentSource>>,
@@ -183,6 +195,11 @@ pub struct Environment {
 
 /// Request body for creating an environment explicitly.
 ///
+/// For the *inline* per-request form (the `environment` field on an
+/// interaction), use [`RemoteEnvironment`](crate::RemoteEnvironment) /
+/// [`EnvironmentSpec`](crate::EnvironmentSpec) instead — same fields, but
+/// carrying the `remote` type discriminator the inline union requires.
+///
 /// # Example
 ///
 /// ```
@@ -199,6 +216,10 @@ pub struct CreateEnvironmentRequest {
     /// Network configuration for the environment.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub network: Option<NetworkConfig>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen) — lets an
+    /// unmodeled create-request field be set without a crate release.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl CreateEnvironmentRequest {
@@ -254,7 +275,7 @@ mod tests {
             "size_bytes": "19"
         });
         let env: Environment = serde_json::from_value(json).unwrap();
-        assert_eq!(env.id, "38aac1ae7f30fe9bd67afe42382ea041");
+        assert_eq!(env.id.as_deref(), Some("38aac1ae7f30fe9bd67afe42382ea041"));
         assert_eq!(env.status, Some(EnvironmentStatus::Active));
         assert_eq!(env.file_count, Some(2));
         assert_eq!(env.size_bytes, Some(19));

@@ -152,14 +152,24 @@ impl<'de> Deserialize<'de> for HarmCategory {
             Some("image_harassment") => Ok(Self::ImageHarassment),
             Some("image_sexually_explicit") => Ok(Self::ImageSexuallyExplicit),
             Some("jailbreak") => Ok(Self::Jailbreak),
-            Some(other) => Ok(Self::Unknown {
-                category_type: other.to_string(),
-                data: value.clone(),
-            }),
-            None => Ok(Self::Unknown {
-                category_type: String::new(),
-                data: value,
-            }),
+            Some(other) => {
+                tracing::warn!(
+                    "Encountered unknown HarmCategory '{other}' - using Unknown variant (Evergreen)"
+                );
+                Ok(Self::Unknown {
+                    category_type: other.to_string(),
+                    data: value.clone(),
+                })
+            }
+            None => {
+                tracing::warn!(
+                    "HarmCategory received non-string value: {value}. Preserving in Unknown variant."
+                );
+                Ok(Self::Unknown {
+                    category_type: format!("<non-string: {value}>"),
+                    data: value,
+                })
+            }
         }
     }
 }
@@ -275,14 +285,24 @@ impl<'de> Deserialize<'de> for SafetyThreshold {
             Some("block_only_high") => Ok(Self::BlockOnlyHigh),
             Some("block_none") => Ok(Self::BlockNone),
             Some("off") => Ok(Self::Off),
-            Some(other) => Ok(Self::Unknown {
-                threshold_type: other.to_string(),
-                data: value.clone(),
-            }),
-            None => Ok(Self::Unknown {
-                threshold_type: String::new(),
-                data: value,
-            }),
+            Some(other) => {
+                tracing::warn!(
+                    "Encountered unknown SafetyThreshold '{other}' - using Unknown variant (Evergreen)"
+                );
+                Ok(Self::Unknown {
+                    threshold_type: other.to_string(),
+                    data: value.clone(),
+                })
+            }
+            None => {
+                tracing::warn!(
+                    "SafetyThreshold received non-string value: {value}. Preserving in Unknown variant."
+                );
+                Ok(Self::Unknown {
+                    threshold_type: format!("<non-string: {value}>"),
+                    data: value,
+                })
+            }
         }
     }
 }
@@ -374,14 +394,24 @@ impl<'de> Deserialize<'de> for SafetyMethod {
         match value.as_str() {
             Some("severity") => Ok(Self::Severity),
             Some("probability") => Ok(Self::Probability),
-            Some(other) => Ok(Self::Unknown {
-                method_type: other.to_string(),
-                data: value.clone(),
-            }),
-            None => Ok(Self::Unknown {
-                method_type: String::new(),
-                data: value,
-            }),
+            Some(other) => {
+                tracing::warn!(
+                    "Encountered unknown SafetyMethod '{other}' - using Unknown variant (Evergreen)"
+                );
+                Ok(Self::Unknown {
+                    method_type: other.to_string(),
+                    data: value.clone(),
+                })
+            }
+            None => {
+                tracing::warn!(
+                    "SafetyMethod received non-string value: {value}. Preserving in Unknown variant."
+                );
+                Ok(Self::Unknown {
+                    method_type: format!("<non-string: {value}>"),
+                    data: value,
+                })
+            }
         }
     }
 }

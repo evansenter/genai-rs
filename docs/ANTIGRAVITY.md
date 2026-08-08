@@ -196,7 +196,11 @@ wire — verified against the pinned harness proto). Two edge cases:
   anything it cannot map.
 
 `on_post_tool` observes completed custom tool calls (and harness-side
-post-tool hook callbacks) for audit logging.
+post-tool hook callbacks) for audit logging. `ToolOutcome.result` is the
+**inner** tool result, not the `{"result": ...}` wire envelope the harness
+receives: a scalar return `X` arrives as its string form (or `X` serialized
+when non-string), and an object return is passed through serialized. Failures
+populate `ToolOutcome.error` instead.
 
 ### Answering agent questions
 
@@ -234,11 +238,7 @@ block in it waiting for a human. For interactive flows, collect the
 answer out-of-band (chat reply, CLI prompt in another task) into a
 channel and answer from `try_recv`, returning `Unanswered` when nothing
 has arrived; the deadlock-avoidance fallback only covers the hookless
-case. `ToolOutcome.result` is the
-**inner** tool result, not the `{"result": ...}` wire envelope the harness
-receives: a scalar return `X` arrives as its string form (or `X` serialized
-when non-string), and an object return is passed through serialized. Failures
-populate `ToolOutcome.error` instead.
+case.
 
 ## Custom tools — the same `#[tool]` functions as the Interactions API
 

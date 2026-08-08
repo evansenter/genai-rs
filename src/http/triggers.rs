@@ -3,7 +3,7 @@
 //! Same header conventions as the other Interactions API resources
 //! (API key + `Api-Revision`); shared plumbing lives in `http/common.rs`.
 
-use super::common::{BASE_URL_PREFIX, send_and_read, with_paging};
+use super::common::{BASE_URL_PREFIX, send_and_read, to_body, with_paging};
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
 use crate::errors::GenaiError;
@@ -24,12 +24,6 @@ fn trigger_url(id: &str) -> String {
 
 fn trigger_executions_url(trigger_id: &str) -> String {
     format!("{BASE_URL_PREFIX}/{API_VERSION}/triggers/{trigger_id}/executions")
-}
-
-/// Serializes a body for the wire, mapping serialization errors to `Internal`.
-fn to_body<B: serde::Serialize>(body: &B) -> Result<serde_json::Value, GenaiError> {
-    serde_json::to_value(body)
-        .map_err(|e| GenaiError::Internal(format!("Failed to serialize request body: {e}")))
 }
 
 /// Creates a trigger (`POST /v1beta/triggers`).

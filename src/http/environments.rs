@@ -3,7 +3,7 @@
 //! Same header conventions as the other Interactions API resources
 //! (API key + `Api-Revision`); shared plumbing lives in `http/common.rs`.
 
-use super::common::{BASE_URL_PREFIX, send_and_read, with_paging};
+use super::common::{BASE_URL_PREFIX, send_and_read, to_body, with_paging};
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
 use crate::environments::{CreateEnvironmentRequest, Environment, EnvironmentListResponse};
@@ -25,9 +25,7 @@ pub async fn create_environment(
     request: &CreateEnvironmentRequest,
 ) -> Result<Environment, GenaiError> {
     tracing::debug!("Creating environment");
-    let body = serde_json::to_value(request)
-        .map_err(|e| GenaiError::Internal(format!("Failed to serialize request body: {e}")))?;
-    let text = send_and_read(ctx, "POST", &environments_url(), Some(body)).await?;
+    let text = send_and_read(ctx, "POST", &environments_url(), Some(to_body(request)?)).await?;
     deserialize_with_context(&text, "Environment from create")
 }
 
