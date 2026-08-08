@@ -4,6 +4,8 @@ members = [
 ]
 
 [workspace.lints.rust]
+# No source currently branches on cfg(docsrs); this allowance keeps the
+# docs.rs rustdoc-arg below lint-clean if a #[cfg(docsrs)] is ever added.
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)"] }
 
 [workspace.dependencies]

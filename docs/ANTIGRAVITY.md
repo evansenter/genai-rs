@@ -255,6 +255,8 @@ is write-capable, so enabling it requires a policy or pre-tool hook (the
 spawn-time safety gate):
 
 ```rust,ignore
+use genai_rs::CallableFunction;
+
 use genai_rs::antigravity::{BuiltinTool, Capabilities, Subagent, policy};
 
 let agent = AntigravityAgent::builder()

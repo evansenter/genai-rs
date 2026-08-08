@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   features only), with "Available on crate feature ... only" banners on
   feature-gated items. The CI doc gate now builds with `--all-features` so
   feature-gated docs stay under the `-D warnings` check.
+- The `audio_input` and `video_input` examples now embed real media
+  fixtures, replacing the zero-length WAV and header-only MP4 that the API
+  rejects with 400 `invalid_request` — both examples previously always took
+  their error branch.
 - README installation snippet now lists `async-trait` and `serde_json`,
   required by `#[tool]`-generated code, and notes the `CallableFunction`
   import — following the previous snippet produced a compile error on

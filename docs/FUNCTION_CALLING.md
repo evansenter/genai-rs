@@ -90,6 +90,8 @@ println!("{}", result.response.as_text().unwrap());
 ### Limiting Available Functions
 
 ```rust,ignore
+use genai_rs::CallableFunction;
+
 // Only expose specific functions (not all registered ones)
 let result = client
     .interaction()
@@ -132,6 +134,8 @@ The `#[tool]` macro generates:
 3. Registration in the global function registry
 
 ```rust,ignore
+use genai_rs::CallableFunction;
+
 // You can access the generated declaration:
 let declaration = GetWeatherCallable.declaration();
 println!("Name: {}", declaration.name());
@@ -393,6 +397,8 @@ let declaration = FunctionDeclaration::builder("process_items")
 ### Accessing Declaration Properties
 
 ```rust,ignore
+use genai_rs::CallableFunction;
+
 let decl = GetWeatherCallable.declaration();
 
 println!("Name: {}", decl.name());
