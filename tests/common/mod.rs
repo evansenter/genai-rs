@@ -968,19 +968,17 @@ pub async fn validate_response_semantically(
 ///
 /// # Panics
 ///
-/// - If the semantic validation API call fails
 /// - If the response is not semantically valid
+/// - If the validator call fails non-transiently (4xx other than 429)
+///
+/// Transient validator failures (network errors, 5xx, 429) are logged with a
+/// greppable SEMANTIC_VALIDATION_SKIPPED marker and treated as a pass — the
+/// validator is a second API round-trip that can fail independently of the
+/// input under test.
 ///
 /// # Example
 ///
 /// ```ignore
-/// // Instead of:
-/// let is_valid = validate_response_semantically(&client, context, &text, question)
-///     .await
-///     .expect("Semantic validation failed");
-/// assert!(is_valid, "Response should...");
-///
-/// // Use:
 /// assert_response_semantic(&client, context, &text, question).await;
 /// ```
 // Note: Used in multimodal_tests.rs and temp_file_tests.rs but warning appears
@@ -1000,9 +998,21 @@ pub async fn assert_response_semantic(
             validation_question, response_text
         ),
         // The validator is a second API round-trip that can fail
-        // independently of the input under test — don't fail the test on
-        // its transport errors.
-        Err(e) => println!("Semantic validation call error (non-fatal): {:?}", e),
+        // independently of the input under test — tolerate transient
+        // failures (network, 5xx, 429) with a greppable marker, but panic
+        // on systemic errors (4xx) so a broken validator can't go quietly
+        // green suite-wide.
+        Err(
+            e @ (GenaiError::Http(_)
+            | GenaiError::Api {
+                status_code: 429 | 500..=599,
+                ..
+            }),
+        ) => eprintln!(
+            "SEMANTIC_VALIDATION_SKIPPED (transient validator error): {:?}",
+            e
+        ),
+        Err(e) => panic!("Semantic validation call failed non-transiently: {:?}", e),
     }
 }
 

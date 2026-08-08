@@ -66,7 +66,7 @@ The North region leads in both sales volume and quantity sold.
 
 The example uses simulated sales data:
 
-```rust
+```rust,ignore
 struct SalesRecord {
     date: String,       // "2024-01-15"
     product: String,    // "Laptop Pro"
@@ -81,8 +81,9 @@ struct SalesRecord {
 
 ### Statistical Analysis
 
-```rust
+```rust,ignore
 use genai_rs::CallableFunction;
+use genai_rs_macros::tool;
 
 #[tool(column(description = "Column: 'quantity' or 'unit_price'"))]
 fn get_column_stats(column: String) -> String {
@@ -92,8 +93,9 @@ fn get_column_stats(column: String) -> String {
 
 ### Group Aggregation
 
-```rust
+```rust,ignore
 use genai_rs::CallableFunction;
+use genai_rs_macros::tool;
 
 #[tool(group_by(description = "Group by: 'category', 'region', 'product'"))]
 fn get_sales_by_group(group_by: String) -> String {
@@ -105,7 +107,7 @@ fn get_sales_by_group(group_by: String) -> String {
 
 ### Database Integration
 
-```rust
+```rust,ignore
 // Connect to real databases
 async fn execute_query(sql: &str) -> Result<DataFrame, Error> {
     let pool = PgPool::connect(&database_url).await?;
@@ -115,7 +117,7 @@ async fn execute_query(sql: &str) -> Result<DataFrame, Error> {
 
 ### SQL Generation
 
-```rust
+```rust,ignore
 // Natural language to SQL
 async fn nl_to_sql(question: &str) -> String {
     client.interaction()
@@ -130,7 +132,7 @@ async fn nl_to_sql(question: &str) -> String {
 
 ### Visualization
 
-```rust
+```rust,ignore
 // Generate chart specifications
 async fn suggest_visualization(data: &DataFrame) -> ChartSpec {
     // Return chart type, axes, and data mappings
@@ -139,7 +141,7 @@ async fn suggest_visualization(data: &DataFrame) -> ChartSpec {
 
 ### Large Dataset Handling
 
-```rust
+```rust,ignore
 // Pagination and sampling for big data
 struct PaginatedResult {
     data: Vec<Row>,

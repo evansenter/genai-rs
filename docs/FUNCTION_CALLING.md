@@ -106,6 +106,7 @@ let result = client
 
 ```rust,ignore
 use genai_rs::CallableFunction;
+use genai_rs_macros::tool;
 
 #[tool(
     city(description = "The city name"),
@@ -120,6 +121,7 @@ fn get_weather_detailed(city: String, unit: String) -> String {
 
 ```rust,ignore
 use genai_rs::CallableFunction;
+use genai_rs_macros::tool;
 
 #[tool(url(description = "URL to fetch"))]
 async fn fetch_url(url: String) -> String {
@@ -560,6 +562,7 @@ This happens automatically across multiple loop iterations.
 
 ```rust,ignore
 use genai_rs::CallableFunction;
+use genai_rs_macros::tool;
 
 #[tool(city(description = "City name"))]
 fn get_weather(city: String) -> String {
@@ -572,6 +575,7 @@ fn get_weather(city: String) -> String {
 
 ```rust,ignore
 use genai_rs::CallableFunction;
+use genai_rs_macros::tool;
 
 #[tool(id(description = "User ID"))]
 fn get_user(id: i32) -> String {
@@ -590,6 +594,7 @@ fn get_user(id: i32) -> String {
 
 ```rust,ignore
 use genai_rs::CallableFunction;
+use genai_rs_macros::tool;
 
 #[tool(query(description = "Search query"))]
 fn search(query: String) -> String {
@@ -609,6 +614,7 @@ fn search(query: String) -> String {
 
 ```rust,ignore
 use genai_rs::CallableFunction;
+use genai_rs_macros::tool;
 // Good: Clear, specific
 #[tool(city(description = "City name (e.g., 'Tokyo', 'New York')"))]
 fn get_current_weather(city: String) -> String

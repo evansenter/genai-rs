@@ -13,7 +13,7 @@
 
 mod common;
 
-use common::{consume_stream, get_client, stateful_builder, validate_response_semantically};
+use common::{assert_response_semantic, consume_stream, get_client, stateful_builder};
 use genai_rs::{FunctionDeclaration, InteractionStatus, Step};
 use serde_json::json;
 
@@ -62,19 +62,13 @@ async fn test_streaming_multi_turn_basic() {
     assert!(result.has_output(), "Should receive streaming chunks");
 
     // Verify context was maintained - use semantic validation
-    let is_valid = validate_response_semantically(
+    assert_response_semantic(
         &client,
         "Turn 1 established 'My favorite programming language is Python'. Turn 2 asked 'What is my favorite programming language?'",
         &result.collected_text,
         "Does this response identify Python as the favorite programming language?",
     )
-    .await
-    .expect("Semantic validation failed");
-    assert!(
-        is_valid,
-        "Streaming response should recall the fact from Turn 1. Got: {}",
-        result.collected_text
-    );
+    .await;
 
     // Verify final response if received
     if let Some(response) = result.final_response {
@@ -167,20 +161,13 @@ async fn test_streaming_multi_turn_function_calling() {
 
     // Verify context was maintained using semantic validation
     // The model should reference the weather conditions from Turn 1 (rainy, 18°C)
-    let is_valid = validate_response_semantically(
+    assert_response_semantic(
         &client,
         "Turn 1 established weather in Paris: rainy, 18°C, high humidity. User asked 'Should I bring an umbrella?' in Turn 3.",
         &result.collected_text,
         "Does this response address whether to bring an umbrella based on the rainy weather?",
     )
-    .await
-    .expect("Semantic validation failed");
-
-    assert!(
-        is_valid,
-        "Streaming response should reference weather context. Got: {}",
-        result.collected_text
-    );
+    .await;
 
     // Verify final response if received
     if let Some(response) = result.final_response {

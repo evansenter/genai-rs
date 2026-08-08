@@ -35,8 +35,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_model(model_name)
         .with_content(vec![
             Content::text(
-                "This is a demo audio file. In real usage, describe what you hear. \
-                 If the audio is silent or empty, just say 'No audio content detected.'",
+                "This is a short demo audio clip. Describe what you hear. \
+                 If it is silent, just say 'Silent audio.'",
             ),
             Content::audio_data(DEMO_WAV_BASE64, "audio/wav"),
         ])
@@ -50,7 +50,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         }
         Err(e) => {
-            println!("Note: audio interaction failed: {e}\n");
+            // The demo fixture is known-valid (drift-guarded by tests), so a
+            // failure here is a real error — surface it.
+            return Err(e.into());
         }
     }
 

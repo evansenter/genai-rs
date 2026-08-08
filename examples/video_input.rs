@@ -46,7 +46,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         }
         Err(e) => {
-            println!("Note: video interaction failed: {e}\n");
+            // The demo fixture is known-valid (drift-guarded by tests), so a
+            // failure here is a real error — surface it.
+            return Err(e.into());
         }
     }
 

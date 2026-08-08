@@ -320,6 +320,7 @@ Function not found in registry or tool service: function='...'
 
 ```rust,ignore
 use genai_rs::CallableFunction;
+use genai_rs_macros::tool;
 
 /// Fetch data from API
 #[tool]
@@ -355,6 +356,7 @@ Err(FunctionError::ArgumentMismatch(message)) => {
 
 ```rust,ignore
 use genai_rs::CallableFunction;
+use genai_rs_macros::tool;
 
 /// Get user by ID
 #[tool]

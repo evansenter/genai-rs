@@ -78,7 +78,7 @@ Each example demonstrates:
 
 Retrieval-Augmented Generation for document Q&A:
 
-```rust
+```rust,ignore
 // Retrieve relevant documents
 let retrieved = store.retrieve(query, 2);
 
@@ -96,7 +96,7 @@ let response = client.interaction()
 
 Stateful customer support bot with automatic function execution:
 
-```rust
+```rust,ignore
 // Auto handles function calling loop
 let result = client.interaction()
     .with_previous_interaction(&last_id)
@@ -108,7 +108,7 @@ let result = client.interaction()
 
 Same bot with manual control over function execution:
 
-```rust
+```rust,ignore
 // Manual function calling loop
 let response = client.interaction()
     .with_previous_interaction(&last_id)
@@ -120,7 +120,7 @@ let response = client.interaction()
 
 Stateless conversations with client-side history management:
 
-```rust
+```rust,ignore
 // No server state - maintain history locally
 let response = client.interaction()
     .with_input(InteractionInput::Content(history.clone()))
@@ -132,7 +132,7 @@ let response = client.interaction()
 
 Structured code analysis:
 
-```rust
+```rust,ignore
 // Get structured analysis output
 let analysis: CodeAnalysis = client.interaction()
     .with_response_format(schema)
@@ -146,7 +146,7 @@ let analysis: CodeAnalysis = client.interaction()
 
 Natural language data queries:
 
-```rust
+```rust,ignore
 // NL question -> function calls -> answer
 let result = client.interaction()
     .with_text("What are total sales by region?")
@@ -158,7 +158,7 @@ let result = client.interaction()
 
 Real-time web research:
 
-```rust
+```rust,ignore
 // Grounded search with source attribution
 let response = client.interaction()
     .with_google_search()
@@ -174,7 +174,7 @@ for source in response.google_search_results() {
 
 AI-powered test generation:
 
-```rust
+```rust,ignore
 // Generate structured test suite
 let suite: TestSuite = assistant
     .generate_test_suite(code, "rust").await?;
@@ -190,7 +190,7 @@ let analysis = assistant
 
 Each example wraps the client for domain-specific operations:
 
-```rust
+```rust,ignore
 struct SupportSession {
     client: Client,
     last_interaction_id: Option<String>,
@@ -207,8 +207,9 @@ impl SupportSession {
 
 Function calling with the `#[tool]` macro:
 
-```rust
+```rust,ignore
 use genai_rs::CallableFunction;
+use genai_rs_macros::tool;
 
 #[tool(column(description = "Column name to analyze"))]
 fn get_stats(column: String) -> String {
@@ -224,7 +225,7 @@ client.interaction()
 
 JSON schema for consistent parsing:
 
-```rust
+```rust,ignore
 let schema = json!({
     "type": "object",
     "properties": {
