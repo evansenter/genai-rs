@@ -515,11 +515,12 @@ async fn test_video_from_temp_file() {
 /// run in CI, so a fixture update that misses one silently sends that
 /// example down its error branch. Runs without an API key.
 ///
-/// Self-maintaining: walks examples/**/*.rs for `_BASE64:` declarations
-/// and extracts the first quoted literal that follows, so it also catches
-/// raw strings, `&'static str`, a literal rustfmt moved to its own line,
-/// and stale copies in *new* examples. A declaration with no quoted
-/// literal nearby fails loudly rather than being skipped.
+/// Self-maintaining: walks examples/**/*.rs for `_BASE64: <type> = <str>`
+/// declarations and extracts the quoted literal, so it also catches raw
+/// strings, `&'static str`, a literal rustfmt moved to its own line, and
+/// stale copies in *new* examples that follow the naming convention. The
+/// `checked` floor and the every-canonical-seen check below backstop the
+/// matcher itself: reformatting or removing a known copy fails here.
 #[test]
 fn example_fixtures_match_test_fixtures() {
     let canonical = [
@@ -544,24 +545,27 @@ fn example_fixtures_match_test_fixtures() {
                 while let Some(hit) = src[from..].find("_BASE64") {
                     let after = from + hit + "_BASE64".len();
                     from = after;
-                    // Declarations look like `X_BASE64: <type> = <literal>`;
-                    // other mentions (format-string interpolation, comments)
-                    // aren't followed by a colon.
-                    if !src[after..].trim_start().starts_with(':') {
+                    // Declarations look like `X_BASE64: <type> = <literal>`:
+                    // a colon, then an `=` before the opening quote, all
+                    // within a short span. Format-string interpolation
+                    // (`{X_BASE64:?}`) and doc-comment mentions have the
+                    // colon but not the `= ... "` shape, so they're skipped.
+                    let tail = &src[after..];
+                    if !tail.trim_start().starts_with(':') {
+                        continue;
+                    }
+                    let window_end = tail.char_indices().nth(200).map_or(tail.len(), |(i, _)| i);
+                    let window = &tail[..window_end];
+                    let (Some(eq), Some(q1)) = (window.find('='), window.find('"')) else {
+                        continue;
+                    };
+                    if eq > q1 {
                         continue;
                     }
                     // Base64 contains no quotes or escapes, so the literal is
                     // exactly the span between the next two quote characters
                     // (works for both "..." and r#"..."# forms).
-                    let window = &src[after..src.len().min(after + 200_000)];
-                    let q1 = window.find('"').unwrap_or_else(|| {
-                        panic!(
-                            "{}: _BASE64 declaration with no quoted literal — \
-                             matcher no longer recognizes this shape",
-                            path.display()
-                        )
-                    });
-                    let lit = &window[q1 + 1..];
+                    let lit = &tail[q1 + 1..];
                     let q2 = lit.find('"').expect("unterminated string literal");
                     let value = &lit[..q2];
                     let matched = canonical.iter().find(|(_, v)| *v == value);

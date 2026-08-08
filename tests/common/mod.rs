@@ -78,8 +78,10 @@ pub fn is_transient_error(err: &GenaiError) -> bool {
 /// attempt.
 ///
 /// Note: inside a `with_timeout` budget, a worst case adds ~7s of backoff
-/// plus up to three extra round-trips — a sustained outage can therefore
-/// surface as a harness timeout rather than the underlying error.
+/// (more if the server sends `Retry-After`, up to 15s per attempt — larger
+/// requested delays abort the retry and surface the error) plus up to
+/// three extra round-trips — a sustained outage can therefore surface as
+/// a harness timeout rather than the underlying error.
 ///
 /// # Arguments
 ///
@@ -115,13 +117,18 @@ where
                 if (is_transient_error(&err) || err.is_retryable()) && attempt < max_retries =>
             {
                 // Exponential backoff: 1s, 2s, 4s, ... — but honor a
-                // server-sent Retry-After (429) when it asks for longer,
-                // capped so a large suggested delay fails fast against the
-                // harness timeout instead of silently eating its budget.
+                // server-sent Retry-After when it asks for longer. Retrying
+                // *before* the requested delay just earns another 429, and
+                // sleeping out a long delay inside a with_timeout budget
+                // surfaces as an opaque harness timeout — so if the server
+                // asks for more than we can afford, surface the real error
+                // immediately instead.
                 let backoff = Duration::from_secs(1 << attempt);
-                let delay = err
-                    .retry_after()
-                    .map_or(backoff, |ra| ra.max(backoff).min(Duration::from_secs(15)));
+                let delay = match err.retry_after() {
+                    Some(ra) if ra > Duration::from_secs(15) => return Err(err),
+                    Some(ra) => ra.max(backoff),
+                    None => backoff,
+                };
                 println!(
                     "Transient error on attempt {} of {}, retrying in {:?}: {:?}",
                     attempt + 1,
@@ -994,7 +1001,8 @@ pub async fn validate_response_semantically(
 ///   variants fail loud by default
 ///
 /// The validator call itself gets a single [`retry_on_transient`] retry
-/// (~1s of backoff plus one extra round-trip — deliberately smaller than
+/// (normally ~1s of backoff — a server-sent `Retry-After` can raise that
+/// to at most 15s — plus one extra round-trip; deliberately smaller than
 /// the primary-call budget, since many callers nest both retry chains
 /// inside one `with_timeout` budget). Transient
 /// failures that survive the retries (per [`GenaiError::is_retryable`] —
