@@ -487,9 +487,14 @@ if response.has_unknown() {
 All fixtures are complete, well-formed files the API accepts, so tests
 exercising them assert strictly (`.expect()` + status check) — an API
 rejection is a real failure, not an expected fixture limitation. Semantic
-validation via `assert_response_semantic` is uniformly non-fatal on
-validator-call transport errors (a second API round-trip that can fail
-independently of the input under test) while still asserting on its verdict.
+validation via `assert_response_semantic` (used throughout the multimodal,
+temp-file and multi-turn suites) applies a two-tier policy: it asserts on
+the verdict and panics on non-transient validator errors, but tolerates
+transient ones (per `GenaiError::is_retryable`) with a greppable
+`SEMANTIC_VALIDATION_SKIPPED` marker — the validator is a second API
+round-trip that can fail independently of the input under test. (Some
+older tests still call `validate_response_semantically` directly and
+hard-fail on any validator error; converting them is a welcome cleanup.)
 
 ### Test Fixtures
 

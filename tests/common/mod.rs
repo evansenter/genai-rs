@@ -971,10 +971,11 @@ pub async fn validate_response_semantically(
 /// - If the response is not semantically valid
 /// - If the validator call fails non-transiently (4xx other than 429)
 ///
-/// Transient validator failures (network errors, 5xx, 429) are logged with a
-/// greppable SEMANTIC_VALIDATION_SKIPPED marker and treated as a pass — the
-/// validator is a second API round-trip that can fail independently of the
-/// input under test.
+/// Transient validator failures (per [`GenaiError::is_retryable`]: network
+/// errors, timeouts, 5xx, 429) are logged with a greppable
+/// SEMANTIC_VALIDATION_SKIPPED marker and treated as a pass — the validator
+/// is a second API round-trip that can fail independently of the input
+/// under test.
 ///
 /// # Example
 ///
@@ -999,16 +1000,10 @@ pub async fn assert_response_semantic(
         ),
         // The validator is a second API round-trip that can fail
         // independently of the input under test — tolerate transient
-        // failures (network, 5xx, 429) with a greppable marker, but panic
-        // on systemic errors (4xx) so a broken validator can't go quietly
-        // green suite-wide.
-        Err(
-            e @ (GenaiError::Http(_)
-            | GenaiError::Api {
-                status_code: 429 | 500..=599,
-                ..
-            }),
-        ) => eprintln!(
+        // failures (per the crate's own is_retryable classification) with a
+        // greppable marker, but panic on systemic errors (e.g. 4xx) so a
+        // broken validator can't go quietly green suite-wide.
+        Err(e) if e.is_retryable() => eprintln!(
             "SEMANTIC_VALIDATION_SKIPPED (transient validator error): {:?}",
             e
         ),
