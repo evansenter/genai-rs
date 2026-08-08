@@ -244,10 +244,10 @@ When releasing a new version, update these files:
 
 After merging version bump PR:
 
-0. **Verify the docs.rs build locally** (docs.rs builds on nightly rustdoc,
-   which CI never exercises — e.g. nightly-only attribute removals; a failure
-   here would otherwise surface as a broken docs.rs build after the version
-   is immutable on crates.io):
+0. **Verify the docs.rs build locally** (docs.rs builds on nightly rustdoc —
+   e.g. nightly-only attribute removals; release.yml's validate job runs the
+   same nightly check before publish, but catching it here means finding out
+   before the tag exists rather than after):
    `RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo +nightly doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs`
    (matches the `[package.metadata.docs.rs]` feature set)
 1. **Tag the release**: `git tag -a vX.Y.Z origin/main -m "Release vX.Y.Z"`

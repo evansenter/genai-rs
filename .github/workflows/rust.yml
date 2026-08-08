@@ -118,9 +118,10 @@ jobs:
             if [ "${skips:-0}" -gt 3 ]; then
               # The tolerated-skip escape hatch is only meaningful while it
               # stays rare — past this threshold the run's green can't be
-              # trusted, so fail instead of warn.
+              # trusted, so fail instead of warn. Escalate only a passing
+              # run: a real nextest failure keeps its own exit code.
               echo "::error::$test: $skips semantic validations passed vacuously — too many to trust this run (grep SEMANTIC_VALIDATION_SKIPPED in the log for causes)"
-              rc=1
+              if [ "$rc" -eq 0 ]; then rc=1; fi
             elif [ "${skips:-0}" -gt 0 ]; then
               echo "::warning::$test: $skips semantic validation(s) passed vacuously (grep SEMANTIC_VALIDATION_SKIPPED in the log for causes)"
             fi
@@ -171,7 +172,8 @@ jobs:
         # Mirrors [package.metadata.docs.rs] (features AND the docsrs
         # rustdoc-arg) on stable: gates warnings specific to the published
         # feature set. Nightly-only breakage (docs.rs builds on nightly) is
-        # covered by release checklist step 0 in CLAUDE.md, not this job.
+        # covered by the nightly step in release.yml's validate job (and by
+        # release checklist step 0 in CLAUDE.md), not this job.
         run: cargo doc --workspace --no-deps --features antigravity
         env:
           RUSTDOCFLAGS: --cfg docsrs -D warnings

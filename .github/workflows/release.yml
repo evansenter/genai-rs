@@ -37,9 +37,15 @@ jobs:
           rc=0
           cargo nextest run --workspace --run-ignored all --success-output=final 2>&1 | tee /tmp/integration.log || rc=$?
           skips=$(grep -c SEMANTIC_VALIDATION_SKIPPED /tmp/integration.log || true)
-          if [ "${skips:-0}" -gt 3 ]; then
+          # Threshold scaled to this run's denominator: rust.yml applies 3
+          # per test binary (largest group ~13 semantic validations, ~23%
+          # tolerated); this single workspace run has ~48, so 10 (~20%)
+          # keeps the two gates equivalent in intent.
+          if [ "${skips:-0}" -gt 10 ]; then
             echo "::error::$skips semantic validations passed vacuously — too many to trust this run (grep SEMANTIC_VALIDATION_SKIPPED in the log for causes)"
-            exit 1
+            # Escalate only a passing run — a real nextest failure keeps
+            # its own exit code and stays the headline cause.
+            if [ "$rc" -eq 0 ]; then rc=1; fi
           elif [ "${skips:-0}" -gt 0 ]; then
             echo "::warning::$skips semantic validation(s) passed vacuously (grep SEMANTIC_VALIDATION_SKIPPED in the log for causes)"
           fi
@@ -63,12 +69,15 @@ jobs:
       # breakage). This is the last gate before the version becomes
       # immutable on crates.io, so the nightly check lives here rather
       # than in rust.yml, where nightly churn would redden unrelated PRs.
-      # +nightly is explicit so the toolchain default stays stable.
+      # No -D warnings: docs.rs fails on hard errors only, and gating new
+      # nightly lints here would block a release that would publish fine.
+      # NOTE: installing the nightly toolchain changes the rustup default
+      # for later steps — keep this the last step in the job.
       - uses: dtolnay/rust-toolchain@nightly
       - name: Check documentation (docs.rs feature set, nightly)
         run: cargo +nightly doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs-nightly
         env:
-          RUSTDOCFLAGS: --cfg docsrs -D warnings
+          RUSTDOCFLAGS: --cfg docsrs
 
   # Publish to crates.io
   publish:
