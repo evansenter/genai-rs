@@ -19,12 +19,12 @@ mod common;
 
 use base64::Engine;
 use common::{
-    TINY_PDF_BASE64, TINY_RED_PNG_BASE64, TINY_WAV_BASE64, assert_response_semantic, get_client,
-    stateful_builder,
+    TINY_MP4_BASE64, TINY_PDF_BASE64, TINY_RED_PNG_BASE64, TINY_WAV_BASE64,
+    assert_response_semantic, get_client, stateful_builder,
 };
 use genai_rs::{
     Content, InteractionInput, InteractionStatus, audio_from_file, document_from_file,
-    image_from_file,
+    image_from_file, video_from_file,
 };
 use tempfile::TempDir;
 
@@ -448,11 +448,45 @@ async fn test_audio_from_temp_file() {
 // Video File Tests
 // =============================================================================
 
-// Note: Video test removed - The minimal MP4 header (ftyp box only) is not a valid
-// video file that the Gemini API can process. The API returns 400 "Invalid video data".
-// Testing video functionality would require a real video file, which is too large
-// for inline test fixtures. The video_from_file() function is tested via the
-// file loading mechanics (same as audio/image) which is covered by other tests.
+/// Tests loading a video file from a temp file using video_from_file().
+///
+/// Uses the TINY_MP4_BASE64 fixture (a real one-frame 64x64 H.264 clip, ~1.5KB),
+/// so the API accepts it as valid video data.
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_video_from_temp_file() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let video_path = temp_dir.path().join("test_video.mp4");
+
+    let video_bytes = base64::engine::general_purpose::STANDARD
+        .decode(TINY_MP4_BASE64)
+        .expect("Failed to decode base64");
+    std::fs::write(&video_path, &video_bytes).expect("Failed to write video");
+
+    let video_content = video_from_file(&video_path)
+        .await
+        .expect("Failed to load video from file");
+
+    let contents = vec![
+        Content::text("Is this a video file? Answer yes or no."),
+        video_content,
+    ];
+
+    let response = stateful_builder(&client)
+        .with_input(InteractionInput::Content(contents))
+        .create()
+        .await
+        .expect("Video interaction failed");
+
+    assert_eq!(response.status, InteractionStatus::Completed);
+    assert!(response.has_text(), "Should have text response");
+    println!("Video response: {:?}", response.as_text());
+}
 
 // =============================================================================
 // Error Handling Tests

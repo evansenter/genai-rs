@@ -214,7 +214,7 @@ mod image {
 
 mod audio {
     use crate::common::{SAMPLE_AUDIO_URL, TINY_WAV_BASE64, get_client, stateful_builder};
-    use genai_rs::{Content, InteractionInput};
+    use genai_rs::{Content, InteractionInput, InteractionStatus};
 
     /// Tests audio input from URI.
     /// Note: GCS URIs are not supported by the Interactions API.
@@ -265,41 +265,28 @@ mod audio {
             return;
         };
 
-        // Use tiny WAV for testing base64 audio input
-        // Note: This is a minimal header with no actual audio, so the model may report it's empty/silent
+        // The TINY_WAV fixture is a complete, well-formed audio clip (100 frames
+        // of silence), so the API must accept it — assert strictly.
         let contents = vec![
             Content::text("Describe what you hear in this audio file."),
             genai_rs::Content::audio_data(TINY_WAV_BASE64, "audio/wav"),
         ];
 
-        let result = stateful_builder(&client)
+        let response = stateful_builder(&client)
             .with_input(InteractionInput::Content(contents))
             .create()
-            .await;
+            .await
+            .expect("Base64 audio interaction failed");
 
-        match result {
-            Ok(response) => {
-                println!("Base64 audio response status: {:?}", response.status);
-                if response.has_text() {
-                    let text = response.as_text().unwrap();
-                    println!("Audio response: {}", text);
-                    // Just verify we got some response - the content can vary
-                    assert!(!text.is_empty(), "Should get some response about the audio");
-                }
-            }
-            Err(e) => {
-                println!(
-                    "Base64 audio error (may be expected for minimal WAV): {:?}",
-                    e
-                );
-            }
-        }
+        assert_eq!(response.status, InteractionStatus::Completed);
+        assert!(response.has_text(), "Should have text response");
+        println!("Audio response: {:?}", response.as_text());
     }
 }
 
 mod video {
     use crate::common::{SAMPLE_VIDEO_URL, TINY_MP4_BASE64, get_client, stateful_builder};
-    use genai_rs::{Content, InteractionInput};
+    use genai_rs::{Content, InteractionInput, InteractionStatus};
 
     /// Tests video input from URI.
     /// Note: GCS URIs are not supported by the Interactions API.
@@ -343,7 +330,6 @@ mod video {
     }
 
     /// Tests video input from base64.
-    /// Note: This uses a minimal MP4 header, so the model may report it's empty/corrupt.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_video_input_from_base64() {
@@ -352,36 +338,22 @@ mod video {
             return;
         };
 
-        // Use minimal MP4 for testing base64 video input
-        // Note: This is a minimal header with no actual video frames, so the model may report it's empty
+        // The TINY_MP4 fixture is a real one-frame H.264 clip, so the API
+        // must accept it — assert strictly.
         let contents = vec![
             Content::text("Describe what you see in this video file."),
             Content::video_data(TINY_MP4_BASE64, "video/mp4"),
         ];
 
-        let result = stateful_builder(&client)
+        let response = stateful_builder(&client)
             .with_input(InteractionInput::Content(contents))
             .create()
-            .await;
+            .await
+            .expect("Base64 video interaction failed");
 
-        match result {
-            Ok(response) => {
-                println!("Base64 video response status: {:?}", response.status);
-                if response.has_text() {
-                    let text = response.as_text().unwrap();
-                    println!("Video response: {}", text);
-                    // Just verify we got some response - the content can vary
-                    assert!(!text.is_empty(), "Should get some response about the video");
-                }
-            }
-            Err(e) => {
-                // A minimal MP4 header may not be accepted by the API
-                println!(
-                    "Base64 video error (may be expected for minimal MP4): {:?}",
-                    e
-                );
-            }
-        }
+        assert_eq!(response.status, InteractionStatus::Completed);
+        assert!(response.has_text(), "Should have text response");
+        println!("Video response: {:?}", response.as_text());
     }
 }
 
@@ -486,7 +458,7 @@ mod mixed_media {
     /// image + audio together. It asserts on the response content when successful,
     /// but allows known format errors from the minimal test files.
     ///
-    /// Note: Video is excluded because the minimal MP4 test file often fails validation.
+    /// See test_mixed_image_audio_video for the all-three-types variant.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_mixed_image_and_audio() {
@@ -585,27 +557,12 @@ mod mixed_media {
             .create()
             .await;
 
-        match result {
-            Ok(response) => {
-                println!("All media types response status: {:?}", response.status);
-                if response.has_text() {
-                    let text = response.as_text().unwrap();
-                    println!("All media types response: {}", text);
-                }
-                // If we get here, the API accepted all three types
-                assert_eq!(response.status, InteractionStatus::Completed);
-            }
-            Err(e) => {
-                // The minimal test files are very likely to fail validation
-                let error_str = format!("{:?}", e);
-                println!(
-                    "All media types error (expected for minimal files): {}",
-                    error_str
-                );
-                // This test documents the API behavior with minimal files
-                // A passing result would indicate the API accepted the format
-            }
+        let response = result.expect("Mixed media interaction failed");
+        println!("All media types response status: {:?}", response.status);
+        if let Some(text) = response.as_text() {
+            println!("All media types response: {}", text);
         }
+        assert_eq!(response.status, InteractionStatus::Completed);
     }
 }
 
@@ -941,10 +898,8 @@ mod bytes_loading {
     /// This validates that base64-encoded image data works correctly.
     /// Uses semantic validation to verify the model correctly interprets the image.
     ///
-    /// Note: This test uses `.expect()` (strict assertion) because the PNG fixture
-    /// is a complete, well-formed image that the API should always accept.
-    /// Compare to audio/video tests which use lenient `match result` because those
-    /// minimal fixtures may be rejected by the API.
+    /// Note: All media fixtures (PNG, WAV, MP4) are complete, well-formed files
+    /// the API should always accept, so media roundtrip tests assert strictly.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_image_data_roundtrip() {
@@ -985,8 +940,8 @@ mod bytes_loading {
     /// Tests audio input with base64-encoded data using Content::audio_data().
     ///
     /// This validates that base64-encoded audio data works correctly.
-    /// Note: The minimal WAV test file may not contain actual audio, so the model
-    /// may report it's empty/silent.
+    /// The TINY_WAV fixture is a complete, well-formed clip, so this test
+    /// asserts strictly — an API rejection is a real failure.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_audio_data_roundtrip() {
@@ -1006,31 +961,17 @@ mod bytes_loading {
             .create()
             .await;
 
-        match result {
-            Ok(response) => {
-                println!("Audio bytes response status: {:?}", response.status);
-                if response.has_text() {
-                    let text = response.as_text().unwrap();
-                    println!("Audio response: {}", text);
-                    // Just verify we got some response - the content can vary
-                    assert!(!text.is_empty(), "Should get some response about the audio");
-                }
-            }
-            Err(e) => {
-                // The minimal WAV might not be accepted
-                println!(
-                    "Audio bytes error (may be expected for minimal WAV): {:?}",
-                    e
-                );
-            }
-        }
+        let response = result.expect("Audio bytes interaction failed");
+        assert_eq!(response.status, InteractionStatus::Completed);
+        assert!(response.has_text(), "Should have text response");
+        println!("Audio response: {:?}", response.as_text());
     }
 
     /// Tests video input with base64-encoded data using Content::video_data().
     ///
     /// This validates that base64-encoded video data works correctly.
-    /// Note: The minimal MP4 test file is just a container header with no frames,
-    /// so the model may report it's empty/corrupt.
+    /// The TINY_MP4 fixture is a real one-frame H.264 clip, so this test
+    /// asserts strictly — an API rejection is a real failure.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_video_data_roundtrip() {
@@ -1050,24 +991,10 @@ mod bytes_loading {
             .create()
             .await;
 
-        match result {
-            Ok(response) => {
-                println!("Video bytes response status: {:?}", response.status);
-                if response.has_text() {
-                    let text = response.as_text().unwrap();
-                    println!("Video response: {}", text);
-                    // Just verify we got some response - the content can vary
-                    assert!(!text.is_empty(), "Should get some response about the video");
-                }
-            }
-            Err(e) => {
-                // The minimal MP4 might not be accepted
-                println!(
-                    "Video bytes error (may be expected for minimal MP4): {:?}",
-                    e
-                );
-            }
-        }
+        let response = result.expect("Video bytes interaction failed");
+        assert_eq!(response.status, InteractionStatus::Completed);
+        assert!(response.has_text(), "Should have text response");
+        println!("Video response: {:?}", response.as_text());
     }
 
     /// Tests document input with base64-encoded data using Content::document_data().
