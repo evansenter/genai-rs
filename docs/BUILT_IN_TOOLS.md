@@ -589,7 +589,8 @@ Built-in tools can also combine with your own functions:
 use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
-#[tool(description = "Get current user's preferences")]
+/// Get current user's preferences
+#[tool]
 fn get_user_prefs() -> String {
     // Your implementation
     r#"{"theme": "dark", "language": "en"}"#.to_string()

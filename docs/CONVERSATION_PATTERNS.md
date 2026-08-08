@@ -343,7 +343,8 @@ Step arrays work with all features:
 use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
-#[tool(description = "Get current weather")]
+/// Get current weather
+#[tool(city(description = "City to get weather for"))]
 fn get_weather(city: String) -> String {
     format!("Weather in {}: Sunny, 72°F", city)
 }

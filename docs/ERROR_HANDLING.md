@@ -321,7 +321,8 @@ Function not found in registry or tool service: function='...'
 ```rust,ignore
 use genai_rs::CallableFunction;
 
-#[tool(description = "Fetch data from API")]
+/// Fetch data from API
+#[tool]
 async fn fetch_data(url: String) -> Result<String, String> {
     // Return Err for graceful failure
     reqwest::get(&url)
@@ -355,7 +356,8 @@ Err(FunctionError::ArgumentMismatch(message)) => {
 ```rust,ignore
 use genai_rs::CallableFunction;
 
-#[tool(description = "Get user by ID")]
+/// Get user by ID
+#[tool]
 fn get_user(id: i32) -> Result<String, String> {
     if id <= 0 {
         return Err("User ID must be positive".to_string());
