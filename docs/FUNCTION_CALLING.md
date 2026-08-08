@@ -56,6 +56,7 @@ The simplest approach - define functions with the `#[tool]` attribute.
 ### Basic Usage
 
 ```rust,ignore
+use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 /// Gets the current weather for a city

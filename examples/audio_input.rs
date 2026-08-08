@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         }
         Err(e) => {
-            println!("Note: Demo WAV may not be processable: {e}\n");
+            println!("Note: audio interaction failed: {e}\n");
         }
     }
 

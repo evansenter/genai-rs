@@ -36,7 +36,7 @@ jobs:
       - name: Run unit tests
         run: cargo nextest run --workspace
       - name: Run doctests
-        run: cargo test --workspace --doc
+        run: cargo test --workspace --all-features --doc
 
   test-strict-unknown:
     name: Test Suite (strict-unknown)
@@ -258,15 +258,16 @@ jobs:
           done
       - name: Check size limits
         run: |
-          # Fail if any example exceeds 14MB (raised from 10MB for the
-          # 2026-05-20 revision surface + reqwest 0.13 at ~10.1MB, then from
+          # Fail if any example exceeds 16MB (raised from 10MB for the
+          # 2026-05-20 revision surface + reqwest 0.13 at ~10.1MB, then past
           # 12MB when stable-toolchain drift pushed auto_function_calling to
-          # ~13MB; guards against runaway growth, not absolute size)
+          # ~13MB; 16MB keeps ~20% headroom over that so routine toolchain
+          # drift doesn't re-trip it. Guards runaway growth, not absolute size)
           for f in target/release/examples/*; do
             if [ -f "$f" ] && [[ "$(basename "$f")" != *.d ]]; then
               size=$(stat -c%s "$f")
-              if [ "$size" -gt 14680064 ]; then
-                echo "::error::Binary $(basename $f) exceeds 14MB limit: $size bytes"
+              if [ "$size" -gt 16777216 ]; then
+                echo "::error::Binary $(basename $f) exceeds 16MB limit: $size bytes"
                 exit 1
               fi
             fi

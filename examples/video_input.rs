@@ -49,7 +49,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         }
         Err(e) => {
-            println!("Note: Demo MP4 may not be processable: {e}\n");
+            println!("Note: video interaction failed: {e}\n");
         }
     }
 

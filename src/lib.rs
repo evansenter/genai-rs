@@ -1,4 +1,3 @@
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 //! # genai-rs
 //!
 //! A Rust client library for Google's Generative AI (Gemini) API using the Interactions API.

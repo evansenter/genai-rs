@@ -208,6 +208,8 @@ impl SupportSession {
 Function calling with the `#[tool]` macro:
 
 ```rust
+use genai_rs::CallableFunction;
+
 #[tool(column(description = "Column name to analyze"))]
 fn get_stats(column: String) -> String {
     // Implementation

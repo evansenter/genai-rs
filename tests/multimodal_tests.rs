@@ -536,10 +536,9 @@ mod mixed_media {
 
         let response = result.expect("Mixed media interaction failed");
         println!("All media types response status: {:?}", response.status);
-        if let Some(text) = response.as_text() {
-            println!("All media types response: {}", text);
-        }
         assert_eq!(response.status, InteractionStatus::Completed);
+        assert!(response.has_text(), "Should have text response");
+        println!("All media types response: {}", response.as_text().unwrap());
     }
 }
 

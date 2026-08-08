@@ -85,10 +85,12 @@ delivery. Details and per-feature live-verification notes are in
 genai-rs = "0.8"
 tokio = { version = "1.0", features = ["full"] }
 
+# Required together, if you use the #[tool] macro
+genai-rs-macros = "0.8"  # The macro itself
+async-trait = "0.1"      # Referenced by #[tool]-generated code
+serde_json = "1.0"       # Referenced by #[tool]-generated code
+
 # Optional
-genai-rs-macros = "0.8"  # For #[tool] macro
-async-trait = "0.1"      # Required by #[tool]-generated code
-serde_json = "1.0"       # Required by #[tool]-generated code
 futures-util = "0.3"     # For streaming
 ```
 
@@ -151,6 +153,7 @@ while let Some(Ok(event)) = stream.next().await {
 ### Function Calling with `#[tool]`
 
 ```rust,ignore
+use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 #[tool(location(description = "City name, e.g. Tokyo"))]
