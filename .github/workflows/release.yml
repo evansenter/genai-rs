@@ -37,7 +37,10 @@ jobs:
           rc=0
           cargo nextest run --workspace --run-ignored all --success-output=final 2>&1 | tee /tmp/integration.log || rc=$?
           skips=$(grep -c SEMANTIC_VALIDATION_SKIPPED /tmp/integration.log || true)
-          if [ "${skips:-0}" -gt 0 ]; then
+          if [ "${skips:-0}" -gt 3 ]; then
+            echo "::error::$skips semantic validations passed vacuously — too many to trust this run (grep SEMANTIC_VALIDATION_SKIPPED in the log for causes)"
+            exit 1
+          elif [ "${skips:-0}" -gt 0 ]; then
             echo "::warning::$skips semantic validation(s) passed vacuously (grep SEMANTIC_VALIDATION_SKIPPED in the log for causes)"
           fi
           exit "$rc"
@@ -53,6 +56,17 @@ jobs:
           RUSTDOCFLAGS: -D warnings
       - name: Check documentation (docs.rs feature set)
         run: cargo doc --workspace --no-deps --features antigravity
+        env:
+          RUSTDOCFLAGS: --cfg docsrs -D warnings
+      # docs.rs builds on nightly rustdoc, which no stable invocation can
+      # mirror (e.g. the Rust 1.92 doc_auto_cfg removal was nightly-only
+      # breakage). This is the last gate before the version becomes
+      # immutable on crates.io, so the nightly check lives here rather
+      # than in rust.yml, where nightly churn would redden unrelated PRs.
+      # +nightly is explicit so the toolchain default stays stable.
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Check documentation (docs.rs feature set, nightly)
+        run: cargo +nightly doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs-nightly
         env:
           RUSTDOCFLAGS: --cfg docsrs -D warnings
 

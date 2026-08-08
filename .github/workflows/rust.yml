@@ -115,7 +115,13 @@ jobs:
             cargo nextest run --test $test --run-ignored all --success-output=final 2>&1 | tee "/tmp/$test.log" || rc=$?
             echo "::endgroup::"
             skips=$(grep -c SEMANTIC_VALIDATION_SKIPPED "/tmp/$test.log" || true)
-            if [ "${skips:-0}" -gt 0 ]; then
+            if [ "${skips:-0}" -gt 3 ]; then
+              # The tolerated-skip escape hatch is only meaningful while it
+              # stays rare — past this threshold the run's green can't be
+              # trusted, so fail instead of warn.
+              echo "::error::$test: $skips semantic validations passed vacuously — too many to trust this run (grep SEMANTIC_VALIDATION_SKIPPED in the log for causes)"
+              rc=1
+            elif [ "${skips:-0}" -gt 0 ]; then
               echo "::warning::$test: $skips semantic validation(s) passed vacuously (grep SEMANTIC_VALIDATION_SKIPPED in the log for causes)"
             fi
             [ "$rc" -eq 0 ] || exit "$rc"
