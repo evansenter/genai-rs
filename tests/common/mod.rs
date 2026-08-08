@@ -37,13 +37,18 @@ use tokio::time::sleep;
 #[allow(dead_code)]
 pub const DEFAULT_MAX_RETRIES: u32 = 3;
 
-/// Checks if an error is a transient API error that should be retried.
+/// Checks if an error is a known model-side transient flake that should be
+/// retried.
 ///
 /// Currently detects:
-/// - Spanner UTF-8 errors (Google backend issue with stateful conversations)
+/// - Spanner UTF-8 errors (Google backend issue with stateful conversations;
+///   both "spanner" and "utf-8" must appear in the message)
+/// - 400s carrying "invalid json syntax" (the model occasionally emits
+///   invalid JSON in structured output)
 ///
-/// The detection is specific to avoid false positives - both "spanner" and "utf-8"
-/// must appear in the error message.
+/// Transport-level transience (network, timeouts, 429, 5xx) is
+/// [`GenaiError::is_retryable`]'s job; callers that want both compose the
+/// two predicates.
 #[allow(dead_code)]
 pub fn is_transient_error(err: &GenaiError) -> bool {
     match err {
@@ -67,9 +72,10 @@ pub fn is_transient_error(err: &GenaiError) -> bool {
 ///
 /// Retries both this module's known model-side flakes ([`is_transient_error`])
 /// and the crate's retryable transport classes ([`GenaiError::is_retryable`]:
-/// network errors, timeouts, 429, 5xx). Non-retryable errors (e.g. 400
-/// rejections) return immediately — a fixture the API rejects still fails
-/// loud on the first attempt.
+/// network errors, timeouts, 429, 5xx). Anything outside those two
+/// predicates returns immediately — a 400 `invalid_request` fixture
+/// rejection carries neither marker, so it still fails loud on the first
+/// attempt.
 ///
 /// Note: inside a `with_timeout` budget, a worst case adds ~7s of backoff
 /// plus up to three extra round-trips — a sustained outage can therefore
