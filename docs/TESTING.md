@@ -485,7 +485,8 @@ if response.has_unknown() {
 | `TINY_PDF_BASE64` | "Hello World" PDF |
 
 All fixtures are complete, well-formed files the API accepts. Tests
-exercising them retry transient transport errors on the primary call
+exercising them on the non-streaming `create()` path retry transient
+transport errors on the primary call
 (`retry_request!`, keyed on `GenaiError::is_retryable` plus the module's
 `is_transient_error` model-side-flake cases) and then assert strictly —
 a validation rejection (e.g. 400 `invalid_request`) fails loudly on the

@@ -999,7 +999,7 @@ pub async fn validate_response_semantically(
 /// ```ignore
 /// assert_response_semantic(&client, context, &text, question).await;
 /// ```
-// Note: Used in multimodal_tests.rs and temp_file_tests.rs but warning appears
+// Note: Used across the integration test files, but the warning appears
 // because each test file compiles independently
 #[allow(dead_code)]
 pub async fn assert_response_semantic(
