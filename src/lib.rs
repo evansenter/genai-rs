@@ -96,6 +96,19 @@ pub use environment::{
     SourceType,
 };
 
+// Triggers resource (/v1beta/triggers) — server-side scheduled interactions
+pub mod triggers;
+pub use triggers::{
+    Trigger, TriggerCreateParams, TriggerExecution, TriggerExecutionListResponse,
+    TriggerExecutionStatus, TriggerListResponse, TriggerStatus, TriggerUpdate,
+};
+
+// Environments resource (/v1beta/environments)
+pub mod environments;
+pub use environments::{
+    CreateEnvironmentRequest, Environment, EnvironmentListResponse, EnvironmentStatus,
+};
+
 // Safety settings (request safety_settings field)
 pub mod safety;
 pub use safety::{HarmCategory, SafetyMethod, SafetySetting, SafetyThreshold};

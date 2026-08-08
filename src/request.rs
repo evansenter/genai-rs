@@ -242,6 +242,15 @@ pub enum InteractionInput {
     Steps(Vec<Step>),
 }
 
+impl Default for InteractionInput {
+    /// An empty text input — the zero value for struct-literal
+    /// construction of [`InteractionRequest`]; replace it with real input
+    /// before sending.
+    fn default() -> Self {
+        Self::Text(String::new())
+    }
+}
+
 impl Serialize for InteractionInput {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -1169,7 +1178,7 @@ impl VideoConfig {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct InteractionRequest {
     /// Model name (e.g., "gemini-3-flash-preview") - mutually exclusive with agent
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -565,3 +565,112 @@ async fn test_deep_research_config_knobs_accepted() {
         Err(e) => panic!("Deep Research config knobs rejected: {e}"),
     }
 }
+
+// =============================================================================
+// Environments resource: create / get / list / delete
+// =============================================================================
+
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_environment_crud_lifecycle() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    use genai_rs::{CreateEnvironmentRequest, EnvironmentSource};
+
+    // Create: one inline file source.
+    let request = CreateEnvironmentRequest::new().add_source(EnvironmentSource::inline(
+        "/etc/motd",
+        "hello from genai-rs environments CRUD",
+    ));
+    let created = crate::retry_request!([client, request] => {
+        client.create_environment(&request).await
+    })
+    .expect("create_environment");
+    println!(
+        "Created environment: id={} status={:?}",
+        created.id, created.status
+    );
+    assert!(!created.id.is_empty());
+
+    // Get: counts arrive as protobuf-JSON strings and must parse.
+    let fetched = client
+        .get_environment(&created.id)
+        .await
+        .expect("get_environment");
+    assert_eq!(fetched.id, created.id);
+    assert!(
+        fetched.file_count.is_some(),
+        "file_count should deserialize from the string wire form: {fetched:?}"
+    );
+
+    // List: the created environment must appear (first page is enough —
+    // environments expire, so the list stays small).
+    let listed = client
+        .list_environments(Some(50), None)
+        .await
+        .expect("list_environments");
+    assert!(
+        listed.environments.iter().any(|e| e.id == created.id),
+        "created environment missing from list"
+    );
+
+    // Delete, then confirm it no longer resolves.
+    client
+        .delete_environment(&created.id)
+        .await
+        .expect("delete_environment");
+    let gone = client.get_environment(&created.id).await;
+    assert!(gone.is_err(), "environment should be gone after delete");
+}
+
+// =============================================================================
+// Triggers resource: list is live; create is agent-gated
+// =============================================================================
+
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_triggers_list_and_gated_create() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    use genai_rs::{InteractionInput, InteractionRequest, TriggerCreateParams};
+
+    // List works on standard keys (returns `{}` when empty — the default
+    // deserialization path this asserts).
+    let listed = client
+        .list_triggers(Some(10), None)
+        .await
+        .expect("list_triggers");
+    println!("Triggers listed: {}", listed.triggers.len());
+
+    // Create requires a custom agent, which is gated/allowlisted on
+    // standard API keys (verified live 2026-08-08: a model-only
+    // interaction is rejected with "Agent '' is invalid or not found").
+    // Tolerate the gate; assert the payload schema itself was accepted.
+    let interaction = InteractionRequest {
+        model: Some("gemini-3-flash-preview".to_string()),
+        input: InteractionInput::Text("Say OK".to_string()),
+        ..Default::default()
+    };
+    let params = TriggerCreateParams::new("0 5 1 1 *", "UTC", interaction)
+        .with_display_name("genai-rs trigger schema probe");
+    match client.create_trigger(&params).await {
+        Ok(trigger) => {
+            println!("Trigger created (agent gate open): id={}", trigger.id);
+            let _ = client.delete_trigger(&trigger.id).await;
+        }
+        Err(e) => {
+            let message = e.to_string();
+            println!("Trigger create gated as expected: {message}");
+            assert!(
+                !message.contains("Unknown parameter"),
+                "trigger payload schema itself was rejected: {message}"
+            );
+        }
+    }
+}

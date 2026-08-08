@@ -836,6 +836,154 @@ impl Client {
             .await
     }
 
+    // --- Triggers resource methods (`/v1beta/triggers`) ---
+
+    /// Creates a server-side scheduled trigger.
+    ///
+    /// The trigger's `interaction` must target a custom `agent` (see
+    /// [`crate::triggers`] for the live-verified constraints); trigger
+    /// creation is gated with custom-agent creation on standard API keys.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the API rejects the
+    /// trigger definition.
+    pub async fn create_trigger(
+        &self,
+        params: &crate::TriggerCreateParams,
+    ) -> Result<crate::Trigger, GenaiError> {
+        crate::http::triggers::create_trigger(&self.http, params).await
+    }
+
+    /// Retrieves a trigger by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the trigger doesn't exist.
+    pub async fn get_trigger(&self, trigger_id: &str) -> Result<crate::Trigger, GenaiError> {
+        crate::http::triggers::get_trigger(&self.http, trigger_id).await
+    }
+
+    /// Lists triggers, paged.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or an invalid page token.
+    pub async fn list_triggers(
+        &self,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+    ) -> Result<crate::TriggerListResponse, GenaiError> {
+        crate::http::triggers::list_triggers(&self.http, page_size, page_token).await
+    }
+
+    /// Updates a trigger (display name and/or status; `paused` pauses it,
+    /// `active` resumes it).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the trigger doesn't exist.
+    pub async fn update_trigger(
+        &self,
+        trigger_id: &str,
+        update: &crate::TriggerUpdate,
+    ) -> Result<crate::Trigger, GenaiError> {
+        crate::http::triggers::update_trigger(&self.http, trigger_id, update).await
+    }
+
+    /// Deletes a trigger.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the trigger doesn't exist.
+    pub async fn delete_trigger(&self, trigger_id: &str) -> Result<(), GenaiError> {
+        crate::http::triggers::delete_trigger(&self.http, trigger_id).await
+    }
+
+    /// Fires a trigger immediately, outside its schedule.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the trigger doesn't exist.
+    pub async fn run_trigger(
+        &self,
+        trigger_id: &str,
+    ) -> Result<crate::TriggerExecution, GenaiError> {
+        crate::http::triggers::run_trigger(&self.http, trigger_id).await
+    }
+
+    /// Lists a trigger's past executions, paged.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the trigger doesn't exist.
+    pub async fn list_trigger_executions(
+        &self,
+        trigger_id: &str,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+    ) -> Result<crate::TriggerExecutionListResponse, GenaiError> {
+        crate::http::triggers::list_trigger_executions(
+            &self.http, trigger_id, page_size, page_token,
+        )
+        .await
+    }
+
+    // --- Environments resource methods (`/v1beta/environments`) ---
+
+    /// Creates an environment explicitly, for reuse across interactions.
+    ///
+    /// Requests can also create environments implicitly by passing a typed
+    /// [`EnvironmentSpec`](crate::EnvironmentSpec) inline; explicit creation
+    /// returns the ID so many interactions can share one container.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the definition is
+    /// rejected.
+    pub async fn create_environment(
+        &self,
+        request: &crate::CreateEnvironmentRequest,
+    ) -> Result<crate::Environment, GenaiError> {
+        crate::http::environments::create_environment(&self.http, request).await
+    }
+
+    /// Retrieves an environment by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the environment doesn't
+    /// exist.
+    pub async fn get_environment(
+        &self,
+        environment_id: &str,
+    ) -> Result<crate::Environment, GenaiError> {
+        crate::http::environments::get_environment(&self.http, environment_id).await
+    }
+
+    /// Lists environments, paged.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or an invalid page token.
+    pub async fn list_environments(
+        &self,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+    ) -> Result<crate::EnvironmentListResponse, GenaiError> {
+        crate::http::environments::list_environments(&self.http, page_size, page_token).await
+    }
+
+    /// Deletes an environment.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the environment doesn't
+    /// exist.
+    pub async fn delete_environment(&self, environment_id: &str) -> Result<(), GenaiError> {
+        crate::http::environments::delete_environment(&self.http, environment_id).await
+    }
+
     // --- Agents resource methods (`/v1beta/agents`) ---
 
     /// Creates a custom agent.

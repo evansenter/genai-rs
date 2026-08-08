@@ -1,0 +1,281 @@
+//! Environments resource (`/v1beta/environments`).
+//!
+//! An [`Environment`] is a server-side container of files (and network
+//! configuration) that agent interactions can execute against. Requests
+//! reference one via
+//! [`InteractionRequest::environment`](crate::request::InteractionRequest::environment)
+//! — either inline (the API creates one implicitly) or by ID. This module
+//! models the explicit CRUD surface: create an environment once, reference
+//! it from many interactions, list what exists, and delete what's stale.
+//!
+//! Wire format verified live 2026-08-08: the resource uses `created` /
+//! `updated` / `last_accessed` ISO-8601 timestamps, and `file_count` /
+//! `size_bytes` are int64s serialized as JSON *strings* (protobuf JSON
+//! convention); both are accepted here as numbers too.
+
+use crate::environment::{EnvironmentSource, NetworkConfig};
+use chrono::{DateTime, Utc};
+use serde::de::Deserializer;
+use serde::{Deserialize, Serialize};
+use std::fmt;
+
+/// Status of an environment container.
+///
+/// This enum is marked `#[non_exhaustive]` for forward compatibility.
+///
+/// # Wire Format
+///
+/// Serializes as lowercase strings: `"active"`, `"expired"`.
+///
+/// # Evergreen Pattern
+///
+/// Unknown values from the API deserialize into the `Unknown` variant,
+/// preserving the original data for debugging and roundtrip serialization.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum EnvironmentStatus {
+    /// The environment is available for use.
+    Active,
+    /// The environment has expired and can no longer be used.
+    Expired,
+    /// Unknown variant for forward compatibility (Evergreen pattern)
+    Unknown {
+        /// The unrecognized status type from the API
+        status_type: String,
+        /// The raw JSON value, preserved for debugging and roundtrip
+        data: serde_json::Value,
+    },
+}
+
+impl EnvironmentStatus {
+    /// Returns true if this is an unknown status.
+    #[must_use]
+    pub const fn is_unknown(&self) -> bool {
+        matches!(self, Self::Unknown { .. })
+    }
+
+    /// Returns the status type name if this is an unknown status.
+    #[must_use]
+    pub fn unknown_status_type(&self) -> Option<&str> {
+        match self {
+            Self::Unknown { status_type, .. } => Some(status_type),
+            _ => None,
+        }
+    }
+
+    /// Returns the preserved data if this is an unknown status.
+    #[must_use]
+    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::Unknown { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for EnvironmentStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Active => write!(f, "active"),
+            Self::Expired => write!(f, "expired"),
+            Self::Unknown { status_type, .. } => write!(f, "{status_type}"),
+        }
+    }
+}
+
+impl Serialize for EnvironmentStatus {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Active => serializer.serialize_str("active"),
+            Self::Expired => serializer.serialize_str("expired"),
+            Self::Unknown { status_type, .. } => serializer.serialize_str(status_type),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for EnvironmentStatus {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value.as_str() {
+            Some("active") => Ok(Self::Active),
+            Some("expired") => Ok(Self::Expired),
+            Some(other) => Ok(Self::Unknown {
+                status_type: other.to_string(),
+                data: value.clone(),
+            }),
+            None => Ok(Self::Unknown {
+                status_type: String::new(),
+                data: value,
+            }),
+        }
+    }
+}
+
+/// Deserializes an optional int64 that the API serializes as a JSON string
+/// (protobuf JSON convention), accepting a plain number too.
+fn deserialize_string_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    match value {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::Number(n)) => Ok(n.as_i64()),
+        Some(serde_json::Value::String(s)) => Ok(s.parse().ok()),
+        Some(_) => Ok(None),
+    }
+}
+
+/// An execution environment for an agent, as returned by the
+/// `/v1beta/environments` resource.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Environment {
+    /// Output only. The ID of the environment.
+    pub id: String,
+    /// The file sources materialized into the environment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sources: Option<Vec<EnvironmentSource>>,
+    /// Network configuration for the environment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network: Option<NetworkConfig>,
+    /// Output only. The status of the environment container.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<EnvironmentStatus>,
+    /// Output only. When the environment was created.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created: Option<DateTime<Utc>>,
+    /// Output only. When the environment was last updated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated: Option<DateTime<Utc>>,
+    /// Output only. When the environment was last accessed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_accessed: Option<DateTime<Utc>>,
+    /// Output only. The number of files in the environment.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_string_i64"
+    )]
+    pub file_count: Option<i64>,
+    /// Output only. The total size of the environment's files in bytes.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_string_i64"
+    )]
+    pub size_bytes: Option<i64>,
+}
+
+/// Request body for creating an environment explicitly.
+///
+/// # Example
+///
+/// ```
+/// use genai_rs::{CreateEnvironmentRequest, EnvironmentSource};
+///
+/// let request = CreateEnvironmentRequest::new()
+///     .add_source(EnvironmentSource::inline("/etc/motd", "hello"));
+/// ```
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct CreateEnvironmentRequest {
+    /// The file sources to materialize into the environment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sources: Option<Vec<EnvironmentSource>>,
+    /// Network configuration for the environment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network: Option<NetworkConfig>,
+}
+
+impl CreateEnvironmentRequest {
+    /// Creates an empty environment request.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Adds a file source, accumulating with any added earlier.
+    #[must_use]
+    pub fn add_source(mut self, source: EnvironmentSource) -> Self {
+        self.sources.get_or_insert_with(Vec::new).push(source);
+        self
+    }
+
+    /// Sets the network configuration.
+    #[must_use]
+    pub fn with_network(mut self, network: NetworkConfig) -> Self {
+        self.network = Some(network);
+        self
+    }
+}
+
+/// Response from listing environments.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct EnvironmentListResponse {
+    /// The environments in this page.
+    #[serde(default)]
+    pub environments: Vec<Environment>,
+    /// Token for fetching the next page, absent on the last page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_page_token: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn environment_deserializes_live_wire_shape() {
+        // Captured from a live GET /v1beta/environments on 2026-08-08:
+        // int64s arrive as strings, timestamps as ISO 8601 with offset.
+        let json = serde_json::json!({
+            "id": "38aac1ae7f30fe9bd67afe42382ea041",
+            "sources": [
+                {"type": "inline", "target": "/etc/motd", "content": "hello from genai-rs"}
+            ],
+            "created": "2026-08-08T13:24:10.64798+00:00",
+            "updated": "2026-08-08T13:24:10.64798+00:00",
+            "status": "active",
+            "file_count": "2",
+            "size_bytes": "19"
+        });
+        let env: Environment = serde_json::from_value(json).unwrap();
+        assert_eq!(env.id, "38aac1ae7f30fe9bd67afe42382ea041");
+        assert_eq!(env.status, Some(EnvironmentStatus::Active));
+        assert_eq!(env.file_count, Some(2));
+        assert_eq!(env.size_bytes, Some(19));
+        assert!(env.created.is_some());
+    }
+
+    #[test]
+    fn numeric_counts_also_accepted() {
+        let json = serde_json::json!({"id": "x", "file_count": 3, "size_bytes": 42});
+        let env: Environment = serde_json::from_value(json).unwrap();
+        assert_eq!(env.file_count, Some(3));
+        assert_eq!(env.size_bytes, Some(42));
+    }
+
+    #[test]
+    fn unknown_status_roundtrips() {
+        let json = serde_json::json!({"id": "x", "status": "hibernating"});
+        let env: Environment = serde_json::from_value(json).unwrap();
+        assert!(env.status.as_ref().unwrap().is_unknown());
+        assert_eq!(
+            env.status.as_ref().unwrap().unknown_status_type(),
+            Some("hibernating")
+        );
+    }
+
+    #[test]
+    fn empty_list_response_deserializes() {
+        // GET /v1beta/environments returns `{}` when nothing exists.
+        let list: EnvironmentListResponse = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert!(list.environments.is_empty());
+        assert!(list.next_page_token.is_none());
+    }
+}
