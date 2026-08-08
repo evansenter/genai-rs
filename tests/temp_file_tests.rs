@@ -12,7 +12,9 @@
 //!
 //! # Prerequisites
 //!
-//! - `GEMINI_API_KEY` environment variable must be set
+//! - `GEMINI_API_KEY` environment variable must be set (exception:
+//!   `example_fixtures_match_test_fixtures` needs no key and runs in the
+//!   keyless unit-test CI pass)
 //! - Tests create temporary files that are automatically cleaned up
 
 mod common;
@@ -496,6 +498,9 @@ async fn test_video_from_temp_file() {
 /// test fixtures. The examples embed verbatim copies of these constants and
 /// are never run in CI, so a fixture update that misses them silently sends
 /// the examples down their error branch. Runs without an API key.
+///
+/// Covers every `*_BASE64` constant under `examples/` today — if a new
+/// example embeds a fixture copy, add it here.
 #[test]
 fn example_fixtures_match_test_fixtures() {
     let audio_src = include_str!("../examples/audio_input.rs");

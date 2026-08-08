@@ -68,7 +68,7 @@ make check  # Run all quality gates (fmt + clippy + test)
 cargo fmt -- --check                                                 # Check format
 cargo clippy --workspace --all-targets --all-features -- -D warnings # Lint
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --document-private-items
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --features antigravity  # docs.rs feature set
+RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo doc --workspace --no-deps --features antigravity  # docs.rs feature set
 ```
 
 ## Architecture
