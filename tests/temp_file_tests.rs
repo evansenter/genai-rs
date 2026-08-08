@@ -515,19 +515,23 @@ async fn test_video_from_temp_file() {
 /// run in CI, so a fixture update that misses one silently sends that
 /// example down its error branch. Runs without an API key.
 ///
-/// Self-maintaining: walks examples/*.rs for `_BASE64: &str = "..."`
-/// declarations, so a *new* example embedding a stale copy fails here too.
+/// Self-maintaining: walks examples/**/*.rs for `_BASE64:` declarations
+/// and extracts the first quoted literal that follows, so it also catches
+/// raw strings, `&'static str`, a literal rustfmt moved to its own line,
+/// and stale copies in *new* examples. A declaration with no quoted
+/// literal nearby fails loudly rather than being skipped.
 #[test]
 fn example_fixtures_match_test_fixtures() {
     let canonical = [
-        TINY_WAV_BASE64,
-        TINY_MP4_BASE64,
-        TINY_PDF_BASE64,
-        TINY_RED_PNG_BASE64,
-        TINY_BLUE_PNG_BASE64,
+        ("TINY_WAV_BASE64", TINY_WAV_BASE64),
+        ("TINY_MP4_BASE64", TINY_MP4_BASE64),
+        ("TINY_PDF_BASE64", TINY_PDF_BASE64),
+        ("TINY_RED_PNG_BASE64", TINY_RED_PNG_BASE64),
+        ("TINY_BLUE_PNG_BASE64", TINY_BLUE_PNG_BASE64),
     ];
     let examples_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/examples");
     let mut checked = 0;
+    let mut seen = std::collections::HashSet::new();
     let mut stack = vec![std::path::PathBuf::from(examples_dir)];
     while let Some(dir) = stack.pop() {
         for entry in std::fs::read_dir(&dir).expect("read examples dir") {
@@ -536,20 +540,41 @@ fn example_fixtures_match_test_fixtures() {
                 stack.push(path);
             } else if path.extension().is_some_and(|e| e == "rs") {
                 let src = std::fs::read_to_string(&path).expect("read example");
-                for line in src.lines() {
-                    if line.contains("_BASE64: &str = \"") {
-                        let value = line
-                            .split('"')
-                            .nth(1)
-                            .expect("string literal after _BASE64 declaration");
-                        assert!(
-                            canonical.contains(&value),
-                            "{} embeds a fixture copy that drifted from tests/common: {}...",
-                            path.display(),
-                            &value[..value.len().min(40)]
-                        );
-                        checked += 1;
+                let mut from = 0;
+                while let Some(hit) = src[from..].find("_BASE64") {
+                    let after = from + hit + "_BASE64".len();
+                    from = after;
+                    // Declarations look like `X_BASE64: <type> = <literal>`;
+                    // other mentions (format-string interpolation, comments)
+                    // aren't followed by a colon.
+                    if !src[after..].trim_start().starts_with(':') {
+                        continue;
                     }
+                    // Base64 contains no quotes or escapes, so the literal is
+                    // exactly the span between the next two quote characters
+                    // (works for both "..." and r#"..."# forms).
+                    let window = &src[after..src.len().min(after + 200_000)];
+                    let q1 = window.find('"').unwrap_or_else(|| {
+                        panic!(
+                            "{}: _BASE64 declaration with no quoted literal — \
+                             matcher no longer recognizes this shape",
+                            path.display()
+                        )
+                    });
+                    let lit = &window[q1 + 1..];
+                    let q2 = lit.find('"').expect("unterminated string literal");
+                    let value = &lit[..q2];
+                    let matched = canonical.iter().find(|(_, v)| *v == value);
+                    assert!(
+                        matched.is_some(),
+                        "{} embeds a base64 fixture this guard doesn't recognize: {}... — \
+                         if it's a copy of a tests/common fixture it has drifted; if it's \
+                         a deliberately new fixture, add it to this guard's canonical list",
+                        path.display(),
+                        value.chars().take(40).collect::<String>()
+                    );
+                    seen.insert(matched.expect("asserted above").0);
+                    checked += 1;
                 }
             }
         }
@@ -559,6 +584,13 @@ fn example_fixtures_match_test_fixtures() {
         "expected at least the five known fixture copies, found {checked} — \
          did the declaration shape change?"
     );
+    for (name, _) in &canonical {
+        assert!(
+            seen.contains(name),
+            "no example embeds {name} — if the example that used it was \
+             removed or switched fixtures, update this guard's canonical list"
+        );
+    }
 }
 
 // =============================================================================

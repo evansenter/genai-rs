@@ -114,8 +114,14 @@ where
             Err(err)
                 if (is_transient_error(&err) || err.is_retryable()) && attempt < max_retries =>
             {
-                // Exponential backoff: 1s, 2s, 4s, ...
-                let delay = Duration::from_secs(1 << attempt);
+                // Exponential backoff: 1s, 2s, 4s, ... — but honor a
+                // server-sent Retry-After (429) when it asks for longer,
+                // capped so a large suggested delay fails fast against the
+                // harness timeout instead of silently eating its budget.
+                let backoff = Duration::from_secs(1 << attempt);
+                let delay = err
+                    .retry_after()
+                    .map_or(backoff, |ra| ra.max(backoff).min(Duration::from_secs(15)));
                 println!(
                     "Transient error on attempt {} of {}, retrying in {:?}: {:?}",
                     attempt + 1,
@@ -987,10 +993,16 @@ pub async fn validate_response_semantically(
 ///   transient classes below — `GenaiError` is `#[non_exhaustive]`, so new
 ///   variants fail loud by default
 ///
-/// Transient validator failures (per [`GenaiError::is_retryable`] — network
-/// errors, timeouts, 5xx, 429 — plus this module's [`is_transient_error`]
-/// cases, which cover known model-side structured-output flakes) are logged
-/// with a greppable SEMANTIC_VALIDATION_SKIPPED marker and treated as a
+/// The validator call itself gets a single [`retry_on_transient`] retry
+/// (~1s of backoff plus one extra round-trip — deliberately smaller than
+/// the primary-call budget, since many callers nest both retry chains
+/// inside one `with_timeout` budget). Transient
+/// failures that survive the retries (per [`GenaiError::is_retryable`] —
+/// network errors, timeouts, 5xx, 429 — plus this module's
+/// [`is_transient_error`] cases, which cover known model-side
+/// structured-output flakes) are logged with a greppable
+/// SEMANTIC_VALIDATION_SKIPPED marker (counted and surfaced as a
+/// `::warning::` annotation by the CI integration step) and treated as a
 /// pass — the validator is a second API round-trip that can fail
 /// independently of the input under test.
 ///
@@ -1008,9 +1020,12 @@ pub async fn assert_response_semantic(
     response_text: &str,
     validation_question: &str,
 ) {
-    // The validator gets the same transient retries as primary calls, so the
-    // tolerated-skip path below is a genuine last resort.
-    match retry_on_transient(DEFAULT_MAX_RETRIES, || {
+    // One retry only: the validator is best-effort with a tolerated-skip
+    // fallback, and it often runs nested inside a with_timeout budget the
+    // primary call's own retry chain already draws down — a full
+    // DEFAULT_MAX_RETRIES chain here could turn a transient blip into a
+    // less-diagnosable harness timeout.
+    match retry_on_transient(1, || {
         validate_response_semantically(client, context, response_text, validation_question)
     })
     .await

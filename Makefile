@@ -22,8 +22,7 @@ test-all:
 
 # Build documentation with warnings as errors (all features + the docs.rs
 # feature set, which differ on strict-unknown). The mirror build uses its
-# own target dir so it neither overwrites target/doc nor invalidates the
-# first build's rustdoc fingerprint.
+# own target dir so target/doc stays browsable as the all-features build.
 docs:
 	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --document-private-items
 	RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs

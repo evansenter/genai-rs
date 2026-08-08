@@ -72,9 +72,9 @@ fn get_time(timezone: String) -> String {
     format!(r#"{{"timezone": "{}", "time": "14:30"}}"#, timezone)
 }
 
-// Compile-checked in CI as a doctest: proves both imports above are
-// required. (The async-trait / serde_json manifest requirement is only
-// provable from a fresh consumer crate — see the README note.)
+// Compile-checked in CI as a doctest, so this snippet cannot silently
+// rot. (The async-trait / serde_json manifest requirement is only
+// observable from a fresh consumer crate — see the README note.)
 let _declaration = GetWeatherCallable.declaration();
 ```
 
@@ -618,8 +618,6 @@ fn search(query: String) -> String {
 ### 4. Use Descriptive Names and Descriptions
 
 ```rust,ignore
-use genai_rs::CallableFunction;
-use genai_rs_macros::tool;
 // Good: Clear, specific
 #[tool(city(description = "City name (e.g., 'Tokyo', 'New York')"))]
 fn get_current_weather(city: String) -> String

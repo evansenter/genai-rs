@@ -68,7 +68,7 @@ make check  # Run all quality gates (fmt + clippy + test)
 cargo fmt -- --check                                                 # Check format
 cargo clippy --workspace --all-targets --all-features -- -D warnings # Lint
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --document-private-items
-RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo doc --workspace --no-deps --features antigravity  # docs.rs feature set
+RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs  # docs.rs feature set (separate target dir so it doesn't clobber target/doc)
 ```
 
 ## Architecture
@@ -177,7 +177,7 @@ See `Content` in `src/content.rs` for reference implementation.
 ### Test Assertion Strategies
 
 - **Structural**: Verify API mechanics (status, field presence) - default for most tests
-- **Semantic**: Use `validate_response_semantically()` for behavioral tests (adds ~1-2s API call)
+- **Semantic**: Use `assert_response_semantic()` for behavioral tests (adds ~1-2s API call; retries the validator on transient errors and asserts on the verdict)
 - **Avoid**: Brittle `text.contains("word")` assertions on LLM output - responses vary
 
 **Decision rule**: Is it checking LLM text content with a non-deterministic expected value? → Use semantic validation.
@@ -188,7 +188,7 @@ assert!(text.contains("paris"));
 assert!(text.contains("red") || text.contains("crimson"));
 
 // GOOD - Handles natural language variability
-validate_response_semantically(&client, context, text, "Does this identify Paris?").await?;
+assert_response_semantic(&client, context, text, "Does this identify Paris?").await;
 
 // OK - Deterministic values (error messages, code execution results)
 assert!(text.contains("3628800"));  // factorial(10) - exact computed value
@@ -248,7 +248,7 @@ After merging version bump PR:
    which CI never exercises — e.g. nightly-only attribute removals; a failure
    here would otherwise surface as a broken docs.rs build after the version
    is immutable on crates.io):
-   `RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo +nightly doc --workspace --no-deps --features antigravity`
+   `RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo +nightly doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs`
    (matches the `[package.metadata.docs.rs]` feature set)
 1. **Tag the release**: `git tag -a vX.Y.Z origin/main -m "Release vX.Y.Z"`
 2. **Push tag**: `git push origin vX.Y.Z`
