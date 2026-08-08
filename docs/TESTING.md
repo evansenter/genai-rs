@@ -251,7 +251,7 @@ assert!(!result.collected_text.is_empty());
 
 For behavioral tests where exact output varies, use the suite-wide helper
 (it retries the validator on transient errors and tolerates only what
-survives the retries — see the two-tier policy note under
+survives the retries — see the retry-and-tolerance policy note under
 [Minimal Test Assets](#minimal-test-assets)):
 
 ```rust,ignore
