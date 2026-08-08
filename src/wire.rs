@@ -1111,6 +1111,12 @@ mod tests {
         };
 
         tracing::subscriber::with_default(recorder, || {
+            // Other tests exercise these callsites with no subscriber installed,
+            // which can cache their interest as `never` process-wide. Under
+            // nextest (process per test) that's invisible, but under plain
+            // `cargo test` (e.g. the coverage job) the cache is shared across
+            // threads — rebuild so the scoped Recorder is consulted.
+            tracing::callsite::rebuild_interest_cache();
             TracingForwarder::new().on_event(&WireEvent::ResponseStatus { id: 7, status: 200 });
         });
 

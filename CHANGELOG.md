@@ -12,8 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - docs.rs now builds with the `antigravity` feature enabled (the module was
   invisible in the 0.8.0 docs, which were built with default features only),
   with "Available on crate feature ... only" banners on feature-gated items.
-  The CI doc gate now builds with `--all-features` so feature-gated docs
-  stay under the `-D warnings` check.
+  The CI doc gate now builds both `--all-features` and the docs.rs feature
+  set under `-D warnings`.
 - The `audio_input` and `video_input` examples now embed real media
   fixtures, replacing the zero-length WAV and header-only MP4 that the API
   rejects with 400 `invalid_request` — both examples previously always took

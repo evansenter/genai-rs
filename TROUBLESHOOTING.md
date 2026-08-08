@@ -254,6 +254,8 @@ let result = client
 
 **Diagnose:**
 ```rust,ignore
+use genai_rs::CallableFunction;
+
 #[tool(city(description = "City name"))]
 fn get_weather(city: String) -> String {
     println!("DEBUG: city = {:?}", city);  // Log arguments
@@ -265,6 +267,8 @@ fn get_weather(city: String) -> String {
 
 1. **Better parameter descriptions:**
 ```rust,ignore
+use genai_rs::CallableFunction;
+
 #[tool(city(description = "The city name, e.g., 'Tokyo', 'New York City'"))]
 fn get_weather(city: String) -> String
 ```

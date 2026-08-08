@@ -151,12 +151,12 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
       - name: Check documentation (docs.rs feature set)
-        # Mirrors [package.metadata.docs.rs] in Cargo.toml: items gated on
-        # cfg(not(feature = "strict-unknown")) render on docs.rs but are
-        # invisible to the all-features build above.
+        # Exact mirror of [package.metadata.docs.rs] (features AND the docsrs
+        # rustdoc-arg): gates the configuration docs.rs actually publishes, so
+        # a rustdoc warning specific to it cannot first surface post-publish.
         run: cargo doc --workspace --no-deps --features antigravity
         env:
-          RUSTDOCFLAGS: -D warnings
+          RUSTDOCFLAGS: --cfg docsrs -D warnings
 
   msrv:
     name: MSRV Check

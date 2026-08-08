@@ -848,7 +848,7 @@ mod file_loading {
 mod bytes_loading {
     use crate::common::{
         TINY_MP4_BASE64, TINY_PDF_BASE64, TINY_RED_PNG_BASE64, TINY_WAV_BASE64,
-        assert_response_semantic, get_client, validate_response_semantically,
+        assert_response_semantic, get_client,
     };
     use genai_rs::{Content, InteractionStatus};
 
@@ -962,9 +962,8 @@ mod bytes_loading {
     /// The test PDF contains "Hello World" text.
     /// Uses semantic validation to verify the model correctly interprets the document.
     ///
-    /// Note: The primary interaction asserts strictly; only the inner
-    /// validate_response_semantically call is lenient, because it is a second
-    /// API round-trip that can fail independently of the input under test.
+    /// Asserts strictly on the interaction under test; semantic validation
+    /// (like all sibling tests) is non-fatal on validator transport errors.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_document_data_roundtrip() {
@@ -994,28 +993,15 @@ mod bytes_loading {
         let text = response.as_text().unwrap();
         println!("PDF response: {}", text);
 
-        // Use semantic validation instead of brittle content checks.
-        // Only this inner call stays lenient: it is a second API round-trip
-        // that can fail independently of the document input under test.
-        match validate_response_semantically(
+        // Use semantic validation instead of brittle content checks
+        // (assert_response_semantic is non-fatal on validator transport errors).
+        assert_response_semantic(
             &client,
             "User asked about text in a PDF that contains 'Hello World'",
             text,
             "Does this response mention 'Hello', 'World', or indicate these words were found in the document?",
         )
-        .await
-        {
-            Ok(is_valid) => {
-                assert!(
-                    is_valid,
-                    "Response should mention the PDF content: {}",
-                    text
-                );
-            }
-            Err(e) => {
-                println!("Semantic validation error (non-fatal): {:?}", e);
-            }
-        }
+        .await;
     }
 }
 

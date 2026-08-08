@@ -24,7 +24,7 @@ test-all:
 # feature set, which differ on strict-unknown)
 docs:
 	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --document-private-items
-	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --features antigravity
+	RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo doc --workspace --no-deps --features antigravity
 
 # Clean build artifacts
 clean:

@@ -485,11 +485,11 @@ if response.has_unknown() {
 | `TINY_PDF_BASE64` | "Hello World" PDF |
 
 All fixtures are complete, well-formed files the API accepts, so tests
-exercising them should assert strictly (`.expect()` + status check) — an API
-rejection is a real failure, not an expected fixture limitation. (Exception:
-`test_document_data_roundtrip` stays lenient because its extra
-semantic-validation call is a second API round-trip that can fail
-independently of the document input under test.)
+exercising them assert strictly (`.expect()` + status check) — an API
+rejection is a real failure, not an expected fixture limitation. Semantic
+validation via `assert_response_semantic` is uniformly non-fatal on
+validator-call transport errors (a second API round-trip that can fail
+independently of the input under test) while still asserting on its verdict.
 
 ### Test Fixtures
 

@@ -319,6 +319,8 @@ Function not found in registry or tool service: function='...'
 ### Execution Errors
 
 ```rust,ignore
+use genai_rs::CallableFunction;
+
 #[tool(description = "Fetch data from API")]
 async fn fetch_data(url: String) -> Result<String, String> {
     // Return Err for graceful failure
@@ -351,6 +353,8 @@ Err(FunctionError::ArgumentMismatch(message)) => {
 3. **Don't panic** - Return errors so the conversation can continue
 
 ```rust,ignore
+use genai_rs::CallableFunction;
+
 #[tool(description = "Get user by ID")]
 fn get_user(id: i32) -> Result<String, String> {
     if id <= 0 {

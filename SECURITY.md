@@ -80,6 +80,8 @@ println!("{:?}", client);
 When implementing callable functions, validate all arguments:
 
 ```rust
+use genai_rs::CallableFunction;
+
 #[tool(city(description = "The city name"))]
 fn get_weather(city: String) -> String {
     // Validate input length to prevent abuse

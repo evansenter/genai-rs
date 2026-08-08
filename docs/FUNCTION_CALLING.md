@@ -105,6 +105,8 @@ let result = client
 ### Multiple Parameters
 
 ```rust,ignore
+use genai_rs::CallableFunction;
+
 #[tool(
     city(description = "The city name"),
     unit(description = "Temperature unit: celsius or fahrenheit")
@@ -117,6 +119,8 @@ fn get_weather_detailed(city: String, unit: String) -> String {
 ### Async Functions
 
 ```rust,ignore
+use genai_rs::CallableFunction;
+
 #[tool(url(description = "URL to fetch"))]
 async fn fetch_url(url: String) -> String {
     // Async operations supported
@@ -553,6 +557,8 @@ This happens automatically across multiple loop iterations.
 ### 1. Return JSON from Functions
 
 ```rust,ignore
+use genai_rs::CallableFunction;
+
 #[tool(city(description = "City name"))]
 fn get_weather(city: String) -> String {
     // Return JSON for structured data
@@ -563,6 +569,8 @@ fn get_weather(city: String) -> String {
 ### 2. Handle Errors Gracefully
 
 ```rust,ignore
+use genai_rs::CallableFunction;
+
 #[tool(id(description = "User ID"))]
 fn get_user(id: i32) -> String {
     if id <= 0 {
@@ -579,6 +587,8 @@ fn get_user(id: i32) -> String {
 ### 3. Validate Inputs
 
 ```rust,ignore
+use genai_rs::CallableFunction;
+
 #[tool(query(description = "Search query"))]
 fn search(query: String) -> String {
     if query.len() > 1000 {
@@ -596,6 +606,7 @@ fn search(query: String) -> String {
 ### 4. Use Descriptive Names and Descriptions
 
 ```rust,ignore
+use genai_rs::CallableFunction;
 // Good: Clear, specific
 #[tool(city(description = "City name (e.g., 'Tokyo', 'New York')"))]
 fn get_current_weather(city: String) -> String

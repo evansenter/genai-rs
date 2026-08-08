@@ -82,6 +82,8 @@ struct SalesRecord {
 ### Statistical Analysis
 
 ```rust
+use genai_rs::CallableFunction;
+
 #[tool(column(description = "Column: 'quantity' or 'unit_price'"))]
 fn get_column_stats(column: String) -> String {
     // Calculate: count, sum, mean, min, max, std_dev
@@ -91,6 +93,8 @@ fn get_column_stats(column: String) -> String {
 ### Group Aggregation
 
 ```rust
+use genai_rs::CallableFunction;
+
 #[tool(group_by(description = "Group by: 'category', 'region', 'product'"))]
 fn get_sales_by_group(group_by: String) -> String {
     // Sum sales and quantity by group
