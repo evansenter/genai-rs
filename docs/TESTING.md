@@ -482,11 +482,14 @@ if response.has_unknown() {
 | `TINY_BLUE_PNG_BASE64` | 1x1 blue PNG |
 | `TINY_WAV_BASE64` | 100 frames of 16-bit mono silence (valid WAV) |
 | `TINY_MP4_BASE64` | One-frame 64x64 H.264 clip (valid MP4) |
-
-All media fixtures are complete, well-formed files the API accepts, so tests
-exercising them should assert strictly (`.expect()` + status check) — an API
-rejection is a real failure, not an expected fixture limitation.
 | `TINY_PDF_BASE64` | "Hello World" PDF |
+
+All fixtures are complete, well-formed files the API accepts, so tests
+exercising them should assert strictly (`.expect()` + status check) — an API
+rejection is a real failure, not an expected fixture limitation. (Exception:
+`test_document_data_roundtrip` stays lenient because its extra
+semantic-validation call is a second API round-trip that can fail
+independently of the document input under test.)
 
 ### Test Fixtures
 
