@@ -308,11 +308,13 @@ if let Some(text) = response.as_text() {
 Thinking works with function calling to show reasoning about tool use:
 
 ```rust,ignore
+use genai_rs::CallableFunction;
+
 let response = client.interaction()
     .with_model("gemini-3-flash-preview")
     .with_text("What's the weather in Tokyo and should I bring an umbrella?")
     .with_thinking_level(ThinkingLevel::Medium)
-    .add_function(get_weather.declaration())
+    .add_function(GetWeatherCallable.declaration())
     .create_with_auto_functions()
     .await?;
 

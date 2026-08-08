@@ -31,7 +31,7 @@ make test      # Unit tests only (excludes doctests for speed)
 make test-all  # Full suite including integration tests (requires GEMINI_API_KEY)
 make fmt       # Check formatting
 make clippy    # Lint with warnings as errors
-make docs      # Build docs with warnings as errors
+make docs      # Build docs with warnings as errors (all-features + docs.rs feature set)
 make clean     # Clean build artifacts
 ```
 
@@ -67,7 +67,8 @@ make check  # Run all quality gates (fmt + clippy + test)
 # Or individually:
 cargo fmt -- --check                                                 # Check format
 cargo clippy --workspace --all-targets --all-features -- -D warnings # Lint
-make docs  # Docs (two builds: --all-features and the docs.rs feature set)
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --document-private-items
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --features antigravity  # docs.rs feature set
 ```
 
 ## Architecture

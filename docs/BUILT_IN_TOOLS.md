@@ -586,6 +586,7 @@ let response = client
 Built-in tools can also combine with your own functions:
 
 ```rust,ignore
+use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 #[tool(description = "Get current user's preferences")]
@@ -599,7 +600,7 @@ let response = client
     .with_model("gemini-3-flash-preview")
     .with_text("Personalize search results based on my preferences")
     .with_google_search()
-    .add_function(get_user_prefs.declaration())
+    .add_function(GetUserPrefsCallable.declaration())
     .create_with_auto_functions()
     .await?;
 ```
