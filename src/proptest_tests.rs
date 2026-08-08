@@ -1211,6 +1211,7 @@ fn arb_generation_config() -> impl Strategy<Value = GenerationConfig> {
                 speech_config,
                 image_config,
                 video_config,
+                transcription_config: None,
             }
         },
     )

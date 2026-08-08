@@ -387,6 +387,8 @@ mod streaming {
                 cached_content: None,
                 webhook_config: None,
                 environment: None,
+                safety_settings: None,
+                labels: None,
             };
 
             let stream = client.execute_stream(request);

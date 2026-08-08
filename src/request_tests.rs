@@ -22,6 +22,8 @@ fn test_serialize_create_interaction_request_with_model() {
         cached_content: None,
         webhook_config: None,
         environment: None,
+        safety_settings: None,
+        labels: None,
     };
 
     let json = serde_json::to_string(&request).expect("Serialization failed");
@@ -48,6 +50,7 @@ fn test_generation_config_serialization() {
         speech_config: None,
         image_config: None,
         video_config: None,
+        transcription_config: None,
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -74,6 +77,7 @@ fn test_generation_config_new_fields_serialization() {
         speech_config: None,
         image_config: None,
         video_config: None,
+        transcription_config: None,
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -104,6 +108,7 @@ fn test_generation_config_roundtrip() {
         speech_config: None,
         image_config: None,
         video_config: None,
+        transcription_config: None,
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -522,6 +527,8 @@ fn test_create_interaction_request_with_agent_config() {
         cached_content: None,
         webhook_config: None,
         environment: None,
+        safety_settings: None,
+        labels: None,
     };
 
     let json = serde_json::to_string(&request).expect("Serialization failed");
@@ -605,6 +612,8 @@ fn test_interaction_request_roundtrip() {
         cached_content: Some("cachedContents/xyz".to_string()),
         webhook_config: None,
         environment: None,
+        safety_settings: None,
+        labels: None,
     };
 
     // Serialize to JSON
@@ -671,6 +680,8 @@ fn test_response_format_serializes_as_snake_case() {
         cached_content: None,
         webhook_config: None,
         environment: None,
+        safety_settings: None,
+        labels: None,
     };
 
     let json = serde_json::to_string(&request).expect("Serialization failed");
@@ -885,6 +896,8 @@ fn test_request_with_webhook_config_and_environment_wire_shape() {
                 .add_source(EnvironmentSource::inline("/etc/motd", "hello"))
                 .into(),
         ),
+        safety_settings: None,
+        labels: None,
     };
 
     let value = serde_json::to_value(&request).unwrap();

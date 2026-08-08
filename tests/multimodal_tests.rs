@@ -1205,6 +1205,8 @@ mod text_to_speech {
             cached_content: None,
             webhook_config: None,
             environment: None,
+            safety_settings: None,
+            labels: None,
         };
 
         let mut request_json = serde_json::to_value(&request).expect("Serialize request");
@@ -1264,6 +1266,8 @@ mod text_to_speech {
             cached_content: None,
             webhook_config: None,
             environment: None,
+            safety_settings: None,
+            labels: None,
         };
 
         let flat_json = serde_json::to_value(&flat_request).expect("Serialize flat request");

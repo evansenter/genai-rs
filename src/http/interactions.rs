@@ -583,6 +583,8 @@ mod tests {
             cached_content: None,
             webhook_config: None,
             environment: None,
+            safety_settings: None,
+            labels: None,
         };
 
         let json = serde_json::to_string(&request).expect("Serialization should work");

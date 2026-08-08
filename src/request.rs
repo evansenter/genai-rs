@@ -8,6 +8,7 @@ use std::fmt;
 use crate::content::Content;
 use crate::environment::EnvironmentSpec;
 use crate::response_format::ResponseFormatSpec;
+use crate::safety::SafetySetting;
 use crate::steps::Step;
 use crate::tools::{Tool, ToolChoice};
 use crate::webhooks::WebhookConfig;
@@ -524,6 +525,55 @@ pub struct GenerationConfig {
     /// response modality.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub video_config: Option<VideoConfig>,
+    /// Audio transcription configuration.
+    ///
+    /// Controls language hints, diarization, custom vocabulary and
+    /// timestamp granularity when transcribing audio input.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transcription_config: Option<TranscriptionConfig>,
+}
+
+/// Audio transcription configuration.
+///
+/// Set via
+/// [`GenerationConfig::transcription_config`] to control how audio input is
+/// transcribed.
+///
+/// # Example
+///
+/// ```
+/// use genai_rs::TranscriptionConfig;
+///
+/// let config = TranscriptionConfig {
+///     language_codes: Some(vec!["en-US".to_string()]),
+///     diarization_mode: Some("speaker".to_string()),
+///     ..Default::default()
+/// };
+/// assert_eq!(
+///     serde_json::to_value(&config).unwrap(),
+///     serde_json::json!({
+///         "language_codes": ["en-US"],
+///         "diarization_mode": "speaker"
+///     })
+/// );
+/// ```
+#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
+pub struct TranscriptionConfig {
+    /// Phrases to bias recognition toward (contextual adaptation).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub adaptation_phrases: Option<Vec<String>>,
+    /// Domain-specific vocabulary to bias recognition toward.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_vocabulary: Option<Vec<String>>,
+    /// Speaker diarization mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diarization_mode: Option<String>,
+    /// BCP-47 language codes hinting the audio's language(s).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language_codes: Option<Vec<String>>,
+    /// Timestamp granularities to include (e.g. word-level timing).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp_granularities: Option<Vec<String>>,
 }
 
 /// Deserializes `speech_config` from either the spec list form or the legacy
@@ -1195,6 +1245,24 @@ pub struct InteractionRequest {
     /// remote environment (sources + network allowlist).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment: Option<EnvironmentSpec>,
+
+    /// Safety settings for the interaction, one per harm category.
+    ///
+    /// Server-side constraint (verified live 2026-08-08): the Gemini API
+    /// rejects `safety_settings` — "not available on the Gemini API but it
+    /// is available on the Gemini Enterprise Agent Platform" (Vertex-only).
+    /// The field is modeled for spec parity and forward compatibility.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub safety_settings: Option<Vec<SafetySetting>>,
+
+    /// User-defined metadata labels for the request.
+    ///
+    /// Server-side constraint (verified live 2026-08-08): the Gemini API
+    /// rejects `labels` — "not available on the Gemini API but it is
+    /// available on the Gemini Enterprise Agent Platform" (Vertex-only).
+    /// The field is modeled for spec parity and forward compatibility.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub labels: Option<std::collections::HashMap<String, String>>,
 }
 
 /// Latency/priority service tier for a request.
@@ -1781,6 +1849,68 @@ impl DynamicConfig {
 impl From<DynamicConfig> for AgentConfig {
     fn from(_: DynamicConfig) -> Self {
         AgentConfig(serde_json::json!({"type": "dynamic"}))
+    }
+}
+
+/// Configuration for the server-side Antigravity coding agent.
+///
+/// This configures `agent("antigravity")` interactions that run in Google's
+/// sandbox (typically with an [`environment`](InteractionRequest::environment)
+/// attached) — distinct from the local-harness bridge in
+/// [`antigravity`](crate::antigravity), which runs the agent on your machine.
+///
+/// # Example
+///
+/// ```
+/// use genai_rs::{AgentConfig, AntigravityConfig};
+///
+/// let config: AgentConfig = AntigravityConfig::new()
+///     .with_model("gemini-3-flash-preview")
+///     .with_max_total_tokens(200_000)
+///     .into();
+/// ```
+#[derive(Clone, Debug, Default)]
+pub struct AntigravityConfig {
+    model: Option<String>,
+    max_total_tokens: Option<i64>,
+}
+
+impl AntigravityConfig {
+    /// Create a new Antigravity agent configuration with default settings.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the model the agent uses for its reasoning loop.
+    #[must_use]
+    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+        self.model = Some(model.into());
+        self
+    }
+
+    /// Cap the total tokens the agent may consume across its whole run.
+    #[must_use]
+    pub fn with_max_total_tokens(mut self, max_total_tokens: i64) -> Self {
+        self.max_total_tokens = Some(max_total_tokens);
+        self
+    }
+}
+
+impl From<AntigravityConfig> for AgentConfig {
+    fn from(config: AntigravityConfig) -> Self {
+        let mut map = serde_json::Map::new();
+        map.insert(
+            "type".into(),
+            serde_json::Value::String("antigravity".into()),
+        );
+        if let Some(model) = config.model {
+            map.insert("model".into(), serde_json::Value::String(model));
+        }
+        if let Some(max) = config.max_total_tokens {
+            map.insert("max_total_tokens".into(), serde_json::Value::from(max));
+        }
+        AgentConfig(serde_json::Value::Object(map))
     }
 }
 

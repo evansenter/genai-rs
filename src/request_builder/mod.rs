@@ -12,9 +12,9 @@ use tracing::debug;
 use crate::{
     AgentConfig, Content, DeepResearchConfig, EnvironmentSpec, FunctionCallingMode,
     FunctionDeclaration, GenerationConfig, ImageConfig, InteractionInput, InteractionRequest,
-    InteractionResponse, ResponseFormat, ResponseFormatSpec, ServiceTier, SpeechConfig, Step,
-    StreamEvent, ThinkingLevel, ThinkingSummaries, Tool as InternalTool, ToolChoice, VideoConfig,
-    WebhookConfig,
+    InteractionResponse, ResponseFormat, ResponseFormatSpec, SafetySetting, ServiceTier,
+    SpeechConfig, Step, StreamEvent, ThinkingLevel, ThinkingSummaries, Tool as InternalTool,
+    ToolChoice, TranscriptionConfig, VideoConfig, WebhookConfig,
 };
 use futures_util::{StreamExt, stream::BoxStream};
 
@@ -98,6 +98,8 @@ pub struct InteractionBuilder<'a> {
     cached_content: Option<String>,
     webhook_config: Option<WebhookConfig>,
     environment: Option<EnvironmentSpec>,
+    safety_settings: Option<Vec<SafetySetting>>,
+    labels: Option<std::collections::HashMap<String, String>>,
     /// Maximum iterations for auto function calling loop
     max_function_call_loops: usize,
     /// Tool service for dependency-injected functions
@@ -161,6 +163,8 @@ impl<'a> InteractionBuilder<'a> {
             cached_content: None,
             webhook_config: None,
             environment: None,
+            safety_settings: None,
+            labels: None,
             max_function_call_loops: DEFAULT_MAX_FUNCTION_CALL_LOOPS,
             tool_service: None,
             timeout: None,
@@ -1219,6 +1223,42 @@ impl<'a> InteractionBuilder<'a> {
         self
     }
 
+    /// Sets the audio transcription configuration
+    /// (`generation_config.transcription_config`).
+    ///
+    /// Controls language hints, diarization, custom vocabulary and
+    /// timestamp granularity when transcribing audio input.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{Client, TranscriptionConfig};
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::new("api-key".to_string());
+    /// let response = client
+    ///     .interaction()
+    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_text("Transcribe the attached audio")
+    ///     .with_transcription_config(TranscriptionConfig {
+    ///         language_codes: Some(vec!["en-US".to_string()]),
+    ///         ..Default::default()
+    ///     })
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_transcription_config(mut self, config: TranscriptionConfig) -> Self {
+        let gen_config = self
+            .generation_config
+            .get_or_insert_with(GenerationConfig::default);
+        gen_config.transcription_config = Some(config);
+        self
+    }
+
     /// Configures the request to return video output.
     ///
     /// This is a convenience method equivalent to:
@@ -1320,6 +1360,68 @@ impl<'a> InteractionBuilder<'a> {
     #[must_use]
     pub fn with_environment(mut self, environment: impl Into<EnvironmentSpec>) -> Self {
         self.environment = Some(environment.into());
+        self
+    }
+
+    /// Sets the safety settings for this request, replacing any previously
+    /// added ones.
+    ///
+    /// Server-side constraint (verified live 2026-08-08): the Gemini API
+    /// rejects `safety_settings` (Vertex-only); see [`SafetySetting`].
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{Client, HarmCategory, SafetySetting, SafetyThreshold};
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::new("api-key".to_string());
+    /// let response = client
+    ///     .interaction()
+    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_text("Tell me about safety filters")
+    ///     .with_safety_settings(vec![SafetySetting::new(
+    ///         HarmCategory::Harassment,
+    ///         SafetyThreshold::BlockOnlyHigh,
+    ///     )])
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_safety_settings(mut self, settings: Vec<SafetySetting>) -> Self {
+        self.safety_settings = Some(settings);
+        self
+    }
+
+    /// Adds a single safety setting, accumulating with any added earlier.
+    #[must_use]
+    pub fn add_safety_setting(mut self, setting: SafetySetting) -> Self {
+        self.safety_settings
+            .get_or_insert_with(Vec::new)
+            .push(setting);
+        self
+    }
+
+    /// Sets the user-defined metadata labels for this request, replacing
+    /// any previously added ones.
+    ///
+    /// Server-side constraint (verified live 2026-08-08): the Gemini API
+    /// rejects `labels` (Vertex-only); modeled for spec parity.
+    #[must_use]
+    pub fn with_labels(mut self, labels: std::collections::HashMap<String, String>) -> Self {
+        self.labels = Some(labels);
+        self
+    }
+
+    /// Adds a single metadata label, accumulating with any added earlier.
+    #[must_use]
+    pub fn add_label(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.labels
+            .get_or_insert_with(std::collections::HashMap::new)
+            .insert(key.into(), value.into());
         self
     }
 
@@ -2203,6 +2305,8 @@ impl<'a> InteractionBuilder<'a> {
             cached_content: self.cached_content,
             webhook_config: self.webhook_config,
             environment: self.environment,
+            safety_settings: self.safety_settings,
+            labels: self.labels,
         })
     }
 }
