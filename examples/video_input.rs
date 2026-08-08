@@ -39,17 +39,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .create()
         .await;
 
-    match response {
-        Ok(r) => {
-            if let Some(text) = r.as_text() {
-                println!("Response: {text}\n");
-            }
-        }
-        Err(e) => {
-            // The demo fixture is known-valid (drift-guarded by tests), so a
-            // failure here is a real error — surface it.
-            return Err(e.into());
-        }
+    // The demo fixture is known-valid (drift-guarded by tests), so a
+    // failure here is a real error — surface it.
+    let response = response?;
+    if let Some(text) = response.as_text() {
+        println!("Response: {text}\n");
     }
 
     // =========================================================================

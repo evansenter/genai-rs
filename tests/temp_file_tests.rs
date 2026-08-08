@@ -238,11 +238,13 @@ async fn test_txt_file_as_text_input() {
         file_content
     );
 
-    let response = stateful_builder(&client)
-        .with_text(&prompt)
-        .create()
-        .await
-        .expect("TXT interaction failed");
+    let response = crate::retry_request!([client, prompt] => {
+        stateful_builder(&client)
+            .with_text(&prompt)
+            .create()
+            .await
+    })
+    .expect("TXT interaction failed");
 
     assert_eq!(response.status, InteractionStatus::Completed);
     let text = response.as_text().unwrap();
@@ -314,11 +316,13 @@ async fn test_markdown_file_as_text_input() {
         file_content
     );
 
-    let response = stateful_builder(&client)
-        .with_text(&prompt)
-        .create()
-        .await
-        .expect("Markdown interaction failed");
+    let response = crate::retry_request!([client, prompt] => {
+        stateful_builder(&client)
+            .with_text(&prompt)
+            .create()
+            .await
+    })
+    .expect("Markdown interaction failed");
 
     assert_eq!(response.status, InteractionStatus::Completed);
     let text = response.as_text().unwrap();
@@ -387,11 +391,13 @@ async fn test_csv_file_as_text_input() {
         file_content
     );
 
-    let response = stateful_builder(&client)
-        .with_text(&prompt)
-        .create()
-        .await
-        .expect("CSV interaction failed");
+    let response = crate::retry_request!([client, prompt] => {
+        stateful_builder(&client)
+            .with_text(&prompt)
+            .create()
+            .await
+    })
+    .expect("CSV interaction failed");
 
     assert_eq!(response.status, InteractionStatus::Completed);
     let text = response.as_text().unwrap();
