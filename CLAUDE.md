@@ -31,7 +31,7 @@ make test      # Unit tests only (excludes doctests for speed)
 make test-all  # Full suite including integration tests (requires GEMINI_API_KEY)
 make fmt       # Check formatting
 make clippy    # Lint with warnings as errors
-make docs      # Build docs with warnings as errors
+make docs      # Build docs with warnings as errors (all-features + docs.rs feature set)
 make clean     # Clean build artifacts
 ```
 
@@ -67,7 +67,8 @@ make check  # Run all quality gates (fmt + clippy + test)
 # Or individually:
 cargo fmt -- --check                                                 # Check format
 cargo clippy --workspace --all-targets --all-features -- -D warnings # Lint
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items  # Docs
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --document-private-items
+RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs  # docs.rs feature set (separate target dir so it doesn't clobber target/doc)
 ```
 
 ## Architecture
@@ -176,7 +177,7 @@ See `Content` in `src/content.rs` for reference implementation.
 ### Test Assertion Strategies
 
 - **Structural**: Verify API mechanics (status, field presence) - default for most tests
-- **Semantic**: Use `validate_response_semantically()` for behavioral tests (adds ~1-2s API call)
+- **Semantic**: Use `assert_response_semantic()` for behavioral tests (adds ~1-2s API call; retries the validator on transient errors and asserts on the verdict)
 - **Avoid**: Brittle `text.contains("word")` assertions on LLM output - responses vary
 
 **Decision rule**: Is it checking LLM text content with a non-deterministic expected value? → Use semantic validation.
@@ -187,7 +188,7 @@ assert!(text.contains("paris"));
 assert!(text.contains("red") || text.contains("crimson"));
 
 // GOOD - Handles natural language variability
-validate_response_semantically(&client, context, text, "Does this identify Paris?").await?;
+assert_response_semantic(&client, context, text, "Does this identify Paris?").await;
 
 // OK - Deterministic values (error messages, code execution results)
 assert!(text.contains("3628800"));  // factorial(10) - exact computed value
@@ -243,6 +244,12 @@ When releasing a new version, update these files:
 
 After merging version bump PR:
 
+0. **Verify the docs.rs build locally** (docs.rs builds on nightly rustdoc —
+   e.g. nightly-only attribute removals; release.yml's validate job runs the
+   same nightly check before publish, but catching it here means finding out
+   before the tag exists rather than after):
+   `RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo +nightly doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs`
+   (matches the `[package.metadata.docs.rs]` feature set)
 1. **Tag the release**: `git tag -a vX.Y.Z origin/main -m "Release vX.Y.Z"`
 2. **Push tag**: `git push origin vX.Y.Z`
 3. **Create GitHub release**: `gh release create vX.Y.Z --title "vX.Y.Z" --notes "..."` (copy from CHANGELOG)

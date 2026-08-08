@@ -55,10 +55,12 @@ mod image {
             Content::image_uri(SAMPLE_IMAGE_URL, "image/jpeg"),
         ];
 
-        let result = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await;
+        let result = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        });
 
         match result {
             Ok(response) => {
@@ -99,11 +101,13 @@ mod image {
             Content::image_data(TINY_RED_PNG_BASE64, "image/png"),
         ];
 
-        let response = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await
-            .expect("Base64 image interaction failed");
+        let response = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        })
+        .expect("Base64 image interaction failed");
 
         assert_eq!(response.status, InteractionStatus::Completed);
         assert!(response.has_text(), "Should have text response");
@@ -139,11 +143,13 @@ mod image {
             Content::image_data(TINY_BLUE_PNG_BASE64, "image/png"),
         ];
 
-        let response = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await
-            .expect("Multiple images interaction failed");
+        let response = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        })
+        .expect("Multiple images interaction failed");
 
         assert_eq!(response.status, InteractionStatus::Completed);
         assert!(response.has_text(), "Should have text response");
@@ -176,22 +182,27 @@ mod image {
                 Content::image_data(TINY_RED_PNG_BASE64, "image/png"),
             ];
 
-            let response1 = stateful_builder(&client)
-                .with_input(InteractionInput::Content(contents))
-                .create()
-                .await
-                .expect("First interaction failed");
+            let response1 = crate::retry_request!([client, contents] => {
+                stateful_builder(&client)
+                    .with_input(InteractionInput::Content(contents))
+                    .create()
+                    .await
+            })
+            .expect("First interaction failed");
 
             assert_eq!(response1.status, InteractionStatus::Completed);
             println!("First response: {:?}", response1.as_text());
 
             // Second turn: ask follow-up about the same image
-            let response2 = stateful_builder(&client)
-                .with_previous_interaction(response1.id.as_ref().expect("id should exist"))
-                .with_text("Is that a warm or cool color?")
-                .create()
-                .await
-                .expect("Follow-up interaction failed");
+            let prev_id = response1.id.clone().expect("id should exist");
+            let response2 = crate::retry_request!([client, prev_id] => {
+                stateful_builder(&client)
+                    .with_previous_interaction(&prev_id)
+                    .with_text("Is that a warm or cool color?")
+                    .create()
+                    .await
+            })
+            .expect("Follow-up interaction failed");
 
             assert_eq!(response2.status, InteractionStatus::Completed);
             assert!(response2.has_text(), "Should have follow-up response");
@@ -214,7 +225,7 @@ mod image {
 
 mod audio {
     use crate::common::{SAMPLE_AUDIO_URL, TINY_WAV_BASE64, get_client, stateful_builder};
-    use genai_rs::{Content, InteractionInput};
+    use genai_rs::{Content, InteractionInput, InteractionStatus};
 
     /// Tests audio input from URI.
     /// Note: GCS URIs are not supported by the Interactions API.
@@ -231,10 +242,12 @@ mod audio {
             Content::audio_uri(SAMPLE_AUDIO_URL, "audio/mpeg"),
         ];
 
-        let result = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await;
+        let result = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        });
 
         match result {
             Ok(response) => {
@@ -265,41 +278,30 @@ mod audio {
             return;
         };
 
-        // Use tiny WAV for testing base64 audio input
-        // Note: This is a minimal header with no actual audio, so the model may report it's empty/silent
+        // The TINY_WAV fixture is a complete, well-formed audio clip (100 frames
+        // of silence), so the API must accept it — assert strictly.
         let contents = vec![
             Content::text("Describe what you hear in this audio file."),
             genai_rs::Content::audio_data(TINY_WAV_BASE64, "audio/wav"),
         ];
 
-        let result = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await;
+        let response = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        })
+        .expect("Base64 audio interaction failed");
 
-        match result {
-            Ok(response) => {
-                println!("Base64 audio response status: {:?}", response.status);
-                if response.has_text() {
-                    let text = response.as_text().unwrap();
-                    println!("Audio response: {}", text);
-                    // Just verify we got some response - the content can vary
-                    assert!(!text.is_empty(), "Should get some response about the audio");
-                }
-            }
-            Err(e) => {
-                println!(
-                    "Base64 audio error (may be expected for minimal WAV): {:?}",
-                    e
-                );
-            }
-        }
+        assert_eq!(response.status, InteractionStatus::Completed);
+        assert!(response.has_text(), "Should have text response");
+        println!("Audio response: {:?}", response.as_text());
     }
 }
 
 mod video {
     use crate::common::{SAMPLE_VIDEO_URL, TINY_MP4_BASE64, get_client, stateful_builder};
-    use genai_rs::{Content, InteractionInput};
+    use genai_rs::{Content, InteractionInput, InteractionStatus};
 
     /// Tests video input from URI.
     /// Note: GCS URIs are not supported by the Interactions API.
@@ -316,10 +318,12 @@ mod video {
             Content::video_uri(SAMPLE_VIDEO_URL, "video/mp4"),
         ];
 
-        let result = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await;
+        let result = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        });
 
         match result {
             Ok(response) => {
@@ -343,7 +347,6 @@ mod video {
     }
 
     /// Tests video input from base64.
-    /// Note: This uses a minimal MP4 header, so the model may report it's empty/corrupt.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_video_input_from_base64() {
@@ -352,36 +355,24 @@ mod video {
             return;
         };
 
-        // Use minimal MP4 for testing base64 video input
-        // Note: This is a minimal header with no actual video frames, so the model may report it's empty
+        // The TINY_MP4 fixture is a real one-frame H.264 clip, so the API
+        // must accept it — assert strictly.
         let contents = vec![
             Content::text("Describe what you see in this video file."),
             Content::video_data(TINY_MP4_BASE64, "video/mp4"),
         ];
 
-        let result = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await;
+        let response = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        })
+        .expect("Base64 video interaction failed");
 
-        match result {
-            Ok(response) => {
-                println!("Base64 video response status: {:?}", response.status);
-                if response.has_text() {
-                    let text = response.as_text().unwrap();
-                    println!("Video response: {}", text);
-                    // Just verify we got some response - the content can vary
-                    assert!(!text.is_empty(), "Should get some response about the video");
-                }
-            }
-            Err(e) => {
-                // A minimal MP4 header may not be accepted by the API
-                println!(
-                    "Base64 video error (may be expected for minimal MP4): {:?}",
-                    e
-                );
-            }
-        }
+        assert_eq!(response.status, InteractionStatus::Completed);
+        assert!(response.has_text(), "Should have text response");
+        println!("Video response: {:?}", response.as_text());
     }
 }
 
@@ -407,11 +398,13 @@ mod mixed_content {
             Content::text("Based on the color above, what emotion might it represent?"),
         ];
 
-        let response = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await
-            .expect("Interleaved content interaction failed");
+        let response = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        })
+        .expect("Interleaved content interaction failed");
 
         assert_eq!(response.status, InteractionStatus::Completed);
         assert!(response.has_text(), "Should have text response");
@@ -446,11 +439,13 @@ mod mixed_content {
             Content::image_data(TINY_BLUE_PNG_BASE64, "image/png"),
         ];
 
-        let response = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await
-            .expect("Comparison interaction failed");
+        let response = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        })
+        .expect("Comparison interaction failed");
 
         assert_eq!(response.status, InteractionStatus::Completed);
         assert!(response.has_text(), "Should have text response");
@@ -482,11 +477,11 @@ mod mixed_media {
 
     /// Tests combining multiple media types (image + audio) in a single interaction.
     ///
-    /// This is an **enforcing test** that expects the API to successfully process
-    /// image + audio together. It asserts on the response content when successful,
-    /// but allows known format errors from the minimal test files.
+    /// Both fixtures are complete, well-formed media files the API must
+    /// accept, so this test asserts strictly and semantically validates the
+    /// response content.
     ///
-    /// Note: Video is excluded because the minimal MP4 test file often fails validation.
+    /// See test_mixed_image_audio_video for the all-three-types variant.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_mixed_image_and_audio() {
@@ -507,60 +502,39 @@ mod mixed_media {
             Content::audio_data(TINY_WAV_BASE64, "audio/wav"),
         ];
 
-        let result = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await;
+        let result = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        });
 
-        match result {
-            Ok(response) => {
-                assert_eq!(
-                    response.status,
-                    InteractionStatus::Completed,
-                    "Mixed media interaction should complete"
-                );
-                assert!(response.has_text(), "Should have text response");
+        let response = result.expect("Mixed media interaction failed");
+        assert_eq!(
+            response.status,
+            InteractionStatus::Completed,
+            "Mixed media interaction should complete"
+        );
+        assert!(response.has_text(), "Should have text response");
 
-                let text = response.as_text().unwrap();
-                println!("Mixed media response: {}", text);
+        let text = response.as_text().unwrap();
+        println!("Mixed media response: {}", text);
 
-                // Verify the model acknowledged at least one input using semantic validation
-                // Note: Minimal test files may not provide enough data for the model to analyze both
-                assert_response_semantic(
-                    &client,
-                    "Sent a red image and a WAV audio file, asked to describe both",
-                    text,
-                    "Does this response mention anything about an image (color, red) OR audio (sound, silent, empty)?",
-                )
-                .await;
-            }
-            Err(e) => {
-                // The minimal test files might not be fully valid
-                let error_str = format!("{:?}", e);
-                println!(
-                    "Mixed media error (may be expected for minimal files): {}",
-                    error_str
-                );
-                // Don't fail the test for format errors with minimal test files
-                assert!(
-                    error_str.contains("format")
-                        || error_str.contains("invalid")
-                        || error_str.contains("empty")
-                        || error_str.contains("audio"),
-                    "Unexpected error: {}",
-                    error_str
-                );
-            }
-        }
+        // Verify the model acknowledged at least one input using semantic validation
+        assert_response_semantic(
+            &client,
+            "Sent a red image and a WAV audio file, asked to describe both",
+            text,
+            "Does this response mention anything about an image (color, red) OR audio (sound, silent, empty)?",
+        )
+        .await;
     }
 
     /// Tests combining all three media types: image, audio, and video.
     ///
-    /// This is an **exploratory test** that documents API behavior rather than enforcing
-    /// specific outcomes. It may fail due to the minimal test files not being fully valid.
-    ///
-    /// - **Success**: Indicates the API accepts all three media types together
-    /// - **Failure**: Documents which media types cause issues (helps debugging)
+    /// All three fixtures are complete, well-formed media files the API must
+    /// accept, so this test asserts strictly — an API rejection is a real
+    /// failure.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_mixed_image_audio_video() {
@@ -580,32 +554,18 @@ mod mixed_media {
             Content::video_data(TINY_MP4_BASE64, "video/mp4"),
         ];
 
-        let result = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await;
+        let result = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        });
 
-        match result {
-            Ok(response) => {
-                println!("All media types response status: {:?}", response.status);
-                if response.has_text() {
-                    let text = response.as_text().unwrap();
-                    println!("All media types response: {}", text);
-                }
-                // If we get here, the API accepted all three types
-                assert_eq!(response.status, InteractionStatus::Completed);
-            }
-            Err(e) => {
-                // The minimal test files are very likely to fail validation
-                let error_str = format!("{:?}", e);
-                println!(
-                    "All media types error (expected for minimal files): {}",
-                    error_str
-                );
-                // This test documents the API behavior with minimal files
-                // A passing result would indicate the API accepted the format
-            }
-        }
+        let response = result.expect("Mixed media interaction failed");
+        println!("All media types response status: {:?}", response.status);
+        assert_eq!(response.status, InteractionStatus::Completed);
+        assert!(response.has_text(), "Should have text response");
+        println!("All media types response: {}", response.as_text().unwrap());
     }
 }
 
@@ -631,36 +591,27 @@ mod document {
             Content::document_data(TINY_PDF_BASE64, "application/pdf"),
         ];
 
-        let result = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await;
+        let result = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        });
 
-        match result {
-            Ok(response) => {
-                println!("PDF document response status: {:?}", response.status);
-                assert_eq!(response.status, InteractionStatus::Completed);
-                if response.has_text() {
-                    let text = response.as_text().unwrap();
-                    println!("PDF response: {}", text);
-                    // The minimal PDF contains "Hello World" - use semantic validation
-                    assert_response_semantic(
-                        &client,
-                        "Asked about text in a PDF that contains 'Hello World'",
-                        text,
-                        "Does this response mention 'Hello' or 'World' or indicate those words were found?",
-                    )
-                    .await;
-                }
-            }
-            Err(e) => {
-                // The minimal PDF might not be fully valid or the API might have restrictions
-                println!(
-                    "PDF document error (may be expected for minimal PDF): {:?}",
-                    e
-                );
-            }
-        }
+        let response = result.expect("PDF document interaction failed");
+        println!("PDF document response status: {:?}", response.status);
+        assert_eq!(response.status, InteractionStatus::Completed);
+        assert!(response.has_text(), "Should have text response");
+        let text = response.as_text().unwrap();
+        println!("PDF response: {}", text);
+        // The PDF contains "Hello World" - use semantic validation
+        assert_response_semantic(
+            &client,
+            "Asked about text in a PDF that contains 'Hello World'",
+            text,
+            "Does this response mention 'Hello' or 'World' or indicate those words were found?",
+        )
+        .await;
     }
 
     /// Tests combining PDF document with text question.
@@ -678,30 +629,26 @@ mod document {
             Content::text("Is this a valid PDF? What can you tell me about its structure?"),
         ];
 
-        let result = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await;
+        let result = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        });
 
-        match result {
-            Ok(response) => {
-                assert_eq!(response.status, InteractionStatus::Completed);
-                assert!(response.has_text(), "Should have text response");
-                let text = response.as_text().unwrap();
-                println!("PDF question response: {}", text);
-                // Should mention something about the PDF - use semantic validation
-                assert_response_semantic(
-                    &client,
-                    "Sent a PDF and asked if it's valid and about its structure",
-                    text,
-                    "Does this response discuss the PDF, document structure, or pages?",
-                )
-                .await;
-            }
-            Err(e) => {
-                println!("PDF with question error (may be expected): {:?}", e);
-            }
-        }
+        let response = result.expect("PDF with question interaction failed");
+        assert_eq!(response.status, InteractionStatus::Completed);
+        assert!(response.has_text(), "Should have text response");
+        let text = response.as_text().unwrap();
+        println!("PDF question response: {}", text);
+        // Should mention something about the PDF - use semantic validation
+        assert_response_semantic(
+            &client,
+            "Sent a PDF and asked if it's valid and about its structure",
+            text,
+            "Does this response discuss the PDF, document structure, or pages?",
+        )
+        .await;
     }
 }
 
@@ -819,16 +766,19 @@ mod file_loading {
         let image_content = image_from_file(&image_path)
             .await
             .expect("Failed to load image file");
-        let response = client
-            .interaction()
-            .with_model("gemini-3-flash-preview")
-            .with_content(vec![
-                Content::text("What color is this image? Answer with just the color name."),
-                image_content,
-            ])
-            .create()
-            .await
-            .expect("Image interaction failed");
+        let contents = vec![
+            Content::text("What color is this image? Answer with just the color name."),
+            image_content,
+        ];
+        let response = crate::retry_request!([client, contents] => {
+            client
+                .interaction()
+                .with_model("gemini-3-flash-preview")
+                .with_content(contents)
+                .create()
+                .await
+        })
+        .expect("Image interaction failed");
 
         assert_eq!(response.status, InteractionStatus::Completed);
         assert!(response.has_text(), "Should have text response");
@@ -883,19 +833,22 @@ mod file_loading {
         let blue_content = image_from_file(&blue_path)
             .await
             .expect("Failed to load blue image");
-        let response = client
-            .interaction()
-            .with_model("gemini-3-flash-preview")
-            .with_content(vec![
-                Content::text(
-                    "I'm showing you two small colored images. What colors are they? List both.",
-                ),
-                red_content,
-                blue_content,
-            ])
-            .create()
-            .await
-            .expect("Multiple images interaction failed");
+        let contents = vec![
+            Content::text(
+                "I'm showing you two small colored images. What colors are they? List both.",
+            ),
+            red_content,
+            blue_content,
+        ];
+        let response = crate::retry_request!([client, contents] => {
+            client
+                .interaction()
+                .with_model("gemini-3-flash-preview")
+                .with_content(contents)
+                .create()
+                .await
+        })
+        .expect("Multiple images interaction failed");
 
         assert_eq!(response.status, InteractionStatus::Completed);
         assert!(response.has_text(), "Should have text response");
@@ -932,7 +885,7 @@ mod file_loading {
 mod bytes_loading {
     use crate::common::{
         TINY_MP4_BASE64, TINY_PDF_BASE64, TINY_RED_PNG_BASE64, TINY_WAV_BASE64,
-        assert_response_semantic, get_client, validate_response_semantically,
+        assert_response_semantic, get_client,
     };
     use genai_rs::{Content, InteractionStatus};
 
@@ -941,10 +894,8 @@ mod bytes_loading {
     /// This validates that base64-encoded image data works correctly.
     /// Uses semantic validation to verify the model correctly interprets the image.
     ///
-    /// Note: This test uses `.expect()` (strict assertion) because the PNG fixture
-    /// is a complete, well-formed image that the API should always accept.
-    /// Compare to audio/video tests which use lenient `match result` because those
-    /// minimal fixtures may be rejected by the API.
+    /// Note: All media fixtures (PNG, WAV, MP4) are complete, well-formed files
+    /// the API should always accept, so media roundtrip tests assert strictly.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_image_data_roundtrip() {
@@ -955,16 +906,19 @@ mod bytes_loading {
 
         // Use Content::image_data() with base64-encoded data
         // The tiny PNG is well-formed and should always be processable
-        let response = client
-            .interaction()
-            .with_model("gemini-3-flash-preview")
-            .with_content(vec![
-                Content::text("What color is this image? Answer with just the color name."),
-                Content::image_data(TINY_RED_PNG_BASE64, "image/png"),
-            ])
-            .create()
-            .await
-            .expect("Image data interaction failed");
+        let contents = vec![
+            Content::text("What color is this image? Answer with just the color name."),
+            Content::image_data(TINY_RED_PNG_BASE64, "image/png"),
+        ];
+        let response = crate::retry_request!([client, contents] => {
+            client
+                .interaction()
+                .with_model("gemini-3-flash-preview")
+                .with_content(contents)
+                .create()
+                .await
+        })
+        .expect("Image data interaction failed");
 
         assert_eq!(response.status, InteractionStatus::Completed);
         assert!(response.has_text(), "Should have text response");
@@ -985,8 +939,8 @@ mod bytes_loading {
     /// Tests audio input with base64-encoded data using Content::audio_data().
     ///
     /// This validates that base64-encoded audio data works correctly.
-    /// Note: The minimal WAV test file may not contain actual audio, so the model
-    /// may report it's empty/silent.
+    /// The TINY_WAV fixture is a complete, well-formed clip, so this test
+    /// asserts strictly — an API rejection is a real failure.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_audio_data_roundtrip() {
@@ -996,41 +950,30 @@ mod bytes_loading {
         };
 
         // Use Content::audio_data() with base64-encoded data
-        let result = client
-            .interaction()
-            .with_model("gemini-3-flash-preview")
-            .with_content(vec![
-                Content::text("Describe what you hear in this audio file."),
-                Content::audio_data(TINY_WAV_BASE64, "audio/wav"),
-            ])
-            .create()
-            .await;
+        let contents = vec![
+            Content::text("Describe what you hear in this audio file."),
+            Content::audio_data(TINY_WAV_BASE64, "audio/wav"),
+        ];
+        let result = crate::retry_request!([client, contents] => {
+            client
+                .interaction()
+                .with_model("gemini-3-flash-preview")
+                .with_content(contents)
+                .create()
+                .await
+        });
 
-        match result {
-            Ok(response) => {
-                println!("Audio bytes response status: {:?}", response.status);
-                if response.has_text() {
-                    let text = response.as_text().unwrap();
-                    println!("Audio response: {}", text);
-                    // Just verify we got some response - the content can vary
-                    assert!(!text.is_empty(), "Should get some response about the audio");
-                }
-            }
-            Err(e) => {
-                // The minimal WAV might not be accepted
-                println!(
-                    "Audio bytes error (may be expected for minimal WAV): {:?}",
-                    e
-                );
-            }
-        }
+        let response = result.expect("Audio bytes interaction failed");
+        assert_eq!(response.status, InteractionStatus::Completed);
+        assert!(response.has_text(), "Should have text response");
+        println!("Audio response: {:?}", response.as_text());
     }
 
     /// Tests video input with base64-encoded data using Content::video_data().
     ///
     /// This validates that base64-encoded video data works correctly.
-    /// Note: The minimal MP4 test file is just a container header with no frames,
-    /// so the model may report it's empty/corrupt.
+    /// The TINY_MP4 fixture is a real one-frame H.264 clip, so this test
+    /// asserts strictly — an API rejection is a real failure.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_video_data_roundtrip() {
@@ -1040,34 +983,23 @@ mod bytes_loading {
         };
 
         // Use Content::video_data() with base64-encoded data
-        let result = client
-            .interaction()
-            .with_model("gemini-3-flash-preview")
-            .with_content(vec![
-                Content::text("Describe what you see in this video file."),
-                Content::video_data(TINY_MP4_BASE64, "video/mp4"),
-            ])
-            .create()
-            .await;
+        let contents = vec![
+            Content::text("Describe what you see in this video file."),
+            Content::video_data(TINY_MP4_BASE64, "video/mp4"),
+        ];
+        let result = crate::retry_request!([client, contents] => {
+            client
+                .interaction()
+                .with_model("gemini-3-flash-preview")
+                .with_content(contents)
+                .create()
+                .await
+        });
 
-        match result {
-            Ok(response) => {
-                println!("Video bytes response status: {:?}", response.status);
-                if response.has_text() {
-                    let text = response.as_text().unwrap();
-                    println!("Video response: {}", text);
-                    // Just verify we got some response - the content can vary
-                    assert!(!text.is_empty(), "Should get some response about the video");
-                }
-            }
-            Err(e) => {
-                // The minimal MP4 might not be accepted
-                println!(
-                    "Video bytes error (may be expected for minimal MP4): {:?}",
-                    e
-                );
-            }
-        }
+        let response = result.expect("Video bytes interaction failed");
+        assert_eq!(response.status, InteractionStatus::Completed);
+        assert!(response.has_text(), "Should have text response");
+        println!("Video response: {:?}", response.as_text());
     }
 
     /// Tests document input with base64-encoded data using Content::document_data().
@@ -1076,8 +1008,8 @@ mod bytes_loading {
     /// The test PDF contains "Hello World" text.
     /// Uses semantic validation to verify the model correctly interprets the document.
     ///
-    /// Note: Like audio/video tests, this uses lenient error handling because the
-    /// minimal PDF fixture or the semantic validation call might fail.
+    /// Asserts strictly on the interaction under test; semantic validation
+    /// (like all sibling tests) is non-fatal on validator transport errors.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_document_data_roundtrip() {
@@ -1087,54 +1019,38 @@ mod bytes_loading {
         };
 
         // Use Content::document_data() with base64-encoded data
-        let result = client
-            .interaction()
-            .with_model("gemini-3-flash-preview")
-            .with_content(vec![
-                Content::text(
-                    "What text does this PDF document contain? Answer with just the text you find.",
-                ),
-                Content::document_data(TINY_PDF_BASE64, "application/pdf"),
-            ])
-            .create()
-            .await;
-
-        match result {
-            Ok(response) => {
-                println!("PDF bytes response status: {:?}", response.status);
-                assert_eq!(response.status, InteractionStatus::Completed);
-                assert!(response.has_text(), "Should have text response");
-
-                let text = response.as_text().unwrap();
-                println!("PDF response: {}", text);
-
-                // Use semantic validation instead of brittle content checks
-                // Handle validation failure gracefully since it makes an additional API call
-                match validate_response_semantically(
-                    &client,
-                    "User asked about text in a PDF that contains 'Hello World'",
-                    text,
-                    "Does this response mention 'Hello', 'World', or indicate these words were found in the document?",
-                )
+        let contents = vec![
+            Content::text(
+                "What text does this PDF document contain? Answer with just the text you find.",
+            ),
+            Content::document_data(TINY_PDF_BASE64, "application/pdf"),
+        ];
+        let result = crate::retry_request!([client, contents] => {
+            client
+                .interaction()
+                .with_model("gemini-3-flash-preview")
+                .with_content(contents)
+                .create()
                 .await
-                {
-                    Ok(is_valid) => {
-                        assert!(
-                            is_valid,
-                            "Response should mention the PDF content: {}",
-                            text
-                        );
-                    }
-                    Err(e) => {
-                        println!("Semantic validation error (non-fatal): {:?}", e);
-                    }
-                }
-            }
-            Err(e) => {
-                // The minimal PDF might not be fully valid
-                println!("PDF bytes error (may be expected for minimal PDF): {:?}", e);
-            }
-        }
+        });
+
+        let response = result.expect("PDF bytes interaction failed");
+        println!("PDF bytes response status: {:?}", response.status);
+        assert_eq!(response.status, InteractionStatus::Completed);
+        assert!(response.has_text(), "Should have text response");
+
+        let text = response.as_text().unwrap();
+        println!("PDF response: {}", text);
+
+        // Use semantic validation instead of brittle content checks
+        // (assert_response_semantic is non-fatal on validator transport errors).
+        assert_response_semantic(
+            &client,
+            "User asked about text in a PDF that contains 'Hello World'",
+            text,
+            "Does this response mention 'Hello', 'World', or indicate these words were found in the document?",
+        )
+        .await;
     }
 }
 

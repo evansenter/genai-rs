@@ -340,9 +340,11 @@ let response = client
 Step arrays work with all features:
 
 ```rust,ignore
+use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
-#[tool(description = "Get current weather")]
+/// Get current weather
+#[tool(city(description = "City to get weather for"))]
 fn get_weather(city: String) -> String {
     format!("Weather in {}: Sunny, 72°F", city)
 }
@@ -351,7 +353,7 @@ let response = client
     .interaction()
     .with_model("gemini-3-flash-preview")
     .with_history(history)
-    .add_function(get_weather.declaration())
+    .add_function(GetWeatherCallable.declaration())
     .create_with_auto_functions()
     .await?;
 ```

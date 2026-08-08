@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- docs.rs now builds with the `antigravity` feature enabled (the module was
+  invisible in the 0.8.0 docs, which were built with default features only),
+  with "Available on crate feature ... only" banners on feature-gated items.
+  The CI doc gate now builds both `--all-features` and the docs.rs feature
+  set under `-D warnings`.
+- The `audio_input` and `video_input` examples now embed real media
+  fixtures, replacing the zero-length WAV and header-only MP4 that the API
+  rejects with 400 `invalid_request` — both examples previously always took
+  their error branch.
+- Corrected `#[tool]` snippets across the guides: an invalid
+  `#[tool(description = ...)]` attribute form the macro parser rejects,
+  `.declaration()` called on the function item instead of the generated
+  callable struct, and missing `CallableFunction` / `tool` imports.
+- README installation snippet now lists `async-trait` and `serde_json`,
+  required by `#[tool]`-generated code, and notes the `CallableFunction`
+  import — following the previous snippet produced a compile error on
+  first macro use.
+
 ## [0.8.0] - 2026-07-14
 
 This release migrates the crate to Interactions API wire revision

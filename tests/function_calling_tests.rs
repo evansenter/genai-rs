@@ -29,10 +29,10 @@
 mod common;
 
 use common::{
-    consume_auto_function_stream, consume_stream, extended_test_timeout, get_client,
-    get_time_function, get_weather_function, interaction_builder, is_long_conversation_api_error,
-    is_safety_block_error, retry_on_any_error, stateful_builder, test_timeout,
-    validate_response_semantically, with_timeout,
+    assert_response_semantic, consume_auto_function_stream, consume_stream, extended_test_timeout,
+    get_client, get_time_function, get_weather_function, interaction_builder,
+    is_long_conversation_api_error, is_safety_block_error, retry_on_any_error, stateful_builder,
+    test_timeout, validate_response_semantically, with_timeout,
 };
 use genai_rs::{
     CallableFunction, FunctionDeclaration, FunctionExecutionResult, GenaiError, InteractionStatus,
@@ -297,16 +297,12 @@ mod basic {
                 "Model should provide a response to the error"
             );
 
-            let is_valid = validate_response_semantically(
+            assert_response_semantic(
                 &client,
                 "User asked to get secret data for key 'test123'. The function returned an error: 'Access denied: insufficient permissions'.",
                 text,
                 "Does this response acknowledge or explain that the request failed due to access/permission issues?"
-            ).await.expect("Semantic validation failed");
-            assert!(
-                is_valid,
-                "Response should acknowledge the error/failure from the function"
-            );
+            ).await;
         }
     }
 
@@ -1486,16 +1482,12 @@ mod thinking {
         );
 
         let text2 = response2.as_text().unwrap();
-        let is_valid = validate_response_semantically(
+        assert_response_semantic(
             &client,
             "User asked 'What's the weather in Tokyo? Should I bring an umbrella?' and received weather data showing 18°C, rainy conditions, 80% precipitation",
             text2,
             "Does this response address the weather conditions and whether an umbrella is needed?"
-        ).await.expect("Semantic validation failed");
-        assert!(
-            is_valid,
-            "Turn 2 response should meaningfully address the weather question"
-        );
+        ).await;
     }
 
     #[tokio::test]
@@ -1853,19 +1845,12 @@ mod thinking {
         );
 
         // Verify content is about the sky/light/scattering - use semantic validation
-        let is_valid = validate_response_semantically(
+        assert_response_semantic(
             &client,
             "Asked 'Why is the sky blue?' with thinking mode enabled",
             &result.collected_text,
             "Does this response explain the scientific reason for the sky appearing blue (light, scattering, wavelengths)?",
-        )
-        .await
-        .expect("Semantic validation failed");
-        assert!(
-            is_valid,
-            "Response should explain why sky is blue. Got: {}",
-            result.collected_text
-        );
+        ).await;
 
         println!("\n✓ Streaming with thinking (no function calling) completed successfully");
     }
@@ -2166,19 +2151,12 @@ mod thinking {
                 println!("Step 3 text preview: {}...", &text[..text.len().min(200)]);
 
                 // Use semantic validation instead of brittle keyword matching
-                let is_valid = validate_response_semantically(
+                assert_response_semantic(
                     &client,
                     "User asked about planning a trip to Tokyo. The assistant gathered information about current weather, local time, forecast, and recommended activities via function calls.",
                     text,
                     "Does this response provide helpful trip planning information about Tokyo (weather, timing, activities)?",
-                )
-                .await
-                .expect("Semantic validation failed");
-
-                assert!(
-                    is_valid,
-                    "Final response should reference gathered information"
-                );
+                ).await;
             }
 
             println!("\n✓ Sequential parallel function chain (3 steps) completed successfully");
@@ -2287,13 +2265,12 @@ mod multiturn {
         let text = response3.as_text().unwrap();
         println!("Turn 3 response: {}", text);
 
-        let is_valid = validate_response_semantically(
+        assert_response_semantic(
             &client,
             "Previous turns retrieved weather: Seattle (65°F) and Tokyo (72°F). User asked which city is warmer.",
             text,
             "Does this response correctly identify which city is warmer based on temperature comparison?"
-        ).await.expect("Semantic validation failed");
-        assert!(is_valid, "Response should correctly compare temperatures");
+        ).await;
     }
 
     #[tokio::test]
@@ -2457,6 +2434,8 @@ mod multiturn {
 
                 let text = response2.as_text().ok_or("Turn 2 should have text")?;
 
+                // Direct validator call: this retry closure needs the verdict
+                // as a Result rather than a panic.
                 let is_valid = validate_response_semantically(
                     &client,
                     "The model was given a system instruction to 'always respond in haiku format'. User asked 'Tell me about the ocean.' in a follow-up turn.",
@@ -2641,15 +2620,12 @@ mod multiturn {
         println!("Response: {}", text);
 
         // Model should explain the error to user - use semantic validation to avoid brittle keyword matching
-        let is_valid = validate_response_semantically(
+        assert_response_semantic(
             &client,
             "A function call to get_secret_data returned an error: 'Permission denied: insufficient privileges for key test123'. The system instruction says to explain errors to the user.",
             text,
             "Does this response appropriately explain to the user that accessing the secret data failed due to a permissions/privileges issue?",
-        )
-        .await
-        .expect("Semantic validation should succeed");
-        assert!(is_valid, "Response should explain the permission error");
+        ).await;
     }
 
     /// Test ThinkingLevel::High with function calling.

@@ -20,9 +20,12 @@ test:
 test-all:
 	cargo nextest run --run-ignored all
 
-# Build documentation with warnings as errors
+# Build documentation with warnings as errors (all features + the docs.rs
+# feature set, which differ on strict-unknown). The mirror build uses its
+# own target dir so target/doc stays browsable as the all-features build.
 docs:
-	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items
+	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --document-private-items
+	RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs
 
 # Clean build artifacts
 clean:

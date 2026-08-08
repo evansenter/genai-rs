@@ -319,7 +319,11 @@ Function not found in registry or tool service: function='...'
 ### Execution Errors
 
 ```rust,ignore
-#[tool(description = "Fetch data from API")]
+use genai_rs::CallableFunction;
+use genai_rs_macros::tool;
+
+/// Fetch data from API
+#[tool(url(description = "URL to fetch"))]
 async fn fetch_data(url: String) -> Result<String, String> {
     // Return Err for graceful failure
     reqwest::get(&url)
@@ -351,7 +355,11 @@ Err(FunctionError::ArgumentMismatch(message)) => {
 3. **Don't panic** - Return errors so the conversation can continue
 
 ```rust,ignore
-#[tool(description = "Get user by ID")]
+use genai_rs::CallableFunction;
+use genai_rs_macros::tool;
+
+/// Get user by ID
+#[tool(id(description = "The user ID to look up"))]
 fn get_user(id: i32) -> Result<String, String> {
     if id <= 0 {
         return Err("User ID must be positive".to_string());

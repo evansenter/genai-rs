@@ -30,8 +30,8 @@
 mod common;
 
 use common::{
-    consume_stream, extended_test_timeout, interaction_builder, retry_on_any_error,
-    stateful_builder, test_timeout, validate_response_semantically, with_timeout,
+    assert_response_semantic, consume_stream, extended_test_timeout, interaction_builder,
+    retry_on_any_error, stateful_builder, test_timeout, with_timeout,
 };
 use genai_rs::{
     CallableFunction, Client, Content, FunctionDeclaration, GenaiError, GenerationConfig,
@@ -89,15 +89,13 @@ mod basic {
 
         assert!(response.has_text(), "Should have text response");
         let text = response.as_text().unwrap();
-        let is_valid = validate_response_semantically(
+        assert_response_semantic(
             &client,
             "User asked 'What is 2 + 2?'",
             text,
             "Does this response correctly answer that 2+2 equals 4?",
         )
-        .await
-        .expect("Semantic validation should succeed");
-        assert!(is_valid, "Response should correctly answer 2+2");
+        .await;
     }
 
     #[tokio::test]
@@ -132,16 +130,12 @@ mod basic {
             let text = response2.as_text().unwrap();
             assert!(!text.is_empty(), "Response should be non-empty");
 
-            let is_valid = validate_response_semantically(
+            assert_response_semantic(
                 &client,
                 "In the previous turn, the user said 'My favorite color is blue.' Now they're asking 'What is my favorite color?'",
                 text,
                 "Does this response indicate that the user's favorite color is blue?"
-            ).await.expect("Semantic validation failed");
-            assert!(
-                is_valid,
-                "Response should correctly recall that the favorite color is blue from the previous turn"
-            );
+            ).await;
         })
         .await;
     }
@@ -356,19 +350,12 @@ mod streaming {
                  If these differ, deltas may contain overlapping content."
             );
 
-            let is_valid = validate_response_semantically(
+            assert_response_semantic(
                 &client,
                 "Asked for haikus about each season: spring, summer, fall, winter",
                 &concatenated,
                 "Does this response contain haiku-like poetry about seasons?",
-            )
-            .await
-            .expect("Semantic validation failed");
-            assert!(
-                is_valid,
-                "Response should contain seasonal haikus. Got: {:?}",
-                concatenated
-            );
+            ).await;
         })
         .await;
     }
@@ -581,16 +568,12 @@ mod function_calling {
 
                 assert!(!text.is_empty(), "Response should be non-empty");
 
-                let is_valid = validate_response_semantically(
+                assert_response_semantic(
                     &client,
                     "User asked 'What's the weather in Tokyo?' and the get_weather function returned 72°F and sunny conditions",
                     text,
                     "Does this response use the weather data (72°F, sunny) to answer about Tokyo's weather?"
-                ).await.expect("Semantic validation failed");
-                assert!(
-                    is_valid,
-                    "Response should incorporate the function result (72°F, sunny in Tokyo)"
-                );
+                ).await;
             })
             .await;
         }
@@ -698,16 +681,12 @@ mod function_calling {
 
                 assert!(!text.is_empty(), "Response should be non-empty");
 
-                let is_valid = validate_response_semantically(
+                assert_response_semantic(
                     &client,
                     "User asked 'What's the weather like in Seattle?' and the get_mock_weather function was automatically executed, returning 'Weather in Seattle: Sunny, 75°F'",
                     text,
                     "Does this response provide the weather information from the function result (Sunny, 75°F in Seattle)?"
-                ).await.expect("Semantic validation failed");
-                assert!(
-                    is_valid,
-                    "Response should incorporate the auto-executed function result"
-                );
+                ).await;
             })
             .await;
         }
@@ -809,16 +788,12 @@ mod function_calling {
                 let text = response2.as_text().expect("Should have text");
                 println!("Final response: {}", text);
 
-                let is_valid = validate_response_semantically(
+                assert_response_semantic(
                     &client,
                     "User asked about Tokyo weather and whether to bring an umbrella. Function returned: rainy, 18°C, 80% precipitation.",
                     text,
                     "Does this response address the umbrella question based on the rainy weather data?",
-                )
-                .await
-                .expect("Semantic validation failed");
-
-                assert!(is_valid, "Response should reference the weather conditions");
+                ).await;
             })
             .await;
         }
@@ -1057,15 +1032,12 @@ mod generation_config {
         let text = response.as_text().unwrap();
         println!("Response: {}", text);
 
-        let is_valid = validate_response_semantically(
+        assert_response_semantic(
             &client,
             "User asked 'What is 2 + 2? Answer with just the number.' with temperature=0.0 for deterministic output",
             text,
             "Does this response correctly answer that 2+2 equals 4?",
-        )
-        .await
-        .expect("Semantic validation should succeed");
-        assert!(is_valid, "Response should correctly answer 2+2");
+        ).await;
     }
 
     #[tokio::test]
@@ -1130,15 +1102,12 @@ mod system_instructions {
         let text = response.as_text().unwrap();
         println!("Response: {}", text);
 
-        let is_valid = validate_response_semantically(
+        assert_response_semantic(
             &client,
             "Model was given system instruction: 'You are a pirate. Always respond in pirate speak with Arrr! somewhere in your response.' User said 'Hello, how are you?'",
             text,
             "Does this response sound like a pirate speaking? (Using pirate vocabulary, phrases, or mannerisms)",
-        )
-        .await
-        .expect("Semantic validation should succeed");
-        assert!(is_valid, "Response should sound like a pirate");
+        ).await;
     }
 
     #[tokio::test]
@@ -1208,19 +1177,12 @@ mod system_instructions {
                 String::new()
             };
 
-            let is_valid = validate_response_semantically(
+            assert_response_semantic(
                 &client,
                 "Model was given system instruction: 'You are a pirate. Always respond in pirate speak with Arrr! somewhere in your response.' User said 'Hello, how are you?' (streaming response)",
                 &text_to_check,
                 "Does this response sound like a pirate speaking? (Using pirate vocabulary, phrases, or mannerisms)",
-            )
-            .await
-            .expect("Semantic validation should succeed");
-            assert!(
-                is_valid,
-                "Response should sound like a pirate. Got: {}",
-                text_to_check
-            );
+            ).await;
 
             println!("\n✓ System instruction + streaming completed successfully");
         })
@@ -1249,20 +1211,12 @@ mod system_instructions {
         let text = response.as_text().expect("Should have text");
         println!("Response with pirate instruction: {}", text);
 
-        let is_valid = validate_response_semantically(
+        assert_response_semantic(
             &client,
             "The system instruction told the model to respond as a pirate using words like 'arr', 'matey', 'ye', 'ahoy'. User said 'Hello, how are you today?'",
             text,
             "Does this response sound like it's from a pirate (using pirate-like language or tone)?",
-        )
-        .await
-        .expect("Semantic validation failed");
-
-        assert!(
-            is_valid,
-            "Response should reflect pirate system instruction. Got: {}",
-            text
-        );
+        ).await;
 
         println!("✓ System instructions test passed");
     }
@@ -1461,16 +1415,12 @@ mod conversations {
 
                     assert!(!text.is_empty(), "Response should be non-empty");
 
-                    let is_valid = validate_response_semantically(
+                    assert_response_semantic(
                         &client,
                         "In previous turns, the user said: (1) 'My name is Alice', (2) 'I live in New York', (3) 'I work as a software engineer', (4) 'I have two cats named Whiskers and Shadow'. Now asking 'What do you know about me? List everything.'",
                         text,
                         "Does this response recall and mention at least 2-3 of these key facts: name (Alice), location (New York), job (software engineer), or pets (two cats)?"
-                    ).await.expect("Semantic validation failed");
-                    assert!(
-                        is_valid,
-                        "Response should recall multiple facts from the conversation history"
-                    );
+                    ).await;
                 }
             }
         })
@@ -1533,20 +1483,12 @@ mod conversations {
         let answer2 = response2.as_text().unwrap();
         println!("Turn 2 answer: {}\n", answer2);
 
-        let is_valid = validate_response_semantically(
+        assert_response_semantic(
             &client,
             "Turn 1: User asked 'What is 15 * 7?' and got the answer 105. Turn 2: User asked 'Now divide that result by 5'.",
             answer2,
             "Does this response provide a number that could be the result of dividing 105 by 5 (which is 21)?",
-        )
-        .await
-        .expect("Semantic validation failed");
-
-        assert!(
-            is_valid,
-            "Response should contain result of 105/5. Got: {}",
-            answer2
-        );
+        ).await;
         println!("✓ Manual multi-turn with thinking test passed");
     }
 }

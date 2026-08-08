@@ -378,6 +378,107 @@ async fn test_retry_on_transient_zero_retries() {
     );
 }
 
+/// A plain 5xx with no model-side flake marker is retried via
+/// `GenaiError::is_retryable` — the predicate widening the retry sweep
+/// relies on. Before that widening, only `is_transient_error` cases
+/// retried, so this test pins the new behavior.
+#[tokio::test]
+async fn test_retry_on_transient_retries_plain_5xx() {
+    let call_count = Arc::new(AtomicU32::new(0));
+    let count = call_count.clone();
+
+    let result = retry_on_transient(1, || {
+        let count = count.clone();
+        async move {
+            let attempt = count.fetch_add(1, Ordering::SeqCst);
+            if attempt == 0 {
+                Err(GenaiError::Api {
+                    status_code: 503,
+                    message: "The service is currently unavailable.".to_string(),
+                    request_id: None,
+                    retry_after: None,
+                })
+            } else {
+                Ok("recovered".to_string())
+            }
+        }
+    })
+    .await;
+
+    assert!(result.is_ok());
+    assert_eq!(
+        call_count.load(Ordering::SeqCst),
+        2,
+        "A plain 503 should be retried"
+    );
+}
+
+/// A 400 invalid_request (e.g. a rejected fixture) carries neither
+/// transient marker, so it must fail on the first attempt — the property
+/// the retry-then-assert-strictly sweep depends on.
+#[tokio::test]
+async fn test_retry_on_transient_invalid_request_fails_first_attempt() {
+    let call_count = Arc::new(AtomicU32::new(0));
+    let count = call_count.clone();
+
+    let result = retry_on_transient(3, || {
+        let count = count.clone();
+        async move {
+            count.fetch_add(1, Ordering::SeqCst);
+            Err::<String, _>(GenaiError::Api {
+                status_code: 400,
+                message: "invalid_request: Provided content is invalid.".to_string(),
+                request_id: None,
+                retry_after: None,
+            })
+        }
+    })
+    .await;
+
+    assert!(result.is_err());
+    assert_eq!(
+        call_count.load(Ordering::SeqCst),
+        1,
+        "A 400 invalid_request must not be retried"
+    );
+}
+
+/// A retryable error whose server-sent Retry-After exceeds what a harness
+/// timeout budget can afford aborts the retry immediately, surfacing the
+/// real error instead of sleeping toward an opaque timeout. No wall clock
+/// is spent, so this also pins that the abort happens before the sleep.
+#[tokio::test]
+async fn test_retry_on_transient_aborts_on_long_retry_after() {
+    let call_count = Arc::new(AtomicU32::new(0));
+    let count = call_count.clone();
+
+    let start = std::time::Instant::now();
+    let result = retry_on_transient(3, || {
+        let count = count.clone();
+        async move {
+            count.fetch_add(1, Ordering::SeqCst);
+            Err::<String, _>(GenaiError::Api {
+                status_code: 429,
+                message: "Rate limited".to_string(),
+                request_id: None,
+                retry_after: Some(std::time::Duration::from_secs(30)),
+            })
+        }
+    })
+    .await;
+
+    assert!(result.is_err());
+    assert_eq!(
+        call_count.load(Ordering::SeqCst),
+        1,
+        "A Retry-After beyond the cap must abort instead of retrying"
+    );
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(5),
+        "The abort must happen without sleeping out the requested delay"
+    );
+}
+
 // =============================================================================
 // Error Matching Pattern Tests
 // =============================================================================

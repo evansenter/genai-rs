@@ -339,6 +339,8 @@ Prefer the specific method for your use case:
 Group related builder calls together:
 
 ```rust,ignore
+use genai_rs::CallableFunction;
+
 client.interaction()
     // Target
     .with_model("gemini-3-flash-preview")
@@ -348,7 +350,7 @@ client.interaction()
     // Input
     .with_text("Current question")
     // Tools
-    .add_function(get_weather.declaration())
+    .add_function(GetWeatherCallable.declaration())
     // Execute
     .create()
     .await?;

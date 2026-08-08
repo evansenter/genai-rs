@@ -37,13 +37,18 @@ use tokio::time::sleep;
 #[allow(dead_code)]
 pub const DEFAULT_MAX_RETRIES: u32 = 3;
 
-/// Checks if an error is a transient API error that should be retried.
+/// Checks if an error is a known model-side transient flake that should be
+/// retried.
 ///
 /// Currently detects:
-/// - Spanner UTF-8 errors (Google backend issue with stateful conversations)
+/// - Spanner UTF-8 errors (Google backend issue with stateful conversations;
+///   both "spanner" and "utf-8" must appear in the message)
+/// - 400s carrying "invalid json syntax" (the model occasionally emits
+///   invalid JSON in structured output)
 ///
-/// The detection is specific to avoid false positives - both "spanner" and "utf-8"
-/// must appear in the error message.
+/// Transport-level transience (network, timeouts, 429, 5xx) is
+/// [`GenaiError::is_retryable`]'s job; callers that want both compose the
+/// two predicates.
 #[allow(dead_code)]
 pub fn is_transient_error(err: &GenaiError) -> bool {
     match err {
@@ -65,9 +70,19 @@ pub fn is_transient_error(err: &GenaiError) -> bool {
 
 /// Retries an async operation on transient API errors with exponential backoff.
 ///
-/// This is useful for working around transient Google API backend issues,
-/// such as the Spanner UTF-8 error that occasionally occurs with stateful
-/// conversations (see issue #60).
+/// Retries both this module's known model-side flakes ([`is_transient_error`])
+/// and the crate's retryable transport classes ([`GenaiError::is_retryable`]:
+/// network errors, timeouts, 429, 5xx). Anything outside those two
+/// predicates returns immediately — a 400 `invalid_request` fixture
+/// rejection carries neither marker, so it still fails loud on the first
+/// attempt.
+///
+/// Note: inside a `with_timeout` budget, a worst case adds up to 15s of
+/// sleep (the cumulative cap across all attempts; server-sent `Retry-After`
+/// delays are honored within it, and once the next delay would exceed it
+/// the retry aborts and the real error surfaces) plus up to three extra
+/// round-trips — a sustained outage can therefore still surface as a
+/// harness timeout rather than the underlying error.
 ///
 /// # Arguments
 ///
@@ -95,13 +110,30 @@ where
     Fut: Future<Output = Result<T, GenaiError>>,
 {
     let mut last_error = None;
+    let mut total_slept = Duration::ZERO;
 
     for attempt in 0..=max_retries {
         match operation().await {
             Ok(result) => return Ok(result),
-            Err(err) if is_transient_error(&err) && attempt < max_retries => {
-                // Exponential backoff: 1s, 2s, 4s, ...
-                let delay = Duration::from_secs(1 << attempt);
+            Err(err)
+                if (is_transient_error(&err) || err.is_retryable()) && attempt < max_retries =>
+            {
+                // Exponential backoff: 1s, 2s, 4s, ... — but honor a
+                // server-sent Retry-After when it asks for longer. Retrying
+                // *before* the requested delay just earns another 429, and
+                // sleeping out long delays inside a with_timeout budget
+                // surfaces as an opaque harness timeout — so total sleep is
+                // capped at 15s across all attempts, and once the next delay
+                // would exceed it the real error surfaces immediately.
+                let backoff = Duration::from_secs(1 << attempt);
+                let delay = match err.retry_after() {
+                    Some(ra) => ra.max(backoff),
+                    None => backoff,
+                };
+                if total_slept + delay > Duration::from_secs(15) {
+                    return Err(err);
+                }
+                total_slept += delay;
                 println!(
                     "Transient error on attempt {} of {}, retrying in {:?}: {:?}",
                     attempt + 1,
@@ -745,15 +777,17 @@ pub const SAMPLE_VIDEO_URL: &str = "gs://cloud-samples-data/video/animals.mp4";
 #[allow(dead_code)]
 pub const TINY_RED_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
 
-/// Small WAV audio header (minimal valid WAV for testing)
-/// This is a 44-byte WAV header with no actual audio data
+/// Small WAV audio clip: 16-bit mono 44.1kHz, 100 frames (~2ms) of silence.
+/// The data chunk must be non-empty — as of 2026-08 the API rejects
+/// zero-length audio streams with 400 invalid_request.
 #[allow(dead_code)]
-pub const TINY_WAV_BASE64: &str = "UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+pub const TINY_WAV_BASE64: &str = "UklGRuwAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YcgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==";
 
-/// Minimal MP4 video file (ftyp box only) for testing base64 video input
-/// This is a minimal valid MP4 container header - the model may report it's empty/corrupt
+/// Tiny valid MP4: one 64x64 red H.264 frame (~1.5KB, ffmpeg-generated).
+/// Must contain real media data — as of 2026-08 the API rejects
+/// container-header-only files with 400 invalid_request.
 #[allow(dead_code)]
-pub const TINY_MP4_BASE64: &str = "AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDE=";
+pub const TINY_MP4_BASE64: &str = "AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAMWbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAAMgAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAkB0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAAMgAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAEAAAABAAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAADIAAAAAAABAAAAAAG4bWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAAAoAAAACABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABY21pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAASNzdGJsAAAAv3N0c2QAAAAAAAAAAQAAAK9hdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAEAAQABIAAAASAAAAAAAAAABFUxhdmM2MC4zMS4xMDIgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAANWF2Y0MBZAAK/+EAGGdkAAqs2UQmwEQAAAMABAAAAwAoPEiWWAEABmjr48siwP34+AAAAAAQcGFzcAAAAAEAAAABAAAAFGJ0cnQAAAAAAAByOAAAcjgAAAAYc3R0cwAAAAAAAAABAAAAAQAACAAAAAAcc3RzYwAAAAAAAAABAAAAAQAAAAEAAAABAAAAFHN0c3oAAAAAAAAC2wAAAAEAAAAUc3RjbwAAAAAAAAABAAADRgAAAGJ1ZHRhAAAAWm1ldGEAAAAAAAAAIWhkbHIAAAAAAAAAAG1kaXJhcHBsAAAAAAAAAAAAAAAALWlsc3QAAAAlqXRvbwAAAB1kYXRhAAAAAQAAAABMYXZmNjAuMTYuMTAwAAAACGZyZWUAAALjbWRhdAAAAq0GBf//qdxF6b3m2Ui3lizYINkj7u94MjY0IC0gY29yZSAxNjQgcjMxMDggMzFlMTlmOSAtIEguMjY0L01QRUctNCBBVkMgY29kZWMgLSBDb3B5bGVmdCAyMDAzLTIwMjMgLSBodHRwOi8vd3d3LnZpZGVvbGFuLm9yZy94MjY0Lmh0bWwgLSBvcHRpb25zOiBjYWJhYz0xIHJlZj0zIGRlYmxvY2s9MTowOjAgYW5hbHlzZT0weDM6MHgxMTMgbWU9aGV4IHN1Ym1lPTcgcHN5PTEgcHN5X3JkPTEuMDA6MC4wMCBtaXhlZF9yZWY9MSBtZV9yYW5nZT0xNiBjaHJvbWFfbWU9MSB0cmVsbGlzPTEgOHg4ZGN0PTEgY3FtPTAgZGVhZHpvbmU9MjEsMTEgZmFzdF9wc2tpcD0xIGNocm9tYV9xcF9vZmZzZXQ9LTIgdGhyZWFkcz0yIGxvb2thaGVhZF90aHJlYWRzPTEgc2xpY2VkX3RocmVhZHM9MCBucj0wIGRlY2ltYXRlPTEgaW50ZXJsYWNlZD0wIGJsdXJheV9jb21wYXQ9MCBjb25zdHJhaW5lZF9pbnRyYT0wIGJmcmFtZXM9MyBiX3B5cmFtaWQ9MiBiX2FkYXB0PTEgYl9iaWFzPTAgZGlyZWN0PTEgd2VpZ2h0Yj0xIG9wZW5fZ29wPTAgd2VpZ2h0cD0yIGtleWludD0yNTAga2V5aW50X21pbj01IHNjZW5lY3V0PTQwIGludHJhX3JlZnJlc2g9MCByY19sb29rYWhlYWQ9NDAgcmM9Y3JmIG1idHJlZT0xIGNyZj0yMy4wIHFjb21wPTAuNjAgcXBtaW49MCBxcG1heD02OSBxcHN0ZXA9NCBpcF9yYXRpbz0xLjQwIGFxPTE6MS4wMACAAAAAJmWIhAA///7mdfgU0wgaSTL8Q84/MVcp5wFs500OH1UoDGdRcGNv";
 
 /// Small 1x1 blue PNG image encoded as base64
 /// This is a minimal valid PNG for testing multi-image comparisons
@@ -912,16 +946,22 @@ pub async fn validate_response_semantically(
     if let Some(text) = validation.as_text()
         && let Ok(json) = serde_json::from_str::<serde_json::Value>(text)
     {
-        let is_valid = json
-            .get("is_valid")
-            .and_then(|v| v.as_bool())
-            // Design decision: Default to valid if the boolean is missing or malformed.
-            // This favors test reliability (avoiding false negatives from API format changes)
-            // over catching edge cases where Gemini might return invalid but we can't parse it.
-            // The tradeoff is acceptable because: (1) structured output is typically reliable,
-            // (2) we log the reason for debugging, and (3) blocking tests on parse errors
-            // would make tests fragile to API evolution.
-            .unwrap_or(true);
+        let verdict = json.get("is_valid").and_then(|v| v.as_bool());
+        if verdict.is_none() {
+            // Same greppable marker as the transient-error skip path, so a
+            // drifted structured-output contract can't go quietly green
+            // suite-wide — the CI marker count picks this up too.
+            println!(
+                "SEMANTIC_VALIDATION_SKIPPED (missing-verdict): is_valid absent or non-boolean, assuming valid"
+            );
+        }
+        // Design decision: Default to valid if the boolean is missing or malformed.
+        // This favors test reliability (avoiding false negatives from API format changes)
+        // over catching edge cases where Gemini might return invalid but we can't parse it.
+        // The tradeoff is acceptable because: (1) structured output is typically reliable,
+        // (2) we log the reason for debugging, and (3) blocking tests on parse errors
+        // would make tests fragile to API evolution.
+        let is_valid = verdict.unwrap_or(true);
 
         let reason = json
             .get("reason")
@@ -945,15 +985,15 @@ pub async fn validate_response_semantically(
     let response_preview = validation
         .as_text()
         .map(|t| {
-            if t.len() > 100 {
-                format!("{}...", &t[..100])
+            if t.chars().count() > 100 {
+                format!("{}...", t.chars().take(100).collect::<String>())
             } else {
                 t.to_string()
             }
         })
         .unwrap_or_else(|| "(no text)".to_string());
     println!(
-        "Warning: Could not parse semantic validation response (text: '{}'), assuming valid",
+        "SEMANTIC_VALIDATION_SKIPPED (unparseable-verdict): could not parse validator response (text: '{}'), assuming valid",
         response_preview
     );
     Ok(true)
@@ -966,22 +1006,32 @@ pub async fn validate_response_semantically(
 ///
 /// # Panics
 ///
-/// - If the semantic validation API call fails
 /// - If the response is not semantically valid
+/// - If the validator call fails with anything other than the tolerated
+///   transient classes below — `GenaiError` is `#[non_exhaustive]`, so new
+///   variants fail loud by default
+///
+/// The validator call itself gets a single [`retry_on_transient`] retry
+/// (normally ~1s of backoff — a server-sent `Retry-After` can raise that
+/// up to the helper's 15s cumulative sleep cap — plus one extra
+/// round-trip; deliberately smaller than the primary-call budget, since
+/// many callers nest both retry chains inside one `with_timeout`
+/// budget). Transient
+/// failures that survive the retries (per [`GenaiError::is_retryable`] —
+/// network errors, timeouts, 5xx, 429 — plus this module's
+/// [`is_transient_error`] cases, which cover known model-side
+/// structured-output flakes) are logged with a greppable
+/// SEMANTIC_VALIDATION_SKIPPED marker (counted and surfaced as a
+/// `::warning::` annotation by the CI integration step) and treated as a
+/// pass — the validator is a second API round-trip that can fail
+/// independently of the input under test.
 ///
 /// # Example
 ///
 /// ```ignore
-/// // Instead of:
-/// let is_valid = validate_response_semantically(&client, context, &text, question)
-///     .await
-///     .expect("Semantic validation failed");
-/// assert!(is_valid, "Response should...");
-///
-/// // Use:
 /// assert_response_semantic(&client, context, &text, question).await;
 /// ```
-// Note: Used in multimodal_tests.rs and temp_file_tests.rs but warning appears
+// Note: Used across the integration test files, but the warning appears
 // because each test file compiles independently
 #[allow(dead_code)]
 pub async fn assert_response_semantic(
@@ -990,15 +1040,33 @@ pub async fn assert_response_semantic(
     response_text: &str,
     validation_question: &str,
 ) {
-    let is_valid =
+    // One retry only: the validator is best-effort with a tolerated-skip
+    // fallback, and it often runs nested inside a with_timeout budget the
+    // primary call's own retry chain already draws down — a full
+    // DEFAULT_MAX_RETRIES chain here could turn a transient blip into a
+    // less-diagnosable harness timeout.
+    match retry_on_transient(1, || {
         validate_response_semantically(client, context, response_text, validation_question)
-            .await
-            .expect("Semantic validation API call failed");
-    assert!(
-        is_valid,
-        "Semantic validation failed.\nQuestion: {}\nResponse: {}",
-        validation_question, response_text
-    );
+    })
+    .await
+    {
+        Ok(is_valid) => assert!(
+            is_valid,
+            "Semantic validation failed.\nQuestion: {}\nResponse: {}",
+            validation_question, response_text
+        ),
+        // The validator is a second API round-trip that can fail
+        // independently of the input under test — tolerate transient
+        // failures (is_retryable: transport/429/5xx/timeouts; plus this
+        // module's is_transient_error: empirically model-side-flaky 400s)
+        // with a greppable marker, but panic on everything else so a broken
+        // validator can't go quietly green suite-wide.
+        Err(e) if e.is_retryable() || is_transient_error(&e) => eprintln!(
+            "SEMANTIC_VALIDATION_SKIPPED (transient validator error): {:?}",
+            e
+        ),
+        Err(e) => panic!("Semantic validation call failed non-transiently: {:?}", e),
+    }
 }
 
 // =============================================================================

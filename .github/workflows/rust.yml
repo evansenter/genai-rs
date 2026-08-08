@@ -35,8 +35,10 @@ jobs:
         run: sudo apt-get update || true; sudo apt-get install -y mold
       - name: Run unit tests
         run: cargo nextest run --workspace
-      - name: Run doctests
+      - name: Run doctests (default features)
         run: cargo test --workspace --doc
+      - name: Run doctests (all features)
+        run: cargo test --workspace --all-features --doc
 
   test-strict-unknown:
     name: Test Suite (strict-unknown)
@@ -101,11 +103,29 @@ jobs:
         run: sudo apt-get update || true; sudo apt-get install -y mold
       - name: Run integration tests (${{ matrix.group }})
         run: |
-          set -e
+          set -eo pipefail
           for test in ${{ matrix.tests }}; do
             echo "::group::Running $test"
-            cargo nextest run --test $test --run-ignored all
+            # --success-output=final keeps passing-test output (notably the
+            # SEMANTIC_VALIDATION_SKIPPED marker) greppable in CI logs.
+            # Capture the status instead of dying on it so the group is
+            # closed and the skip warning still fires on a failing run —
+            # the run where the skip count is most diagnostic.
+            rc=0
+            cargo nextest run --test $test --run-ignored all --success-output=final 2>&1 | tee "/tmp/$test.log" || rc=$?
             echo "::endgroup::"
+            skips=$(grep -c SEMANTIC_VALIDATION_SKIPPED "/tmp/$test.log" || true)
+            if [ "${skips:-0}" -gt 3 ]; then
+              # The tolerated-skip escape hatch is only meaningful while it
+              # stays rare — past this threshold the run's green can't be
+              # trusted, so fail instead of warn. Escalate only a passing
+              # run: a real nextest failure keeps its own exit code.
+              echo "::error::$test: $skips semantic validations passed vacuously — too many to trust this run (grep SEMANTIC_VALIDATION_SKIPPED in the log for causes)"
+              if [ "$rc" -eq 0 ]; then rc=1; fi
+            elif [ "${skips:-0}" -gt 0 ]; then
+              echo "::warning::$test: $skips semantic validation(s) passed vacuously (grep SEMANTIC_VALIDATION_SKIPPED in the log for causes)"
+            fi
+            [ "$rc" -eq 0 ] || exit "$rc"
           done
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -144,10 +164,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install mold linker
         run: sudo apt-get update || true; sudo apt-get install -y mold
-      - name: Check documentation
-        run: cargo doc --workspace --no-deps --document-private-items
+      - name: Check documentation (all features)
+        run: cargo doc --workspace --no-deps --all-features --document-private-items
         env:
           RUSTDOCFLAGS: -D warnings
+      - name: Check documentation (docs.rs feature set)
+        # Mirrors [package.metadata.docs.rs] (features AND the docsrs
+        # rustdoc-arg) on stable: gates warnings specific to the published
+        # feature set. Nightly-only breakage (docs.rs builds on nightly) is
+        # covered by the nightly step in release.yml's validate job (and by
+        # release checklist step 0 in CLAUDE.md), not this job.
+        run: cargo doc --workspace --no-deps --features antigravity
+        env:
+          RUSTDOCFLAGS: --cfg docsrs -D warnings
 
   msrv:
     name: MSRV Check
@@ -258,14 +287,16 @@ jobs:
           done
       - name: Check size limits
         run: |
-          # Fail if any example exceeds 12MB (raised from 10MB when the
-          # 2026-05-20 revision surface + reqwest 0.13 pushed audio_input
-          # to ~10.1MB; guards against runaway growth, not absolute size)
+          # Fail if any example exceeds 16MB (raised from 10MB for the
+          # 2026-05-20 revision surface + reqwest 0.13 at ~10.1MB, then past
+          # 12MB when stable-toolchain drift pushed auto_function_calling to
+          # ~13MB; 16MB keeps ~20% headroom over that so routine toolchain
+          # drift doesn't re-trip it. Guards runaway growth, not absolute size)
           for f in target/release/examples/*; do
             if [ -f "$f" ] && [[ "$(basename "$f")" != *.d ]]; then
               size=$(stat -c%s "$f")
-              if [ "$size" -gt 12582912 ]; then
-                echo "::error::Binary $(basename $f) exceeds 12MB limit: $size bytes"
+              if [ "$size" -gt 16777216 ]; then
+                echo "::error::Binary $(basename $f) exceeds 16MB limit: $size bytes"
                 exit 1
               fi
             fi

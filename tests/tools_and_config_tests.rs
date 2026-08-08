@@ -29,8 +29,7 @@
 mod common;
 
 use common::{
-    get_client, interaction_builder, retry_on_any_error, stateful_builder,
-    validate_response_semantically,
+    assert_response_semantic, get_client, interaction_builder, retry_on_any_error, stateful_builder,
 };
 use genai_rs::{
     FunctionCallingMode, FunctionDeclaration, GenerationConfig, InteractionStatus, ThinkingLevel,
@@ -71,15 +70,12 @@ mod google_search {
                     let text = response.as_text().unwrap();
                     println!("Response with Google Search: {}", text);
                     // Should provide current/recent information - use semantic validation
-                    let is_valid = validate_response_semantically(
+                    assert_response_semantic(
                         &client,
                         "Asked about current weather in New York City with Google Search enabled",
                         text,
                         "Does this response discuss weather, temperature, or conditions in New York?",
-                    )
-                    .await
-                    .expect("Semantic validation failed");
-                    assert!(is_valid, "Response should mention weather-related content");
+                    ).await;
                 }
 
                 // Verify grounding data is available via search steps
@@ -551,18 +547,12 @@ mod url_context {
                     let text = response.as_text().unwrap();
                     println!("URL Context response: {}", text);
                     // example.com has standard placeholder content - use semantic validation
-                    let is_valid = validate_response_semantically(
+                    assert_response_semantic(
                         &client,
                         "Asked to describe example.com (IANA reserved domain for documentation)",
                         text,
                         "Does this response describe example.com as a reserved/example domain or mention its illustrative/documentation purpose?",
-                    )
-                    .await
-                    .expect("Semantic validation failed");
-                    assert!(
-                        is_valid,
-                        "Response should describe content from example.com"
-                    );
+                    ).await;
                 }
             }
             Err(e) => {
@@ -1445,15 +1435,13 @@ mod sampling {
         let text = response.as_text().unwrap();
         println!("Top-p response: {}", text);
 
-        let is_valid = validate_response_semantically(
+        assert_response_semantic(
             &client,
             "Asked for the capital of France in one word",
             text,
             "Does this response identify Paris as the capital of France?",
         )
-        .await
-        .expect("Semantic validation failed");
-        assert!(is_valid, "Should answer Paris");
+        .await;
     }
 
     /// Test combining multiple generation config options.

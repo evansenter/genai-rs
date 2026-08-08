@@ -12,19 +12,21 @@
 //!
 //! # Prerequisites
 //!
-//! - `GEMINI_API_KEY` environment variable must be set
+//! - `GEMINI_API_KEY` environment variable must be set (exception:
+//!   `example_fixtures_match_test_fixtures` needs no key and runs in the
+//!   keyless unit-test CI pass)
 //! - Tests create temporary files that are automatically cleaned up
 
 mod common;
 
 use base64::Engine;
 use common::{
-    TINY_PDF_BASE64, TINY_RED_PNG_BASE64, TINY_WAV_BASE64, assert_response_semantic, get_client,
-    stateful_builder,
+    TINY_BLUE_PNG_BASE64, TINY_MP4_BASE64, TINY_PDF_BASE64, TINY_RED_PNG_BASE64, TINY_WAV_BASE64,
+    assert_response_semantic, get_client, stateful_builder,
 };
 use genai_rs::{
     Content, InteractionInput, InteractionStatus, audio_from_file, document_from_file,
-    image_from_file,
+    image_from_file, video_from_file,
 };
 use tempfile::TempDir;
 
@@ -62,11 +64,13 @@ async fn test_image_from_temp_file() {
         image_content,
     ];
 
-    let response = stateful_builder(&client)
-        .with_input(InteractionInput::Content(contents))
-        .create()
-        .await
-        .expect("Image interaction failed");
+    let response = crate::retry_request!([client, contents] => {
+        stateful_builder(&client)
+            .with_input(InteractionInput::Content(contents))
+            .create()
+            .await
+    })
+    .expect("Image interaction failed");
 
     assert_eq!(response.status, InteractionStatus::Completed);
     assert!(response.has_text(), "Should have text response");
@@ -114,11 +118,13 @@ async fn test_image_mismatched_mime() {
         image_content,
     ];
 
-    let response = stateful_builder(&client)
-        .with_input(InteractionInput::Content(contents))
-        .create()
-        .await
-        .expect("Image interaction failed");
+    let response = crate::retry_request!([client, contents] => {
+        stateful_builder(&client)
+            .with_input(InteractionInput::Content(contents))
+            .create()
+            .await
+    })
+    .expect("Image interaction failed");
 
     assert_eq!(response.status, InteractionStatus::Completed);
     println!("Response: {:?}", response.as_text());
@@ -156,11 +162,13 @@ async fn test_pdf_from_temp_file() {
         doc_content,
     ];
 
-    let response = stateful_builder(&client)
-        .with_input(InteractionInput::Content(contents))
-        .create()
-        .await
-        .expect("PDF interaction failed");
+    let response = crate::retry_request!([client, contents] => {
+        stateful_builder(&client)
+            .with_input(InteractionInput::Content(contents))
+            .create()
+            .await
+    })
+    .expect("PDF interaction failed");
 
     assert_eq!(response.status, InteractionStatus::Completed);
     assert!(response.has_text(), "Should have text response");
@@ -230,11 +238,13 @@ async fn test_txt_file_as_text_input() {
         file_content
     );
 
-    let response = stateful_builder(&client)
-        .with_text(&prompt)
-        .create()
-        .await
-        .expect("TXT interaction failed");
+    let response = crate::retry_request!([client, prompt] => {
+        stateful_builder(&client)
+            .with_text(&prompt)
+            .create()
+            .await
+    })
+    .expect("TXT interaction failed");
 
     assert_eq!(response.status, InteractionStatus::Completed);
     let text = response.as_text().unwrap();
@@ -306,11 +316,13 @@ async fn test_markdown_file_as_text_input() {
         file_content
     );
 
-    let response = stateful_builder(&client)
-        .with_text(&prompt)
-        .create()
-        .await
-        .expect("Markdown interaction failed");
+    let response = crate::retry_request!([client, prompt] => {
+        stateful_builder(&client)
+            .with_text(&prompt)
+            .create()
+            .await
+    })
+    .expect("Markdown interaction failed");
 
     assert_eq!(response.status, InteractionStatus::Completed);
     let text = response.as_text().unwrap();
@@ -379,11 +391,13 @@ async fn test_csv_file_as_text_input() {
         file_content
     );
 
-    let response = stateful_builder(&client)
-        .with_text(&prompt)
-        .create()
-        .await
-        .expect("CSV interaction failed");
+    let response = crate::retry_request!([client, prompt] => {
+        stateful_builder(&client)
+            .with_text(&prompt)
+            .create()
+            .await
+    })
+    .expect("CSV interaction failed");
 
     assert_eq!(response.status, InteractionStatus::Completed);
     let text = response.as_text().unwrap();
@@ -433,11 +447,13 @@ async fn test_audio_from_temp_file() {
         audio_content,
     ];
 
-    let response = stateful_builder(&client)
-        .with_input(InteractionInput::Content(contents))
-        .create()
-        .await
-        .expect("Audio interaction failed");
+    let response = crate::retry_request!([client, contents] => {
+        stateful_builder(&client)
+            .with_input(InteractionInput::Content(contents))
+            .create()
+            .await
+    })
+    .expect("Audio interaction failed");
 
     assert_eq!(response.status, InteractionStatus::Completed);
     assert!(response.has_text(), "Should have text response");
@@ -448,11 +464,138 @@ async fn test_audio_from_temp_file() {
 // Video File Tests
 // =============================================================================
 
-// Note: Video test removed - The minimal MP4 header (ftyp box only) is not a valid
-// video file that the Gemini API can process. The API returns 400 "Invalid video data".
-// Testing video functionality would require a real video file, which is too large
-// for inline test fixtures. The video_from_file() function is tested via the
-// file loading mechanics (same as audio/image) which is covered by other tests.
+/// Tests loading a video file from a temp file using video_from_file().
+///
+/// Uses the TINY_MP4_BASE64 fixture (a real one-frame 64x64 H.264 clip, ~1.5KB),
+/// so the API accepts it as valid video data.
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_video_from_temp_file() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let video_path = temp_dir.path().join("test_video.mp4");
+
+    let video_bytes = base64::engine::general_purpose::STANDARD
+        .decode(TINY_MP4_BASE64)
+        .expect("Failed to decode base64");
+    std::fs::write(&video_path, &video_bytes).expect("Failed to write video");
+
+    let video_content = video_from_file(&video_path)
+        .await
+        .expect("Failed to load video from file");
+
+    let contents = vec![
+        Content::text("Is this a video file? Answer yes or no."),
+        video_content,
+    ];
+
+    let response = crate::retry_request!([client, contents] => {
+        stateful_builder(&client)
+            .with_input(InteractionInput::Content(contents))
+            .create()
+            .await
+    })
+    .expect("Video interaction failed");
+
+    assert_eq!(response.status, InteractionStatus::Completed);
+    assert!(response.has_text(), "Should have text response");
+    println!("Video response: {:?}", response.as_text());
+}
+
+// =============================================================================
+// Fixture Drift Guard
+// =============================================================================
+
+/// Guards against example fixture copies drifting from the canonical test
+/// fixtures. Examples embed verbatim copies of these constants and are never
+/// run in CI, so a fixture update that misses one silently sends that
+/// example down its error branch. Runs without an API key.
+///
+/// Self-maintaining: walks examples/**/*.rs for `_BASE64: <type> = <str>`
+/// declarations and extracts the quoted literal, so it also catches raw
+/// strings, `&'static str`, a literal rustfmt moved to its own line, and
+/// stale copies in *new* examples that follow the naming convention. The
+/// `checked` floor and the every-canonical-seen check below backstop the
+/// matcher itself: reformatting or removing a known copy fails here.
+#[test]
+fn example_fixtures_match_test_fixtures() {
+    let canonical = [
+        ("TINY_WAV_BASE64", TINY_WAV_BASE64),
+        ("TINY_MP4_BASE64", TINY_MP4_BASE64),
+        ("TINY_PDF_BASE64", TINY_PDF_BASE64),
+        ("TINY_RED_PNG_BASE64", TINY_RED_PNG_BASE64),
+        ("TINY_BLUE_PNG_BASE64", TINY_BLUE_PNG_BASE64),
+    ];
+    let examples_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/examples");
+    let mut checked = 0;
+    let mut seen = std::collections::HashSet::new();
+    let mut stack = vec![std::path::PathBuf::from(examples_dir)];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).expect("read examples dir") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                let src = std::fs::read_to_string(&path).expect("read example");
+                let mut from = 0;
+                while let Some(hit) = src[from..].find("_BASE64") {
+                    let after = from + hit + "_BASE64".len();
+                    from = after;
+                    // Declarations look like `X_BASE64: <type> = <literal>`:
+                    // a colon, then an `=` before the opening quote, all
+                    // within a short span. Format-string interpolation
+                    // (`{X_BASE64:?}`) and doc-comment mentions have the
+                    // colon but not the `= ... "` shape, so they're skipped.
+                    let tail = &src[after..];
+                    if !tail.trim_start().starts_with(':') {
+                        continue;
+                    }
+                    let window_end = tail.char_indices().nth(200).map_or(tail.len(), |(i, _)| i);
+                    let window = &tail[..window_end];
+                    let (Some(eq), Some(q1)) = (window.find('='), window.find('"')) else {
+                        continue;
+                    };
+                    if eq > q1 {
+                        continue;
+                    }
+                    // Base64 contains no quotes or escapes, so the literal is
+                    // exactly the span between the next two quote characters
+                    // (works for both "..." and r#"..."# forms).
+                    let lit = &tail[q1 + 1..];
+                    let q2 = lit.find('"').expect("unterminated string literal");
+                    let value = &lit[..q2];
+                    let matched = canonical.iter().find(|(_, v)| *v == value);
+                    assert!(
+                        matched.is_some(),
+                        "{} embeds a base64 fixture this guard doesn't recognize: {}... — \
+                         if it's a copy of a tests/common fixture it has drifted; if it's \
+                         a deliberately new fixture, add it to this guard's canonical list",
+                        path.display(),
+                        value.chars().take(40).collect::<String>()
+                    );
+                    seen.insert(matched.expect("asserted above").0);
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert!(
+        checked >= 5,
+        "expected at least the five known fixture copies, found {checked} — \
+         did the declaration shape change?"
+    );
+    for (name, _) in &canonical {
+        assert!(
+            seen.contains(name),
+            "no example embeds {name} — if the example that used it was \
+             removed or switched fixtures, update this guard's canonical list"
+        );
+    }
+}
 
 // =============================================================================
 // Error Handling Tests

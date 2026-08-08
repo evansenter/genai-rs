@@ -16,8 +16,7 @@
 mod common;
 
 use common::{
-    consume_stream, get_client, interaction_builder, stateful_builder,
-    validate_response_semantically,
+    assert_response_semantic, consume_stream, get_client, interaction_builder, stateful_builder,
 };
 use futures_util::StreamExt;
 use genai_rs::{InteractionStatus, StreamChunk};
@@ -434,17 +433,11 @@ async fn test_multiturn_stream_event_ids() {
     }
 
     // Verify context was preserved - use semantic validation
-    let is_valid = validate_response_semantically(
+    assert_response_semantic(
         &client,
         "Turn 1 established 'My name is Alice'. Turn 2 asked 'What is my name?'",
         &result.collected_text,
         "Does this response identify the name as Alice?",
     )
-    .await
-    .expect("Semantic validation failed");
-    assert!(
-        is_valid,
-        "Response should recall the name from Turn 1. Got: {}",
-        result.collected_text
-    );
+    .await;
 }

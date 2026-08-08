@@ -14,8 +14,8 @@
 mod common;
 
 use common::{
-    get_client, interaction_builder, is_long_conversation_api_error, stateful_builder,
-    validate_response_semantically,
+    assert_response_semantic, get_client, interaction_builder, is_long_conversation_api_error,
+    stateful_builder,
 };
 use genai_rs::{FunctionDeclaration, InteractionStatus, Step};
 use serde_json::json;
@@ -245,15 +245,13 @@ async fn test_conversation_function_then_text() {
     println!("Turn 3 text: {}", text);
 
     // Should reference the weather context
-    let is_valid = validate_response_semantically(
+    assert_response_semantic(
         &client,
         "Function returned 25°C sunny weather for Tokyo. User asked if they should bring a jacket.",
         text,
         "Does this response use the weather context (warm/sunny, 25°C) to advise about whether to bring a jacket?",
     )
-    .await
-    .expect("Semantic validation failed");
-    assert!(is_valid, "Response should reference weather context");
+    .await;
 }
 
 // =============================================================================
@@ -319,15 +317,13 @@ async fn test_conversation_branch() {
     println!("Branch response (from turn 2): {}", text);
 
     // Should know about color and number from turns 1-2
-    let is_valid = validate_response_semantically(
+    assert_response_semantic(
         &client,
         "User said favorite color is red (turn 1), favorite number is 7 (turn 2), then asked about favorites. Branch from turn 2 - cat was only mentioned in turn 3.",
         text,
         "Does this response mention the user's favorite color (red) or favorite number (7)?",
     )
-    .await
-    .expect("Semantic validation failed");
-    assert!(is_valid, "Branch should have context from earlier turns");
+    .await;
 
     // Continue from turn 3 to verify it still works
     let prev_id = response3.id.clone().expect("id should exist");
@@ -343,15 +339,13 @@ async fn test_conversation_branch() {
     let continue_text = continue_response.as_text().unwrap();
     println!("Continue response (from turn 3): {}", continue_text);
 
-    let is_valid = validate_response_semantically(
+    assert_response_semantic(
         &client,
         "User said their favorite animal is a cat in turn 3, then asked what their favorite animal is",
         continue_text,
         "Does this response correctly identify cat as the user's favorite animal?",
     )
-    .await
-    .expect("Semantic validation failed");
-    assert!(is_valid, "Continue should remember the cat from turn 3");
+    .await;
 }
 
 // =============================================================================
@@ -517,15 +511,13 @@ async fn test_conversation_builder_fluent_api() {
     println!("Response: {}", text);
 
     // Model should remember both facts
-    let is_valid = validate_response_semantically(
+    assert_response_semantic(
         &client,
         "User said their name is Alice and they love hiking, then asked what their name is and what they enjoy",
         text,
         "Does this response correctly recall that the user's name is Alice AND that they enjoy hiking?",
     )
-    .await
-    .expect("Semantic validation failed");
-    assert!(is_valid, "Response should mention both Alice and hiking");
+    .await;
 }
 
 #[tokio::test]
@@ -565,15 +557,13 @@ async fn test_explicit_turns_context_preservation() {
     println!("Response: {}", text);
 
     // Should remember both destination and interest
-    let is_valid = validate_response_semantically(
+    assert_response_semantic(
         &client,
         "User discussed planning a trip to Tokyo and mentioned loving local cuisine. Then asked where they're going and what they enjoy.",
         text,
         "Does this response correctly recall that the user is going to Tokyo/Japan AND that they enjoy food/cuisine?",
     )
-    .await
-    .expect("Semantic validation failed");
-    assert!(is_valid, "Response should mention Tokyo and food interests");
+    .await;
 }
 
 #[tokio::test]
@@ -601,13 +591,11 @@ async fn test_explicit_turns_single_user_message() {
     let text = response.as_text().unwrap();
     println!("Response: {}", text);
 
-    let is_valid = validate_response_semantically(
+    assert_response_semantic(
         &client,
         "Asked for the capital of France in one word",
         text,
         "Does this response identify Paris as the capital of France?",
     )
-    .await
-    .expect("Semantic validation failed");
-    assert!(is_valid, "Response should identify Paris as the capital");
+    .await;
 }

@@ -11,10 +11,10 @@ use genai_rs::{Client, Content, GenaiError};
 use std::env;
 use std::error::Error;
 
-// A minimal valid WAV file header (44 bytes) - for demonstration purposes only.
-// This contains no actual audio data, so the API may reject it or report it as empty/silent.
-// In real usage, load actual audio files with content.
-const DEMO_WAV_BASE64: &str = "UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+// A tiny valid WAV clip (100 frames of 16-bit mono silence) - for demonstration
+// purposes only. The API requires a non-empty data chunk; in real usage, load
+// actual audio files with content.
+const DEMO_WAV_BASE64: &str = "UklGRuwAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YcgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // =========================================================================
     println!("=== Example 1: Audio Transcription ===\n");
 
-    // Note: This uses a minimal WAV header for demonstration.
+    // Note: This uses a tiny silent WAV clip for demonstration.
     // In real usage, you would provide actual audio content.
     // Using with_content() with Content constructors
     let response = client
@@ -35,23 +35,27 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_model(model_name)
         .with_content(vec![
             Content::text(
-                "This is a demo audio file. In real usage, describe what you hear. \
-                 If the audio is silent or empty, just say 'No audio content detected.'",
+                "This is a short demo audio clip. Describe what you hear. \
+                 If it is silent, just say 'Silent audio.'",
             ),
             Content::audio_data(DEMO_WAV_BASE64, "audio/wav"),
         ])
         .create()
         .await;
 
+    // The demo fixture is known-valid (drift-guarded by tests), so a
+    // non-transient failure is a real error — surface it. Transient blips
+    // (per GenaiError::is_retryable) shouldn't hide the rest of the demo.
     match response {
         Ok(r) => {
             if let Some(text) = r.as_text() {
                 println!("Response: {text}\n");
             }
         }
-        Err(e) => {
-            println!("Note: Demo WAV may not be processable: {e}\n");
+        Err(e) if e.is_retryable() => {
+            println!("Note: transient API error, continuing demo: {e}\n");
         }
+        Err(e) => return Err(e.into()),
     }
 
     // =========================================================================

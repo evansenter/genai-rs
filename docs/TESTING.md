@@ -249,16 +249,18 @@ assert!(!result.collected_text.is_empty());
 
 ### Semantic Validation
 
-For behavioral tests where exact output varies:
+For behavioral tests where exact output varies, use the suite-wide helper
+(it retries the validator on transient errors and tolerates only what
+survives the retries — see the retry-and-tolerance policy note under
+[Minimal Test Assets](#minimal-test-assets)):
 
 ```rust,ignore
-let is_valid = validate_response_semantically(
+assert_response_semantic(
     &client,
     "User asked about weather in Tokyo",
     response.as_text().unwrap(),
     "Does the response mention Tokyo's weather?"
-).await?;
-assert!(is_valid);
+).await;
 ```
 
 ### Function Execution Error Detection
@@ -373,14 +375,20 @@ assert!(response.function_calls().len() > 0);
 For behavioral tests where the LLM's response content matters:
 
 ```rust,ignore
-let is_valid = validate_response_semantically(
+assert_response_semantic(
     &client,
     "Context: user asked X, function returned Y",
     response.as_text().unwrap(),
     "Does the response incorporate Y?"
-).await?;
-assert!(is_valid, "Response should use function result");
+).await;
 ```
+
+Use `assert_response_semantic` rather than calling
+`validate_response_semantically` directly — the helper retries the validator
+call on transient errors and asserts on the verdict, so a 503 on the
+validation round-trip doesn't hard-fail the test. Reach for the lower-level
+`validate_response_semantically` only when you need the verdict as a
+`Result` (e.g. inside a retry closure).
 
 **When to use semantic validation**:
 - Multi-turn context preservation ("Does this recall the user's name?")
@@ -415,22 +423,20 @@ assert!(text.contains("hik"));  // Trying to catch "hiking"
 
 ```rust,ignore
 // GOOD - Semantic validation handles natural language variability
-let is_valid = validate_response_semantically(
+assert_response_semantic(
     &client,
     "Asked about the capital of France",
     text,
     "Does this response correctly identify Paris as the capital of France?"
-).await?;
-assert!(is_valid);
+).await;
 
 // GOOD - For color identification
-let is_valid = validate_response_semantically(
+assert_response_semantic(
     &client,
     "Showed a red image",
     text,
     "Does this response identify the color as red or a shade of red?"
-).await?;
-assert!(is_valid);
+).await;
 ```
 
 ### Acceptable `.contains()` Usage
@@ -480,9 +486,28 @@ if response.has_unknown() {
 |----------|-------------|
 | `TINY_RED_PNG_BASE64` | 1x1 red PNG |
 | `TINY_BLUE_PNG_BASE64` | 1x1 blue PNG |
-| `TINY_WAV_BASE64` | Minimal WAV header |
-| `TINY_MP4_BASE64` | Minimal MP4 container |
+| `TINY_WAV_BASE64` | 100 frames of 16-bit mono silence (valid WAV) |
+| `TINY_MP4_BASE64` | One-frame 64x64 H.264 clip (valid MP4) |
 | `TINY_PDF_BASE64` | "Hello World" PDF |
+
+All fixtures are complete, well-formed files the API accepts. Tests
+exercising them on the non-streaming `create()` path retry transient
+transport errors on the primary call
+(`retry_request!`, keyed on `GenaiError::is_retryable` plus the module's
+`is_transient_error` model-side-flake cases) and then assert strictly —
+a validation rejection (e.g. 400 `invalid_request`) fails loudly on the
+first attempt, while a 503 blip does not redden the suite. (Exceptions:
+the streaming path, where the primary call is not a single `create()`,
+and the canary tests, kept out of scope for this pass.) Semantic
+validation via `assert_response_semantic` (the suite-wide helper; one
+deliberate direct `validate_response_semantically` call remains, inside a
+retry closure that needs the verdict as a `Result`) applies the same
+policy: the validator call is itself retried on transient errors, then
+the helper asserts on the verdict, panics on non-transient validator
+errors, and tolerates transients that survive the retries with a
+`SEMANTIC_VALIDATION_SKIPPED` marker (the CI integration step captures
+passing-test output via `--success-output=final`, counts the markers,
+and emits a `::warning::` annotation when any appear).
 
 ### Test Fixtures
 

@@ -222,6 +222,8 @@ let result = client
 
 2. **Function not declared:**
 ```rust,ignore
+use genai_rs::CallableFunction;
+
 // Explicitly add function
 let result = client
     .interaction()
@@ -254,10 +256,13 @@ let result = client
 
 **Diagnose:**
 ```rust,ignore
+use genai_rs::CallableFunction;
+use genai_rs_macros::tool;
+
 #[tool(city(description = "City name"))]
 fn get_weather(city: String) -> String {
-    println!("DEBUG: city = {:?}", city);  // Log arguments
-    // ...
+    println!("DEBUG: city = {:?}", city); // Log arguments
+    format!(r#"{{"city": "{city}"}}"#)
 }
 ```
 
@@ -265,8 +270,13 @@ fn get_weather(city: String) -> String {
 
 1. **Better parameter descriptions:**
 ```rust,ignore
+use genai_rs::CallableFunction;
+use genai_rs_macros::tool;
+
 #[tool(city(description = "The city name, e.g., 'Tokyo', 'New York City'"))]
-fn get_weather(city: String) -> String
+fn get_weather(city: String) -> String {
+    format!(r#"{{"city": "{city}"}}"#)
+}
 ```
 
 2. **Use enums for constrained values:**
