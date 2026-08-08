@@ -40,10 +40,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .await;
 
     // The demo fixture is known-valid (drift-guarded by tests), so a
-    // failure here is a real error — surface it.
-    let response = response?;
-    if let Some(text) = response.as_text() {
-        println!("Response: {text}\n");
+    // non-transient failure is a real error — surface it. Transient blips
+    // (per GenaiError::is_retryable) shouldn't hide the rest of the demo.
+    match response {
+        Ok(r) => {
+            if let Some(text) = r.as_text() {
+                println!("Response: {text}\n");
+            }
+        }
+        Err(e) if e.is_retryable() => {
+            println!("Note: transient API error, continuing demo: {e}\n");
+        }
+        Err(e) => return Err(e.into()),
     }
 
     // =========================================================================
