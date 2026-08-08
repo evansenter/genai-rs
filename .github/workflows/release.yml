@@ -29,7 +29,18 @@ jobs:
       - name: Run doctests (all features)
         run: cargo test --workspace --all-features --doc
       - name: Run integration tests
-        run: cargo nextest run --workspace --run-ignored all
+        run: |
+          set -eo pipefail
+          # Mirrors the rust.yml integration step: keep passing-test output so
+          # vacuously-passed semantic validations surface as a warning even in
+          # release validation — the run where a silent skip matters most.
+          rc=0
+          cargo nextest run --workspace --run-ignored all --success-output=final 2>&1 | tee /tmp/integration.log || rc=$?
+          skips=$(grep -c SEMANTIC_VALIDATION_SKIPPED /tmp/integration.log || true)
+          if [ "${skips:-0}" -gt 0 ]; then
+            echo "::warning::$skips semantic validation(s) passed vacuously (grep SEMANTIC_VALIDATION_SKIPPED in the log for causes)"
+          fi
+          exit "$rc"
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       - name: Check formatting

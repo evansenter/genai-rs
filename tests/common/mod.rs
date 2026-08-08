@@ -77,11 +77,12 @@ pub fn is_transient_error(err: &GenaiError) -> bool {
 /// rejection carries neither marker, so it still fails loud on the first
 /// attempt.
 ///
-/// Note: inside a `with_timeout` budget, a worst case adds ~7s of backoff
-/// (more if the server sends `Retry-After`, up to 15s per attempt — larger
-/// requested delays abort the retry and surface the error) plus up to
-/// three extra round-trips — a sustained outage can therefore surface as
-/// a harness timeout rather than the underlying error.
+/// Note: inside a `with_timeout` budget, a worst case adds up to 15s of
+/// sleep (the cumulative cap across all attempts; server-sent `Retry-After`
+/// delays are honored within it, and once the next delay would exceed it
+/// the retry aborts and the real error surfaces) plus up to three extra
+/// round-trips — a sustained outage can therefore still surface as a
+/// harness timeout rather than the underlying error.
 ///
 /// # Arguments
 ///
@@ -109,6 +110,7 @@ where
     Fut: Future<Output = Result<T, GenaiError>>,
 {
     let mut last_error = None;
+    let mut total_slept = Duration::ZERO;
 
     for attempt in 0..=max_retries {
         match operation().await {
@@ -119,16 +121,19 @@ where
                 // Exponential backoff: 1s, 2s, 4s, ... — but honor a
                 // server-sent Retry-After when it asks for longer. Retrying
                 // *before* the requested delay just earns another 429, and
-                // sleeping out a long delay inside a with_timeout budget
-                // surfaces as an opaque harness timeout — so if the server
-                // asks for more than we can afford, surface the real error
-                // immediately instead.
+                // sleeping out long delays inside a with_timeout budget
+                // surfaces as an opaque harness timeout — so total sleep is
+                // capped at 15s across all attempts, and once the next delay
+                // would exceed it the real error surfaces immediately.
                 let backoff = Duration::from_secs(1 << attempt);
                 let delay = match err.retry_after() {
-                    Some(ra) if ra > Duration::from_secs(15) => return Err(err),
                     Some(ra) => ra.max(backoff),
                     None => backoff,
                 };
+                if total_slept + delay > Duration::from_secs(15) {
+                    return Err(err);
+                }
+                total_slept += delay;
                 println!(
                     "Transient error on attempt {} of {}, retrying in {:?}: {:?}",
                     attempt + 1,
@@ -941,16 +946,22 @@ pub async fn validate_response_semantically(
     if let Some(text) = validation.as_text()
         && let Ok(json) = serde_json::from_str::<serde_json::Value>(text)
     {
-        let is_valid = json
-            .get("is_valid")
-            .and_then(|v| v.as_bool())
-            // Design decision: Default to valid if the boolean is missing or malformed.
-            // This favors test reliability (avoiding false negatives from API format changes)
-            // over catching edge cases where Gemini might return invalid but we can't parse it.
-            // The tradeoff is acceptable because: (1) structured output is typically reliable,
-            // (2) we log the reason for debugging, and (3) blocking tests on parse errors
-            // would make tests fragile to API evolution.
-            .unwrap_or(true);
+        let verdict = json.get("is_valid").and_then(|v| v.as_bool());
+        if verdict.is_none() {
+            // Same greppable marker as the transient-error skip path, so a
+            // drifted structured-output contract can't go quietly green
+            // suite-wide — the CI marker count picks this up too.
+            println!(
+                "SEMANTIC_VALIDATION_SKIPPED (missing-verdict): is_valid absent or non-boolean, assuming valid"
+            );
+        }
+        // Design decision: Default to valid if the boolean is missing or malformed.
+        // This favors test reliability (avoiding false negatives from API format changes)
+        // over catching edge cases where Gemini might return invalid but we can't parse it.
+        // The tradeoff is acceptable because: (1) structured output is typically reliable,
+        // (2) we log the reason for debugging, and (3) blocking tests on parse errors
+        // would make tests fragile to API evolution.
+        let is_valid = verdict.unwrap_or(true);
 
         let reason = json
             .get("reason")
@@ -974,15 +985,15 @@ pub async fn validate_response_semantically(
     let response_preview = validation
         .as_text()
         .map(|t| {
-            if t.len() > 100 {
-                format!("{}...", &t[..100])
+            if t.chars().count() > 100 {
+                format!("{}...", t.chars().take(100).collect::<String>())
             } else {
                 t.to_string()
             }
         })
         .unwrap_or_else(|| "(no text)".to_string());
     println!(
-        "Warning: Could not parse semantic validation response (text: '{}'), assuming valid",
+        "SEMANTIC_VALIDATION_SKIPPED (unparseable-verdict): could not parse validator response (text: '{}'), assuming valid",
         response_preview
     );
     Ok(true)
@@ -1002,9 +1013,10 @@ pub async fn validate_response_semantically(
 ///
 /// The validator call itself gets a single [`retry_on_transient`] retry
 /// (normally ~1s of backoff — a server-sent `Retry-After` can raise that
-/// to at most 15s — plus one extra round-trip; deliberately smaller than
-/// the primary-call budget, since many callers nest both retry chains
-/// inside one `with_timeout` budget). Transient
+/// up to the helper's 15s cumulative sleep cap — plus one extra
+/// round-trip; deliberately smaller than the primary-call budget, since
+/// many callers nest both retry chains inside one `with_timeout`
+/// budget). Transient
 /// failures that survive the retries (per [`GenaiError::is_retryable`] —
 /// network errors, timeouts, 5xx, 429 — plus this module's
 /// [`is_transient_error`] cases, which cover known model-side

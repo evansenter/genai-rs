@@ -116,7 +116,7 @@ jobs:
             echo "::endgroup::"
             skips=$(grep -c SEMANTIC_VALIDATION_SKIPPED "/tmp/$test.log" || true)
             if [ "${skips:-0}" -gt 0 ]; then
-              echo "::warning::$test: $skips semantic validation(s) skipped on transient validator errors"
+              echo "::warning::$test: $skips semantic validation(s) passed vacuously (grep SEMANTIC_VALIDATION_SKIPPED in the log for causes)"
             fi
             [ "$rc" -eq 0 ] || exit "$rc"
           done
