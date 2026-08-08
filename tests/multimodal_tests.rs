@@ -55,10 +55,12 @@ mod image {
             Content::image_uri(SAMPLE_IMAGE_URL, "image/jpeg"),
         ];
 
-        let result = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await;
+        let result = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        });
 
         match result {
             Ok(response) => {
@@ -99,11 +101,13 @@ mod image {
             Content::image_data(TINY_RED_PNG_BASE64, "image/png"),
         ];
 
-        let response = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await
-            .expect("Base64 image interaction failed");
+        let response = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        })
+        .expect("Base64 image interaction failed");
 
         assert_eq!(response.status, InteractionStatus::Completed);
         assert!(response.has_text(), "Should have text response");
@@ -139,11 +143,13 @@ mod image {
             Content::image_data(TINY_BLUE_PNG_BASE64, "image/png"),
         ];
 
-        let response = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await
-            .expect("Multiple images interaction failed");
+        let response = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        })
+        .expect("Multiple images interaction failed");
 
         assert_eq!(response.status, InteractionStatus::Completed);
         assert!(response.has_text(), "Should have text response");
@@ -231,10 +237,12 @@ mod audio {
             Content::audio_uri(SAMPLE_AUDIO_URL, "audio/mpeg"),
         ];
 
-        let result = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await;
+        let result = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        });
 
         match result {
             Ok(response) => {
@@ -272,11 +280,13 @@ mod audio {
             genai_rs::Content::audio_data(TINY_WAV_BASE64, "audio/wav"),
         ];
 
-        let response = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await
-            .expect("Base64 audio interaction failed");
+        let response = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        })
+        .expect("Base64 audio interaction failed");
 
         assert_eq!(response.status, InteractionStatus::Completed);
         assert!(response.has_text(), "Should have text response");
@@ -303,10 +313,12 @@ mod video {
             Content::video_uri(SAMPLE_VIDEO_URL, "video/mp4"),
         ];
 
-        let result = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await;
+        let result = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        });
 
         match result {
             Ok(response) => {
@@ -345,11 +357,13 @@ mod video {
             Content::video_data(TINY_MP4_BASE64, "video/mp4"),
         ];
 
-        let response = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await
-            .expect("Base64 video interaction failed");
+        let response = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        })
+        .expect("Base64 video interaction failed");
 
         assert_eq!(response.status, InteractionStatus::Completed);
         assert!(response.has_text(), "Should have text response");
@@ -379,11 +393,13 @@ mod mixed_content {
             Content::text("Based on the color above, what emotion might it represent?"),
         ];
 
-        let response = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await
-            .expect("Interleaved content interaction failed");
+        let response = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        })
+        .expect("Interleaved content interaction failed");
 
         assert_eq!(response.status, InteractionStatus::Completed);
         assert!(response.has_text(), "Should have text response");
@@ -418,11 +434,13 @@ mod mixed_content {
             Content::image_data(TINY_BLUE_PNG_BASE64, "image/png"),
         ];
 
-        let response = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await
-            .expect("Comparison interaction failed");
+        let response = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        })
+        .expect("Comparison interaction failed");
 
         assert_eq!(response.status, InteractionStatus::Completed);
         assert!(response.has_text(), "Should have text response");
@@ -479,10 +497,12 @@ mod mixed_media {
             Content::audio_data(TINY_WAV_BASE64, "audio/wav"),
         ];
 
-        let result = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await;
+        let result = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        });
 
         let response = result.expect("Mixed media interaction failed");
         assert_eq!(
@@ -529,10 +549,12 @@ mod mixed_media {
             Content::video_data(TINY_MP4_BASE64, "video/mp4"),
         ];
 
-        let result = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await;
+        let result = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        });
 
         let response = result.expect("Mixed media interaction failed");
         println!("All media types response status: {:?}", response.status);
@@ -564,10 +586,12 @@ mod document {
             Content::document_data(TINY_PDF_BASE64, "application/pdf"),
         ];
 
-        let result = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await;
+        let result = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        });
 
         let response = result.expect("PDF document interaction failed");
         println!("PDF document response status: {:?}", response.status);
@@ -600,10 +624,12 @@ mod document {
             Content::text("Is this a valid PDF? What can you tell me about its structure?"),
         ];
 
-        let result = stateful_builder(&client)
-            .with_input(InteractionInput::Content(contents))
-            .create()
-            .await;
+        let result = crate::retry_request!([client, contents] => {
+            stateful_builder(&client)
+                .with_input(InteractionInput::Content(contents))
+                .create()
+                .await
+        });
 
         let response = result.expect("PDF with question interaction failed");
         assert_eq!(response.status, InteractionStatus::Completed);
@@ -910,15 +936,18 @@ mod bytes_loading {
         };
 
         // Use Content::audio_data() with base64-encoded data
-        let result = client
-            .interaction()
-            .with_model("gemini-3-flash-preview")
-            .with_content(vec![
-                Content::text("Describe what you hear in this audio file."),
-                Content::audio_data(TINY_WAV_BASE64, "audio/wav"),
-            ])
-            .create()
-            .await;
+        let contents = vec![
+            Content::text("Describe what you hear in this audio file."),
+            Content::audio_data(TINY_WAV_BASE64, "audio/wav"),
+        ];
+        let result = crate::retry_request!([client, contents] => {
+            client
+                .interaction()
+                .with_model("gemini-3-flash-preview")
+                .with_content(contents)
+                .create()
+                .await
+        });
 
         let response = result.expect("Audio bytes interaction failed");
         assert_eq!(response.status, InteractionStatus::Completed);
@@ -940,15 +969,18 @@ mod bytes_loading {
         };
 
         // Use Content::video_data() with base64-encoded data
-        let result = client
-            .interaction()
-            .with_model("gemini-3-flash-preview")
-            .with_content(vec![
-                Content::text("Describe what you see in this video file."),
-                Content::video_data(TINY_MP4_BASE64, "video/mp4"),
-            ])
-            .create()
-            .await;
+        let contents = vec![
+            Content::text("Describe what you see in this video file."),
+            Content::video_data(TINY_MP4_BASE64, "video/mp4"),
+        ];
+        let result = crate::retry_request!([client, contents] => {
+            client
+                .interaction()
+                .with_model("gemini-3-flash-preview")
+                .with_content(contents)
+                .create()
+                .await
+        });
 
         let response = result.expect("Video bytes interaction failed");
         assert_eq!(response.status, InteractionStatus::Completed);
@@ -973,17 +1005,20 @@ mod bytes_loading {
         };
 
         // Use Content::document_data() with base64-encoded data
-        let result = client
-            .interaction()
-            .with_model("gemini-3-flash-preview")
-            .with_content(vec![
-                Content::text(
-                    "What text does this PDF document contain? Answer with just the text you find.",
-                ),
-                Content::document_data(TINY_PDF_BASE64, "application/pdf"),
-            ])
-            .create()
-            .await;
+        let contents = vec![
+            Content::text(
+                "What text does this PDF document contain? Answer with just the text you find.",
+            ),
+            Content::document_data(TINY_PDF_BASE64, "application/pdf"),
+        ];
+        let result = crate::retry_request!([client, contents] => {
+            client
+                .interaction()
+                .with_model("gemini-3-flash-preview")
+                .with_content(contents)
+                .create()
+                .await
+        });
 
         let response = result.expect("PDF bytes interaction failed");
         println!("PDF bytes response status: {:?}", response.status);

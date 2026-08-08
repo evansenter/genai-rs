@@ -435,11 +435,13 @@ async fn test_audio_from_temp_file() {
         audio_content,
     ];
 
-    let response = stateful_builder(&client)
-        .with_input(InteractionInput::Content(contents))
-        .create()
-        .await
-        .expect("Audio interaction failed");
+    let response = crate::retry_request!([client, contents] => {
+        stateful_builder(&client)
+            .with_input(InteractionInput::Content(contents))
+            .create()
+            .await
+    })
+    .expect("Audio interaction failed");
 
     assert_eq!(response.status, InteractionStatus::Completed);
     assert!(response.has_text(), "Should have text response");
@@ -479,11 +481,13 @@ async fn test_video_from_temp_file() {
         video_content,
     ];
 
-    let response = stateful_builder(&client)
-        .with_input(InteractionInput::Content(contents))
-        .create()
-        .await
-        .expect("Video interaction failed");
+    let response = crate::retry_request!([client, contents] => {
+        stateful_builder(&client)
+            .with_input(InteractionInput::Content(contents))
+            .create()
+            .await
+    })
+    .expect("Video interaction failed");
 
     assert_eq!(response.status, InteractionStatus::Completed);
     assert!(response.has_text(), "Should have text response");

@@ -65,9 +65,11 @@ pub fn is_transient_error(err: &GenaiError) -> bool {
 
 /// Retries an async operation on transient API errors with exponential backoff.
 ///
-/// This is useful for working around transient Google API backend issues,
-/// such as the Spanner UTF-8 error that occasionally occurs with stateful
-/// conversations (see issue #60).
+/// Retries both this module's known model-side flakes ([`is_transient_error`])
+/// and the crate's retryable transport classes ([`GenaiError::is_retryable`]:
+/// network errors, timeouts, 429, 5xx). Non-retryable errors (e.g. 400
+/// rejections) return immediately — a fixture the API rejects still fails
+/// loud on the first attempt.
 ///
 /// # Arguments
 ///
@@ -99,7 +101,9 @@ where
     for attempt in 0..=max_retries {
         match operation().await {
             Ok(result) => return Ok(result),
-            Err(err) if is_transient_error(&err) && attempt < max_retries => {
+            Err(err)
+                if (is_transient_error(&err) || err.is_retryable()) && attempt < max_retries =>
+            {
                 // Exponential backoff: 1s, 2s, 4s, ...
                 let delay = Duration::from_secs(1 << attempt);
                 println!(
@@ -1003,9 +1007,10 @@ pub async fn assert_response_semantic(
         ),
         // The validator is a second API round-trip that can fail
         // independently of the input under test — tolerate transient
-        // failures (per the crate's own is_retryable classification) with a
-        // greppable marker, but panic on systemic errors (e.g. 4xx) so a
-        // broken validator can't go quietly green suite-wide.
+        // failures (is_retryable: transport/429/5xx/timeouts; plus this
+        // module's is_transient_error: empirically model-side-flaky 400s)
+        // with a greppable marker, but panic on everything else so a broken
+        // validator can't go quietly green suite-wide.
         Err(e) if e.is_retryable() || is_transient_error(&e) => eprintln!(
             "SEMANTIC_VALIDATION_SKIPPED (transient validator error): {:?}",
             e

@@ -222,7 +222,9 @@ let result = client
 
 2. **Function not declared:**
 ```rust,ignore
-// Explicitly add function (requires `use genai_rs::CallableFunction;` in scope)
+use genai_rs::CallableFunction;
+
+// Explicitly add function
 let result = client
     .interaction()
     .with_text("What's the weather?")

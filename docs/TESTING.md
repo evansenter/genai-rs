@@ -484,17 +484,19 @@ if response.has_unknown() {
 | `TINY_MP4_BASE64` | One-frame 64x64 H.264 clip (valid MP4) |
 | `TINY_PDF_BASE64` | "Hello World" PDF |
 
-All fixtures are complete, well-formed files the API accepts, so tests
-exercising them assert strictly (`.expect()` + status check) — an API
-rejection is a real failure, not an expected fixture limitation. Semantic
-validation via `assert_response_semantic` (used throughout the multimodal,
-temp-file and multi-turn suites) applies a two-tier policy: it asserts on
-the verdict and panics on non-transient validator errors, but tolerates
-transient ones (per `GenaiError::is_retryable`) with a greppable
-`SEMANTIC_VALIDATION_SKIPPED` marker — the validator is a second API
-round-trip that can fail independently of the input under test. (Some
-older tests still call `validate_response_semantically` directly and
-hard-fail on any validator error; converting them is a welcome cleanup.)
+All fixtures are complete, well-formed files the API accepts. Tests
+exercising them retry transient transport errors on the primary call
+(`retry_request!`, keyed on `GenaiError::is_retryable` plus the module's
+`is_transient_error` model-side-flake cases) and then assert strictly —
+a validation rejection (e.g. 400 `invalid_request`) fails loudly on the
+first attempt, while a 503 blip does not redden the suite. Semantic
+validation via `assert_response_semantic` (the suite-wide helper; one
+deliberate direct `validate_response_semantically` call remains, inside a
+retry closure that needs the verdict as a `Result`) applies the same
+two-tier policy: it asserts on the verdict, panics on non-transient
+validator errors, and tolerates transient ones with a
+`SEMANTIC_VALIDATION_SKIPPED` marker (surfaced in CI via
+`--success-output=final` on the integration step).
 
 ### Test Fixtures
 
