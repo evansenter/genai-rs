@@ -454,9 +454,9 @@ mod mixed_media {
 
     /// Tests combining multiple media types (image + audio) in a single interaction.
     ///
-    /// This is an **enforcing test** that expects the API to successfully process
-    /// image + audio together. It asserts on the response content when successful,
-    /// but allows known format errors from the minimal test files.
+    /// Both fixtures are complete, well-formed media files the API must
+    /// accept, so this test asserts strictly and semantically validates the
+    /// response content.
     ///
     /// See test_mixed_image_audio_video for the all-three-types variant.
     #[tokio::test]
@@ -484,55 +484,32 @@ mod mixed_media {
             .create()
             .await;
 
-        match result {
-            Ok(response) => {
-                assert_eq!(
-                    response.status,
-                    InteractionStatus::Completed,
-                    "Mixed media interaction should complete"
-                );
-                assert!(response.has_text(), "Should have text response");
+        let response = result.expect("Mixed media interaction failed");
+        assert_eq!(
+            response.status,
+            InteractionStatus::Completed,
+            "Mixed media interaction should complete"
+        );
+        assert!(response.has_text(), "Should have text response");
 
-                let text = response.as_text().unwrap();
-                println!("Mixed media response: {}", text);
+        let text = response.as_text().unwrap();
+        println!("Mixed media response: {}", text);
 
-                // Verify the model acknowledged at least one input using semantic validation
-                // Note: Minimal test files may not provide enough data for the model to analyze both
-                assert_response_semantic(
-                    &client,
-                    "Sent a red image and a WAV audio file, asked to describe both",
-                    text,
-                    "Does this response mention anything about an image (color, red) OR audio (sound, silent, empty)?",
-                )
-                .await;
-            }
-            Err(e) => {
-                // The minimal test files might not be fully valid
-                let error_str = format!("{:?}", e);
-                println!(
-                    "Mixed media error (may be expected for minimal files): {}",
-                    error_str
-                );
-                // Don't fail the test for format errors with minimal test files
-                assert!(
-                    error_str.contains("format")
-                        || error_str.contains("invalid")
-                        || error_str.contains("empty")
-                        || error_str.contains("audio"),
-                    "Unexpected error: {}",
-                    error_str
-                );
-            }
-        }
+        // Verify the model acknowledged at least one input using semantic validation
+        assert_response_semantic(
+            &client,
+            "Sent a red image and a WAV audio file, asked to describe both",
+            text,
+            "Does this response mention anything about an image (color, red) OR audio (sound, silent, empty)?",
+        )
+        .await;
     }
 
     /// Tests combining all three media types: image, audio, and video.
     ///
-    /// This is an **exploratory test** that documents API behavior rather than enforcing
-    /// specific outcomes. It may fail due to the minimal test files not being fully valid.
-    ///
-    /// - **Success**: Indicates the API accepts all three media types together
-    /// - **Failure**: Documents which media types cause issues (helps debugging)
+    /// All three fixtures are complete, well-formed media files the API must
+    /// accept, so this test asserts strictly — an API rejection is a real
+    /// failure.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_mixed_image_audio_video() {

@@ -243,6 +243,10 @@ When releasing a new version, update these files:
 
 After merging version bump PR:
 
+0. **Verify the docs.rs build locally** (the `docsrs` cfg path only runs on
+   nightly, so CI never exercises it; a failure here would otherwise surface
+   as a broken docs.rs build after the version is immutable on crates.io):
+   `RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo +nightly doc --workspace --no-deps --all-features`
 1. **Tag the release**: `git tag -a vX.Y.Z origin/main -m "Release vX.Y.Z"`
 2. **Push tag**: `git push origin vX.Y.Z`
 3. **Create GitHub release**: `gh release create vX.Y.Z --title "vX.Y.Z" --notes "..."` (copy from CHANGELOG)
