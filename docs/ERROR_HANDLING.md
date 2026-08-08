@@ -323,7 +323,7 @@ use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 /// Fetch data from API
-#[tool]
+#[tool(url(description = "URL to fetch"))]
 async fn fetch_data(url: String) -> Result<String, String> {
     // Return Err for graceful failure
     reqwest::get(&url)
@@ -359,7 +359,7 @@ use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 /// Get user by ID
-#[tool]
+#[tool(id(description = "The user ID to look up"))]
 fn get_user(id: i32) -> Result<String, String> {
     if id <= 0 {
         return Err("User ID must be positive".to_string());
