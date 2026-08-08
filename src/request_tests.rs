@@ -424,6 +424,33 @@ fn test_dynamic_config_serialization() {
 }
 
 #[test]
+fn test_antigravity_config_serialization() {
+    let config: AgentConfig = AntigravityConfig::new()
+        .with_model("gemini-3-flash-preview")
+        .with_max_total_tokens(200_000)
+        .into();
+
+    let json = serde_json::to_string(&config).expect("Serialization failed");
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(value["type"], "antigravity");
+    assert_eq!(value["model"], "gemini-3-flash-preview");
+    assert_eq!(value["max_total_tokens"], 200_000);
+}
+
+#[test]
+fn test_antigravity_config_minimal_serialization() {
+    let config: AgentConfig = AntigravityConfig::new().into();
+
+    let json = serde_json::to_string(&config).expect("Serialization failed");
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(value["type"], "antigravity");
+    assert!(value.get("model").is_none());
+    assert!(value.get("max_total_tokens").is_none());
+}
+
+#[test]
 fn test_agent_config_deserialization_deep_research() {
     let json = r#"{"type": "deep-research", "thinkingSummaries": "auto"}"#;
     let parsed: AgentConfig = serde_json::from_str(json).expect("Deserialization should succeed");

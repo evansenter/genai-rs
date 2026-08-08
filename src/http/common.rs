@@ -150,6 +150,77 @@ pub fn construct_endpoint_url(endpoint: Endpoint) -> String {
     format!("{BASE_URL_PREFIX}{path}{query_string}")
 }
 
+/// Sends a resource-CRUD request with the standard headers (API key +
+/// `Api-Revision`), emits wire events, checks the status, and returns the
+/// response body text. Shared by the agents / webhooks / triggers /
+/// environments resource modules.
+pub(crate) async fn send_and_read(
+    ctx: &super::context::HttpContext,
+    method: &str,
+    url: &str,
+    body: Option<serde_json::Value>,
+) -> Result<String, crate::errors::GenaiError> {
+    use crate::errors::GenaiError;
+    use crate::wire::WireEvent;
+
+    let request_id = ctx.next_request_id();
+    ctx.emit_request(request_id, method, url, body.clone());
+
+    let builder = match method {
+        "GET" => ctx.http_client.get(url),
+        "POST" => ctx.http_client.post(url),
+        "PATCH" => ctx.http_client.patch(url),
+        "DELETE" => ctx.http_client.delete(url),
+        other => {
+            return Err(GenaiError::Internal(format!(
+                "Unsupported HTTP method: {other}"
+            )));
+        }
+    };
+
+    let mut builder = builder
+        .header(API_KEY_HEADER, &ctx.api_key)
+        .header(API_REVISION_HEADER, API_REVISION);
+    if let Some(body) = &body {
+        builder = builder.json(body);
+    }
+
+    let response = builder.send().await?;
+
+    ctx.emit(WireEvent::ResponseStatus {
+        id: request_id,
+        status: response.status().as_u16(),
+    });
+
+    let response = super::error_helpers::check_response_wire(response, ctx, request_id).await?;
+    let response_text = response
+        .text()
+        .await
+        .map_err(crate::errors::GenaiError::Http)?;
+    ctx.emit_response_body(request_id, &response_text);
+    Ok(response_text)
+}
+
+/// Appends `page_size` / `page_token` query params to a URL.
+pub(crate) fn with_paging(
+    mut url: String,
+    page_size: Option<u32>,
+    page_token: Option<&str>,
+) -> String {
+    let mut params = Vec::new();
+    if let Some(size) = page_size {
+        params.push(format!("page_size={size}"));
+    }
+    if let Some(token) = page_token {
+        params.push(format!("page_token={}", urlencoding::encode(token)));
+    }
+    if !params.is_empty() {
+        url.push('?');
+        url.push_str(&params.join("&"));
+    }
+    url
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

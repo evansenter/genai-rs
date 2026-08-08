@@ -127,8 +127,17 @@ where
     match value {
         None | Some(serde_json::Value::Null) => Ok(None),
         Some(serde_json::Value::Number(n)) => Ok(n.as_i64()),
-        Some(serde_json::Value::String(s)) => Ok(s.parse().ok()),
-        Some(_) => Ok(None),
+        Some(serde_json::Value::String(s)) => {
+            let parsed = s.parse().ok();
+            if parsed.is_none() {
+                tracing::warn!("Unparseable int64 string from API, dropping: {s:?}");
+            }
+            Ok(parsed)
+        }
+        Some(other) => {
+            tracing::warn!("Unexpected JSON type for int64 field, dropping: {other:?}");
+            Ok(None)
+        }
     }
 }
 

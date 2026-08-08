@@ -1633,3 +1633,126 @@ fn test_builder_request_roundtrip_with_new_fields() {
     assert!(back.webhook_config.is_some());
     assert!(back.response_format.is_some());
 }
+
+#[test]
+fn test_builder_safety_settings_replace_and_accumulate() {
+    use crate::{HarmCategory, SafetySetting, SafetyThreshold};
+
+    let client = create_test_client();
+    // add_* accumulates: two adds yield two entries, appended after with_*.
+    let request = client
+        .interaction()
+        .with_model("gemini-3-flash-preview")
+        .with_text("Hello")
+        .with_safety_settings(vec![SafetySetting::new(
+            HarmCategory::HateSpeech,
+            SafetyThreshold::BlockLowAndAbove,
+        )])
+        .add_safety_setting(SafetySetting::new(
+            HarmCategory::Harassment,
+            SafetyThreshold::BlockOnlyHigh,
+        ))
+        .add_safety_setting(SafetySetting::new(
+            HarmCategory::Jailbreak,
+            SafetyThreshold::Off,
+        ))
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    let settings = value["safety_settings"].as_array().unwrap();
+    assert_eq!(settings.len(), 3, "add_* must accumulate onto with_*");
+    assert_eq!(settings[0]["category"], "hate_speech");
+    assert_eq!(settings[1]["category"], "harassment");
+    assert_eq!(settings[1]["threshold"], "block_only_high");
+    assert_eq!(settings[2]["threshold"], "off");
+}
+
+#[test]
+fn test_builder_with_safety_settings_replaces() {
+    use crate::{HarmCategory, SafetySetting, SafetyThreshold};
+
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-3-flash-preview")
+        .with_text("Hello")
+        .add_safety_setting(SafetySetting::new(
+            HarmCategory::HateSpeech,
+            SafetyThreshold::Off,
+        ))
+        .with_safety_settings(vec![SafetySetting::new(
+            HarmCategory::CivicIntegrity,
+            SafetyThreshold::BlockNone,
+        )])
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    let settings = value["safety_settings"].as_array().unwrap();
+    assert_eq!(settings.len(), 1, "with_* must replace");
+    assert_eq!(settings[0]["category"], "civic_integrity");
+}
+
+#[test]
+fn test_builder_labels_merge_and_replace() {
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-3-flash-preview")
+        .with_text("Hello")
+        .add_label("team", "search")
+        .add_label("env", "ci")
+        .add_label("team", "platform") // same key: last write wins
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    assert_eq!(value["labels"]["team"], "platform");
+    assert_eq!(value["labels"]["env"], "ci");
+    assert_eq!(value["labels"].as_object().unwrap().len(), 2);
+
+    // with_labels replaces wholesale.
+    let request = client
+        .interaction()
+        .with_model("gemini-3-flash-preview")
+        .with_text("Hello")
+        .add_label("stale", "1")
+        .with_labels(std::collections::HashMap::from([(
+            "fresh".to_string(),
+            "2".to_string(),
+        )]))
+        .build()
+        .unwrap();
+    let value = serde_json::to_value(&request).unwrap();
+    assert!(value["labels"].get("stale").is_none());
+    assert_eq!(value["labels"]["fresh"], "2");
+}
+
+#[test]
+fn test_builder_with_transcription_config() {
+    use crate::TranscriptionConfig;
+
+    let client = create_test_client();
+    let request = client
+        .interaction()
+        .with_model("gemini-3-flash-preview")
+        .with_text("Transcribe this")
+        .with_generation_config(GenerationConfig {
+            temperature: Some(0.5), // pre-existing generation_config must survive
+            ..Default::default()
+        })
+        .with_transcription_config(TranscriptionConfig {
+            language_codes: Some(vec!["en-US".to_string()]),
+            diarization_mode: Some("speaker".to_string()),
+            ..Default::default()
+        })
+        .build()
+        .unwrap();
+
+    let value = serde_json::to_value(&request).unwrap();
+    let gc = &value["generation_config"];
+    assert_eq!(gc["temperature"], 0.5);
+    assert_eq!(gc["transcription_config"]["language_codes"][0], "en-US");
+    assert_eq!(gc["transcription_config"]["diarization_mode"], "speaker");
+}

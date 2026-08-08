@@ -445,7 +445,13 @@ timestamps as ISO 8601 with offset — both verified in the same probe).
 trigger creation requires a custom agent, which is gated/allowlisted on
 standard API keys (verified live 2026-08-08 — a model-only trigger
 interaction is rejected with "Agent '' is invalid or not found", and
-`GET /v1beta/triggers` returns `{}` when empty).
+`GET /v1beta/triggers` returns `{}` when empty). The `Trigger` resource's
+*field names* are equally unverified — note it uses `create_time`/
+`update_time` per the SDK spec while the live-verified Environments
+resource uses `created`/`updated`; if the live wire follows the
+environments convention, the timestamp fields deserialize as `None`
+(all fields are Optional/defaulted, so nothing hard-fails). Confirm with
+`LOUD_WIRE=1` once the agent gate opens.
 
 ### ThinkingSummaries (agent_config)
 

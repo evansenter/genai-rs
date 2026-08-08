@@ -227,7 +227,14 @@ let agent = AntigravityAgent::builder()
 padded with `Unanswered`. Without a hook every question is answered
 "unanswered" (with a `warn!`) so the harness never deadlocks — disable
 `BuiltinTool::AskQuestion` in `Capabilities` if the agent should never
-ask. `ToolOutcome.result` is the
+ask.
+
+The hook is synchronous and runs inline in the harness event pump — don't
+block in it waiting for a human. For interactive flows, collect the
+answer out-of-band (chat reply, CLI prompt in another task) into a
+channel and answer from `try_recv`, returning `Unanswered` when nothing
+has arrived; the deadlock-avoidance fallback only covers the hookless
+case. `ToolOutcome.result` is the
 **inner** tool result, not the `{"result": ...}` wire envelope the harness
 receives: a scalar return `X` arrives as its string form (or `X` serialized
 when non-string), and an object return is passed through serialized. Failures

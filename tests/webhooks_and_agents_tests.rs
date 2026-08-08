@@ -595,33 +595,46 @@ async fn test_environment_crud_lifecycle() {
     );
     assert!(!created.id.is_empty());
 
-    // Get: counts arrive as protobuf-JSON strings and must parse.
-    let fetched = client
-        .get_environment(&created.id)
-        .await
+    // Run the read assertions in a closure so the delete below also runs
+    // on the failure path — a tripped assertion must not leak the
+    // environment server-side (they expire eventually, but repeated CI
+    // failures would accumulate containers). Reads retry transients like
+    // the neighbouring CRUD tests.
+    let created_id = created.id.clone();
+    let checks = async {
+        // Get: counts arrive as protobuf-JSON strings and must parse.
+        let fetched = crate::retry_request!([client, created_id] => {
+            client.get_environment(&created_id).await
+        })
         .expect("get_environment");
-    assert_eq!(fetched.id, created.id);
-    assert!(
-        fetched.file_count.is_some(),
-        "file_count should deserialize from the string wire form: {fetched:?}"
-    );
+        assert_eq!(fetched.id, created.id);
+        assert!(
+            fetched.file_count.is_some(),
+            "file_count should deserialize from the string wire form: {fetched:?}"
+        );
 
-    // List: the created environment must appear (first page is enough —
-    // environments expire, so the list stays small).
-    let listed = client
-        .list_environments(Some(50), None)
-        .await
+        // List: the created environment must appear (first page is enough —
+        // environments expire, so the list stays small).
+        let listed = crate::retry_request!([client] => {
+            client.list_environments(Some(50), None).await
+        })
         .expect("list_environments");
-    assert!(
-        listed.environments.iter().any(|e| e.id == created.id),
-        "created environment missing from list"
-    );
+        assert!(
+            listed.environments.iter().any(|e| e.id == created.id),
+            "created environment missing from list"
+        );
+    };
+    let outcome = std::panic::AssertUnwindSafe(checks);
+    let outcome = futures_util::FutureExt::catch_unwind(outcome).await;
 
-    // Delete, then confirm it no longer resolves.
+    // Delete runs regardless of assertion outcome, then confirm gone.
     client
         .delete_environment(&created.id)
         .await
         .expect("delete_environment");
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
     let gone = client.get_environment(&created.id).await;
     assert!(gone.is_err(), "environment should be gone after delete");
 }
@@ -661,8 +674,10 @@ async fn test_triggers_list_and_gated_create() {
         .with_display_name("genai-rs trigger schema probe");
     match client.create_trigger(&params).await {
         Ok(trigger) => {
-            println!("Trigger created (agent gate open): id={}", trigger.id);
-            let _ = client.delete_trigger(&trigger.id).await;
+            println!("Trigger created (agent gate open): id={:?}", trigger.id);
+            if let Some(id) = &trigger.id {
+                let _ = client.delete_trigger(id).await;
+            }
         }
         Err(e) => {
             let message = e.to_string();

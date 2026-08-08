@@ -4,14 +4,13 @@
 //! the webhooks resource is part of the revisioned Interactions surface
 //! (the generated google-genai bindings apply the revision header globally).
 
-use super::common::{API_KEY_HEADER, API_REVISION, API_REVISION_HEADER, BASE_URL_PREFIX};
+use super::common::{BASE_URL_PREFIX, send_and_read};
 use super::context::HttpContext;
-use super::error_helpers::{check_response_wire, deserialize_with_context};
+use super::error_helpers::deserialize_with_context;
 use crate::errors::GenaiError;
 use crate::webhooks::{
     RevocationBehavior, RotateSigningSecretResponse, Webhook, WebhookListResponse, WebhookUpdate,
 };
-use crate::wire::WireEvent;
 
 const API_VERSION: &str = "v1beta";
 
@@ -21,49 +20,6 @@ fn webhooks_url() -> String {
 
 fn webhook_url(id: &str) -> String {
     format!("{BASE_URL_PREFIX}/{API_VERSION}/webhooks/{id}")
-}
-
-/// Sends a request with the standard headers, emits wire events, checks the
-/// status, and returns the response body text.
-async fn send_and_read(
-    ctx: &HttpContext,
-    method: &str,
-    url: &str,
-    body: Option<serde_json::Value>,
-) -> Result<String, GenaiError> {
-    let request_id = ctx.next_request_id();
-    ctx.emit_request(request_id, method, url, body.clone());
-
-    let builder = match method {
-        "GET" => ctx.http_client.get(url),
-        "POST" => ctx.http_client.post(url),
-        "PATCH" => ctx.http_client.patch(url),
-        "DELETE" => ctx.http_client.delete(url),
-        other => {
-            return Err(GenaiError::Internal(format!(
-                "Unsupported HTTP method: {other}"
-            )));
-        }
-    };
-
-    let mut builder = builder
-        .header(API_KEY_HEADER, &ctx.api_key)
-        .header(API_REVISION_HEADER, API_REVISION);
-    if let Some(body) = &body {
-        builder = builder.json(body);
-    }
-
-    let response = builder.send().await?;
-
-    ctx.emit(WireEvent::ResponseStatus {
-        id: request_id,
-        status: response.status().as_u16(),
-    });
-
-    let response = check_response_wire(response, ctx, request_id).await?;
-    let response_text = response.text().await.map_err(GenaiError::Http)?;
-    ctx.emit_response_body(request_id, &response_text);
-    Ok(response_text)
 }
 
 /// Serializes a body for the wire, mapping serialization errors to `Internal`.

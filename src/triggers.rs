@@ -252,16 +252,29 @@ impl<'de> Deserialize<'de> for TriggerExecutionStatus {
 }
 
 /// A server-side scheduled trigger, as returned by `/v1beta/triggers`.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+///
+/// All fields are optional with a struct-level serde default (the Evergreen
+/// preserve-don't-reject posture, mirroring [`Agent`](crate::agents::Agent)):
+/// this resource shape is not yet fully live-verified — creation is
+/// agent-gated — so a projection that elides fields must degrade per-field
+/// rather than failing the whole list response.
+///
+/// (No `PartialEq`: the nested [`InteractionRequest`] doesn't implement it.)
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct Trigger {
     /// Output only. The ID of the trigger.
-    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     /// Cron expression the trigger fires on.
-    pub schedule: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<String>,
     /// IANA time zone the schedule is evaluated in (e.g. `"UTC"`).
-    pub time_zone: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_zone: Option<String>,
     /// The interaction request created on each firing.
-    pub interaction: InteractionRequest,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interaction: Option<InteractionRequest>,
     /// Human-readable display name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
@@ -424,12 +437,18 @@ impl TriggerUpdate {
 }
 
 /// A single firing of a [`Trigger`].
-#[derive(Clone, Debug, Serialize, Deserialize)]
+///
+/// All fields optional with a struct-level serde default; see [`Trigger`]
+/// for the rationale.
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
+#[serde(default)]
 pub struct TriggerExecution {
     /// Output only. The ID of the execution.
-    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     /// Output only. The ID of the trigger that fired.
-    pub trigger_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger_id: Option<String>,
     /// Output only. The interaction created by this firing.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub interaction_id: Option<String>,
@@ -531,8 +550,23 @@ mod tests {
             "next_run_time": "2026-08-09T09:00:00Z"
         });
         let trigger: Trigger = serde_json::from_value(json).unwrap();
+        assert_eq!(trigger.id.as_deref(), Some("trig-1"));
         assert_eq!(trigger.status, Some(TriggerStatus::Active));
         assert!(trigger.next_run_time.is_some());
+    }
+
+    #[test]
+    fn sparse_trigger_projection_degrades_per_field() {
+        // A list projection that elides the nested interaction (or any
+        // other field) must still deserialize — Evergreen posture.
+        let trigger: Trigger = serde_json::from_value(serde_json::json!({"id": "t"})).unwrap();
+        assert_eq!(trigger.id.as_deref(), Some("t"));
+        assert!(trigger.interaction.is_none());
+
+        let execution: TriggerExecution =
+            serde_json::from_value(serde_json::json!({"status": "completed"})).unwrap();
+        assert!(execution.id.is_none());
+        assert_eq!(execution.status, Some(TriggerExecutionStatus::Completed));
     }
 
     #[test]

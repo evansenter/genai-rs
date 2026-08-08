@@ -128,6 +128,39 @@ async fn main() -> Result<(), Box<dyn Error>> {
         Err(e) => println!("Background interaction failed: {e}"),
     }
 
+    // =========================================================================
+    // Environments: create once, reference from many interactions
+    // =========================================================================
+    // Verified live 2026-08-08: the full lifecycle works on a standard key.
+    println!("\n=== Environments CRUD ===");
+    let env_request = genai_rs::CreateEnvironmentRequest::new().add_source(
+        genai_rs::EnvironmentSource::inline("/etc/motd", "hello from the environments example"),
+    );
+    let environment = client.create_environment(&env_request).await?;
+    println!("Created environment: {}", environment.id);
+
+    let listed = client.list_environments(Some(10), None).await?;
+    println!("Environments visible: {}", listed.environments.len());
+
+    let fetched = client.get_environment(&environment.id).await?;
+    println!(
+        "Fetched: status={:?} files={:?} bytes={:?}",
+        fetched.status, fetched.file_count, fetched.size_bytes
+    );
+
+    client.delete_environment(&environment.id).await?;
+    println!("Deleted environment {}", environment.id);
+
+    // =========================================================================
+    // Triggers: server-side scheduled interactions
+    // =========================================================================
+    // Listing works on any key. Creating a trigger requires its interaction
+    // to target a custom agent (an /v1beta/agents resource), and custom-agent
+    // creation is gated/allowlisted on standard API keys — so this example
+    // only lists. See genai_rs::triggers for the create/run/update surface.
+    let triggers = client.list_triggers(Some(10), None).await?;
+    println!("\nTriggers visible: {}", triggers.triggers.len());
+
     print_footer();
     Ok(())
 }
@@ -151,4 +184,8 @@ fn print_footer() {
     println!("  (state: disabled_due_to_failed_deliveries) - monitor webhook state");
     println!("• webhook_config overrides registered webhooks per request and echoes");
     println!("  user_metadata on every event - use it to correlate jobs");
+    println!("• Environments expire on their own, but delete what you create -");
+    println!("  repeated runs otherwise accumulate containers until expiry");
+    println!("• Triggers fire with no client process running; pause via");
+    println!("  update_trigger(status: paused) and audit via list_trigger_executions");
 }

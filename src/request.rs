@@ -1873,6 +1873,11 @@ impl From<DynamicConfig> for AgentConfig {
 /// attached) — distinct from the local-harness bridge in
 /// [`antigravity`](crate::antigravity), which runs the agent on your machine.
 ///
+/// Probe note (2026-08-08): the bare `antigravity` agent alias returns 404
+/// `not_found` on a standard API key, so the config keys (`type`, `model`,
+/// `max_total_tokens`) come from the official SDK spec and are pending live
+/// verification against an account where the agent is available.
+///
 /// # Example
 ///
 /// ```

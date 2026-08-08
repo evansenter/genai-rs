@@ -394,7 +394,14 @@ impl AgentBuilder {
     ///
     /// The hook receives the whole question batch and returns answers (or
     /// cancels). Without a hook, every question is answered "unanswered"
-    /// so the harness never deadlocks.
+    /// so the harness never deadlocks — that fallback covers only the
+    /// *hookless* case.
+    ///
+    /// The hook is synchronous and runs inline in the harness event pump:
+    /// **do not block in it** waiting for a human. Answer from policy or
+    /// pre-collected state (e.g. a channel drained with `try_recv`);
+    /// blocking stalls all event processing for as long as the answer
+    /// takes.
     #[must_use]
     pub fn on_questions(
         mut self,
@@ -1287,10 +1294,14 @@ impl AntigravityAgent {
                 self.answer_tool_confirmation(&step, &step_key, turn)
                     .await?;
             }
-            if let Some(questions) = &step.questions_request.clone()
+            if step.questions_request.is_some()
                 && turn.mark_wait_handled(&step_key, "questions_request")
             {
-                self.answer_questions(&step, questions).await?;
+                let questions = step
+                    .questions_request
+                    .clone()
+                    .expect("checked is_some above");
+                self.answer_questions(&step, &questions).await?;
             }
         }
         Ok(())
@@ -1343,8 +1354,7 @@ impl AntigravityAgent {
         step: &StepUpdate,
         request: &protocol::UserQuestionsRequest,
     ) -> Result<(), AntigravityError> {
-        let question_count = request.questions.len();
-        let (cancelled, answers) = match &self.questions {
+        let reply = match &self.questions {
             Some(hook) => {
                 let batch: Vec<hooks::AgentQuestion> = request
                     .questions
@@ -1358,76 +1368,22 @@ impl AntigravityAgent {
                         }
                     })
                     .collect();
-                match hook(&batch) {
-                    hooks::QuestionReply::Cancel => (true, Vec::new()),
-                    hooks::QuestionReply::Answers(answers) => {
-                        if answers.len() != question_count {
-                            tracing::warn!(
-                                "Questions hook returned {} answer(s) for {} question(s); \
-                                 padding with unanswered / dropping extras",
-                                answers.len(),
-                                question_count
-                            );
-                        }
-                        let mapped = answers
-                            .into_iter()
-                            .map(|answer| match answer {
-                                hooks::QuestionAnswer::Unanswered => {
-                                    protocol::UserQuestionAnswer::unanswered()
-                                }
-                                hooks::QuestionAnswer::Freeform(text) => {
-                                    protocol::UserQuestionAnswer {
-                                        unanswered: None,
-                                        multiple_choice_answer: Some(
-                                            protocol::MultipleChoiceAnswer {
-                                                selected_choice_indices: Vec::new(),
-                                                freeform_response: Some(text),
-                                            },
-                                        ),
-                                    }
-                                }
-                                hooks::QuestionAnswer::Choices { selected, freeform } => {
-                                    protocol::UserQuestionAnswer {
-                                        unanswered: None,
-                                        multiple_choice_answer: Some(
-                                            protocol::MultipleChoiceAnswer {
-                                                selected_choice_indices: selected,
-                                                freeform_response: freeform,
-                                            },
-                                        ),
-                                    }
-                                }
-                            })
-                            .chain(std::iter::repeat_with(
-                                protocol::UserQuestionAnswer::unanswered,
-                            ))
-                            .take(question_count)
-                            .collect();
-                        (false, mapped)
-                    }
-                }
+                Some(hook(&batch))
             }
             None => {
                 tracing::warn!(
-                    "Harness asked {question_count} user question(s) but no questions hook \
+                    "Harness asked {} user question(s) but no questions hook \
                      is set; answering as unanswered. Set `.on_questions(..)` on the \
                      builder to answer interactively, or disable the ask_question \
-                     builtin (Capabilities) to prevent this."
+                     builtin (Capabilities) to prevent this.",
+                    request.questions.len()
                 );
-                (
-                    false,
-                    (0..question_count)
-                        .map(|_| protocol::UserQuestionAnswer::unanswered())
-                        .collect(),
-                )
+                None
             }
         };
-        let response = protocol::UserQuestionsResponse {
-            trajectory_id: step.trajectory_id.clone().unwrap_or_default(),
-            step_index: step.step_index.unwrap_or_default(),
-            cancelled: cancelled.then_some(true),
-            response: (!cancelled).then_some(protocol::QuestionsResponse { answers }),
-        };
+        let mut response = map_question_reply(reply, request.questions.len());
+        response.trajectory_id = step.trajectory_id.clone().unwrap_or_default();
+        response.step_index = step.step_index.unwrap_or_default();
         self.session
             .send(&InputEvent::QuestionResponse(response))
             .await
@@ -1922,9 +1878,145 @@ impl TurnState {
     }
 }
 
+/// Maps a questions-hook reply (or the hookless `None` fallback) onto the
+/// protocol's `cancelled`/`response` oneof.
+///
+/// A short answer list is padded with "unanswered", a long one truncated,
+/// both with a `warn!`. `trajectory_id`/`step_index` are left for the
+/// caller to fill in. Free function so the mapping is unit-testable.
+fn map_question_reply(
+    reply: Option<hooks::QuestionReply>,
+    question_count: usize,
+) -> protocol::UserQuestionsResponse {
+    let (cancelled, answers) = match reply {
+        Some(hooks::QuestionReply::Cancel) => (true, Vec::new()),
+        Some(hooks::QuestionReply::Answers(answers)) => {
+            if answers.len() != question_count {
+                tracing::warn!(
+                    "Questions hook returned {} answer(s) for {} question(s); \
+                     padding with unanswered / dropping extras",
+                    answers.len(),
+                    question_count
+                );
+            }
+            let mapped = answers
+                .into_iter()
+                .map(|answer| match answer {
+                    hooks::QuestionAnswer::Unanswered => protocol::UserQuestionAnswer::unanswered(),
+                    hooks::QuestionAnswer::Freeform(text) => protocol::UserQuestionAnswer {
+                        unanswered: None,
+                        multiple_choice_answer: Some(protocol::MultipleChoiceAnswer {
+                            selected_choice_indices: Vec::new(),
+                            freeform_response: Some(text),
+                        }),
+                    },
+                    hooks::QuestionAnswer::Choices { selected, freeform } => {
+                        protocol::UserQuestionAnswer {
+                            unanswered: None,
+                            multiple_choice_answer: Some(protocol::MultipleChoiceAnswer {
+                                selected_choice_indices: selected,
+                                freeform_response: freeform,
+                            }),
+                        }
+                    }
+                })
+                .chain(std::iter::repeat_with(
+                    protocol::UserQuestionAnswer::unanswered,
+                ))
+                .take(question_count)
+                .collect();
+            (false, mapped)
+        }
+        None => (
+            false,
+            (0..question_count)
+                .map(|_| protocol::UserQuestionAnswer::unanswered())
+                .collect(),
+        ),
+    };
+    protocol::UserQuestionsResponse {
+        trajectory_id: String::new(),
+        step_index: 0,
+        cancelled: cancelled.then_some(true),
+        response: (!cancelled).then_some(protocol::QuestionsResponse { answers }),
+    }
+}
+
 #[cfg(test)]
 mod agent_tests {
     use super::*;
+
+    #[test]
+    fn question_reply_cancel_sets_only_cancelled() {
+        let response = map_question_reply(Some(hooks::QuestionReply::Cancel), 2);
+        assert_eq!(response.cancelled, Some(true));
+        assert!(
+            response.response.is_none(),
+            "cancel must not also emit a response (protocol oneof)"
+        );
+    }
+
+    #[test]
+    fn question_reply_exact_answers_map_to_protocol() {
+        let response = map_question_reply(
+            Some(hooks::QuestionReply::Answers(vec![
+                hooks::QuestionAnswer::Choices {
+                    selected: vec![1, 2],
+                    freeform: None,
+                },
+                hooks::QuestionAnswer::Freeform("details".into()),
+            ])),
+            2,
+        );
+        assert!(response.cancelled.is_none());
+        let answers = response.response.expect("answers present").answers;
+        assert_eq!(answers.len(), 2);
+        let first = answers[0].multiple_choice_answer.as_ref().unwrap();
+        assert_eq!(first.selected_choice_indices, vec![1, 2]);
+        assert!(first.freeform_response.is_none());
+        let second = answers[1].multiple_choice_answer.as_ref().unwrap();
+        assert!(second.selected_choice_indices.is_empty());
+        assert_eq!(second.freeform_response.as_deref(), Some("details"));
+        assert!(answers[1].unanswered.is_none());
+    }
+
+    #[test]
+    fn question_reply_short_list_pads_with_unanswered() {
+        let response = map_question_reply(
+            Some(hooks::QuestionReply::Answers(vec![
+                hooks::QuestionAnswer::Freeform("only one".into()),
+            ])),
+            3,
+        );
+        let answers = response.response.expect("answers present").answers;
+        assert_eq!(answers.len(), 3, "padded to the question count");
+        assert!(answers[0].multiple_choice_answer.is_some());
+        assert_eq!(answers[1].unanswered, Some(true));
+        assert_eq!(answers[2].unanswered, Some(true));
+    }
+
+    #[test]
+    fn question_reply_long_list_truncates() {
+        let response = map_question_reply(
+            Some(hooks::QuestionReply::Answers(vec![
+                hooks::QuestionAnswer::Unanswered,
+                hooks::QuestionAnswer::Freeform("extra".into()),
+            ])),
+            1,
+        );
+        let answers = response.response.expect("answers present").answers;
+        assert_eq!(answers.len(), 1, "truncated to the question count");
+        assert_eq!(answers[0].unanswered, Some(true));
+    }
+
+    #[test]
+    fn question_reply_hookless_fallback_answers_unanswered() {
+        let response = map_question_reply(None, 2);
+        assert!(response.cancelled.is_none());
+        let answers = response.response.expect("answers present").answers;
+        assert_eq!(answers.len(), 2);
+        assert!(answers.iter().all(|a| a.unanswered == Some(true)));
+    }
 
     fn trajectory_update(
         trajectory_id: Option<&str>,
