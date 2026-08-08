@@ -151,9 +151,10 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
       - name: Check documentation (docs.rs feature set)
-        # Exact mirror of [package.metadata.docs.rs] (features AND the docsrs
-        # rustdoc-arg): gates the configuration docs.rs actually publishes, so
-        # a rustdoc warning specific to it cannot first surface post-publish.
+        # Mirrors [package.metadata.docs.rs] (features AND the docsrs
+        # rustdoc-arg) on stable: gates warnings specific to the published
+        # feature set. Nightly-only breakage (docs.rs builds on nightly) is
+        # covered by release checklist step 0 in CLAUDE.md, not this job.
         run: cargo doc --workspace --no-deps --features antigravity
         env:
           RUSTDOCFLAGS: --cfg docsrs -D warnings

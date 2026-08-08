@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fixtures, replacing the zero-length WAV and header-only MP4 that the API
   rejects with 400 `invalid_request` — both examples previously always took
   their error branch.
+- Corrected `#[tool]` snippets across the guides: an invalid
+  `#[tool(description = ...)]` attribute form the macro parser rejects,
+  `.declaration()` called on the function item instead of the generated
+  callable struct, and missing `CallableFunction` / `tool` imports.
 - README installation snippet now lists `async-trait` and `serde_json`,
   required by `#[tool]`-generated code, and notes the `CallableFunction`
   import — following the previous snippet produced a compile error on
