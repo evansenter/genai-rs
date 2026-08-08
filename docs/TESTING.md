@@ -505,9 +505,12 @@ retry closure that needs the verdict as a `Result`) applies the same
 policy: the validator call is itself retried on transient errors, then
 the helper asserts on the verdict, panics on non-transient validator
 errors, and tolerates transients that survive the retries with a
-`SEMANTIC_VALIDATION_SKIPPED` marker (the CI integration step captures
-passing-test output via `--success-output=final`, counts the markers,
-and emits a `::warning::` annotation when any appear).
+`SEMANTIC_VALIDATION_SKIPPED` marker. The CI integration step captures
+passing-test output via `--success-output=final` and counts the markers:
+a `::warning::` annotation when any appear, and a **failed step** past a
+per-run threshold (see the marker-counting blocks in `rust.yml` and
+`release.yml` for the current numbers) — the escape hatch stays available
+for transient blips without being able to quietly become the normal path.
 
 ### Test Fixtures
 

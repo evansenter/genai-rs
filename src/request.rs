@@ -1204,6 +1204,11 @@ pub struct InteractionRequest {
     pub tools: Option<Vec<Tool>>,
 
     /// Response modalities (e.g., ["image"]; the API only accepts lowercase)
+    ///
+    /// Deprecation signal: the official SDK marks `response_modalities`
+    /// (and `response_mime_type`) as deprecated in favor of the typed
+    /// [`response_format`](Self::response_format) union — prefer
+    /// [`ResponseFormatSpec`] for new code. Kept until the API removes it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_modalities: Option<Vec<String>>,
 

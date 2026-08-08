@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.8.1] - 2026-08-08
 
+### Added
+
+- **Triggers resource** (`/v1beta/triggers`): server-side scheduled
+  interactions with full CRUD plus `run_trigger` and
+  `list_trigger_executions` — cron agents that fire with no client process
+  running. Trigger creation requires a custom agent (gated on standard API
+  keys, verified live); the list path and payload schema are live-verified.
+- **Environments resource** (`/v1beta/environments`): explicit
+  `create/get/list/delete_environment` so many interactions can share one
+  container (full lifecycle verified live on a standard key). Handles the
+  protobuf-JSON string int64 wire form for `file_count`/`size_bytes`.
+- **`TranscriptionConfig`** in `generation_config`
+  (`with_transcription_config`): language hints, diarization, custom
+  vocabulary, adaptation phrases and timestamp granularities for audio
+  input (accepted live).
+- **`SafetySetting`/`HarmCategory`/`SafetyThreshold`/`SafetyMethod`** and
+  the `safety_settings` request field (+ `with_safety_settings`/
+  `add_safety_setting`), and **`labels`** request metadata
+  (+ `with_labels`/`add_label`). Both parameters are currently rejected by
+  the Gemini API ("available on the Gemini Enterprise Agent Platform",
+  verified live 2026-08-08) — modeled for spec parity and forward
+  compatibility, like the existing `Retrieval` tool.
+- **`AntigravityConfig`** typed agent-config helper for server-side
+  `agent("antigravity")` interactions (`model`, `max_total_tokens`).
+- **Antigravity bridge: `on_questions` hook** — answer the agent's
+  `ask_question` batches programmatically (select choices, freeform text,
+  skip, or cancel) instead of the previous always-"unanswered" fallback.
+- `InteractionRequest` and `InteractionInput` implement `Default`, easing
+  struct-literal construction (e.g. nested trigger interactions).
+
+### Deprecated
+
+- `response_modalities` / `response_mime_type` are marked deprecated by
+  the official SDK in favor of the typed `response_format` union; the
+  builder and field docs now steer new code to `with_response_format`.
+
 ### Fixed
 
 - docs.rs now builds with the `antigravity` feature enabled (the module was

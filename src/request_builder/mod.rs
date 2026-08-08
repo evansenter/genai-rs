@@ -958,6 +958,10 @@ impl<'a> InteractionBuilder<'a> {
     /// (`text`, `image`, `audio`, `video`, `document` — verified live), so
     /// each provided value is lowercased before being sent. The list stays
     /// `Vec<String>` (open enum) so new modalities pass through unchanged.
+    ///
+    /// Deprecation signal: the official SDK marks `response_modalities` as
+    /// deprecated in favor of the typed `response_format` union — prefer
+    /// [`with_response_format`](Self::with_response_format) for new code.
     #[must_use]
     pub fn with_response_modalities(mut self, modalities: Vec<String>) -> Self {
         self.response_modalities = Some(modalities.into_iter().map(|m| m.to_lowercase()).collect());

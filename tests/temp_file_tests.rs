@@ -583,11 +583,6 @@ fn example_fixtures_match_test_fixtures() {
             }
         }
     }
-    assert!(
-        checked >= 5,
-        "expected at least the five known fixture copies, found {checked} — \
-         did the declaration shape change?"
-    );
     for (name, _) in &canonical {
         assert!(
             seen.contains(name),
@@ -595,6 +590,15 @@ fn example_fixtures_match_test_fixtures() {
              removed or switched fixtures, update this guard's canonical list"
         );
     }
+    // Redundant with the loop above when it passes, but a distinct message
+    // for the matcher-regression case (declarations present but none
+    // recognized would fail the loop first with the more actionable name).
+    assert!(
+        checked >= canonical.len(),
+        "expected at least {} fixture copies, found {checked} — \
+         did the declaration shape change?",
+        canonical.len()
+    );
 }
 
 // =============================================================================

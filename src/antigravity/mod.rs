@@ -45,8 +45,8 @@ pub mod triggers;
 
 pub use config::{BuiltinTool, Capabilities, McpServer, SUPPORTED_HARNESS_VERSION, Subagent};
 pub use hooks::{
-    Policy, PolicyDecision, PostToolHook, PreToolDecision, PreToolHook, ToolInvocation,
-    ToolOutcome, policy,
+    AgentQuestion, Policy, PolicyDecision, PostToolHook, PreToolDecision, PreToolHook,
+    QuestionAnswer, QuestionHook, QuestionReply, ToolInvocation, ToolOutcome, policy,
 };
 pub use streaming::{AgentEvent, AgentEventStream, ErrorSeverity, ToolAction, ToolDecision};
 pub use triggers::TriggerConfig;
@@ -234,6 +234,7 @@ pub struct AgentBuilder {
     mcp_servers: Vec<McpServer>,
     policies: Vec<Policy>,
     pre_tool: Option<PreToolHook>,
+    questions: Option<hooks::QuestionHook>,
     post_tool: Option<PostToolHook>,
     save_dir: Option<String>,
     conversation_id: Option<String>,
@@ -385,6 +386,21 @@ impl AgentBuilder {
         hook: impl Fn(&ToolInvocation) -> PreToolDecision + Send + Sync + 'static,
     ) -> Self {
         self.pre_tool = Some(Arc::new(hook));
+        self
+    }
+
+    /// Sets a questions hook, invoked when the agent asks the user
+    /// questions via the `ask_question` builtin.
+    ///
+    /// The hook receives the whole question batch and returns answers (or
+    /// cancels). Without a hook, every question is answered "unanswered"
+    /// so the harness never deadlocks.
+    #[must_use]
+    pub fn on_questions(
+        mut self,
+        hook: impl Fn(&[hooks::AgentQuestion]) -> hooks::QuestionReply + Send + Sync + 'static,
+    ) -> Self {
+        self.questions = Some(Arc::new(hook));
         self
     }
 
@@ -621,6 +637,7 @@ impl AgentBuilder {
             dispatcher,
             policy_engine: PolicyEngine::new(self.policies),
             pre_tool: self.pre_tool,
+            questions: self.questions,
             post_tool: self.post_tool,
             conversation_id: None,
             initial_history: Vec::new(),
@@ -759,6 +776,7 @@ pub struct AntigravityAgent {
     dispatcher: ToolDispatcher,
     policy_engine: PolicyEngine,
     pre_tool: Option<PreToolHook>,
+    questions: Option<hooks::QuestionHook>,
     post_tool: Option<PostToolHook>,
     conversation_id: Option<String>,
     initial_history: Vec<StepUpdate>,
@@ -1269,11 +1287,10 @@ impl AntigravityAgent {
                 self.answer_tool_confirmation(&step, &step_key, turn)
                     .await?;
             }
-            if let Some(questions) = &step.questions_request
+            if let Some(questions) = &step.questions_request.clone()
                 && turn.mark_wait_handled(&step_key, "questions_request")
             {
-                self.answer_questions(&step, questions.questions.len())
-                    .await?;
+                self.answer_questions(&step, questions).await?;
             }
         }
         Ok(())
@@ -1315,28 +1332,101 @@ impl AntigravityAgent {
             .await
     }
 
-    /// Replies to a `questions_request`. Interactive question handling is
-    /// not supported yet; every question is answered "unanswered" so the
-    /// harness never deadlocks (the protocol requires a response).
+    /// Replies to a `questions_request`.
+    ///
+    /// With an [`AgentBuilder::on_questions`] hook set, the batch is handed
+    /// to the hook and its answers (or cancellation) are relayed. Without
+    /// one, every question is answered "unanswered" so the harness never
+    /// deadlocks (the protocol requires a response).
     async fn answer_questions(
         &mut self,
         step: &StepUpdate,
-        question_count: usize,
+        request: &protocol::UserQuestionsRequest,
     ) -> Result<(), AntigravityError> {
-        tracing::warn!(
-            "Harness asked {question_count} user question(s) but interactive question \
-             handling is not supported; answering as unanswered. Disable the \
-             ask_question builtin (Capabilities) to prevent this."
-        );
+        let question_count = request.questions.len();
+        let (cancelled, answers) = match &self.questions {
+            Some(hook) => {
+                let batch: Vec<hooks::AgentQuestion> = request
+                    .questions
+                    .iter()
+                    .map(|q| {
+                        let mc = q.multiple_choice.as_ref();
+                        hooks::AgentQuestion {
+                            question: mc.and_then(|m| m.question.clone()).unwrap_or_default(),
+                            choices: mc.map(|m| m.choices.clone()).unwrap_or_default(),
+                            is_multi_select: mc.and_then(|m| m.is_multi_select).unwrap_or(false),
+                        }
+                    })
+                    .collect();
+                match hook(&batch) {
+                    hooks::QuestionReply::Cancel => (true, Vec::new()),
+                    hooks::QuestionReply::Answers(answers) => {
+                        if answers.len() != question_count {
+                            tracing::warn!(
+                                "Questions hook returned {} answer(s) for {} question(s); \
+                                 padding with unanswered / dropping extras",
+                                answers.len(),
+                                question_count
+                            );
+                        }
+                        let mapped = answers
+                            .into_iter()
+                            .map(|answer| match answer {
+                                hooks::QuestionAnswer::Unanswered => {
+                                    protocol::UserQuestionAnswer::unanswered()
+                                }
+                                hooks::QuestionAnswer::Freeform(text) => {
+                                    protocol::UserQuestionAnswer {
+                                        unanswered: None,
+                                        multiple_choice_answer: Some(
+                                            protocol::MultipleChoiceAnswer {
+                                                selected_choice_indices: Vec::new(),
+                                                freeform_response: Some(text),
+                                            },
+                                        ),
+                                    }
+                                }
+                                hooks::QuestionAnswer::Choices { selected, freeform } => {
+                                    protocol::UserQuestionAnswer {
+                                        unanswered: None,
+                                        multiple_choice_answer: Some(
+                                            protocol::MultipleChoiceAnswer {
+                                                selected_choice_indices: selected,
+                                                freeform_response: freeform,
+                                            },
+                                        ),
+                                    }
+                                }
+                            })
+                            .chain(std::iter::repeat_with(
+                                protocol::UserQuestionAnswer::unanswered,
+                            ))
+                            .take(question_count)
+                            .collect();
+                        (false, mapped)
+                    }
+                }
+            }
+            None => {
+                tracing::warn!(
+                    "Harness asked {question_count} user question(s) but no questions hook \
+                     is set; answering as unanswered. Set `.on_questions(..)` on the \
+                     builder to answer interactively, or disable the ask_question \
+                     builtin (Capabilities) to prevent this."
+                );
+                (
+                    false,
+                    (0..question_count)
+                        .map(|_| protocol::UserQuestionAnswer::unanswered())
+                        .collect(),
+                )
+            }
+        };
         let response = protocol::UserQuestionsResponse {
             trajectory_id: step.trajectory_id.clone().unwrap_or_default(),
             step_index: step.step_index.unwrap_or_default(),
-            cancelled: None,
-            response: Some(protocol::QuestionsResponse {
-                answers: (0..question_count)
-                    .map(|_| protocol::UserQuestionAnswer::unanswered())
-                    .collect(),
-            }),
+            cancelled: cancelled.then_some(true),
+            response: (!cancelled).then_some(protocol::QuestionsResponse { answers }),
         };
         self.session
             .send(&InputEvent::QuestionResponse(response))

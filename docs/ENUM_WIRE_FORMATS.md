@@ -90,6 +90,12 @@ Helper methods on each type:
 | `FunctionCallingMode` | lowercase | `"auto"`, `"any"`, `"none"`, `"validated"` | **Changed** from SCREAMING_CASE; legacy uppercase accepted on deserialize. Pending live verification (2026-05-20 revision) |
 | `CodeExecutionLanguage` | lowercase | `"python"` | **Changed** from `"PYTHON"`; legacy uppercase accepted on deserialize. Pending live verification (2026-05-20 revision) |
 | `ServiceTier` | lowercase | `"flex"`, `"standard"`, `"priority"` | New in 2026-05-20. Pending live verification (2026-05-20 revision) |
+| `HarmCategory` | snake_case | `"hate_speech"`, `"jailbreak"` | `safety_settings`; parameter itself Gemini-API-rejected (Vertex-only), verified live 2026-08-08 |
+| `SafetyThreshold` | snake_case | `"block_only_high"`, `"off"` | Same Vertex-only constraint as `HarmCategory` |
+| `SafetyMethod` | lowercase | `"severity"`, `"probability"` | Same Vertex-only constraint as `HarmCategory` |
+| `EnvironmentStatus` | lowercase | `"active"`, `"expired"` | `/v1beta/environments`; `"active"` verified live 2026-08-08 |
+| `TriggerStatus` | lowercase | `"active"`, `"paused"`, `"error"` | `/v1beta/triggers`; from SDK spec, creation agent-gated so pending live verification |
+| `TriggerExecutionStatus` | snake_case | `"in_progress"`, `"timed_out"` | From SDK spec, pending live verification |
 | `InteractionStatus` | snake_case | `"in_progress"`, `"requires_action"`, `"budget_exceeded"` | `budget_exceeded` new; pending live verification (2026-05-20 revision). `Default` is `InProgress` |
 | `SearchType` | snake_case string | `"web_search"`, `"image_search"`, `"enterprise_web_search"` | `enterprise_web_search` new; pending live verification (2026-05-20 revision) |
 | `GroundingToolCount` | `{"type": ..., "count": n}` | `{"type": "google_search", "count": 2}` | In `usage.grounding_tool_count`. Pending live verification (2026-05-20 revision) |
@@ -396,6 +402,50 @@ interaction response echoes the effective tier as `service_tier: "standard"`,
 alongside an `object: "interaction"` resource discriminator — both now modeled
 on `InteractionResponse` (`service_tier`, `object`). The request-side values
 (`flex`/`priority`) are still pending live verification.
+
+### Safety settings enums (request `safety_settings`)
+
+`HarmCategory` / `SafetyThreshold` / `SafetyMethod`, all snake_case strings
+with the standard Unknown pattern (`category_type` / `threshold_type` /
+`method_type`).
+
+| Rust Enum | Wire Values |
+|-----------|-------------|
+| `HarmCategory` | `"hate_speech"`, `"dangerous_content"`, `"harassment"`, `"sexually_explicit"`, `"civic_integrity"`, `"image_hate"`, `"image_dangerous_content"`, `"image_harassment"`, `"image_sexually_explicit"`, `"jailbreak"` |
+| `SafetyThreshold` | `"block_low_and_above"`, `"block_medium_and_above"`, `"block_only_high"`, `"block_none"`, `"off"` |
+| `SafetyMethod` | `"severity"`, `"probability"` |
+
+**Status**: Enum values come from the official SDK spec. The
+`safety_settings` request parameter itself is rejected by the Gemini API
+(verified live 2026-08-08: 400 `invalid_request`, "not available on the
+Gemini API but it is available on the Gemini Enterprise Agent Platform") —
+modeled for spec parity and forward compatibility.
+
+### EnvironmentStatus (`/v1beta/environments`)
+
+| Rust Enum | Wire Value |
+|-----------|------------|
+| `EnvironmentStatus::Active` | `"active"` |
+| `EnvironmentStatus::Expired` | `"expired"` |
+| `EnvironmentStatus::Unknown { status_type, data }` | preserved |
+
+**Status**: `"active"` verified live 2026-08-08 (full environments CRUD
+works on a standard key; int64 counts arrive as protobuf-JSON strings and
+timestamps as ISO 8601 with offset — both verified in the same probe).
+`"expired"` comes from the SDK spec.
+
+### TriggerStatus / TriggerExecutionStatus (`/v1beta/triggers`)
+
+| Rust Enum | Wire Values |
+|-----------|-------------|
+| `TriggerStatus` | `"active"`, `"paused"`, `"error"` |
+| `TriggerExecutionStatus` | `"in_progress"`, `"completed"`, `"failed"`, `"skipped"`, `"timed_out"` |
+
+**Status**: From the official SDK spec. Live verification is pending:
+trigger creation requires a custom agent, which is gated/allowlisted on
+standard API keys (verified live 2026-08-08 — a model-only trigger
+interaction is rejected with "Agent '' is invalid or not found", and
+`GET /v1beta/triggers` returns `{}` when empty).
 
 ### ThinkingSummaries (agent_config)
 

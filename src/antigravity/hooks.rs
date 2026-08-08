@@ -83,6 +83,54 @@ pub type PreToolHook = Arc<dyn Fn(&ToolInvocation) -> PreToolDecision + Send + S
 /// A synchronous post-tool hook: observe completed tool calls.
 pub type PostToolHook = Arc<dyn Fn(&ToolOutcome) + Send + Sync>;
 
+/// A question the agent asked via the `ask_question` builtin.
+///
+/// Delivered to the hook set with
+/// [`on_questions`](crate::antigravity::AgentBuilder::on_questions);
+/// currently always multiple-choice (the only question type the harness
+/// protocol defines).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentQuestion {
+    /// The question text.
+    pub question: String,
+    /// The predefined choices.
+    pub choices: Vec<String>,
+    /// Whether more than one choice may be selected.
+    pub is_multi_select: bool,
+}
+
+/// Answer to a single [`AgentQuestion`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum QuestionAnswer {
+    /// Select choices by zero-based index into
+    /// [`AgentQuestion::choices`], optionally adding freeform text.
+    Choices {
+        /// Zero-based indices of the selected choices.
+        selected: Vec<i32>,
+        /// Optional freeform text alongside the selection.
+        freeform: Option<String>,
+    },
+    /// A freeform text answer with no choice selected.
+    Freeform(String),
+    /// Leave this question unanswered.
+    Unanswered,
+}
+
+/// Reply to a whole `ask_question` batch.
+#[derive(Debug, Clone, PartialEq)]
+pub enum QuestionReply {
+    /// One answer per question, in order. A short reply is padded with
+    /// [`QuestionAnswer::Unanswered`]; extra answers are dropped.
+    Answers(Vec<QuestionAnswer>),
+    /// Cancel the question interaction.
+    Cancel,
+}
+
+/// Hook invoked when the agent asks the user questions
+/// (`ask_question` builtin). Return answers or cancel; without a hook the
+/// harness receives "unanswered" for every question.
+pub type QuestionHook = Arc<dyn Fn(&[AgentQuestion]) -> QuestionReply + Send + Sync>;
+
 /// What a matched policy decides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]

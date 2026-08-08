@@ -196,7 +196,38 @@ wire — verified against the pinned harness proto). Two edge cases:
   anything it cannot map.
 
 `on_post_tool` observes completed custom tool calls (and harness-side
-post-tool hook callbacks) for audit logging. `ToolOutcome.result` is the
+post-tool hook callbacks) for audit logging.
+
+### Answering agent questions
+
+When the `ask_question` builtin is enabled, the agent can pause a turn to
+ask the user questions (multiple-choice, optionally multi-select). Set an
+`on_questions` hook to answer them programmatically — route them to a CLI
+prompt, a chat message, or policy code:
+
+```rust,ignore
+use genai_rs::antigravity::{QuestionAnswer, QuestionReply};
+
+let agent = AntigravityAgent::builder()
+    // ...
+    .on_questions(|questions| {
+        // Answer each question: pick the first choice.
+        QuestionReply::Answers(
+            questions
+                .iter()
+                .map(|_q| QuestionAnswer::Choices { selected: vec![0], freeform: None })
+                .collect(),
+        )
+    })
+    .build()
+    .await?;
+```
+
+`QuestionReply::Cancel` cancels the interaction; a short answer list is
+padded with `Unanswered`. Without a hook every question is answered
+"unanswered" (with a `warn!`) so the harness never deadlocks — disable
+`BuiltinTool::AskQuestion` in `Capabilities` if the agent should never
+ask. `ToolOutcome.result` is the
 **inner** tool result, not the `{"result": ...}` wire envelope the harness
 receives: a scalar return `X` arrives as its string form (or `X` serialized
 when non-string), and an object return is passed through serialized. Failures
@@ -256,7 +287,6 @@ spawn-time safety gate):
 
 ```rust,ignore
 use genai_rs::CallableFunction;
-
 use genai_rs::antigravity::{BuiltinTool, Capabilities, Subagent, policy};
 
 let agent = AntigravityAgent::builder()
