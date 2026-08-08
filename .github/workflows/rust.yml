@@ -106,7 +106,9 @@ jobs:
           set -e
           for test in ${{ matrix.tests }}; do
             echo "::group::Running $test"
-            cargo nextest run --test $test --run-ignored all
+            # --success-output=final keeps passing-test output (notably the
+            # SEMANTIC_VALIDATION_SKIPPED marker) greppable in CI logs.
+            cargo nextest run --test $test --run-ignored all --success-output=final
             echo "::endgroup::"
           done
         env:
