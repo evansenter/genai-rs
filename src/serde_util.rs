@@ -60,6 +60,36 @@ where
     }
 }
 
+/// Deserializes an optional int64 accepting both the plain-number and
+/// protobuf-JSON string forms, but *erroring* on anything malformed — the
+/// send-side sibling of [`deserialize_string_i64`]. For deserializable
+/// request types (config-file loading), where a typo must stay a clean
+/// load-time error: there is no page to protect on the send side, and a
+/// silently dropped field would change what gets created.
+pub(crate) fn deserialize_strict_string_i64<'de, D>(
+    deserializer: D,
+) -> Result<Option<i64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    match value {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::Number(n)) => n
+            .as_i64()
+            .map(Some)
+            .ok_or_else(|| D::Error::custom(format!("non-i64 JSON number for int64 field: {n}"))),
+        Some(serde_json::Value::String(s)) => s
+            .parse()
+            .map(Some)
+            .map_err(|e| D::Error::custom(format!("unparseable int64 string {s:?}: {e}"))),
+        Some(other) => Err(D::Error::custom(format!(
+            "unexpected JSON type for int64 field: {other}"
+        ))),
+    }
+}
+
 /// Deserializes an optional RFC 3339 timestamp, degrading an unparseable
 /// string or unexpected JSON shape to `None` with a `warn!` instead of
 /// failing the enclosing struct (and hence an entire list response).

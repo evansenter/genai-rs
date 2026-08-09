@@ -518,7 +518,7 @@ pub struct TriggerCreateParams {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::serde_util::deserialize_string_i64"
+        deserialize_with = "crate::serde_util::deserialize_strict_string_i64"
     )]
     pub max_consecutive_failures: Option<i64>,
     /// Per-execution timeout in seconds. Sends as a plain JSON number
@@ -527,7 +527,7 @@ pub struct TriggerCreateParams {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::serde_util::deserialize_string_i64"
+        deserialize_with = "crate::serde_util::deserialize_strict_string_i64"
     )]
     pub execution_timeout_seconds: Option<i64>,
     /// Unrecognized fields, preserved for roundtrip (Evergreen) — lets an
@@ -891,6 +891,26 @@ mod tests {
         let json = serde_json::to_value(&params).unwrap();
         assert_eq!(json["max_consecutive_failures"], serde_json::json!(3));
         assert_eq!(json["execution_timeout_seconds"], serde_json::json!(600));
+
+        // Unlike the response side there is no page to protect here, so a
+        // malformed value stays a clean load-time error rather than
+        // silently dropping the field (which would create a trigger with
+        // no auto-disable cap).
+        for bad in [
+            serde_json::json!("three"),
+            serde_json::json!(""),
+            serde_json::json!(3.5),
+            serde_json::json!(true),
+        ] {
+            let result: Result<TriggerCreateParams, _> =
+                serde_json::from_value(serde_json::json!({
+                    "schedule": "0 9 * * *",
+                    "time_zone": "UTC",
+                    "interaction": {"agent": "my-agent", "input": "hi"},
+                    "max_consecutive_failures": bad
+                }));
+            assert!(result.is_err(), "send-side int64 must stay strict");
+        }
         let update: TriggerUpdate =
             serde_json::from_value(serde_json::json!({"other": 1})).unwrap();
         assert_eq!(update.extra["other"], 1);
