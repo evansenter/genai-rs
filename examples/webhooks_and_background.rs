@@ -164,8 +164,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // to target a custom agent (an /v1beta/agents resource), and custom-agent
     // creation is gated/allowlisted on standard API keys — so this example
     // only lists. See genai_rs::triggers for the create/run/update surface.
-    let triggers = client.list_triggers(Some(10), None).await?;
-    println!("\nTriggers visible: {}", triggers.triggers.len());
+    match client.list_triggers(Some(10), None).await {
+        Ok(triggers) => println!("\nTriggers visible: {}", triggers.triggers.len()),
+        Err(e) => println!("\nlist_triggers failed (tolerated, gated surface): {e}"),
+    }
 
     print_footer();
     Ok(())

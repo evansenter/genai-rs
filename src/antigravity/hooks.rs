@@ -104,6 +104,10 @@ pub struct AgentQuestion {
 pub enum QuestionAnswer {
     /// Select choices by zero-based index into
     /// [`AgentQuestion::choices`], optionally adding freeform text.
+    ///
+    /// Indices are relayed to the harness as-is: out-of-range indices and
+    /// multiple selections on a single-select question are `warn!`ed but
+    /// not filtered — the harness owns the final verdict.
     Choices {
         /// Zero-based indices of the selected choices.
         selected: Vec<i32>,

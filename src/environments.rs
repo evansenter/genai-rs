@@ -302,6 +302,20 @@ mod tests {
     }
 
     #[test]
+    fn create_request_network_serializes_without_discriminator() {
+        use crate::environment::NetworkConfig;
+
+        let request = CreateEnvironmentRequest::new().with_network(NetworkConfig::Disabled);
+        let json = serde_json::to_value(&request).unwrap();
+        assert!(json.get("network").is_some(), "network key present");
+        assert!(
+            json.get("type").is_none(),
+            "the standalone create body must not carry the inline union's \
+             `remote` discriminator: {json}"
+        );
+    }
+
+    #[test]
     fn empty_list_response_deserializes() {
         // GET /v1beta/environments returns `{}` when nothing exists.
         let list: EnvironmentListResponse = serde_json::from_value(serde_json::json!({})).unwrap();

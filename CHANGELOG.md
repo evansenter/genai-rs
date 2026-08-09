@@ -50,9 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Deprecated
 
-- `response_modalities` / `response_mime_type` are marked deprecated by
-  the official SDK in favor of the typed `response_format` union; the
-  builder and field docs now steer new code to `with_response_format`.
+- `response_modalities` is marked deprecated by the official SDK in
+  favor of the typed `response_format` union; the builder and field docs
+  now steer new code to `with_response_format`. (The SDK deprecates
+  `response_mime_type` alongside it, but that field was already removed
+  from this crate — the API rejects it in every form.)
 
 ### Fixed
 

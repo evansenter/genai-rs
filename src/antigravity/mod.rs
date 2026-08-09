@@ -1354,11 +1354,9 @@ impl AntigravityAgent {
         step: &StepUpdate,
         request: &protocol::UserQuestionsRequest,
     ) -> Result<(), AntigravityError> {
+        let batch = map_questions(request);
         let reply = match &self.questions {
-            Some(hook) => {
-                let batch = map_questions(request);
-                Some(hook(&batch))
-            }
+            Some(hook) => Some(hook(&batch)),
             None => {
                 tracing::warn!(
                     "Harness asked {} user question(s) but no questions hook \
@@ -1370,7 +1368,7 @@ impl AntigravityAgent {
                 None
             }
         };
-        let mut response = map_question_reply(reply, request.questions.len());
+        let mut response = map_question_reply(reply, &batch);
         response.trajectory_id = step.trajectory_id.clone().unwrap_or_default();
         response.step_index = step.step_index.unwrap_or_default();
         self.session
@@ -1903,12 +1901,16 @@ fn map_questions(request: &protocol::UserQuestionsRequest) -> Vec<hooks::AgentQu
 /// protocol's `cancelled`/`response` oneof.
 ///
 /// A short answer list is padded with "unanswered", a long one truncated,
-/// both with a `warn!`. `trajectory_id`/`step_index` are left for the
-/// caller to fill in. Free function so the mapping is unit-testable.
+/// both with a `warn!`; hook-selected choice indices are validated against
+/// the question batch (out-of-range or single-select violations `warn!`
+/// but are still relayed — the harness owns the final verdict).
+/// `trajectory_id`/`step_index` are left for the caller to fill in. Free
+/// function so the mapping is unit-testable.
 fn map_question_reply(
     reply: Option<hooks::QuestionReply>,
-    question_count: usize,
+    questions: &[hooks::AgentQuestion],
 ) -> protocol::UserQuestionsResponse {
+    let question_count = questions.len();
     let (cancelled, answers) = match reply {
         Some(hooks::QuestionReply::Cancel) => (true, Vec::new()),
         Some(hooks::QuestionReply::Answers(answers)) => {
@@ -1922,16 +1924,38 @@ fn map_question_reply(
             }
             let mapped = answers
                 .into_iter()
-                .map(|answer| match answer {
-                    hooks::QuestionAnswer::Unanswered => protocol::UserQuestionAnswer::unanswered(),
-                    hooks::QuestionAnswer::Freeform(text) => protocol::UserQuestionAnswer {
+                .map(Some)
+                .chain(std::iter::repeat_with(|| None))
+                .take(question_count)
+                .zip(questions.iter())
+                .map(|(answer, question)| match answer {
+                    None | Some(hooks::QuestionAnswer::Unanswered) => {
+                        protocol::UserQuestionAnswer::unanswered()
+                    }
+                    Some(hooks::QuestionAnswer::Freeform(text)) => protocol::UserQuestionAnswer {
                         unanswered: None,
                         multiple_choice_answer: Some(protocol::MultipleChoiceAnswer {
                             selected_choice_indices: Vec::new(),
                             freeform_response: Some(text),
                         }),
                     },
-                    hooks::QuestionAnswer::Choices { selected, freeform } => {
+                    Some(hooks::QuestionAnswer::Choices { selected, freeform }) => {
+                        for &idx in &selected {
+                            if idx < 0 || idx as usize >= question.choices.len() {
+                                tracing::warn!(
+                                    "Questions hook selected index {idx} for a question \
+                                     with {} choice(s); relaying anyway",
+                                    question.choices.len()
+                                );
+                            }
+                        }
+                        if selected.len() > 1 && !question.is_multi_select {
+                            tracing::warn!(
+                                "Questions hook selected {} choices for a single-select \
+                                 question; relaying anyway",
+                                selected.len()
+                            );
+                        }
                         protocol::UserQuestionAnswer {
                             unanswered: None,
                             multiple_choice_answer: Some(protocol::MultipleChoiceAnswer {
@@ -1941,10 +1965,6 @@ fn map_question_reply(
                         }
                     }
                 })
-                .chain(std::iter::repeat_with(
-                    protocol::UserQuestionAnswer::unanswered,
-                ))
-                .take(question_count)
                 .collect();
             (false, mapped)
         }
@@ -1967,9 +1987,20 @@ fn map_question_reply(
 mod agent_tests {
     use super::*;
 
+    /// `n` three-choice single-select questions for mapping tests.
+    fn question_batch(n: usize) -> Vec<hooks::AgentQuestion> {
+        (0..n)
+            .map(|i| hooks::AgentQuestion {
+                question: format!("q{i}"),
+                choices: vec!["a".into(), "b".into(), "c".into()],
+                is_multi_select: false,
+            })
+            .collect()
+    }
+
     #[test]
     fn question_reply_cancel_sets_only_cancelled() {
-        let response = map_question_reply(Some(hooks::QuestionReply::Cancel), 2);
+        let response = map_question_reply(Some(hooks::QuestionReply::Cancel), &question_batch(2));
         assert_eq!(response.cancelled, Some(true));
         assert!(
             response.response.is_none(),
@@ -1987,7 +2018,7 @@ mod agent_tests {
                 },
                 hooks::QuestionAnswer::Freeform("details".into()),
             ])),
-            2,
+            &question_batch(2),
         );
         assert!(response.cancelled.is_none());
         let answers = response.response.expect("answers present").answers;
@@ -2007,7 +2038,7 @@ mod agent_tests {
             Some(hooks::QuestionReply::Answers(vec![
                 hooks::QuestionAnswer::Freeform("only one".into()),
             ])),
-            3,
+            &question_batch(3),
         );
         let answers = response.response.expect("answers present").answers;
         assert_eq!(answers.len(), 3, "padded to the question count");
@@ -2023,7 +2054,7 @@ mod agent_tests {
                 hooks::QuestionAnswer::Unanswered,
                 hooks::QuestionAnswer::Freeform("extra".into()),
             ])),
-            1,
+            &question_batch(1),
         );
         let answers = response.response.expect("answers present").answers;
         assert_eq!(answers.len(), 1, "truncated to the question count");
@@ -2079,7 +2110,7 @@ mod agent_tests {
 
     #[test]
     fn question_reply_hookless_fallback_answers_unanswered() {
-        let response = map_question_reply(None, 2);
+        let response = map_question_reply(None, &question_batch(2));
         assert!(response.cancelled.is_none());
         let answers = response.response.expect("answers present").answers;
         assert_eq!(answers.len(), 2);

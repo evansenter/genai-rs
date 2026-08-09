@@ -684,8 +684,12 @@ async fn test_triggers_list_and_gated_create() {
         Err(e) => {
             let message = e.to_string();
             println!("Trigger create gated as expected: {message}");
+            // "Unknown parameter" covers top-level params; a bad field
+            // inside the JSON body (incl. the nested interaction) comes
+            // back as protobuf-JSON "Unknown name" — check both, like the
+            // nested-body probe in test_retrieval_tool_vertex_only.
             assert!(
-                !message.contains("Unknown parameter"),
+                !message.contains("Unknown parameter") && !message.contains("Unknown name"),
                 "trigger payload schema itself was rejected: {message}"
             );
         }
