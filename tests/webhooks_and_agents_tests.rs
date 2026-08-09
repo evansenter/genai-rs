@@ -21,7 +21,7 @@
 
 mod common;
 
-use common::get_client;
+use common::{TINY_WAV_BASE64, get_client};
 use genai_rs::{
     Agent, DeepResearchConfig, EnvironmentSource, RemoteEnvironment, ResponseFormat,
     RetrievalConfig, SpeechConfig, Tool, VideoConfig, VideoTask, Visualization, Webhook,
@@ -529,10 +529,6 @@ async fn test_video_generation_request_shape() {
 // TranscriptionConfig + Vertex-gated request params (request acceptance)
 // =============================================================================
 
-/// Same tiny valid WAV clip `examples/audio_input.rs` uses (100 frames of
-/// 16-bit mono silence) — enough for the API to accept an audio turn.
-const TEST_WAV_BASE64: &str = "UklGRuwAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YcgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==";
-
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_transcription_config_accepted() {
@@ -544,47 +540,34 @@ async fn test_transcription_config_accepted() {
     use genai_rs::TranscriptionConfig;
 
     // Verified live (2026-08-08): `generation_config.transcription_config`
-    // is accepted by the Gemini API (200). This pins that acceptance in CI
-    // — a server-side rename or field rejection fails here as a schema
-    // error instead of shipping silently.
-    let result = client
-        .interaction()
-        .with_model("gemini-3-flash-preview")
-        .with_content(vec![
-            genai_rs::Content::text(
-                "Transcribe this short clip. If it is silent, say 'Silent audio.'",
-            ),
-            genai_rs::Content::audio_data(TEST_WAV_BASE64, "audio/wav"),
-        ])
-        .with_transcription_config(TranscriptionConfig {
-            language_codes: Some(vec!["en-US".to_string()]),
-            diarization_mode: Some("speaker".to_string()),
-            timestamp_granularities: Some(vec!["word".to_string()]),
-            ..Default::default()
-        })
-        .create()
-        .await;
-
-    match result {
-        Ok(response) => println!(
-            "transcription_config accepted: status={:?}",
-            response.status
-        ),
-        // Only a structured API rejection proves anything about the schema
-        // — a transport blip would pass the marker check vacuously.
-        Err(genai_rs::GenaiError::Api {
-            status_code,
-            message,
-            ..
-        }) if (400..500).contains(&status_code) => {
-            println!("transcription_config request rejected: {message}");
-            assert!(
-                !message.contains("Unknown parameter") && !message.contains("Unknown name"),
-                "transcription_config schema itself was rejected: {message}"
-            );
-        }
-        Err(e) => panic!("expected acceptance or a structured 4xx, got: {e}"),
-    }
+    // is accepted by the Gemini API (200) — so assert the strong form.
+    // A server-side rename, field rejection, *or* a Vertex-gating of the
+    // parameter all fail this outright instead of shipping silently;
+    // transients are absorbed by the retry.
+    let response = crate::retry_request!([client] => {
+        client
+            .interaction()
+            .with_model("gemini-3-flash-preview")
+            .with_content(vec![
+                genai_rs::Content::text(
+                    "Transcribe this short clip. If it is silent, say 'Silent audio.'",
+                ),
+                genai_rs::Content::audio_data(TINY_WAV_BASE64, "audio/wav"),
+            ])
+            .with_transcription_config(TranscriptionConfig {
+                language_codes: Some(vec!["en-US".to_string()]),
+                diarization_mode: Some("speaker".to_string()),
+                timestamp_granularities: Some(vec!["word".to_string()]),
+                ..Default::default()
+            })
+            .create()
+            .await
+    })
+    .expect("transcription_config should be accepted (verified live 2026-08-08)");
+    println!(
+        "transcription_config accepted: status={:?}",
+        response.status
+    );
 }
 
 #[tokio::test]
@@ -599,42 +582,47 @@ async fn test_safety_settings_and_labels_vertex_gated() {
 
     // Verified live (2026-08-08): both `safety_settings` and `labels` are
     // rejected as Vertex-only ("not available on the Gemini API but it is
-    // available on the Gemini Enterprise Agent Platform"). This pins that
-    // the rejection stays a *capability* error, not a schema-level
-    // unknown-field error — if it starts succeeding, the knobs have
-    // launched on the Gemini API and this test should be upgraded.
-    let result = client
-        .interaction()
-        .with_model("gemini-3-flash-preview")
-        .with_text("Say OK.")
-        .add_safety_setting(SafetySetting::new(
-            HarmCategory::Harassment,
-            SafetyThreshold::BlockOnlyHigh,
-        ))
-        .add_label("team", "genai-rs-ci")
-        .create()
-        .await;
+    // available on the Gemini Enterprise Agent Platform"). The two gates
+    // are independent spec parameters that merely share that status today,
+    // so probe each on its own request — one launching while the other
+    // stays gated remains legible. This pins that each rejection stays a
+    // *capability* error, not a schema-level unknown-field error — if one
+    // starts succeeding, that knob has launched and this test should be
+    // upgraded.
+    for knob in ["safety_settings", "labels"] {
+        let builder = client
+            .interaction()
+            .with_model("gemini-3-flash-preview")
+            .with_text("Say OK.");
+        let builder = match knob {
+            "safety_settings" => builder.add_safety_setting(SafetySetting::new(
+                HarmCategory::Harassment,
+                SafetyThreshold::BlockOnlyHigh,
+            )),
+            _ => builder.add_label("team", "genai-rs-ci"),
+        };
 
-    match result {
-        Ok(response) => println!(
-            "safety_settings/labels accepted (launched on the Gemini API?): {:?}",
-            response.status
-        ),
-        // Only a structured 4xx proves the request reached the schema
-        // validator — a transport blip would pass the marker check
-        // vacuously, so fail loudly on anything else.
-        Err(genai_rs::GenaiError::Api {
-            status_code,
-            message,
-            ..
-        }) if (400..500).contains(&status_code) => {
-            println!("Vertex-gated as expected: {message}");
-            assert!(
-                !message.contains("Unknown parameter") && !message.contains("Unknown name"),
-                "safety_settings/labels schema itself was rejected: {message}"
-            );
+        match builder.create().await {
+            Ok(response) => println!(
+                "{knob} accepted (launched on the Gemini API?): {:?}",
+                response.status
+            ),
+            // Only a structured 4xx proves the request reached the schema
+            // validator — a transport blip would pass the marker check
+            // vacuously, so fail loudly on anything else.
+            Err(genai_rs::GenaiError::Api {
+                status_code,
+                message,
+                ..
+            }) if (400..500).contains(&status_code) => {
+                println!("{knob} Vertex-gated as expected: {message}");
+                assert!(
+                    !message.contains("Unknown parameter") && !message.contains("Unknown name"),
+                    "{knob} schema itself was rejected: {message}"
+                );
+            }
+            Err(e) => panic!("{knob}: expected a 4xx Vertex-gate rejection, got: {e}"),
         }
-        Err(e) => panic!("expected a 4xx Vertex-gate rejection, got: {e}"),
     }
 }
 

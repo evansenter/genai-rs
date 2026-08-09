@@ -78,7 +78,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("1. TRANSCRIPTION:");
     println!(
         r#"
-   use genai_rs::Content;
+   use genai_rs::{{Content, TranscriptionConfig}};
 
    let response = client
        .interaction()
@@ -87,6 +87,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
            Content::text("Transcribe this audio with proper punctuation."),
            Content::audio_data(&base64_audio, "audio/mp3"),
        ])
+       // Language hints speed up + improve recognition (omit to auto-detect)
+       .with_transcription_config(TranscriptionConfig {{
+           language_codes: Some(vec!["en-US".to_string()]),
+           ..Default::default()
+       }})
        .create()
        .await?;
 "#
@@ -105,6 +110,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                - What is the emotional tone?"),
            Content::audio_data(&base64_audio, "audio/mp3"),
        ])
+       // Structural speaker labels, beyond what prompting can express
+       .with_transcription_config(TranscriptionConfig {{
+           diarization_mode: Some("speaker".to_string()),
+           ..Default::default()
+       }})
        .create()
        .await?;
 "#
