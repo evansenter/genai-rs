@@ -131,8 +131,9 @@ where
                 // *before* the requested delay just earns another 429, and
                 // sleeping out long delays inside a with_timeout budget
                 // surfaces as an opaque harness timeout — so total sleep is
-                // capped at 15s across all attempts, and once the next delay
-                // would exceed it the real error surfaces immediately.
+                // capped at MAX_RETRY_SLEEP across all attempts, and once the
+                // next delay would exceed it the real error surfaces
+                // immediately.
                 let backoff = Duration::from_secs(1 << attempt);
                 let delay = match err.retry_after() {
                     Some(ra) => ra.max(backoff),
