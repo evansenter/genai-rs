@@ -49,7 +49,7 @@
 //! # }
 //! ```
 
-use super::common::{API_KEY_HEADER, path_segment, require_id};
+use super::common::{API_KEY_HEADER, path_segment, require_id, with_paging_and};
 use super::context::HttpContext;
 use super::error_helpers::{check_response, check_response_wire, deserialize_with_context};
 use crate::errors::GenaiError;
@@ -939,27 +939,23 @@ pub async fn get_file(ctx: &HttpContext, file_name: &str) -> Result<FileMetadata
 }
 
 /// Builds the list URL. Extracted from [`list_files`] so the paging
-/// shape is testable like its `with_paging` siblings — the Files API
-/// spells its params `pageSize`/`pageToken`, so it cannot ride the
-/// shared helper directly.
+/// shape is testable like its `with_paging` siblings. The Files API
+/// spells its params `pageSize`/`pageToken`, so it can't use
+/// `with_paging`'s fixed spelling — but it rides `with_paging_and`'s
+/// `extra` slice (like `update_webhook`'s `update_mask`), so the
+/// separator choice and value encoding stay centrally pinned.
 fn list_files_url(page_size: Option<u32>, page_token: Option<&str>) -> String {
-    let mut url = format!("{BASE_URL}/{FILES_API_VERSION}/files");
-    let mut has_params = false;
+    let base = format!("{BASE_URL}/{FILES_API_VERSION}/files");
+    let size_str;
+    let mut extra: Vec<(&str, &str)> = Vec::new();
     if let Some(size) = page_size {
-        url.push_str(&format!("?pageSize={size}"));
-        has_params = true;
+        size_str = size.to_string();
+        extra.push(("pageSize", &size_str));
     }
     if let Some(token) = page_token {
-        let separator = if has_params { "&" } else { "?" };
-        // Same invariant as with_paging: a reserved character in the token
-        // must arrive percent-encoded, or the server sees a truncated token
-        // (and a standard-base64 `+` would decode to a space).
-        url.push_str(&format!(
-            "{separator}pageToken={}",
-            urlencoding::encode(token)
-        ));
+        extra.push(("pageToken", token));
     }
-    url
+    with_paging_and(base, None, None, &extra)
 }
 
 /// Lists all uploaded files.
