@@ -287,7 +287,10 @@ pub struct Trigger {
     /// stray scalar) degrades to empty text with a `warn!`, and any
     /// other undeserializable `interaction` (a non-object shape, a type
     /// mismatch on a modeled field) degrades to `None`, instead of
-    /// failing the whole list response. (Under default features a
+    /// failing the whole list response. An *absent* `input` (a projection
+    /// that elides it — the common list shape) likewise reads as empty
+    /// text, silently: don't treat `interaction.input` as evidence of the
+    /// stored prompt. (Under default features a
     /// malformed steps *array* never reaches this path — the Evergreen
     /// `Step` deserializer absorbs unrecognized elements as
     /// `Step::Unknown` per-element; under `strict-unknown` it is rejected
@@ -961,6 +964,12 @@ mod tests {
         .unwrap();
         let interaction = trigger.interaction.expect("interaction present");
         assert_eq!(interaction.agent.as_deref(), Some("my-agent"));
+        // An absent input reads as empty text on this path (documented on
+        // the field): indistinguishable from a genuinely empty prompt.
+        assert_eq!(
+            interaction.input,
+            crate::request::InteractionInput::Text(String::new())
+        );
 
         // An interaction carrying an undeserializable `input` — explicit
         // null (serde defaults only cover the key-absent case) or a stray
