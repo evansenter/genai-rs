@@ -57,10 +57,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 questions
                     .iter()
                     .map(|q| {
-                        println!("[agent asked: {}]", q.question);
-                        if q.is_unknown_type() || q.choices.is_empty() {
+                        if q.is_unknown_type() {
+                            // Unmodeled question type: the text is empty by
+                            // construction and the raw payload is in
+                            // `extra` — show its keys, the one observable
+                            // difference from a modeled question.
+                            println!(
+                                "[agent asked an unmodeled question type; extra keys: {:?}]",
+                                q.extra.keys().collect::<Vec<_>>()
+                            );
+                            QuestionAnswer::Unanswered
+                        } else if q.choices.is_empty() {
+                            println!("[agent asked: {}]", q.question);
                             QuestionAnswer::Unanswered
                         } else {
+                            println!("[agent asked: {}]", q.question);
                             QuestionAnswer::Choices {
                                 selected: vec![0],
                                 freeform: None,
