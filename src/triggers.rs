@@ -269,9 +269,7 @@ impl<'de> Deserialize<'de> for TriggerExecutionStatus {
 /// this resource shape is not yet fully live-verified — creation is
 /// agent-gated — so a projection that elides fields must degrade per-field
 /// rather than failing the whole list response.
-///
-/// (No `PartialEq`: the nested [`InteractionRequest`] doesn't implement it.)
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 #[serde(default)]
 pub struct Trigger {
     /// Output only. The ID of the trigger.
@@ -380,6 +378,12 @@ pub struct Trigger {
 ///
 /// # Example
 ///
+/// The struct literal below is the no-client form; with a [`Client`] in
+/// scope, prefer `client.interaction()...build()` — the builder yields the
+/// same [`InteractionRequest`] but stays source-compatible as fields are
+/// added (struct literals break on every new public field; see the 0.9.0
+/// CHANGELOG entry).
+///
 /// ```
 /// use genai_rs::{InteractionInput, InteractionRequest, TriggerCreateParams};
 ///
@@ -391,7 +395,9 @@ pub struct Trigger {
 /// let params = TriggerCreateParams::new("0 9 * * *", "UTC", interaction)
 ///     .with_display_name("daily-audit");
 /// ```
-#[derive(Clone, Debug, Serialize, Deserialize)]
+///
+/// [`Client`]: crate::Client
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct TriggerCreateParams {
     /// Cron expression the trigger fires on.
     pub schedule: String,
@@ -486,7 +492,7 @@ impl TriggerCreateParams {
 /// present in the body, but trigger updates are not live-verifiable while
 /// creation is agent-gated — treat the partial-update semantics as
 /// unconfirmed until then.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct TriggerUpdate {
     /// New display name.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -518,6 +524,13 @@ impl TriggerUpdate {
     }
 
     /// Sets the status.
+    ///
+    /// [`Active`](TriggerStatus::Active) resumes the trigger and
+    /// [`Paused`](TriggerStatus::Paused) pauses it — the two values a
+    /// caller meaningfully sends. [`Error`](TriggerStatus::Error) is
+    /// output-only (the server sets it after consecutive failures); the
+    /// open enum accepts it here per the Evergreen posture, but sending it
+    /// is untested against the live API.
     #[must_use]
     pub fn with_status(mut self, status: TriggerStatus) -> Self {
         self.status = Some(status);
@@ -577,7 +590,7 @@ pub struct TriggerExecution {
 ///
 /// The API returns `{}` when no triggers exist (verified live 2026-08-08),
 /// so both fields default.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct TriggerListResponse {
     /// The triggers in this page.
@@ -588,7 +601,7 @@ pub struct TriggerListResponse {
 }
 
 /// Response from listing a trigger's executions.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct TriggerExecutionListResponse {
     /// The executions in this page.

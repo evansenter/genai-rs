@@ -213,6 +213,29 @@ let follow_up = client
     .await?;
 ```
 
+The Antigravity managed agent above is the one whose config is
+live-verified end to end (2026-08-09): the environment is **required**,
+and `AntigravityConfig` tunes the run — leave its `model` unset (an
+unavailable value 404s, including `gemini-3-flash-preview`, the crate's
+default model elsewhere):
+
+```rust,ignore
+use genai_rs::{AntigravityConfig, EnvironmentSource, RemoteEnvironment};
+
+let response = client
+    .interaction()
+    .with_agent("antigravity-preview-05-2026")
+    .with_text("Print the contents of /etc/motd")
+    .with_background(true)
+    .with_store_enabled()
+    .with_environment(
+        RemoteEnvironment::new().add_source(EnvironmentSource::inline("/etc/motd", "hello")),
+    )
+    .with_agent_config(AntigravityConfig::new().with_max_total_tokens(200_000))
+    .create()
+    .await?;
+```
+
 Network policy is a union: omit `with_network` to allow all outbound
 traffic, use `NetworkConfig::Disabled` to turn networking off, or an
 allowlist of domains (wildcards supported; `transform` injects headers on

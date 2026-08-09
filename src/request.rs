@@ -468,7 +468,7 @@ impl<'de> Visitor<'de> for ThinkingLevelVisitor {
 }
 
 /// Generation configuration for model behavior
-#[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct GenerationConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
@@ -634,7 +634,7 @@ where
 /// Common voices include: Aoede, Charon, Fenrir, Kore, Puck, and others.
 /// See [Google's TTS documentation](https://ai.google.dev/gemini-api/docs/text-generation)
 /// for the full list of available voices.
-#[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct SpeechConfig {
     /// The voice to use for speech synthesis.
     ///
@@ -1183,7 +1183,7 @@ impl VideoConfig {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct InteractionRequest {
     /// Model name (e.g., "gemini-3-flash-preview") - mutually exclusive with agent
     #[serde(skip_serializing_if = "Option::is_none")]

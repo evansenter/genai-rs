@@ -54,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (build that fixture with `AgentQuestion::unknown()`).
 - `InteractionRequest` and `InteractionInput` implement `Default`, easing
   struct-literal construction (e.g. nested trigger interactions).
+- `InteractionRequest`, `GenerationConfig`, `SpeechConfig`, `Tool`,
+  `FunctionParameters`, `Trigger` and the trigger request/response types
+  implement `PartialEq`, so whole-value assertions work across the new
+  resource types uniformly.
 
 ### Deprecated
 
