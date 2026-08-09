@@ -1,5 +1,5 @@
 use super::common::{
-    API_KEY_HEADER, API_REVISION, API_REVISION_HEADER, Endpoint, construct_endpoint_url,
+    API_KEY_HEADER, API_REVISION, API_REVISION_HEADER, Endpoint, construct_endpoint_url, require_id,
 };
 use super::context::HttpContext;
 use super::error_helpers::{check_response_wire, deserialize_with_context};
@@ -316,6 +316,7 @@ pub async fn get_interaction(
     interaction_id: &str,
     include_input: bool,
 ) -> Result<InteractionResponse, GenaiError> {
+    require_id(interaction_id, "interaction")?;
     let endpoint = Endpoint::GetInteraction {
         id: interaction_id,
         stream: false,
@@ -448,6 +449,7 @@ pub fn get_interaction_stream<'a>(
 /// - The HTTP request fails
 /// - The response status is not successful
 pub async fn delete_interaction(ctx: &HttpContext, interaction_id: &str) -> Result<(), GenaiError> {
+    require_id(interaction_id, "interaction")?;
     let endpoint = Endpoint::DeleteInteraction { id: interaction_id };
     let url = construct_endpoint_url(endpoint);
 
@@ -487,6 +489,7 @@ pub async fn cancel_interaction(
     ctx: &HttpContext,
     interaction_id: &str,
 ) -> Result<InteractionResponse, GenaiError> {
+    require_id(interaction_id, "interaction")?;
     let endpoint = Endpoint::CancelInteraction { id: interaction_id };
     let url = construct_endpoint_url(endpoint);
 

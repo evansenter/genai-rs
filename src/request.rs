@@ -1272,21 +1272,18 @@ pub struct InteractionRequest {
 
     /// The input for this interaction
     ///
-    /// The `serde(default)` tolerates sparse nested projections (e.g. a
-    /// `Trigger` list entry whose interaction omits `input`), but this
-    /// deserializer is otherwise *strict*: a malformed or null `input`
-    /// (e.g. a typo in a config file feeding
+    /// *Required* on deserialize, and strict: an absent, misspelled,
+    /// malformed, or null `input` (e.g. a typo in a config file feeding
     /// [`TriggerCreateParams`](crate::TriggerCreateParams)) is a clean
     /// parse error, not a silently scheduled empty prompt. The
     /// *response*-side leniency lives on
-    /// [`Trigger::interaction`](crate::Trigger) instead, where an
-    /// undeserializable nested `input` degrades to empty text rather than
-    /// failing a whole list response. Note the roundtrip asymmetry:
-    /// absence deserializes to empty text and re-serializes as a
-    /// *present* `input` key — the one spot in the Evergreen surface
-    /// where a sparse projection gains a field instead of preserving
-    /// absence.
-    #[serde(default)]
+    /// [`Trigger::interaction`](crate::Trigger) instead, where a sparse
+    /// projection's absent `input` deserializes to empty text and an
+    /// undeserializable one degrades the same way rather than failing a
+    /// whole list response. (That path has a roundtrip asymmetry: absence
+    /// re-serializes as a *present* `input` key — the one spot in the
+    /// Evergreen surface where a sparse projection gains a field instead
+    /// of preserving absence.)
     pub input: InteractionInput,
 
     /// Reference to a previous interaction for stateful conversations

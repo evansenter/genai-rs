@@ -287,9 +287,11 @@ pub struct Trigger {
     /// stray scalar) degrades to empty text with a `warn!`, and any
     /// other undeserializable `interaction` (a non-object shape, a type
     /// mismatch on a modeled field) degrades to `None`, instead of
-    /// failing the whole list response. (A malformed steps *array* never
-    /// reaches this path: the Evergreen `Step` deserializer absorbs
-    /// unrecognized elements as `Step::Unknown` per-element.) Leniency is
+    /// failing the whole list response. (Under default features a
+    /// malformed steps *array* never reaches this path — the Evergreen
+    /// `Step` deserializer absorbs unrecognized elements as
+    /// `Step::Unknown` per-element; under `strict-unknown` it is rejected
+    /// and degrades here like any other bad input.) Leniency is
     /// scoped to this response side; [`TriggerCreateParams`]'s send-side
     /// interaction stays strict, so a config-file typo is a clean parse
     /// error rather than a silently scheduled empty prompt.
@@ -393,9 +395,10 @@ pub struct Trigger {
 /// [`InteractionInput`](crate::request::InteractionInput)'s deserializer
 /// rejects (explicit null, a stray scalar) onto the empty default with a
 /// `warn!` before parsing the interaction, and a non-object `interaction`
-/// onto `None`. (A malformed steps *array* never reaches the rejection
-/// path — the Evergreen `Step` deserializer absorbs unrecognized elements
-/// as `Step::Unknown` per-element.)
+/// onto `None`. (Under default features a malformed steps *array* never
+/// reaches the rejection path — the Evergreen `Step` deserializer absorbs
+/// unrecognized elements as `Step::Unknown` per-element; `strict-unknown`
+/// rejects it and it degrades here like any other bad input.)
 ///
 /// The nested `input` is the one non-`Option` field in the trigger tree,
 /// so without this a projection carrying `input: null` (or `input: 0`)
@@ -422,8 +425,16 @@ where
         Some(mut value) => {
             // Take `input` out and parse the rest — one parse each, no
             // clone (the catch-all arm above guarantees an object here).
-            // An absent input falls through to the field's serde default.
+            // The placeholder satisfies the now-required field; a sparse
+            // projection's absent input thus deserializes to empty text
+            // *on this path only* — the send side keeps input required.
             let raw_input = value.as_object_mut().and_then(|obj| obj.remove("input"));
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert(
+                    "input".to_string(),
+                    serde_json::Value::String(String::new()),
+                );
+            }
             // Warn-and-drop like the arms above: a type mismatch on a
             // modeled field (numeric `model`, string `tools`) must not
             // zero the whole page either.
@@ -974,6 +985,15 @@ mod tests {
             "interaction": {"agent": "my-agent", "input": 0}
         }));
         assert!(result.is_err(), "send-side input must stay strict");
+        // Absent (or typo'd, e.g. "inputs") is equally a clean parse
+        // error on the send side — `input` is a required field there, so
+        // a config mistake cannot silently schedule an empty prompt.
+        let result: Result<TriggerCreateParams, _> = serde_json::from_value(serde_json::json!({
+            "schedule": "0 9 * * *",
+            "time_zone": "UTC",
+            "interaction": {"agent": "my-agent", "inputs": "typo"}
+        }));
+        assert!(result.is_err(), "send-side absent input must stay strict");
     }
 
     #[test]
