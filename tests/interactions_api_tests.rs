@@ -200,15 +200,20 @@ mod basic {
             return;
         };
 
-        let response = client
-            .interaction()
-            .with_agent("deep-research-pro-preview-12-2025")
-            .with_text("What are the current trends in quantum computing research?")
-            .with_background(true)
-            .with_store_enabled()
-            .create()
-            .await
-            .expect("Failed to create background interaction");
+        // Retry-wrapped: a transient at create time (failed CI in 0.24s on
+        // what passes locally) should not fail the probe, and a retried
+        // create at worst orphans a bounded background interaction.
+        let response = retry_request!([client] => {
+            client
+                .interaction()
+                .with_agent("deep-research-pro-preview-12-2025")
+                .with_text("What are the current trends in quantum computing research?")
+                .with_background(true)
+                .with_store_enabled()
+                .create()
+                .await
+        })
+        .expect("Failed to create background interaction");
 
         let interaction_id = response
             .id
