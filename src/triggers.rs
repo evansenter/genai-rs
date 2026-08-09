@@ -392,6 +392,10 @@ pub struct TriggerCreateParams {
     /// unmodeled create-request field be set without a crate release,
     /// which matters here because trigger creation is agent-gated and the
     /// body cannot be live-verified against the wire.
+    ///
+    /// A key that collides with a modeled field **wins on serialize** (the
+    /// flattened map is emitted last) — deliberate, so the escape hatch can
+    /// also override a modeled field whose wire shape turns out wrong.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -467,6 +471,8 @@ pub struct TriggerUpdate {
     /// Unrecognized fields, preserved for roundtrip (Evergreen) — lets an
     /// unmodeled update field be sent without a crate release. Empty maps
     /// add nothing to the body, keeping the empty-update-is-`{}` contract.
+    /// Colliding keys win on serialize, as on
+    /// [`TriggerCreateParams::extra`].
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -638,6 +644,15 @@ mod tests {
             .insert("future_field".into(), serde_json::json!("x"));
         let json = serde_json::to_value(&params).unwrap();
         assert_eq!(json["future_field"], "x");
+
+        // A colliding key wins on serialize (the flattened map is emitted
+        // last) — pinned so the precedence reads as a decision rather than
+        // an artifact of field-declaration order.
+        params
+            .extra
+            .insert("schedule".into(), serde_json::json!("*/5 * * * *"));
+        let json = serde_json::to_value(&params).unwrap();
+        assert_eq!(json["schedule"], "*/5 * * * *");
 
         let mut update = TriggerUpdate::new();
         update.extra.insert("other".into(), serde_json::json!(1));
