@@ -38,6 +38,10 @@ where
 {
     let value = Option::<serde_json::Value>::deserialize(deserializer)?;
     match value {
+        // A JSON null arrives as `None` (serde routes it through
+        // `visit_none`; see `deserialize_lenient_vec`) — the second half
+        // of this pattern is belt-and-braces, not a reachable arm. Same
+        // for the two siblings below.
         None | Some(serde_json::Value::Null) => Ok(None),
         Some(serde_json::Value::Number(n)) => {
             let parsed = n.as_i64();
@@ -234,72 +238,6 @@ mod tests {
         assert_eq!(roundtrip(serde_json::json!({"v": {"n": 1}})), None);
     }
 
-    #[test]
-    fn lenient_vec_null_arm_warns() {
-        // The warn is load-bearing: it is the only signal distinguishing
-        // an explicit-null page from a genuinely empty account, and serde
-        // maps JSON null to `None` (never `Some(Value::Null)`), so this
-        // pins that the arm that actually fires is the one that logs.
-        use std::sync::{Arc, Mutex};
-        use tracing::span;
-
-        struct Recorder {
-            messages: Arc<Mutex<Vec<String>>>,
-        }
-
-        impl tracing::Subscriber for Recorder {
-            fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
-                true
-            }
-            fn new_span(&self, _span: &span::Attributes<'_>) -> span::Id {
-                span::Id::from_u64(1)
-            }
-            fn record(&self, _span: &span::Id, _values: &span::Record<'_>) {}
-            fn record_follows_from(&self, _span: &span::Id, _follows: &span::Id) {}
-            fn event(&self, event: &tracing::Event<'_>) {
-                struct MessageVisitor<'a>(&'a mut String);
-                impl tracing::field::Visit for MessageVisitor<'_> {
-                    fn record_debug(
-                        &mut self,
-                        field: &tracing::field::Field,
-                        value: &dyn std::fmt::Debug,
-                    ) {
-                        if field.name() == "message" {
-                            use std::fmt::Write;
-                            let _ = write!(self.0, "{value:?}");
-                        }
-                    }
-                }
-                let mut message = String::new();
-                event.record(&mut MessageVisitor(&mut message));
-                self.messages.lock().unwrap().push(message);
-            }
-            fn enter(&self, _span: &span::Id) {}
-            fn exit(&self, _span: &span::Id) {}
-        }
-
-        let messages = Arc::new(Mutex::new(Vec::new()));
-        let recorder = Recorder {
-            messages: Arc::clone(&messages),
-        };
-        tracing::subscriber::with_default(recorder, || {
-            // Sibling tests exercise this callsite with no subscriber
-            // installed, which can cache its interest as `never`
-            // process-wide under plain `cargo test` — rebuild so the
-            // scoped Recorder is consulted (same caveat as wire.rs).
-            tracing::callsite::rebuild_interest_cache();
-            assert_eq!(
-                vec_roundtrip(serde_json::json!({"v": null})),
-                Vec::<i64>::new()
-            );
-        });
-        let messages = messages.lock().unwrap();
-        assert!(
-            messages.iter().any(|m| m.contains("explicit null")),
-            "the explicit-null degradation must warn; got: {messages:?}"
-        );
-    }
-
     /// The send-side sibling of `Wrapper`: same accepted wire forms, but
     /// malformed values error instead of degrading.
     #[derive(Debug, PartialEq, Deserialize)]
@@ -416,6 +354,34 @@ mod tests {
         assert_eq!(
             vec_roundtrip(serde_json::json!({"v": [1, "x", 2]})),
             vec![1, 2]
+        );
+    }
+
+    #[test]
+    fn lenient_vec_warns_are_not_silent() {
+        // The warns are load-bearing, and value assertions cannot pin
+        // them: an explicit-null page and a genuinely empty account both
+        // read as an empty vec, and a page that silently lost an element
+        // reads like a shorter page. Assert on the log itself. (serde
+        // maps JSON null to `None` — never `Some(Value::Null)` — so this
+        // also pins that the arm that fires is the one that logs.)
+        let messages = crate::test_subscriber::capture_messages(|| {
+            assert_eq!(
+                vec_roundtrip(serde_json::json!({"v": null})),
+                Vec::<i64>::new()
+            );
+            assert_eq!(
+                vec_roundtrip(serde_json::json!({"v": [1, "x", 2]})),
+                vec![1, 2]
+            );
+        });
+        assert!(
+            messages.iter().any(|m| m.contains("explicit null")),
+            "the explicit-null degradation must warn; got: {messages:?}"
+        );
+        assert!(
+            messages.iter().any(|m| m.contains("dropping")),
+            "the element-drop degradation must warn; got: {messages:?}"
         );
     }
 
