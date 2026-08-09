@@ -109,6 +109,12 @@ where
 /// entries of a page whose list carries a stray malformed element; a
 /// non-object element, or one whose modeled field arrives with the wrong
 /// JSON type, reaches it and drops alone.
+///
+/// Deliberately envelope-scoped: lists *inside* an element
+/// (`Agent::tools`, `Webhook::signing_secrets`, `Environment::sources`)
+/// keep strict derived deserialization — a malformed nested list drops
+/// its own element via the arm above rather than being partially
+/// salvaged, keeping the blast radius one resource, not one page.
 pub(crate) fn deserialize_lenient_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
 where
     D: Deserializer<'de>,
