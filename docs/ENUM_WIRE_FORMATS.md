@@ -458,8 +458,9 @@ interaction is rejected with "Agent '' is invalid or not found", and
 `update_time` per the SDK spec while the live-verified Environments
 resource uses `created`/`updated`; both spellings are accepted on
 deserialize (`serde(alias)` hedges the bet; serialization keeps the
-spec spelling). The timestamp *encoding* is the same class of bet — this family already diverged once
-on encoding (int64s arrive as protobuf-JSON strings), so the nine
+spec spelling). The timestamp *encoding* is the same class of bet —
+this family already diverged once on encoding (int64s arrive as
+protobuf-JSON strings), so the nine
 trigger-family timestamps route through a lenient RFC 3339 deserializer
 that degrades an unexpected shape (epoch number, proto-style object,
 garbage string) to `None` with a `warn!` instead of failing the whole

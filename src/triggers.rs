@@ -363,7 +363,10 @@ pub struct Trigger {
     /// The SDK spec spells this `create_time` while the live-verified
     /// environments resource next door uses `created` — the alias hedges
     /// that documented bet (deserialize-only; serialization keeps the
-    /// spec spelling).
+    /// spec spelling). One arm still hard-fails: *both* spellings in one
+    /// object is a serde duplicate-field error, raised before any
+    /// lenient deserializer runs (inside a listed page the element-drop
+    /// arm absorbs it, costing the one trigger).
     #[serde(
         default,
         alias = "created",
@@ -788,6 +791,9 @@ pub struct TriggerExecutionListResponse {
     /// empty; malformed elements drop individually. The envelope key is
     /// the unverified `trigger_executions` per the SDK spec; `executions`
     /// (the path-segment spelling) is accepted on deserialize as a hedge.
+    /// Both keys in one envelope is a serde duplicate-field error raised
+    /// before the lenient helper runs — the one alias arm that fails the
+    /// whole call rather than degrading.
     #[serde(
         alias = "executions",
         deserialize_with = "crate::serde_util::deserialize_lenient_vec"
