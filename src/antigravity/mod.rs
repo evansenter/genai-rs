@@ -2006,7 +2006,7 @@ fn map_question_reply(
                         }
                         Some(hooks::QuestionAnswer::Choices { selected, freeform }) => {
                             for &idx in &selected {
-                                if idx < 0 || idx as usize >= question.choices.len() {
+                                if idx >= question.choices.len() {
                                     tracing::warn!(
                                         "Questions hook selected index {idx} for a question \
                                      with {} choice(s); relaying anyway",
@@ -2027,10 +2027,26 @@ fn map_question_reply(
                                  freeform (did you mean Unanswered?); relaying anyway"
                                 );
                             }
+                            // The wire type is i32; an index that cannot fit
+                            // is absurd (no real choice list is that long) and
+                            // drops with a warn rather than wrapping.
+                            let selected_choice_indices = selected
+                                .iter()
+                                .filter_map(|&idx| {
+                                    i32::try_from(idx)
+                                        .map_err(|_| {
+                                            tracing::warn!(
+                                                "Questions hook selected index {idx} \
+                                             exceeds the i32 wire range; dropping"
+                                            );
+                                        })
+                                        .ok()
+                                })
+                                .collect();
                             protocol::UserQuestionAnswer {
                                 unanswered: None,
                                 multiple_choice_answer: Some(protocol::MultipleChoiceAnswer {
-                                    selected_choice_indices: selected,
+                                    selected_choice_indices,
                                     freeform_response: freeform,
                                 }),
                             }
@@ -2062,13 +2078,7 @@ mod agent_tests {
     /// `n` three-choice single-select questions for mapping tests.
     fn question_batch(n: usize) -> Vec<AgentQuestion> {
         (0..n)
-            .map(|i| {
-                AgentQuestion::new(
-                    format!("q{i}"),
-                    vec!["a".into(), "b".into(), "c".into()],
-                    false,
-                )
-            })
+            .map(|i| AgentQuestion::new(format!("q{i}"), ["a", "b", "c"], false))
             .collect()
     }
 

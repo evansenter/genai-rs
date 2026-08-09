@@ -1054,6 +1054,9 @@ mod tests {
     fn execution_status_wire_values() {
         for (status, wire) in [
             (TriggerExecutionStatus::InProgress, "in_progress"),
+            (TriggerExecutionStatus::Completed, "completed"),
+            (TriggerExecutionStatus::Failed, "failed"),
+            (TriggerExecutionStatus::Skipped, "skipped"),
             (TriggerExecutionStatus::TimedOut, "timed_out"),
         ] {
             assert_eq!(serde_json::to_value(&status).unwrap(), wire);

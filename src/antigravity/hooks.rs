@@ -143,7 +143,7 @@ impl AgentQuestion {
     ///
     /// let fixture = [AgentQuestion::new(
     ///     "Proceed with the migration?",
-    ///     vec!["yes".into(), "no".into()],
+    ///     ["yes", "no"],
     ///     false,
     /// )];
     /// let QuestionReply::Answers(answers) = hook(&fixture) else {
@@ -155,10 +155,14 @@ impl AgentQuestion {
     /// );
     /// ```
     #[must_use]
-    pub fn new(question: impl Into<String>, choices: Vec<String>, is_multi_select: bool) -> Self {
+    pub fn new(
+        question: impl Into<String>,
+        choices: impl IntoIterator<Item = impl Into<String>>,
+        is_multi_select: bool,
+    ) -> Self {
         Self {
             question: question.into(),
-            choices,
+            choices: choices.into_iter().map(Into::into).collect(),
             is_multi_select,
             extra: serde_json::Map::new(),
             unknown_type: false,
@@ -213,8 +217,10 @@ pub enum QuestionAnswer {
     /// multiple selections on a single-select question are `warn!`ed but
     /// not filtered — the harness owns the final verdict.
     Choices {
-        /// Zero-based indices of the selected choices.
-        selected: Vec<i32>,
+        /// Zero-based indices of the selected choices. Converted to the
+        /// harness's `i32` wire type at the protocol boundary (an index
+        /// that cannot fit is warn'ed and dropped there).
+        selected: Vec<usize>,
         /// Optional freeform text alongside the selection.
         freeform: Option<String>,
     },

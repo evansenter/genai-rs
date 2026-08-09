@@ -230,11 +230,18 @@ let agent = AntigravityAgent::builder()
     // builtins you enable later.
     .add_policy(policy::deny_all())
     .on_questions(|questions| {
-        // Answer each question: pick the first choice.
+        // Answer each question: pick the first choice, but never guess on
+        // a question with no rendered choices (e.g. an unknown type).
         QuestionReply::Answers(
             questions
                 .iter()
-                .map(|_q| QuestionAnswer::Choices { selected: vec![0], freeform: None })
+                .map(|q| {
+                    if q.choices.is_empty() {
+                        QuestionAnswer::Unanswered
+                    } else {
+                        QuestionAnswer::Choices { selected: vec![0], freeform: None }
+                    }
+                })
                 .collect(),
         )
     })
@@ -253,7 +260,8 @@ never asks.
 A question whose *type* this crate doesn't model arrives with
 `is_unknown_type()` true, empty text/choices, and the raw payload in
 `extra` — prefer `Cancel` or `Unanswered` there over guessing (the
-snippet above would otherwise select index 0 of an empty choice list).
+empty-choices guard in the snippet above is what routes that case to
+`Unanswered` instead of selecting index 0 of an empty list).
 `AgentQuestion::unknown(extra)` builds that fixture for unit tests.
 
 The hook is synchronous and runs inline in the harness event pump — don't
