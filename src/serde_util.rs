@@ -225,6 +225,39 @@ mod tests {
         assert_eq!(roundtrip(serde_json::json!({"v": {"n": 1}})), None);
     }
 
+    /// The send-side sibling of `Wrapper`: same accepted wire forms, but
+    /// malformed values error instead of degrading.
+    #[derive(Debug, PartialEq, Deserialize)]
+    struct StrictWrapper {
+        #[serde(default, deserialize_with = "super::deserialize_strict_string_i64")]
+        v: Option<i64>,
+    }
+
+    #[test]
+    fn strict_string_i64_accepts_both_forms_and_absence() {
+        let parse = |json| serde_json::from_value::<StrictWrapper>(json).map(|w| w.v);
+        assert_eq!(parse(serde_json::json!({"v": "42"})).unwrap(), Some(42));
+        assert_eq!(parse(serde_json::json!({"v": 42})).unwrap(), Some(42));
+        // The two arms that look malformed but must NOT error: an unset
+        // optional is not a typo.
+        assert_eq!(parse(serde_json::json!({"v": null})).unwrap(), None);
+        assert_eq!(parse(serde_json::json!({})).unwrap(), None);
+    }
+
+    #[test]
+    fn strict_string_i64_errors_on_malformed_values() {
+        // The send-side contract, opposite of `Wrapper`'s: there is no
+        // page to protect, so garbage is a load-time error rather than a
+        // silently unset field.
+        let parse = |json| serde_json::from_value::<StrictWrapper>(json);
+        assert!(parse(serde_json::json!({"v": "three"})).is_err());
+        assert!(parse(serde_json::json!({"v": ""})).is_err());
+        assert!(parse(serde_json::json!({"v": 1.5})).is_err());
+        assert!(parse(serde_json::json!({"v": true})).is_err());
+        assert!(parse(serde_json::json!({"v": [1]})).is_err());
+        assert!(parse(serde_json::json!({"v": {"n": 1}})).is_err());
+    }
+
     #[derive(Debug, PartialEq, Deserialize)]
     struct TsWrapper {
         #[serde(default, deserialize_with = "super::deserialize_lenient_timestamp")]
