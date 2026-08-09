@@ -247,9 +247,6 @@ pub(crate) fn path_segment(id: &str) -> std::borrow::Cow<'_, str> {
 }
 
 /// Appends `page_size` / `page_token` query params to a URL.
-///
-/// `url` must not already carry a query string — the shared paging
-/// helpers append `?` unconditionally.
 pub(crate) fn with_paging(url: String, page_size: Option<u32>, page_token: Option<&str>) -> String {
     with_paging_and(url, page_size, page_token, &[])
 }
@@ -258,18 +255,17 @@ pub(crate) fn with_paging(url: String, page_size: Option<u32>, page_token: Optio
 /// percent-encoded), for list endpoints with extra filters like the
 /// agents resource's `parent`.
 ///
-/// `url` must not already carry a query string — this helper appends `?`
-/// unconditionally.
+/// The separator is chosen from the URL itself (`&` when a query string
+/// is already present), so a future list endpoint with a fixed query
+/// param cannot silently emit a second `?` — all four call sites today
+/// pass query-less bases, but that used to be an unchecked-in-release
+/// `debug_assert` precondition rather than handled behavior.
 pub(crate) fn with_paging_and(
     mut url: String,
     page_size: Option<u32>,
     page_token: Option<&str>,
     extra: &[(&str, &str)],
 ) -> String {
-    debug_assert!(
-        !url.contains('?'),
-        "paging helpers require a query-less base URL, got {url}"
-    );
     let mut params = Vec::new();
     if let Some(size) = page_size {
         params.push(format!("page_size={size}"));
@@ -281,7 +277,7 @@ pub(crate) fn with_paging_and(
         params.push(format!("{key}={}", urlencoding::encode(value)));
     }
     if !params.is_empty() {
-        url.push('?');
+        url.push(if url.contains('?') { '&' } else { '?' });
         url.push_str(&params.join("&"));
     }
     url
@@ -329,6 +325,18 @@ mod tests {
                 &[("parent", "projects/a b")]
             ),
             "https://x/v1beta/things?page_size=5&parent=projects%2Fa%20b"
+        );
+    }
+
+    #[test]
+    fn with_paging_joins_an_existing_query_string() {
+        // A base that already carries a query param gets `&`, not a second
+        // `?` — no call site does this today, but the helper handles it
+        // rather than leaving it to a debug_assert that vanishes in
+        // release builds.
+        assert_eq!(
+            with_paging("https://x/v1beta/things?fixed=1".into(), Some(5), None),
+            "https://x/v1beta/things?fixed=1&page_size=5"
         );
     }
 

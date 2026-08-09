@@ -240,6 +240,63 @@ fn test_is_transient_error_regular_500() {
     );
 }
 
+#[test]
+fn test_is_transient_error_message_pinned_400_arms() {
+    // The two message-pinned 400 classes retry: the model's occasional
+    // invalid structured-output JSON, and the server-side processing
+    // burst (generic apology, observed failing in under a second on
+    // requests that pass on re-run).
+    let invalid_json = GenaiError::Api {
+        status_code: 400,
+        message: "Invalid JSON syntax at line 3".to_string(),
+        request_id: None,
+        retry_after: None,
+    };
+    assert!(
+        is_transient_error(&invalid_json),
+        "Invalid-JSON 400 should be transient"
+    );
+
+    let processing_burst = GenaiError::Api {
+        status_code: 400,
+        message: r#"{"error":{"message":"There was a problem processing your request. You will not be charged.","code":"invalid_request"}}"#.to_string(),
+        request_id: None,
+        retry_after: None,
+    };
+    assert!(
+        is_transient_error(&processing_burst),
+        "Processing-burst 400 should be transient"
+    );
+
+    // The fail-loud contract: a 400 that names its actual problem matches
+    // neither phrase and fails on the first attempt.
+    let fixture_rejection = GenaiError::Api {
+        status_code: 400,
+        message:
+            r#"{"error":{"message":"Unknown field 'speech_configs'","code":"invalid_request"}}"#
+                .to_string(),
+        request_id: None,
+        retry_after: None,
+    };
+    assert!(
+        !is_transient_error(&fixture_rejection),
+        "A 400 naming its problem should fail loud"
+    );
+
+    // Transport classes (429, plain 5xx bursts) are is_retryable's job,
+    // not this predicate's.
+    let rate_limited = GenaiError::Api {
+        status_code: 429,
+        message: "rate limited".to_string(),
+        request_id: None,
+        retry_after: None,
+    };
+    assert!(
+        !is_transient_error(&rate_limited),
+        "429 belongs to is_retryable, not is_transient_error"
+    );
+}
+
 // =============================================================================
 // Retry Logic Tests
 // =============================================================================

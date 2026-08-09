@@ -1369,7 +1369,17 @@ impl Client {
     ///
     /// # Arguments
     ///
-    /// * `file_name` - The resource name of the file (e.g., "files/abc123")
+    /// * `file_name` - The full resource name of the file (e.g.,
+    ///   "files/abc123" — the form [`FileMetadata::name`](crate::FileMetadata)
+    ///   returns). Anything else — a bare ID, extra path segments — is
+    ///   rejected locally as [`GenaiError::InvalidInput`] before a request
+    ///   is sent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenaiError::InvalidInput`] for a name that is not
+    /// `files/<id>`, and an API or network error if the request fails or
+    /// the file doesn't exist.
     ///
     /// # Example
     ///
@@ -1421,7 +1431,17 @@ impl Client {
     ///
     /// # Arguments
     ///
-    /// * `file_name` - The resource name of the file to delete (e.g., "files/abc123")
+    /// * `file_name` - The full resource name of the file to delete (e.g.,
+    ///   "files/abc123" — the form [`FileMetadata::name`](crate::FileMetadata)
+    ///   returns). Anything else — a bare ID, extra path segments — is
+    ///   rejected locally as [`GenaiError::InvalidInput`] before a request
+    ///   is sent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenaiError::InvalidInput`] for a name that is not
+    /// `files/<id>`, and an API or network error if the request fails or
+    /// the file doesn't exist.
     ///
     /// # Example
     ///

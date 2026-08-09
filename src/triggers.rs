@@ -698,6 +698,13 @@ pub struct TriggerUpdate {
     /// add nothing to the body, keeping the empty-update-is-`{}` contract.
     /// Colliding keys win on serialize, as on
     /// [`TriggerCreateParams::extra`].
+    ///
+    /// The same typo cost as its siblings, sharpened by this endpoint: a
+    /// typo'd optional key in a deserialized config (`dispaly_name`, ...)
+    /// is silently absorbed here and forwarded verbatim — and since there
+    /// is no `update_mask`, body-key omission is the only update-scoping
+    /// mechanism, so the swallowed typo is indistinguishable from a
+    /// deliberate no-op update.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }

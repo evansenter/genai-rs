@@ -309,7 +309,11 @@ pub struct VideoMetadata {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListFilesResponse {
-    /// List of files
+    /// List of files. Deliberately *not* on the lenient-list helper
+    /// (`serde_util::deserialize_lenient_vec`) the five Interactions
+    /// envelopes use: this surface is live-verified and unrevisioned, so
+    /// a malformed element is a real protocol break worth failing loudly
+    /// on.
     #[serde(default)]
     pub files: Vec<FileMetadata>,
 
@@ -892,11 +896,13 @@ fn file_resource_path(file_name: &str) -> Result<String, GenaiError> {
 /// # Arguments
 ///
 /// * `ctx` - HTTP context (client, API key, wire inspectors)
-/// * `file_name` - The resource name of the file (e.g., "files/abc123")
+/// * `file_name` - The full resource name of the file (e.g., "files/abc123")
 ///
 /// # Errors
 ///
-/// Returns an error if the request fails or the file doesn't exist.
+/// Returns [`GenaiError::InvalidInput`] for a name that is not
+/// `files/<id>` (see [`file_resource_path`]), or an error if the request
+/// fails or the file doesn't exist.
 pub async fn get_file(ctx: &HttpContext, file_name: &str) -> Result<FileMetadata, GenaiError> {
     tracing::debug!("Getting file metadata: {}", file_name);
 
@@ -1013,11 +1019,14 @@ pub async fn list_files(
 /// # Arguments
 ///
 /// * `ctx` - HTTP context (client, API key, wire inspectors)
-/// * `file_name` - The resource name of the file to delete (e.g., "files/abc123")
+/// * `file_name` - The full resource name of the file to delete (e.g.,
+///   "files/abc123")
 ///
 /// # Errors
 ///
-/// Returns an error if the request fails or the file doesn't exist.
+/// Returns [`GenaiError::InvalidInput`] for a name that is not
+/// `files/<id>` (see [`file_resource_path`]), or an error if the request
+/// fails or the file doesn't exist.
 pub async fn delete_file(ctx: &HttpContext, file_name: &str) -> Result<(), GenaiError> {
     tracing::debug!("Deleting file: {}", file_name);
 

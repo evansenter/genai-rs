@@ -186,9 +186,13 @@ where
 /// live-verified `{}` empty response); a present-but-null or otherwise
 /// malformed list key would otherwise error and zero the whole page — the
 /// same wholesale failure the sibling helpers exist to avoid. Used by all
-/// five resource list envelopes (agents, webhooks, triggers, trigger
-/// executions, environments), not just the wire-unverified trigger family
-/// that motivated it. The per-element arm keeps the good
+/// five Interactions resource list envelopes (agents, webhooks, triggers,
+/// trigger executions, environments), not just the wire-unverified
+/// trigger family that motivated it. The sixth list envelope in the
+/// crate, `ListFilesResponse::files`, deliberately stays strict: the
+/// Files API is a separate, unrevisioned surface whose element shape is
+/// live-verified, so a malformed element there is evidence of a real
+/// protocol break, not a projection to degrade around. The per-element arm keeps the good
 /// entries of a page whose list carries a stray malformed element; a
 /// non-object element, or one whose modeled field arrives with the wrong
 /// JSON type, reaches it and drops alone.
