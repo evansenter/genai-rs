@@ -284,8 +284,12 @@ pub struct Trigger {
     /// The interaction request created on each firing.
     ///
     /// A nested `input` this crate can't deserialize (explicit null, a
-    /// stray scalar, malformed steps) degrades to empty text with a
-    /// `warn!` instead of failing the whole list response — leniency
+    /// stray scalar) degrades to empty text with a `warn!`, and any
+    /// other undeserializable `interaction` (a non-object shape, a type
+    /// mismatch on a modeled field) degrades to `None`, instead of
+    /// failing the whole list response. (A malformed steps *array* never
+    /// reaches this path: the Evergreen `Step` deserializer absorbs
+    /// unrecognized elements as `Step::Unknown` per-element.) Leniency is
     /// scoped to this response side; [`TriggerCreateParams`]'s send-side
     /// interaction stays strict, so a config-file typo is a clean parse
     /// error rather than a silently scheduled empty prompt.
@@ -387,8 +391,11 @@ pub struct Trigger {
 
 /// Deserializes `Trigger::interaction`, degrading a nested `input` that
 /// [`InteractionInput`](crate::request::InteractionInput)'s deserializer
-/// rejects (explicit null, a stray scalar, malformed steps) onto the empty
-/// default with a `warn!` before parsing the interaction.
+/// rejects (explicit null, a stray scalar) onto the empty default with a
+/// `warn!` before parsing the interaction, and a non-object `interaction`
+/// onto `None`. (A malformed steps *array* never reaches the rejection
+/// path — the Evergreen `Step` deserializer absorbs unrecognized elements
+/// as `Step::Unknown` per-element.)
 ///
 /// The nested `input` is the one non-`Option` field in the trigger tree,
 /// so without this a projection carrying `input: null` (or `input: 0`)
@@ -425,9 +432,14 @@ where
                     serde_json::Value::String(String::new()),
                 );
             }
-            serde_json::from_value(value)
-                .map(Some)
-                .map_err(serde::de::Error::custom)
+            // Warn-and-drop like the arms above: a type mismatch on a
+            // modeled field (numeric `model`, string `tools`) must not
+            // zero the whole page either.
+            Ok(serde_json::from_value(value)
+                .map_err(|e| {
+                    tracing::warn!("Undeserializable trigger interaction, dropping: {e}");
+                })
+                .ok())
         }
     }
 }
@@ -933,10 +945,14 @@ mod tests {
             );
         }
 
-        // A non-object `interaction` (stray scalar, array) degrades to
-        // None wholesale — the catch-all arm, uniform with the serde_util
-        // helpers.
-        for bad_interaction in [serde_json::json!(0), serde_json::json!([5])] {
+        // A non-object `interaction` (stray scalar, array) or one with a
+        // type mismatch on a modeled field degrades to None wholesale —
+        // the catch-all arms, uniform with the serde_util helpers.
+        for bad_interaction in [
+            serde_json::json!(0),
+            serde_json::json!([5]),
+            serde_json::json!({"model": 5}),
+        ] {
             let trigger: Trigger = serde_json::from_value(serde_json::json!({
                 "id": "t4",
                 "interaction": bad_interaction
