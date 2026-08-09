@@ -425,8 +425,11 @@ fn test_dynamic_config_serialization() {
 
 #[test]
 fn test_antigravity_config_serialization() {
+    // Opaque placeholder: the docs record the crate's default model as a
+    // known-404 value for this knob, so don't demonstrate it here — this
+    // test pins only that a set model is emitted verbatim.
     let config: AgentConfig = AntigravityConfig::new()
-        .with_model("gemini-3-flash-preview")
+        .with_model("some-supported-model")
         .with_max_total_tokens(200_000)
         .into();
 
@@ -434,7 +437,7 @@ fn test_antigravity_config_serialization() {
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
 
     assert_eq!(value["type"], "antigravity");
-    assert_eq!(value["model"], "gemini-3-flash-preview");
+    assert_eq!(value["model"], "some-supported-model");
     assert_eq!(value["max_total_tokens"], 200_000);
 }
 

@@ -1290,6 +1290,10 @@ pub struct InteractionRequest {
     /// rejects `labels` — "not available on the Gemini API but it is
     /// available on the Gemini Enterprise Agent Platform" (Vertex-only).
     /// The field is modeled for spec parity and forward compatibility.
+    ///
+    /// `BTreeMap` (not `HashMap`) so the serialized key order is
+    /// deterministic — wire captures and `LOUD_WIRE` diffs of the same
+    /// logical request stay byte-identical across runs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub labels: Option<std::collections::BTreeMap<String, String>>,
 }

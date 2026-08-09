@@ -46,7 +46,7 @@ async fn main() -> Result<(), genai_rs::GenaiError> {
 | **Thinking Mode** | Model reasoning with configurable depth, thought summaries and signatures |
 | **Background + Webhooks** | Background execution, per-request webhook routing, full `/webhooks` resource (CRUD, ping, secret rotation) |
 | **Environments & Agents** | `environment` request field plus full `/environments` (CRUD, live-verified) and `/agents` resource clients |
-| **Scheduled Triggers** | `/triggers` resource: server-side cron interactions that fire with no client process running (CRUD, run-now, execution history) |
+| **Scheduled Triggers** | `/triggers` resource: server-side cron interactions that fire with no client process running (CRUD, run-now, execution history; creation requires a custom agent, allowlisted on standard keys) |
 | **Multi-Speaker TTS** | `speech_config` list form for multi-voice dialogue |
 | **Wire Inspection** | Structured `WireEvent` stream via the `WireInspector` trait; `LOUD_WIRE=1` and `tracing` built-ins |
 | **Local Agents** | `antigravity` feature: native client for the Antigravity harness (workspaces, policies, subagents) |

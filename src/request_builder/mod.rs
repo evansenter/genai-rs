@@ -1413,7 +1413,8 @@ impl<'a> InteractionBuilder<'a> {
     /// any previously added ones.
     ///
     /// Server-side constraint (verified live 2026-08-08): the Gemini API
-    /// rejects `labels` (Vertex-only); modeled for spec parity.
+    /// rejects `labels` (Vertex-only); modeled for spec parity. `BTreeMap`
+    /// so the serialized key order is deterministic.
     #[must_use]
     pub fn with_labels(mut self, labels: std::collections::BTreeMap<String, String>) -> Self {
         self.labels = Some(labels);

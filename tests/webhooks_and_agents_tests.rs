@@ -881,6 +881,15 @@ async fn test_triggers_list_and_gated_create() {
                     Ok(()) => println!("Deleted trigger {id}"),
                     Err(e) => println!("delete_trigger failed: {e} - delete {id} manually"),
                 }
+            } else {
+                // No ID means no handle to delete by — the scheduled
+                // trigger is now leaked. Panic with the only remaining
+                // handle (the display name) rather than fall through.
+                panic!(
+                    "trigger created without an id (protocol violation) — a scheduled \
+                     trigger named {:?} is leaked; hunt it down via list_triggers",
+                    trigger.display_name
+                );
             }
         }
         // Only a structured 4xx API rejection proves anything about the
