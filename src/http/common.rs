@@ -72,13 +72,17 @@ impl Endpoint<'_> {
                 format!("/{}/interactions", version.as_str())
             }
             Self::GetInteraction { id, .. } => {
-                format!("/{}/interactions/{}", version.as_str(), id)
+                format!("/{}/interactions/{}", version.as_str(), path_segment(id))
             }
             Self::DeleteInteraction { id } => {
-                format!("/{}/interactions/{}", version.as_str(), id)
+                format!("/{}/interactions/{}", version.as_str(), path_segment(id))
             }
             Self::CancelInteraction { id } => {
-                format!("/{}/interactions/{}/cancel", version.as_str(), id)
+                format!(
+                    "/{}/interactions/{}/cancel",
+                    version.as_str(),
+                    path_segment(id)
+                )
             }
         }
     }
@@ -208,6 +212,14 @@ pub(crate) fn to_body<B: serde::Serialize>(
     serde_json::to_value(body).map_err(|e| {
         crate::errors::GenaiError::Internal(format!("Failed to serialize request body: {e}"))
     })
+}
+
+/// Percent-encodes a resource ID for use as a single URL path segment, so a
+/// hostile or malformed ID (containing `/`, `?`, `#`, ...) cannot rewrite
+/// the request path. IDs from this API are opaque hex/base64url today; this
+/// is defense-in-depth applied uniformly across all resource modules.
+pub(crate) fn path_segment(id: &str) -> String {
+    urlencoding::encode(id).into_owned()
 }
 
 /// Appends `page_size` / `page_token` query params to a URL.

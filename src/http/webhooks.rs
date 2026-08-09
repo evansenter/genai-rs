@@ -4,7 +4,7 @@
 //! the webhooks resource is part of the revisioned Interactions surface
 //! (the generated google-genai bindings apply the revision header globally).
 
-use super::common::{BASE_URL_PREFIX, send_and_read, to_body, with_paging};
+use super::common::{BASE_URL_PREFIX, path_segment, send_and_read, to_body, with_paging};
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
 use crate::errors::GenaiError;
@@ -19,7 +19,10 @@ fn webhooks_url() -> String {
 }
 
 fn webhook_url(id: &str) -> String {
-    format!("{BASE_URL_PREFIX}/{API_VERSION}/webhooks/{id}")
+    format!(
+        "{BASE_URL_PREFIX}/{API_VERSION}/webhooks/{}",
+        path_segment(id)
+    )
 }
 
 /// Registers a new webhook (`POST /v1beta/webhooks`).

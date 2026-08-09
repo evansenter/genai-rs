@@ -3,7 +3,7 @@
 //! Same header conventions as the other Interactions API resources
 //! (API key + `Api-Revision`); shared plumbing lives in `http/common.rs`.
 
-use super::common::{BASE_URL_PREFIX, send_and_read, to_body, with_paging};
+use super::common::{BASE_URL_PREFIX, path_segment, send_and_read, to_body, with_paging};
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
 use crate::errors::GenaiError;
@@ -19,18 +19,16 @@ fn triggers_url() -> String {
 }
 
 fn trigger_url(id: &str) -> String {
-    // IDs are opaque hex today, but percent-encode anyway so a hostile or
-    // malformed ID can't rewrite the request path.
     format!(
         "{BASE_URL_PREFIX}/{API_VERSION}/triggers/{}",
-        urlencoding::encode(id)
+        path_segment(id)
     )
 }
 
 fn trigger_executions_url(trigger_id: &str) -> String {
     format!(
         "{BASE_URL_PREFIX}/{API_VERSION}/triggers/{}/executions",
-        urlencoding::encode(trigger_id)
+        path_segment(trigger_id)
     )
 }
 
@@ -149,10 +147,15 @@ mod tests {
             trigger_executions_url("trig-123"),
             "https://generativelanguage.googleapis.com/v1beta/triggers/trig-123/executions"
         );
-        // A path-metacharacter ID is encoded, not interpolated raw.
+        // A path-metacharacter ID is encoded, not interpolated raw — on
+        // both the item URL and the sub-collection URL.
         assert_eq!(
             trigger_url("a/b?c"),
             "https://generativelanguage.googleapis.com/v1beta/triggers/a%2Fb%3Fc"
+        );
+        assert_eq!(
+            trigger_executions_url("a/b?c"),
+            "https://generativelanguage.googleapis.com/v1beta/triggers/a%2Fb%3Fc/executions"
         );
     }
 }

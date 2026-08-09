@@ -3,7 +3,7 @@
 //! Same header conventions as the other Interactions API resources
 //! (API key + `Api-Revision`); shared plumbing lives in `http/common.rs`.
 
-use super::common::{BASE_URL_PREFIX, send_and_read, to_body, with_paging};
+use super::common::{BASE_URL_PREFIX, path_segment, send_and_read, to_body, with_paging};
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
 use crate::environments::{CreateEnvironmentRequest, Environment, EnvironmentListResponse};
@@ -16,11 +16,9 @@ fn environments_url() -> String {
 }
 
 fn environment_url(id: &str) -> String {
-    // IDs are opaque hex today, but percent-encode anyway so a hostile or
-    // malformed ID can't rewrite the request path.
     format!(
         "{BASE_URL_PREFIX}/{API_VERSION}/environments/{}",
-        urlencoding::encode(id)
+        path_segment(id)
     )
 }
 
@@ -76,6 +74,11 @@ mod tests {
         assert_eq!(
             environment_url("env-123"),
             "https://generativelanguage.googleapis.com/v1beta/environments/env-123"
+        );
+        // A path-metacharacter ID is encoded, not interpolated raw.
+        assert_eq!(
+            environment_url("a/b?c"),
+            "https://generativelanguage.googleapis.com/v1beta/environments/a%2Fb%3Fc"
         );
     }
 }

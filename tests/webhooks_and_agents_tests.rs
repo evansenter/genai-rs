@@ -327,9 +327,20 @@ async fn test_interaction_with_inline_environment() {
             }
             // Best-effort: delete the implicitly provisioned environment
             // when its ID is known (they expire on their own, but each CI
-            // run otherwise leaves one behind until then).
+            // run otherwise leaves one behind until then). The field's ID
+            // form is unverified — crate fixtures show the prefixed
+            // `environments/<id>` resource name — so strip the prefix for
+            // the bare-ID URL builder and print the outcome rather than
+            // swallowing a silent 404.
             if let Some(env_id) = &response.environment_id {
-                let _ = client.delete_environment(env_id).await;
+                let bare_id = env_id.strip_prefix("environments/").unwrap_or(env_id);
+                match client.delete_environment(bare_id).await {
+                    Ok(()) => println!("Deleted implicit environment {bare_id}"),
+                    Err(e) => println!(
+                        "delete of implicit environment {bare_id} failed (expires on \
+                         its own): {e}"
+                    ),
+                }
             }
         }
         Err(e) => println!("Environment not available for this account/agent: {e}"),
@@ -608,24 +619,32 @@ async fn test_safety_settings_and_labels_vertex_gated() {
         });
 
         match result {
-            Ok(response) => println!(
-                "{knob} accepted (launched on the Gemini API?): {:?}",
+            // Probes pin current reality: a launch is a loud signal to
+            // upgrade this test, exactly like the transcription probe's
+            // strict expect above.
+            Ok(response) => panic!(
+                "{knob} was accepted (status={:?}) — the knob has launched on \
+                 the Gemini API; upgrade this probe to assert acceptance",
                 response.status
             ),
-            // The positive pin: a 400 carrying the documented gate text.
-            // This alone proves the schema was accepted and only the
-            // capability gate refused it — a schema rejection ("Unknown
-            // parameter"/"Unknown name"), a 403 on a mis-scoped key, or a
-            // transport failure all fall through to the panic arm.
+            // The positive pin: a 400 carrying the gate's stable fragment
+            // ("Gemini Enterprise" appears in every observed wording of
+            // the Vertex-only rejection; deliberately shorter than the
+            // full sentence so a benign rewording doesn't read as a crate
+            // regression). This alone proves the schema was accepted and
+            // only the capability gate refused it — a schema rejection
+            // ("Unknown parameter"/"Unknown name"), a 403 on a mis-scoped
+            // key, or a transport failure all fall through to the panic
+            // arm.
             Err(genai_rs::GenaiError::Api {
                 status_code: 400,
                 message,
                 ..
-            }) if message.contains("Gemini Enterprise Agent Platform") => {
+            }) if message.contains("Gemini Enterprise") => {
                 println!("{knob} Vertex-gated as expected: {message}");
             }
             Err(e) => {
-                panic!("{knob}: expected acceptance or the documented Vertex-gate 400, got: {e}")
+                panic!("{knob}: expected the documented Vertex-gate 400, got: {e}")
             }
         }
     }
