@@ -935,7 +935,13 @@ pub async fn list_files(
     }
     if let Some(token) = page_token {
         let separator = if has_params { "&" } else { "?" };
-        url.push_str(&format!("{separator}pageToken={token}"));
+        // Same invariant as with_paging: a reserved character in the token
+        // must arrive percent-encoded, or the server sees a truncated token
+        // (and a standard-base64 `+` would decode to a space).
+        url.push_str(&format!(
+            "{separator}pageToken={}",
+            urlencoding::encode(token)
+        ));
     }
 
     let request_id = ctx.next_request_id();
