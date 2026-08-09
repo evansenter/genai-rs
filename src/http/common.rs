@@ -218,7 +218,7 @@ pub(crate) fn to_body<B: serde::Serialize>(
 pub(crate) fn require_id(id: &str, what: &str) -> Result<(), crate::errors::GenaiError> {
     if id.is_empty() {
         return Err(crate::errors::GenaiError::InvalidInput(format!(
-            "{what} ID must not be empty (an empty ID would address the collection URL)"
+            "{what} ID must not be empty (an empty ID would address the collection or API-root URL)"
         )));
     }
     Ok(())
