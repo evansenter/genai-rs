@@ -94,18 +94,19 @@ where
     }
 }
 
-/// Deserializes a list field leniently, degrading an explicit null or any
-/// non-array shape to an empty vec with a `warn!` instead of failing the
-/// enclosing envelope.
+/// Deserializes a list field leniently: an explicit null or non-array
+/// shape degrades to an empty vec, and an undeserializable *element*
+/// drops alone — each with a `warn!` — instead of failing the enclosing
+/// envelope.
 ///
 /// Struct-level serde defaults cover only the key-*absent* case (the
 /// live-verified `{}` empty response); a present-but-null or otherwise
 /// malformed list key would otherwise error and zero the whole page — the
 /// same wholesale failure the sibling helpers exist to avoid, on the
-/// wire-unverified resource family. Note the degradation is per-list, not
-/// per-element: one undeserializable element drops the whole list (the
-/// element types this is used with are themselves lenient, so that arm is
-/// a last resort).
+/// wire-unverified resource family. The per-element arm keeps the good
+/// entries of a page whose list carries one stray malformed element,
+/// though with the all-`Option` element types this is used with, only a
+/// non-object element can actually reach it.
 pub(crate) fn deserialize_lenient_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
 where
     D: Deserializer<'de>,
@@ -123,13 +124,26 @@ where
             );
             Ok(Vec::new())
         }
-        Some(other) => Ok(serde_json::from_value(other).unwrap_or_else(|e| {
+        Some(serde_json::Value::Array(items)) => Ok(items
+            .into_iter()
+            .filter_map(|item| {
+                serde_json::from_value(item)
+                    .map_err(|e| {
+                        tracing::warn!(
+                            "Undeserializable {} list element, dropping: {e}",
+                            std::any::type_name::<T>()
+                        );
+                    })
+                    .ok()
+            })
+            .collect()),
+        Some(other) => {
             tracing::warn!(
-                "Undeserializable list field of {}, degrading to empty: {e}",
+                "Unexpected JSON type for {} list field, degrading to empty: {other:?}",
                 std::any::type_name::<T>()
             );
-            Vec::new()
-        })),
+            Ok(Vec::new())
+        }
     }
 }
 
@@ -251,11 +265,11 @@ mod tests {
             vec_roundtrip(serde_json::json!({"v": {"a": 1}})),
             Vec::<i64>::new()
         );
-        // Degradation is per-list, not per-element (documented on the
-        // helper): one bad element drops the whole list.
+        // Degradation is per-element: one bad element drops alone, and the
+        // good entries of the page survive.
         assert_eq!(
-            vec_roundtrip(serde_json::json!({"v": [1, "x"]})),
-            Vec::<i64>::new()
+            vec_roundtrip(serde_json::json!({"v": [1, "x", 2]})),
+            vec![1, 2]
         );
     }
 

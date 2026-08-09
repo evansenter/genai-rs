@@ -411,11 +411,14 @@ mod tests {
         assert!(list.environments.is_empty());
         assert!(list.next_page_token.is_none());
 
-        // An explicit null list key — the one empty shape the struct-level
-        // serde default does not reach — degrades to empty rather than
-        // zeroing the page with an error.
+        // Present-but-degenerate list keys — the shapes the struct-level
+        // serde default does not reach — degrade rather than zeroing the
+        // page with an error: null and non-array values read as empty.
         let list: EnvironmentListResponse =
             serde_json::from_value(serde_json::json!({"environments": null})).unwrap();
+        assert!(list.environments.is_empty());
+        let list: EnvironmentListResponse =
+            serde_json::from_value(serde_json::json!({"environments": 7})).unwrap();
         assert!(list.environments.is_empty());
     }
 }

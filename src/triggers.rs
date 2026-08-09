@@ -916,14 +916,20 @@ mod tests {
         let list: TriggerListResponse = serde_json::from_value(serde_json::json!({})).unwrap();
         assert!(list.triggers.is_empty());
 
-        // An explicit null list key — the one empty shape the struct-level
-        // serde default does not reach — degrades to empty rather than
-        // zeroing the page with an error.
+        // Present-but-degenerate list keys — the shapes the struct-level
+        // serde default does not reach — degrade rather than zeroing the
+        // page with an error: null and non-array values read as empty.
         let list: TriggerListResponse =
             serde_json::from_value(serde_json::json!({"triggers": null})).unwrap();
         assert!(list.triggers.is_empty());
+        let list: TriggerListResponse =
+            serde_json::from_value(serde_json::json!({"triggers": "corrupted"})).unwrap();
+        assert!(list.triggers.is_empty());
         let executions: TriggerExecutionListResponse =
             serde_json::from_value(serde_json::json!({"trigger_executions": null})).unwrap();
+        assert!(executions.trigger_executions.is_empty());
+        let executions: TriggerExecutionListResponse =
+            serde_json::from_value(serde_json::json!({"trigger_executions": {"a": 1}})).unwrap();
         assert!(executions.trigger_executions.is_empty());
     }
 
