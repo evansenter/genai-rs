@@ -539,6 +539,10 @@ impl Client {
     /// # Returns
     /// A boxed stream that yields `StreamEvent` items.
     ///
+    /// An empty `interaction_id` is rejected locally as
+    /// [`GenaiError::InvalidInput`]: the returned stream yields that error
+    /// as its first (and only) item and no request is sent.
+    ///
     /// # Example
     /// ```no_run
     /// use genai_rs::{Client, StreamChunk};
