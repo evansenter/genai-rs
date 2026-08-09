@@ -132,7 +132,8 @@ let builder = AntigravityAgent::builder().with_capabilities(caps);
 ### Safety gate
 
 Enabling any write-capable builtin (`run_command`, `edit_file`,
-`create_file`, `generate_image`, `search_web`, `start_subagent`) or any MCP
+`create_file`, `generate_image`, `search_web`, `start_subagent`,
+`ask_question` — everything outside the read-only set) or any MCP
 server **without a policy or pre-tool hook** is an error at `spawn()` time —
 the same guard the Python SDK enforces. Add `policy::allow_all()` for
 autonomous agents, or a deny-by-default rule set.
@@ -204,9 +205,12 @@ populate `ToolOutcome.error` instead.
 
 ### Answering agent questions
 
-When the `ask_question` builtin is enabled, the agent can pause a turn to
-ask the user questions (multiple-choice, optionally multi-select). Set an
-`on_questions` hook to answer them programmatically — route them to a CLI
+The `ask_question` builtin lets the agent pause a turn to ask the user
+questions (multiple-choice, optionally multi-select). It is **off in the
+default read-only capability set** — enable it explicitly, and note that
+it counts as write-capable for the [safety gate](#safety-gate), so a
+policy or pre-tool hook must also be registered. Set an `on_questions`
+hook to answer the questions programmatically — route them to a CLI
 prompt, a chat message, or policy code:
 
 ```rust,ignore
@@ -231,9 +235,9 @@ let agent = AntigravityAgent::builder()
 
 `QuestionReply::Cancel` cancels the interaction; a short answer list is
 padded with `Unanswered`. Without a hook every question is answered
-"unanswered" (with a `warn!`) so the harness never deadlocks — disable
-`BuiltinTool::AskQuestion` in `Capabilities` if the agent should never
-ask.
+"unanswered" (with a `warn!`) so the harness never deadlocks — and since
+the builtin is off by default, simply not enabling it means the agent
+never asks.
 
 The hook is synchronous and runs inline in the harness event pump — don't
 block in it waiting for a human. For interactive flows, collect the
