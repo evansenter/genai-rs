@@ -53,6 +53,39 @@ where
     }
 }
 
+/// Deserializes an optional RFC 3339 timestamp, degrading an unparseable
+/// string or unexpected JSON shape to `None` with a `warn!` instead of
+/// failing the enclosing struct (and hence an entire list response).
+///
+/// Used on the wire-unverified trigger resource family: protobuf-JSON
+/// specifies RFC 3339 strings for `Timestamp`, but the same family already
+/// diverged from expectations once (int64s arrive as strings), so
+/// timestamps degrade per-field the same way the int64s do.
+pub(crate) fn deserialize_lenient_timestamp<'de, D>(
+    deserializer: D,
+) -> Result<Option<chrono::DateTime<chrono::Utc>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    match value {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(s)) => {
+            let parsed = chrono::DateTime::parse_from_rfc3339(&s)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .ok();
+            if parsed.is_none() {
+                tracing::warn!("Unparseable RFC 3339 timestamp from API, dropping: {s:?}");
+            }
+            Ok(parsed)
+        }
+        Some(other) => {
+            tracing::warn!("Unexpected JSON type for timestamp field, dropping: {other:?}");
+            Ok(None)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde::{Deserialize, Serialize};
@@ -91,6 +124,43 @@ mod tests {
         assert_eq!(roundtrip(serde_json::json!({"v": true})), None);
         assert_eq!(roundtrip(serde_json::json!({"v": [1]})), None);
         assert_eq!(roundtrip(serde_json::json!({"v": {"n": 1}})), None);
+    }
+
+    #[derive(Debug, PartialEq, Deserialize)]
+    struct TsWrapper {
+        #[serde(default, deserialize_with = "super::deserialize_lenient_timestamp")]
+        t: Option<chrono::DateTime<chrono::Utc>>,
+    }
+
+    fn ts_roundtrip(json: serde_json::Value) -> Option<chrono::DateTime<chrono::Utc>> {
+        serde_json::from_value::<TsWrapper>(json).unwrap().t
+    }
+
+    #[test]
+    fn lenient_timestamp_happy_paths() {
+        let t = ts_roundtrip(serde_json::json!({"t": "2026-08-08T12:30:00Z"}));
+        assert_eq!(t.unwrap().to_rfc3339(), "2026-08-08T12:30:00+00:00");
+        // Offset forms normalize to UTC.
+        let t = ts_roundtrip(serde_json::json!({"t": "2026-08-08T05:30:00-07:00"}));
+        assert_eq!(t.unwrap().to_rfc3339(), "2026-08-08T12:30:00+00:00");
+        assert_eq!(ts_roundtrip(serde_json::json!({"t": null})), None);
+        assert_eq!(ts_roundtrip(serde_json::json!({})), None);
+    }
+
+    #[test]
+    fn lenient_timestamp_degradation_arms_drop_to_none() {
+        // Same degrade-per-field contract as the int64s: one bad timestamp
+        // must never fail the struct it is embedded in.
+        assert_eq!(ts_roundtrip(serde_json::json!({"t": "not-a-time"})), None);
+        assert_eq!(ts_roundtrip(serde_json::json!({"t": ""})), None);
+        // Epoch-number and object encodings (the realistic divergence
+        // shapes) degrade rather than erroring.
+        assert_eq!(ts_roundtrip(serde_json::json!({"t": 1754656200})), None);
+        assert_eq!(
+            ts_roundtrip(serde_json::json!({"t": {"seconds": 1754656200}})),
+            None
+        );
+        assert_eq!(ts_roundtrip(serde_json::json!({"t": true})), None);
     }
 
     #[test]

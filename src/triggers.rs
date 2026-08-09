@@ -333,22 +333,46 @@ pub struct Trigger {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_interaction_id: Option<String>,
     /// Output only. When the trigger was created.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+    )]
     pub create_time: Option<DateTime<Utc>>,
     /// Output only. When the trigger was last updated.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+    )]
     pub update_time: Option<DateTime<Utc>>,
     /// Output only. When the trigger last fired.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+    )]
     pub last_run_time: Option<DateTime<Utc>>,
     /// Output only. When the trigger next fires.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+    )]
     pub next_run_time: Option<DateTime<Utc>>,
     /// Output only. When the trigger was last paused.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+    )]
     pub last_pause_time: Option<DateTime<Utc>>,
     /// Output only. When the trigger was last resumed.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+    )]
     pub last_resume_time: Option<DateTime<Utc>>,
 }
 
@@ -527,13 +551,25 @@ pub struct TriggerExecution {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// Output only. When the firing was scheduled for.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+    )]
     pub scheduled_time: Option<DateTime<Utc>>,
     /// Output only. When the execution started.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+    )]
     pub start_time: Option<DateTime<Utc>>,
     /// Output only. When the execution finished.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+    )]
     pub end_time: Option<DateTime<Utc>>,
 }
 
@@ -688,6 +724,36 @@ mod tests {
         let back = serde_json::to_value(&trigger).unwrap();
         assert_eq!(back["max_consecutive_failures"], serde_json::json!("3"));
         assert_eq!(back["execution_timeout_seconds"], serde_json::json!("600"));
+    }
+
+    #[test]
+    fn trigger_timestamps_degrade_per_field() {
+        // Same posture as the int64s on this wire-unverified resource: a
+        // timestamp arriving in an unexpected encoding (epoch number,
+        // proto-style object, garbage string) drops that field to None
+        // instead of failing the whole list response.
+        let json = serde_json::json!({
+            "id": "trig-1",
+            "create_time": "2026-08-08T12:30:00Z",
+            "update_time": "not-a-time",
+            "last_run_time": 1754656200,
+            "next_run_time": {"seconds": 1754656200}
+        });
+        let trigger: Trigger = serde_json::from_value(json).unwrap();
+        assert_eq!(trigger.id.as_deref(), Some("trig-1"));
+        assert!(trigger.create_time.is_some());
+        assert_eq!(trigger.update_time, None);
+        assert_eq!(trigger.last_run_time, None);
+        assert_eq!(trigger.next_run_time, None);
+
+        let json = serde_json::json!({
+            "id": "exec-1",
+            "scheduled_time": "2026-08-08T12:30:00Z",
+            "end_time": "garbage"
+        });
+        let execution: TriggerExecution = serde_json::from_value(json).unwrap();
+        assert!(execution.scheduled_time.is_some());
+        assert_eq!(execution.end_time, None);
     }
 
     #[test]

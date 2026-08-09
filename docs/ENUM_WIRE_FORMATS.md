@@ -450,7 +450,13 @@ interaction is rejected with "Agent '' is invalid or not found", and
 `update_time` per the SDK spec while the live-verified Environments
 resource uses `created`/`updated`; if the live wire follows the
 environments convention, the timestamp fields deserialize as `None`
-(all fields are Optional/defaulted, so nothing hard-fails). The list
+(all fields are Optional/defaulted, so nothing hard-fails). The timestamp
+*encoding* is the same class of bet — this family already diverged once
+on encoding (int64s arrive as protobuf-JSON strings), so the nine
+trigger-family timestamps route through a lenient RFC 3339 deserializer
+that degrades an unexpected shape (epoch number, proto-style object,
+garbage string) to `None` with a `warn!` instead of failing the whole
+list response. The list
 envelope keys are in the same boat: `triggers` matches its path segment
 but `GET .../executions` is modeled with a `trigger_executions` key per
 the SDK spec — if the live wire uses `executions` instead, the

@@ -230,12 +230,19 @@ pub(crate) fn with_paging(url: String, page_size: Option<u32>, page_token: Optio
 /// [`with_paging`] plus resource-specific query params (values
 /// percent-encoded), for list endpoints with extra filters like the
 /// agents resource's `parent`.
+///
+/// `url` must not already carry a query string — this helper appends `?`
+/// unconditionally.
 pub(crate) fn with_paging_and(
     mut url: String,
     page_size: Option<u32>,
     page_token: Option<&str>,
     extra: &[(&str, &str)],
 ) -> String {
+    debug_assert!(
+        !url.contains('?'),
+        "with_paging_and requires a query-less base URL, got {url}"
+    );
     let mut params = Vec::new();
     if let Some(size) = page_size {
         params.push(format!("page_size={size}"));

@@ -712,19 +712,24 @@ async fn test_deep_research_config_knobs_accepted() {
     // the Gemini Enterprise Agent Platform") and is deliberately not sent
     // here. Deep-research runs are long, so this only checks request
     // acceptance and then cancels the background interaction.
-    let result = client
-        .interaction()
-        .with_agent("deep-research-preview-04-2026")
-        .with_text("One-paragraph overview of Rust async runtimes")
-        .with_background(true)
-        .with_store_enabled()
-        .with_agent_config(
-            DeepResearchConfig::new()
-                .with_visualization(Visualization::Auto)
-                .with_collaborative_planning(true),
-        )
-        .create()
-        .await;
+    // Retry-wrapped like the antigravity probe next door: a retried create
+    // can at worst orphan a bounded background interaction (cancel-on-success
+    // covers the common case), unlike the trigger probe's scheduled resource.
+    let result = crate::retry_request!([client] => {
+        client
+            .interaction()
+            .with_agent("deep-research-preview-04-2026")
+            .with_text("One-paragraph overview of Rust async runtimes")
+            .with_background(true)
+            .with_store_enabled()
+            .with_agent_config(
+                DeepResearchConfig::new()
+                    .with_visualization(Visualization::Auto)
+                    .with_collaborative_planning(true),
+            )
+            .create()
+            .await
+    });
 
     match result {
         Ok(response) => {
