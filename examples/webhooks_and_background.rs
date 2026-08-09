@@ -198,7 +198,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 ),
             }
         }
-        Ok(_) => println!("create_environment returned no ID (protocol violation) - skipping"),
+        Ok(_) => println!(
+            "create_environment returned no ID (protocol violation) - the \
+             container is leaked; hunt it via list_environments"
+        ),
         Err(e) => println!("create_environment failed (tolerated): {e}"),
     }
 
