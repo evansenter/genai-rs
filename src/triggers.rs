@@ -531,6 +531,12 @@ impl TriggerUpdate {
     /// output-only (the server sets it after consecutive failures); the
     /// open enum accepts it here per the Evergreen posture, but sending it
     /// is untested against the live API.
+    ///
+    /// In a read-modify-write flow, don't echo back a status whose
+    /// [`is_unknown()`](TriggerStatus::is_unknown) type came from a
+    /// *non-string* wire value: its wire form is the crate's
+    /// `<non-string: ...>` debug marker, not the original value. (An
+    /// unknown *string* status round-trips faithfully.)
     #[must_use]
     pub fn with_status(mut self, status: TriggerStatus) -> Self {
         self.status = Some(status);
