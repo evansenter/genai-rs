@@ -45,6 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Antigravity bridge: `on_questions` hook** — answer the agent's
   `ask_question` batches programmatically (select choices, freeform text,
   skip, or cancel) instead of the previous always-"unanswered" fallback.
+  An unmodeled future question type arrives with
+  `AgentQuestion::is_unknown_type()` set and its raw payload in `extra`
+  (build that fixture with `AgentQuestion::unknown()`).
 - `InteractionRequest` and `InteractionInput` implement `Default`, easing
   struct-literal construction (e.g. nested trigger interactions).
 
