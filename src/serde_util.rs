@@ -97,8 +97,12 @@ where
 /// Used on the trigger resource family, whose wire shape is unverified
 /// (protobuf-JSON specifies RFC 3339 strings for `Timestamp`, but this
 /// family already diverged from expectations once — int64s arrive as
-/// strings), and on `Environment` for uniformity with the int64 helpers
-/// next door even though its timestamp encoding was live-verified.
+/// strings); on `Environment` for uniformity with the int64 helpers next
+/// door even though its timestamp encoding was live-verified; and on
+/// `Webhook`/`SigningSecret` so a divergent timestamp encoding costs one
+/// field rather than dropping the whole webhook from a listed page (the
+/// element-drop arm of `deserialize_lenient_vec` would otherwise be the
+/// thing that caught it).
 pub(crate) fn deserialize_lenient_timestamp<'de, D>(
     deserializer: D,
 ) -> Result<Option<chrono::DateTime<chrono::Utc>>, D::Error>
@@ -141,7 +145,8 @@ where
 /// JSON type, reaches it and drops alone.
 ///
 /// Deliberately envelope-scoped: lists *inside* an element
-/// (`Agent::tools`, `Webhook::signing_secrets`, `Environment::sources`)
+/// (`Agent::tools`, `Webhook::signing_secrets`,
+/// `Webhook::subscribed_events`, `Environment::sources`)
 /// keep strict derived deserialization — a malformed nested list drops
 /// its own element via the arm above rather than being partially
 /// salvaged, keeping the blast radius one resource, not one page.
@@ -152,15 +157,14 @@ where
 {
     let value = Option::<serde_json::Value>::deserialize(deserializer)?;
     match value {
-        // Key-absent: unreachable from the five envelopes today (their
-        // struct-level serde defaults fill a missing key without calling
-        // this helper), but kept silent like the siblings so a future
-        // default-less call site cannot log a spurious "null" warning.
-        None => Ok(Vec::new()),
-        Some(serde_json::Value::Null) => {
-            // The value is always null on this arm, so the element type is
-            // the only discriminator available to say *which* envelope's
-            // page came back empty.
+        // This is the explicit-null arm: serde maps a JSON null to `None`
+        // via `deserialize_option`/`visit_none`, so `Some(Value::Null)`
+        // can never be produced here. A merely-absent key also cannot
+        // reach this helper — every call site carries a struct-level
+        // serde default, which fills a missing key without invoking
+        // `deserialize_with`. The element type is the only discriminator
+        // available to say *which* envelope's page came back empty.
+        None => {
             tracing::warn!(
                 "List field of {} was explicit null; degrading to an empty list",
                 std::any::type_name::<T>()
@@ -228,6 +232,72 @@ mod tests {
         assert_eq!(roundtrip(serde_json::json!({"v": true})), None);
         assert_eq!(roundtrip(serde_json::json!({"v": [1]})), None);
         assert_eq!(roundtrip(serde_json::json!({"v": {"n": 1}})), None);
+    }
+
+    #[test]
+    fn lenient_vec_null_arm_warns() {
+        // The warn is load-bearing: it is the only signal distinguishing
+        // an explicit-null page from a genuinely empty account, and serde
+        // maps JSON null to `None` (never `Some(Value::Null)`), so this
+        // pins that the arm that actually fires is the one that logs.
+        use std::sync::{Arc, Mutex};
+        use tracing::span;
+
+        struct Recorder {
+            messages: Arc<Mutex<Vec<String>>>,
+        }
+
+        impl tracing::Subscriber for Recorder {
+            fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+                true
+            }
+            fn new_span(&self, _span: &span::Attributes<'_>) -> span::Id {
+                span::Id::from_u64(1)
+            }
+            fn record(&self, _span: &span::Id, _values: &span::Record<'_>) {}
+            fn record_follows_from(&self, _span: &span::Id, _follows: &span::Id) {}
+            fn event(&self, event: &tracing::Event<'_>) {
+                struct MessageVisitor<'a>(&'a mut String);
+                impl tracing::field::Visit for MessageVisitor<'_> {
+                    fn record_debug(
+                        &mut self,
+                        field: &tracing::field::Field,
+                        value: &dyn std::fmt::Debug,
+                    ) {
+                        if field.name() == "message" {
+                            use std::fmt::Write;
+                            let _ = write!(self.0, "{value:?}");
+                        }
+                    }
+                }
+                let mut message = String::new();
+                event.record(&mut MessageVisitor(&mut message));
+                self.messages.lock().unwrap().push(message);
+            }
+            fn enter(&self, _span: &span::Id) {}
+            fn exit(&self, _span: &span::Id) {}
+        }
+
+        let messages = Arc::new(Mutex::new(Vec::new()));
+        let recorder = Recorder {
+            messages: Arc::clone(&messages),
+        };
+        tracing::subscriber::with_default(recorder, || {
+            // Sibling tests exercise this callsite with no subscriber
+            // installed, which can cache its interest as `never`
+            // process-wide under plain `cargo test` — rebuild so the
+            // scoped Recorder is consulted (same caveat as wire.rs).
+            tracing::callsite::rebuild_interest_cache();
+            assert_eq!(
+                vec_roundtrip(serde_json::json!({"v": null})),
+                Vec::<i64>::new()
+            );
+        });
+        let messages = messages.lock().unwrap();
+        assert!(
+            messages.iter().any(|m| m.contains("explicit null")),
+            "the explicit-null degradation must warn; got: {messages:?}"
+        );
     }
 
     /// The send-side sibling of `Wrapper`: same accepted wire forms, but
