@@ -284,6 +284,14 @@ mod tests {
         let back = serde_json::to_value(&env).unwrap();
         assert_eq!(back["file_count"], serde_json::json!("2"));
         assert_eq!(back["size_bytes"], serde_json::json!("19"));
+        // Timestamps are deliberately NOT byte-faithful: chrono re-emits
+        // the same instant in its own RFC 3339 spelling (Z suffix, padded
+        // fraction) rather than the captured `+00:00` form — see the
+        // serde_util module doc for the scoped fidelity claim.
+        assert_eq!(
+            back["created"],
+            serde_json::json!("2026-08-08T13:24:10.647980Z")
+        );
     }
 
     #[test]

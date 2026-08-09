@@ -1,5 +1,7 @@
 //! Antigravity agent example: spawn the local harness, register a custom
-//! Rust tool, set policies, and run an agentic conversation.
+//! Rust tool, set policies, and run an agentic conversation — including
+//! enabling the write-capable `ask_question` builtin and answering the
+//! agent's question batches through an `on_questions` hook.
 //!
 //! Requirements:
 //! - The `localharness` binary (ships in the `google-antigravity` Python
