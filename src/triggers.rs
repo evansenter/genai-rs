@@ -541,6 +541,46 @@ mod tests {
     }
 
     #[test]
+    fn trigger_update_serializes_partial() {
+        // The send direction for TriggerStatus: pause/resume rides on this
+        // exact wire value.
+        let update = TriggerUpdate::new().with_status(TriggerStatus::Paused);
+        assert_eq!(
+            serde_json::to_value(&update).unwrap(),
+            serde_json::json!({"status": "paused"})
+        );
+
+        // An empty update must serialize to an empty object — the
+        // skip_serializing_if contract that makes PATCH a genuine partial
+        // update rather than a display-name wipe.
+        assert_eq!(
+            serde_json::to_value(TriggerUpdate::new()).unwrap(),
+            serde_json::json!({})
+        );
+
+        let named = TriggerUpdate::new()
+            .with_display_name("renamed")
+            .with_status(TriggerStatus::Active);
+        let json = serde_json::to_value(&named).unwrap();
+        assert_eq!(json["display_name"], "renamed");
+        assert_eq!(json["status"], "active");
+    }
+
+    #[test]
+    fn create_params_serialize_all_fields() {
+        let params = TriggerCreateParams::new("0 9 * * *", "UTC", probe_interaction())
+            .with_display_name("daily-audit")
+            .with_environment_id("env-123")
+            .with_max_consecutive_failures(3)
+            .with_execution_timeout_seconds(600);
+        let json = serde_json::to_value(&params).unwrap();
+        assert_eq!(json["display_name"], "daily-audit");
+        assert_eq!(json["environment_id"], "env-123");
+        assert_eq!(json["max_consecutive_failures"], 3);
+        assert_eq!(json["execution_timeout_seconds"], 600);
+    }
+
+    #[test]
     fn empty_list_response_deserializes() {
         // GET /v1beta/triggers returns `{}` when nothing exists.
         let list: TriggerListResponse = serde_json::from_value(serde_json::json!({})).unwrap();
