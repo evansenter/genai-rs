@@ -1883,15 +1883,23 @@ impl From<DynamicConfig> for AgentConfig {
 
 /// Configuration for the server-side Antigravity coding agent.
 ///
-/// This configures `agent("antigravity")` interactions that run in Google's
-/// sandbox (typically with an [`environment`](InteractionRequest::environment)
-/// attached) — distinct from the local-harness bridge in
-/// [`antigravity`](crate::antigravity), which runs the agent on your machine.
+/// This configures `agent("antigravity-preview-05-2026")` interactions that
+/// run in Google's sandbox (an
+/// [`environment`](InteractionRequest::environment) is **required** for that
+/// agent) — distinct from the local-harness bridge in
+/// [`antigravity`](crate::antigravity), which runs the agent on your
+/// machine. The bare `antigravity` string is only the `agent_config` *type*
+/// discriminant (which [`From`] sets), not an agent ID.
 ///
-/// Probe note (2026-08-08): the bare `antigravity` agent alias returns 404
-/// `not_found` on a standard API key, so the config keys (`type`, `model`,
-/// `max_total_tokens`) come from the official SDK spec and are pending live
-/// verification against an account where the agent is available.
+/// Probe notes (verified live 2026-08-09, standard API key):
+/// `agent_config: {"type": "antigravity"}` and `max_total_tokens` are
+/// **accepted** on `antigravity-preview-05-2026` (the server's validation
+/// error enumerates the supported config types as `dynamic`,
+/// `deep-research`, `code-mender`, `antigravity`). Setting `model` to a
+/// value the agent doesn't offer returns 404 `not_found`
+/// (`gemini-3-flash-preview` does); the agent's model catalog is not
+/// enumerable on a standard key, so leave `model` unset unless you know an
+/// accepted value.
 ///
 /// # Example
 ///

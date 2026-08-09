@@ -73,7 +73,7 @@ Google-managed agents known to this crate (from the 2026-05-20 spec):
 | `deep-research-pro-preview-12-2025` | Gemini Deep Research agent (launch preview) |
 | `deep-research-preview-04-2026` | Gemini Deep Research agent |
 | `deep-research-max-preview-04-2026` | Gemini Deep Research Max agent |
-| `antigravity-preview-05-2026` | Antigravity managed agent for multi-step tasks with reasoning, file operations, and tool use (pairs well with [Environments](#environments)) |
+| `antigravity-preview-05-2026` | Antigravity managed agent for multi-step tasks with reasoning, file operations, and tool use (requires an [environment](#environments); tune via `AntigravityConfig` — `agent_config` type `antigravity`) |
 
 Availability varies by account and region; unknown agent IDs pass through
 unchanged (Evergreen), so newer agents work without a crate update.

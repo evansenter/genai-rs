@@ -1086,6 +1086,21 @@ Veo models (e.g. `veo-3.1-generate-preview`) return 404 "Model not found"
 `response_modalities: ["video"]`. `video_config` is accepted (ignored) on
 non-video models.
 
+### AntigravityConfig (agent_config type "antigravity")
+
+```json
+{"agent_config": {"type": "antigravity", "max_total_tokens": 200000}}
+```
+
+**Status**: ✅ Verified live 2026-08-09 on `agent("antigravity-preview-05-2026")`
+(which requires an `environment`): the `type` discriminant and
+`max_total_tokens` are accepted; the server's validation error enumerates
+the supported `agent_config.type` values as `dynamic`, `deep-research`,
+`code-mender`, `antigravity`. `model` is server-validated per agent — an
+unavailable value returns 404 `not_found` (observed with
+`gemini-3-flash-preview`), and the agent's model catalog is not enumerable
+on a standard key.
+
 ### Visualization (Deep Research agent_config)
 
 ```json

@@ -651,6 +651,48 @@ async fn test_safety_settings_and_labels_vertex_gated() {
     }
 }
 
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_antigravity_config_accepted() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    use genai_rs::{AntigravityConfig, EnvironmentSource, RemoteEnvironment};
+
+    // Verified live (2026-08-09): `agent_config: {"type": "antigravity"}`
+    // plus `max_total_tokens` is accepted on `antigravity-preview-05-2026`
+    // (which requires an environment). `model` is deliberately not sent —
+    // an unavailable value returns 404 and the agent's model catalog is
+    // not enumerable on a standard key. Retry transients, assert the
+    // strong form, and cancel the background interaction.
+    let response = crate::retry_request!([client] => {
+        client
+            .interaction()
+            .with_agent("antigravity-preview-05-2026")
+            .with_text("Print the contents of /etc/motd")
+            .with_background(true)
+            .with_store_enabled()
+            .with_environment(
+                RemoteEnvironment::new()
+                    .add_source(EnvironmentSource::inline("/etc/motd", "config probe")),
+            )
+            .with_agent_config(AntigravityConfig::new().with_max_total_tokens(200_000))
+            .create()
+            .await
+    })
+    .expect("AntigravityConfig should be accepted (verified live 2026-08-09)");
+    println!("AntigravityConfig accepted: status={:?}", response.status);
+    if let Some(id) = &response.id {
+        let _ = client.cancel_interaction(id).await;
+    }
+    if let Some(env_id) = &response.environment_id {
+        let bare_id = env_id.strip_prefix("environments/").unwrap_or(env_id);
+        let _ = client.delete_environment(bare_id).await;
+    }
+}
+
 // =============================================================================
 // Deep Research config knobs (request acceptance)
 // =============================================================================
@@ -850,6 +892,14 @@ async fn test_triggers_list_and_gated_create() {
             ..
         }) if (400..500).contains(&status_code) => {
             println!("Trigger create gated as expected: {message}");
+            // Positive pin first: the 4xx must actually be the agent gate
+            // (live-observed "Agent '' is invalid or not found") — an
+            // unrelated rejection (bad cron, rejected time_zone) must not
+            // read as a pass.
+            assert!(
+                message.contains("is invalid or not found"),
+                "expected the agent-gate rejection, got a different 4xx: {message}"
+            );
             // "Unknown parameter" covers top-level params; a bad field
             // inside the JSON body (incl. the nested interaction) comes
             // back as protobuf-JSON "Unknown name" — check both, like the

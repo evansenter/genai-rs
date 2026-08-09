@@ -1438,6 +1438,10 @@ pub struct MultipleChoice {
     /// Whether multiple choices may be selected.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_multi_select: Option<bool>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen) — keeps
+    /// the question path lossless one level down too.
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 /// `TrajectoryStateUpdate`.

@@ -1893,11 +1893,19 @@ fn map_questions(request: &protocol::UserQuestionsRequest) -> Vec<hooks::AgentQu
                     m.choices.len()
                 );
             }
+            // Merge outer (UserQuestion) and inner (MultipleChoice)
+            // unmodeled fields so the hook-facing shape is lossless at
+            // both levels; a key collision (none exist in the protocol
+            // today) resolves to the inner value.
+            let mut extra = q.extra.clone();
+            if let Some(m) = mc {
+                extra.extend(m.extra.clone());
+            }
             hooks::AgentQuestion {
                 question: mc.and_then(|m| m.question.clone()).unwrap_or_default(),
                 choices: mc.map(|m| m.choices.clone()).unwrap_or_default(),
                 is_multi_select: mc.and_then(|m| m.is_multi_select).unwrap_or(false),
-                extra: q.extra.clone(),
+                extra,
                 unknown_type: mc.is_none(),
             }
         })
@@ -2084,6 +2092,7 @@ mod agent_tests {
                     question: Some("Pick one".into()),
                     choices: vec!["a".into(), "b".into()],
                     is_multi_select: Some(true),
+                    ..Default::default()
                 }),
                 ..Default::default()
             }],
@@ -2116,6 +2125,7 @@ mod agent_tests {
                         question: Some("Sparse".into()),
                         choices: Vec::new(),
                         is_multi_select: None,
+                        ..Default::default()
                     }),
                     ..Default::default()
                 },
@@ -2126,6 +2136,13 @@ mod agent_tests {
                         question: None,
                         choices: vec!["yes".into(), "no".into()],
                         is_multi_select: None,
+                        // An unmodeled field *inside* multipleChoice must
+                        // also reach the hook (merged into extra).
+                        extra: {
+                            let mut m = serde_json::Map::new();
+                            m.insert("defaultChoiceIndex".into(), serde_json::json!(1));
+                            m
+                        },
                     }),
                     ..Default::default()
                 },
@@ -2153,6 +2170,9 @@ mod agent_tests {
         assert!(batch[2].question.is_empty());
         assert_eq!(batch[2].choices, vec!["yes", "no"]);
         assert!(!batch[2].is_unknown_type());
+        // An unmodeled field nested inside multipleChoice merges into the
+        // hook-facing extra map (lossless one level down too).
+        assert_eq!(batch[2].extra["defaultChoiceIndex"], 1);
     }
 
     #[test]

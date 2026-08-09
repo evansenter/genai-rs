@@ -200,9 +200,11 @@ pub struct CreateEnvironmentRequest {
     /// Unrecognized fields, preserved for roundtrip (Evergreen) — lets an
     /// unmodeled create-request field be set without a crate release.
     ///
-    /// A key that collides with a modeled field **wins on serialize** (the
-    /// flattened map is emitted last) — deliberate, so the escape hatch can
-    /// also override a modeled field whose wire shape turns out wrong.
+    /// A key that collides with a modeled field **wins on serialize** via
+    /// `serde_json::to_value` — the form the request path uses — so the
+    /// escape hatch can also override a modeled field whose wire shape
+    /// turns out wrong. (`to_string` on a flattened struct emits both keys
+    /// rather than deduplicating; don't hand-serialize colliding params.)
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
