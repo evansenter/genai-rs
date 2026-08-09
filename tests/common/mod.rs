@@ -53,9 +53,10 @@ pub const MAX_RETRY_SLEEP: Duration = Duration::from_secs(15);
 /// - 400s carrying "invalid json syntax" (the model occasionally emits
 ///   invalid JSON in structured output)
 /// - 400s carrying "there was a problem processing your request" (a
-///   server-side burst class: `code: invalid_request` with this generic
-///   message and a "You will not be charged" apology, observed failing in
-///   under a second on requests that pass on re-run)
+///   server-side burst class observed failing in under a second on
+///   requests that pass on re-run; matched on status plus this phrase
+///   alone, so if the API ever reuses the apology for a real rejection
+///   the cost is the bounded retry budget before failing, not a mask)
 ///
 /// Transport-level transience (network, timeouts, 429, 5xx) is
 /// [`GenaiError::is_retryable`]'s job; callers that want both compose the
@@ -1161,5 +1162,49 @@ pub fn is_safety_block_error(error: &GenaiError) -> bool {
             ..
         } => *status_code == 400 && message.to_lowercase().contains("safety violation"),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod predicate_tests {
+    use super::*;
+
+    fn api_err(status_code: u16, message: &str) -> GenaiError {
+        GenaiError::Api {
+            status_code,
+            message: message.to_string(),
+            request_id: None,
+            retry_after: None,
+        }
+    }
+
+    #[test]
+    fn transient_predicate_retries_known_flakes_and_fails_loud_otherwise() {
+        // The three message-pinned flake classes retry...
+        assert!(is_transient_error(&api_err(
+            400,
+            r#"{"error":{"message":"There was a problem processing your request. You will not be charged.","code":"invalid_request"}}"#
+        )));
+        assert!(is_transient_error(&api_err(
+            400,
+            "Invalid JSON syntax at line 3"
+        )));
+        assert!(is_transient_error(&api_err(
+            500,
+            "Spanner error: invalid UTF-8 sequence in conversation state"
+        )));
+
+        // ...and the fail-loud contract holds: a rejection that names its
+        // actual problem, or only half a marker, is NOT retried.
+        assert!(!is_transient_error(&api_err(
+            400,
+            r#"{"error":{"message":"Unknown field 'speech_configs'","code":"invalid_request"}}"#
+        )));
+        assert!(!is_transient_error(&api_err(
+            500,
+            "Spanner error: deadline exceeded" // spanner without the utf-8 half
+        )));
+        // Transport classes are is_retryable's job, not this predicate's.
+        assert!(!is_transient_error(&api_err(429, "rate limited")));
     }
 }

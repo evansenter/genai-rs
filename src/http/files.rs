@@ -49,7 +49,7 @@
 //! # }
 //! ```
 
-use super::common::{API_KEY_HEADER, require_id, require_no_dot_segments};
+use super::common::{API_KEY_HEADER, path_segment, require_id};
 use super::context::HttpContext;
 use super::error_helpers::{check_response, check_response_wire, deserialize_with_context};
 use crate::errors::GenaiError;
@@ -855,6 +855,38 @@ pub async fn upload_file_chunked_with_chunk_size(
     Ok((file_response.file, resumable_upload))
 }
 
+/// Validates a Files API resource name and rebuilds it as a URL path
+/// fragment with the ID percent-encoded.
+///
+/// A Files API name is always the `files/` prefix plus one opaque ID
+/// (the shape every upload response returns), so this positively checks
+/// that shape — prefix present, exactly one non-empty segment after it —
+/// and then routes the ID through [`path_segment`] like every other
+/// resource module. That closes the whole threat family at once (empty
+/// name, `.`/`..` dot segments bare or percent-encoded, `?`/`#` query
+/// and fragment splits, stray extra segments) instead of enumerating
+/// threats against a raw interpolation one guard at a time. A name that
+/// fails the shape check could never have addressed a file anyway — the
+/// raw form's URL was a guaranteed 404 or a different endpoint — so
+/// rejecting locally with `InvalidInput` only converts silent misfires
+/// into loud ones.
+fn file_resource_path(file_name: &str) -> Result<String, GenaiError> {
+    let Some(id) = file_name.strip_prefix("files/") else {
+        return Err(GenaiError::InvalidInput(format!(
+            "file name must be a full `files/<id>` resource name \
+             (the form upload responses return); got {file_name:?}"
+        )));
+    };
+    require_id(id, "file")?;
+    if id.contains('/') {
+        return Err(GenaiError::InvalidInput(format!(
+            "file name must contain exactly one segment after `files/`; \
+             got {file_name:?}"
+        )));
+    }
+    Ok(format!("files/{}", path_segment(id)))
+}
+
 /// Gets metadata for a specific file.
 ///
 /// # Arguments
@@ -866,19 +898,12 @@ pub async fn upload_file_chunked_with_chunk_size(
 ///
 /// Returns an error if the request fails or the file doesn't exist.
 pub async fn get_file(ctx: &HttpContext, file_name: &str) -> Result<FileMetadata, GenaiError> {
-    require_id(file_name, "file")?;
-    require_no_dot_segments(file_name, "file")?;
     tracing::debug!("Getting file metadata: {}", file_name);
 
-    // Deliberately raw — the one interpolation site exempt from the
-    // `path_segment` sweep: `file_name` is a full resource name
-    // ("files/abc123") whose slash is structural, so percent-encoding
-    // would break every call. Only the encoding is waived, not the
-    // threats it guards: `require_id` above still rejects the empty name
-    // that would collapse this into a bare API-root URL, and
-    // `require_no_dot_segments` rejects the `.`/`..` segments that would
-    // rewrite the path (same for `delete_file` below).
-    let url = format!("{BASE_URL}/{FILES_API_VERSION}/{file_name}");
+    let url = format!(
+        "{BASE_URL}/{FILES_API_VERSION}/{}",
+        file_resource_path(file_name)?
+    );
 
     let request_id = ctx.next_request_id();
     ctx.emit_request(request_id, "GET", &url, None);
@@ -994,13 +1019,12 @@ pub async fn list_files(
 ///
 /// Returns an error if the request fails or the file doesn't exist.
 pub async fn delete_file(ctx: &HttpContext, file_name: &str) -> Result<(), GenaiError> {
-    require_id(file_name, "file")?;
-    require_no_dot_segments(file_name, "file")?;
     tracing::debug!("Deleting file: {}", file_name);
 
-    // Raw interpolation of a full resource name — see the note in
-    // `get_file` above.
-    let url = format!("{BASE_URL}/{FILES_API_VERSION}/{file_name}");
+    let url = format!(
+        "{BASE_URL}/{FILES_API_VERSION}/{}",
+        file_resource_path(file_name)?
+    );
 
     let request_id = ctx.next_request_id();
     ctx.emit_request(request_id, "DELETE", &url, None);
@@ -1052,6 +1076,42 @@ mod tests {
         assert_eq!(
             list_files_url(None, Some("a/b&c=d+e")),
             format!("{base}?pageToken=a%2Fb%26c%3Dd%2Be")
+        );
+    }
+
+    #[test]
+    fn file_resource_path_validates_shape_and_encodes() {
+        // The happy path: the exact shape upload responses return, with
+        // the opaque ID passing through byte-identical.
+        assert_eq!(file_resource_path("files/abc123").unwrap(), "files/abc123");
+        // Dots inside an ID are not dot segments and stay verbatim.
+        assert_eq!(file_resource_path("files/a.b.c").unwrap(), "files/a.b.c");
+
+        // Shape violations reject locally: missing prefix, empty ID,
+        // extra segments (which also covers `files/../x`).
+        assert!(file_resource_path("abc123").is_err());
+        assert!(file_resource_path("").is_err());
+        assert!(file_resource_path("files/").is_err());
+        assert!(file_resource_path("files/a/b").is_err());
+        assert!(file_resource_path("../../v1beta/files/other").is_err());
+
+        // Threats that pass the shape check are defused by encoding, so
+        // URL parsing can never treat them structurally: bare and
+        // percent-encoded dot segments (WHATWG pops `%2e%2e` like `..`),
+        // and the query/fragment splitters that would silently retarget
+        // the request.
+        assert_eq!(file_resource_path("files/..").unwrap(), "files/%2E%2E");
+        assert_eq!(
+            file_resource_path("files/%2e%2e").unwrap(),
+            "files/%252e%252e"
+        );
+        assert_eq!(
+            file_resource_path("files/abc?alt=media").unwrap(),
+            "files/abc%3Falt%3Dmedia"
+        );
+        assert_eq!(
+            file_resource_path("files/abc#frag").unwrap(),
+            "files/abc%23frag"
         );
     }
 

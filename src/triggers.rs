@@ -581,13 +581,15 @@ pub struct TriggerCreateParams {
 /// - `store` set: live-verified server rejection (see the module docs) —
 ///   the API rejects `store` inside a trigger's nested interaction, and
 ///   the agent gate would otherwise mask that until the round-trip.
-/// - empty text input: [`InteractionInput::default()`] is an empty string,
-///   so a struct literal that sets `agent` and falls through to
+/// - empty input: [`InteractionInput::default()`] is an empty string, so
+///   a struct literal that sets `agent` and falls through to
 ///   `..Default::default()` without setting `input` compiles, serializes,
 ///   and would then fire on a schedule with an empty prompt and nobody
-///   watching. The send-side strictness on `input` only covers the
-///   deserialize path (where an absent key is a parse error); this funnel
-///   is the only place the struct-literal shape can be caught.
+///   watching — and an explicit empty `Content`/`Steps` vector is the
+///   same outcome spelled differently. The send-side strictness on
+///   `input` only covers the deserialize path (where an absent key is a
+///   parse error); this funnel is the only place the struct-literal
+///   shapes can be caught.
 pub(crate) fn warn_on_interaction_footguns(interaction: &InteractionRequest) {
     if interaction.store.is_some() {
         tracing::warn!(
@@ -595,11 +597,16 @@ pub(crate) fn warn_on_interaction_footguns(interaction: &InteractionRequest) {
              the API rejects it in trigger requests"
         );
     }
-    if matches!(&interaction.input, InteractionInput::Text(text) if text.is_empty()) {
+    let input_is_empty = match &interaction.input {
+        InteractionInput::Text(text) => text.is_empty(),
+        InteractionInput::Content(content) => content.is_empty(),
+        InteractionInput::Steps(steps) => steps.is_empty(),
+    };
+    if input_is_empty {
         tracing::warn!(
-            "TriggerCreateParams: the nested interaction's input is an empty \
-             string (the `..Default::default()` zero value); the trigger \
-             would fire on its schedule with an empty prompt"
+            "TriggerCreateParams: the nested interaction's input is empty \
+             (empty text, content, or steps); the trigger would fire on \
+             its schedule with an empty prompt"
         );
     }
 }
@@ -1014,18 +1021,50 @@ mod tests {
     fn empty_input_warn_fires_on_the_struct_literal_shape() {
         // The strict `input` deserialize can't catch a struct literal that
         // rides `..Default::default()` — the field is present and
-        // well-formed, just the empty zero value. Pin that the funnel
-        // warns on it, and that real input stays quiet.
+        // well-formed, just the empty zero value — nor the explicit
+        // empty-vector spellings of the same mistake. Pin that the funnel
+        // warns on all three, and that real input stays quiet.
+        let empty_inputs = [
+            InteractionInput::default(),
+            InteractionInput::Content(Vec::new()),
+            InteractionInput::Steps(Vec::new()),
+        ];
+        for input in empty_inputs {
+            let variant = format!("{input:?}");
+            let messages = crate::test_subscriber::capture_messages(|| {
+                let interaction = crate::request::InteractionRequest {
+                    agent: Some("my-agent".to_string()),
+                    input,
+                    ..Default::default()
+                };
+                let _ = TriggerCreateParams::new("0 9 * * *", "UTC", interaction);
+            });
+            assert!(
+                messages.iter().any(|m| m.contains("empty prompt")),
+                "new() must warn on empty {variant}; got: {messages:?}"
+            );
+        }
+
+        // The config-file spelling of the same mistake: an empty JSON
+        // array parses cleanly as empty `Steps` (input_from_value's
+        // is-content check is vacuously false for it), so the deserialize
+        // funnel must warn too — this is the shape a user hits without
+        // ever writing a struct literal.
         let messages = crate::test_subscriber::capture_messages(|| {
-            let interaction = crate::request::InteractionRequest {
-                agent: Some("my-agent".to_string()),
-                ..Default::default()
-            };
-            let _ = TriggerCreateParams::new("0 9 * * *", "UTC", interaction);
+            let params: TriggerCreateParams = serde_json::from_value(serde_json::json!({
+                "schedule": "0 9 * * *",
+                "time_zone": "UTC",
+                "interaction": {"agent": "my-agent", "input": []}
+            }))
+            .unwrap();
+            assert!(matches!(
+                &params.interaction.input,
+                InteractionInput::Steps(steps) if steps.is_empty()
+            ));
         });
         assert!(
             messages.iter().any(|m| m.contains("empty prompt")),
-            "new() must warn on the empty default input; got: {messages:?}"
+            "the deserialize path must warn on an empty-array input; got: {messages:?}"
         );
 
         let messages = crate::test_subscriber::capture_messages(|| {
