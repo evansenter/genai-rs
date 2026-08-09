@@ -98,10 +98,12 @@ pub struct AgentQuestion {
     pub choices: Vec<String>,
     /// Whether more than one choice may be selected.
     pub is_multi_select: bool,
-    /// Unmodeled wire fields (Evergreen) — non-empty when the harness sent
-    /// a question shape this crate doesn't model (e.g. a future question
-    /// type), so a hook can inspect the raw payload instead of guessing
-    /// from empty text/choices.
+    /// Unmodeled wire fields (Evergreen), preserved from the harness's
+    /// question object. Non-empty whenever the wire carried fields this
+    /// crate doesn't model — a modeled multiple-choice question can carry
+    /// unmodeled siblings too, so use [`Self::is_unknown_type`] (not this
+    /// map's emptiness) to tell whether the question's *type* itself is
+    /// unmodeled.
     pub extra: serde_json::Map<String, serde_json::Value>,
     /// True when the wire question carried no `multiple_choice` arm.
     pub(crate) unknown_type: bool,

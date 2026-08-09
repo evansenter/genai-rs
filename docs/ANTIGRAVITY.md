@@ -245,6 +245,12 @@ padded with `Unanswered`. Without a hook every question is answered
 the builtin is off by default, simply not enabling it means the agent
 never asks.
 
+A question whose *type* this crate doesn't model arrives with
+`is_unknown_type()` true, empty text/choices, and the raw payload in
+`extra` — prefer `Cancel` or `Unanswered` there over guessing (the
+snippet above would otherwise select index 0 of an empty choice list).
+`AgentQuestion::unknown(extra)` builds that fixture for unit tests.
+
 The hook is synchronous and runs inline in the harness event pump — don't
 block in it waiting for a human. For interactive flows, collect the
 answer out-of-band (chat reply, CLI prompt in another task) into a
