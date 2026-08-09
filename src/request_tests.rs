@@ -22,6 +22,8 @@ fn test_serialize_create_interaction_request_with_model() {
         cached_content: None,
         webhook_config: None,
         environment: None,
+        safety_settings: None,
+        labels: None,
     };
 
     let json = serde_json::to_string(&request).expect("Serialization failed");
@@ -48,6 +50,7 @@ fn test_generation_config_serialization() {
         speech_config: None,
         image_config: None,
         video_config: None,
+        transcription_config: None,
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -74,6 +77,7 @@ fn test_generation_config_new_fields_serialization() {
         speech_config: None,
         image_config: None,
         video_config: None,
+        transcription_config: None,
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -104,6 +108,7 @@ fn test_generation_config_roundtrip() {
         speech_config: None,
         image_config: None,
         video_config: None,
+        transcription_config: None,
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -419,6 +424,36 @@ fn test_dynamic_config_serialization() {
 }
 
 #[test]
+fn test_antigravity_config_serialization() {
+    // Opaque placeholder: the docs record the crate's default model as a
+    // known-404 value for this knob, so don't demonstrate it here — this
+    // test pins only that a set model is emitted verbatim.
+    let config: AgentConfig = AntigravityConfig::new()
+        .with_model("some-supported-model")
+        .with_max_total_tokens(200_000)
+        .into();
+
+    let json = serde_json::to_string(&config).expect("Serialization failed");
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(value["type"], "antigravity");
+    assert_eq!(value["model"], "some-supported-model");
+    assert_eq!(value["max_total_tokens"], 200_000);
+}
+
+#[test]
+fn test_antigravity_config_minimal_serialization() {
+    let config: AgentConfig = AntigravityConfig::new().into();
+
+    let json = serde_json::to_string(&config).expect("Serialization failed");
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(value["type"], "antigravity");
+    assert!(value.get("model").is_none());
+    assert!(value.get("max_total_tokens").is_none());
+}
+
+#[test]
 fn test_agent_config_deserialization_deep_research() {
     let json = r#"{"type": "deep-research", "thinkingSummaries": "auto"}"#;
     let parsed: AgentConfig = serde_json::from_str(json).expect("Deserialization should succeed");
@@ -522,6 +557,8 @@ fn test_create_interaction_request_with_agent_config() {
         cached_content: None,
         webhook_config: None,
         environment: None,
+        safety_settings: None,
+        labels: None,
     };
 
     let json = serde_json::to_string(&request).expect("Serialization failed");
@@ -605,6 +642,8 @@ fn test_interaction_request_roundtrip() {
         cached_content: Some("cachedContents/xyz".to_string()),
         webhook_config: None,
         environment: None,
+        safety_settings: None,
+        labels: None,
     };
 
     // Serialize to JSON
@@ -671,6 +710,8 @@ fn test_response_format_serializes_as_snake_case() {
         cached_content: None,
         webhook_config: None,
         environment: None,
+        safety_settings: None,
+        labels: None,
     };
 
     let json = serde_json::to_string(&request).expect("Serialization failed");
@@ -885,6 +926,8 @@ fn test_request_with_webhook_config_and_environment_wire_shape() {
                 .add_source(EnvironmentSource::inline("/etc/motd", "hello"))
                 .into(),
         ),
+        safety_settings: None,
+        labels: None,
     };
 
     let value = serde_json::to_value(&request).unwrap();

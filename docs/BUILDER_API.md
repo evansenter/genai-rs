@@ -50,6 +50,10 @@ Methods follow a consistent naming pattern based on their behavior:
 | `with_cached_content(impl Into<String>)` | with | replaces | References an explicit context cache (e.g. `"cachedContents/xyz"`) |
 | `with_webhook_config(WebhookConfig)` | with | replaces | Per-request webhook routing (`uris` + `user_metadata`) |
 | `with_environment(impl Into<EnvironmentSpec>)` | with | replaces | Environment ID string or typed `RemoteEnvironment` |
+| `with_safety_settings(Vec<SafetySetting>)` | with | replaces | Vertex-only (Gemini API rejects with 400) |
+| `add_safety_setting(SafetySetting)` | add | accumulates | Appends one safety setting; Vertex-only |
+| `with_labels(impl IntoIterator<Item = (K, V)>)` | with | replaces | User metadata labels; Vertex-only |
+| `add_label(key, value)` | add | merges | Inserts one label (same key overwrites — map-backed, unlike `add_safety_setting`'s list); Vertex-only |
 | **Input** |
 | `with_text()` | with | replaces | Composes with `with_history()` |
 | `with_history(Vec<Step>)` | with | replaces | Composes with `with_text()` |
@@ -83,10 +87,11 @@ Methods follow a consistent naming pattern based on their behavior:
 | `with_stop_sequences()` | with | replaces | Halt generation on sequences |
 | `with_presence_penalty(f32)` | with | replaces | Penalizes tokens already present; range [-2.0, 2.0] |
 | `with_frequency_penalty(f32)` | with | replaces | Penalizes tokens by frequency; range [-2.0, 2.0] |
+| `with_transcription_config(TranscriptionConfig)` | with | replaces | Audio transcription tuning (`generation_config.transcription_config`) |
 | **Response Format & Modalities** |
 | `with_response_format(impl Into<ResponseFormat>)` | with | replaces | Typed format (text/audio/image/video) or a raw JSON schema `serde_json::Value` (maps to the text/`application/json` form) |
 | `with_response_formats(Vec<ResponseFormat>)` | with | replaces | List form — one format per output modality |
-| `with_response_modalities(Vec<String>)` | with | replaces | Requested output modalities |
+| `with_response_modalities(Vec<String>)` | with | replaces | Deprecated in the API docs — prefer typed `with_response_format(s)` (modalities are inferred) |
 | `with_image_output()` / `with_audio_output()` / `with_video_output()` | with | replaces | Modality shortcuts |
 
 Note: `GenerationConfig` no longer has a `top_k` field (removed in API revision 2026-05-20), so there is no `with_top_k()` builder method. `FileSearchConfig::with_top_k()` (a file-search retrieval setting) is unrelated and still exists.

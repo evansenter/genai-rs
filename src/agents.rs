@@ -35,7 +35,7 @@ use crate::tools::Tool;
 ///             .add_source(EnvironmentSource::gcs("gs://feedback", "/data")),
 ///     );
 /// ```
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Agent {
     /// The unique identifier for the agent.
@@ -110,10 +110,12 @@ impl Agent {
 }
 
 /// Response for `GET /v1beta/agents` (list).
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AgentListResponse {
-    /// The agents on this page.
+    /// The agents on this page. A null or malformed list degrades to
+    /// empty; malformed elements drop individually.
+    #[serde(deserialize_with = "crate::serde_util::deserialize_lenient_vec")]
     pub agents: Vec<Agent>,
     /// Token for the next page. Absent when there are no more pages.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -159,9 +161,9 @@ mod tests {
 
     #[test]
     fn test_agent_base_environment_string_id() {
-        let agent = Agent::new("my-agent").with_base_environment("environments/env-42");
+        let agent = Agent::new("my-agent").with_base_environment("env42bare0");
         let value = serde_json::to_value(&agent).unwrap();
-        assert_eq!(value["base_environment"], "environments/env-42");
+        assert_eq!(value["base_environment"], "env42bare0");
     }
 
     #[test]
@@ -175,7 +177,7 @@ mod tests {
                 {"type": "google_search"},
                 {"type": "mcp_server", "name": "fs", "url": "https://mcp.example.com/fs"}
             ],
-            "base_environment": "environments/env-1"
+            "base_environment": "env1bare0"
         });
 
         let agent: Agent = serde_json::from_value(json.clone()).unwrap();
@@ -183,7 +185,7 @@ mod tests {
         assert_eq!(agent.tools.as_ref().unwrap().len(), 2);
         assert!(matches!(
             agent.base_environment,
-            Some(EnvironmentSpec::Id(ref id)) if id == "environments/env-1"
+            Some(EnvironmentSpec::Id(ref id)) if id == "env1bare0"
         ));
 
         let back = serde_json::to_value(&agent).unwrap();
@@ -217,5 +219,24 @@ mod tests {
         let empty: AgentListResponse = serde_json::from_str("{}").unwrap();
         assert!(empty.agents.is_empty());
         assert!(empty.next_page_token.is_none());
+
+        // Present-but-degenerate list keys degrade like the trigger and
+        // environment envelopes, rather than erroring the page.
+        let null: AgentListResponse = serde_json::from_value(json!({"agents": null})).unwrap();
+        assert!(null.agents.is_empty());
+        let bad: AgentListResponse =
+            serde_json::from_value(json!({"agents": "corrupted"})).unwrap();
+        assert!(bad.agents.is_empty());
+
+        // The element-drop arm, pinned on the concrete type like its
+        // webhooks counterpart: a wrong-typed modeled field or a
+        // non-object element drops alone; the good siblings survive.
+        let partial: AgentListResponse = serde_json::from_value(
+            json!({"agents": [{"id": "a1"}, {"id": 42}, "not-an-object", {"id": "a2"}]}),
+        )
+        .unwrap();
+        assert_eq!(partial.agents.len(), 2);
+        assert_eq!(partial.agents[0].id.as_deref(), Some("a1"));
+        assert_eq!(partial.agents[1].id.as_deref(), Some("a2"));
     }
 }

@@ -15,8 +15,9 @@
 #![cfg(not(feature = "strict-unknown"))]
 
 use genai_rs::{
-    Annotation, Content, FunctionCallingMode, InteractionStatus, Resolution, Role, ServiceTier,
-    Step, StepDelta, StreamChunk, ThinkingLevel, ThinkingSummaries, ToolChoice,
+    Annotation, Content, EnvironmentStatus, FunctionCallingMode, HarmCategory, InteractionStatus,
+    Resolution, Role, SafetyMethod, SafetyThreshold, ServiceTier, Step, StepDelta, StreamChunk,
+    ThinkingLevel, ThinkingSummaries, ToolChoice, TriggerExecutionStatus, TriggerStatus,
 };
 use serde_json::json;
 
@@ -664,6 +665,30 @@ mod helper_methods {
         // StreamChunk (uses "chunk_type" field)
         let chunk: StreamChunk = serde_json::from_value(json!({"chunk_type": "future"})).unwrap();
         assert!(chunk.is_unknown());
+
+        // HarmCategory
+        let category: HarmCategory = serde_json::from_value(json!("future")).unwrap();
+        assert!(category.is_unknown());
+
+        // SafetyThreshold
+        let threshold: SafetyThreshold = serde_json::from_value(json!("future")).unwrap();
+        assert!(threshold.is_unknown());
+
+        // SafetyMethod
+        let method: SafetyMethod = serde_json::from_value(json!("future")).unwrap();
+        assert!(method.is_unknown());
+
+        // EnvironmentStatus
+        let env_status: EnvironmentStatus = serde_json::from_value(json!("future")).unwrap();
+        assert!(env_status.is_unknown());
+
+        // TriggerStatus
+        let trig_status: TriggerStatus = serde_json::from_value(json!("future")).unwrap();
+        assert!(trig_status.is_unknown());
+
+        // TriggerExecutionStatus
+        let exec_status: TriggerExecutionStatus = serde_json::from_value(json!("future")).unwrap();
+        assert!(exec_status.is_unknown());
     }
 
     #[test]
@@ -725,6 +750,31 @@ mod helper_methods {
         let chunk: StreamChunk =
             serde_json::from_value(json!({"chunk_type": "test_chunk"})).unwrap();
         assert_eq!(chunk.unknown_chunk_type(), Some("test_chunk"));
+
+        // HarmCategory
+        let category: HarmCategory = serde_json::from_value(json!("test_cat")).unwrap();
+        assert_eq!(category.unknown_category_type(), Some("test_cat"));
+
+        // SafetyThreshold
+        let threshold: SafetyThreshold = serde_json::from_value(json!("test_thresh")).unwrap();
+        assert_eq!(threshold.unknown_threshold_type(), Some("test_thresh"));
+
+        // SafetyMethod
+        let method: SafetyMethod = serde_json::from_value(json!("test_method")).unwrap();
+        assert_eq!(method.unknown_method_type(), Some("test_method"));
+
+        // EnvironmentStatus
+        let env_status: EnvironmentStatus = serde_json::from_value(json!("test_env")).unwrap();
+        assert_eq!(env_status.unknown_status_type(), Some("test_env"));
+
+        // TriggerStatus
+        let trig_status: TriggerStatus = serde_json::from_value(json!("test_trig")).unwrap();
+        assert_eq!(trig_status.unknown_status_type(), Some("test_trig"));
+
+        // TriggerExecutionStatus
+        let exec_status: TriggerExecutionStatus =
+            serde_json::from_value(json!("test_exec")).unwrap();
+        assert_eq!(exec_status.unknown_status_type(), Some("test_exec"));
     }
 
     #[test]
@@ -771,6 +821,30 @@ mod helper_methods {
                 .unwrap();
         let data = chunk.unknown_data().unwrap();
         assert!(data.get("payload").is_some() || data.get("chunk_type").is_some());
+
+        // HarmCategory
+        let category: HarmCategory = serde_json::from_value(json!("test")).unwrap();
+        assert!(category.unknown_data().is_some());
+
+        // SafetyThreshold
+        let threshold: SafetyThreshold = serde_json::from_value(json!("test")).unwrap();
+        assert!(threshold.unknown_data().is_some());
+
+        // SafetyMethod
+        let method: SafetyMethod = serde_json::from_value(json!("test")).unwrap();
+        assert!(method.unknown_data().is_some());
+
+        // EnvironmentStatus
+        let env_status: EnvironmentStatus = serde_json::from_value(json!("test")).unwrap();
+        assert!(env_status.unknown_data().is_some());
+
+        // TriggerStatus
+        let trig_status: TriggerStatus = serde_json::from_value(json!("test")).unwrap();
+        assert!(trig_status.unknown_data().is_some());
+
+        // TriggerExecutionStatus
+        let exec_status: TriggerExecutionStatus = serde_json::from_value(json!("test")).unwrap();
+        assert!(exec_status.unknown_data().is_some());
     }
 }
 
@@ -814,5 +888,52 @@ mod edge_cases {
 
         let back = serde_json::to_value(&role).unwrap();
         assert_eq!(back, "タイプ");
+    }
+}
+
+/// The non-string Unknown arm of the six enums added in 0.9.0. The
+/// string arm is covered per-enum above; this pins the marker-prefix
+/// contract the `TriggerUpdate::with_status` docs rest on — a status
+/// whose unknown type came from a non-string wire value carries the
+/// crate debug marker, not the original value, so echoing it back
+/// would send the marker.
+mod non_string_unknown_arms {
+    use genai_rs::{
+        EnvironmentStatus, HarmCategory, SafetyMethod, SafetyThreshold, TriggerExecutionStatus,
+        TriggerStatus,
+    };
+    use serde_json::json;
+
+    const MARKER: &str = "<non-string: ";
+
+    #[test]
+    fn all_six_new_enums_mark_non_string_wire_values() {
+        let status: TriggerStatus = serde_json::from_value(json!(5)).unwrap();
+        assert!(status.unknown_status_type().unwrap().starts_with(MARKER));
+
+        let exec: TriggerExecutionStatus = serde_json::from_value(json!(5)).unwrap();
+        assert!(exec.unknown_status_type().unwrap().starts_with(MARKER));
+
+        let env: EnvironmentStatus = serde_json::from_value(json!(5)).unwrap();
+        assert!(env.unknown_status_type().unwrap().starts_with(MARKER));
+
+        let category: HarmCategory = serde_json::from_value(json!(5)).unwrap();
+        assert!(
+            category
+                .unknown_category_type()
+                .unwrap()
+                .starts_with(MARKER)
+        );
+
+        let threshold: SafetyThreshold = serde_json::from_value(json!(5)).unwrap();
+        assert!(
+            threshold
+                .unknown_threshold_type()
+                .unwrap()
+                .starts_with(MARKER)
+        );
+
+        let method: SafetyMethod = serde_json::from_value(json!(5)).unwrap();
+        assert!(method.unknown_method_type().unwrap().starts_with(MARKER));
     }
 }

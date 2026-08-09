@@ -49,7 +49,7 @@
 //! # }
 //! ```
 
-use super::common::API_KEY_HEADER;
+use super::common::{API_KEY_HEADER, path_segment, require_id, with_paging_and};
 use super::context::HttpContext;
 use super::error_helpers::{check_response, check_response_wire, deserialize_with_context};
 use crate::errors::GenaiError;
@@ -309,7 +309,11 @@ pub struct VideoMetadata {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListFilesResponse {
-    /// List of files
+    /// List of files. Deliberately *not* on the lenient-list helper
+    /// (`serde_util::deserialize_lenient_vec`) the five Interactions
+    /// envelopes use: this surface is live-verified and unrevisioned, so
+    /// a malformed element is a real protocol break worth failing loudly
+    /// on.
     #[serde(default)]
     pub files: Vec<FileMetadata>,
 
@@ -328,8 +332,14 @@ pub struct FileUploadResponse {
 // --- API Functions ---
 
 const BASE_URL: &str = "https://generativelanguage.googleapis.com";
+/// The Files API's own version segment. Deliberately *not* the shared
+/// Interactions `API_VERSION`: this API is unrevisioned and tracks
+/// separately (matching google-genai's separate files client), so an
+/// Interactions version bump must not drag these paths along. A unit test
+/// pins `UPLOAD_URL` to the same segment so the two spellings cannot
+/// drift apart within this module.
+const FILES_API_VERSION: &str = "v1beta";
 const UPLOAD_URL: &str = "https://generativelanguage.googleapis.com/upload/v1beta/files";
-const API_VERSION: &str = "v1beta";
 /// Maximum file size for uploads (2 GB)
 const MAX_FILE_SIZE: u64 = 2_147_483_648;
 
@@ -849,20 +859,59 @@ pub async fn upload_file_chunked_with_chunk_size(
     Ok((file_response.file, resumable_upload))
 }
 
+/// Validates a Files API resource name and rebuilds it as a URL path
+/// fragment with the ID percent-encoded.
+///
+/// A Files API name is always the `files/` prefix plus one opaque ID
+/// (the shape every upload response returns), so this positively checks
+/// that shape — prefix present, exactly one non-empty segment after it —
+/// and then routes the ID through [`path_segment`] like every other
+/// resource module. That closes the whole threat family at once —
+/// `require_id` rejects the empty name and every dot-segment spelling
+/// (WHATWG normalizes the percent-encoded forms at parse time too), the
+/// interior-slash check rejects stray segments, and the encoder defuses
+/// `?`/`#` query and fragment splits — instead of enumerating
+/// threats against a raw interpolation one guard at a time. A name that
+/// fails the shape check could never have addressed a file anyway — the
+/// raw form's URL was a guaranteed 404 or a different endpoint — so
+/// rejecting locally with `InvalidInput` only converts silent misfires
+/// into loud ones.
+fn file_resource_path(file_name: &str) -> Result<String, GenaiError> {
+    let Some(id) = file_name.strip_prefix("files/") else {
+        return Err(GenaiError::InvalidInput(format!(
+            "file name must be a full `files/<id>` resource name \
+             (the form upload responses return); got {file_name:?}"
+        )));
+    };
+    require_id(id, "file")?;
+    if id.contains('/') {
+        return Err(GenaiError::InvalidInput(format!(
+            "file name must contain exactly one segment after `files/`; \
+             got {file_name:?}"
+        )));
+    }
+    Ok(format!("files/{}", path_segment(id)))
+}
+
 /// Gets metadata for a specific file.
 ///
 /// # Arguments
 ///
 /// * `ctx` - HTTP context (client, API key, wire inspectors)
-/// * `file_name` - The resource name of the file (e.g., "files/abc123")
+/// * `file_name` - The full resource name of the file (e.g., "files/abc123")
 ///
 /// # Errors
 ///
-/// Returns an error if the request fails or the file doesn't exist.
+/// Returns [`GenaiError::InvalidInput`] for a name that is not
+/// `files/<id>` (see [`file_resource_path`]), or an error if the request
+/// fails or the file doesn't exist.
 pub async fn get_file(ctx: &HttpContext, file_name: &str) -> Result<FileMetadata, GenaiError> {
     tracing::debug!("Getting file metadata: {}", file_name);
 
-    let url = format!("{BASE_URL}/{API_VERSION}/{file_name}");
+    let url = format!(
+        "{BASE_URL}/{FILES_API_VERSION}/{}",
+        file_resource_path(file_name)?
+    );
 
     let request_id = ctx.next_request_id();
     ctx.emit_request(request_id, "GET", &url, None);
@@ -891,6 +940,26 @@ pub async fn get_file(ctx: &HttpContext, file_name: &str) -> Result<FileMetadata
     Ok(file)
 }
 
+/// Builds the list URL. Extracted from [`list_files`] so the paging
+/// shape is testable like its `with_paging` siblings. The Files API
+/// spells its params `pageSize`/`pageToken`, so it can't use
+/// `with_paging`'s fixed spelling — but it rides `with_paging_and`'s
+/// `extra` slice (like `update_webhook`'s `update_mask`), so the
+/// separator choice and value encoding stay centrally pinned.
+fn list_files_url(page_size: Option<u32>, page_token: Option<&str>) -> String {
+    let base = format!("{BASE_URL}/{FILES_API_VERSION}/files");
+    let size_str;
+    let mut extra: Vec<(&str, &str)> = Vec::new();
+    if let Some(size) = page_size {
+        size_str = size.to_string();
+        extra.push(("pageSize", &size_str));
+    }
+    if let Some(token) = page_token {
+        extra.push(("pageToken", token));
+    }
+    with_paging_and(base, None, None, &extra)
+}
+
 /// Lists all uploaded files.
 ///
 /// # Arguments
@@ -913,18 +982,7 @@ pub async fn list_files(
         page_token
     );
 
-    let mut url = format!("{BASE_URL}/{API_VERSION}/files");
-
-    // Add query parameters
-    let mut has_params = false;
-    if let Some(size) = page_size {
-        url.push_str(&format!("?pageSize={size}"));
-        has_params = true;
-    }
-    if let Some(token) = page_token {
-        let separator = if has_params { "&" } else { "?" };
-        url.push_str(&format!("{separator}pageToken={token}"));
-    }
+    let url = list_files_url(page_size, page_token);
 
     let request_id = ctx.next_request_id();
     ctx.emit_request(request_id, "GET", &url, None);
@@ -959,15 +1017,21 @@ pub async fn list_files(
 /// # Arguments
 ///
 /// * `ctx` - HTTP context (client, API key, wire inspectors)
-/// * `file_name` - The resource name of the file to delete (e.g., "files/abc123")
+/// * `file_name` - The full resource name of the file to delete (e.g.,
+///   "files/abc123")
 ///
 /// # Errors
 ///
-/// Returns an error if the request fails or the file doesn't exist.
+/// Returns [`GenaiError::InvalidInput`] for a name that is not
+/// `files/<id>` (see [`file_resource_path`]), or an error if the request
+/// fails or the file doesn't exist.
 pub async fn delete_file(ctx: &HttpContext, file_name: &str) -> Result<(), GenaiError> {
     tracing::debug!("Deleting file: {}", file_name);
 
-    let url = format!("{BASE_URL}/{API_VERSION}/{file_name}");
+    let url = format!(
+        "{BASE_URL}/{FILES_API_VERSION}/{}",
+        file_resource_path(file_name)?
+    );
 
     let request_id = ctx.next_request_id();
     ctx.emit_request(request_id, "DELETE", &url, None);
@@ -994,6 +1058,77 @@ pub async fn delete_file(ctx: &HttpContext, file_name: &str) -> Result<(), Genai
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn list_files_url_encodes_paging() {
+        let base = format!("{BASE_URL}/{FILES_API_VERSION}/files");
+        assert_eq!(list_files_url(None, None), base);
+        assert_eq!(
+            list_files_url(Some(10), None),
+            format!("{base}?pageSize=10")
+        );
+        // Token alone takes the leading `?`; with a size it rides `&`.
+        assert_eq!(
+            list_files_url(None, Some("tok")),
+            format!("{base}?pageToken=tok")
+        );
+        assert_eq!(
+            list_files_url(Some(10), Some("tok")),
+            format!("{base}?pageSize=10&pageToken=tok")
+        );
+        // The invariant with_paging pins for every other list endpoint: a
+        // reserved character arrives percent-encoded. `+` is the arm a
+        // standard-base64 token would actually hit (it would otherwise
+        // decode to a space server-side).
+        assert_eq!(
+            list_files_url(None, Some("a/b&c=d+e")),
+            format!("{base}?pageToken=a%2Fb%26c%3Dd%2Be")
+        );
+    }
+
+    #[test]
+    fn file_resource_path_validates_shape_and_encodes() {
+        // The happy path: the exact shape upload responses return, with
+        // the opaque ID passing through byte-identical.
+        assert_eq!(file_resource_path("files/abc123").unwrap(), "files/abc123");
+        // Dots inside an ID are not dot segments and stay verbatim.
+        assert_eq!(file_resource_path("files/a.b.c").unwrap(), "files/a.b.c");
+
+        // Shape violations reject locally: missing prefix, empty ID,
+        // extra segments (which also covers `files/../x`), and every
+        // dot-segment spelling — WHATWG dot-segment removal matches the
+        // percent-encoded forms case-insensitively at parse time, so
+        // `require_id` rejects them all rather than trusting encoding.
+        assert!(file_resource_path("abc123").is_err());
+        assert!(file_resource_path("").is_err());
+        assert!(file_resource_path("files/").is_err());
+        assert!(file_resource_path("files/a/b").is_err());
+        assert!(file_resource_path("../../v1beta/files/other").is_err());
+        assert!(file_resource_path("files/..").is_err());
+        assert!(file_resource_path("files/%2e%2e").is_err());
+        assert!(file_resource_path("files/%2E.").is_err());
+
+        // Threats that pass the shape check are defused by encoding, so
+        // URL parsing can never treat them structurally: the
+        // query/fragment splitters that would silently retarget the
+        // request.
+        assert_eq!(
+            file_resource_path("files/abc?alt=media").unwrap(),
+            "files/abc%3Falt%3Dmedia"
+        );
+        assert_eq!(
+            file_resource_path("files/abc#frag").unwrap(),
+            "files/abc%23frag"
+        );
+    }
+
+    #[test]
+    fn test_upload_url_matches_files_api_version() {
+        // UPLOAD_URL is a literal (const format! doesn't exist), so pin it
+        // to FILES_API_VERSION — a version migration must move both
+        // spellings or fail here.
+        assert!(UPLOAD_URL.contains(&format!("/upload/{FILES_API_VERSION}/")));
+    }
 
     #[test]
     fn test_file_metadata_deserialization() {

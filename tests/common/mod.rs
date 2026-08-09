@@ -37,6 +37,13 @@ use tokio::time::sleep;
 #[allow(dead_code)]
 pub const DEFAULT_MAX_RETRIES: u32 = 3;
 
+/// Cumulative sleep budget for [`retry_on_transient`], across all attempts
+/// (plain backoff and honored `Retry-After` alike). Once the next delay
+/// would exceed it, the real error surfaces instead of sleeping toward a
+/// harness timeout.
+#[allow(dead_code)]
+pub const MAX_RETRY_SLEEP: Duration = Duration::from_secs(15);
+
 /// Checks if an error is a known model-side transient flake that should be
 /// retried.
 ///
@@ -45,6 +52,11 @@ pub const DEFAULT_MAX_RETRIES: u32 = 3;
 ///   both "spanner" and "utf-8" must appear in the message)
 /// - 400s carrying "invalid json syntax" (the model occasionally emits
 ///   invalid JSON in structured output)
+/// - 400s carrying "there was a problem processing your request" (a
+///   server-side burst class observed failing in under a second on
+///   requests that pass on re-run; matched on status plus this phrase
+///   alone, so if the API ever reuses the apology for a real rejection
+///   the cost is the bounded retry budget before failing, not a mask)
 ///
 /// Transport-level transience (network, timeouts, 429, 5xx) is
 /// [`GenaiError::is_retryable`]'s job; callers that want both compose the
@@ -63,6 +75,12 @@ pub fn is_transient_error(err: &GenaiError) -> bool {
             (lower.contains("spanner") && lower.contains("utf-8"))
                 // Model occasionally generates invalid JSON — transient API-side issue
                 || (*status_code == 400 && lower.contains("invalid json syntax"))
+                // Server-side processing burst: generic apology with no
+                // pointer at the request. Message-pinned so a genuine
+                // fixture rejection (which names its problem) still fails
+                // loud on the first attempt.
+                || (*status_code == 400
+                    && lower.contains("there was a problem processing your request"))
         }
         _ => false,
     }
@@ -73,16 +91,17 @@ pub fn is_transient_error(err: &GenaiError) -> bool {
 /// Retries both this module's known model-side flakes ([`is_transient_error`])
 /// and the crate's retryable transport classes ([`GenaiError::is_retryable`]:
 /// network errors, timeouts, 429, 5xx). Anything outside those two
-/// predicates returns immediately — a 400 `invalid_request` fixture
-/// rejection carries neither marker, so it still fails loud on the first
-/// attempt.
+/// predicates returns immediately — a 400 fixture rejection that names its
+/// actual problem carries none of the message-pinned markers, so it still
+/// fails loud on the first attempt.
 ///
-/// Note: inside a `with_timeout` budget, a worst case adds up to 15s of
-/// sleep (the cumulative cap across all attempts; server-sent `Retry-After`
-/// delays are honored within it, and once the next delay would exceed it
-/// the retry aborts and the real error surfaces) plus up to three extra
-/// round-trips — a sustained outage can therefore still surface as a
-/// harness timeout rather than the underlying error.
+/// Note: inside a `with_timeout` budget, a worst case adds up to
+/// [`MAX_RETRY_SLEEP`] of sleep (the cumulative cap across all attempts;
+/// server-sent `Retry-After` delays are honored within it, and once the
+/// next delay would exceed it the retry aborts and the real error
+/// surfaces) plus up to three extra round-trips — a sustained outage can
+/// therefore still surface as a harness timeout rather than the
+/// underlying error.
 ///
 /// # Arguments
 ///
@@ -123,14 +142,15 @@ where
                 // *before* the requested delay just earns another 429, and
                 // sleeping out long delays inside a with_timeout budget
                 // surfaces as an opaque harness timeout — so total sleep is
-                // capped at 15s across all attempts, and once the next delay
-                // would exceed it the real error surfaces immediately.
+                // capped at MAX_RETRY_SLEEP across all attempts, and once the
+                // next delay would exceed it the real error surfaces
+                // immediately.
                 let backoff = Duration::from_secs(1 << attempt);
                 let delay = match err.retry_after() {
                     Some(ra) => ra.max(backoff),
                     None => backoff,
                 };
-                if total_slept + delay > Duration::from_secs(15) {
+                if total_slept + delay > MAX_RETRY_SLEEP {
                     return Err(err);
                 }
                 total_slept += delay;
@@ -1013,7 +1033,7 @@ pub async fn validate_response_semantically(
 ///
 /// The validator call itself gets a single [`retry_on_transient`] retry
 /// (normally ~1s of backoff — a server-sent `Retry-After` can raise that
-/// up to the helper's 15s cumulative sleep cap — plus one extra
+/// up to the [`MAX_RETRY_SLEEP`] cumulative cap — plus one extra
 /// round-trip; deliberately smaller than the primary-call budget, since
 /// many callers nest both retry chains inside one `with_timeout`
 /// budget). Transient
@@ -1021,10 +1041,11 @@ pub async fn validate_response_semantically(
 /// network errors, timeouts, 5xx, 429 — plus this module's
 /// [`is_transient_error`] cases, which cover known model-side
 /// structured-output flakes) are logged with a greppable
-/// SEMANTIC_VALIDATION_SKIPPED marker (counted and surfaced as a
-/// `::warning::` annotation by the CI integration step) and treated as a
-/// pass — the validator is a second API round-trip that can fail
-/// independently of the input under test.
+/// SEMANTIC_VALIDATION_SKIPPED marker (the CI integration step counts
+/// the markers: a `::warning::` annotation when any appear, a failed step
+/// past a per-run threshold) and treated as a pass — the validator is a
+/// second API round-trip that can fail independently of the input under
+/// test.
 ///
 /// # Example
 ///

@@ -1030,7 +1030,7 @@ mod tests {
         // create_webhook returns new_signing_secret; rotate returns secret.
         // Both are one-time values and must never reach inspector output.
         let mut value = serde_json::json!({
-            "id": "webhooks/wh-1",
+            "id": "wh1bare0pq",
             "new_signing_secret": "whsec_create-secret",
             "secret": "whsec_rotated-secret"
         });
@@ -1039,7 +1039,7 @@ mod tests {
         assert!(!rendered.contains("whsec_"), "secret leaked: {rendered}");
         assert_eq!(value["new_signing_secret"], "[REDACTED]");
         assert_eq!(value["secret"], "[REDACTED]");
-        assert_eq!(value["id"], "webhooks/wh-1");
+        assert_eq!(value["id"], "wh1bare0pq");
     }
 
     #[test]
@@ -1078,49 +1078,9 @@ mod tests {
 
     #[test]
     fn test_tracing_forwarder_emits_to_wire_target() {
-        use std::sync::{Arc, Mutex};
-        use tracing::span;
-
-        /// Minimal subscriber that records the target of every event.
-        struct Recorder {
-            targets: Arc<Mutex<Vec<String>>>,
-        }
-
-        impl tracing::Subscriber for Recorder {
-            fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
-                true
-            }
-            fn new_span(&self, _span: &span::Attributes<'_>) -> span::Id {
-                span::Id::from_u64(1)
-            }
-            fn record(&self, _span: &span::Id, _values: &span::Record<'_>) {}
-            fn record_follows_from(&self, _span: &span::Id, _follows: &span::Id) {}
-            fn event(&self, event: &tracing::Event<'_>) {
-                self.targets
-                    .lock()
-                    .unwrap()
-                    .push(event.metadata().target().to_string());
-            }
-            fn enter(&self, _span: &span::Id) {}
-            fn exit(&self, _span: &span::Id) {}
-        }
-
-        let targets = Arc::new(Mutex::new(Vec::new()));
-        let recorder = Recorder {
-            targets: Arc::clone(&targets),
-        };
-
-        tracing::subscriber::with_default(recorder, || {
-            // Other tests exercise these callsites with no subscriber installed,
-            // which can cache their interest as `never` process-wide. Under
-            // nextest (process per test) that's invisible, but under plain
-            // `cargo test` (e.g. the coverage job) the cache is shared across
-            // threads — rebuild so the scoped Recorder is consulted.
-            tracing::callsite::rebuild_interest_cache();
+        let targets = crate::test_subscriber::capture_targets(|| {
             TracingForwarder::new().on_event(&WireEvent::ResponseStatus { id: 7, status: 200 });
         });
-
-        let targets = targets.lock().unwrap();
         assert_eq!(targets.as_slice(), [TRACING_TARGET]);
     }
 

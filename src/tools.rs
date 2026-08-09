@@ -18,7 +18,7 @@ use std::collections::HashMap;
 /// captured as `Tool::Unknown` rather than causing a deserialization error.
 /// This follows the [Evergreen spec](https://github.com/google-deepmind/evergreen-spec)
 /// philosophy of graceful degradation.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum Tool {
     /// A custom function that the model can call
@@ -515,7 +515,7 @@ pub struct FunctionDeclaration {
 }
 
 /// Represents the parameters schema for a function.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct FunctionParameters {
     #[serde(rename = "type")]
     type_: String,

@@ -56,6 +56,9 @@
 // Internal HTTP Layer (pub(crate))
 // =============================================================================
 pub(crate) mod http;
+pub(crate) mod serde_util;
+#[cfg(test)]
+pub(crate) mod test_subscriber;
 
 // =============================================================================
 // Core Type Modules
@@ -79,9 +82,10 @@ pub use steps::{FunctionResultPayload, Step, StepDelta, StepError};
 // Request types (includes agent configuration)
 pub mod request;
 pub use request::{
-    AgentConfig, DeepResearchConfig, DynamicConfig, GenerationConfig, ImageAspectRatio,
-    ImageConfig, ImageSize, InteractionInput, InteractionRequest, Role, ServiceTier, SpeechConfig,
-    ThinkingLevel, ThinkingSummaries, TurnContent, VideoConfig, VideoTask, Visualization,
+    AgentConfig, AntigravityConfig, DeepResearchConfig, DynamicConfig, GenerationConfig,
+    ImageAspectRatio, ImageConfig, ImageSize, InteractionInput, InteractionRequest, Role,
+    ServiceTier, SpeechConfig, ThinkingLevel, ThinkingSummaries, TranscriptionConfig, TurnContent,
+    VideoConfig, VideoTask, Visualization,
 };
 
 // Typed response_format union (text/audio/image/video + list form)
@@ -94,6 +98,23 @@ pub use environment::{
     AllowlistEntry, EnvironmentSource, EnvironmentSpec, NetworkConfig, RemoteEnvironment,
     SourceType,
 };
+
+// Triggers resource (/v1beta/triggers) — server-side scheduled interactions
+pub mod triggers;
+pub use triggers::{
+    Trigger, TriggerCreateParams, TriggerExecution, TriggerExecutionListResponse,
+    TriggerExecutionStatus, TriggerListResponse, TriggerStatus, TriggerUpdate,
+};
+
+// Environments resource (/v1beta/environments)
+pub mod environments;
+pub use environments::{
+    CreateEnvironmentRequest, Environment, EnvironmentListResponse, EnvironmentStatus,
+};
+
+// Safety settings (request safety_settings field)
+pub mod safety;
+pub use safety::{HarmCategory, SafetyMethod, SafetySetting, SafetyThreshold};
 
 // Agents resource (/v1beta/agents)
 pub mod agents;

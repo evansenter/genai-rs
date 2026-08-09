@@ -20,22 +20,25 @@ use super::environment::{
     AllowlistEntry, EnvironmentSource, EnvironmentSpec, NetworkConfig, RemoteEnvironment,
     SourceType,
 };
+use super::environments::EnvironmentStatus;
 use super::request::{
     AgentConfig, DeepResearchConfig, DynamicConfig, GenerationConfig, ImageAspectRatio,
     ImageConfig, ImageSize, InteractionInput, Role, ServiceTier, SpeechConfig, ThinkingLevel,
-    ThinkingSummaries, TurnContent, VideoConfig, VideoTask, Visualization,
+    ThinkingSummaries, TranscriptionConfig, TurnContent, VideoConfig, VideoTask, Visualization,
 };
 use super::response::{
     GroundingToolCount, InteractionResponse, InteractionStatus, ModalityTokens,
     OwnedFunctionCallInfo, UsageMetadata,
 };
 use super::response_format::{ResponseDelivery, ResponseFormat, ResponseFormatSpec};
+use super::safety::{HarmCategory, SafetyMethod, SafetySetting, SafetyThreshold};
 use super::steps::{FunctionResultPayload, Step, StepDelta, StepError};
 use super::tools::{
     AllowedTools, ExaAiSearchConfig, FunctionCallingMode, FunctionParameters, HybridSearchConfig,
     ParallelAiSearchConfig, RagFilter, RagRanking, RagResource, RagRetrievalConfig, RagStoreConfig,
     RetrievalType, SearchType, Tool, ToolChoice, VertexAiSearchConfig,
 };
+use super::triggers::{TriggerExecutionStatus, TriggerStatus};
 use super::webhooks::{RevocationBehavior, WebhookConfig, WebhookEvent, WebhookState};
 use super::wire_streaming::StreamChunk;
 
@@ -1158,6 +1161,31 @@ fn arb_speech_config() -> impl Strategy<Value = SpeechConfig> {
         })
 }
 
+fn arb_transcription_config() -> impl Strategy<Value = TranscriptionConfig> {
+    (
+        proptest::option::of(proptest::collection::vec(arb_identifier(), 0..3)),
+        proptest::option::of(proptest::collection::vec(arb_identifier(), 0..3)),
+        proptest::option::of(arb_identifier()),
+        proptest::option::of(proptest::collection::vec(arb_identifier(), 0..3)),
+        proptest::option::of(proptest::collection::vec(arb_identifier(), 0..3)),
+    )
+        .prop_map(
+            |(
+                adaptation_phrases,
+                custom_vocabulary,
+                diarization_mode,
+                language_codes,
+                timestamp_granularities,
+            )| TranscriptionConfig {
+                adaptation_phrases,
+                custom_vocabulary,
+                diarization_mode,
+                language_codes,
+                timestamp_granularities,
+            },
+        )
+}
+
 fn arb_generation_config() -> impl Strategy<Value = GenerationConfig> {
     // Split into two tuples to stay under proptest's 12-element limit
     let part1 = (
@@ -1176,6 +1204,7 @@ fn arb_generation_config() -> impl Strategy<Value = GenerationConfig> {
         proptest::option::of(proptest::collection::vec(arb_speech_config(), 1..3)),
         proptest::option::of(arb_image_config()),
         proptest::option::of(arb_video_config()),
+        proptest::option::of(arb_transcription_config()),
     );
     (part1, part2).prop_map(
         |(
@@ -1195,6 +1224,7 @@ fn arb_generation_config() -> impl Strategy<Value = GenerationConfig> {
                 speech_config,
                 image_config,
                 video_config,
+                transcription_config,
             ),
         )| {
             GenerationConfig {
@@ -1211,6 +1241,7 @@ fn arb_generation_config() -> impl Strategy<Value = GenerationConfig> {
                 speech_config,
                 image_config,
                 video_config,
+                transcription_config,
             }
         },
     )
@@ -1595,6 +1626,100 @@ fn arb_rag_retrieval_config() -> impl Strategy<Value = RagRetrievalConfig> {
 // =============================================================================
 // Webhook / Environment / ResponseFormat Strategies
 // =============================================================================
+
+fn arb_harm_category() -> impl Strategy<Value = HarmCategory> {
+    prop_oneof![
+        Just(HarmCategory::HateSpeech),
+        Just(HarmCategory::DangerousContent),
+        Just(HarmCategory::Harassment),
+        Just(HarmCategory::SexuallyExplicit),
+        Just(HarmCategory::CivicIntegrity),
+        Just(HarmCategory::ImageHate),
+        Just(HarmCategory::ImageDangerousContent),
+        Just(HarmCategory::ImageHarassment),
+        Just(HarmCategory::ImageSexuallyExplicit),
+        Just(HarmCategory::Jailbreak),
+        arb_unknown_type().prop_map(|category_type| HarmCategory::Unknown {
+            data: serde_json::Value::String(category_type.clone()),
+            category_type,
+        }),
+    ]
+}
+
+fn arb_safety_threshold() -> impl Strategy<Value = SafetyThreshold> {
+    prop_oneof![
+        Just(SafetyThreshold::BlockLowAndAbove),
+        Just(SafetyThreshold::BlockMediumAndAbove),
+        Just(SafetyThreshold::BlockOnlyHigh),
+        Just(SafetyThreshold::BlockNone),
+        Just(SafetyThreshold::Off),
+        arb_unknown_type().prop_map(|threshold_type| SafetyThreshold::Unknown {
+            data: serde_json::Value::String(threshold_type.clone()),
+            threshold_type,
+        }),
+    ]
+}
+
+fn arb_safety_method() -> impl Strategy<Value = SafetyMethod> {
+    prop_oneof![
+        Just(SafetyMethod::Severity),
+        Just(SafetyMethod::Probability),
+        arb_unknown_type().prop_map(|method_type| SafetyMethod::Unknown {
+            data: serde_json::Value::String(method_type.clone()),
+            method_type,
+        }),
+    ]
+}
+
+fn arb_safety_setting() -> impl Strategy<Value = SafetySetting> {
+    (
+        arb_harm_category(),
+        arb_safety_threshold(),
+        proptest::option::of(arb_safety_method()),
+    )
+        .prop_map(|(category, threshold, method)| SafetySetting {
+            category,
+            threshold,
+            method,
+        })
+}
+
+fn arb_trigger_status() -> impl Strategy<Value = TriggerStatus> {
+    prop_oneof![
+        Just(TriggerStatus::Active),
+        Just(TriggerStatus::Paused),
+        Just(TriggerStatus::Error),
+        arb_unknown_type().prop_map(|status_type| TriggerStatus::Unknown {
+            data: serde_json::Value::String(status_type.clone()),
+            status_type,
+        }),
+    ]
+}
+
+fn arb_trigger_execution_status() -> impl Strategy<Value = TriggerExecutionStatus> {
+    prop_oneof![
+        Just(TriggerExecutionStatus::InProgress),
+        Just(TriggerExecutionStatus::Completed),
+        Just(TriggerExecutionStatus::Failed),
+        Just(TriggerExecutionStatus::Skipped),
+        Just(TriggerExecutionStatus::TimedOut),
+        arb_unknown_type().prop_map(|status_type| TriggerExecutionStatus::Unknown {
+            data: serde_json::Value::String(status_type.clone()),
+            status_type,
+        }),
+    ]
+}
+
+fn arb_environment_status() -> impl Strategy<Value = EnvironmentStatus> {
+    prop_oneof![
+        Just(EnvironmentStatus::Active),
+        Just(EnvironmentStatus::Expired),
+        arb_unknown_type().prop_map(|status_type| EnvironmentStatus::Unknown {
+            data: serde_json::Value::String(status_type.clone()),
+            status_type,
+        }),
+    ]
+}
 
 fn arb_webhook_event() -> impl Strategy<Value = WebhookEvent> {
     prop_oneof![
@@ -2110,6 +2235,39 @@ proptest! {
         let json = serde_json::to_string(&visualization).expect("Serialization should succeed");
         let restored: Visualization = serde_json::from_str(&json).expect("Deserialization should succeed");
         prop_assert_eq!(visualization, restored);
+    }
+
+    /// Test that SafetySetting (and its three hand-serialized enums)
+    /// roundtrips correctly through JSON, including Unknown arms.
+    #[test]
+    fn safety_setting_roundtrip(setting in arb_safety_setting()) {
+        let json = serde_json::to_string(&setting).expect("Serialization should succeed");
+        let restored: SafetySetting = serde_json::from_str(&json).expect("Deserialization should succeed");
+        prop_assert_eq!(setting, restored);
+    }
+
+    /// Test that TriggerStatus roundtrips correctly through JSON.
+    #[test]
+    fn trigger_status_roundtrip(status in arb_trigger_status()) {
+        let json = serde_json::to_string(&status).expect("Serialization should succeed");
+        let restored: TriggerStatus = serde_json::from_str(&json).expect("Deserialization should succeed");
+        prop_assert_eq!(status, restored);
+    }
+
+    /// Test that TriggerExecutionStatus roundtrips correctly through JSON.
+    #[test]
+    fn trigger_execution_status_roundtrip(status in arb_trigger_execution_status()) {
+        let json = serde_json::to_string(&status).expect("Serialization should succeed");
+        let restored: TriggerExecutionStatus = serde_json::from_str(&json).expect("Deserialization should succeed");
+        prop_assert_eq!(status, restored);
+    }
+
+    /// Test that EnvironmentStatus roundtrips correctly through JSON.
+    #[test]
+    fn environment_status_roundtrip(status in arb_environment_status()) {
+        let json = serde_json::to_string(&status).expect("Serialization should succeed");
+        let restored: EnvironmentStatus = serde_json::from_str(&json).expect("Deserialization should succeed");
+        prop_assert_eq!(status, restored);
     }
 
     /// Test that WebhookEvent roundtrips correctly through JSON.

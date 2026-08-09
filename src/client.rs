@@ -447,6 +447,10 @@ impl Client {
 
     /// Retrieves an existing interaction by its ID.
     ///
+    /// `interaction_id` is the bare ID (the form [`InteractionResponse::id`](crate::InteractionResponse)
+    /// returns) — not an `interactions/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
+    ///
     /// Useful for checking the status of long-running interactions or agents,
     /// or for retrieving the full conversation history.
     ///
@@ -460,6 +464,10 @@ impl Client {
     /// - The HTTP request fails
     /// - Response parsing fails
     /// - The API returns an error
+    ///
+    /// An empty or dot-segment ID is rejected locally as
+    /// [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn get_interaction(
         &self,
         interaction_id: &str,
@@ -492,6 +500,10 @@ impl Client {
     /// - The HTTP request fails
     /// - Response parsing fails
     /// - The API returns an error
+    ///
+    /// An empty or dot-segment ID is rejected locally as
+    /// [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn get_interaction_with_input(
         &self,
         interaction_id: &str,
@@ -509,6 +521,10 @@ impl Client {
 
     /// Retrieves an existing interaction by its ID with streaming.
     ///
+    /// `interaction_id` is the bare ID (the form [`InteractionResponse::id`](crate::InteractionResponse)
+    /// returns) — not an `interactions/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
+    ///
     /// Returns a stream of events for the interaction. This is useful for:
     /// - Resuming an interrupted stream using `last_event_id`
     /// - Streaming a long-running interaction's progress (e.g., deep research)
@@ -524,6 +540,10 @@ impl Client {
     ///
     /// # Returns
     /// A boxed stream that yields `StreamEvent` items.
+    ///
+    /// An empty or dot-segment `interaction_id` is rejected locally as
+    /// [`GenaiError::InvalidInput`]: the returned stream yields that error
+    /// as its first (and only) item and no request is sent.
     ///
     /// # Example
     /// ```no_run
@@ -590,6 +610,10 @@ impl Client {
 
     /// Deletes an interaction by its ID.
     ///
+    /// `interaction_id` is the bare ID (the form [`InteractionResponse::id`](crate::InteractionResponse)
+    /// returns) — not an `interactions/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
+    ///
     /// Removes the interaction from the server, freeing up storage and making it
     /// unavailable for future reference via `previous_interaction_id`.
     ///
@@ -602,6 +626,10 @@ impl Client {
     /// Returns an error if:
     /// - The HTTP request fails
     /// - The API returns an error
+    ///
+    /// An empty or dot-segment ID is rejected locally as
+    /// [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn delete_interaction(&self, interaction_id: &str) -> Result<(), GenaiError> {
         tracing::debug!("Deleting interaction: ID={interaction_id}");
 
@@ -613,6 +641,10 @@ impl Client {
     }
 
     /// Cancels an in-progress background interaction.
+    ///
+    /// `interaction_id` is the bare ID (the form [`InteractionResponse::id`](crate::InteractionResponse)
+    /// returns) — not an `interactions/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
     ///
     /// Only applicable to interactions created with `background: true` that are
     /// still in `InProgress` status. Returns the updated interaction with
@@ -635,6 +667,10 @@ impl Client {
     /// - The interaction is not in a cancellable state (not background or already complete)
     /// - The HTTP request fails
     /// - The API returns an error
+    ///
+    /// An empty or dot-segment ID is rejected locally as
+    /// [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     ///
     /// # Example
     ///
@@ -721,10 +757,18 @@ impl Client {
 
     /// Retrieves a registered webhook by ID.
     ///
+    /// `webhook_id` is the bare ID (the form [`Webhook::id`](crate::Webhook)
+    /// returns) — not a `webhooks/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
+    ///
     /// # Errors
     ///
     /// Returns an error if the webhook doesn't exist, the HTTP request fails,
     /// or response parsing fails.
+    ///
+    /// An empty or dot-segment ID is rejected locally as
+    /// [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn get_webhook(&self, webhook_id: &str) -> Result<crate::Webhook, GenaiError> {
         crate::http::webhooks::get_webhook(&self.http, webhook_id).await
     }
@@ -749,6 +793,10 @@ impl Client {
 
     /// Updates a registered webhook.
     ///
+    /// `webhook_id` is the bare ID (the form [`Webhook::id`](crate::Webhook)
+    /// returns) — not a `webhooks/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
+    ///
     /// # Arguments
     ///
     /// * `webhook_id` - The webhook to update.
@@ -765,6 +813,10 @@ impl Client {
     ///
     /// Returns an error if the webhook doesn't exist, the HTTP request fails,
     /// or response parsing fails.
+    ///
+    /// An empty or dot-segment ID is rejected locally as
+    /// [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     ///
     /// # Example
     ///
@@ -793,14 +845,26 @@ impl Client {
 
     /// Deletes a registered webhook.
     ///
+    /// `webhook_id` is the bare ID (the form [`Webhook::id`](crate::Webhook)
+    /// returns) — not a `webhooks/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
+    ///
     /// # Errors
     ///
     /// Returns an error if the webhook doesn't exist or the HTTP request fails.
+    ///
+    /// An empty or dot-segment ID is rejected locally as
+    /// [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn delete_webhook(&self, webhook_id: &str) -> Result<(), GenaiError> {
         crate::http::webhooks::delete_webhook(&self.http, webhook_id).await
     }
 
     /// Sends a test event to a webhook (`:ping`).
+    ///
+    /// `webhook_id` is the bare ID (the form [`Webhook::id`](crate::Webhook)
+    /// returns) — not a `webhooks/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
     ///
     /// Use this to verify your endpoint receives and validates deliveries
     /// before relying on it for real events.
@@ -812,11 +876,19 @@ impl Client {
     /// # Errors
     ///
     /// Returns an error if the webhook doesn't exist or the HTTP request fails.
+    ///
+    /// An empty or dot-segment ID is rejected locally as
+    /// [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn ping_webhook(&self, webhook_id: &str) -> Result<(), GenaiError> {
         crate::http::webhooks::ping_webhook(&self.http, webhook_id).await
     }
 
     /// Rotates a webhook's signing secret (`:rotateSigningSecret`).
+    ///
+    /// `webhook_id` is the bare ID (the form [`Webhook::id`](crate::Webhook)
+    /// returns) — not a `webhooks/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
     ///
     /// Returns the newly generated secret. Pass a
     /// [`RevocationBehavior`](crate::RevocationBehavior) to control whether
@@ -827,6 +899,10 @@ impl Client {
     ///
     /// Returns an error if the webhook doesn't exist, the HTTP request fails,
     /// or response parsing fails.
+    ///
+    /// An empty or dot-segment ID is rejected locally as
+    /// [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn rotate_webhook_signing_secret(
         &self,
         webhook_id: &str,
@@ -834,6 +910,253 @@ impl Client {
     ) -> Result<crate::RotateSigningSecretResponse, GenaiError> {
         crate::http::webhooks::rotate_signing_secret(&self.http, webhook_id, revocation_behavior)
             .await
+    }
+
+    // --- Triggers resource methods (`/v1beta/triggers`) ---
+
+    /// Creates a server-side scheduled trigger.
+    ///
+    /// The trigger's `interaction` must target a custom `agent` (see
+    /// [`crate::triggers`] for the live-verified constraints); trigger
+    /// creation is gated with custom-agent creation on standard API keys.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the API rejects the
+    /// trigger definition.
+    pub async fn create_trigger(
+        &self,
+        params: &crate::TriggerCreateParams,
+    ) -> Result<crate::Trigger, GenaiError> {
+        crate::http::triggers::create_trigger(&self.http, params).await
+    }
+
+    /// Retrieves a trigger by ID.
+    ///
+    /// `trigger_id` is the bare ID (the form [`Trigger::id`](crate::Trigger)
+    /// returns) — not a `triggers/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the trigger doesn't exist.
+    ///
+    /// An empty or dot-segment ID is rejected locally as
+    /// [`GenaiError::InvalidInput`]
+    /// before any request is sent.
+    pub async fn get_trigger(&self, trigger_id: &str) -> Result<crate::Trigger, GenaiError> {
+        crate::http::triggers::get_trigger(&self.http, trigger_id).await
+    }
+
+    /// Lists triggers, paged.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_size` - Optional maximum number of triggers per page.
+    /// * `page_token` - Optional token from a previous list call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or an invalid page token.
+    pub async fn list_triggers(
+        &self,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+    ) -> Result<crate::TriggerListResponse, GenaiError> {
+        crate::http::triggers::list_triggers(&self.http, page_size, page_token).await
+    }
+
+    /// Updates a trigger (display name and/or status; `paused` pauses it,
+    /// `active` resumes it).
+    ///
+    /// # Arguments
+    ///
+    /// * `trigger_id` - The trigger to update.
+    /// * `update` - The fields to change (only set fields are sent; there
+    ///   is no `update_mask` on this endpoint — see [`crate::TriggerUpdate`]).
+    ///
+    /// `trigger_id` is the bare ID (the form [`Trigger::id`](crate::Trigger)
+    /// returns) — not a `triggers/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the trigger doesn't exist.
+    ///
+    /// An empty or dot-segment ID is rejected locally as
+    /// [`GenaiError::InvalidInput`]
+    /// before any request is sent.
+    pub async fn update_trigger(
+        &self,
+        trigger_id: &str,
+        update: &crate::TriggerUpdate,
+    ) -> Result<crate::Trigger, GenaiError> {
+        crate::http::triggers::update_trigger(&self.http, trigger_id, update).await
+    }
+
+    /// Deletes a trigger.
+    ///
+    /// `trigger_id` is the bare ID (the form [`Trigger::id`](crate::Trigger)
+    /// returns) — not a `triggers/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the trigger doesn't exist.
+    ///
+    /// An empty or dot-segment ID is rejected locally as
+    /// [`GenaiError::InvalidInput`]
+    /// before any request is sent.
+    pub async fn delete_trigger(&self, trigger_id: &str) -> Result<(), GenaiError> {
+        crate::http::triggers::delete_trigger(&self.http, trigger_id).await
+    }
+
+    /// Fires a trigger immediately, outside its schedule.
+    ///
+    /// `trigger_id` is the bare ID (the form [`Trigger::id`](crate::Trigger)
+    /// returns) — not a `triggers/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
+    ///
+    /// **Unverified endpoint shape**: this posts to the `executions`
+    /// sub-collection (not a `:run` colon verb), a path derived from the
+    /// google-genai generated bindings rather than observed live — it
+    /// needs an existing trigger, and trigger creation is agent-gated
+    /// (see [`triggers`](crate::triggers)). The same caveat applies to
+    /// [`list_trigger_executions`](Self::list_trigger_executions).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the trigger doesn't exist.
+    ///
+    /// An empty or dot-segment ID is rejected locally as
+    /// [`GenaiError::InvalidInput`]
+    /// before any request is sent.
+    pub async fn run_trigger(
+        &self,
+        trigger_id: &str,
+    ) -> Result<crate::TriggerExecution, GenaiError> {
+        crate::http::triggers::run_trigger(&self.http, trigger_id).await
+    }
+
+    /// Lists a trigger's past executions, paged.
+    ///
+    /// # Arguments
+    ///
+    /// * `trigger_id` - The trigger whose executions to list.
+    /// * `page_size` - Optional maximum number of executions per page.
+    /// * `page_token` - Optional token from a previous list call.
+    ///
+    /// `trigger_id` is the bare ID (the form [`Trigger::id`](crate::Trigger)
+    /// returns) — not a `triggers/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
+    ///
+    /// **Unverified endpoint shape**: reads the same `executions`
+    /// sub-collection [`run_trigger`](Self::run_trigger) posts to, with
+    /// the same caveat — the path comes from the google-genai generated
+    /// bindings, not live observation, because it needs an existing
+    /// trigger and trigger creation is agent-gated.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the trigger doesn't exist.
+    ///
+    /// An empty or dot-segment ID is rejected locally as
+    /// [`GenaiError::InvalidInput`]
+    /// before any request is sent.
+    pub async fn list_trigger_executions(
+        &self,
+        trigger_id: &str,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+    ) -> Result<crate::TriggerExecutionListResponse, GenaiError> {
+        crate::http::triggers::list_trigger_executions(
+            &self.http, trigger_id, page_size, page_token,
+        )
+        .await
+    }
+
+    // --- Environments resource methods (`/v1beta/environments`) ---
+
+    /// Creates an environment explicitly, for reuse across interactions.
+    ///
+    /// Requests can also create environments implicitly by passing a typed
+    /// [`EnvironmentSpec`](crate::EnvironmentSpec) inline; explicit creation
+    /// returns the ID so many interactions can share one container.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the definition is
+    /// rejected.
+    pub async fn create_environment(
+        &self,
+        request: &crate::CreateEnvironmentRequest,
+    ) -> Result<crate::Environment, GenaiError> {
+        crate::http::environments::create_environment(&self.http, request).await
+    }
+
+    /// Retrieves an environment by ID.
+    ///
+    /// `environment_id` is the bare ID (the form
+    /// [`Environment::id`](crate::Environment) returns, live-verified) — not
+    /// an `environments/...` resource name, which would be percent-encoded
+    /// into a single path segment and 404. The one unobserved source is
+    /// [`environment_id`](crate::InteractionResponse::environment_id) on a
+    /// response: strip a leading `environments/` prefix before passing it
+    /// here.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the environment doesn't
+    /// exist.
+    ///
+    /// An empty or dot-segment ID is rejected locally as
+    /// [`GenaiError::InvalidInput`]
+    /// before any request is sent.
+    pub async fn get_environment(
+        &self,
+        environment_id: &str,
+    ) -> Result<crate::Environment, GenaiError> {
+        crate::http::environments::get_environment(&self.http, environment_id).await
+    }
+
+    /// Lists environments, paged.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_size` - Optional maximum number of environments per page.
+    /// * `page_token` - Optional token from a previous list call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or an invalid page token.
+    pub async fn list_environments(
+        &self,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+    ) -> Result<crate::EnvironmentListResponse, GenaiError> {
+        crate::http::environments::list_environments(&self.http, page_size, page_token).await
+    }
+
+    /// Deletes an environment.
+    ///
+    /// `environment_id` is the bare ID (the form
+    /// [`Environment::id`](crate::Environment) returns, live-verified) — not
+    /// an `environments/...` resource name, which would be percent-encoded
+    /// into a single path segment and 404. The one unobserved source is
+    /// [`environment_id`](crate::InteractionResponse::environment_id) on a
+    /// response: strip a leading `environments/` prefix before passing it
+    /// here.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the environment doesn't
+    /// exist.
+    ///
+    /// An empty or dot-segment ID is rejected locally as
+    /// [`GenaiError::InvalidInput`]
+    /// before any request is sent.
+    pub async fn delete_environment(&self, environment_id: &str) -> Result<(), GenaiError> {
+        crate::http::environments::delete_environment(&self.http, environment_id).await
     }
 
     // --- Agents resource methods (`/v1beta/agents`) ---
@@ -890,10 +1213,18 @@ impl Client {
 
     /// Retrieves an agent by ID.
     ///
+    /// `agent_id` is the bare ID (the form [`Agent::id`](crate::Agent)
+    /// returns) — not an `agents/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
+    ///
     /// # Errors
     ///
     /// Returns an error if the agent doesn't exist, the HTTP request fails,
     /// or response parsing fails.
+    ///
+    /// An empty or dot-segment ID is rejected locally as
+    /// [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn get_agent(&self, agent_id: &str) -> Result<crate::Agent, GenaiError> {
         crate::http::agents::get_agent(&self.http, agent_id).await
     }
@@ -920,9 +1251,17 @@ impl Client {
 
     /// Deletes an agent by ID.
     ///
+    /// `agent_id` is the bare ID (the form [`Agent::id`](crate::Agent)
+    /// returns) — not an `agents/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
+    ///
     /// # Errors
     ///
     /// Returns an error if the agent doesn't exist or the HTTP request fails.
+    ///
+    /// An empty or dot-segment ID is rejected locally as
+    /// [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn delete_agent(&self, agent_id: &str) -> Result<(), GenaiError> {
         crate::http::agents::delete_agent(&self.http, agent_id).await
     }
@@ -1106,7 +1445,17 @@ impl Client {
     ///
     /// # Arguments
     ///
-    /// * `file_name` - The resource name of the file (e.g., "files/abc123")
+    /// * `file_name` - The full resource name of the file (e.g.,
+    ///   "files/abc123" — the form [`FileMetadata::name`](crate::FileMetadata)
+    ///   returns). Anything else — a bare ID, extra path segments — is
+    ///   rejected locally as [`GenaiError::InvalidInput`] before a request
+    ///   is sent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenaiError::InvalidInput`] for a name that is not
+    /// `files/<id>`, and an API or network error if the request fails or
+    /// the file doesn't exist.
     ///
     /// # Example
     ///
@@ -1158,7 +1507,17 @@ impl Client {
     ///
     /// # Arguments
     ///
-    /// * `file_name` - The resource name of the file to delete (e.g., "files/abc123")
+    /// * `file_name` - The full resource name of the file to delete (e.g.,
+    ///   "files/abc123" — the form [`FileMetadata::name`](crate::FileMetadata)
+    ///   returns). Anything else — a bare ID, extra path segments — is
+    ///   rejected locally as [`GenaiError::InvalidInput`] before a request
+    ///   is sent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenaiError::InvalidInput`] for a name that is not
+    /// `files/<id>`, and an API or network error if the request fails or
+    /// the file doesn't exist.
     ///
     /// # Example
     ///

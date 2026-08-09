@@ -2736,13 +2736,16 @@ mod builtins_multiturn {
 
         println!("=== Google Search + Multi-turn ===");
 
-        // Turn 1: Ask about current weather (requires real-time data)
-        let result1 = stateful_builder(&client)
-            .with_text("What is the current weather in Tokyo, Japan today? Use search to find current data.")
-            .with_google_search()
-            .with_store_enabled()
-            .create()
-            .await;
+        // Turn 1: Ask about current weather (requires real-time data).
+        // Retry-wrapped like turn 2 so a transient doesn't fail the probe.
+        let result1 = retry_request!([client] => {
+            stateful_builder(&client)
+                .with_text("What is the current weather in Tokyo, Japan today? Use search to find current data.")
+                .with_google_search()
+                .with_store_enabled()
+                .create()
+                .await
+        });
 
         let response1 = match result1 {
             Ok(response) => {
@@ -2756,6 +2759,13 @@ mod builtins_multiturn {
                 let error_str = format!("{:?}", e);
                 if error_str.contains("not supported") || error_str.contains("not available") {
                     println!("Google Search tool not available - skipping test");
+                    return;
+                }
+                if is_safety_block_error(&e) {
+                    // Search grounding pulls external pages the backend can
+                    // intermittently classify as unsafe — same tolerance as
+                    // the URL-context sibling below (observed live 2026-07).
+                    eprintln!("Turn 1 blocked by content safety filter - test inconclusive: {e:?}");
                     return;
                 }
                 panic!("Turn 1 failed unexpectedly: {:?}", e);
@@ -2800,6 +2810,10 @@ mod builtins_multiturn {
                     println!("API limitation encountered: {:?}", e);
                     return;
                 }
+                if is_safety_block_error(&e) {
+                    eprintln!("Turn 2 blocked by content safety filter - test inconclusive: {e:?}");
+                    return;
+                }
                 panic!("Turn 2 failed unexpectedly: {:?}", e);
             }
         }
@@ -2817,15 +2831,18 @@ mod builtins_multiturn {
 
         println!("=== URL Context + Multi-turn ===");
 
-        // Turn 1: Fetch example.com content
-        let result1 = stateful_builder(&client)
-            .with_text(
-                "Fetch and summarize the main content from https://example.com using URL context.",
-            )
-            .with_url_context()
-            .with_store_enabled()
-            .create()
-            .await;
+        // Turn 1: Fetch example.com content. Retry-wrapped like the
+        // google-search sibling so a transient doesn't fail the probe.
+        let result1 = retry_request!([client] => {
+            stateful_builder(&client)
+                .with_text(
+                    "Fetch and summarize the main content from https://example.com using URL context.",
+                )
+                .with_url_context()
+                .with_store_enabled()
+                .create()
+                .await
+        });
 
         let response1 = match result1 {
             Ok(response) => {

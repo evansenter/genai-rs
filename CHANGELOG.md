@@ -5,10 +5,108 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.0] - 2026-08-09
+
+### Changed (breaking)
+
+- `InteractionRequest` gains public `safety_settings` and `labels` fields
+  and `GenerationConfig` gains `transcription_config` — source-breaking
+  for downstream struct literals and exhaustive patterns on these
+  constructible structs, hence the minor bump (cargo treats 0.8.x as
+  compatible, so this could not ship as 0.8.1). The structs deliberately
+  remain constructible (no `#[non_exhaustive]`): per the project's
+  versioning philosophy, future field additions will take minor bumps
+  rather than trading away struct-literal ergonomics.
+  (`antigravity::protocol::MultipleChoice` — behind the `antigravity`
+  feature — likewise gains a public flattened `extra` field.)
+
+### Changed
+
+- All five resource list envelopes (`AgentListResponse`,
+  `WebhookListResponse`, and the new trigger/execution/environment ones)
+  now degrade a null or malformed list key to an empty page and drop
+  undeserializable elements individually with a `tracing::warn!`, instead
+  of failing the whole response. For the two pre-existing types this
+  changes observable behavior: `list_agents()`/`list_webhooks()` calls
+  that previously returned `Err` on a malformed page now return the
+  surviving entries.
+- `Webhook::create_time`/`update_time` and `SigningSecret::expire_time`
+  now deserialize leniently like the trigger and environment timestamps:
+  a response whose timestamp encoding diverges from RFC 3339 yields the
+  field as `None` (with a `tracing::warn!`) instead of failing the call —
+  so an absent timestamp on a returned webhook can mean either "not sent"
+  or "sent but unparseable"; the warn log distinguishes them.
+
+### Added
+
+- **Triggers resource** (`/v1beta/triggers`): server-side scheduled
+  interactions with full CRUD plus `run_trigger` and
+  `list_trigger_executions` — cron agents that fire with no client process
+  running. Trigger creation requires a custom agent (gated on standard API
+  keys, verified live); the list path and payload schema are live-verified.
+- **Environments resource** (`/v1beta/environments`): explicit
+  `create/get/list/delete_environment` so many interactions can share one
+  container (full lifecycle verified live on a standard key). Handles the
+  protobuf-JSON string int64 wire form for `file_count`/`size_bytes`.
+- **`TranscriptionConfig`** in `generation_config`
+  (`with_transcription_config`): language hints, diarization, custom
+  vocabulary, adaptation phrases and timestamp granularities for audio
+  input (accepted live).
+- **`SafetySetting`/`HarmCategory`/`SafetyThreshold`/`SafetyMethod`** and
+  the `safety_settings` request field (+ `with_safety_settings`/
+  `add_safety_setting`), and **`labels`** request metadata
+  (+ `with_labels`/`add_label`). Both parameters are currently rejected by
+  the Gemini API ("available on the Gemini Enterprise Agent Platform",
+  verified live 2026-08-08) — modeled for spec parity and forward
+  compatibility, like the existing `Retrieval` tool.
+- **`AntigravityConfig`** typed agent-config helper for server-side
+  `agent("antigravity-preview-05-2026")` interactions (`model`,
+  `max_total_tokens`; the config's `antigravity` string is only the
+  `agent_config` type discriminant, not an agent ID).
+- **Antigravity bridge: `on_questions` hook** — answer the agent's
+  `ask_question` batches programmatically (select choices, freeform text,
+  skip, or cancel) instead of the previous always-"unanswered" fallback.
+  An unmodeled future question type arrives with
+  `AgentQuestion::is_unknown_type()` set and its raw payload in `extra`
+  (build that fixture with `AgentQuestion::unknown()`).
+- `InteractionRequest` and `InteractionInput` implement `Default`, easing
+  struct-literal construction (e.g. nested trigger interactions).
+- `InteractionRequest`, `GenerationConfig`, `SpeechConfig`, `Tool`,
+  `FunctionParameters`, `Trigger` and the trigger request/response types
+  implement `PartialEq`, so whole-value assertions work across the new
+  resource types uniformly. The pre-existing `Agent` and
+  `AgentListResponse` gain it too, completing the set.
+
+### Deprecated
+
+- `response_modalities` is marked deprecated by the official SDK in
+  favor of the typed `response_format` union; the builder and field docs
+  now steer new code to `with_response_format`. (The SDK deprecates
+  `response_mime_type` alongside it, but that field was already removed
+  from this crate — the API rejects it in every form.)
 
 ### Fixed
 
+- Resource IDs are now percent-encoded when interpolated into URL paths
+  (interactions get/delete/cancel/stream and the agents, webhooks, triggers
+  and environments item URLs). Well-formed IDs are byte-identical on the
+  wire; a value containing path metacharacters (`/`, `?`, `#`) is now
+  sent as one encoded segment instead of silently rewriting the request
+  path, and an empty or dot-segment resource ID (any WHATWG spelling —
+  `.`/`..` bare or percent-encoded, which the URL parser would otherwise
+  pop at parse time) is rejected locally as `InvalidInput` rather than
+  issuing a request against the collection or a different URL. The Files
+  API's `get_file`/`delete_file` now validate the full resource name's
+  shape positively — the `files/` prefix plus exactly one non-empty
+  segment, with the ID percent-encoded like every other resource — so an
+  empty name, a `.`/`..` dot segment (bare or percent-encoded), a `?`/`#`
+  query or fragment split, or stray extra segments all fail locally as
+  `InvalidInput` instead of silently addressing a different URL. The Files API
+  `list_files` page token is likewise percent-encoded (agents and
+  webhooks already encoded theirs, and the new trigger/environment
+  endpoints ride the shared encoder), so a token carrying a reserved
+  character is no longer truncated on the wire (a standard-base64 `+`
+  previously decoded to a space).
 - docs.rs now builds with the `antigravity` feature enabled (the module was
   invisible in the 0.8.0 docs, which were built with default features only),
   with "Available on crate feature ... only" banners on feature-gated items.

@@ -47,6 +47,12 @@ All types below implement graceful handling of unrecognized values via an `Unkno
 | 29 | `ResponseFormat` | src/response_format.rs | `format_type` | text/audio/image/video union |
 | 30 | `VideoTask` | src/request.rs | `task_type` | text_to_video/image_to_video/reference_to_video/edit |
 | 31 | `Visualization` | src/request.rs | `visualization_type` | off/auto (Deep Research agent_config) |
+| 32 | `HarmCategory` | src/safety.rs | `category_type` | Ten harm categories (Vertex-gated parameter) |
+| 33 | `SafetyThreshold` | src/safety.rs | `threshold_type` | Block thresholds (Vertex-gated parameter) |
+| 34 | `SafetyMethod` | src/safety.rs | `method_type` | severity/probability (Vertex-gated parameter) |
+| 35 | `EnvironmentStatus` | src/environments.rs | `status_type` | active/expired |
+| 36 | `TriggerStatus` | src/triggers.rs | `status_type` | active/paused/error (SDK-spec, pending live) |
+| 37 | `TriggerExecutionStatus` | src/triggers.rs | `status_type` | Execution outcomes (SDK-spec, pending live) |
 
 **Removed in revision 2026-05-20** (no longer exist in this library or on the wire):
 `UrlRetrievalStatus`, `GroundingMetadata`, `UrlContextMetadata`, `Turn`, and all tool-related
@@ -90,6 +96,12 @@ Helper methods on each type:
 | `FunctionCallingMode` | lowercase | `"auto"`, `"any"`, `"none"`, `"validated"` | **Changed** from SCREAMING_CASE; legacy uppercase accepted on deserialize. Pending live verification (2026-05-20 revision) |
 | `CodeExecutionLanguage` | lowercase | `"python"` | **Changed** from `"PYTHON"`; legacy uppercase accepted on deserialize. Pending live verification (2026-05-20 revision) |
 | `ServiceTier` | lowercase | `"flex"`, `"standard"`, `"priority"` | New in 2026-05-20. Pending live verification (2026-05-20 revision) |
+| `HarmCategory` | snake_case | `"hate_speech"`, `"jailbreak"` | `safety_settings`; parameter itself Gemini-API-rejected (Vertex-only), verified live 2026-08-08 |
+| `SafetyThreshold` | snake_case | `"block_only_high"`, `"off"` | Same Vertex-only constraint as `HarmCategory` |
+| `SafetyMethod` | lowercase | `"severity"`, `"probability"` | Same Vertex-only constraint as `HarmCategory` |
+| `EnvironmentStatus` | lowercase | `"active"`, `"expired"` | `/v1beta/environments`; `"active"` verified live 2026-08-08 |
+| `TriggerStatus` | lowercase | `"active"`, `"paused"`, `"error"` | `/v1beta/triggers`; from SDK spec, creation agent-gated so pending live verification |
+| `TriggerExecutionStatus` | snake_case | `"in_progress"`, `"timed_out"` | From SDK spec, pending live verification |
 | `InteractionStatus` | snake_case | `"in_progress"`, `"requires_action"`, `"budget_exceeded"` | `budget_exceeded` new; pending live verification (2026-05-20 revision). `Default` is `InProgress` |
 | `SearchType` | snake_case string | `"web_search"`, `"image_search"`, `"enterprise_web_search"` | `enterprise_web_search` new; pending live verification (2026-05-20 revision) |
 | `GroundingToolCount` | `{"type": ..., "count": n}` | `{"type": "google_search", "count": 2}` | In `usage.grounding_tool_count`. Pending live verification (2026-05-20 revision) |
@@ -396,6 +408,73 @@ interaction response echoes the effective tier as `service_tier: "standard"`,
 alongside an `object: "interaction"` resource discriminator — both now modeled
 on `InteractionResponse` (`service_tier`, `object`). The request-side values
 (`flex`/`priority`) are still pending live verification.
+
+### Safety settings enums (request `safety_settings`)
+
+`HarmCategory` / `SafetyThreshold` (snake_case) and `SafetyMethod`
+(lowercase — its values are single words, matching the summary table's
+classification), all with the standard Unknown pattern (`category_type` /
+`threshold_type` / `method_type`).
+
+| Rust Enum | Wire Values |
+|-----------|-------------|
+| `HarmCategory` | `"hate_speech"`, `"dangerous_content"`, `"harassment"`, `"sexually_explicit"`, `"civic_integrity"`, `"image_hate"`, `"image_dangerous_content"`, `"image_harassment"`, `"image_sexually_explicit"`, `"jailbreak"` |
+| `SafetyThreshold` | `"block_low_and_above"`, `"block_medium_and_above"`, `"block_only_high"`, `"block_none"`, `"off"` |
+| `SafetyMethod` | `"severity"`, `"probability"` |
+
+**Status**: Enum values come from the official SDK spec. The
+`safety_settings` request parameter itself is rejected by the Gemini API
+(verified live 2026-08-08: 400 `invalid_request`, "not available on the
+Gemini API but it is available on the Gemini Enterprise Agent Platform") —
+modeled for spec parity and forward compatibility.
+
+### EnvironmentStatus (`/v1beta/environments`)
+
+| Rust Enum | Wire Value |
+|-----------|------------|
+| `EnvironmentStatus::Active` | `"active"` |
+| `EnvironmentStatus::Expired` | `"expired"` |
+| `EnvironmentStatus::Unknown { status_type, data }` | preserved |
+
+**Status**: `"active"` verified live 2026-08-08 (full environments CRUD
+works on a standard key; int64 counts arrive as protobuf-JSON strings and
+timestamps as ISO 8601 with offset — both verified in the same probe).
+`"expired"` comes from the SDK spec.
+
+### TriggerStatus / TriggerExecutionStatus (`/v1beta/triggers`)
+
+| Rust Enum | Wire Values |
+|-----------|-------------|
+| `TriggerStatus` | `"active"`, `"paused"`, `"error"` |
+| `TriggerStatus::Unknown { status_type, data }` | preserved |
+| `TriggerExecutionStatus` | `"in_progress"`, `"completed"`, `"failed"`, `"skipped"`, `"timed_out"` |
+| `TriggerExecutionStatus::Unknown { status_type, data }` | preserved |
+
+**Status**: From the official SDK spec. Live verification is pending:
+trigger creation requires a custom agent, which is gated/allowlisted on
+standard API keys (verified live 2026-08-08 — a model-only trigger
+interaction is rejected with "Agent '' is invalid or not found", and
+`GET /v1beta/triggers` returns `{}` when empty). The `Trigger` resource's
+*field names* are equally unverified — note it uses `create_time`/
+`update_time` per the SDK spec while the live-verified Environments
+resource uses `created`/`updated`; both spellings are accepted on
+deserialize (`serde(alias)` hedges the bet; serialization keeps the
+spec spelling). The timestamp *encoding* is the same class of bet —
+this family already diverged once on encoding (int64s arrive as
+protobuf-JSON strings), so the nine
+trigger-family timestamps route through a lenient RFC 3339 deserializer
+that degrades an unexpected shape (epoch number, proto-style object,
+garbage string) to `None` with a `warn!` instead of failing the whole
+list response. The list
+envelope keys are in the same boat: `triggers` matches its path segment
+but `GET .../executions` is modeled with a `trigger_executions` key per
+the SDK spec — `executions` (the path-segment spelling) is likewise
+accepted on deserialize as an alias. The aliases hedge only the
+spellings something actually demonstrates (the environments resource's
+`created`/`updated`, the path segment); the other seven trigger-family
+timestamps have no observed alternative to alias against and would
+still degrade to `None` under a wholesale rename, so a `LOUD_WIRE=1`
+confirmation once the agent gate opens remains worthwhile.
 
 ### ThinkingSummaries (agent_config)
 
@@ -867,7 +946,7 @@ Webhook resource (snake_case, RFC3339 timestamps):
 
 ```json
 {
-  "id": "webhooks/wh-123",
+  "id": "wh123bare0pq",
   "name": "my-hook",
   "uri": "https://example.com/hook",
   "subscribed_events": ["batch.succeeded", "interaction.completed", "video.generated"],
@@ -1026,6 +1105,21 @@ Veo models (e.g. `veo-3.1-generate-preview`) return 404 "Model not found"
 `response_modalities: ["video"]`. `video_config` is accepted (ignored) on
 non-video models.
 
+### AntigravityConfig (agent_config type "antigravity")
+
+```json
+{"agent_config": {"type": "antigravity", "max_total_tokens": 200000}}
+```
+
+**Status**: ✅ Verified live 2026-08-09 on `agent("antigravity-preview-05-2026")`
+(which requires an `environment`): the `type` discriminant and
+`max_total_tokens` are accepted; the server's validation error enumerates
+the supported `agent_config.type` values as `dynamic`, `deep-research`,
+`code-mender`, `antigravity`. `model` is server-validated per agent — an
+unavailable value returns 404 `not_found` (observed with
+`gemini-3-flash-preview`), and the agent's model catalog is not enumerable
+on a standard key.
+
 ### Visualization (Deep Research agent_config)
 
 ```json
@@ -1069,6 +1163,23 @@ grounding invocation counts.
 Helper: `usage.grounding_count_for_tool("google_search")`.
 
 **Status**: Pending live verification (2026-05-20 revision).
+
+### TranscriptionConfig open-string values
+
+`generation_config.transcription_config` (`TranscriptionConfig` in
+`src/request.rs`) keeps its constrained fields as open strings (Evergreen),
+with the SDK-documented value sets:
+
+| Field | Documented values | Notes |
+|-------|-------------------|-------|
+| `diarization_mode` | `"speaker"` | Only supported value per SDK 2.17.0 spec |
+| `timestamp_granularities` | `"word"` | Only supported value per spec; empty list = no timestamps |
+| `language_codes` | BCP-47 codes | Empty/omitted = automatic language detection |
+
+**Status**: The config object itself was accepted live (200, 2026-08-08);
+the documented value sets are from the SDK spec and their output effects
+(`WordInfo` timing/speaker fields) are pending live verification with an
+audio input.
 
 ## Testing New Enums
 

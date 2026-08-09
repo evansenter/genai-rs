@@ -1306,12 +1306,16 @@ mod thinking {
             ..Default::default()
         };
 
-        let response = stateful_builder(&client)
-            .with_text("What is 2 + 2?")
-            .with_generation_config(config)
-            .create()
-            .await
-            .expect("Minimal thinking interaction failed");
+        // Retry-wrapped: flaked in CI on a server-side 500 "Internal error
+        // encountered." at create time, which is_retryable already covers.
+        let response = retry_request!([client, config] => {
+            stateful_builder(&client)
+                .with_text("What is 2 + 2?")
+                .with_generation_config(config)
+                .create()
+                .await
+        })
+        .expect("Minimal thinking interaction failed");
 
         assert_eq!(response.status, InteractionStatus::Completed);
         assert!(response.has_text(), "Should have text response");

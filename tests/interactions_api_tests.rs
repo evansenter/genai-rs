@@ -200,15 +200,22 @@ mod basic {
             return;
         };
 
-        let response = client
-            .interaction()
-            .with_agent("deep-research-pro-preview-12-2025")
-            .with_text("What are the current trends in quantum computing research?")
-            .with_background(true)
-            .with_store_enabled()
-            .create()
-            .await
-            .expect("Failed to create background interaction");
+        // Retry-wrapped: create time has flaked in CI on a sub-second 400
+        // "there was a problem processing your request" burst, which
+        // is_transient_error now matches by message (alongside its 429/5xx
+        // transport coverage). A retried create at worst orphans a bounded
+        // background interaction.
+        let response = retry_request!([client] => {
+            client
+                .interaction()
+                .with_agent("deep-research-pro-preview-12-2025")
+                .with_text("What are the current trends in quantum computing research?")
+                .with_background(true)
+                .with_store_enabled()
+                .create()
+                .await
+        })
+        .expect("Failed to create background interaction");
 
         let interaction_id = response
             .id
@@ -387,6 +394,8 @@ mod streaming {
                 cached_content: None,
                 webhook_config: None,
                 environment: None,
+                safety_settings: None,
+                labels: None,
             };
 
             let stream = client.execute_stream(request);

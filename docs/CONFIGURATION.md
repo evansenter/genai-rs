@@ -632,8 +632,10 @@ for prompt in creative_prompts {
 | `tool_choice` | `Option<ToolChoice>` | Function calling behavior (mode or allowed-tools restriction) |
 | `presence_penalty` | `Option<f32>` | Penalize already-present tokens [-2.0, 2.0] |
 | `frequency_penalty` | `Option<f32>` | Penalize frequent tokens [-2.0, 2.0] |
-| `speech_config` | `Option<SpeechConfig>` | TTS configuration |
+| `speech_config` | `Option<Vec<SpeechConfig>>` | TTS configuration (single-object legacy wire form accepted on deserialize) |
 | `image_config` | `Option<ImageConfig>` | Image generation aspect ratio and size |
+| `video_config` | `Option<VideoConfig>` | Video generation settings |
+| `transcription_config` | `Option<TranscriptionConfig>` | Audio-input transcription: language hints, diarization, timestamps |
 
 Note: `top_k` was removed by the API revision 2026-05-20.
 

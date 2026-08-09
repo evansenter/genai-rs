@@ -10,6 +10,7 @@ This guide covers agent-based interactions and background execution patterns for
 - [Deep Research Agent](#deep-research-agent)
 - [Custom Agents (Agents Resource)](#custom-agents-agents-resource)
 - [Environments](#environments)
+- [Scheduled Triggers](#scheduled-triggers)
 - [Background Execution](#background-execution)
 - [Webhooks Instead of Polling](#webhooks-instead-of-polling)
 - [Polling Patterns](#polling-patterns)
@@ -72,7 +73,7 @@ Google-managed agents known to this crate (from the 2026-05-20 spec):
 | `deep-research-pro-preview-12-2025` | Gemini Deep Research agent (launch preview) |
 | `deep-research-preview-04-2026` | Gemini Deep Research agent |
 | `deep-research-max-preview-04-2026` | Gemini Deep Research Max agent |
-| `antigravity-preview-05-2026` | Antigravity managed agent for multi-step tasks with reasoning, file operations, and tool use (pairs well with [Environments](#environments)) |
+| `antigravity-preview-05-2026` | Antigravity managed agent for multi-step tasks with reasoning, file operations, and tool use (requires an [environment](#environments); tune via `AntigravityConfig` — `agent_config` type `antigravity`) |
 
 Availability varies by account and region; unknown agent IDs pass through
 unchanged (Evergreen), so newer agents work without a crate update.
@@ -212,11 +213,108 @@ let follow_up = client
     .await?;
 ```
 
+The Antigravity managed agent above is the one whose config is
+live-verified end to end (2026-08-09): the environment is **required**,
+and `AntigravityConfig` tunes the run — leave its `model` unset (an
+unavailable value 404s, including `gemini-3-flash-preview`, the crate's
+default model elsewhere):
+
+```rust,ignore
+use genai_rs::{AntigravityConfig, EnvironmentSource, RemoteEnvironment};
+
+let response = client
+    .interaction()
+    .with_agent("antigravity-preview-05-2026")
+    .with_text("Print the contents of /etc/motd")
+    .with_background(true)
+    .with_store_enabled()
+    .with_environment(
+        RemoteEnvironment::new().add_source(EnvironmentSource::inline("/etc/motd", "hello")),
+    )
+    .with_agent_config(AntigravityConfig::new().with_max_total_tokens(200_000))
+    .create()
+    .await?;
+```
+
 Network policy is a union: omit `with_network` to allow all outbound
 traffic, use `NetworkConfig::Disabled` to turn networking off, or an
 allowlist of domains (wildcards supported; `transform` injects headers on
 matching requests). Custom agents can also carry a default environment via
 `Agent::with_base_environment`.
+
+### Explicit environment CRUD
+
+Instead of letting the server create an environment implicitly from an
+inline `RemoteEnvironment`, you can manage environments as first-class
+resources (`/v1beta/environments`) — create one up front, reference its ID
+from many interactions, and delete it when done. The full lifecycle works
+on a standard API key:
+
+```rust,ignore
+use genai_rs::{CreateEnvironmentRequest, EnvironmentSource};
+
+let env = client
+    .create_environment(
+        &CreateEnvironmentRequest::new()
+            .add_source(EnvironmentSource::inline("/workspace/.env", "MODE=ci")),
+    )
+    .await?;
+let env_id = env.id.clone().expect("create returns an ID");
+
+// Reference it from any interaction, then inspect and clean up.
+let fetched = client.get_environment(&env_id).await?;
+println!("status={:?} files={:?}", fetched.status, fetched.file_count);
+let listed = client.list_environments(Some(10), None).await?;
+println!("environments: {}", listed.environments.len());
+client.delete_environment(&env_id).await?;
+```
+
+Environments expire on their own (`status` moves from `active` to
+`expired`), but delete what you create — repeated runs otherwise
+accumulate containers until expiry.
+
+## Scheduled Triggers
+
+A *trigger* (`/v1beta/triggers`) runs a stored interaction on a cron
+schedule server-side — no process of yours needs to be running. Creating
+one requires the nested interaction to target a **custom agent**, and
+custom-agent creation is gated/allowlisted on standard API keys today, so
+most accounts can list but not create:
+
+```rust,ignore
+use genai_rs::{InteractionInput, InteractionRequest, TriggerCreateParams, TriggerStatus, TriggerUpdate};
+
+// The nested interaction must target a custom agent (an /v1beta/agents
+// resource ID) — a model-only interaction is rejected.
+let interaction = InteractionRequest {
+    agent: Some("my-custom-agent".to_string()),
+    input: InteractionInput::Text("Summarize yesterday's alerts".to_string()),
+    ..Default::default()
+};
+
+// Schedule + IANA time zone + the interaction to run each firing.
+let params = TriggerCreateParams::new("0 9 * * 1-5", "America/Los_Angeles", interaction)
+    .with_display_name("weekday-briefing")
+    .with_environment_id("env-id");         // optional: run inside an environment
+let trigger = client.create_trigger(&params).await?;
+
+// Fire immediately and inspect runs, then pause via update.
+let id = trigger.id.clone().expect("created trigger has an ID");
+let execution = client.run_trigger(&id).await?;
+println!("fired: {:?}", execution.status);
+let runs = client.list_trigger_executions(&id, Some(10), None).await?;
+println!("executions: {}", runs.trigger_executions.len());
+client
+    .update_trigger(&id, &TriggerUpdate::new().with_status(TriggerStatus::Paused))
+    .await?;
+client.delete_trigger(&id).await?;
+```
+
+`TriggerUpdate` omits unset fields from the PATCH body; note there is no
+`update_mask` on this endpoint (unlike webhooks), so partial-update
+semantics rest on that omission and are unconfirmed until trigger updates
+are live-verifiable. See the `genai_rs::triggers` module docs for the
+execution-status lifecycle and the agent-gating details.
 
 ## Background Execution
 

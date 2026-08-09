@@ -19,7 +19,7 @@ Enable the feature:
 
 ```toml
 [dependencies]
-genai-rs = { version = "0.8", features = ["antigravity"] }
+genai-rs = { version = "0.9", features = ["antigravity"] }
 ```
 
 Install the harness binary (it ships inside the platform-specific wheel):
@@ -132,7 +132,8 @@ let builder = AntigravityAgent::builder().with_capabilities(caps);
 ### Safety gate
 
 Enabling any write-capable builtin (`run_command`, `edit_file`,
-`create_file`, `generate_image`, `search_web`, `start_subagent`) or any MCP
+`create_file`, `generate_image`, `search_web`, `start_subagent`,
+`ask_question` — everything outside the read-only set) or any MCP
 server **without a policy or pre-tool hook** is an error at `spawn()` time —
 the same guard the Python SDK enforces. Add `policy::allow_all()` for
 autonomous agents, or a deny-by-default rule set.
@@ -202,6 +203,76 @@ receives: a scalar return `X` arrives as its string form (or `X` serialized
 when non-string), and an object return is passed through serialized. Failures
 populate `ToolOutcome.error` instead.
 
+### Answering agent questions
+
+The `ask_question` builtin lets the agent pause a turn to ask the user
+questions (multiple-choice, optionally multi-select). It is **off in the
+default read-only capability set** — enable it explicitly, and note that
+it counts as write-capable for the [safety gate](#safety-gate), so a
+policy or pre-tool hook must also be registered. (The policy satisfies
+the gate but does not govern questions — question requests bypass the
+policy engine entirely; `on_questions`, or not enabling the builtin, is
+the only control.) Set an `on_questions` hook to answer the questions
+programmatically — route them to a CLI prompt, a chat message, or policy
+code:
+
+```rust,ignore
+use genai_rs::antigravity::{BuiltinTool, Capabilities, QuestionAnswer, QuestionReply, policy};
+
+let agent = AntigravityAgent::builder()
+    // ...
+    // read_only() does not include AskQuestion — enable it explicitly.
+    .with_capabilities(Capabilities::read_only().enable(BuiltinTool::AskQuestion))
+    // AskQuestion is write-capable, so the spawn-time safety gate requires
+    // a policy (or on_pre_tool hook) once it is enabled. Any rule
+    // satisfies the gate (questions bypass the policy engine), so prefer
+    // deny-by-default over allow_all() — it won't silently permit other
+    // builtins you enable later.
+    .add_policy(policy::deny_all())
+    .on_questions(|questions| {
+        // Answer each question: pick the first choice, but never guess on
+        // an unmodeled question type or one with no rendered choices.
+        QuestionReply::Answers(
+            questions
+                .iter()
+                .map(|q| {
+                    if q.is_unknown_type() || q.choices.is_empty() {
+                        QuestionAnswer::Unanswered
+                    } else {
+                        QuestionAnswer::Choices { selected: vec![0], freeform: None }
+                    }
+                })
+                .collect(),
+        )
+    })
+    .spawn()
+    .await?;
+```
+
+`QuestionReply::Cancel` sends the cancelled flag with no answers — "stop
+asking"; what the harness then does with the in-flight turn is
+harness-owned and not live-verified. A short answer list is padded with
+`Unanswered`. (`Freeform(text)` is the ergonomic spelling of
+a `Choices` answer with no selection and that freeform text — the two
+produce identical wire.) Without a hook every question is answered
+"unanswered" (with a `warn!`) so the harness never deadlocks — and since
+the builtin is off by default, simply not enabling it means the agent
+never asks.
+
+A question whose *type* this crate doesn't model arrives with
+`is_unknown_type()` true, empty text/choices, and the raw payload in
+`extra` — prefer `Cancel` or `Unanswered` there over guessing (the
+`is_unknown_type()` check in the snippet above is what routes that case
+to `Unanswered` rather than selecting index 0 of an empty list).
+`AgentQuestion::unknown(extra)` builds that fixture for unit tests.
+
+The hook is synchronous and runs inline in the harness event pump — don't
+block in it waiting for a human. For interactive flows, collect the
+answer out-of-band (chat reply, CLI prompt in another task) into a
+channel and answer from `try_recv`, returning `Unanswered` when nothing
+has arrived; the deadlock-avoidance fallback only covers the hookless
+case.
+
 ## Custom tools — the same `#[tool]` functions as the Interactions API
 
 Tool declarations are the crate's ordinary `FunctionDeclaration`; dispatch
@@ -256,7 +327,6 @@ spawn-time safety gate):
 
 ```rust,ignore
 use genai_rs::CallableFunction;
-
 use genai_rs::antigravity::{BuiltinTool, Capabilities, Subagent, policy};
 
 let agent = AntigravityAgent::builder()
@@ -471,10 +541,10 @@ variants, never on message text. Key variants: `HarnessNotFound{searched}`,
 ## Current limitations (follow-ups)
 
 - **User questions**: the `ask_question` builtin is answered "unanswered"
-  automatically (never deadlocks); interactive question hooks are not
-  exposed. Disable the builtin if this matters.
-- **Hooks are synchronous**: `on_pre_tool` / `on_post_tool` are sync
-  closures; async hooks are a follow-up.
+  automatically (never deadlocks) unless an `on_questions` hook is set —
+  see [Answering agent questions](#answering-agent-questions).
+- **Hooks are synchronous**: `on_pre_tool` / `on_post_tool` /
+  `on_questions` are sync closures; async hooks are a follow-up.
 - **Trigger-turn output is not surfaced**: turns started by
   `add_trigger` deliveries run unobserved and are halted/discarded by the
   next `chat`/`send_streaming` (see [Triggers](#triggers)); a background

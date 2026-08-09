@@ -45,7 +45,8 @@ async fn main() -> Result<(), genai_rs::GenaiError> {
 | **Typed Response Formats** | JSON schema, audio, image, and video output via `with_response_format()` |
 | **Thinking Mode** | Model reasoning with configurable depth, thought summaries and signatures |
 | **Background + Webhooks** | Background execution, per-request webhook routing, full `/webhooks` resource (CRUD, ping, secret rotation) |
-| **Environments & Agents** | `environment` request field and the `/agents` resource client |
+| **Environments & Agents** | `environment` request field plus full `/environments` (CRUD, live-verified) and `/agents` resource clients |
+| **Scheduled Triggers** | `/triggers` resource: server-side cron interactions that fire with no client process running (CRUD, run-now, execution history; creation requires a custom agent, allowlisted on standard keys) |
 | **Multi-Speaker TTS** | `speech_config` list form for multi-voice dialogue |
 | **Wire Inspection** | Structured `WireEvent` stream via the `WireInspector` trait; `LOUD_WIRE=1` and `tracing` built-ins |
 | **Local Agents** | `antigravity` feature: native client for the Antigravity harness (workspaces, policies, subagents) |
@@ -74,19 +75,20 @@ async fn main() -> Result<(), genai_rs::GenaiError> {
 The crate models the full 2026-05-20 Interactions API surface, with wire
 shapes verified live against the Gemini API. A few knobs are **modeled but
 gated to Vertex AI** and rejected by the Gemini API today: the Retrieval
-tool, `DeepResearchConfig::with_bigquery_tool()`, and video `gcs_uri`
-delivery. Details and per-feature live-verification notes are in
+tool, `DeepResearchConfig::with_bigquery_tool()`, `safety_settings`,
+request `labels`, and video `gcs_uri` delivery. Details and per-feature
+live-verification notes are in
 [docs/INTERACTIONS_API_GAP.md](docs/INTERACTIONS_API_GAP.md).
 
 ## Installation
 
 ```toml
 [dependencies]
-genai-rs = "0.8"
+genai-rs = "0.9"
 tokio = { version = "1.0", features = ["full"] }
 
 # Required together, if you use the #[tool] macro
-genai-rs-macros = "0.8"  # The macro itself
+genai-rs-macros = "0.9"  # The macro itself
 async-trait = "0.1"      # Referenced by #[tool]-generated code
 serde_json = "1.0"       # Referenced by #[tool]-generated code
 

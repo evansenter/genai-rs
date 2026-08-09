@@ -66,7 +66,7 @@ LOUD_WIRE=1 cargo run --example <example_name>
 | Example | Description | Difficulty |
 |---------|-------------|------------|
 | `multimodal_image` | Analyze images, resolution control | Beginner |
-| `audio_input` | Transcribe and analyze audio | Beginner |
+| `audio_input` | Transcribe and analyze audio (incl. `TranscriptionConfig` tuning) | Beginner |
 | `video_input` | Analyze video content | Beginner |
 | `pdf_input` | Process PDF documents | Beginner |
 | `text_input` | Analyze text documents (TXT, JSON, CSV) | Beginner |
@@ -95,9 +95,9 @@ LOUD_WIRE=1 cargo run --example <example_name>
 |---------|-------------|------------|
 | `thinking` | Chain-of-thought reasoning levels | Intermediate |
 | `deep_research` | Long-running research agent | Advanced |
-| `webhooks_and_background` | Webhook resource CRUD + per-request webhook routing | Advanced |
+| `webhooks_and_background` | Webhook resource CRUD + per-request webhook routing + environments CRUD + triggers listing | Advanced |
 | `cancel_interaction` | Cancel background tasks | Intermediate |
-| `antigravity_agent` | Local Antigravity harness agent with Rust tools and policies (`--features antigravity`) | Advanced |
+| `antigravity_agent` | Local Antigravity harness agent with Rust tools, policies, and the `on_questions` hook (`--features antigravity`) | Advanced |
 
 ### Real-World Applications
 
@@ -268,12 +268,16 @@ cargo run --example deep_research
 **Learn**: `with_agent()`, `with_background()`, polling patterns.
 
 #### webhooks_and_background
-Push-based completion via webhooks instead of polling.
+Push-based completion via webhooks instead of polling, plus the
+environments and triggers resources.
 ```bash
 cargo run --example webhooks_and_background
 ```
 **Learn**: `create_webhook()`/`ping_webhook()`/`rotate_webhook_signing_secret()`,
-`WebhookEvent`, `with_webhook_config()` on background interactions.
+`WebhookEvent`, `with_webhook_config()` on background interactions;
+`create_environment()`/`get_environment()`/`list_environments()`/
+`delete_environment()` lifecycle; `list_triggers()` (creation is
+agent-gated).
 **Note**: Runs without `GEMINI_API_KEY` (prints request shapes).
 
 #### cancel_interaction
@@ -282,6 +286,18 @@ Cancel in-progress background tasks.
 cargo run --example cancel_interaction
 ```
 **Learn**: `cancel_interaction()`, task lifecycle management.
+
+#### antigravity_agent
+Local Antigravity harness agent: custom Rust tools, policies, streaming,
+and answering agent questions.
+```bash
+cargo run --example antigravity_agent --features antigravity
+```
+**Learn**: `AntigravityAgent::builder()`, `#[tool]` dispatch through the
+harness, `policy::deny_all()`/`allow()`, `on_questions()` (enabling the
+write-capable `AskQuestion` builtin), `send_streaming()`, `shutdown()`.
+**Note**: Requires the `localharness` binary
+(`pip install google-antigravity==0.1.5`) and `GEMINI_API_KEY`.
 
 ## Prerequisites by Example
 

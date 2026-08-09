@@ -280,8 +280,13 @@ pub struct SigningSecret {
     /// Truncated version of the signing secret (for identification).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub truncated_secret: Option<String>,
-    /// Expiration timestamp of the signing secret.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Expiration timestamp of the signing secret. A malformed timestamp
+    /// degrades to `None` (see `serde_util::deserialize_lenient_timestamp`).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp::<_, crate::serde_util::ForSigningSecret>"
+    )]
     pub expire_time: Option<DateTime<Utc>>,
 }
 
@@ -325,11 +330,23 @@ pub struct Webhook {
     /// store it securely, it is not returned again.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub new_signing_secret: Option<String>,
-    /// Output only. When the webhook was created.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Output only. When the webhook was created. A malformed timestamp
+    /// degrades to `None` rather than dropping the webhook from a listed
+    /// page (see `serde_util::deserialize_lenient_timestamp`).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp::<_, crate::serde_util::ForWebhook>"
+    )]
     pub create_time: Option<DateTime<Utc>>,
-    /// Output only. When the webhook was last updated.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Output only. When the webhook was last updated. A malformed timestamp
+    /// degrades to `None` rather than dropping the webhook from a listed
+    /// page (see `serde_util::deserialize_lenient_timestamp`).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp::<_, crate::serde_util::ForWebhook>"
+    )]
     pub update_time: Option<DateTime<Utc>>,
 }
 
@@ -539,7 +556,9 @@ impl<'de> Deserialize<'de> for RevocationBehavior {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WebhookListResponse {
-    /// The webhooks on this page.
+    /// The webhooks on this page. A null or malformed list degrades to
+    /// empty; malformed elements drop individually.
+    #[serde(deserialize_with = "crate::serde_util::deserialize_lenient_vec")]
     pub webhooks: Vec<Webhook>,
     /// Token for the next page. Absent when there are no more pages.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -739,7 +758,7 @@ mod tests {
     fn test_webhook_full_resource_roundtrip() {
         // Wire fixture derived from the generated google-genai bindings.
         let json = json!({
-            "id": "webhooks/wh-123",
+            "id": "wh123bare0pq",
             "name": "my-hook",
             "uri": "https://example.com/hook",
             "subscribed_events": ["batch.succeeded", "interaction.failed", "video.generated"],
@@ -753,7 +772,7 @@ mod tests {
         });
 
         let webhook: Webhook = serde_json::from_value(json.clone()).unwrap();
-        assert_eq!(webhook.id.as_deref(), Some("webhooks/wh-123"));
+        assert_eq!(webhook.id.as_deref(), Some("wh123bare0pq"));
         assert_eq!(webhook.state, Some(WebhookState::Enabled));
         assert_eq!(webhook.subscribed_events.len(), 3);
         assert_eq!(
@@ -790,6 +809,28 @@ mod tests {
         let empty: WebhookListResponse = serde_json::from_str("{}").unwrap();
         assert!(empty.webhooks.is_empty());
         assert!(empty.next_page_token.is_none());
+
+        // Present-but-degenerate list keys degrade like the trigger and
+        // environment envelopes, rather than erroring the page.
+        let null: WebhookListResponse = serde_json::from_value(json!({"webhooks": null})).unwrap();
+        assert!(null.webhooks.is_empty());
+        let bad: WebhookListResponse = serde_json::from_value(json!({"webhooks": 7})).unwrap();
+        assert!(bad.webhooks.is_empty());
+
+        // The element-drop arm, pinned on the concrete type: a malformed
+        // timestamp does NOT drop the webhook (the lenient timestamp
+        // degrades that field alone), while a wrong-typed modeled field
+        // drops only its own element and the good sibling survives.
+        let partial: WebhookListResponse = serde_json::from_value(json!({"webhooks": [
+            {"uri": "https://a.example.com", "create_time": "not-a-time"},
+            {"uri": 42},
+            {"uri": "https://b.example.com"}
+        ]}))
+        .unwrap();
+        assert_eq!(partial.webhooks.len(), 2);
+        assert_eq!(partial.webhooks[0].uri, "https://a.example.com");
+        assert!(partial.webhooks[0].create_time.is_none());
+        assert_eq!(partial.webhooks[1].uri, "https://b.example.com");
     }
 
     #[test]

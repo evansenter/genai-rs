@@ -7,7 +7,7 @@
 //!
 //! Run with: cargo run --example audio_input
 
-use genai_rs::{Client, Content, GenaiError};
+use genai_rs::{Client, Content, GenaiError, TranscriptionConfig};
 use std::env;
 use std::error::Error;
 
@@ -29,7 +29,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Note: This uses a tiny silent WAV clip for demonstration.
     // In real usage, you would provide actual audio content.
-    // Using with_content() with Content constructors
+    // Using with_content() with Content constructors.
+    //
+    // TranscriptionConfig tunes speech recognition: BCP-47 language hints
+    // (omit for auto-detect), "speaker" diarization, and "word"-level
+    // timestamps (the SDK-documented value sets — see the field docs).
     let response = client
         .interaction()
         .with_model(model_name)
@@ -40,6 +44,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
             ),
             Content::audio_data(DEMO_WAV_BASE64, "audio/wav"),
         ])
+        .with_transcription_config(
+            TranscriptionConfig::new()
+                .with_language_codes(["en-US"])
+                .with_diarization_mode("speaker")
+                .with_timestamp_granularities(["word"]),
+        )
         .create()
         .await;
 
@@ -68,7 +78,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("1. TRANSCRIPTION:");
     println!(
         r#"
-   use genai_rs::Content;
+   use genai_rs::{{Content, TranscriptionConfig}};
 
    let response = client
        .interaction()
@@ -77,6 +87,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
            Content::text("Transcribe this audio with proper punctuation."),
            Content::audio_data(&base64_audio, "audio/mp3"),
        ])
+       // Language hints speed up + improve recognition (omit to auto-detect)
+       .with_transcription_config(
+           TranscriptionConfig::new().with_language_codes(["en-US"]),
+       )
        .create()
        .await?;
 "#
@@ -95,6 +109,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                - What is the emotional tone?"),
            Content::audio_data(&base64_audio, "audio/mp3"),
        ])
+       // Structural speaker labels, beyond what prompting can express
+       .with_transcription_config(
+           TranscriptionConfig::new().with_diarization_mode("speaker"),
+       )
        .create()
        .await?;
 "#
@@ -260,17 +278,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("• Multi-turn conversations remember audio context\n");
 
     println!("--- What You'll See with LOUD_WIRE=1 ---");
-    println!("  [REQ#1] POST with text + inlineData (audio base64 truncated)");
+    println!(
+        "  [REQ#1] POST with text + inlineData (audio base64 truncated) + \
+         generation_config.transcription_config"
+    );
     println!("  [RES#1] completed: transcription or analysis\n");
-    println!("Multi-turn:");
-    println!("  [REQ#2] POST with text + previousInteractionId");
-    println!("  [RES#2] completed: follow-up using audio context\n");
+    println!("Error handling (Example 4):");
+    println!("  [REQ#2] POST with deliberately invalid base64 audio");
+    println!("  [RES#2] 400 invalid_argument - surfaced as GenaiError::Api\n");
 
     println!("--- Production Considerations ---");
     println!("• Supports WAV, MP3, AIFF, AAC, OGG, FLAC formats");
     println!("• Maximum audio length: ~9.5 hours");
     println!("• For files >20MB, use Files API (upload_file)");
     println!("• MIME type must match actual audio format");
+    println!("• TranscriptionConfig's diarization_mode/timestamp_granularities are");
+    println!("  open strings with one documented value each today (\"speaker\", \"word\")");
 
     Ok(())
 }

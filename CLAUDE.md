@@ -236,6 +236,7 @@ When releasing a new version, update these files:
 | `Cargo.toml` | `genai-rs-macros = { version = "X.Y.Z"` (dependencies) |
 | `genai-rs-macros/Cargo.toml` | `version = "X.Y.Z"` (line ~3) |
 | `README.md` | `genai-rs = "X.Y"` and `genai-rs-macros = "X.Y"` (Installation section) |
+| `docs/ANTIGRAVITY.md` | `genai-rs = { version = "X.Y", ... }` (Setup section) |
 | `CHANGELOG.md` | `## [Unreleased]` → `## [X.Y.Z] - YYYY-MM-DD` |
 
 `Cargo.lock` updates automatically—don't edit manually.
@@ -249,7 +250,9 @@ After merging version bump PR:
    same nightly check before publish, but catching it here means finding out
    before the tag exists rather than after):
    `RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo +nightly doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs`
-   (matches the `[package.metadata.docs.rs]` feature set)
+   (matches the `[package.metadata.docs.rs]` feature set; `-D warnings` here
+   is deliberately stricter than docs.rs and the CI gate — warnings are an
+   early signal locally, but only hard errors fail the actual docs.rs build)
 1. **Tag the release**: `git tag -a vX.Y.Z origin/main -m "Release vX.Y.Z"`
 2. **Push tag**: `git push origin vX.Y.Z`
 3. **Create GitHub release**: `gh release create vX.Y.Z --title "vX.Y.Z" --notes "..."` (copy from CHANGELOG)

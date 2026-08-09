@@ -1,12 +1,15 @@
 //! Example: Webhooks + background execution
 //!
-//! Demonstrates the webhooks surface of the Interactions API:
+//! Demonstrates the webhooks, environments and triggers surfaces of the
+//! Interactions API:
 //!
 //! 1. The `/v1beta/webhooks` resource: create/get/list/update/ping/
 //!    rotateSigningSecret/delete
 //! 2. Per-request `webhook_config` routing on a background interaction, so
 //!    lifecycle events (`interaction.completed`, `interaction.failed`, ...)
 //!    are pushed to your endpoint instead of requiring polling
+//! 3. The `/v1beta/environments` resource: create/get/list/delete lifecycle
+//! 4. The `/v1beta/triggers` resource: listing (creation is agent-gated)
 //!
 //! Without `GEMINI_API_KEY` the example constructs the requests and prints
 //! their wire shapes instead of calling the API, so it can always run.
@@ -66,6 +69,30 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("=== Background interaction with webhook_config ===");
     println!("{}\n", serde_json::to_string_pretty(&request)?);
 
+    // Environments/triggers wire shapes (the live sections below reuse
+    // this request) — printed here so a keyless run still shows them.
+    let env_request = genai_rs::CreateEnvironmentRequest::new().add_source(
+        genai_rs::EnvironmentSource::inline("/etc/motd", "hello from the environments example"),
+    );
+    println!("=== Environment create (POST /v1beta/environments) ===");
+    println!("{}\n", serde_json::to_string_pretty(&env_request)?);
+
+    // The trigger create body is the one shape a reader cannot observe
+    // live at all (creation is agent-gated), so always print it.
+    let trigger_params = genai_rs::TriggerCreateParams::new(
+        "0 9 * * 1-5",
+        "UTC",
+        genai_rs::InteractionRequest {
+            agent: Some("my-custom-agent".to_string()),
+            input: genai_rs::InteractionInput::Text("Daily repo audit".to_string()),
+            ..Default::default()
+        },
+    )
+    .with_display_name("weekday-audit");
+    println!("=== Trigger create (POST /v1beta/triggers, agent-gated) ===");
+    println!("{}\n", serde_json::to_string_pretty(&trigger_params)?);
+    println!("=== Triggers list (GET /v1beta/triggers) - no body ===\n");
+
     let Some(_) = api_key else {
         println!("GEMINI_API_KEY not set - skipping live API calls.\n");
         print_footer();
@@ -77,17 +104,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // -------------------------------------------------------------------
     println!("=== Live webhook lifecycle ===");
     match client.create_webhook(&webhook).await {
-        Ok(created) => {
-            let id = created.id.clone().unwrap_or_default();
+        // Destructure a present ID like the environments section below:
+        // require_id turns an empty ID into a local InvalidInput on every
+        // follow-up call, so an ID-less create would otherwise leak the
+        // webhook with misattributed errors and no usable handle.
+        Ok(Webhook {
+            id: Some(id),
+            new_signing_secret,
+            ..
+        }) if !id.is_empty() => {
             println!("Created webhook: {id}");
             // Store this secret securely - it is only returned on create.
-            println!(
-                "Signing secret returned: {}",
-                created.new_signing_secret.is_some()
-            );
+            println!("Signing secret returned: {}", new_signing_secret.is_some());
 
-            let list = client.list_webhooks(Some(10), None).await?;
-            println!("Registered webhooks: {}", list.webhooks.len());
+            match client.list_webhooks(Some(10), None).await {
+                Ok(list) => println!("Registered webhooks: {}", list.webhooks.len()),
+                Err(e) => println!("list_webhooks failed: {e}"),
+            }
 
             // Send a test delivery to the endpoint
             match client.ping_webhook(&id).await {
@@ -102,9 +135,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
 
             // Clean up
-            client.delete_webhook(&id).await?;
-            println!("Deleted webhook {id}");
+            match client.delete_webhook(&id).await {
+                Ok(()) => println!("Deleted webhook {id}"),
+                Err(e) => println!("delete_webhook failed: {e} - delete {id} manually"),
+            }
         }
+        Ok(_) => println!(
+            "Webhook created without an ID (protocol violation) - it may \
+             linger; list and delete it manually"
+        ),
         Err(e) => println!("Webhook resource not available for this account: {e}"),
     }
 
@@ -128,6 +167,65 @@ async fn main() -> Result<(), Box<dyn Error>> {
         Err(e) => println!("Background interaction failed: {e}"),
     }
 
+    // =========================================================================
+    // Environments: create once, reference from many interactions
+    // =========================================================================
+    // Verified live 2026-08-08: the full lifecycle works on a standard key.
+    println!("\n=== Environments CRUD ===");
+    // Print-don't-propagate throughout, like the webhook sections above: an
+    // account-gating or transient error must not exit main — the footer (and
+    // its delete-what-you-create warning) still has to print.
+    match client.create_environment(&env_request).await {
+        // A create response without a usable ID would be a protocol
+        // violation; don't paper over it (an absent or empty ID would turn
+        // the get/delete below into local InvalidInput errors misattributed
+        // to the API, like the webhook arm above).
+        Ok(genai_rs::Environment {
+            id: Some(env_id), ..
+        }) if !env_id.is_empty() => {
+            println!("Created environment: {env_id}");
+
+            // A failed read must not skip the delete below and leak the
+            // container (see the footer note).
+            match client.list_environments(Some(10), None).await {
+                Ok(listed) => println!("Environments visible: {}", listed.environments.len()),
+                Err(e) => println!("list_environments failed: {e}"),
+            }
+            match client.get_environment(&env_id).await {
+                Ok(fetched) => println!(
+                    "Fetched: status={:?} files={:?} bytes={:?}",
+                    fetched.status, fetched.file_count, fetched.size_bytes
+                ),
+                Err(e) => println!("get_environment failed: {e}"),
+            }
+
+            match client.delete_environment(&env_id).await {
+                Ok(()) => println!("Deleted environment {env_id}"),
+                Err(e) => println!(
+                    "delete_environment failed: {e} - delete {env_id} manually \
+                     so containers don't accumulate"
+                ),
+            }
+        }
+        Ok(_) => println!(
+            "create_environment returned no ID (protocol violation) - the \
+             container is leaked; hunt it via list_environments"
+        ),
+        Err(e) => println!("create_environment failed (tolerated): {e}"),
+    }
+
+    // =========================================================================
+    // Triggers: server-side scheduled interactions
+    // =========================================================================
+    // Listing works on any key. Creating a trigger requires its interaction
+    // to target a custom agent (an /v1beta/agents resource), and custom-agent
+    // creation is gated/allowlisted on standard API keys — so this example
+    // only lists. See genai_rs::triggers for the create/run/update surface.
+    match client.list_triggers(Some(10), None).await {
+        Ok(triggers) => println!("\nTriggers visible: {}", triggers.triggers.len()),
+        Err(e) => println!("\nlist_triggers failed (tolerated, gated surface): {e}"),
+    }
+
     print_footer();
     Ok(())
 }
@@ -141,7 +239,11 @@ fn print_footer() {
     println!("  [REQ#2] GET /v1beta/webhooks (list), POST :ping, POST :rotateSigningSecret");
     println!("  [RES#2] list/ping/rotate responses");
     println!("  [REQ#3] POST /v1beta/interactions with background + webhook_config");
-    println!("  [RES#3] in_progress interaction; completion arrives at your webhook\n");
+    println!("  [RES#3] in_progress interaction; completion arrives at your webhook");
+    println!("  [REQ#4] POST /v1beta/environments, then GET (list + by id), DELETE");
+    println!("  [RES#4] environment resource: status, string-encoded file_count/size_bytes");
+    println!("  [REQ#5] GET /v1beta/triggers");
+    println!("  [RES#5] trigger list ({{}} when none exist)\n");
 
     println!("--- Production Considerations ---");
     println!("• Store new_signing_secret at create time - it is never returned again");
@@ -151,4 +253,8 @@ fn print_footer() {
     println!("  (state: disabled_due_to_failed_deliveries) - monitor webhook state");
     println!("• webhook_config overrides registered webhooks per request and echoes");
     println!("  user_metadata on every event - use it to correlate jobs");
+    println!("• Environments expire on their own, but delete what you create -");
+    println!("  repeated runs otherwise accumulate containers until expiry");
+    println!("• Triggers fire with no client process running; pause via");
+    println!("  update_trigger(status: paused) and audit via list_trigger_executions");
 }

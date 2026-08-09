@@ -1,5 +1,7 @@
 //! Antigravity agent example: spawn the local harness, register a custom
-//! Rust tool, set policies, and run an agentic conversation.
+//! Rust tool, set policies, and run an agentic conversation — including
+//! enabling the write-capable `ask_question` builtin and answering the
+//! agent's question batches through an `on_questions` hook.
 //!
 //! Requirements:
 //! - The `localharness` binary (ships in the `google-antigravity` Python
@@ -15,7 +17,9 @@
 
 use futures_util::StreamExt;
 use genai_rs::CallableFunction;
-use genai_rs::antigravity::{AgentEvent, AntigravityAgent, BuiltinTool, Capabilities, policy};
+use genai_rs::antigravity::{
+    AgentEvent, AntigravityAgent, BuiltinTool, Capabilities, QuestionAnswer, QuestionReply, policy,
+};
 use genai_rs_macros::tool;
 
 /// Returns the current weather for a city.
@@ -36,8 +40,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut agent = AntigravityAgent::builder()
         .with_api_key(api_key)
         .with_model("gemini-3-flash-preview")
-        .with_system_instructions("You are a concise assistant. Prefer tools over guessing.")
-        .with_capabilities(Capabilities::read_only().disable(BuiltinTool::AskQuestion))
+        .with_system_instructions(
+            "You are a concise assistant. Prefer tools over guessing. When a request is \
+             ambiguous (e.g. no city given for weather), use ask_question to clarify \
+             instead of assuming.",
+        )
+        // read_only() does not include AskQuestion — enable it explicitly
+        // so the on_questions hook below is reachable.
+        .with_capabilities(Capabilities::read_only().enable(BuiltinTool::AskQuestion))
+        // Answer agent questions (ask_question builtin) from policy: pick
+        // the first choice when there is one, otherwise leave unanswered.
+        // The hook runs inline in the event pump — never block in it
+        // waiting for a human; answer from policy or pre-collected state.
+        .on_questions(|questions| {
+            QuestionReply::Answers(
+                questions
+                    .iter()
+                    .map(|q| {
+                        if q.is_unknown_type() {
+                            // Unmodeled question type: the text is empty by
+                            // construction and the raw payload is in
+                            // `extra` — show its keys, the one observable
+                            // difference from a modeled question.
+                            println!(
+                                "[agent asked an unmodeled question type; extra keys: {:?}]",
+                                q.extra.keys().collect::<Vec<_>>()
+                            );
+                            QuestionAnswer::Unanswered
+                        } else if q.choices.is_empty() {
+                            println!("[agent asked: {}]", q.question);
+                            QuestionAnswer::Unanswered
+                        } else {
+                            println!("[agent asked: {}]", q.question);
+                            QuestionAnswer::Choices {
+                                selected: vec![0],
+                                freeform: None,
+                            }
+                        }
+                    })
+                    .collect(),
+            )
+        })
         .add_tool(GetWeatherCallable.declaration())
         .add_policy(policy::deny_all())
         .add_policy(policy::allow("get_weather"))
@@ -87,6 +130,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!();
     }
 
+    // A deliberately under-specified turn: no city, so per the system
+    // instruction the agent should clarify via ask_question — answered by
+    // the on_questions hook above (which picks the first choice). This is
+    // the turn that exercises the questionsRequest/questionResponse
+    // round-trip documented in the footer.
+    println!("\n--- Ambiguous turn (may trigger ask_question) ---");
+    let response = agent.chat("What's the weather like right now?").await?;
+    println!("Agent: {}\n", response.text());
+
     let conversation_id = agent.conversation_id().map(ToString::to_string);
     agent.shutdown().await?;
     println!("\nHarness shut down cleanly. (conversation_id={conversation_id:?})");
@@ -102,6 +154,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "  WS Receive: {{\"toolCall\": ...}} / WS Send: {{\"toolResponse\": ...}} - custom tools"
     );
+    println!(
+        "  WS Receive: stepUpdate.questionsRequest / WS Send: {{\"questionResponse\": ...}} - \
+         agent questions answered by the on_questions hook"
+    );
     println!("  STDERR: ... - harness diagnostics\n");
 
     println!("--- Production Considerations ---");
@@ -109,6 +165,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "• Pin the harness: pip install google-antigravity==0.1.5 (see SUPPORTED_HARNESS_VERSION)"
     );
     println!("• Always add policies before enabling write tools (run_command, edit_file)");
+    println!(
+        "• on_questions runs inline in the event pump - never block in it waiting for a human;"
+    );
+    println!("  answer from policy or pre-collected state (channel + try_recv)");
+    println!("• AskQuestion counts as write-capable: enabling it without a policy or");
+    println!("  on_pre_tool hook fails the spawn-time safety gate - but questions bypass");
+    println!("  the policy engine at runtime; on_questions (or not enabling) is the control");
     println!(
         "• Call agent.shutdown() for graceful exit; dropping kills the harness without persistence"
     );

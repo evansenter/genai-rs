@@ -42,7 +42,7 @@ pub enum BuiltinTool {
     EditFile,
     /// Execute a shell command (`run_command`). Write-capable.
     RunCommand,
-    /// Ask the user a clarifying question (`ask_question`).
+    /// Ask the user a clarifying question (`ask_question`). Write-capable.
     AskQuestion,
     /// Invoke a subagent (`start_subagent`). Write-capable.
     StartSubagent,

@@ -21,7 +21,7 @@
 
 mod common;
 
-use common::get_client;
+use common::{TINY_WAV_BASE64, get_client};
 use genai_rs::{
     Agent, DeepResearchConfig, EnvironmentSource, RemoteEnvironment, ResponseFormat,
     RetrievalConfig, SpeechConfig, Tool, VideoConfig, VideoTask, Visualization, Webhook,
@@ -325,6 +325,24 @@ async fn test_interaction_with_inline_environment() {
             if let Some(id) = &response.id {
                 let _ = client.cancel_interaction(id).await;
             }
+            // Best-effort: delete the implicitly provisioned environment
+            // when its ID is known (they expire on their own, but each CI
+            // run otherwise leaves one behind until then). Every
+            // live-observed ID in this API is bare (no collection prefix);
+            // environment_id is the one field not yet observed non-None at
+            // accept-time, so defensively strip a possible resource-name
+            // prefix and print the outcome rather than swallowing a
+            // silent 404.
+            if let Some(env_id) = &response.environment_id {
+                let bare_id = env_id.strip_prefix("environments/").unwrap_or(env_id);
+                match client.delete_environment(bare_id).await {
+                    Ok(()) => println!("Deleted implicit environment {bare_id}"),
+                    Err(e) => println!(
+                        "delete of implicit environment {bare_id} failed (expires on \
+                         its own): {e}"
+                    ),
+                }
+            }
         }
         Err(e) => println!("Environment not available for this account/agent: {e}"),
     }
@@ -520,6 +538,182 @@ async fn test_video_generation_request_shape() {
 }
 
 // =============================================================================
+// TranscriptionConfig + Vertex-gated request params (request acceptance)
+// =============================================================================
+
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_transcription_config_accepted() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    use genai_rs::TranscriptionConfig;
+
+    // Verified live (2026-08-08): `generation_config.transcription_config`
+    // is accepted by the Gemini API (200) — so assert the strong form.
+    // A server-side rename, field rejection, *or* a Vertex-gating of the
+    // parameter all fail this outright instead of shipping silently;
+    // transients are absorbed by the retry.
+    let response = crate::retry_request!([client] => {
+        client
+            .interaction()
+            .with_model("gemini-3-flash-preview")
+            .with_content(vec![
+                genai_rs::Content::text(
+                    "Transcribe this short clip. If it is silent, say 'Silent audio.'",
+                ),
+                genai_rs::Content::audio_data(TINY_WAV_BASE64, "audio/wav"),
+            ])
+            .with_transcription_config(
+                TranscriptionConfig::new()
+                    .with_language_codes(["en-US"])
+                    .with_diarization_mode("speaker")
+                    .with_timestamp_granularities(["word"]),
+            )
+            .create()
+            .await
+    })
+    .expect("transcription_config should be accepted (verified live 2026-08-08)");
+    println!(
+        "transcription_config accepted: status={:?}",
+        response.status
+    );
+}
+
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_safety_settings_and_labels_vertex_gated() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    use genai_rs::{HarmCategory, SafetySetting, SafetyThreshold};
+
+    // Verified live (2026-08-08): both `safety_settings` and `labels` are
+    // rejected as Vertex-only ("not available on the Gemini API but it is
+    // available on the Gemini Enterprise Agent Platform"). The two gates
+    // are independent spec parameters that merely share that status today,
+    // so probe each on its own request — one launching while the other
+    // stays gated remains legible. This pins that each rejection stays a
+    // *capability* error, not a schema-level unknown-field error — if one
+    // starts succeeding, that knob has launched and this test should be
+    // upgraded.
+    for knob in ["safety_settings", "labels"] {
+        // Retry transients (429/5xx) so the strict match below only ever
+        // sees a settled outcome.
+        let result = crate::retry_request!([client, knob] => {
+            let builder = client
+                .interaction()
+                .with_model("gemini-3-flash-preview")
+                .with_text("Say OK.");
+            let builder = match knob {
+                "safety_settings" => builder.add_safety_setting(SafetySetting::new(
+                    HarmCategory::Harassment,
+                    SafetyThreshold::BlockOnlyHigh,
+                )),
+                "labels" => builder.add_label("team", "genai-rs-ci"),
+                // Exhaustive on purpose: a catch-all would let a typo (or a
+                // third entry) silently probe labels under the wrong name.
+                other => panic!("unhandled knob {other}"),
+            };
+            builder.create().await
+        });
+
+        match result {
+            // Probes pin current reality: a launch is a loud signal to
+            // upgrade this test, exactly like the transcription probe's
+            // strict expect above.
+            Ok(response) => panic!(
+                "{knob} was accepted (status={:?}) — the knob has launched on \
+                 the Gemini API; upgrade this probe to assert acceptance",
+                response.status
+            ),
+            // The positive pin: a 400 carrying the gate's stable fragment
+            // ("Gemini Enterprise" appears in every observed wording of
+            // the Vertex-only rejection; deliberately shorter than the
+            // full sentence so a benign rewording doesn't read as a crate
+            // regression). This alone proves the schema was accepted and
+            // only the capability gate refused it — a schema rejection
+            // ("Unknown parameter"/"Unknown name"), a 403 on a mis-scoped
+            // key, or a transport failure all fall through to the panic
+            // arm.
+            Err(genai_rs::GenaiError::Api {
+                status_code: 400,
+                message,
+                ..
+            }) if message.contains("Gemini Enterprise") => {
+                println!("{knob} Vertex-gated as expected: {message}");
+            }
+            Err(e) => {
+                panic!("{knob}: expected the documented Vertex-gate 400, got: {e}")
+            }
+        }
+    }
+}
+
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_antigravity_config_accepted() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    use genai_rs::{AntigravityConfig, EnvironmentSource, RemoteEnvironment};
+
+    // Verified live (2026-08-09): `agent_config: {"type": "antigravity"}`
+    // plus `max_total_tokens` is accepted on `antigravity-preview-05-2026`
+    // (which requires an environment). `model` is deliberately not sent —
+    // an unavailable value returns 404 and the agent's model catalog is
+    // not enumerable on a standard key. Retry transients, assert the
+    // strong form, and cancel the background interaction. The retry is
+    // deliberate despite the non-idempotent create: a retry after a lost
+    // response can orphan an agent run plus its environment with no ID to
+    // clean up, but max_total_tokens caps the orphan's cost and the
+    // environment expires on its own — unlike the trigger probe, whose
+    // orphan would fire on a schedule forever, so it declines the retry.
+    let response = crate::retry_request!([client] => {
+        client
+            .interaction()
+            .with_agent("antigravity-preview-05-2026")
+            .with_text("Print the contents of /etc/motd")
+            .with_background(true)
+            .with_store_enabled()
+            .with_environment(
+                RemoteEnvironment::new()
+                    .add_source(EnvironmentSource::inline("/etc/motd", "config probe")),
+            )
+            .with_agent_config(AntigravityConfig::new().with_max_total_tokens(200_000))
+            .create()
+            .await
+    })
+    .expect("AntigravityConfig should be accepted (verified live 2026-08-09)");
+    println!("AntigravityConfig accepted: status={:?}", response.status);
+    if let Some(id) = &response.id {
+        // Print both arms: a failed cancel leaves a background agent
+        // running against the account's budget — the larger of this
+        // test's two possible leaks, so it must not be silent.
+        match client.cancel_interaction(id).await {
+            Ok(_) => println!("Cancelled interaction {id}"),
+            Err(e) => println!("cancel_interaction({id}) failed (tolerated): {e}"),
+        }
+    }
+    if let Some(env_id) = &response.environment_id {
+        let bare_id = env_id.strip_prefix("environments/").unwrap_or(env_id);
+        // Print both arms like the inline-environment probe: the
+        // response-side environment_id form is unobserved, and a 404 here
+        // is exactly the signal that the prefix assumption is wrong.
+        match client.delete_environment(bare_id).await {
+            Ok(()) => println!("Deleted environment {bare_id}"),
+            Err(e) => println!("delete_environment({bare_id}) failed (tolerated): {e}"),
+        }
+    }
+}
+
+// =============================================================================
 // Deep Research config knobs (request acceptance)
 // =============================================================================
 
@@ -538,19 +732,24 @@ async fn test_deep_research_config_knobs_accepted() {
     // the Gemini Enterprise Agent Platform") and is deliberately not sent
     // here. Deep-research runs are long, so this only checks request
     // acceptance and then cancels the background interaction.
-    let result = client
-        .interaction()
-        .with_agent("deep-research-preview-04-2026")
-        .with_text("One-paragraph overview of Rust async runtimes")
-        .with_background(true)
-        .with_store_enabled()
-        .with_agent_config(
-            DeepResearchConfig::new()
-                .with_visualization(Visualization::Auto)
-                .with_collaborative_planning(true),
-        )
-        .create()
-        .await;
+    // Retry-wrapped like the antigravity probe next door: a retried create
+    // can at worst orphan a bounded background interaction (cancel-on-success
+    // covers the common case), unlike the trigger probe's scheduled resource.
+    let result = crate::retry_request!([client] => {
+        client
+            .interaction()
+            .with_agent("deep-research-preview-04-2026")
+            .with_text("One-paragraph overview of Rust async runtimes")
+            .with_background(true)
+            .with_store_enabled()
+            .with_agent_config(
+                DeepResearchConfig::new()
+                    .with_visualization(Visualization::Auto)
+                    .with_collaborative_planning(true),
+            )
+            .create()
+            .await
+    });
 
     match result {
         Ok(response) => {
@@ -563,5 +762,198 @@ async fn test_deep_research_config_knobs_accepted() {
             }
         }
         Err(e) => panic!("Deep Research config knobs rejected: {e}"),
+    }
+}
+
+// =============================================================================
+// Environments resource: create / get / list / delete
+// =============================================================================
+
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_environment_crud_lifecycle() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    use genai_rs::{CreateEnvironmentRequest, EnvironmentSource};
+
+    // Create: one inline file source.
+    let request = CreateEnvironmentRequest::new().add_source(EnvironmentSource::inline(
+        "/etc/motd",
+        "hello from genai-rs environments CRUD",
+    ));
+    // Create is a non-idempotent POST, so a retry after a lost response can
+    // orphan a first container — tolerated here (unlike the trigger test's
+    // un-retried create) because environments expire on their own, bounding
+    // the leak, while an un-retried create would flake the whole lifecycle.
+    let created = crate::retry_request!([client, request] => {
+        client.create_environment(&request).await
+    })
+    .expect("create_environment");
+    println!(
+        "Created environment: id={:?} status={:?}",
+        created.id, created.status
+    );
+    let created_id = created.id.clone().unwrap_or_else(|| {
+        // No ID means no handle to delete by — the container is leaked
+        // (until it expires). Name it loudly like the trigger and example
+        // siblings instead of a bare expect.
+        panic!(
+            "create_environment returned no ID (protocol violation) — the container is \
+             leaked; hunt it via list_environments"
+        )
+    });
+
+    // Run the read assertions in a closure so the delete below also runs
+    // on the failure path — a tripped assertion must not leak the
+    // environment server-side (they expire eventually, but repeated CI
+    // failures would accumulate containers). Reads retry transients like
+    // the neighbouring CRUD tests.
+    let checks = async {
+        // Get: counts arrive as protobuf-JSON strings and must parse.
+        let fetched = crate::retry_request!([client, created_id] => {
+            client.get_environment(&created_id).await
+        })
+        .expect("get_environment");
+        assert_eq!(fetched.id.as_deref(), Some(created_id.as_str()));
+        assert!(
+            fetched.file_count.is_some(),
+            "file_count should deserialize from the string wire form: {fetched:?}"
+        );
+
+        // List: the created environment must appear (first page is enough —
+        // environments expire, so the list stays small).
+        let listed = crate::retry_request!([client] => {
+            client.list_environments(Some(50), None).await
+        })
+        .expect("list_environments");
+        assert!(
+            listed
+                .environments
+                .iter()
+                .any(|e| e.id.as_deref() == Some(created_id.as_str())),
+            "created environment missing from list"
+        );
+    };
+    let outcome = std::panic::AssertUnwindSafe(checks);
+    let outcome = futures_util::FutureExt::catch_unwind(outcome).await;
+
+    // Delete runs regardless of assertion outcome (retrying transients so
+    // a blip doesn't leak the container), but a tripped read assertion is
+    // the diagnosis this test exists to produce — re-raise it before
+    // judging the delete, so a double failure reports the real one.
+    let deleted = crate::retry_request!([client, created_id] => {
+        client.delete_environment(&created_id).await
+    });
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    deleted.expect("delete_environment");
+    // Confirm gone with the same rigor as the trigger probe below: pin the
+    // positive form — a deleted environment gets a 404 (verified live
+    // 2026-08-09). A broad 4xx would also admit outcomes that say nothing
+    // about the delete (an exhausted-retry 429, a mis-scoped-key 403).
+    // Retry transients first so a 503 becomes a real answer rather than a
+    // panic.
+    let gone = crate::retry_request!([client, created_id] => {
+        client.get_environment(&created_id).await
+    });
+    match gone {
+        Err(genai_rs::GenaiError::Api {
+            status_code: 404, ..
+        }) => {}
+        Ok(env) => panic!("environment should be gone after delete, got: {env:?}"),
+        Err(e) => panic!("expected a 404 for the deleted environment, got: {e}"),
+    }
+}
+
+// =============================================================================
+// Triggers resource: list is live; create is agent-gated
+// =============================================================================
+
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_triggers_list_and_gated_create() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    use genai_rs::{InteractionInput, InteractionRequest, TriggerCreateParams};
+
+    // List works on standard keys (returns `{}` when empty — the default
+    // deserialization path this asserts). Reads retry transients like the
+    // neighbouring CRUD tests.
+    let listed = crate::retry_request!([client] => {
+        client.list_triggers(Some(10), None).await
+    })
+    .expect("list_triggers");
+    println!("Triggers listed: {}", listed.triggers.len());
+
+    // Create requires a custom agent, which is gated/allowlisted on
+    // standard API keys (verified live 2026-08-08: a model-only
+    // interaction is rejected with "Agent '' is invalid or not found").
+    // Tolerate the gate; assert the payload schema itself was accepted.
+    let interaction = InteractionRequest {
+        model: Some("gemini-3-flash-preview".to_string()),
+        input: InteractionInput::Text("Say OK".to_string()),
+        ..Default::default()
+    };
+    let params = TriggerCreateParams::new("0 5 1 1 *", "UTC", interaction)
+        .with_display_name("genai-rs trigger schema probe");
+    // Deliberately NOT retry-wrapped: create is a non-idempotent POST, and
+    // a retry after a lost response could leave a second, *scheduled*
+    // trigger behind with no ID to clean up. A transient create failure is
+    // a legible test failure, not a flake worth papering over.
+    match client.create_trigger(&params).await {
+        Ok(trigger) => {
+            println!("Trigger created (agent gate open): id={:?}", trigger.id);
+            if let Some(id) = &trigger.id {
+                // A leaked trigger keeps firing on schedule — if the delete
+                // fails, say so loudly instead of leaving it silent.
+                match client.delete_trigger(id).await {
+                    Ok(()) => println!("Deleted trigger {id}"),
+                    Err(e) => println!("delete_trigger failed: {e} - delete {id} manually"),
+                }
+            } else {
+                // No ID means no handle to delete by — the scheduled
+                // trigger is now leaked. Panic with the only remaining
+                // handle (the display name) rather than fall through.
+                panic!(
+                    "trigger created without an id (protocol violation) — a scheduled \
+                     trigger named {:?} is leaked; hunt it down via list_triggers",
+                    trigger.display_name
+                );
+            }
+        }
+        // Only a structured 4xx API rejection proves anything about the
+        // payload schema — a transport failure would pass the marker check
+        // vacuously, so fail loudly on anything else.
+        Err(genai_rs::GenaiError::Api {
+            status_code,
+            message,
+            ..
+        }) if (400..500).contains(&status_code) => {
+            println!("Trigger create gated as expected: {message}");
+            // Positive pin first: the 4xx must actually be the agent gate
+            // (live-observed "Agent '' is invalid or not found") — an
+            // unrelated rejection (bad cron, rejected time_zone) must not
+            // read as a pass.
+            assert!(
+                message.contains("is invalid or not found"),
+                "expected the agent-gate rejection, got a different 4xx: {message}"
+            );
+            // "Unknown parameter" covers top-level params; a bad field
+            // inside the JSON body (incl. the nested interaction) comes
+            // back as protobuf-JSON "Unknown name" — check both, like the
+            // nested-body probe in test_retrieval_tool_vertex_only.
+            assert!(
+                !message.contains("Unknown parameter") && !message.contains("Unknown name"),
+                "trigger payload schema itself was rejected: {message}"
+            );
+        }
+        Err(e) => panic!("expected a 4xx agent-gate rejection, got: {e}"),
     }
 }

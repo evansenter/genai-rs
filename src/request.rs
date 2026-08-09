@@ -8,6 +8,7 @@ use std::fmt;
 use crate::content::Content;
 use crate::environment::EnvironmentSpec;
 use crate::response_format::ResponseFormatSpec;
+use crate::safety::SafetySetting;
 use crate::steps::Step;
 use crate::tools::{Tool, ToolChoice};
 use crate::webhooks::WebhookConfig;
@@ -241,6 +242,15 @@ pub enum InteractionInput {
     Steps(Vec<Step>),
 }
 
+impl Default for InteractionInput {
+    /// An empty text input — the zero value for struct-literal
+    /// construction of [`InteractionRequest`]; replace it with real input
+    /// before sending.
+    fn default() -> Self {
+        Self::Text(String::new())
+    }
+}
+
 impl Serialize for InteractionInput {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -263,49 +273,53 @@ impl<'de> Deserialize<'de> for InteractionInput {
         D: Deserializer<'de>,
     {
         let value = serde_json::Value::deserialize(deserializer)?;
-        match value {
-            serde_json::Value::String(s) => Ok(Self::Text(s)),
-            serde_json::Value::Array(items) => {
-                // Decide between [Content] and [Step] by inspecting element
-                // type tags. Elements with content tags (text/image/...) are
-                // content blocks; everything else (user_input, function_call,
-                // unknown future types, ...) is treated as steps, the
-                // canonical revision 2026-05-20 form.
-                let is_content = items.iter().all(|item| {
-                    item.get("type")
-                        .and_then(|t| t.as_str())
-                        .is_some_and(|t| CONTENT_TYPE_TAGS.contains(&t))
-                });
-                if is_content && !items.is_empty() {
-                    let contents = serde_json::from_value(serde_json::Value::Array(items))
-                        .map_err(serde::de::Error::custom)?;
-                    Ok(Self::Content(contents))
-                } else {
-                    let steps = serde_json::from_value(serde_json::Value::Array(items))
-                        .map_err(serde::de::Error::custom)?;
-                    Ok(Self::Steps(steps))
-                }
-            }
-            other @ serde_json::Value::Object(_) => {
-                // A single content or step object.
-                let is_content = other
-                    .get("type")
+        input_from_value(value).map_err(serde::de::Error::custom)
+    }
+}
+
+/// The by-`Value` body of [`InteractionInput`]'s deserializer, shared with
+/// the lenient trigger-side probe so neither path buffers the tree twice.
+pub(crate) fn input_from_value(value: serde_json::Value) -> Result<InteractionInput, String> {
+    match value {
+        serde_json::Value::String(s) => Ok(InteractionInput::Text(s)),
+        serde_json::Value::Array(items) => {
+            // Decide between [Content] and [Step] by inspecting element
+            // type tags. Elements with content tags (text/image/...) are
+            // content blocks; everything else (user_input, function_call,
+            // unknown future types, ...) is treated as steps, the
+            // canonical revision 2026-05-20 form.
+            let is_content = items.iter().all(|item| {
+                item.get("type")
                     .and_then(|t| t.as_str())
-                    .is_some_and(|t| CONTENT_TYPE_TAGS.contains(&t));
-                if is_content {
-                    let content: Content =
-                        serde_json::from_value(other).map_err(serde::de::Error::custom)?;
-                    Ok(Self::Content(vec![content]))
-                } else {
-                    let step: Step =
-                        serde_json::from_value(other).map_err(serde::de::Error::custom)?;
-                    Ok(Self::Steps(vec![step]))
-                }
+                    .is_some_and(|t| CONTENT_TYPE_TAGS.contains(&t))
+            });
+            if is_content && !items.is_empty() {
+                let contents = serde_json::from_value(serde_json::Value::Array(items))
+                    .map_err(|e| e.to_string())?;
+                Ok(InteractionInput::Content(contents))
+            } else {
+                let steps = serde_json::from_value(serde_json::Value::Array(items))
+                    .map_err(|e| e.to_string())?;
+                Ok(InteractionInput::Steps(steps))
             }
-            other => Err(serde::de::Error::custom(format!(
-                "InteractionInput must be a string, array, or object; got {other}"
-            ))),
         }
+        other @ serde_json::Value::Object(_) => {
+            // A single content or step object.
+            let is_content = other
+                .get("type")
+                .and_then(|t| t.as_str())
+                .is_some_and(|t| CONTENT_TYPE_TAGS.contains(&t));
+            if is_content {
+                let content: Content = serde_json::from_value(other).map_err(|e| e.to_string())?;
+                Ok(InteractionInput::Content(vec![content]))
+            } else {
+                let step: Step = serde_json::from_value(other).map_err(|e| e.to_string())?;
+                Ok(InteractionInput::Steps(vec![step]))
+            }
+        }
+        other => Err(format!(
+            "InteractionInput must be a string, array, or object; got {other}"
+        )),
     }
 }
 
@@ -458,7 +472,7 @@ impl<'de> Visitor<'de> for ThinkingLevelVisitor {
 }
 
 /// Generation configuration for model behavior
-#[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct GenerationConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
@@ -524,6 +538,133 @@ pub struct GenerationConfig {
     /// response modality.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub video_config: Option<VideoConfig>,
+    /// Audio transcription configuration.
+    ///
+    /// Controls language hints, diarization, custom vocabulary and
+    /// timestamp granularity when transcribing audio input.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transcription_config: Option<TranscriptionConfig>,
+}
+
+/// Audio transcription configuration.
+///
+/// Set via
+/// [`GenerationConfig::transcription_config`] to control how audio input is
+/// transcribed.
+///
+/// # Example
+///
+/// ```
+/// use genai_rs::TranscriptionConfig;
+///
+/// // Prefer the builder over a struct literal: the struct is
+/// // constructible, so literals break when fields are added (see the
+/// // 0.9.0 CHANGELOG entry).
+/// let config = TranscriptionConfig::new()
+///     .with_language_codes(["en-US"])
+///     .with_diarization_mode("speaker");
+/// assert_eq!(
+///     serde_json::to_value(&config).unwrap(),
+///     serde_json::json!({
+///         "language_codes": ["en-US"],
+///         "diarization_mode": "speaker"
+///     })
+/// );
+/// ```
+#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
+pub struct TranscriptionConfig {
+    /// Phrases to bias recognition toward (contextual adaptation).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub adaptation_phrases: Option<Vec<String>>,
+    /// Domain-specific vocabulary to bias recognition toward.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_vocabulary: Option<Vec<String>>,
+    /// Speaker diarization mode. The SDK spec documents `"speaker"` as the
+    /// only supported value today; kept an open string (Evergreen) so new
+    /// modes work without a crate release.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diarization_mode: Option<String>,
+    /// BCP-47 language codes hinting the audio's language(s). Omitted or
+    /// empty means automatic language detection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language_codes: Option<Vec<String>>,
+    /// Timestamp granularities to include. The SDK spec documents `"word"`
+    /// as the only supported value today (empty = no timestamps); kept an
+    /// open string list (Evergreen).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp_granularities: Option<Vec<String>>,
+}
+
+impl TranscriptionConfig {
+    /// Create a new transcription configuration with default settings.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the BCP-47 language hints (omitted means automatic detection).
+    #[must_use]
+    pub fn with_language_codes(
+        mut self,
+        language_codes: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.language_codes = Some(language_codes.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Set the diarization mode (`"speaker"` is the only value the SDK
+    /// spec documents today; open string per the Evergreen posture).
+    #[must_use]
+    pub fn with_diarization_mode(mut self, mode: impl Into<String>) -> Self {
+        self.diarization_mode = Some(mode.into());
+        self
+    }
+
+    /// Set the timestamp granularities (`"word"` is the only value the SDK
+    /// spec documents today; open string list per the Evergreen posture).
+    #[must_use]
+    pub fn with_timestamp_granularities(
+        mut self,
+        granularities: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.timestamp_granularities = Some(granularities.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Set the domain-specific vocabulary to bias recognition toward,
+    /// replacing any set earlier.
+    #[must_use]
+    pub fn with_custom_vocabulary(
+        mut self,
+        vocabulary: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.custom_vocabulary = Some(vocabulary.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Set the contextual-adaptation phrases, replacing any set earlier.
+    ///
+    /// This is the one `Vec` field here with an accumulating `add_*`
+    /// companion — phrases are the incremental-assembly case; the other
+    /// list fields take a pre-built `Vec` via their `with_*` setter.
+    #[must_use]
+    pub fn with_adaptation_phrases(
+        mut self,
+        phrases: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.adaptation_phrases = Some(phrases.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Add a single contextual-adaptation phrase, accumulating with any
+    /// added earlier.
+    #[must_use]
+    pub fn add_adaptation_phrase(mut self, phrase: impl Into<String>) -> Self {
+        self.adaptation_phrases
+            .get_or_insert_with(Vec::new)
+            .push(phrase.into());
+        self
+    }
 }
 
 /// Deserializes `speech_config` from either the spec list form or the legacy
@@ -570,7 +711,7 @@ where
 /// Common voices include: Aoede, Charon, Fenrir, Kore, Puck, and others.
 /// See [Google's TTS documentation](https://ai.google.dev/gemini-api/docs/text-generation)
 /// for the full list of available voices.
-#[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct SpeechConfig {
     /// The voice to use for speech synthesis.
     ///
@@ -1119,7 +1260,7 @@ impl VideoConfig {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct InteractionRequest {
     /// Model name (e.g., "gemini-3-flash-preview") - mutually exclusive with agent
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1134,6 +1275,23 @@ pub struct InteractionRequest {
     pub agent_config: Option<AgentConfig>,
 
     /// The input for this interaction
+    ///
+    /// *Required* on deserialize, and strict: an absent, misspelled,
+    /// malformed, or null `input` (e.g. a typo in a config file feeding
+    /// [`TriggerCreateParams`](crate::TriggerCreateParams)) is a clean
+    /// parse error, not a silently scheduled empty prompt. (The
+    /// strictness covers `input` itself and the other modeled fields'
+    /// shapes; a misspelled *optional sibling* key in a
+    /// `TriggerCreateParams` config is absorbed by its flattened `extra`
+    /// escape hatch — the documented cost of that hatch.) The
+    /// *response*-side leniency lives on
+    /// [`Trigger::interaction`](crate::Trigger) instead, where a sparse
+    /// projection's absent `input` deserializes to empty text and an
+    /// undeserializable one degrades the same way rather than failing a
+    /// whole list response. (That path has a roundtrip asymmetry: absence
+    /// re-serializes as a *present* `input` key — the one spot in the
+    /// Evergreen surface where a sparse projection gains a field instead
+    /// of preserving absence.)
     pub input: InteractionInput,
 
     /// Reference to a previous interaction for stateful conversations
@@ -1145,6 +1303,12 @@ pub struct InteractionRequest {
     pub tools: Option<Vec<Tool>>,
 
     /// Response modalities (e.g., ["image"]; the API only accepts lowercase)
+    ///
+    /// Deprecation signal: the official SDK marks `response_modalities`
+    /// (and `response_mime_type`, already removed from this crate) as
+    /// deprecated in favor of the typed
+    /// [`response_format`](Self::response_format) union — prefer
+    /// [`ResponseFormatSpec`] for new code. Kept until the API removes it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_modalities: Option<Vec<String>>,
 
@@ -1195,6 +1359,28 @@ pub struct InteractionRequest {
     /// remote environment (sources + network allowlist).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment: Option<EnvironmentSpec>,
+
+    /// Safety settings for the interaction, one per harm category.
+    ///
+    /// Server-side constraint (verified live 2026-08-08): the Gemini API
+    /// rejects `safety_settings` — "not available on the Gemini API but it
+    /// is available on the Gemini Enterprise Agent Platform" (Vertex-only).
+    /// The field is modeled for spec parity and forward compatibility.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub safety_settings: Option<Vec<SafetySetting>>,
+
+    /// User-defined metadata labels for the request.
+    ///
+    /// Server-side constraint (verified live 2026-08-08): the Gemini API
+    /// rejects `labels` — "not available on the Gemini API but it is
+    /// available on the Gemini Enterprise Agent Platform" (Vertex-only).
+    /// The field is modeled for spec parity and forward compatibility.
+    ///
+    /// `BTreeMap` (not `HashMap`) so the serialized key order is
+    /// deterministic — wire captures and `LOUD_WIRE` diffs of the same
+    /// logical request stay byte-identical across runs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub labels: Option<std::collections::BTreeMap<String, String>>,
 }
 
 /// Latency/priority service tier for a request.
@@ -1781,6 +1967,84 @@ impl DynamicConfig {
 impl From<DynamicConfig> for AgentConfig {
     fn from(_: DynamicConfig) -> Self {
         AgentConfig(serde_json::json!({"type": "dynamic"}))
+    }
+}
+
+/// Configuration for the server-side Antigravity coding agent.
+///
+/// This configures `agent("antigravity-preview-05-2026")` interactions that
+/// run in Google's sandbox (an
+/// [`environment`](InteractionRequest::environment) is **required** for that
+/// agent) — distinct from the local-harness bridge in the `antigravity`
+/// module (feature `antigravity`), which runs the agent on your
+/// machine. The bare `antigravity` string is only the `agent_config` *type*
+/// discriminant (which [`From`] sets), not an agent ID.
+///
+/// Probe notes (verified live 2026-08-09, standard API key):
+/// `agent_config: {"type": "antigravity"}` and `max_total_tokens` are
+/// **accepted** on `antigravity-preview-05-2026` (the server's validation
+/// error enumerates the supported config types as `dynamic`,
+/// `deep-research`, `code-mender`, `antigravity`). Setting `model` to a
+/// value the agent doesn't offer returns 404 `not_found` — including
+/// `gemini-3-flash-preview`, this crate's default model elsewhere. The
+/// agent's model catalog is not enumerable on a standard key, so leave
+/// `model` unset unless you know an accepted value.
+///
+/// # Example
+///
+/// ```
+/// use genai_rs::{AgentConfig, AntigravityConfig};
+///
+/// let config: AgentConfig = AntigravityConfig::new()
+///     .with_max_total_tokens(200_000)
+///     .into();
+/// ```
+#[derive(Clone, Debug, Default)]
+pub struct AntigravityConfig {
+    model: Option<String>,
+    max_total_tokens: Option<i64>,
+}
+
+impl AntigravityConfig {
+    /// Create a new Antigravity agent configuration with default settings.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the model the agent uses for its reasoning loop.
+    ///
+    /// A value the agent does not offer fails the interaction with 404
+    /// `not_found` — see the [type docs](AntigravityConfig) for the probe
+    /// notes; leave unset unless you know an accepted value.
+    #[must_use]
+    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+        self.model = Some(model.into());
+        self
+    }
+
+    /// Cap the total tokens the agent may consume across its whole run.
+    #[must_use]
+    pub fn with_max_total_tokens(mut self, max_total_tokens: i64) -> Self {
+        self.max_total_tokens = Some(max_total_tokens);
+        self
+    }
+}
+
+impl From<AntigravityConfig> for AgentConfig {
+    fn from(config: AntigravityConfig) -> Self {
+        let mut map = serde_json::Map::new();
+        map.insert(
+            "type".into(),
+            serde_json::Value::String("antigravity".into()),
+        );
+        if let Some(model) = config.model {
+            map.insert("model".into(), serde_json::Value::String(model));
+        }
+        if let Some(max) = config.max_total_tokens {
+            map.insert("max_total_tokens".into(), serde_json::Value::from(max));
+        }
+        AgentConfig(serde_json::Value::Object(map))
     }
 }
 

@@ -89,7 +89,11 @@ impl HttpContext {
     }
 
     /// Emits a [`WireEvent::Request`]. No-op when no inspectors are installed.
-    pub fn emit_request(&self, id: u64, method: &str, url: &str, body: Option<serde_json::Value>) {
+    ///
+    /// Takes the body by reference so the clone happens behind the
+    /// inspector guard — on the default no-inspector path nothing is
+    /// cloned (bodies can carry inline file contents).
+    pub fn emit_request(&self, id: u64, method: &str, url: &str, body: Option<&serde_json::Value>) {
         if !self.has_inspectors() {
             return;
         }
@@ -97,7 +101,7 @@ impl HttpContext {
             id,
             method: method.to_string(),
             url: url.to_string(),
-            body,
+            body: body.cloned(),
         });
     }
 

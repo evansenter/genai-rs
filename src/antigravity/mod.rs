@@ -45,8 +45,8 @@ pub mod triggers;
 
 pub use config::{BuiltinTool, Capabilities, McpServer, SUPPORTED_HARNESS_VERSION, Subagent};
 pub use hooks::{
-    Policy, PolicyDecision, PostToolHook, PreToolDecision, PreToolHook, ToolInvocation,
-    ToolOutcome, policy,
+    AgentQuestion, Policy, PolicyDecision, PostToolHook, PreToolDecision, PreToolHook,
+    QuestionAnswer, QuestionHook, QuestionReply, ToolInvocation, ToolOutcome, policy,
 };
 pub use streaming::{AgentEvent, AgentEventStream, ErrorSeverity, ToolAction, ToolDecision};
 pub use triggers::TriggerConfig;
@@ -234,6 +234,7 @@ pub struct AgentBuilder {
     mcp_servers: Vec<McpServer>,
     policies: Vec<Policy>,
     pre_tool: Option<PreToolHook>,
+    questions: Option<QuestionHook>,
     post_tool: Option<PostToolHook>,
     save_dir: Option<String>,
     conversation_id: Option<String>,
@@ -388,6 +389,46 @@ impl AgentBuilder {
         self
     }
 
+    /// Sets a questions hook, invoked when the agent asks the user
+    /// questions via the `ask_question` builtin.
+    ///
+    /// The hook receives the whole question batch and returns answers (or
+    /// cancels). Without a hook, every question is answered "unanswered"
+    /// so the harness never deadlocks — that fallback covers only the
+    /// *hookless* case.
+    ///
+    /// The hook is synchronous and runs inline in the harness event pump:
+    /// **do not block in it** waiting for a human. Answer from policy or
+    /// pre-collected state (e.g. a channel drained with `try_recv`);
+    /// blocking stalls all event processing for as long as the answer
+    /// takes.
+    ///
+    /// The hook only fires if [`BuiltinTool::AskQuestion`] is enabled —
+    /// it is *not* in [`Capabilities::read_only()`] (the default), so on a
+    /// default builder this hook is a no-op: the agent never asks, and
+    /// `spawn()` emits a `warn!` for the hook-set-but-builtin-disabled
+    /// combination. Enable it with
+    /// `Capabilities::read_only().enable(BuiltinTool::AskQuestion)`, which
+    /// as a write-capable capability also needs a policy or
+    /// [`on_pre_tool`](Self::on_pre_tool) hook to pass the spawn-time
+    /// gate.
+    ///
+    /// Questions then arrive on their own `questions_request` path and
+    /// **bypass the policy engine entirely** — a `policy::deny` naming
+    /// `ask_question` (or a blanket `deny_all()`) has no effect on them.
+    /// The capability gate is the only gate: leave
+    /// [`BuiltinTool::AskQuestion`] disabled to prevent questions, and
+    /// this hook (or the "unanswered" fallback) is the only control once
+    /// they are enabled.
+    #[must_use]
+    pub fn on_questions(
+        mut self,
+        hook: impl Fn(&[AgentQuestion]) -> QuestionReply + Send + Sync + 'static,
+    ) -> Self {
+        self.questions = Some(Arc::new(hook));
+        self
+    }
+
     /// Sets a post-tool hook, observing completed custom tool calls.
     #[must_use]
     pub fn on_post_tool(mut self, hook: impl Fn(&ToolOutcome) + Send + Sync + 'static) -> Self {
@@ -530,6 +571,18 @@ impl AgentBuilder {
                 trigger.message
             )));
         }
+        // Not an error (the combination is harmless), but the likeliest
+        // first-time misconfiguration: a questions hook with the builtin
+        // disabled never fires, and without this there is no signal
+        // distinguishing "the agent chose not to ask" from "asking was
+        // never enabled".
+        if self.questions.is_some() && !self.capabilities.is_enabled(BuiltinTool::AskQuestion) {
+            tracing::warn!(
+                "on_questions hook set but BuiltinTool::AskQuestion is not enabled - the agent \
+                 will never ask questions and the hook will never run. Enable it with \
+                 Capabilities::read_only().enable(BuiltinTool::AskQuestion)."
+            );
+        }
 
         // Subagent validation: unique names, and every referenced custom
         // tool registered on the parent (the harness dispatches subagent
@@ -621,6 +674,7 @@ impl AgentBuilder {
             dispatcher,
             policy_engine: PolicyEngine::new(self.policies),
             pre_tool: self.pre_tool,
+            questions: self.questions,
             post_tool: self.post_tool,
             conversation_id: None,
             initial_history: Vec::new(),
@@ -759,6 +813,7 @@ pub struct AntigravityAgent {
     dispatcher: ToolDispatcher,
     policy_engine: PolicyEngine,
     pre_tool: Option<PreToolHook>,
+    questions: Option<QuestionHook>,
     post_tool: Option<PostToolHook>,
     conversation_id: Option<String>,
     initial_history: Vec<StepUpdate>,
@@ -1272,8 +1327,7 @@ impl AntigravityAgent {
             if let Some(questions) = &step.questions_request
                 && turn.mark_wait_handled(&step_key, "questions_request")
             {
-                self.answer_questions(&step, questions.questions.len())
-                    .await?;
+                self.answer_questions(&step, questions).await?;
             }
         }
         Ok(())
@@ -1315,29 +1369,34 @@ impl AntigravityAgent {
             .await
     }
 
-    /// Replies to a `questions_request`. Interactive question handling is
-    /// not supported yet; every question is answered "unanswered" so the
-    /// harness never deadlocks (the protocol requires a response).
+    /// Replies to a `questions_request`.
+    ///
+    /// With an [`AgentBuilder::on_questions`] hook set, the batch is handed
+    /// to the hook and its answers (or cancellation) are relayed. Without
+    /// one, every question is answered "unanswered" so the harness never
+    /// deadlocks (the protocol requires a response).
     async fn answer_questions(
         &mut self,
         step: &StepUpdate,
-        question_count: usize,
+        request: &protocol::UserQuestionsRequest,
     ) -> Result<(), AntigravityError> {
-        tracing::warn!(
-            "Harness asked {question_count} user question(s) but interactive question \
-             handling is not supported; answering as unanswered. Disable the \
-             ask_question builtin (Capabilities) to prevent this."
-        );
-        let response = protocol::UserQuestionsResponse {
-            trajectory_id: step.trajectory_id.clone().unwrap_or_default(),
-            step_index: step.step_index.unwrap_or_default(),
-            cancelled: None,
-            response: Some(protocol::QuestionsResponse {
-                answers: (0..question_count)
-                    .map(|_| protocol::UserQuestionAnswer::unanswered())
-                    .collect(),
-            }),
+        let batch = map_questions(request);
+        let reply = match &self.questions {
+            Some(hook) => Some(hook(&batch)),
+            None => {
+                tracing::warn!(
+                    "Harness asked {} user question(s) but no questions hook \
+                     is set; answering as unanswered. Set `.on_questions(..)` on the \
+                     builder to answer interactively, or disable the ask_question \
+                     builtin (Capabilities) to prevent this.",
+                    request.questions.len()
+                );
+                None
+            }
         };
+        let mut response = map_question_reply(reply, &batch);
+        response.trajectory_id = step.trajectory_id.clone().unwrap_or_default();
+        response.step_index = step.step_index.unwrap_or_default();
         self.session
             .send(&InputEvent::QuestionResponse(response))
             .await
@@ -1832,9 +1891,387 @@ impl TurnState {
     }
 }
 
+/// Maps the harness's question batch into the hook-facing view.
+///
+/// `question`/`choices`/`is_multi_select` fall back to empty/false when
+/// `multiple_choice` (or an inner field) is absent — `choices` is the
+/// index space [`hooks::QuestionAnswer::Choices`] selections refer to,
+/// so the substitution is observable to the hook and pinned by tests.
+/// `unknown_type` (the field hooks branch on via
+/// [`AgentQuestion::is_unknown_type`]) is set exactly when the
+/// `multiple_choice` arm is absent from the wire.
+/// Free function so the mapping is unit-testable.
+fn map_questions(request: &protocol::UserQuestionsRequest) -> Vec<AgentQuestion> {
+    request
+        .questions
+        .iter()
+        .map(|q| {
+            let mc = q.multiple_choice.as_ref();
+            if mc.is_none() {
+                // A future question type reaches the hook flagged via
+                // `unknown_type` (is_unknown_type()) with its payload
+                // merged into `extra`; this warn is the log-side signal
+                // alongside that programmatic one (mirrors unknown-action
+                // handling).
+                tracing::warn!(
+                    "Question with no multiple_choice arm (unknown type?); \
+                     hook sees a blank question. Extra fields: {:?}",
+                    q.extra.keys().collect::<Vec<_>>()
+                );
+            }
+            if let Some(m) = mc
+                && m.question.is_none()
+            {
+                tracing::warn!(
+                    "multiple_choice present but its question text is absent; \
+                     hook sees an empty question above {} choice(s)",
+                    m.choices.len()
+                );
+            }
+            // Merge outer (UserQuestion) and inner (MultipleChoice)
+            // unmodeled fields so the hook-facing shape is lossless at
+            // both levels; a key collision (none exist in the protocol
+            // today) resolves to the inner value.
+            let mut extra = q.extra.clone();
+            if let Some(m) = mc {
+                extra.extend(m.extra.clone());
+            }
+            AgentQuestion {
+                question: mc.and_then(|m| m.question.clone()).unwrap_or_default(),
+                choices: mc.map(|m| m.choices.clone()).unwrap_or_default(),
+                is_multi_select: mc.and_then(|m| m.is_multi_select).unwrap_or(false),
+                extra,
+                unknown_type: mc.is_none(),
+            }
+        })
+        .collect()
+}
+
+/// Maps a questions-hook reply (or the hookless `None` fallback) onto the
+/// protocol's `cancelled`/`response` oneof.
+///
+/// A short answer list is padded with "unanswered", a long one truncated,
+/// both with a `warn!`; hook-selected choice indices are validated against
+/// the question batch (out-of-range or single-select violations `warn!`
+/// but are still relayed — the harness owns the final verdict).
+/// `trajectory_id`/`step_index` are left for the caller to fill in. Free
+/// function so the mapping is unit-testable.
+fn map_question_reply(
+    reply: Option<QuestionReply>,
+    questions: &[AgentQuestion],
+) -> protocol::UserQuestionsResponse {
+    let question_count = questions.len();
+    let (cancelled, answers) = match reply {
+        Some(QuestionReply::Cancel) => (true, Vec::new()),
+        Some(QuestionReply::Answers(answers)) => {
+            if answers.len() != question_count {
+                tracing::warn!(
+                    "Questions hook returned {} answer(s) for {} question(s); \
+                     padding with unanswered / dropping extras",
+                    answers.len(),
+                    question_count
+                );
+            }
+            let mapped = answers
+                .into_iter()
+                .map(Some)
+                .chain(std::iter::repeat_with(|| None))
+                .take(question_count)
+                .zip(questions.iter())
+                .map(|(answer, question)| {
+                    // An unknown-type question has no rendered text or
+                    // choices — answering it is guesswork, and Freeform
+                    // (the natural attempt) would otherwise relay with no
+                    // signal at all, unlike the index checks below.
+                    if question.unknown_type
+                        && !matches!(answer, None | Some(hooks::QuestionAnswer::Unanswered))
+                    {
+                        tracing::warn!(
+                            "Questions hook answered a question whose type this crate does \
+                             not model; relaying anyway (prefer Cancel or Unanswered — see \
+                             AgentQuestion::is_unknown_type)"
+                        );
+                    }
+                    match answer {
+                        None | Some(hooks::QuestionAnswer::Unanswered) => {
+                            protocol::UserQuestionAnswer::unanswered()
+                        }
+                        Some(hooks::QuestionAnswer::Freeform(text)) => {
+                            protocol::UserQuestionAnswer {
+                                unanswered: None,
+                                multiple_choice_answer: Some(protocol::MultipleChoiceAnswer {
+                                    selected_choice_indices: Vec::new(),
+                                    freeform_response: Some(text),
+                                }),
+                            }
+                        }
+                        Some(hooks::QuestionAnswer::Choices { selected, freeform }) => {
+                            for &idx in &selected {
+                                if idx >= question.choices.len() {
+                                    tracing::warn!(
+                                        "Questions hook selected index {idx} for a question \
+                                     with {} choice(s); relaying anyway",
+                                        question.choices.len()
+                                    );
+                                }
+                            }
+                            if selected.len() > 1 && !question.is_multi_select {
+                                tracing::warn!(
+                                    "Questions hook selected {} choices for a single-select \
+                                 question; relaying anyway",
+                                    selected.len()
+                                );
+                            }
+                            if selected.is_empty() && freeform.is_none() {
+                                tracing::warn!(
+                                    "Questions hook returned an empty Choices answer with no \
+                                 freeform (did you mean Unanswered?); relaying anyway"
+                                );
+                            }
+                            // The wire type is i32; an index that cannot fit
+                            // is absurd (no real choice list is that long) and
+                            // drops with a warn rather than wrapping.
+                            let selected_choice_indices = selected
+                                .iter()
+                                .filter_map(|&idx| {
+                                    i32::try_from(idx)
+                                        .map_err(|_| {
+                                            tracing::warn!(
+                                                "Questions hook selected index {idx} \
+                                             exceeds the i32 wire range; dropping"
+                                            );
+                                        })
+                                        .ok()
+                                })
+                                .collect();
+                            protocol::UserQuestionAnswer {
+                                unanswered: None,
+                                multiple_choice_answer: Some(protocol::MultipleChoiceAnswer {
+                                    selected_choice_indices,
+                                    freeform_response: freeform,
+                                }),
+                            }
+                        }
+                    }
+                })
+                .collect();
+            (false, mapped)
+        }
+        None => (
+            false,
+            (0..question_count)
+                .map(|_| protocol::UserQuestionAnswer::unanswered())
+                .collect(),
+        ),
+    };
+    protocol::UserQuestionsResponse {
+        trajectory_id: String::new(),
+        step_index: 0,
+        cancelled: cancelled.then_some(true),
+        response: (!cancelled).then_some(protocol::QuestionsResponse { answers }),
+    }
+}
+
 #[cfg(test)]
 mod agent_tests {
     use super::*;
+
+    /// `n` three-choice single-select questions for mapping tests.
+    fn question_batch(n: usize) -> Vec<AgentQuestion> {
+        (0..n)
+            .map(|i| AgentQuestion::new(format!("q{i}"), ["a", "b", "c"], false))
+            .collect()
+    }
+
+    #[test]
+    fn on_questions_populates_the_builder_hook() {
+        // Plumbing guard: the seven mapping tests would all stay green if
+        // the builder simply dropped the hook (silently reverting to the
+        // hookless "unanswered" fallback). Pin that on_questions stores
+        // the closure it is given — spawn() moves this field to the agent
+        // verbatim, so the builder side is the observable half without a
+        // live harness.
+        let builder = AntigravityAgent::builder().on_questions(|_| QuestionReply::Cancel);
+        let hook = builder.questions.as_ref().expect("hook stored");
+        assert_eq!(hook(&question_batch(1)), QuestionReply::Cancel);
+        assert!(
+            AntigravityAgent::builder().questions.is_none(),
+            "no hook by default"
+        );
+    }
+
+    #[test]
+    fn question_reply_cancel_sets_only_cancelled() {
+        let response = map_question_reply(Some(QuestionReply::Cancel), &question_batch(2));
+        assert_eq!(response.cancelled, Some(true));
+        assert!(
+            response.response.is_none(),
+            "cancel must not also emit a response (protocol oneof)"
+        );
+    }
+
+    #[test]
+    fn question_reply_exact_answers_map_to_protocol() {
+        let response = map_question_reply(
+            Some(QuestionReply::Answers(vec![
+                hooks::QuestionAnswer::Choices {
+                    selected: vec![1, 2],
+                    freeform: None,
+                },
+                hooks::QuestionAnswer::Freeform("details".into()),
+            ])),
+            &question_batch(2),
+        );
+        assert!(response.cancelled.is_none());
+        let answers = response.response.expect("answers present").answers;
+        assert_eq!(answers.len(), 2);
+        let first = answers[0].multiple_choice_answer.as_ref().unwrap();
+        assert_eq!(first.selected_choice_indices, vec![1, 2]);
+        assert!(first.freeform_response.is_none());
+        let second = answers[1].multiple_choice_answer.as_ref().unwrap();
+        assert!(second.selected_choice_indices.is_empty());
+        assert_eq!(second.freeform_response.as_deref(), Some("details"));
+        assert!(answers[1].unanswered.is_none());
+    }
+
+    #[test]
+    fn question_reply_short_list_pads_with_unanswered() {
+        let response = map_question_reply(
+            Some(QuestionReply::Answers(vec![
+                hooks::QuestionAnswer::Freeform("only one".into()),
+            ])),
+            &question_batch(3),
+        );
+        let answers = response.response.expect("answers present").answers;
+        assert_eq!(answers.len(), 3, "padded to the question count");
+        assert!(answers[0].multiple_choice_answer.is_some());
+        assert_eq!(answers[1].unanswered, Some(true));
+        assert_eq!(answers[2].unanswered, Some(true));
+    }
+
+    #[test]
+    fn question_reply_long_list_truncates() {
+        let response = map_question_reply(
+            Some(QuestionReply::Answers(vec![
+                hooks::QuestionAnswer::Unanswered,
+                hooks::QuestionAnswer::Freeform("extra".into()),
+            ])),
+            &question_batch(1),
+        );
+        let answers = response.response.expect("answers present").answers;
+        assert_eq!(answers.len(), 1, "truncated to the question count");
+        assert_eq!(answers[0].unanswered, Some(true));
+    }
+
+    #[test]
+    fn map_questions_extracts_multiple_choice_fields() {
+        let request = protocol::UserQuestionsRequest {
+            questions: vec![protocol::UserQuestion {
+                multiple_choice: Some(protocol::MultipleChoice {
+                    question: Some("Pick one".into()),
+                    choices: vec!["a".into(), "b".into()],
+                    is_multi_select: Some(true),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let batch = map_questions(&request);
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0].question, "Pick one");
+        assert_eq!(batch[0].choices, vec!["a".to_string(), "b".to_string()]);
+        assert!(batch[0].is_multi_select);
+    }
+
+    #[test]
+    fn map_questions_defaults_when_fields_absent() {
+        let request = protocol::UserQuestionsRequest {
+            questions: vec![
+                // No multiple_choice at all: a future question type whose
+                // payload rides in `extra`.
+                protocol::UserQuestion {
+                    multiple_choice: None,
+                    extra: {
+                        let mut m = serde_json::Map::new();
+                        m.insert("freeText".into(), serde_json::json!({"maxLen": 80}));
+                        m
+                    },
+                },
+                // multiple_choice present but sparse: is_multi_select unset.
+                protocol::UserQuestion {
+                    multiple_choice: Some(protocol::MultipleChoice {
+                        question: Some("Sparse".into()),
+                        choices: Vec::new(),
+                        is_multi_select: None,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                // multiple_choice present with choices but no question text:
+                // the hook sees an empty question above real choices (warned).
+                protocol::UserQuestion {
+                    multiple_choice: Some(protocol::MultipleChoice {
+                        question: None,
+                        choices: vec!["yes".into(), "no".into()],
+                        is_multi_select: None,
+                        // An unmodeled field *inside* multipleChoice must
+                        // also reach the hook (merged into extra).
+                        extra: {
+                            let mut m = serde_json::Map::new();
+                            m.insert("defaultChoiceIndex".into(), serde_json::json!(1));
+                            // Same key at both levels: the inner value must
+                            // win the merge (the documented precedence).
+                            m.insert("collides".into(), serde_json::json!("inner"));
+                            m
+                        },
+                    }),
+                    extra: {
+                        let mut m = serde_json::Map::new();
+                        m.insert("collides".into(), serde_json::json!("outer"));
+                        m
+                    },
+                },
+            ],
+            ..Default::default()
+        };
+        let batch = map_questions(&request);
+        assert_eq!(batch.len(), 3);
+        assert!(batch[0].question.is_empty());
+        assert!(batch[0].choices.is_empty());
+        assert!(!batch[0].is_multi_select);
+        // The unknown shape is programmatically distinguishable from a
+        // genuinely empty multiple-choice question, and the raw payload
+        // rides along for the hook to inspect.
+        assert!(batch[0].is_unknown_type());
+        assert_eq!(
+            batch[0].extra["freeText"],
+            serde_json::json!({"maxLen": 80})
+        );
+        assert_eq!(batch[1].question, "Sparse");
+        assert!(!batch[1].is_multi_select);
+        assert!(!batch[1].is_unknown_type());
+        // Blank question text above real choices: the substitution is
+        // observable to the hook (and warned at map time).
+        assert!(batch[2].question.is_empty());
+        assert_eq!(batch[2].choices, vec!["yes", "no"]);
+        assert!(!batch[2].is_unknown_type());
+        // An unmodeled field nested inside multipleChoice merges into the
+        // hook-facing extra map (lossless one level down too).
+        assert_eq!(batch[2].extra["defaultChoiceIndex"], 1);
+        // Collision precedence pinned like the other two extra maps in
+        // this PR: the inner (multipleChoice-level) value wins the merge.
+        assert_eq!(batch[2].extra["collides"], "inner");
+    }
+
+    #[test]
+    fn question_reply_hookless_fallback_answers_unanswered() {
+        let response = map_question_reply(None, &question_batch(2));
+        assert!(response.cancelled.is_none());
+        let answers = response.response.expect("answers present").answers;
+        assert_eq!(answers.len(), 2);
+        assert!(answers.iter().all(|a| a.unanswered == Some(true)));
+    }
 
     fn trajectory_update(
         trajectory_id: Option<&str>,
