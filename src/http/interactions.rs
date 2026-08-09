@@ -388,18 +388,22 @@ pub fn get_interaction_stream<'a>(
     };
     let url = construct_endpoint_url(endpoint);
 
-    let request_id = ctx.next_request_id();
-    let resume_info = last_event_id
-        .map(|id| format!(" (resuming from {})", id))
-        .unwrap_or_default();
-    ctx.emit_request(
-        request_id,
-        &format!("GET (stream){}", resume_info),
-        &url,
-        None,
-    );
-
     try_stream! {
+        // Guard before the wire event so a rejected empty ID doesn't emit
+        // a phantom request that is never sent.
+        require_id(interaction_id, "interaction")?;
+
+        let request_id = ctx.next_request_id();
+        let resume_info = last_event_id
+            .map(|id| format!(" (resuming from {})", id))
+            .unwrap_or_default();
+        ctx.emit_request(
+            request_id,
+            &format!("GET (stream){}", resume_info),
+            &url,
+            None,
+        );
+
         // Accumulate steps (same as create_interaction_stream)
         let mut accumulator = StepAccumulator::new();
 

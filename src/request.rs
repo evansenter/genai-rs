@@ -557,11 +557,12 @@ pub struct GenerationConfig {
 /// ```
 /// use genai_rs::TranscriptionConfig;
 ///
-/// let config = TranscriptionConfig {
-///     language_codes: Some(vec!["en-US".to_string()]),
-///     diarization_mode: Some("speaker".to_string()),
-///     ..Default::default()
-/// };
+/// // Prefer the builder over a struct literal: the struct is
+/// // constructible, so literals break when fields are added (see the
+/// // 0.9.0 CHANGELOG entry).
+/// let config = TranscriptionConfig::new()
+///     .with_language_codes(["en-US"])
+///     .with_diarization_mode("speaker");
 /// assert_eq!(
 ///     serde_json::to_value(&config).unwrap(),
 ///     serde_json::json!({
@@ -1275,7 +1276,11 @@ pub struct InteractionRequest {
     /// *Required* on deserialize, and strict: an absent, misspelled,
     /// malformed, or null `input` (e.g. a typo in a config file feeding
     /// [`TriggerCreateParams`](crate::TriggerCreateParams)) is a clean
-    /// parse error, not a silently scheduled empty prompt. The
+    /// parse error, not a silently scheduled empty prompt. (The
+    /// strictness covers `input` itself and the other modeled fields'
+    /// shapes; a misspelled *optional sibling* key in a
+    /// `TriggerCreateParams` config is absorbed by its flattened `extra`
+    /// escape hatch — the documented cost of that hatch.) The
     /// *response*-side leniency lives on
     /// [`Trigger::interaction`](crate::Trigger) instead, where a sparse
     /// projection's absent `input` deserializes to empty text and an

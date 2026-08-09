@@ -1245,10 +1245,9 @@ impl<'a> InteractionBuilder<'a> {
     ///     .interaction()
     ///     .with_model("gemini-3-flash-preview")
     ///     .with_text("Transcribe the attached audio")
-    ///     .with_transcription_config(TranscriptionConfig {
-    ///         language_codes: Some(vec!["en-US".to_string()]),
-    ///         ..Default::default()
-    ///     })
+    ///     .with_transcription_config(
+    ///         TranscriptionConfig::new().with_language_codes(["en-US"]),
+    ///     )
     ///     .create()
     ///     .await?;
     /// # Ok(())
