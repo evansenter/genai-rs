@@ -514,6 +514,13 @@ pub struct TriggerCreateParams {
     /// which matters here because trigger creation is agent-gated and the
     /// body cannot be live-verified against the wire.
     ///
+    /// The inherent cost: a *typo'd optional* key in a deserialized
+    /// config (`dispaly_name`, ...) is silently absorbed here and
+    /// forwarded to the server verbatim rather than rejected — the
+    /// send-side strictness documented on
+    /// [`Trigger::interaction`] covers the nested request and the
+    /// required top-level fields, not optional key spellings.
+    ///
     /// A key that collides with a modeled field **wins on serialize** via
     /// `serde_json::to_value` — the form the request path uses — so the
     /// escape hatch can also override a modeled field whose wire shape
