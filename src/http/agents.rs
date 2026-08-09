@@ -4,7 +4,7 @@
 //! the agents resource is part of the revisioned Interactions surface
 //! (the generated google-genai bindings apply the revision header globally).
 
-use super::common::{BASE_URL_PREFIX, send_and_read, with_paging_and};
+use super::common::{BASE_URL_PREFIX, send_and_read, to_body, with_paging_and};
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
 use crate::agents::{Agent, AgentListResponse};
@@ -23,9 +23,7 @@ fn agent_url(id: &str) -> String {
 /// Creates an agent (`POST /v1beta/agents`).
 pub async fn create_agent(ctx: &HttpContext, agent: &Agent) -> Result<Agent, GenaiError> {
     tracing::debug!("Creating agent: id={:?}", agent.id);
-    let body = serde_json::to_value(agent)
-        .map_err(|e| GenaiError::Internal(format!("Failed to serialize agent: {e}")))?;
-    let text = send_and_read(ctx, "POST", &agents_url(), Some(body)).await?;
+    let text = send_and_read(ctx, "POST", &agents_url(), Some(to_body(agent)?)).await?;
     deserialize_with_context(&text, "Agent from create")
 }
 
