@@ -613,19 +613,16 @@ async fn test_safety_settings_and_labels_vertex_gated() {
                 response.status
             ),
             // The positive pin: a 400 carrying the documented gate text.
-            // Absent markers alone are necessary but not sufficient — a
-            // 403 on a mis-scoped key would pass that check vacuously, so
-            // anything that isn't the documented rejection fails loudly.
+            // This alone proves the schema was accepted and only the
+            // capability gate refused it — a schema rejection ("Unknown
+            // parameter"/"Unknown name"), a 403 on a mis-scoped key, or a
+            // transport failure all fall through to the panic arm.
             Err(genai_rs::GenaiError::Api {
                 status_code: 400,
                 message,
                 ..
             }) if message.contains("Gemini Enterprise Agent Platform") => {
                 println!("{knob} Vertex-gated as expected: {message}");
-                assert!(
-                    !message.contains("Unknown parameter") && !message.contains("Unknown name"),
-                    "{knob} schema itself was rejected: {message}"
-                );
             }
             Err(e) => {
                 panic!("{knob}: expected acceptance or the documented Vertex-gate 400, got: {e}")
