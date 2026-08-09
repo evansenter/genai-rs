@@ -114,11 +114,20 @@ where
     let value = Option::<serde_json::Value>::deserialize(deserializer)?;
     match value {
         None | Some(serde_json::Value::Null) => {
-            tracing::warn!("List field was explicit null; degrading to an empty list");
+            // The value is always null by construction on this arm, so the
+            // element type is the only discriminator available to say
+            // *which* envelope's page came back empty.
+            tracing::warn!(
+                "List field of {} was explicit null; degrading to an empty list",
+                std::any::type_name::<T>()
+            );
             Ok(Vec::new())
         }
         Some(other) => Ok(serde_json::from_value(other).unwrap_or_else(|e| {
-            tracing::warn!("Undeserializable list field, degrading to empty: {e}");
+            tracing::warn!(
+                "Undeserializable list field of {}, degrading to empty: {e}",
+                std::any::type_name::<T>()
+            );
             Vec::new()
         })),
     }

@@ -868,6 +868,12 @@ pub async fn upload_file_chunked_with_chunk_size(
 pub async fn get_file(ctx: &HttpContext, file_name: &str) -> Result<FileMetadata, GenaiError> {
     tracing::debug!("Getting file metadata: {}", file_name);
 
+    // Deliberately raw — the one interpolation site exempt from the
+    // `path_segment` sweep: `file_name` is a full resource name
+    // ("files/abc123") whose slash is structural, so percent-encoding
+    // would break every call. The `require_id`/`path_segment` empty-ID
+    // and dot-segment guards therefore do not apply on this path (same
+    // for `delete_file` below).
     let url = format!("{BASE_URL}/{FILES_API_VERSION}/{file_name}");
 
     let request_id = ctx.next_request_id();
@@ -973,6 +979,8 @@ pub async fn list_files(
 pub async fn delete_file(ctx: &HttpContext, file_name: &str) -> Result<(), GenaiError> {
     tracing::debug!("Deleting file: {}", file_name);
 
+    // Raw interpolation of a full resource name — see the note in
+    // `get_file` above.
     let url = format!("{BASE_URL}/{FILES_API_VERSION}/{file_name}");
 
     let request_id = ctx.next_request_id();
