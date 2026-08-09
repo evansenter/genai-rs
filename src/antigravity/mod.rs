@@ -1897,6 +1897,8 @@ fn map_questions(request: &protocol::UserQuestionsRequest) -> Vec<hooks::AgentQu
                 question: mc.and_then(|m| m.question.clone()).unwrap_or_default(),
                 choices: mc.map(|m| m.choices.clone()).unwrap_or_default(),
                 is_multi_select: mc.and_then(|m| m.is_multi_select).unwrap_or(false),
+                extra: q.extra.clone(),
+                unknown_type: mc.is_none(),
             }
         })
         .collect()
@@ -2001,10 +2003,12 @@ mod agent_tests {
     /// `n` three-choice single-select questions for mapping tests.
     fn question_batch(n: usize) -> Vec<hooks::AgentQuestion> {
         (0..n)
-            .map(|i| hooks::AgentQuestion {
-                question: format!("q{i}"),
-                choices: vec!["a".into(), "b".into(), "c".into()],
-                is_multi_select: false,
+            .map(|i| {
+                hooks::AgentQuestion::new(
+                    format!("q{i}"),
+                    vec!["a".into(), "b".into(), "c".into()],
+                    false,
+                )
             })
             .collect()
     }
@@ -2094,10 +2098,18 @@ mod agent_tests {
 
     #[test]
     fn map_questions_defaults_when_fields_absent() {
-        // No multiple_choice at all (a future question type in `extra`).
         let request = protocol::UserQuestionsRequest {
             questions: vec![
-                protocol::UserQuestion::default(),
+                // No multiple_choice at all: a future question type whose
+                // payload rides in `extra`.
+                protocol::UserQuestion {
+                    multiple_choice: None,
+                    extra: {
+                        let mut m = serde_json::Map::new();
+                        m.insert("freeText".into(), serde_json::json!({"maxLen": 80}));
+                        m
+                    },
+                },
                 // multiple_choice present but sparse: is_multi_select unset.
                 protocol::UserQuestion {
                     multiple_choice: Some(protocol::MultipleChoice {
@@ -2125,12 +2137,22 @@ mod agent_tests {
         assert!(batch[0].question.is_empty());
         assert!(batch[0].choices.is_empty());
         assert!(!batch[0].is_multi_select);
+        // The unknown shape is programmatically distinguishable from a
+        // genuinely empty multiple-choice question, and the raw payload
+        // rides along for the hook to inspect.
+        assert!(batch[0].is_unknown_type());
+        assert_eq!(
+            batch[0].extra["freeText"],
+            serde_json::json!({"maxLen": 80})
+        );
         assert_eq!(batch[1].question, "Sparse");
         assert!(!batch[1].is_multi_select);
+        assert!(!batch[1].is_unknown_type());
         // Blank question text above real choices: the substitution is
         // observable to the hook (and warned at map time).
         assert!(batch[2].question.is_empty());
         assert_eq!(batch[2].choices, vec!["yes", "no"]);
+        assert!(!batch[2].is_unknown_type());
     }
 
     #[test]

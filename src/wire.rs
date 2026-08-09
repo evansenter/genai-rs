@@ -1030,7 +1030,7 @@ mod tests {
         // create_webhook returns new_signing_secret; rotate returns secret.
         // Both are one-time values and must never reach inspector output.
         let mut value = serde_json::json!({
-            "id": "webhooks/wh-1",
+            "id": "wh1bare0pq",
             "new_signing_secret": "whsec_create-secret",
             "secret": "whsec_rotated-secret"
         });
@@ -1039,7 +1039,7 @@ mod tests {
         assert!(!rendered.contains("whsec_"), "secret leaked: {rendered}");
         assert_eq!(value["new_signing_secret"], "[REDACTED]");
         assert_eq!(value["secret"], "[REDACTED]");
-        assert_eq!(value["id"], "webhooks/wh-1");
+        assert_eq!(value["id"], "wh1bare0pq");
     }
 
     #[test]

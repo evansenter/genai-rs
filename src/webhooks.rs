@@ -739,7 +739,7 @@ mod tests {
     fn test_webhook_full_resource_roundtrip() {
         // Wire fixture derived from the generated google-genai bindings.
         let json = json!({
-            "id": "webhooks/wh-123",
+            "id": "wh123bare0pq",
             "name": "my-hook",
             "uri": "https://example.com/hook",
             "subscribed_events": ["batch.succeeded", "interaction.failed", "video.generated"],
@@ -753,7 +753,7 @@ mod tests {
         });
 
         let webhook: Webhook = serde_json::from_value(json.clone()).unwrap();
-        assert_eq!(webhook.id.as_deref(), Some("webhooks/wh-123"));
+        assert_eq!(webhook.id.as_deref(), Some("wh123bare0pq"));
         assert_eq!(webhook.state, Some(WebhookState::Enabled));
         assert_eq!(webhook.subscribed_events.len(), 3);
         assert_eq!(

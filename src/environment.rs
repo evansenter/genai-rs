@@ -501,7 +501,7 @@ impl<'de> Deserialize<'de> for RemoteEnvironment {
 /// use genai_rs::{EnvironmentSpec, EnvironmentSource, RemoteEnvironment};
 ///
 /// // Reference an existing environment by ID
-/// let by_id: EnvironmentSpec = "environments/env-123".into();
+/// let by_id: EnvironmentSpec = "38aac1ae7f30fe9bd67afe42382ea041".into();
 ///
 /// // Or define one inline
 /// let inline: EnvironmentSpec = RemoteEnvironment::new()
@@ -820,9 +820,9 @@ mod tests {
 
     #[test]
     fn test_environment_spec_id_roundtrip() {
-        let spec: EnvironmentSpec = "environments/env-123".into();
+        let spec: EnvironmentSpec = "38aac1ae7f30fe9bd67afe42382ea041".into();
         let json = serde_json::to_string(&spec).unwrap();
-        assert_eq!(json, "\"environments/env-123\"");
+        assert_eq!(json, "\"38aac1ae7f30fe9bd67afe42382ea041\"");
         let parsed: EnvironmentSpec = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, spec);
     }

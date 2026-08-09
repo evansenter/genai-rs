@@ -159,9 +159,9 @@ mod tests {
 
     #[test]
     fn test_agent_base_environment_string_id() {
-        let agent = Agent::new("my-agent").with_base_environment("environments/env-42");
+        let agent = Agent::new("my-agent").with_base_environment("env42bare0");
         let value = serde_json::to_value(&agent).unwrap();
-        assert_eq!(value["base_environment"], "environments/env-42");
+        assert_eq!(value["base_environment"], "env42bare0");
     }
 
     #[test]
@@ -175,7 +175,7 @@ mod tests {
                 {"type": "google_search"},
                 {"type": "mcp_server", "name": "fs", "url": "https://mcp.example.com/fs"}
             ],
-            "base_environment": "environments/env-1"
+            "base_environment": "env1bare0"
         });
 
         let agent: Agent = serde_json::from_value(json.clone()).unwrap();
@@ -183,7 +183,7 @@ mod tests {
         assert_eq!(agent.tools.as_ref().unwrap().len(), 2);
         assert!(matches!(
             agent.base_environment,
-            Some(EnvironmentSpec::Id(ref id)) if id == "environments/env-1"
+            Some(EnvironmentSpec::Id(ref id)) if id == "env1bare0"
         ));
 
         let back = serde_json::to_value(&agent).unwrap();

@@ -1855,7 +1855,14 @@ mod tests {
 
     #[test]
     fn test_response_deserializes_steps_wire_fixture() {
-        // Representative revision 2026-05-20 response shape.
+        // Representative revision 2026-05-20 response shape. ID forms:
+        // `id`/`previous_interaction_id` are live-observed bare opaque
+        // strings (`v1_...`-style, no `interactions/` prefix);
+        // `environment_id`'s response-side form has not been observed
+        // non-None at accept-time — bare is assumed here to match the
+        // live-verified environments *resource* capture, and the
+        // inline-environment integration test defensively strips a
+        // possible prefix until the field is observed for real.
         let json = r#"{
             "id": "v1_abc123",
             "model": "gemini-3-flash-preview",

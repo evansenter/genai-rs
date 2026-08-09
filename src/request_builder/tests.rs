@@ -1351,12 +1351,12 @@ fn test_builder_with_environment_id() {
         .interaction()
         .with_model("gemini-3-flash-preview")
         .with_text("Hello")
-        .with_environment("environments/env-123")
+        .with_environment("38aac1ae7f30fe9bd67afe42382ea041")
         .build()
         .unwrap();
 
     let value = serde_json::to_value(&request).unwrap();
-    assert_eq!(value["environment"], "environments/env-123");
+    assert_eq!(value["environment"], "38aac1ae7f30fe9bd67afe42382ea041");
 }
 
 #[test]
