@@ -128,13 +128,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "  WS Receive: {{\"toolCall\": ...}} / WS Send: {{\"toolResponse\": ...}} - custom tools"
     );
+    println!(
+        "  WS Receive: stepUpdate.questionsRequest / WS Send: {{\"questionResponse\": ...}} - \
+         agent questions answered by the on_questions hook"
+    );
     println!("  STDERR: ... - harness diagnostics\n");
 
     println!("--- Production Considerations ---");
     println!(
         "• Pin the harness: pip install google-antigravity==0.1.5 (see SUPPORTED_HARNESS_VERSION)"
     );
-    println!("• Always add policies before enabling write tools (run_command, edit_file)");
+    println!(
+        "• Always add policies before enabling write tools (run_command, edit_file, ask_question)"
+    );
+    println!(
+        "• on_questions runs inline in the event pump - never block in it waiting for a human;"
+    );
+    println!("  answer from policy or pre-collected state (channel + try_recv)");
+    println!("• AskQuestion counts as write-capable: enabling it without a policy or");
+    println!("  on_pre_tool hook fails the spawn-time safety gate");
     println!(
         "• Call agent.shutdown() for graceful exit; dropping kills the harness without persistence"
     );

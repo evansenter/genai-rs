@@ -105,6 +105,39 @@ impl AgentQuestion {
     /// unit-test their `on_questions` closures without spawning a harness
     /// (the struct is `#[non_exhaustive]`, so it has no literal syntax
     /// downstream).
+    ///
+    /// ```
+    /// use genai_rs::antigravity::{AgentQuestion, QuestionAnswer, QuestionReply};
+    ///
+    /// // The closure under test — same shape as an `on_questions` hook.
+    /// let hook = |questions: &[AgentQuestion]| {
+    ///     QuestionReply::Answers(
+    ///         questions
+    ///             .iter()
+    ///             .map(|q| {
+    ///                 if q.choices.is_empty() {
+    ///                     QuestionAnswer::Unanswered
+    ///                 } else {
+    ///                     QuestionAnswer::Choices { selected: vec![0], freeform: None }
+    ///                 }
+    ///             })
+    ///             .collect(),
+    ///     )
+    /// };
+    ///
+    /// let fixture = [AgentQuestion::new(
+    ///     "Proceed with the migration?",
+    ///     vec!["yes".into(), "no".into()],
+    ///     false,
+    /// )];
+    /// let QuestionReply::Answers(answers) = hook(&fixture) else {
+    ///     panic!("expected answers");
+    /// };
+    /// assert_eq!(
+    ///     answers,
+    ///     vec![QuestionAnswer::Choices { selected: vec![0], freeform: None }]
+    /// );
+    /// ```
     #[must_use]
     pub fn new(question: impl Into<String>, choices: Vec<String>, is_multi_select: bool) -> Self {
         Self {

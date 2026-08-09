@@ -97,7 +97,7 @@ LOUD_WIRE=1 cargo run --example <example_name>
 | `deep_research` | Long-running research agent | Advanced |
 | `webhooks_and_background` | Webhook resource CRUD + per-request webhook routing + environments CRUD + triggers listing | Advanced |
 | `cancel_interaction` | Cancel background tasks | Intermediate |
-| `antigravity_agent` | Local Antigravity harness agent with Rust tools and policies (`--features antigravity`) | Advanced |
+| `antigravity_agent` | Local Antigravity harness agent with Rust tools, policies, and the `on_questions` hook (`--features antigravity`) | Advanced |
 
 ### Real-World Applications
 
@@ -286,6 +286,18 @@ Cancel in-progress background tasks.
 cargo run --example cancel_interaction
 ```
 **Learn**: `cancel_interaction()`, task lifecycle management.
+
+#### antigravity_agent
+Local Antigravity harness agent: custom Rust tools, policies, streaming,
+and answering agent questions.
+```bash
+cargo run --example antigravity_agent --features antigravity
+```
+**Learn**: `AntigravityAgent::builder()`, `#[tool]` dispatch through the
+harness, `policy::deny_all()`/`allow()`, `on_questions()` (enabling the
+write-capable `AskQuestion` builtin), `send_streaming()`, `shutdown()`.
+**Note**: Requires the `localharness` binary
+(`pip install google-antigravity==0.1.5`) and `GEMINI_API_KEY`.
 
 ## Prerequisites by Example
 
