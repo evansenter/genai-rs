@@ -325,6 +325,12 @@ async fn test_interaction_with_inline_environment() {
             if let Some(id) = &response.id {
                 let _ = client.cancel_interaction(id).await;
             }
+            // Best-effort: delete the implicitly provisioned environment
+            // when its ID is known (they expire on their own, but each CI
+            // run otherwise leaves one behind until then).
+            if let Some(env_id) = &response.environment_id {
+                let _ = client.delete_environment(env_id).await;
+            }
         }
         Err(e) => println!("Environment not available for this account/agent: {e}"),
     }

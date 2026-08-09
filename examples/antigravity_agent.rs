@@ -38,7 +38,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut agent = AntigravityAgent::builder()
         .with_api_key(api_key)
         .with_model("gemini-3-flash-preview")
-        .with_system_instructions("You are a concise assistant. Prefer tools over guessing.")
+        .with_system_instructions(
+            "You are a concise assistant. Prefer tools over guessing. When a request is \
+             ambiguous (e.g. no city given for weather), use ask_question to clarify \
+             instead of assuming.",
+        )
         // read_only() does not include AskQuestion — enable it explicitly
         // so the on_questions hook below is reachable.
         .with_capabilities(Capabilities::read_only().enable(BuiltinTool::AskQuestion))
@@ -112,6 +116,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         println!();
     }
+
+    // A deliberately under-specified turn: no city, so per the system
+    // instruction the agent should clarify via ask_question — answered by
+    // the on_questions hook above (which picks the first choice). This is
+    // the turn that exercises the questionsRequest/questionResponse
+    // round-trip documented in the footer.
+    println!("\n--- Ambiguous turn (may trigger ask_question) ---");
+    let response = agent.chat("What's the weather like right now?").await?;
+    println!("Agent: {}\n", response.text());
 
     let conversation_id = agent.conversation_id().map(ToString::to_string);
     agent.shutdown().await?;

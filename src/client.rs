@@ -866,6 +866,11 @@ impl Client {
 
     /// Lists triggers, paged.
     ///
+    /// # Arguments
+    ///
+    /// * `page_size` - Optional maximum number of triggers per page.
+    /// * `page_token` - Optional token from a previous list call.
+    ///
     /// # Errors
     ///
     /// Returns an error on network failure or an invalid page token.
@@ -879,6 +884,12 @@ impl Client {
 
     /// Updates a trigger (display name and/or status; `paused` pauses it,
     /// `active` resumes it).
+    ///
+    /// # Arguments
+    ///
+    /// * `trigger_id` - The trigger to update.
+    /// * `update` - The fields to change (only set fields are sent; there
+    ///   is no `update_mask` on this endpoint — see [`crate::TriggerUpdate`]).
     ///
     /// # Errors
     ///
@@ -913,6 +924,12 @@ impl Client {
     }
 
     /// Lists a trigger's past executions, paged.
+    ///
+    /// # Arguments
+    ///
+    /// * `trigger_id` - The trigger whose executions to list.
+    /// * `page_size` - Optional maximum number of executions per page.
+    /// * `page_token` - Optional token from a previous list call.
     ///
     /// # Errors
     ///
@@ -962,6 +979,11 @@ impl Client {
     }
 
     /// Lists environments, paged.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_size` - Optional maximum number of environments per page.
+    /// * `page_token` - Optional token from a previous list call.
     ///
     /// # Errors
     ///

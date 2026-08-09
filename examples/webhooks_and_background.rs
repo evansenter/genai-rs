@@ -76,6 +76,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
     );
     println!("=== Environment create (POST /v1beta/environments) ===");
     println!("{}\n", serde_json::to_string_pretty(&env_request)?);
+
+    // The trigger create body is the one shape a reader cannot observe
+    // live at all (creation is agent-gated), so always print it.
+    let trigger_params = genai_rs::TriggerCreateParams::new(
+        "0 9 * * 1-5",
+        "UTC",
+        genai_rs::InteractionRequest {
+            agent: Some("my-custom-agent".to_string()),
+            input: genai_rs::InteractionInput::Text("Daily repo audit".to_string()),
+            ..Default::default()
+        },
+    )
+    .with_display_name("weekday-audit");
+    println!("=== Trigger create (POST /v1beta/triggers, agent-gated) ===");
+    println!("{}\n", serde_json::to_string_pretty(&trigger_params)?);
     println!("=== Triggers list (GET /v1beta/triggers) - no body ===\n");
 
     let Some(_) = api_key else {

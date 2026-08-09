@@ -209,9 +209,12 @@ The `ask_question` builtin lets the agent pause a turn to ask the user
 questions (multiple-choice, optionally multi-select). It is **off in the
 default read-only capability set** — enable it explicitly, and note that
 it counts as write-capable for the [safety gate](#safety-gate), so a
-policy or pre-tool hook must also be registered. Set an `on_questions`
-hook to answer the questions programmatically — route them to a CLI
-prompt, a chat message, or policy code:
+policy or pre-tool hook must also be registered. (The policy satisfies
+the gate but does not govern questions — question requests bypass the
+policy engine entirely; `on_questions`, or not enabling the builtin, is
+the only control.) Set an `on_questions` hook to answer the questions
+programmatically — route them to a CLI prompt, a chat message, or policy
+code:
 
 ```rust,ignore
 use genai_rs::antigravity::{BuiltinTool, Capabilities, QuestionAnswer, QuestionReply, policy};
