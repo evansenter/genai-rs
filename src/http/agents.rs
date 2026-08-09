@@ -4,7 +4,7 @@
 //! the agents resource is part of the revisioned Interactions surface
 //! (the generated google-genai bindings apply the revision header globally).
 
-use super::common::{BASE_URL_PREFIX, send_and_read};
+use super::common::{BASE_URL_PREFIX, send_and_read, with_paging_and};
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
 use crate::agents::{Agent, AgentListResponse};
@@ -47,21 +47,8 @@ pub async fn list_agents(
         "Listing agents: page_size={page_size:?}, page_token={page_token:?}, parent={parent:?}"
     );
 
-    let mut url = agents_url();
-    let mut params = Vec::new();
-    if let Some(size) = page_size {
-        params.push(format!("page_size={size}"));
-    }
-    if let Some(token) = page_token {
-        params.push(format!("page_token={}", urlencoding::encode(token)));
-    }
-    if let Some(parent) = parent {
-        params.push(format!("parent={}", urlencoding::encode(parent)));
-    }
-    if !params.is_empty() {
-        url.push('?');
-        url.push_str(&params.join("&"));
-    }
+    let extra: Vec<(&str, &str)> = parent.map(|p| ("parent", p)).into_iter().collect();
+    let url = with_paging_and(agents_url(), page_size, page_token, &extra);
 
     let text = send_and_read(ctx, "GET", &url, None).await?;
     deserialize_with_context(&text, "AgentListResponse")

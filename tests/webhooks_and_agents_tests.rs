@@ -629,14 +629,17 @@ async fn test_environment_crud_lifecycle() {
     let outcome = std::panic::AssertUnwindSafe(checks);
     let outcome = futures_util::FutureExt::catch_unwind(outcome).await;
 
-    // Delete runs regardless of assertion outcome, then confirm gone.
-    client
-        .delete_environment(&created_id)
-        .await
-        .expect("delete_environment");
+    // Delete runs regardless of assertion outcome (retrying transients so
+    // a blip doesn't leak the container), but a tripped read assertion is
+    // the diagnosis this test exists to produce — re-raise it before
+    // judging the delete, so a double failure reports the real one.
+    let deleted = crate::retry_request!([client, created_id] => {
+        client.delete_environment(&created_id).await
+    });
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }
+    deleted.expect("delete_environment");
     let gone = client.get_environment(&created_id).await;
     assert!(gone.is_err(), "environment should be gone after delete");
 }
@@ -656,11 +659,12 @@ async fn test_triggers_list_and_gated_create() {
     use genai_rs::{InteractionInput, InteractionRequest, TriggerCreateParams};
 
     // List works on standard keys (returns `{}` when empty — the default
-    // deserialization path this asserts).
-    let listed = client
-        .list_triggers(Some(10), None)
-        .await
-        .expect("list_triggers");
+    // deserialization path this asserts). Reads retry transients like the
+    // neighbouring CRUD tests.
+    let listed = crate::retry_request!([client] => {
+        client.list_triggers(Some(10), None).await
+    })
+    .expect("list_triggers");
     println!("Triggers listed: {}", listed.triggers.len());
 
     // Create requires a custom agent, which is gated/allowlisted on
@@ -674,15 +678,24 @@ async fn test_triggers_list_and_gated_create() {
     };
     let params = TriggerCreateParams::new("0 5 1 1 *", "UTC", interaction)
         .with_display_name("genai-rs trigger schema probe");
-    match client.create_trigger(&params).await {
+    let create_result = crate::retry_request!([client, params] => {
+        client.create_trigger(&params).await
+    });
+    match create_result {
         Ok(trigger) => {
             println!("Trigger created (agent gate open): id={:?}", trigger.id);
             if let Some(id) = &trigger.id {
                 let _ = client.delete_trigger(id).await;
             }
         }
-        Err(e) => {
-            let message = e.to_string();
+        // Only a structured 4xx API rejection proves anything about the
+        // payload schema — a transport failure would pass the marker check
+        // vacuously, so fail loudly on anything else.
+        Err(genai_rs::GenaiError::Api {
+            status_code,
+            message,
+            ..
+        }) if (400..500).contains(&status_code) => {
             println!("Trigger create gated as expected: {message}");
             // "Unknown parameter" covers top-level params; a bad field
             // inside the JSON body (incl. the nested interaction) comes
@@ -693,5 +706,6 @@ async fn test_triggers_list_and_gated_create() {
                 "trigger payload schema itself was rejected: {message}"
             );
         }
+        Err(e) => panic!("expected a 4xx agent-gate rejection, got: {e}"),
     }
 }

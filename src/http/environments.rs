@@ -57,3 +57,20 @@ pub async fn delete_environment(ctx: &HttpContext, environment_id: &str) -> Resu
     send_and_read(ctx, "DELETE", &environment_url(environment_id), None).await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_environments_url_construction() {
+        assert_eq!(
+            environments_url(),
+            "https://generativelanguage.googleapis.com/v1beta/environments"
+        );
+        assert_eq!(
+            environment_url("env-123"),
+            "https://generativelanguage.googleapis.com/v1beta/environments/env-123"
+        );
+    }
+}

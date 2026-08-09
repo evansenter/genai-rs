@@ -3,7 +3,8 @@
 Status: implementation tracker — items are removed/checked off as they land.
 Source: Google's `google-genai` Python SDK 2.10.0 generated API bindings
 (machine-generated from the Interactions API spec), cross-checked against SDK
-1.65/1.74/2.0 for protocol history. `ai.google.dev` doc endpoints were not
+1.65/1.74/2.0 for protocol history. Re-swept 2026-08 against SDK 2.17.0
+(items 18-20 below) with every new parameter live-probed first. `ai.google.dev` doc endpoints were not
 reachable from the analysis environment; all behaviors should be re-verified
 live with `LOUD_WIRE=1` before release.
 
@@ -90,6 +91,19 @@ results — full wire notes in `docs/ENUM_WIRE_FORMATS.md`:
   `computer_use`, `code_execution`, `url_context`.
 - **Deep-research knobs**: `visualization` (`off|auto`, server-validated) +
   `collaborative_planning` accepted; `enable_bigquery_tool` is Vertex-only.
+- **`safety_settings` / `labels`**: both rejected as **Vertex-only**
+  (2026-08-08: "not available on the Gemini API but ... available on the
+  Gemini Enterprise Agent Platform") — modeled for spec parity like the
+  Retrieval tool and `enable_bigquery_tool` above.
+- **Environments resource**: full CRUD lifecycle verified live
+  (`/v1beta/environments`); wire uses `created`/`updated`/`last_accessed`
+  timestamps and string-serialized int64 `file_count`/`size_bytes`.
+- **Triggers resource**: list verified live (`{}` when empty); create is
+  custom-agent-gated ("Agent '' is invalid or not found") and rejects
+  `store` inside the nested interaction, so the create/update/execution
+  shapes are modeled from the SDK spec with per-field Evergreen defaults.
+- **`transcription_config`**: accepted by the API (200) inside
+  `generation_config`.
 
 Evergreen extras spotted during verification (returned by the API but not
 previously modeled on `InteractionResponse`) — all now modeled:
@@ -148,6 +162,22 @@ Completed in the revision-migration phase and the phase-2 surface expansion
 16. ~~Typed citation annotations: `url_citation`, `file_citation`,
     `place_citation` (with review snippets); byte indices.~~ ✅
 17. ~~Audio content `channels`/`sample_rate`.~~ ✅
+
+Completed in the 2026-08 sweep against SDK 2.17.0 (the 0.9.0 release):
+
+18. ~~Triggers resource (`/v1beta/triggers` CRUD + `:run`-equivalent
+    `POST .../executions` + executions listing).~~ ✅ (`src/triggers.rs`,
+    `Client::*_trigger*()`; list live-verified, create agent-gated — see
+    verification notes above)
+19. ~~Environments as a standalone resource (`/v1beta/environments` CRUD,
+    complementing the inline `environment` request field).~~ ✅
+    (`src/environments.rs`, `Client::*_environment()`; full lifecycle
+    live-verified)
+20. ~~`generation_config.transcription_config`, `safety_settings`,
+    request `labels` (both Vertex-only), and the `AntigravityConfig`
+    typed generation-config helper.~~ ✅ (`TranscriptionConfig`,
+    `SafetySetting` in `src/safety.rs`, `with_labels()`/`add_label()`,
+    `AntigravityConfig`)
 
 ## Spec-vs-implementation disagreements — ✅ ALL FIXED
 

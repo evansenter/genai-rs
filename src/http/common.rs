@@ -211,10 +211,18 @@ pub(crate) fn to_body<B: serde::Serialize>(
 }
 
 /// Appends `page_size` / `page_token` query params to a URL.
-pub(crate) fn with_paging(
+pub(crate) fn with_paging(url: String, page_size: Option<u32>, page_token: Option<&str>) -> String {
+    with_paging_and(url, page_size, page_token, &[])
+}
+
+/// [`with_paging`] plus resource-specific query params (values
+/// percent-encoded), for list endpoints with extra filters like the
+/// agents resource's `parent`.
+pub(crate) fn with_paging_and(
     mut url: String,
     page_size: Option<u32>,
     page_token: Option<&str>,
+    extra: &[(&str, &str)],
 ) -> String {
     let mut params = Vec::new();
     if let Some(size) = page_size {
@@ -222,6 +230,9 @@ pub(crate) fn with_paging(
     }
     if let Some(token) = page_token {
         params.push(format!("page_token={}", urlencoding::encode(token)));
+    }
+    for (key, value) in extra {
+        params.push(format!("{key}={}", urlencoding::encode(value)));
     }
     if !params.is_empty() {
         url.push('?');
@@ -257,6 +268,21 @@ mod tests {
         assert_eq!(
             with_paging("https://x/v1beta/things".into(), Some(5), Some("a/b&c=d")),
             "https://x/v1beta/things?page_size=5&page_token=a%2Fb%26c%3Dd"
+        );
+    }
+
+    #[test]
+    fn with_paging_and_percent_encodes_extra_params() {
+        // The agents resource's `parent` filter rides the same helper, so
+        // its encoding is covered by the same contract.
+        assert_eq!(
+            with_paging_and(
+                "https://x/v1beta/things".into(),
+                Some(5),
+                None,
+                &[("parent", "projects/a b")]
+            ),
+            "https://x/v1beta/things?page_size=5&parent=projects%2Fa%20b"
         );
     }
 

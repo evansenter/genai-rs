@@ -10,6 +10,7 @@ This guide covers agent-based interactions and background execution patterns for
 - [Deep Research Agent](#deep-research-agent)
 - [Custom Agents (Agents Resource)](#custom-agents-agents-resource)
 - [Environments](#environments)
+- [Scheduled Triggers](#scheduled-triggers)
 - [Background Execution](#background-execution)
 - [Webhooks Instead of Polling](#webhooks-instead-of-polling)
 - [Polling Patterns](#polling-patterns)
@@ -217,6 +218,67 @@ traffic, use `NetworkConfig::Disabled` to turn networking off, or an
 allowlist of domains (wildcards supported; `transform` injects headers on
 matching requests). Custom agents can also carry a default environment via
 `Agent::with_base_environment`.
+
+### Explicit environment CRUD
+
+Instead of letting the server create an environment implicitly from an
+inline `RemoteEnvironment`, you can manage environments as first-class
+resources (`/v1beta/environments`) — create one up front, reference its ID
+from many interactions, and delete it when done. The full lifecycle works
+on a standard API key:
+
+```rust,ignore
+use genai_rs::{CreateEnvironmentRequest, EnvironmentSource};
+
+let env = client
+    .create_environment(
+        &CreateEnvironmentRequest::new()
+            .add_source(EnvironmentSource::inline("/workspace/.env", "MODE=ci")),
+    )
+    .await?;
+let env_id = env.id.clone().expect("create returns an ID");
+
+// Reference it from any interaction, then inspect and clean up.
+let fetched = client.get_environment(&env_id).await?;
+println!("status={:?} files={:?}", fetched.status, fetched.file_count);
+let listed = client.list_environments(Some(10), None).await?;
+client.delete_environment(&env_id).await?;
+```
+
+Environments expire on their own (`status` moves from `active` to
+`expired`), but delete what you create — repeated runs otherwise
+accumulate containers until expiry.
+
+## Scheduled Triggers
+
+A *trigger* (`/v1beta/triggers`) runs a stored interaction on a cron
+schedule server-side — no process of yours needs to be running. Creating
+one requires the nested interaction to target a **custom agent**, and
+custom-agent creation is gated/allowlisted on standard API keys today, so
+most accounts can list but not create:
+
+```rust,ignore
+use genai_rs::{InteractionRequest, TriggerCreateParams, TriggerStatus, TriggerUpdate};
+
+// Schedule + IANA time zone + the interaction to run each firing.
+let params = TriggerCreateParams::new("0 9 * * 1-5", "America/Los_Angeles", interaction)
+    .with_display_name("weekday-briefing")
+    .with_environment_id(env_id);           // optional: run inside an environment
+let trigger = client.create_trigger(&params).await?;
+
+// Pause / resume via partial update; fire immediately; inspect runs.
+let id = trigger.id.clone().expect("created trigger has an ID");
+client
+    .update_trigger(&id, &TriggerUpdate::new().with_status(TriggerStatus::Paused))
+    .await?;
+let execution = client.run_trigger(&id).await?;
+let runs = client.list_trigger_executions(&id, Some(10), None).await?;
+client.delete_trigger(&id).await?;
+```
+
+`TriggerUpdate` is a genuine partial update (unset fields are omitted from
+the PATCH body). See the `genai_rs::triggers` module docs for the
+execution-status lifecycle and the agent-gating details.
 
 ## Background Execution
 

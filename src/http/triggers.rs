@@ -80,6 +80,13 @@ pub async fn delete_trigger(ctx: &HttpContext, trigger_id: &str) -> Result<(), G
 }
 
 /// Fires a trigger immediately (`POST /v1beta/triggers/{id}/executions`).
+///
+/// Note the path shape: unlike the colon custom-method verbs on webhooks
+/// (`:ping`, `:rotateSigningSecret`), run-now is spec'd as a POST to the
+/// `executions` sub-collection — verified against the google-genai 2.17.0
+/// generated bindings (`path="/{api_version}/triggers/{trigger_id}/executions"`).
+/// Not live-verifiable here: reaching it requires an existing trigger, and
+/// trigger creation is agent-gated on standard keys.
 pub async fn run_trigger(
     ctx: &HttpContext,
     trigger_id: &str,
@@ -107,4 +114,28 @@ pub async fn list_trigger_executions(
     let url = with_paging(trigger_executions_url(trigger_id), page_size, page_token);
     let text = send_and_read(ctx, "GET", &url, None).await?;
     deserialize_with_context(&text, "TriggerExecutionListResponse")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_triggers_url_construction() {
+        assert_eq!(
+            triggers_url(),
+            "https://generativelanguage.googleapis.com/v1beta/triggers"
+        );
+        assert_eq!(
+            trigger_url("trig-123"),
+            "https://generativelanguage.googleapis.com/v1beta/triggers/trig-123"
+        );
+        // The sub-collection form the SDK spec mandates for run/list
+        // executions (see the run_trigger doc comment) — this path has no
+        // live probe, so the unit test is its only coverage.
+        assert_eq!(
+            trigger_executions_url("trig-123"),
+            "https://generativelanguage.googleapis.com/v1beta/triggers/trig-123/executions"
+        );
+    }
 }

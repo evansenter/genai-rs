@@ -95,7 +95,7 @@ LOUD_WIRE=1 cargo run --example <example_name>
 |---------|-------------|------------|
 | `thinking` | Chain-of-thought reasoning levels | Intermediate |
 | `deep_research` | Long-running research agent | Advanced |
-| `webhooks_and_background` | Webhook resource CRUD + per-request webhook routing | Advanced |
+| `webhooks_and_background` | Webhook resource CRUD + per-request webhook routing + environments CRUD + triggers listing | Advanced |
 | `cancel_interaction` | Cancel background tasks | Intermediate |
 | `antigravity_agent` | Local Antigravity harness agent with Rust tools and policies (`--features antigravity`) | Advanced |
 
@@ -268,12 +268,16 @@ cargo run --example deep_research
 **Learn**: `with_agent()`, `with_background()`, polling patterns.
 
 #### webhooks_and_background
-Push-based completion via webhooks instead of polling.
+Push-based completion via webhooks instead of polling, plus the
+environments and triggers resources.
 ```bash
 cargo run --example webhooks_and_background
 ```
 **Learn**: `create_webhook()`/`ping_webhook()`/`rotate_webhook_signing_secret()`,
-`WebhookEvent`, `with_webhook_config()` on background interactions.
+`WebhookEvent`, `with_webhook_config()` on background interactions;
+`create_environment()`/`get_environment()`/`list_environments()`/
+`delete_environment()` lifecycle; `list_triggers()` (creation is
+agent-gated).
 **Note**: Runs without `GEMINI_API_KEY` (prints request shapes).
 
 #### cancel_interaction

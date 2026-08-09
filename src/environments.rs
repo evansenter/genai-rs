@@ -127,6 +127,20 @@ impl<'de> Deserialize<'de> for EnvironmentStatus {
     }
 }
 
+/// Serializes an optional int64 in the protobuf-JSON string form the API
+/// uses on the wire, keeping deserialize-then-serialize roundtrips faithful
+/// to captured responses.
+#[allow(clippy::ref_option)] // signature dictated by serde's serialize_with
+fn serialize_string_i64<S>(value: &Option<i64>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match value {
+        Some(n) => serializer.serialize_str(&n.to_string()),
+        None => serializer.serialize_none(),
+    }
+}
+
 /// Deserializes an optional int64 that the API serializes as a JSON string
 /// (protobuf JSON convention), accepting a plain number too.
 fn deserialize_string_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
@@ -136,7 +150,13 @@ where
     let value = Option::<serde_json::Value>::deserialize(deserializer)?;
     match value {
         None | Some(serde_json::Value::Null) => Ok(None),
-        Some(serde_json::Value::Number(n)) => Ok(n.as_i64()),
+        Some(serde_json::Value::Number(n)) => {
+            let parsed = n.as_i64();
+            if parsed.is_none() {
+                tracing::warn!("Non-i64 JSON number for int64 field, dropping: {n}");
+            }
+            Ok(parsed)
+        }
         Some(serde_json::Value::String(s)) => {
             let parsed = s.parse().ok();
             if parsed.is_none() {
@@ -181,6 +201,7 @@ pub struct Environment {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_string_i64",
         deserialize_with = "deserialize_string_i64"
     )]
     pub file_count: Option<i64>,
@@ -188,6 +209,7 @@ pub struct Environment {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_string_i64",
         deserialize_with = "deserialize_string_i64"
     )]
     pub size_bytes: Option<i64>,
@@ -280,6 +302,11 @@ mod tests {
         assert_eq!(env.file_count, Some(2));
         assert_eq!(env.size_bytes, Some(19));
         assert!(env.created.is_some());
+
+        // Roundtrip preserves the protobuf-JSON string form the API sent.
+        let back = serde_json::to_value(&env).unwrap();
+        assert_eq!(back["file_count"], serde_json::json!("2"));
+        assert_eq!(back["size_bytes"], serde_json::json!("19"));
     }
 
     #[test]

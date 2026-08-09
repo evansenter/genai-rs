@@ -136,26 +136,43 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let env_request = genai_rs::CreateEnvironmentRequest::new().add_source(
         genai_rs::EnvironmentSource::inline("/etc/motd", "hello from the environments example"),
     );
-    let environment = client.create_environment(&env_request).await?;
-    let env_id = environment.id.clone().unwrap_or_default();
-    println!("Created environment: {env_id}");
+    // Print-don't-propagate throughout, like the webhook sections above: an
+    // account-gating or transient error must not exit main — the footer (and
+    // its delete-what-you-create warning) still has to print.
+    match client.create_environment(&env_request).await {
+        // A create response without an ID would be a protocol violation;
+        // don't paper over it with an empty string (that would turn the
+        // get/delete below into requests against the collection URL).
+        Ok(genai_rs::Environment {
+            id: Some(env_id), ..
+        }) => {
+            println!("Created environment: {env_id}");
 
-    // Print-don't-propagate between create and delete: a failed read must
-    // not exit main and leak the container (see the footer note).
-    match client.list_environments(Some(10), None).await {
-        Ok(listed) => println!("Environments visible: {}", listed.environments.len()),
-        Err(e) => println!("list_environments failed: {e}"),
-    }
-    match client.get_environment(&env_id).await {
-        Ok(fetched) => println!(
-            "Fetched: status={:?} files={:?} bytes={:?}",
-            fetched.status, fetched.file_count, fetched.size_bytes
-        ),
-        Err(e) => println!("get_environment failed: {e}"),
-    }
+            // A failed read must not skip the delete below and leak the
+            // container (see the footer note).
+            match client.list_environments(Some(10), None).await {
+                Ok(listed) => println!("Environments visible: {}", listed.environments.len()),
+                Err(e) => println!("list_environments failed: {e}"),
+            }
+            match client.get_environment(&env_id).await {
+                Ok(fetched) => println!(
+                    "Fetched: status={:?} files={:?} bytes={:?}",
+                    fetched.status, fetched.file_count, fetched.size_bytes
+                ),
+                Err(e) => println!("get_environment failed: {e}"),
+            }
 
-    client.delete_environment(&env_id).await?;
-    println!("Deleted environment {env_id}");
+            match client.delete_environment(&env_id).await {
+                Ok(()) => println!("Deleted environment {env_id}"),
+                Err(e) => println!(
+                    "delete_environment failed: {e} - delete {env_id} manually \
+                     so containers don't accumulate"
+                ),
+            }
+        }
+        Ok(_) => println!("create_environment returned no ID (protocol violation) - skipping"),
+        Err(e) => println!("create_environment failed (tolerated): {e}"),
+    }
 
     // =========================================================================
     // Triggers: server-side scheduled interactions

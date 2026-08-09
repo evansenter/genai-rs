@@ -450,7 +450,11 @@ interaction is rejected with "Agent '' is invalid or not found", and
 `update_time` per the SDK spec while the live-verified Environments
 resource uses `created`/`updated`; if the live wire follows the
 environments convention, the timestamp fields deserialize as `None`
-(all fields are Optional/defaulted, so nothing hard-fails). Confirm with
+(all fields are Optional/defaulted, so nothing hard-fails). The list
+envelope keys are in the same boat: `triggers` matches its path segment
+but `GET .../executions` is modeled with a `trigger_executions` key per
+the SDK spec — if the live wire uses `executions` instead, the
+`serde(default)` yields a silently empty list. Confirm all of these with
 `LOUD_WIRE=1` once the agent gate opens.
 
 ### ThinkingSummaries (agent_config)
