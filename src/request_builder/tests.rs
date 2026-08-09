@@ -1742,11 +1742,11 @@ fn test_builder_with_transcription_config() {
             temperature: Some(0.5), // pre-existing generation_config must survive
             ..Default::default()
         })
-        .with_transcription_config(TranscriptionConfig {
-            language_codes: Some(vec!["en-US".to_string()]),
-            diarization_mode: Some("speaker".to_string()),
-            ..Default::default()
-        })
+        .with_transcription_config(
+            TranscriptionConfig::new()
+                .with_language_codes(["en-US"])
+                .with_diarization_mode("speaker"),
+        )
         .build()
         .unwrap();
 
