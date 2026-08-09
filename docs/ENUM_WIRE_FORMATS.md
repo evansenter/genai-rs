@@ -47,6 +47,12 @@ All types below implement graceful handling of unrecognized values via an `Unkno
 | 29 | `ResponseFormat` | src/response_format.rs | `format_type` | text/audio/image/video union |
 | 30 | `VideoTask` | src/request.rs | `task_type` | text_to_video/image_to_video/reference_to_video/edit |
 | 31 | `Visualization` | src/request.rs | `visualization_type` | off/auto (Deep Research agent_config) |
+| 32 | `HarmCategory` | src/safety.rs | `category_type` | Ten harm categories (Vertex-gated parameter) |
+| 33 | `SafetyThreshold` | src/safety.rs | `threshold_type` | Block thresholds (Vertex-gated parameter) |
+| 34 | `SafetyMethod` | src/safety.rs | `method_type` | severity/probability (Vertex-gated parameter) |
+| 35 | `EnvironmentStatus` | src/environments.rs | `status_type` | active/expired |
+| 36 | `TriggerStatus` | src/triggers.rs | `status_type` | active/paused/error (SDK-spec, pending live) |
+| 37 | `TriggerExecutionStatus` | src/triggers.rs | `status_type` | Execution outcomes (SDK-spec, pending live) |
 
 **Removed in revision 2026-05-20** (no longer exist in this library or on the wire):
 `UrlRetrievalStatus`, `GroundingMetadata`, `UrlContextMetadata`, `Turn`, and all tool-related
@@ -439,7 +445,9 @@ timestamps as ISO 8601 with offset — both verified in the same probe).
 | Rust Enum | Wire Values |
 |-----------|-------------|
 | `TriggerStatus` | `"active"`, `"paused"`, `"error"` |
+| `TriggerStatus::Unknown { status_type, data }` | preserved |
 | `TriggerExecutionStatus` | `"in_progress"`, `"completed"`, `"failed"`, `"skipped"`, `"timed_out"` |
+| `TriggerExecutionStatus::Unknown { status_type, data }` | preserved |
 
 **Status**: From the official SDK spec. Live verification is pending:
 trigger creation requires a custom agent, which is gated/allowlisted on
