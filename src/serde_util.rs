@@ -152,10 +152,15 @@ where
 {
     let value = Option::<serde_json::Value>::deserialize(deserializer)?;
     match value {
-        None | Some(serde_json::Value::Null) => {
-            // The value is always null by construction on this arm, so the
-            // element type is the only discriminator available to say
-            // *which* envelope's page came back empty.
+        // Key-absent: unreachable from the five envelopes today (their
+        // struct-level serde defaults fill a missing key without calling
+        // this helper), but kept silent like the siblings so a future
+        // default-less call site cannot log a spurious "null" warning.
+        None => Ok(Vec::new()),
+        Some(serde_json::Value::Null) => {
+            // The value is always null on this arm, so the element type is
+            // the only discriminator available to say *which* envelope's
+            // page came back empty.
             tracing::warn!(
                 "List field of {} was explicit null; degrading to an empty list",
                 std::any::type_name::<T>()
