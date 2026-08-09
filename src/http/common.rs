@@ -172,7 +172,7 @@ pub(crate) async fn send_and_read(
     use crate::wire::WireEvent;
 
     let request_id = ctx.next_request_id();
-    ctx.emit_request(request_id, method.as_str(), url, body.clone());
+    ctx.emit_request(request_id, method.as_str(), url, body.as_ref());
 
     let builder = ctx.http_client.request(method, url);
 

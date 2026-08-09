@@ -1896,6 +1896,9 @@ impl TurnState {
 /// `multiple_choice` (or an inner field) is absent — `choices` is the
 /// index space [`hooks::QuestionAnswer::Choices`] selections refer to,
 /// so the substitution is observable to the hook and pinned by tests.
+/// `unknown_type` (the field hooks branch on via
+/// [`AgentQuestion::is_unknown_type`]) is set exactly when the
+/// `multiple_choice` arm is absent from the wire.
 /// Free function so the mapping is unit-testable.
 fn map_questions(request: &protocol::UserQuestionsRequest) -> Vec<AgentQuestion> {
     request
@@ -1904,9 +1907,11 @@ fn map_questions(request: &protocol::UserQuestionsRequest) -> Vec<AgentQuestion>
         .map(|q| {
             let mc = q.multiple_choice.as_ref();
             if mc.is_none() {
-                // A future question type (preserved in `extra`) would reach
-                // the hook as a blank multiple-choice; name it so the drift
-                // is visible (mirrors unknown-action handling).
+                // A future question type reaches the hook flagged via
+                // `unknown_type` (is_unknown_type()) with its payload
+                // merged into `extra`; this warn is the log-side signal
+                // alongside that programmatic one (mirrors unknown-action
+                // handling).
                 tracing::warn!(
                     "Question with no multiple_choice arm (unknown type?); \
                      hook sees a blank question. Extra fields: {:?}",

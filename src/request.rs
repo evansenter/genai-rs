@@ -319,6 +319,26 @@ impl<'de> Deserialize<'de> for InteractionInput {
     }
 }
 
+/// Deserializes `InteractionRequest::input`, mapping an explicit JSON null
+/// onto [`InteractionInput::default()`].
+///
+/// `serde(default)` only covers the key-*absent* case; without this, a
+/// nested projection carrying `input: null` (e.g. a `Trigger` list entry)
+/// would hit the deserializer's catch-all error arm and fail the whole
+/// list response — the one null-intolerant field left in the trigger tree.
+fn deserialize_null_tolerant_input<'de, D>(deserializer: D) -> Result<InteractionInput, D::Error>
+where
+    D: serde::de::Deserializer<'de>,
+{
+    match Option::<InteractionInput>::deserialize(deserializer)? {
+        Some(input) => Ok(input),
+        None => {
+            tracing::warn!("InteractionRequest input was explicit null; degrading to empty text");
+            Ok(InteractionInput::default())
+        }
+    }
+}
+
 /// Thinking level for chain-of-thought reasoning.
 ///
 /// Controls the depth of reasoning the model performs before generating a response.
@@ -1200,13 +1220,16 @@ pub struct InteractionRequest {
     /// The input for this interaction
     ///
     /// The `serde(default)` tolerates sparse nested projections (e.g. a
-    /// `Trigger` list entry whose interaction omits `input`), but note the
-    /// roundtrip asymmetry: absence deserializes to empty text and
-    /// re-serializes as a *present* `input` key — the one spot in the
+    /// `Trigger` list entry whose interaction omits `input`), and the
+    /// `deserialize_with` extends that to an explicit JSON null (serde
+    /// only applies `default` when the key is *absent*) — either way a
+    /// projection degrades to empty text instead of failing the whole
+    /// list response. Note the roundtrip asymmetry: both shapes
+    /// re-serialize as a *present* `input` key — the one spot in the
     /// Evergreen surface where a sparse projection gains a field instead
     /// of preserving absence. Nothing re-sends a deserialized `Trigger`
     /// today, so the shape is left alone rather than making this Optional.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_tolerant_input")]
     pub input: InteractionInput,
 
     /// Reference to a previous interaction for stateful conversations

@@ -33,7 +33,12 @@ pub async fn create_interaction(
     let url = construct_endpoint_url(endpoint);
 
     let request_id = ctx.next_request_id();
-    ctx.emit_request(request_id, "POST", &url, ctx.serialize_wire_body(&request));
+    ctx.emit_request(
+        request_id,
+        "POST",
+        &url,
+        ctx.serialize_wire_body(&request).as_ref(),
+    );
 
     let response = ctx
         .http_client
@@ -248,7 +253,7 @@ pub fn create_interaction_stream<'a>(
         request_id,
         "POST (stream)",
         &url,
-        ctx.serialize_wire_body(&request),
+        ctx.serialize_wire_body(&request).as_ref(),
     );
 
     try_stream! {
@@ -486,7 +491,7 @@ pub async fn cancel_interaction(
     let url = construct_endpoint_url(endpoint);
 
     let request_id = ctx.next_request_id();
-    ctx.emit_request(request_id, "POST", &url, Some(serde_json::json!({})));
+    ctx.emit_request(request_id, "POST", &url, Some(&serde_json::json!({})));
 
     // Send empty JSON body - the API requires Content-Length header
     let response = ctx

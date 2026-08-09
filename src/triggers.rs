@@ -854,6 +854,20 @@ mod tests {
         .unwrap();
         let interaction = trigger.interaction.expect("interaction present");
         assert_eq!(interaction.agent.as_deref(), Some("my-agent"));
+
+        // An interaction carrying an explicit `input: null` (serde defaults
+        // only cover the key-absent case) degrades to empty text too,
+        // instead of failing the whole list response.
+        let trigger: Trigger = serde_json::from_value(serde_json::json!({
+            "id": "t3",
+            "interaction": {"agent": "my-agent", "input": null}
+        }))
+        .unwrap();
+        let interaction = trigger.interaction.expect("interaction present");
+        assert_eq!(
+            interaction.input,
+            crate::request::InteractionInput::Text(String::new())
+        );
     }
 
     #[test]
