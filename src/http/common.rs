@@ -160,27 +160,16 @@ pub fn construct_endpoint_url(endpoint: Endpoint) -> String {
 /// environments resource modules.
 pub(crate) async fn send_and_read(
     ctx: &super::context::HttpContext,
-    method: &str,
+    method: reqwest::Method,
     url: &str,
     body: Option<serde_json::Value>,
 ) -> Result<String, crate::errors::GenaiError> {
-    use crate::errors::GenaiError;
     use crate::wire::WireEvent;
 
     let request_id = ctx.next_request_id();
-    ctx.emit_request(request_id, method, url, body.clone());
+    ctx.emit_request(request_id, method.as_str(), url, body.clone());
 
-    let builder = match method {
-        "GET" => ctx.http_client.get(url),
-        "POST" => ctx.http_client.post(url),
-        "PATCH" => ctx.http_client.patch(url),
-        "DELETE" => ctx.http_client.delete(url),
-        other => {
-            return Err(GenaiError::Internal(format!(
-                "Unsupported HTTP method: {other}"
-            )));
-        }
-    };
+    let builder = ctx.http_client.request(method, url);
 
     let mut builder = builder
         .header(API_KEY_HEADER, &ctx.api_key)
@@ -223,6 +212,9 @@ pub(crate) fn path_segment(id: &str) -> String {
 }
 
 /// Appends `page_size` / `page_token` query params to a URL.
+///
+/// `url` must not already carry a query string — the shared paging
+/// helpers append `?` unconditionally.
 pub(crate) fn with_paging(url: String, page_size: Option<u32>, page_token: Option<&str>) -> String {
     with_paging_and(url, page_size, page_token, &[])
 }
@@ -241,7 +233,7 @@ pub(crate) fn with_paging_and(
 ) -> String {
     debug_assert!(
         !url.contains('?'),
-        "with_paging_and requires a query-less base URL, got {url}"
+        "paging helpers require a query-less base URL, got {url}"
     );
     let mut params = Vec::new();
     if let Some(size) = page_size {

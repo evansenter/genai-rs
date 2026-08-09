@@ -402,6 +402,23 @@ impl AgentBuilder {
     /// pre-collected state (e.g. a channel drained with `try_recv`);
     /// blocking stalls all event processing for as long as the answer
     /// takes.
+    ///
+    /// The hook only fires if [`BuiltinTool::AskQuestion`] is enabled —
+    /// it is *not* in [`Capabilities::read_only()`] (the default), so on a
+    /// default builder this hook is a silent no-op: the agent never asks
+    /// and nothing warns. Enable it with
+    /// `Capabilities::read_only().enable(BuiltinTool::AskQuestion)`, which
+    /// as a write-capable capability also needs a policy or
+    /// [`on_pre_tool`](Self::on_pre_tool) hook to pass the spawn-time
+    /// gate.
+    ///
+    /// Questions then arrive on their own `questions_request` path and
+    /// **bypass the policy engine entirely** — a `policy::deny` naming
+    /// `ask_question` (or a blanket `deny_all()`) has no effect on them.
+    /// The capability gate is the only gate: leave
+    /// [`BuiltinTool::AskQuestion`] disabled to prevent questions, and
+    /// this hook (or the "unanswered" fallback) is the only control once
+    /// they are enabled.
     #[must_use]
     pub fn on_questions(
         mut self,

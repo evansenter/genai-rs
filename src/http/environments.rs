@@ -28,7 +28,13 @@ pub async fn create_environment(
     request: &CreateEnvironmentRequest,
 ) -> Result<Environment, GenaiError> {
     tracing::debug!("Creating environment");
-    let text = send_and_read(ctx, "POST", &environments_url(), Some(to_body(request)?)).await?;
+    let text = send_and_read(
+        ctx,
+        reqwest::Method::POST,
+        &environments_url(),
+        Some(to_body(request)?),
+    )
+    .await?;
     deserialize_with_context(&text, "Environment from create")
 }
 
@@ -38,7 +44,13 @@ pub async fn get_environment(
     environment_id: &str,
 ) -> Result<Environment, GenaiError> {
     tracing::debug!("Getting environment: ID={environment_id}");
-    let text = send_and_read(ctx, "GET", &environment_url(environment_id), None).await?;
+    let text = send_and_read(
+        ctx,
+        reqwest::Method::GET,
+        &environment_url(environment_id),
+        None,
+    )
+    .await?;
     deserialize_with_context(&text, "Environment from get")
 }
 
@@ -50,14 +62,20 @@ pub async fn list_environments(
 ) -> Result<EnvironmentListResponse, GenaiError> {
     tracing::debug!("Listing environments: page_size={page_size:?}, page_token={page_token:?}");
     let url = with_paging(environments_url(), page_size, page_token);
-    let text = send_and_read(ctx, "GET", &url, None).await?;
+    let text = send_and_read(ctx, reqwest::Method::GET, &url, None).await?;
     deserialize_with_context(&text, "EnvironmentListResponse")
 }
 
 /// Deletes an environment (`DELETE /v1beta/environments/{id}`).
 pub async fn delete_environment(ctx: &HttpContext, environment_id: &str) -> Result<(), GenaiError> {
     tracing::debug!("Deleting environment: ID={environment_id}");
-    send_and_read(ctx, "DELETE", &environment_url(environment_id), None).await?;
+    send_and_read(
+        ctx,
+        reqwest::Method::DELETE,
+        &environment_url(environment_id),
+        None,
+    )
+    .await?;
     Ok(())
 }
 

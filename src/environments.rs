@@ -148,13 +148,25 @@ pub struct Environment {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<EnvironmentStatus>,
     /// Output only. When the environment was created.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+    )]
     pub created: Option<DateTime<Utc>>,
     /// Output only. When the environment was last updated.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+    )]
     pub updated: Option<DateTime<Utc>>,
     /// Output only. When the environment was last accessed.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+    )]
     pub last_accessed: Option<DateTime<Utc>>,
     /// Output only. The number of files in the environment.
     #[serde(
@@ -272,6 +284,25 @@ mod tests {
         let back = serde_json::to_value(&env).unwrap();
         assert_eq!(back["file_count"], serde_json::json!("2"));
         assert_eq!(back["size_bytes"], serde_json::json!("19"));
+    }
+
+    #[test]
+    fn environment_timestamps_degrade_per_field() {
+        // Uniform with the trigger family: a timestamp arriving in an
+        // unexpected encoding drops that field to None instead of failing
+        // the whole list response, even though this resource's encoding is
+        // live-verified — the int64s next door got the same tolerance.
+        let json = serde_json::json!({
+            "id": "env-1",
+            "created": "2026-08-08T13:24:10.64798+00:00",
+            "updated": "not-a-time",
+            "last_accessed": 1754656200
+        });
+        let env: Environment = serde_json::from_value(json).unwrap();
+        assert_eq!(env.id.as_deref(), Some("env-1"));
+        assert!(env.created.is_some());
+        assert_eq!(env.updated, None);
+        assert_eq!(env.last_accessed, None);
     }
 
     #[test]

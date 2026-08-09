@@ -823,18 +823,21 @@ async fn test_environment_crud_lifecycle() {
         std::panic::resume_unwind(panic);
     }
     deleted.expect("delete_environment");
-    // Confirm gone with the same rigor as the trigger probe below: only a
-    // structured 4xx proves the delete landed — any(!) error would also be
-    // satisfied by a transport blip. Retry transients first so a 503
-    // becomes a real answer rather than a panic.
+    // Confirm gone with the same rigor as the trigger probe below: pin the
+    // positive form — a deleted environment gets a 404 (verified live
+    // 2026-08-09). A broad 4xx would also admit outcomes that say nothing
+    // about the delete (an exhausted-retry 429, a mis-scoped-key 403).
+    // Retry transients first so a 503 becomes a real answer rather than a
+    // panic.
     let gone = crate::retry_request!([client, created_id] => {
         client.get_environment(&created_id).await
     });
     match gone {
-        Err(genai_rs::GenaiError::Api { status_code, .. }) if (400..500).contains(&status_code) => {
-        }
+        Err(genai_rs::GenaiError::Api {
+            status_code: 404, ..
+        }) => {}
         Ok(env) => panic!("environment should be gone after delete, got: {env:?}"),
-        Err(e) => panic!("expected a 4xx for the deleted environment, got: {e}"),
+        Err(e) => panic!("expected a 404 for the deleted environment, got: {e}"),
     }
 }
 

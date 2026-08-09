@@ -26,14 +26,20 @@ fn agent_url(id: &str) -> String {
 /// Creates an agent (`POST /v1beta/agents`).
 pub async fn create_agent(ctx: &HttpContext, agent: &Agent) -> Result<Agent, GenaiError> {
     tracing::debug!("Creating agent: id={:?}", agent.id);
-    let text = send_and_read(ctx, "POST", &agents_url(), Some(to_body(agent)?)).await?;
+    let text = send_and_read(
+        ctx,
+        reqwest::Method::POST,
+        &agents_url(),
+        Some(to_body(agent)?),
+    )
+    .await?;
     deserialize_with_context(&text, "Agent from create")
 }
 
 /// Retrieves an agent by ID (`GET /v1beta/agents/{id}`).
 pub async fn get_agent(ctx: &HttpContext, agent_id: &str) -> Result<Agent, GenaiError> {
     tracing::debug!("Getting agent: ID={agent_id}");
-    let text = send_and_read(ctx, "GET", &agent_url(agent_id), None).await?;
+    let text = send_and_read(ctx, reqwest::Method::GET, &agent_url(agent_id), None).await?;
     deserialize_with_context(&text, "Agent from get")
 }
 
@@ -51,14 +57,14 @@ pub async fn list_agents(
     let extra: Vec<(&str, &str)> = parent.map(|p| ("parent", p)).into_iter().collect();
     let url = with_paging_and(agents_url(), page_size, page_token, &extra);
 
-    let text = send_and_read(ctx, "GET", &url, None).await?;
+    let text = send_and_read(ctx, reqwest::Method::GET, &url, None).await?;
     deserialize_with_context(&text, "AgentListResponse")
 }
 
 /// Deletes an agent (`DELETE /v1beta/agents/{id}`).
 pub async fn delete_agent(ctx: &HttpContext, agent_id: &str) -> Result<(), GenaiError> {
     tracing::debug!("Deleting agent: ID={agent_id}");
-    send_and_read(ctx, "DELETE", &agent_url(agent_id), None).await?;
+    send_and_read(ctx, reqwest::Method::DELETE, &agent_url(agent_id), None).await?;
     Ok(())
 }
 

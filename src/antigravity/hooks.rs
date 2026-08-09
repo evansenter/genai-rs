@@ -26,6 +26,12 @@
 //!   `generate_image`, `start_subagent`, `ask_question`, `finish`).
 //! - MCP tools are matched as `mcp_<server>_<tool>` (the harness's naming).
 //! - `"*"` matches everything.
+//!
+//! `ask_question` appears in the builtin name list above, but question
+//! requests arrive on their own path and bypass the policy engine — a
+//! policy naming it never fires. The capability gate and the
+//! [`on_questions`](crate::antigravity::AgentBuilder::on_questions) hook
+//! are the only controls; see that method's docs.
 
 use serde_json::Value;
 use std::sync::Arc;

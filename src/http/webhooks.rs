@@ -30,14 +30,20 @@ fn webhook_url(id: &str) -> String {
 /// The response includes `new_signing_secret` — only returned on create.
 pub async fn create_webhook(ctx: &HttpContext, webhook: &Webhook) -> Result<Webhook, GenaiError> {
     tracing::debug!("Creating webhook: uri={}", webhook.uri);
-    let text = send_and_read(ctx, "POST", &webhooks_url(), Some(to_body(webhook)?)).await?;
+    let text = send_and_read(
+        ctx,
+        reqwest::Method::POST,
+        &webhooks_url(),
+        Some(to_body(webhook)?),
+    )
+    .await?;
     deserialize_with_context(&text, "Webhook from create")
 }
 
 /// Retrieves a webhook by ID (`GET /v1beta/webhooks/{id}`).
 pub async fn get_webhook(ctx: &HttpContext, webhook_id: &str) -> Result<Webhook, GenaiError> {
     tracing::debug!("Getting webhook: ID={webhook_id}");
-    let text = send_and_read(ctx, "GET", &webhook_url(webhook_id), None).await?;
+    let text = send_and_read(ctx, reqwest::Method::GET, &webhook_url(webhook_id), None).await?;
     deserialize_with_context(&text, "Webhook from get")
 }
 
@@ -50,7 +56,7 @@ pub async fn list_webhooks(
     tracing::debug!("Listing webhooks: page_size={page_size:?}, page_token={page_token:?}");
 
     let url = with_paging(webhooks_url(), page_size, page_token);
-    let text = send_and_read(ctx, "GET", &url, None).await?;
+    let text = send_and_read(ctx, reqwest::Method::GET, &url, None).await?;
     deserialize_with_context(&text, "WebhookListResponse")
 }
 
@@ -71,14 +77,14 @@ pub async fn update_webhook(
         url.push_str(&format!("?update_mask={}", urlencoding::encode(mask)));
     }
 
-    let text = send_and_read(ctx, "PATCH", &url, Some(to_body(update)?)).await?;
+    let text = send_and_read(ctx, reqwest::Method::PATCH, &url, Some(to_body(update)?)).await?;
     deserialize_with_context(&text, "Webhook from update")
 }
 
 /// Deletes a webhook (`DELETE /v1beta/webhooks/{id}`).
 pub async fn delete_webhook(ctx: &HttpContext, webhook_id: &str) -> Result<(), GenaiError> {
     tracing::debug!("Deleting webhook: ID={webhook_id}");
-    send_and_read(ctx, "DELETE", &webhook_url(webhook_id), None).await?;
+    send_and_read(ctx, reqwest::Method::DELETE, &webhook_url(webhook_id), None).await?;
     Ok(())
 }
 
@@ -87,7 +93,13 @@ pub async fn ping_webhook(ctx: &HttpContext, webhook_id: &str) -> Result<(), Gen
     tracing::debug!("Pinging webhook: ID={webhook_id}");
     let url = format!("{}:ping", webhook_url(webhook_id));
     // Request and response bodies are empty per the spec.
-    send_and_read(ctx, "POST", &url, Some(serde_json::json!({}))).await?;
+    send_and_read(
+        ctx,
+        reqwest::Method::POST,
+        &url,
+        Some(serde_json::json!({})),
+    )
+    .await?;
     Ok(())
 }
 
@@ -110,7 +122,13 @@ pub async fn rotate_signing_secret(
         );
     }
 
-    let text = send_and_read(ctx, "POST", &url, Some(serde_json::Value::Object(body))).await?;
+    let text = send_and_read(
+        ctx,
+        reqwest::Method::POST,
+        &url,
+        Some(serde_json::Value::Object(body)),
+    )
+    .await?;
     deserialize_with_context(&text, "RotateSigningSecretResponse")
 }
 

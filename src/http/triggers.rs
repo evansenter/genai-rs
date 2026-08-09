@@ -38,14 +38,20 @@ pub async fn create_trigger(
     params: &TriggerCreateParams,
 ) -> Result<Trigger, GenaiError> {
     tracing::debug!("Creating trigger: schedule={}", params.schedule);
-    let text = send_and_read(ctx, "POST", &triggers_url(), Some(to_body(params)?)).await?;
+    let text = send_and_read(
+        ctx,
+        reqwest::Method::POST,
+        &triggers_url(),
+        Some(to_body(params)?),
+    )
+    .await?;
     deserialize_with_context(&text, "Trigger from create")
 }
 
 /// Retrieves a trigger by ID (`GET /v1beta/triggers/{id}`).
 pub async fn get_trigger(ctx: &HttpContext, trigger_id: &str) -> Result<Trigger, GenaiError> {
     tracing::debug!("Getting trigger: ID={trigger_id}");
-    let text = send_and_read(ctx, "GET", &trigger_url(trigger_id), None).await?;
+    let text = send_and_read(ctx, reqwest::Method::GET, &trigger_url(trigger_id), None).await?;
     deserialize_with_context(&text, "Trigger from get")
 }
 
@@ -57,7 +63,7 @@ pub async fn list_triggers(
 ) -> Result<TriggerListResponse, GenaiError> {
     tracing::debug!("Listing triggers: page_size={page_size:?}, page_token={page_token:?}");
     let url = with_paging(triggers_url(), page_size, page_token);
-    let text = send_and_read(ctx, "GET", &url, None).await?;
+    let text = send_and_read(ctx, reqwest::Method::GET, &url, None).await?;
     deserialize_with_context(&text, "TriggerListResponse")
 }
 
@@ -74,7 +80,7 @@ pub async fn update_trigger(
     tracing::debug!("Updating trigger: ID={trigger_id}");
     let text = send_and_read(
         ctx,
-        "PATCH",
+        reqwest::Method::PATCH,
         &trigger_url(trigger_id),
         Some(to_body(update)?),
     )
@@ -85,7 +91,7 @@ pub async fn update_trigger(
 /// Deletes a trigger (`DELETE /v1beta/triggers/{id}`).
 pub async fn delete_trigger(ctx: &HttpContext, trigger_id: &str) -> Result<(), GenaiError> {
     tracing::debug!("Deleting trigger: ID={trigger_id}");
-    send_and_read(ctx, "DELETE", &trigger_url(trigger_id), None).await?;
+    send_and_read(ctx, reqwest::Method::DELETE, &trigger_url(trigger_id), None).await?;
     Ok(())
 }
 
@@ -104,7 +110,7 @@ pub async fn run_trigger(
     tracing::debug!("Running trigger: ID={trigger_id}");
     let text = send_and_read(
         ctx,
-        "POST",
+        reqwest::Method::POST,
         &trigger_executions_url(trigger_id),
         Some(serde_json::json!({})),
     )
@@ -122,7 +128,7 @@ pub async fn list_trigger_executions(
 ) -> Result<TriggerExecutionListResponse, GenaiError> {
     tracing::debug!("Listing trigger executions: ID={trigger_id}");
     let url = with_paging(trigger_executions_url(trigger_id), page_size, page_token);
-    let text = send_and_read(ctx, "GET", &url, None).await?;
+    let text = send_and_read(ctx, reqwest::Method::GET, &url, None).await?;
     deserialize_with_context(&text, "TriggerExecutionListResponse")
 }
 

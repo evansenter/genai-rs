@@ -857,6 +857,10 @@ impl Client {
 
     /// Retrieves a trigger by ID.
     ///
+    /// `trigger_id` is the bare ID (the form [`Trigger::id`](crate::Trigger)
+    /// returns) — not a `triggers/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
+    ///
     /// # Errors
     ///
     /// Returns an error on network failure or when the trigger doesn't exist.
@@ -891,6 +895,10 @@ impl Client {
     /// * `update` - The fields to change (only set fields are sent; there
     ///   is no `update_mask` on this endpoint — see [`crate::TriggerUpdate`]).
     ///
+    /// `trigger_id` is the bare ID (the form [`Trigger::id`](crate::Trigger)
+    /// returns) — not a `triggers/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
+    ///
     /// # Errors
     ///
     /// Returns an error on network failure or when the trigger doesn't exist.
@@ -904,6 +912,10 @@ impl Client {
 
     /// Deletes a trigger.
     ///
+    /// `trigger_id` is the bare ID (the form [`Trigger::id`](crate::Trigger)
+    /// returns) — not a `triggers/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
+    ///
     /// # Errors
     ///
     /// Returns an error on network failure or when the trigger doesn't exist.
@@ -912,6 +924,10 @@ impl Client {
     }
 
     /// Fires a trigger immediately, outside its schedule.
+    ///
+    /// `trigger_id` is the bare ID (the form [`Trigger::id`](crate::Trigger)
+    /// returns) — not a `triggers/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
     ///
     /// # Errors
     ///
@@ -930,6 +946,10 @@ impl Client {
     /// * `trigger_id` - The trigger whose executions to list.
     /// * `page_size` - Optional maximum number of executions per page.
     /// * `page_token` - Optional token from a previous list call.
+    ///
+    /// `trigger_id` is the bare ID (the form [`Trigger::id`](crate::Trigger)
+    /// returns) — not a `triggers/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
     ///
     /// # Errors
     ///
@@ -967,6 +987,14 @@ impl Client {
 
     /// Retrieves an environment by ID.
     ///
+    /// `environment_id` is the bare ID (the form
+    /// [`Environment::id`](crate::Environment) returns, live-verified) — not
+    /// an `environments/...` resource name, which would be percent-encoded
+    /// into a single path segment and 404. The one unobserved source is
+    /// [`environment_id`](crate::InteractionResponse::environment_id) on a
+    /// response: strip a leading `environments/` prefix before passing it
+    /// here.
+    ///
     /// # Errors
     ///
     /// Returns an error on network failure or when the environment doesn't
@@ -997,6 +1025,14 @@ impl Client {
     }
 
     /// Deletes an environment.
+    ///
+    /// `environment_id` is the bare ID (the form
+    /// [`Environment::id`](crate::Environment) returns, live-verified) — not
+    /// an `environments/...` resource name, which would be percent-encoded
+    /// into a single path segment and 404. The one unobserved source is
+    /// [`environment_id`](crate::InteractionResponse::environment_id) on a
+    /// response: strip a leading `environments/` prefix before passing it
+    /// here.
     ///
     /// # Errors
     ///

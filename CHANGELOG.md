@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remain constructible (no `#[non_exhaustive]`): per the project's
   versioning philosophy, future field additions will take minor bumps
   rather than trading away struct-literal ergonomics.
+  (`antigravity::protocol::MultipleChoice` — behind the `antigravity`
+  feature — likewise gains a public flattened `extra` field.)
 
 ### Added
 
