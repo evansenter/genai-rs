@@ -16,7 +16,7 @@
 //! it is available.
 //!
 //! This is distinct from
-//! [`antigravity::TriggerConfig`](crate::antigravity), which schedules
+//! `antigravity::TriggerConfig` (feature `antigravity`), which schedules
 //! messages inside a *local* harness session.
 
 use crate::request::{InteractionInput, InteractionRequest};

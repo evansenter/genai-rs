@@ -74,7 +74,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `InteractionRequest`, `GenerationConfig`, `SpeechConfig`, `Tool`,
   `FunctionParameters`, `Trigger` and the trigger request/response types
   implement `PartialEq`, so whole-value assertions work across the new
-  resource types uniformly.
+  resource types uniformly. The pre-existing `Agent` and
+  `AgentListResponse` gain it too, completing the set.
 
 ### Deprecated
 

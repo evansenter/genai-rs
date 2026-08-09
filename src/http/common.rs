@@ -253,7 +253,10 @@ pub(crate) fn with_paging(url: String, page_size: Option<u32>, page_token: Optio
 
 /// [`with_paging`] plus resource-specific query params (values
 /// percent-encoded), for list endpoints with extra filters like the
-/// agents resource's `parent`.
+/// agents resource's `parent` — and for the single extra param on a
+/// non-list URL (`update_webhook`'s `update_mask`), where both paging
+/// arguments are deliberately `None` and only the shared encoder is
+/// wanted.
 ///
 /// The separator is chosen from the URL itself (`&` when a query string
 /// is already present), so a future list endpoint with a fixed query

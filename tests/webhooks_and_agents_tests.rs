@@ -669,7 +669,12 @@ async fn test_antigravity_config_accepted() {
     // (which requires an environment). `model` is deliberately not sent —
     // an unavailable value returns 404 and the agent's model catalog is
     // not enumerable on a standard key. Retry transients, assert the
-    // strong form, and cancel the background interaction.
+    // strong form, and cancel the background interaction. The retry is
+    // deliberate despite the non-idempotent create: a retry after a lost
+    // response can orphan an agent run plus its environment with no ID to
+    // clean up, but max_total_tokens caps the orphan's cost and the
+    // environment expires on its own — unlike the trigger probe, whose
+    // orphan would fire on a schedule forever, so it declines the retry.
     let response = crate::retry_request!([client] => {
         client
             .interaction()

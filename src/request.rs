@@ -1975,8 +1975,8 @@ impl From<DynamicConfig> for AgentConfig {
 /// This configures `agent("antigravity-preview-05-2026")` interactions that
 /// run in Google's sandbox (an
 /// [`environment`](InteractionRequest::environment) is **required** for that
-/// agent) — distinct from the local-harness bridge in
-/// [`antigravity`](crate::antigravity), which runs the agent on your
+/// agent) — distinct from the local-harness bridge in the `antigravity`
+/// module (feature `antigravity`), which runs the agent on your
 /// machine. The bare `antigravity` string is only the `agent_config` *type*
 /// discriminant (which [`From`] sets), not an agent ID.
 ///
