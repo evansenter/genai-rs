@@ -1049,8 +1049,6 @@ mod tests {
         );
     }
 
-    use super::*;
-
     #[test]
     fn test_upload_url_matches_files_api_version() {
         // UPLOAD_URL is a literal (const format! doesn't exist), so pin it

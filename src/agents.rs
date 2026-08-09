@@ -35,7 +35,7 @@ use crate::tools::Tool;
 ///             .add_source(EnvironmentSource::gcs("gs://feedback", "/data")),
 ///     );
 /// ```
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Agent {
     /// The unique identifier for the agent.
@@ -110,7 +110,7 @@ impl Agent {
 }
 
 /// Response for `GET /v1beta/agents` (list).
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AgentListResponse {
     /// The agents on this page. A null or malformed list degrades to
