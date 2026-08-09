@@ -214,6 +214,12 @@ pub struct CreateEnvironmentRequest {
     /// Unrecognized fields, preserved for roundtrip (Evergreen) — lets an
     /// unmodeled create-request field be set without a crate release.
     ///
+    /// The inherent cost (same as
+    /// [`TriggerCreateParams::extra`](crate::TriggerCreateParams)): a
+    /// *typo'd optional* key in a deserialized config (`netwrok`, ...) is
+    /// silently absorbed here and forwarded to the server verbatim rather
+    /// than rejected.
+    ///
     /// A key that collides with a modeled field **wins on serialize** via
     /// `serde_json::to_value` — the form the request path uses — so the
     /// escape hatch can also override a modeled field whose wire shape
