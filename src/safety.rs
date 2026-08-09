@@ -490,13 +490,26 @@ mod tests {
 
     #[test]
     fn known_values_roundtrip() {
+        // Exhaustive: with the parameter Vertex-gated, no live probe can
+        // ever confirm a category string, so these hand-typed as_wire
+        // arms are pinned by nothing else.
         for (category, wire) in [
             (HarmCategory::HateSpeech, "hate_speech"),
+            (HarmCategory::DangerousContent, "dangerous_content"),
+            (HarmCategory::Harassment, "harassment"),
+            (HarmCategory::SexuallyExplicit, "sexually_explicit"),
             (HarmCategory::CivicIntegrity, "civic_integrity"),
+            (HarmCategory::ImageHate, "image_hate"),
+            (
+                HarmCategory::ImageDangerousContent,
+                "image_dangerous_content",
+            ),
+            (HarmCategory::ImageHarassment, "image_harassment"),
             (
                 HarmCategory::ImageSexuallyExplicit,
                 "image_sexually_explicit",
             ),
+            (HarmCategory::Jailbreak, "jailbreak"),
         ] {
             let json = serde_json::to_value(&category).unwrap();
             assert_eq!(json, serde_json::json!(wire));
@@ -511,6 +524,12 @@ mod tests {
     fn display_agrees_with_wire_value() {
         for (threshold, wire) in [
             (SafetyThreshold::BlockLowAndAbove, "block_low_and_above"),
+            (
+                SafetyThreshold::BlockMediumAndAbove,
+                "block_medium_and_above",
+            ),
+            (SafetyThreshold::BlockOnlyHigh, "block_only_high"),
+            (SafetyThreshold::BlockNone, "block_none"),
             (SafetyThreshold::Off, "off"),
         ] {
             assert_eq!(serde_json::to_value(&threshold).unwrap(), wire);
