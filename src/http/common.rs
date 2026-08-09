@@ -306,6 +306,29 @@ mod tests {
     // --- Tests for Endpoint-based URL construction ---
 
     #[test]
+    fn test_endpoint_interaction_ids_are_path_encoded() {
+        // A path-metacharacter ID is encoded, not interpolated raw — the
+        // interaction endpoints are the hot path for every user of the
+        // crate, so pin the property here as well as in the resource
+        // modules.
+        let url = construct_endpoint_url(Endpoint::GetInteraction {
+            id: "a/b?c",
+            stream: false,
+            last_event_id: None,
+            include_input: false,
+        });
+        assert_eq!(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/interactions/a%2Fb%3Fc"
+        );
+        let url = construct_endpoint_url(Endpoint::CancelInteraction { id: "a/b?c" });
+        assert_eq!(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/interactions/a%2Fb%3Fc/cancel"
+        );
+    }
+
+    #[test]
     fn test_endpoint_create_interaction_non_streaming() {
         let endpoint = Endpoint::CreateInteraction { stream: false };
         let url = construct_endpoint_url(endpoint);

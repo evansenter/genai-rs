@@ -1857,7 +1857,7 @@ mod tests {
     fn test_response_deserializes_steps_wire_fixture() {
         // Representative revision 2026-05-20 response shape.
         let json = r#"{
-            "id": "interactions/abc123",
+            "id": "v1_abc123",
             "model": "gemini-3-flash-preview",
             "status": "completed",
             "steps": [
@@ -1872,13 +1872,13 @@ mod tests {
                 "total_tokens": 18,
                 "grounding_tool_count": [{"type": "google_search", "count": 2}]
             },
-            "previous_interaction_id": "interactions/prev",
-            "environment_id": "environments/env1",
+            "previous_interaction_id": "v1_prev",
+            "environment_id": "38aac1ae7f30fe9bd67afe42382ea041",
             "created": "2026-05-21T10:00:00Z"
         }"#;
 
         let response: InteractionResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(response.id.as_deref(), Some("interactions/abc123"));
+        assert_eq!(response.id.as_deref(), Some("v1_abc123"));
         assert_eq!(response.status, InteractionStatus::Completed);
         assert_eq!(response.steps.len(), 2);
         assert_eq!(response.as_text(), Some("The answer is 4."));
@@ -1888,7 +1888,7 @@ mod tests {
         );
         assert_eq!(
             response.environment_id.as_deref(),
-            Some("environments/env1")
+            Some("38aac1ae7f30fe9bd67afe42382ea041")
         );
         let usage = response.usage.as_ref().unwrap();
         assert_eq!(usage.grounding_count_for_tool("google_search"), Some(2));
@@ -1898,12 +1898,12 @@ mod tests {
     #[test]
     fn test_response_serializes_snake_case() {
         let response = InteractionResponse {
-            previous_interaction_id: Some("interactions/prev".into()),
+            previous_interaction_id: Some("v1_prev".into()),
             status: InteractionStatus::Completed,
             ..Default::default()
         };
         let json = serde_json::to_value(&response).unwrap();
-        assert_eq!(json["previous_interaction_id"], "interactions/prev");
+        assert_eq!(json["previous_interaction_id"], "v1_prev");
         assert!(json.get("previousInteractionId").is_none());
     }
 

@@ -76,5 +76,10 @@ mod tests {
             agent_url("my-agent"),
             "https://generativelanguage.googleapis.com/v1beta/agents/my-agent"
         );
+        // A path-metacharacter ID is encoded, not interpolated raw.
+        assert_eq!(
+            agent_url("a/b?c"),
+            "https://generativelanguage.googleapis.com/v1beta/agents/a%2Fb%3Fc"
+        );
     }
 }

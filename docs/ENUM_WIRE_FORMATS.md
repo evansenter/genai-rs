@@ -927,7 +927,7 @@ Webhook resource (snake_case, RFC3339 timestamps):
 
 ```json
 {
-  "id": "webhooks/wh-123",
+  "id": "wh123bare0pq",
   "name": "my-hook",
   "uri": "https://example.com/hook",
   "subscribed_events": ["batch.succeeded", "interaction.completed", "video.generated"],

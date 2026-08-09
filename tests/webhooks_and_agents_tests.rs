@@ -327,11 +327,12 @@ async fn test_interaction_with_inline_environment() {
             }
             // Best-effort: delete the implicitly provisioned environment
             // when its ID is known (they expire on their own, but each CI
-            // run otherwise leaves one behind until then). The field's ID
-            // form is unverified — crate fixtures show the prefixed
-            // `environments/<id>` resource name — so strip the prefix for
-            // the bare-ID URL builder and print the outcome rather than
-            // swallowing a silent 404.
+            // run otherwise leaves one behind until then). Every
+            // live-observed ID in this API is bare (no collection prefix);
+            // environment_id is the one field not yet observed non-None at
+            // accept-time, so defensively strip a possible resource-name
+            // prefix and print the outcome rather than swallowing a
+            // silent 404.
             if let Some(env_id) = &response.environment_id {
                 let bare_id = env_id.strip_prefix("environments/").unwrap_or(env_id);
                 match client.delete_environment(bare_id).await {

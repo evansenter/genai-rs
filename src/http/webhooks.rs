@@ -128,6 +128,13 @@ mod tests {
             webhook_url("wh-123"),
             "https://generativelanguage.googleapis.com/v1beta/webhooks/wh-123"
         );
+        // A path-metacharacter ID is encoded, not interpolated raw (the
+        // colon-verb suffixes below are appended outside webhook_url, so
+        // they are unaffected by the encoding).
+        assert_eq!(
+            webhook_url("a/b?c"),
+            "https://generativelanguage.googleapis.com/v1beta/webhooks/a%2Fb%3Fc"
+        );
         assert_eq!(
             format!("{}:ping", webhook_url("wh-123")),
             "https://generativelanguage.googleapis.com/v1beta/webhooks/wh-123:ping"
