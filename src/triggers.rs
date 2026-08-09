@@ -605,6 +605,28 @@ mod tests {
     }
 
     #[test]
+    fn list_envelopes_deserialize_under_spec_keys() {
+        // Pins the envelope keys the crate is betting on for the resource
+        // ENUM_WIRE_FORMATS.md marks as unverified: `triggers` and (the one
+        // that diverges from its path segment) `trigger_executions`. If the
+        // live wire turns out to use `executions`, the fix lands as a
+        // visible diff here rather than as a list that quietly reads zero.
+        let list: TriggerListResponse =
+            serde_json::from_value(serde_json::json!({"triggers": [{"id": "t1"}]})).unwrap();
+        assert_eq!(list.triggers.len(), 1);
+
+        let executions: TriggerExecutionListResponse = serde_json::from_value(serde_json::json!({
+            "trigger_executions": [{"id": "e1", "status": "completed"}]
+        }))
+        .unwrap();
+        assert_eq!(executions.trigger_executions.len(), 1);
+        assert_eq!(
+            executions.trigger_executions[0].status,
+            Some(TriggerExecutionStatus::Completed)
+        );
+    }
+
+    #[test]
     fn trigger_int64s_tolerate_string_wire_form() {
         // The environments resource live-verified that this API family
         // serializes int64s as protobuf-JSON strings; a trigger doing the
@@ -707,6 +729,16 @@ mod tests {
             (TriggerExecutionStatus::TimedOut, "timed_out"),
         ] {
             assert_eq!(serde_json::to_value(&status).unwrap(), wire);
+            // Display is public API and must agree with the wire value.
+            assert_eq!(status.to_string(), wire);
+        }
+        for (status, wire) in [
+            (TriggerStatus::Active, "active"),
+            (TriggerStatus::Paused, "paused"),
+            (TriggerStatus::Error, "error"),
+        ] {
+            assert_eq!(serde_json::to_value(&status).unwrap(), wire);
+            assert_eq!(status.to_string(), wire);
         }
     }
 }

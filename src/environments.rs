@@ -290,6 +290,17 @@ mod tests {
     }
 
     #[test]
+    fn display_agrees_with_wire_value() {
+        for (status, wire) in [
+            (EnvironmentStatus::Active, "active"),
+            (EnvironmentStatus::Expired, "expired"),
+        ] {
+            assert_eq!(serde_json::to_value(&status).unwrap(), wire);
+            assert_eq!(status.to_string(), wire);
+        }
+    }
+
+    #[test]
     fn add_source_accumulates() {
         let request = CreateEnvironmentRequest::new()
             .add_source(EnvironmentSource::inline("/a", "one"))

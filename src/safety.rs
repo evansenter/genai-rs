@@ -524,6 +524,26 @@ mod tests {
             assert_eq!(json, serde_json::json!(wire));
             let back: HarmCategory = serde_json::from_value(json).unwrap();
             assert_eq!(back, category);
+            // Display is public API and must agree with the wire value.
+            assert_eq!(category.to_string(), wire);
+        }
+    }
+
+    #[test]
+    fn display_agrees_with_wire_value() {
+        for (threshold, wire) in [
+            (SafetyThreshold::BlockLowAndAbove, "block_low_and_above"),
+            (SafetyThreshold::Off, "off"),
+        ] {
+            assert_eq!(serde_json::to_value(&threshold).unwrap(), wire);
+            assert_eq!(threshold.to_string(), wire);
+        }
+        for (method, wire) in [
+            (SafetyMethod::Severity, "severity"),
+            (SafetyMethod::Probability, "probability"),
+        ] {
+            assert_eq!(serde_json::to_value(&method).unwrap(), wire);
+            assert_eq!(method.to_string(), wire);
         }
     }
 }
