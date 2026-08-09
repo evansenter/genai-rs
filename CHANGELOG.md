@@ -20,6 +20,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`antigravity::protocol::MultipleChoice` — behind the `antigravity`
   feature — likewise gains a public flattened `extra` field.)
 
+### Changed
+
+- All five resource list envelopes (`AgentListResponse`,
+  `WebhookListResponse`, and the new trigger/execution/environment ones)
+  now degrade a null or malformed list key to an empty page and drop
+  undeserializable elements individually with a `tracing::warn!`, instead
+  of failing the whole response. For the two pre-existing types this
+  changes observable behavior: `list_agents()`/`list_webhooks()` calls
+  that previously returned `Err` on a malformed page now return the
+  surviving entries.
+- `Webhook::create_time`/`update_time` and `SigningSecret::expire_time`
+  now deserialize leniently like the trigger and environment timestamps:
+  a response whose timestamp encoding diverges from RFC 3339 yields the
+  field as `None` (with a `tracing::warn!`) instead of failing the call —
+  so an absent timestamp on a returned webhook can mean either "not sent"
+  or "sent but unparseable"; the warn log distinguishes them.
+
 ### Added
 
 - **Triggers resource** (`/v1beta/triggers`): server-side scheduled
@@ -69,13 +86,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- All five resource list envelopes (`AgentListResponse`,
-  `WebhookListResponse`, and the new trigger/execution/environment ones)
-  now degrade a null or malformed list key to an empty page and drop
-  undeserializable elements individually with a `tracing::warn!`, instead
-  of failing the whole response. For the two pre-existing types this is a
-  behavior change: `list_agents()`/`list_webhooks()` calls that previously
-  returned `Err` on a malformed page now return the surviving entries.
 - Resource IDs are now percent-encoded when interpolated into URL paths
   (interactions get/delete/cancel/stream and the agents, webhooks, triggers
   and environments item URLs). Well-formed IDs are byte-identical on the
