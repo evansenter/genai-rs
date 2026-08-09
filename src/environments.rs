@@ -199,6 +199,10 @@ pub struct CreateEnvironmentRequest {
     pub network: Option<NetworkConfig>,
     /// Unrecognized fields, preserved for roundtrip (Evergreen) — lets an
     /// unmodeled create-request field be set without a crate release.
+    ///
+    /// A key that collides with a modeled field **wins on serialize** (the
+    /// flattened map is emitted last) — deliberate, so the escape hatch can
+    /// also override a modeled field whose wire shape turns out wrong.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -304,6 +308,26 @@ mod tests {
             .add_source(EnvironmentSource::inline("/a", "one"))
             .add_source(EnvironmentSource::inline("/b", "two"));
         assert_eq!(request.sources.as_ref().map(Vec::len), Some(2));
+    }
+
+    #[test]
+    fn extra_passes_through_and_wins_on_collision() {
+        // Same contract as the trigger bodies: novel keys pass through,
+        // and a colliding key wins on serialize (the flattened map is
+        // emitted last) — pinned so the precedence reads as a decision.
+        let mut request =
+            CreateEnvironmentRequest::new().add_source(EnvironmentSource::inline("/a", "one"));
+        request
+            .extra
+            .insert("future_field".into(), serde_json::json!(true));
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(json["future_field"], true);
+
+        request
+            .extra
+            .insert("sources".into(), serde_json::json!([]));
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(json["sources"], serde_json::json!([]));
     }
 
     #[test]

@@ -284,6 +284,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("• Maximum audio length: ~9.5 hours");
     println!("• For files >20MB, use Files API (upload_file)");
     println!("• MIME type must match actual audio format");
+    println!("• TranscriptionConfig's diarization_mode/timestamp_granularities are");
+    println!("  open strings with one documented value each today (\"speaker\", \"word\")");
 
     Ok(())
 }

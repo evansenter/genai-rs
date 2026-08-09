@@ -570,14 +570,20 @@ async fn test_transcription_config_accepted() {
             "transcription_config accepted: status={:?}",
             response.status
         ),
-        Err(e) => {
-            let message = e.to_string();
-            println!("transcription_config request errored: {message}");
+        // Only a structured API rejection proves anything about the schema
+        // — a transport blip would pass the marker check vacuously.
+        Err(genai_rs::GenaiError::Api {
+            status_code,
+            message,
+            ..
+        }) if (400..500).contains(&status_code) => {
+            println!("transcription_config request rejected: {message}");
             assert!(
                 !message.contains("Unknown parameter") && !message.contains("Unknown name"),
                 "transcription_config schema itself was rejected: {message}"
             );
         }
+        Err(e) => panic!("expected acceptance or a structured 4xx, got: {e}"),
     }
 }
 
@@ -614,14 +620,21 @@ async fn test_safety_settings_and_labels_vertex_gated() {
             "safety_settings/labels accepted (launched on the Gemini API?): {:?}",
             response.status
         ),
-        Err(e) => {
-            let message = e.to_string();
+        // Only a structured 4xx proves the request reached the schema
+        // validator — a transport blip would pass the marker check
+        // vacuously, so fail loudly on anything else.
+        Err(genai_rs::GenaiError::Api {
+            status_code,
+            message,
+            ..
+        }) if (400..500).contains(&status_code) => {
             println!("Vertex-gated as expected: {message}");
             assert!(
                 !message.contains("Unknown parameter") && !message.contains("Unknown name"),
                 "safety_settings/labels schema itself was rejected: {message}"
             );
         }
+        Err(e) => panic!("expected a 4xx Vertex-gate rejection, got: {e}"),
     }
 }
 

@@ -132,6 +132,14 @@ let response = client
     .await?;
 ```
 
+Speech recognition is tunable via
+`with_transcription_config(TranscriptionConfig { .. })`: BCP-47
+`language_codes` hints (omit for auto-detect), `adaptation_phrases` /
+`custom_vocabulary` biasing, `diarization_mode: "speaker"`, and
+`timestamp_granularities: ["word"]` (the SDK-documented value sets —
+kept open strings for forward compatibility). See
+`examples/audio_input.rs` for a runnable demo.
+
 ### Output (Text-to-Speech)
 
 ```rust,ignore
