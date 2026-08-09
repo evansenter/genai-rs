@@ -319,24 +319,25 @@ impl<'de> Deserialize<'de> for InteractionInput {
     }
 }
 
-/// Deserializes `InteractionRequest::input`, mapping an explicit JSON null
-/// onto [`InteractionInput::default()`].
+/// Deserializes `InteractionRequest::input`, degrading any shape
+/// [`InteractionInput`]'s own deserializer rejects (explicit null, a stray
+/// scalar, malformed nested steps) onto [`InteractionInput::default()`]
+/// with a `warn!`.
 ///
 /// `serde(default)` only covers the key-*absent* case; without this, a
-/// nested projection carrying `input: null` (e.g. a `Trigger` list entry)
-/// would hit the deserializer's catch-all error arm and fail the whole
-/// list response — the one null-intolerant field left in the trigger tree.
-fn deserialize_null_tolerant_input<'de, D>(deserializer: D) -> Result<InteractionInput, D::Error>
+/// nested projection carrying `input: null` (or `input: 0`) would
+/// propagate a hard error up through `Trigger` and fail the whole list
+/// response — the same wholesale failure the lenient int64 and timestamp
+/// helpers exist to avoid, on the one remaining field in that tree.
+fn deserialize_lenient_input<'de, D>(deserializer: D) -> Result<InteractionInput, D::Error>
 where
     D: serde::de::Deserializer<'de>,
 {
-    match Option::<InteractionInput>::deserialize(deserializer)? {
-        Some(input) => Ok(input),
-        None => {
-            tracing::warn!("InteractionRequest input was explicit null; degrading to empty text");
-            Ok(InteractionInput::default())
-        }
-    }
+    let value = serde_json::Value::deserialize(deserializer)?;
+    serde_json::from_value::<InteractionInput>(value).or_else(|e| {
+        tracing::warn!("Undeserializable InteractionRequest input ({e}); degrading to empty text");
+        Ok(InteractionInput::default())
+    })
 }
 
 /// Thinking level for chain-of-thought reasoning.
@@ -1221,15 +1222,16 @@ pub struct InteractionRequest {
     ///
     /// The `serde(default)` tolerates sparse nested projections (e.g. a
     /// `Trigger` list entry whose interaction omits `input`), and the
-    /// `deserialize_with` extends that to an explicit JSON null (serde
-    /// only applies `default` when the key is *absent*) — either way a
-    /// projection degrades to empty text instead of failing the whole
-    /// list response. Note the roundtrip asymmetry: both shapes
+    /// `deserialize_with` extends that to any undeserializable shape —
+    /// explicit null (serde only applies `default` when the key is
+    /// *absent*), stray scalars, malformed nested steps — so a projection
+    /// degrades to empty text with a `warn!` instead of failing the whole
+    /// list response. Note the roundtrip asymmetry: these shapes
     /// re-serialize as a *present* `input` key — the one spot in the
     /// Evergreen surface where a sparse projection gains a field instead
     /// of preserving absence. Nothing re-sends a deserialized `Trigger`
     /// today, so the shape is left alone rather than making this Optional.
-    #[serde(default, deserialize_with = "deserialize_null_tolerant_input")]
+    #[serde(default, deserialize_with = "deserialize_lenient_input")]
     pub input: InteractionInput,
 
     /// Reference to a previous interaction for stateful conversations
