@@ -200,9 +200,11 @@ mod basic {
             return;
         };
 
-        // Retry-wrapped: a transient at create time (failed CI in 0.24s on
-        // what passes locally) should not fail the probe, and a retried
-        // create at worst orphans a bounded background interaction.
+        // Retry-wrapped: create time has flaked in CI on a sub-second 400
+        // "there was a problem processing your request" burst, which
+        // is_transient_error now matches by message (alongside its 429/5xx
+        // transport coverage). A retried create at worst orphans a bounded
+        // background interaction.
         let response = retry_request!([client] => {
             client
                 .interaction()

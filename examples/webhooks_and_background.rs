@@ -176,12 +176,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // account-gating or transient error must not exit main — the footer (and
     // its delete-what-you-create warning) still has to print.
     match client.create_environment(&env_request).await {
-        // A create response without an ID would be a protocol violation;
-        // don't paper over it with an empty string (that would turn the
-        // get/delete below into requests against the collection URL).
+        // A create response without a usable ID would be a protocol
+        // violation; don't paper over it (an absent or empty ID would turn
+        // the get/delete below into local InvalidInput errors misattributed
+        // to the API, like the webhook arm above).
         Ok(genai_rs::Environment {
             id: Some(env_id), ..
-        }) => {
+        }) if !env_id.is_empty() => {
             println!("Created environment: {env_id}");
 
             // A failed read must not skip the delete below and leak the

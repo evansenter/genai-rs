@@ -93,9 +93,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sent as one encoded segment instead of silently rewriting the request
   path, and an empty resource ID is rejected locally as `InvalidInput`
   rather than issuing a request against the collection URL. The Files
-  API's `get_file`/`delete_file` reject an empty file name the same way
-  (they stay exempt from the encoding half of the guard pair only —
-  their full resource names carry a structural slash). The Files API
+  API's `get_file`/`delete_file` reject an empty file name the same way,
+  and also reject a name containing `.`/`..` dot segments (they stay
+  exempt from the encoding only — their full resource names carry a
+  structural slash — so the path-rewrite threat is closed by local
+  validation instead). The Files API
   `list_files` page token is likewise percent-encoded (agents and
   webhooks already encoded theirs, and the new trigger/environment
   endpoints ride the shared encoder), so a token carrying a reserved

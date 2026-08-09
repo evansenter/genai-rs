@@ -224,6 +224,29 @@ pub(crate) fn require_id(id: &str, what: &str) -> Result<(), crate::errors::Gena
     Ok(())
 }
 
+/// Rejects dot segments in a full resource name that is interpolated into
+/// a URL path verbatim — the `get_file`/`delete_file` exemption from
+/// [`path_segment`]. The name's slash is structural, so it cannot be
+/// percent-encoded wholesale, but that also means a `.` or `..` segment
+/// survives to URL parsing, where dot-segment removal pops the preceding
+/// path segment and rewrites the request path — exactly the threat
+/// `path_segment`'s explicit dot arms close for single-segment IDs.
+pub(crate) fn require_no_dot_segments(
+    name: &str,
+    what: &str,
+) -> Result<(), crate::errors::GenaiError> {
+    if name
+        .split('/')
+        .any(|segment| segment == "." || segment == "..")
+    {
+        return Err(crate::errors::GenaiError::InvalidInput(format!(
+            "{what} resource name must not contain dot segments \
+             (a `.` or `..` segment would rewrite the request path)"
+        )));
+    }
+    Ok(())
+}
+
 /// Percent-encodes a resource ID for use as a single URL path segment, so a
 /// hostile or malformed ID (containing `/`, `?`, `#`, `..`, ...) cannot
 /// rewrite the request path. IDs from this API are opaque hex/base64url
@@ -369,6 +392,18 @@ mod tests {
         // fail locally instead of issuing the request.
         assert!(require_id("", "trigger").is_err());
         assert!(require_id("t-1", "trigger").is_ok());
+    }
+
+    #[test]
+    fn test_require_no_dot_segments_rejects_traversal() {
+        // A dot segment inside a raw-interpolated resource name would be
+        // popped by URL dot-segment removal and rewrite the request path.
+        assert!(require_no_dot_segments("../../v1beta/files/other", "file").is_err());
+        assert!(require_no_dot_segments("files/./abc", "file").is_err());
+        assert!(require_no_dot_segments("files/..", "file").is_err());
+        // Dots *inside* a segment are not dot segments.
+        assert!(require_no_dot_segments("files/a.b.c", "file").is_ok());
+        assert!(require_no_dot_segments("files/abc123", "file").is_ok());
     }
 
     #[test]

@@ -965,6 +965,13 @@ impl Client {
     /// returns) — not a `triggers/...` resource name, which would be
     /// percent-encoded into a single path segment and 404.
     ///
+    /// **Unverified endpoint shape**: this posts to the `executions`
+    /// sub-collection (not a `:run` colon verb), a path derived from the
+    /// google-genai generated bindings rather than observed live — it
+    /// needs an existing trigger, and trigger creation is agent-gated
+    /// (see [`triggers`](crate::triggers)). The same caveat applies to
+    /// [`list_trigger_executions`](Self::list_trigger_executions).
+    ///
     /// # Errors
     ///
     /// Returns an error on network failure or when the trigger doesn't exist.
@@ -986,6 +993,12 @@ impl Client {
     /// `trigger_id` is the bare ID (the form [`Trigger::id`](crate::Trigger)
     /// returns) — not a `triggers/...` resource name, which would be
     /// percent-encoded into a single path segment and 404.
+    ///
+    /// **Unverified endpoint shape**: reads the same `executions`
+    /// sub-collection [`run_trigger`](Self::run_trigger) posts to, with
+    /// the same caveat — the path comes from the google-genai generated
+    /// bindings, not live observation, because it needs an existing
+    /// trigger and trigger creation is agent-gated.
     ///
     /// # Errors
     ///

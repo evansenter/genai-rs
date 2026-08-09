@@ -19,7 +19,7 @@
 //! [`antigravity::TriggerConfig`](crate::antigravity), which schedules
 //! messages inside a *local* harness session.
 
-use crate::request::InteractionRequest;
+use crate::request::{InteractionInput, InteractionRequest};
 use chrono::{DateTime, Utc};
 use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
@@ -414,7 +414,7 @@ pub struct Trigger {
 }
 
 /// Deserializes `Trigger::interaction`, degrading a nested `input` that
-/// [`InteractionInput`](crate::request::InteractionInput)'s deserializer
+/// [`InteractionInput`]'s deserializer
 /// rejects (explicit null, a stray scalar) onto the empty default with a
 /// `warn!` before parsing the interaction, and a non-object `interaction`
 /// onto `None`. (Under default features a malformed steps *array* never
@@ -514,7 +514,7 @@ pub struct TriggerCreateParams {
     /// [`TriggerCreateParams::new`], the deserialize path, and
     /// `create_trigger` itself all warn when it is set, the last covering
     /// struct literals and post-construction mutation too).
-    #[serde(deserialize_with = "deserialize_interaction_warn_store")]
+    #[serde(deserialize_with = "deserialize_interaction_with_warns")]
     pub interaction: InteractionRequest,
     /// Human-readable display name.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -568,36 +568,52 @@ pub struct TriggerCreateParams {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-/// Live-verified server rejection (see the module docs): `store` is not
-/// allowed inside a trigger's nested interaction. Warn so the
-/// misconfiguration surfaces before the API round-trip — which the agent
-/// gate would otherwise mask — without hard-erroring a shape whose full
-/// validation can't be exercised while creation is gated. Called from
-/// [`TriggerCreateParams::new`], the deserialize path a config file
-/// loads through, and `create_trigger` itself — the funnel covering
-/// struct literals and post-construction mutation. The `new`-then-create
-/// flow therefore warns twice; deliberate, trading a duplicate log line
-/// for a fail-fast signal at construction plus a guaranteed pre-wire
-/// one.
-pub(crate) fn warn_on_store(interaction: &InteractionRequest) {
+/// Pre-flight warns for a trigger's nested interaction. Called from
+/// [`TriggerCreateParams::new`], the deserialize path a config file loads
+/// through, and `create_trigger` itself — the funnel covering struct
+/// literals and post-construction mutation. The `new`-then-create flow
+/// therefore warns twice; deliberate, trading a duplicate log line for a
+/// fail-fast signal at construction plus a guaranteed pre-wire one.
+/// Warns rather than hard-errors throughout: full validation of this shape
+/// can't be exercised while creation is agent-gated.
+///
+/// Two checks:
+/// - `store` set: live-verified server rejection (see the module docs) —
+///   the API rejects `store` inside a trigger's nested interaction, and
+///   the agent gate would otherwise mask that until the round-trip.
+/// - empty text input: [`InteractionInput::default()`] is an empty string,
+///   so a struct literal that sets `agent` and falls through to
+///   `..Default::default()` without setting `input` compiles, serializes,
+///   and would then fire on a schedule with an empty prompt and nobody
+///   watching. The send-side strictness on `input` only covers the
+///   deserialize path (where an absent key is a parse error); this funnel
+///   is the only place the struct-literal shape can be caught.
+pub(crate) fn warn_on_interaction_footguns(interaction: &InteractionRequest) {
     if interaction.store.is_some() {
         tracing::warn!(
             "TriggerCreateParams: `store` is set on the nested interaction; \
              the API rejects it in trigger requests"
         );
     }
+    if matches!(&interaction.input, InteractionInput::Text(text) if text.is_empty()) {
+        tracing::warn!(
+            "TriggerCreateParams: the nested interaction's input is an empty \
+             string (the `..Default::default()` zero value); the trigger \
+             would fire on its schedule with an empty prompt"
+        );
+    }
 }
 
-/// Derived [`InteractionRequest`] deserialization plus the `store` warn,
-/// so a config-file load gets the same pre-flight signal as `new()`.
-fn deserialize_interaction_warn_store<'de, D>(
+/// Derived [`InteractionRequest`] deserialization plus the pre-flight
+/// warns, so a config-file load gets the same signals as `new()`.
+fn deserialize_interaction_with_warns<'de, D>(
     deserializer: D,
 ) -> Result<InteractionRequest, D::Error>
 where
     D: Deserializer<'de>,
 {
     let interaction = InteractionRequest::deserialize(deserializer)?;
-    warn_on_store(&interaction);
+    warn_on_interaction_footguns(&interaction);
     Ok(interaction)
 }
 
@@ -609,7 +625,7 @@ impl TriggerCreateParams {
         time_zone: impl Into<String>,
         interaction: InteractionRequest,
     ) -> Self {
-        warn_on_store(&interaction);
+        warn_on_interaction_footguns(&interaction);
         Self {
             schedule: schedule.into(),
             time_zone: time_zone.into(),
@@ -991,6 +1007,33 @@ mod tests {
         assert!(
             messages.iter().any(|m| m.contains("store")),
             "the deserialize path must warn on store; got: {messages:?}"
+        );
+    }
+
+    #[test]
+    fn empty_input_warn_fires_on_the_struct_literal_shape() {
+        // The strict `input` deserialize can't catch a struct literal that
+        // rides `..Default::default()` — the field is present and
+        // well-formed, just the empty zero value. Pin that the funnel
+        // warns on it, and that real input stays quiet.
+        let messages = crate::test_subscriber::capture_messages(|| {
+            let interaction = crate::request::InteractionRequest {
+                agent: Some("my-agent".to_string()),
+                ..Default::default()
+            };
+            let _ = TriggerCreateParams::new("0 9 * * *", "UTC", interaction);
+        });
+        assert!(
+            messages.iter().any(|m| m.contains("empty prompt")),
+            "new() must warn on the empty default input; got: {messages:?}"
+        );
+
+        let messages = crate::test_subscriber::capture_messages(|| {
+            let _ = TriggerCreateParams::new("0 9 * * *", "UTC", probe_interaction());
+        });
+        assert!(
+            !messages.iter().any(|m| m.contains("empty prompt")),
+            "real input must not warn; got: {messages:?}"
         );
     }
 

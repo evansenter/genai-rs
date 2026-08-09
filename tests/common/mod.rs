@@ -52,6 +52,10 @@ pub const MAX_RETRY_SLEEP: Duration = Duration::from_secs(15);
 ///   both "spanner" and "utf-8" must appear in the message)
 /// - 400s carrying "invalid json syntax" (the model occasionally emits
 ///   invalid JSON in structured output)
+/// - 400s carrying "there was a problem processing your request" (a
+///   server-side burst class: `code: invalid_request` with this generic
+///   message and a "You will not be charged" apology, observed failing in
+///   under a second on requests that pass on re-run)
 ///
 /// Transport-level transience (network, timeouts, 429, 5xx) is
 /// [`GenaiError::is_retryable`]'s job; callers that want both compose the
@@ -70,6 +74,12 @@ pub fn is_transient_error(err: &GenaiError) -> bool {
             (lower.contains("spanner") && lower.contains("utf-8"))
                 // Model occasionally generates invalid JSON — transient API-side issue
                 || (*status_code == 400 && lower.contains("invalid json syntax"))
+                // Server-side processing burst: generic apology with no
+                // pointer at the request. Message-pinned so a genuine
+                // fixture rejection (which names its problem) still fails
+                // loud on the first attempt.
+                || (*status_code == 400
+                    && lower.contains("there was a problem processing your request"))
         }
         _ => false,
     }
@@ -80,9 +90,9 @@ pub fn is_transient_error(err: &GenaiError) -> bool {
 /// Retries both this module's known model-side flakes ([`is_transient_error`])
 /// and the crate's retryable transport classes ([`GenaiError::is_retryable`]:
 /// network errors, timeouts, 429, 5xx). Anything outside those two
-/// predicates returns immediately — a 400 `invalid_request` fixture
-/// rejection carries neither marker, so it still fails loud on the first
-/// attempt.
+/// predicates returns immediately — a 400 fixture rejection that names its
+/// actual problem carries none of the message-pinned markers, so it still
+/// fails loud on the first attempt.
 ///
 /// Note: inside a `with_timeout` budget, a worst case adds up to
 /// [`MAX_RETRY_SLEEP`] of sleep (the cumulative cap across all attempts;
