@@ -66,7 +66,7 @@ LOUD_WIRE=1 cargo run --example <example_name>
 | Example | Description | Difficulty |
 |---------|-------------|------------|
 | `multimodal_image` | Analyze images, resolution control | Beginner |
-| `audio_input` | Transcribe and analyze audio | Beginner |
+| `audio_input` | Transcribe and analyze audio (incl. `TranscriptionConfig` tuning) | Beginner |
 | `video_input` | Analyze video content | Beginner |
 | `pdf_input` | Process PDF documents | Beginner |
 | `text_input` | Analyze text documents (TXT, JSON, CSV) | Beginner |

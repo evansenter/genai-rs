@@ -7,7 +7,7 @@
 //!
 //! Run with: cargo run --example audio_input
 
-use genai_rs::{Client, Content, GenaiError};
+use genai_rs::{Client, Content, GenaiError, TranscriptionConfig};
 use std::env;
 use std::error::Error;
 
@@ -29,7 +29,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Note: This uses a tiny silent WAV clip for demonstration.
     // In real usage, you would provide actual audio content.
-    // Using with_content() with Content constructors
+    // Using with_content() with Content constructors.
+    //
+    // TranscriptionConfig tunes speech recognition: BCP-47 language hints
+    // (omit for auto-detect), "speaker" diarization, and "word"-level
+    // timestamps (the SDK-documented value sets — see the field docs).
     let response = client
         .interaction()
         .with_model(model_name)
@@ -40,6 +44,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
             ),
             Content::audio_data(DEMO_WAV_BASE64, "audio/wav"),
         ])
+        .with_transcription_config(TranscriptionConfig {
+            language_codes: Some(vec!["en-US".to_string()]),
+            diarization_mode: Some("speaker".to_string()),
+            timestamp_granularities: Some(vec!["word".to_string()]),
+            ..Default::default()
+        })
         .create()
         .await;
 
@@ -260,7 +270,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("• Multi-turn conversations remember audio context\n");
 
     println!("--- What You'll See with LOUD_WIRE=1 ---");
-    println!("  [REQ#1] POST with text + inlineData (audio base64 truncated)");
+    println!(
+        "  [REQ#1] POST with text + inlineData (audio base64 truncated) + \
+         generation_config.transcription_config"
+    );
     println!("  [RES#1] completed: transcription or analysis\n");
     println!("Multi-turn:");
     println!("  [REQ#2] POST with text + previousInteractionId");
