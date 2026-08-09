@@ -264,7 +264,7 @@ use genai_rs::{InteractionInput, InteractionRequest, TriggerCreateParams, Trigge
 // The nested interaction must target a custom agent (an /v1beta/agents
 // resource ID) — a model-only interaction is rejected.
 let interaction = InteractionRequest {
-    agent: Some("agents/my-custom-agent".to_string()),
+    agent: Some("my-custom-agent".to_string()),
     input: InteractionInput::Text("Summarize yesterday's alerts".to_string()),
     ..Default::default()
 };

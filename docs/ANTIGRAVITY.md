@@ -19,7 +19,7 @@ Enable the feature:
 
 ```toml
 [dependencies]
-genai-rs = { version = "0.8", features = ["antigravity"] }
+genai-rs = { version = "0.9", features = ["antigravity"] }
 ```
 
 Install the harness binary (it ships inside the platform-specific wheel):
@@ -210,10 +210,12 @@ ask the user questions (multiple-choice, optionally multi-select). Set an
 prompt, a chat message, or policy code:
 
 ```rust,ignore
-use genai_rs::antigravity::{QuestionAnswer, QuestionReply};
+use genai_rs::antigravity::{BuiltinTool, Capabilities, QuestionAnswer, QuestionReply};
 
 let agent = AntigravityAgent::builder()
     // ...
+    // read_only() does not include AskQuestion — enable it explicitly.
+    .with_capabilities(Capabilities::read_only().enable(BuiltinTool::AskQuestion))
     .on_questions(|questions| {
         // Answer each question: pick the first choice.
         QuestionReply::Answers(
@@ -223,7 +225,7 @@ let agent = AntigravityAgent::builder()
                 .collect(),
         )
     })
-    .build()
+    .spawn()
     .await?;
 ```
 
