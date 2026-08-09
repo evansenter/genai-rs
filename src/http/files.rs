@@ -49,7 +49,7 @@
 //! # }
 //! ```
 
-use super::common::{API_KEY_HEADER, API_VERSION};
+use super::common::API_KEY_HEADER;
 use super::context::HttpContext;
 use super::error_helpers::{check_response, check_response_wire, deserialize_with_context};
 use crate::errors::GenaiError;
@@ -328,6 +328,13 @@ pub struct FileUploadResponse {
 // --- API Functions ---
 
 const BASE_URL: &str = "https://generativelanguage.googleapis.com";
+/// The Files API's own version segment. Deliberately *not* the shared
+/// Interactions `API_VERSION`: this API is unrevisioned and tracks
+/// separately (matching google-genai's separate files client), so an
+/// Interactions version bump must not drag these paths along. A unit test
+/// pins `UPLOAD_URL` to the same segment so the two spellings cannot
+/// drift apart within this module.
+const FILES_API_VERSION: &str = "v1beta";
 const UPLOAD_URL: &str = "https://generativelanguage.googleapis.com/upload/v1beta/files";
 /// Maximum file size for uploads (2 GB)
 const MAX_FILE_SIZE: u64 = 2_147_483_648;
@@ -861,7 +868,7 @@ pub async fn upload_file_chunked_with_chunk_size(
 pub async fn get_file(ctx: &HttpContext, file_name: &str) -> Result<FileMetadata, GenaiError> {
     tracing::debug!("Getting file metadata: {}", file_name);
 
-    let url = format!("{BASE_URL}/{API_VERSION}/{file_name}");
+    let url = format!("{BASE_URL}/{FILES_API_VERSION}/{file_name}");
 
     let request_id = ctx.next_request_id();
     ctx.emit_request(request_id, "GET", &url, None);
@@ -912,7 +919,7 @@ pub async fn list_files(
         page_token
     );
 
-    let mut url = format!("{BASE_URL}/{API_VERSION}/files");
+    let mut url = format!("{BASE_URL}/{FILES_API_VERSION}/files");
 
     // Add query parameters
     let mut has_params = false;
@@ -966,7 +973,7 @@ pub async fn list_files(
 pub async fn delete_file(ctx: &HttpContext, file_name: &str) -> Result<(), GenaiError> {
     tracing::debug!("Deleting file: {}", file_name);
 
-    let url = format!("{BASE_URL}/{API_VERSION}/{file_name}");
+    let url = format!("{BASE_URL}/{FILES_API_VERSION}/{file_name}");
 
     let request_id = ctx.next_request_id();
     ctx.emit_request(request_id, "DELETE", &url, None);
@@ -993,6 +1000,14 @@ pub async fn delete_file(ctx: &HttpContext, file_name: &str) -> Result<(), Genai
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_upload_url_matches_files_api_version() {
+        // UPLOAD_URL is a literal (const format! doesn't exist), so pin it
+        // to FILES_API_VERSION — a version migration must move both
+        // spellings or fail here.
+        assert!(UPLOAD_URL.contains(&format!("/upload/{FILES_API_VERSION}/")));
+    }
 
     #[test]
     fn test_file_metadata_deserialization() {

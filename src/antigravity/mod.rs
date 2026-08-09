@@ -1977,46 +1977,63 @@ fn map_question_reply(
                 .chain(std::iter::repeat_with(|| None))
                 .take(question_count)
                 .zip(questions.iter())
-                .map(|(answer, question)| match answer {
-                    None | Some(hooks::QuestionAnswer::Unanswered) => {
-                        protocol::UserQuestionAnswer::unanswered()
+                .map(|(answer, question)| {
+                    // An unknown-type question has no rendered text or
+                    // choices — answering it is guesswork, and Freeform
+                    // (the natural attempt) would otherwise relay with no
+                    // signal at all, unlike the index checks below.
+                    if question.unknown_type
+                        && !matches!(answer, None | Some(hooks::QuestionAnswer::Unanswered))
+                    {
+                        tracing::warn!(
+                            "Questions hook answered a question whose type this crate does \
+                             not model; relaying anyway (prefer Cancel or Unanswered — see \
+                             AgentQuestion::is_unknown_type)"
+                        );
                     }
-                    Some(hooks::QuestionAnswer::Freeform(text)) => protocol::UserQuestionAnswer {
-                        unanswered: None,
-                        multiple_choice_answer: Some(protocol::MultipleChoiceAnswer {
-                            selected_choice_indices: Vec::new(),
-                            freeform_response: Some(text),
-                        }),
-                    },
-                    Some(hooks::QuestionAnswer::Choices { selected, freeform }) => {
-                        for &idx in &selected {
-                            if idx < 0 || idx as usize >= question.choices.len() {
-                                tracing::warn!(
-                                    "Questions hook selected index {idx} for a question \
-                                     with {} choice(s); relaying anyway",
-                                    question.choices.len()
-                                );
+                    match answer {
+                        None | Some(hooks::QuestionAnswer::Unanswered) => {
+                            protocol::UserQuestionAnswer::unanswered()
+                        }
+                        Some(hooks::QuestionAnswer::Freeform(text)) => {
+                            protocol::UserQuestionAnswer {
+                                unanswered: None,
+                                multiple_choice_answer: Some(protocol::MultipleChoiceAnswer {
+                                    selected_choice_indices: Vec::new(),
+                                    freeform_response: Some(text),
+                                }),
                             }
                         }
-                        if selected.len() > 1 && !question.is_multi_select {
-                            tracing::warn!(
-                                "Questions hook selected {} choices for a single-select \
+                        Some(hooks::QuestionAnswer::Choices { selected, freeform }) => {
+                            for &idx in &selected {
+                                if idx < 0 || idx as usize >= question.choices.len() {
+                                    tracing::warn!(
+                                        "Questions hook selected index {idx} for a question \
+                                     with {} choice(s); relaying anyway",
+                                        question.choices.len()
+                                    );
+                                }
+                            }
+                            if selected.len() > 1 && !question.is_multi_select {
+                                tracing::warn!(
+                                    "Questions hook selected {} choices for a single-select \
                                  question; relaying anyway",
-                                selected.len()
-                            );
-                        }
-                        if selected.is_empty() && freeform.is_none() {
-                            tracing::warn!(
-                                "Questions hook returned an empty Choices answer with no \
+                                    selected.len()
+                                );
+                            }
+                            if selected.is_empty() && freeform.is_none() {
+                                tracing::warn!(
+                                    "Questions hook returned an empty Choices answer with no \
                                  freeform (did you mean Unanswered?); relaying anyway"
-                            );
-                        }
-                        protocol::UserQuestionAnswer {
-                            unanswered: None,
-                            multiple_choice_answer: Some(protocol::MultipleChoiceAnswer {
-                                selected_choice_indices: selected,
-                                freeform_response: freeform,
-                            }),
+                                );
+                            }
+                            protocol::UserQuestionAnswer {
+                                unanswered: None,
+                                multiple_choice_answer: Some(protocol::MultipleChoiceAnswer {
+                                    selected_choice_indices: selected,
+                                    freeform_response: freeform,
+                                }),
+                            }
                         }
                     }
                 })
