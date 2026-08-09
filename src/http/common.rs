@@ -229,10 +229,14 @@ pub(crate) fn require_id(id: &str, what: &str) -> Result<(), crate::errors::Gena
             "{what} ID must not be empty (an empty ID would address the collection or API-root URL)"
         )));
     }
-    if matches!(
-        id.to_ascii_lowercase().as_str(),
-        "." | "%2e" | ".." | ".%2e" | "%2e." | "%2e%2e"
-    ) {
+    // Length guard first: the longest spelling is six bytes, so real
+    // (opaque hex/base64url) IDs skip the comparisons entirely, and
+    // eq_ignore_ascii_case avoids allocating a lowercased copy.
+    if id.len() <= 6
+        && [".", "%2e", "..", ".%2e", "%2e.", "%2e%2e"]
+            .iter()
+            .any(|dot| id.eq_ignore_ascii_case(dot))
+    {
         return Err(crate::errors::GenaiError::InvalidInput(format!(
             "{what} ID must not be a dot segment (URL parsing would pop \
              the preceding path segment and address a different endpoint)"
