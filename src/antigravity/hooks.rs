@@ -156,6 +156,33 @@ impl AgentQuestion {
         }
     }
 
+    /// Creates an unknown-type question fixture — empty text and choices,
+    /// [`Self::is_unknown_type`] true, with `extra` carrying the raw
+    /// payload — so hook authors can unit-test their cancel-on-unknown
+    /// branch, the state [`Self::new`] deliberately cannot produce.
+    ///
+    /// ```
+    /// use genai_rs::antigravity::AgentQuestion;
+    ///
+    /// let q = AgentQuestion::unknown(
+    ///     [("freeText".to_string(), serde_json::json!({"maxLen": 80}))]
+    ///         .into_iter()
+    ///         .collect(),
+    /// );
+    /// assert!(q.is_unknown_type());
+    /// assert!(q.choices.is_empty());
+    /// ```
+    #[must_use]
+    pub fn unknown(extra: serde_json::Map<String, serde_json::Value>) -> Self {
+        Self {
+            question: String::new(),
+            choices: Vec::new(),
+            is_multi_select: false,
+            extra,
+            unknown_type: true,
+        }
+    }
+
     /// True when the harness sent a question shape this crate doesn't model
     /// (no `multiple_choice` arm on the wire). The raw payload is in
     /// [`Self::extra`]; a hook may prefer [`QuestionReply::Cancel`] over
