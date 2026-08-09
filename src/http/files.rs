@@ -914,20 +914,12 @@ pub async fn get_file(ctx: &HttpContext, file_name: &str) -> Result<FileMetadata
 /// # Errors
 ///
 /// Returns an error if the request fails.
-pub async fn list_files(
-    ctx: &HttpContext,
-    page_size: Option<u32>,
-    page_token: Option<&str>,
-) -> Result<ListFilesResponse, GenaiError> {
-    tracing::debug!(
-        "Listing files: page_size={:?}, page_token={:?}",
-        page_size,
-        page_token
-    );
-
+/// Builds the list URL. Extracted from [`list_files`] so the paging
+/// shape is testable like its `with_paging` siblings — the Files API
+/// spells its params `pageSize`/`pageToken`, so it cannot ride the
+/// shared helper directly.
+fn list_files_url(page_size: Option<u32>, page_token: Option<&str>) -> String {
     let mut url = format!("{BASE_URL}/{FILES_API_VERSION}/files");
-
-    // Add query parameters
     let mut has_params = false;
     if let Some(size) = page_size {
         url.push_str(&format!("?pageSize={size}"));
@@ -943,6 +935,21 @@ pub async fn list_files(
             urlencoding::encode(token)
         ));
     }
+    url
+}
+
+pub async fn list_files(
+    ctx: &HttpContext,
+    page_size: Option<u32>,
+    page_token: Option<&str>,
+) -> Result<ListFilesResponse, GenaiError> {
+    tracing::debug!(
+        "Listing files: page_size={:?}, page_token={:?}",
+        page_size,
+        page_token
+    );
+
+    let url = list_files_url(page_size, page_token);
 
     let request_id = ctx.next_request_id();
     ctx.emit_request(request_id, "GET", &url, None);
@@ -1013,6 +1020,35 @@ pub async fn delete_file(ctx: &HttpContext, file_name: &str) -> Result<(), Genai
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn list_files_url_encodes_paging() {
+        let base = format!("{BASE_URL}/{FILES_API_VERSION}/files");
+        assert_eq!(list_files_url(None, None), base);
+        assert_eq!(
+            list_files_url(Some(10), None),
+            format!("{base}?pageSize=10")
+        );
+        // Token alone takes the leading `?`; with a size it rides `&`.
+        assert_eq!(
+            list_files_url(None, Some("tok")),
+            format!("{base}?pageToken=tok")
+        );
+        assert_eq!(
+            list_files_url(Some(10), Some("tok")),
+            format!("{base}?pageSize=10&pageToken=tok")
+        );
+        // The invariant with_paging pins for every other list endpoint: a
+        // reserved character arrives percent-encoded. `+` is the arm a
+        // standard-base64 token would actually hit (it would otherwise
+        // decode to a space server-side).
+        assert_eq!(
+            list_files_url(None, Some("a/b&c=d+e")),
+            format!("{base}?pageToken=a%2Fb%26c%3Dd%2Be")
+        );
+    }
+
     use super::*;
 
     #[test]
