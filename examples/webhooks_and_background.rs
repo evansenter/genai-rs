@@ -182,7 +182,11 @@ fn print_footer() {
     println!("  [REQ#2] GET /v1beta/webhooks (list), POST :ping, POST :rotateSigningSecret");
     println!("  [RES#2] list/ping/rotate responses");
     println!("  [REQ#3] POST /v1beta/interactions with background + webhook_config");
-    println!("  [RES#3] in_progress interaction; completion arrives at your webhook\n");
+    println!("  [RES#3] in_progress interaction; completion arrives at your webhook");
+    println!("  [REQ#4] POST /v1beta/environments, then GET (list + by id), DELETE");
+    println!("  [RES#4] environment resource: status, string-encoded file_count/size_bytes");
+    println!("  [REQ#5] GET /v1beta/triggers");
+    println!("  [RES#5] trigger list ({{}} when none exist)\n");
 
     println!("--- Production Considerations ---");
     println!("• Store new_signing_secret at create time - it is never returned again");
