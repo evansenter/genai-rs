@@ -359,15 +359,23 @@ pub struct Trigger {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_interaction_id: Option<String>,
     /// Output only. When the trigger was created.
+    ///
+    /// The SDK spec spells this `create_time` while the live-verified
+    /// environments resource next door uses `created` — the alias hedges
+    /// that documented bet (deserialize-only; serialization keeps the
+    /// spec spelling).
     #[serde(
         default,
+        alias = "created",
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
     )]
     pub create_time: Option<DateTime<Utc>>,
-    /// Output only. When the trigger was last updated.
+    /// Output only. When the trigger was last updated (`updated` accepted
+    /// on deserialize; see [`Trigger::create_time`]).
     #[serde(
         default,
+        alias = "updated",
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
     )]
@@ -777,8 +785,13 @@ pub struct TriggerListResponse {
 #[serde(default)]
 pub struct TriggerExecutionListResponse {
     /// The executions in this page. A null or malformed list degrades to
-    /// empty; malformed elements drop individually.
-    #[serde(deserialize_with = "crate::serde_util::deserialize_lenient_vec")]
+    /// empty; malformed elements drop individually. The envelope key is
+    /// the unverified `trigger_executions` per the SDK spec; `executions`
+    /// (the path-segment spelling) is accepted on deserialize as a hedge.
+    #[serde(
+        alias = "executions",
+        deserialize_with = "crate::serde_util::deserialize_lenient_vec"
+    )]
     pub trigger_executions: Vec<TriggerExecution>,
     /// Token for fetching the next page, absent on the last page.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1063,6 +1076,23 @@ mod tests {
         let executions: TriggerExecutionListResponse =
             serde_json::from_value(serde_json::json!({"trigger_executions": {"a": 1}})).unwrap();
         assert!(executions.trigger_executions.is_empty());
+
+        // The alias hedges on the wire-unverified spellings: the
+        // path-segment envelope key and the environments-convention
+        // timestamps deserialize too.
+        let executions: TriggerExecutionListResponse = serde_json::from_value(
+            serde_json::json!({"executions": [{"id": "e1", "status": "completed"}]}),
+        )
+        .unwrap();
+        assert_eq!(executions.trigger_executions.len(), 1);
+        let trigger: Trigger = serde_json::from_value(serde_json::json!({
+            "id": "t1",
+            "created": "2026-08-08T12:30:00Z",
+            "updated": "2026-08-08T12:31:00Z"
+        }))
+        .unwrap();
+        assert!(trigger.create_time.is_some());
+        assert!(trigger.update_time.is_some());
     }
 
     #[test]
