@@ -94,24 +94,34 @@ where
     }
 }
 
-/// Deserializes a list field that may arrive as JSON null, degrading it to
-/// an empty vec with a `warn!` instead of failing the enclosing envelope.
+/// Deserializes a list field leniently, degrading an explicit null or any
+/// non-array shape to an empty vec with a `warn!` instead of failing the
+/// enclosing envelope.
 ///
 /// Struct-level serde defaults cover only the key-*absent* case (the
-/// live-verified `{}` empty response); a present-but-null key would
-/// otherwise error and zero the whole page — the same wholesale failure
-/// the sibling helpers exist to avoid, on the wire-unverified resource
-/// family.
-pub(crate) fn deserialize_null_as_empty_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+/// live-verified `{}` empty response); a present-but-null or otherwise
+/// malformed list key would otherwise error and zero the whole page — the
+/// same wholesale failure the sibling helpers exist to avoid, on the
+/// wire-unverified resource family. Note the degradation is per-list, not
+/// per-element: one undeserializable element drops the whole list (the
+/// element types this is used with are themselves lenient, so that arm is
+/// a last resort).
+pub(crate) fn deserialize_lenient_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
 where
     D: Deserializer<'de>,
-    T: serde::Deserialize<'de>,
+    T: serde::de::DeserializeOwned,
 {
-    let value = Option::<Vec<T>>::deserialize(deserializer)?;
-    if value.is_none() {
-        tracing::warn!("List field was explicit null; degrading to an empty list");
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    match value {
+        None | Some(serde_json::Value::Null) => {
+            tracing::warn!("List field was explicit null; degrading to an empty list");
+            Ok(Vec::new())
+        }
+        Some(other) => Ok(serde_json::from_value(other).unwrap_or_else(|e| {
+            tracing::warn!("Undeserializable list field, degrading to empty: {e}");
+            Vec::new()
+        })),
     }
-    Ok(value.unwrap_or_default())
 }
 
 #[cfg(test)]
@@ -189,6 +199,55 @@ mod tests {
             None
         );
         assert_eq!(ts_roundtrip(serde_json::json!({"t": true})), None);
+    }
+
+    #[derive(Debug, PartialEq, Deserialize)]
+    struct VecWrapper {
+        #[serde(default, deserialize_with = "super::deserialize_lenient_vec")]
+        v: Vec<i64>,
+    }
+
+    fn vec_roundtrip(json: serde_json::Value) -> Vec<i64> {
+        serde_json::from_value::<VecWrapper>(json).unwrap().v
+    }
+
+    #[test]
+    fn lenient_vec_happy_paths() {
+        assert_eq!(vec_roundtrip(serde_json::json!({"v": [1, 2]})), vec![1, 2]);
+        assert_eq!(
+            vec_roundtrip(serde_json::json!({"v": []})),
+            Vec::<i64>::new()
+        );
+        // Key-absent rides the field-level serde default, not the helper.
+        assert_eq!(vec_roundtrip(serde_json::json!({})), Vec::<i64>::new());
+    }
+
+    #[test]
+    fn lenient_vec_degradation_arms_drop_to_empty() {
+        // Same degrade-per-field contract as the siblings above: a null or
+        // malformed list key must never fail the envelope it is embedded in.
+        assert_eq!(
+            vec_roundtrip(serde_json::json!({"v": null})),
+            Vec::<i64>::new()
+        );
+        assert_eq!(
+            vec_roundtrip(serde_json::json!({"v": "x"})),
+            Vec::<i64>::new()
+        );
+        assert_eq!(
+            vec_roundtrip(serde_json::json!({"v": 5})),
+            Vec::<i64>::new()
+        );
+        assert_eq!(
+            vec_roundtrip(serde_json::json!({"v": {"a": 1}})),
+            Vec::<i64>::new()
+        );
+        // Degradation is per-list, not per-element (documented on the
+        // helper): one bad element drops the whole list.
+        assert_eq!(
+            vec_roundtrip(serde_json::json!({"v": [1, "x"]})),
+            Vec::<i64>::new()
+        );
     }
 
     #[test]
