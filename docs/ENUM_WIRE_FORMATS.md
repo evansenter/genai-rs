@@ -411,9 +411,10 @@ on `InteractionResponse` (`service_tier`, `object`). The request-side values
 
 ### Safety settings enums (request `safety_settings`)
 
-`HarmCategory` / `SafetyThreshold` / `SafetyMethod`, all snake_case strings
-with the standard Unknown pattern (`category_type` / `threshold_type` /
-`method_type`).
+`HarmCategory` / `SafetyThreshold` (snake_case) and `SafetyMethod`
+(lowercase — its values are single words, matching the summary table's
+classification), all with the standard Unknown pattern (`category_type` /
+`threshold_type` / `method_type`).
 
 | Rust Enum | Wire Values |
 |-----------|-------------|
