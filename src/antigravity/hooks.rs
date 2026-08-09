@@ -237,6 +237,12 @@ pub enum QuestionReply {
     /// [`QuestionAnswer::Unanswered`]; extra answers are dropped.
     Answers(Vec<QuestionAnswer>),
     /// Cancel the question interaction.
+    ///
+    /// On the wire this sets the reply's `cancelled` flag with no answers
+    /// (pinned by test). What the harness then does with the in-flight
+    /// turn — resolve with the trajectory as it stands, or end it another
+    /// way — is harness-owned and not live-verified; treat this as "stop
+    /// asking, without answers" rather than a documented turn outcome.
     Cancel,
 }
 

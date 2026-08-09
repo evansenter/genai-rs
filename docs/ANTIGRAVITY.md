@@ -224,8 +224,11 @@ let agent = AntigravityAgent::builder()
     // read_only() does not include AskQuestion — enable it explicitly.
     .with_capabilities(Capabilities::read_only().enable(BuiltinTool::AskQuestion))
     // AskQuestion is write-capable, so the spawn-time safety gate requires
-    // a policy (or on_pre_tool hook) once it is enabled.
-    .add_policy(policy::allow_all())
+    // a policy (or on_pre_tool hook) once it is enabled. Any rule
+    // satisfies the gate (questions bypass the policy engine), so prefer
+    // deny-by-default over allow_all() — it won't silently permit other
+    // builtins you enable later.
+    .add_policy(policy::deny_all())
     .on_questions(|questions| {
         // Answer each question: pick the first choice.
         QuestionReply::Answers(

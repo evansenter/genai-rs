@@ -49,7 +49,7 @@
 //! # }
 //! ```
 
-use super::common::API_KEY_HEADER;
+use super::common::{API_KEY_HEADER, API_VERSION};
 use super::context::HttpContext;
 use super::error_helpers::{check_response, check_response_wire, deserialize_with_context};
 use crate::errors::GenaiError;
@@ -329,7 +329,6 @@ pub struct FileUploadResponse {
 
 const BASE_URL: &str = "https://generativelanguage.googleapis.com";
 const UPLOAD_URL: &str = "https://generativelanguage.googleapis.com/upload/v1beta/files";
-const API_VERSION: &str = "v1beta";
 /// Maximum file size for uploads (2 GB)
 const MAX_FILE_SIZE: u64 = 2_147_483_648;
 
