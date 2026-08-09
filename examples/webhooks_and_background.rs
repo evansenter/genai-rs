@@ -1,12 +1,15 @@
 //! Example: Webhooks + background execution
 //!
-//! Demonstrates the webhooks surface of the Interactions API:
+//! Demonstrates the webhooks, environments and triggers surfaces of the
+//! Interactions API:
 //!
 //! 1. The `/v1beta/webhooks` resource: create/get/list/update/ping/
 //!    rotateSigningSecret/delete
 //! 2. Per-request `webhook_config` routing on a background interaction, so
 //!    lifecycle events (`interaction.completed`, `interaction.failed`, ...)
 //!    are pushed to your endpoint instead of requiring polling
+//! 3. The `/v1beta/environments` resource: create/get/list/delete lifecycle
+//! 4. The `/v1beta/triggers` resource: listing (creation is agent-gated)
 //!
 //! Without `GEMINI_API_KEY` the example constructs the requests and prints
 //! their wire shapes instead of calling the API, so it can always run.

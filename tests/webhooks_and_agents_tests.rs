@@ -701,7 +701,12 @@ async fn test_triggers_list_and_gated_create() {
         Ok(trigger) => {
             println!("Trigger created (agent gate open): id={:?}", trigger.id);
             if let Some(id) = &trigger.id {
-                let _ = client.delete_trigger(id).await;
+                // A leaked trigger keeps firing on schedule — if the delete
+                // fails, say so loudly instead of leaving it silent.
+                match client.delete_trigger(id).await {
+                    Ok(()) => println!("Deleted trigger {id}"),
+                    Err(e) => println!("delete_trigger failed: {e} - delete {id} manually"),
+                }
             }
         }
         // Only a structured 4xx API rejection proves anything about the

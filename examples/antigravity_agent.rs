@@ -16,7 +16,7 @@
 use futures_util::StreamExt;
 use genai_rs::CallableFunction;
 use genai_rs::antigravity::{
-    AgentEvent, AntigravityAgent, Capabilities, QuestionAnswer, QuestionReply, policy,
+    AgentEvent, AntigravityAgent, BuiltinTool, Capabilities, QuestionAnswer, QuestionReply, policy,
 };
 use genai_rs_macros::tool;
 
@@ -39,7 +39,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_api_key(api_key)
         .with_model("gemini-3-flash-preview")
         .with_system_instructions("You are a concise assistant. Prefer tools over guessing.")
-        .with_capabilities(Capabilities::read_only())
+        // read_only() does not include AskQuestion — enable it explicitly
+        // so the on_questions hook below is reachable.
+        .with_capabilities(Capabilities::read_only().enable(BuiltinTool::AskQuestion))
         // Answer agent questions (ask_question builtin) from policy: pick
         // the first choice when there is one, otherwise leave unanswered.
         // The hook runs inline in the event pump — never block in it

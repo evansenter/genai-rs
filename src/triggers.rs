@@ -308,11 +308,16 @@ pub struct Trigger {
     ///
     /// Tolerates the protobuf-JSON string form on deserialize (live-verified
     /// on the environments resource's int64s) so one string-encoded int
-    /// can't fail the whole list response. Serialized as a plain number —
-    /// protobuf-JSON accepts both on input.
+    /// can't fail the whole list response, and re-serializes in the same
+    /// string form for roundtrip uniformity with [`Environment`]'s counts.
+    /// (The send direction is [`TriggerCreateParams`], which emits plain
+    /// numbers — protobuf-JSON accepts both on input.)
+    ///
+    /// [`Environment`]: crate::environments::Environment
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::serde_util::serialize_string_i64",
         deserialize_with = "crate::serde_util::deserialize_string_i64"
     )]
     pub max_consecutive_failures: Option<i64>,
@@ -320,6 +325,7 @@ pub struct Trigger {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::serde_util::serialize_string_i64",
         deserialize_with = "crate::serde_util::deserialize_string_i64"
     )]
     pub consecutive_failure_count: Option<i64>,
@@ -327,6 +333,7 @@ pub struct Trigger {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::serde_util::serialize_string_i64",
         deserialize_with = "crate::serde_util::deserialize_string_i64"
     )]
     pub execution_timeout_seconds: Option<i64>,
@@ -609,6 +616,12 @@ mod tests {
         assert_eq!(trigger.max_consecutive_failures, Some(3));
         assert_eq!(trigger.consecutive_failure_count, Some(1));
         assert_eq!(trigger.execution_timeout_seconds, Some(600));
+
+        // Re-serialization is uniform with Environment's counts: the
+        // protobuf-JSON string form, whichever form arrived.
+        let back = serde_json::to_value(&trigger).unwrap();
+        assert_eq!(back["max_consecutive_failures"], serde_json::json!("3"));
+        assert_eq!(back["execution_timeout_seconds"], serde_json::json!("600"));
     }
 
     #[test]

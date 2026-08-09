@@ -286,6 +286,14 @@ mod tests {
     }
 
     #[test]
+    fn add_source_accumulates() {
+        let request = CreateEnvironmentRequest::new()
+            .add_source(EnvironmentSource::inline("/a", "one"))
+            .add_source(EnvironmentSource::inline("/b", "two"));
+        assert_eq!(request.sources.as_ref().map(Vec::len), Some(2));
+    }
+
+    #[test]
     fn create_request_network_serializes_without_discriminator() {
         use crate::environment::NetworkConfig;
 

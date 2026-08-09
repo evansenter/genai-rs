@@ -574,13 +574,18 @@ pub struct TranscriptionConfig {
     /// Domain-specific vocabulary to bias recognition toward.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_vocabulary: Option<Vec<String>>,
-    /// Speaker diarization mode.
+    /// Speaker diarization mode. The SDK spec documents `"speaker"` as the
+    /// only supported value today; kept an open string (Evergreen) so new
+    /// modes work without a crate release.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diarization_mode: Option<String>,
-    /// BCP-47 language codes hinting the audio's language(s).
+    /// BCP-47 language codes hinting the audio's language(s). Omitted or
+    /// empty means automatic language detection.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language_codes: Option<Vec<String>>,
-    /// Timestamp granularities to include (e.g. word-level timing).
+    /// Timestamp granularities to include. The SDK spec documents `"word"`
+    /// as the only supported value today (empty = no timestamps); kept an
+    /// open string list (Evergreen).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp_granularities: Option<Vec<String>>,
 }

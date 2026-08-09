@@ -1130,6 +1130,23 @@ Helper: `usage.grounding_count_for_tool("google_search")`.
 
 **Status**: Pending live verification (2026-05-20 revision).
 
+### TranscriptionConfig open-string values
+
+`generation_config.transcription_config` (`TranscriptionConfig` in
+`src/request.rs`) keeps its constrained fields as open strings (Evergreen),
+with the SDK-documented value sets:
+
+| Field | Documented values | Notes |
+|-------|-------------------|-------|
+| `diarization_mode` | `"speaker"` | Only supported value per SDK 2.17.0 spec |
+| `timestamp_granularities` | `"word"` | Only supported value per spec; empty list = no timestamps |
+| `language_codes` | BCP-47 codes | Empty/omitted = automatic language detection |
+
+**Status**: The config object itself was accepted live (200, 2026-08-08);
+the documented value sets are from the SDK spec and their output effects
+(`WordInfo` timing/speaker fields) are pending live verification with an
+audio input.
+
 ## Testing New Enums
 
 When adding new enums, always test the actual wire format with `curl`:

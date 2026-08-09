@@ -508,10 +508,10 @@ variants, never on message text. Key variants: `HarnessNotFound{searched}`,
 ## Current limitations (follow-ups)
 
 - **User questions**: the `ask_question` builtin is answered "unanswered"
-  automatically (never deadlocks); interactive question hooks are not
-  exposed. Disable the builtin if this matters.
-- **Hooks are synchronous**: `on_pre_tool` / `on_post_tool` are sync
-  closures; async hooks are a follow-up.
+  automatically (never deadlocks) unless an `on_questions` hook is set —
+  see [Answering agent questions](#answering-agent-questions).
+- **Hooks are synchronous**: `on_pre_tool` / `on_post_tool` /
+  `on_questions` are sync closures; async hooks are a follow-up.
 - **Trigger-turn output is not surfaced**: turns started by
   `add_trigger` deliveries run unobserved and are halted/discarded by the
   next `chat`/`send_streaming` (see [Triggers](#triggers)); a background

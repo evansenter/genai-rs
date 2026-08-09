@@ -52,3 +52,56 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde::{Deserialize, Serialize};
+
+    /// Deliberately no `skip_serializing_if`, so the `None` serialize arm
+    /// is reachable here even though production fields skip it.
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    struct Wrapper {
+        #[serde(
+            default,
+            serialize_with = "super::serialize_string_i64",
+            deserialize_with = "super::deserialize_string_i64"
+        )]
+        v: Option<i64>,
+    }
+
+    fn roundtrip(json: serde_json::Value) -> Option<i64> {
+        serde_json::from_value::<Wrapper>(json).unwrap().v
+    }
+
+    #[test]
+    fn happy_paths_accept_string_and_number() {
+        assert_eq!(roundtrip(serde_json::json!({"v": "42"})), Some(42));
+        assert_eq!(roundtrip(serde_json::json!({"v": 42})), Some(42));
+        assert_eq!(roundtrip(serde_json::json!({"v": null})), None);
+        assert_eq!(roundtrip(serde_json::json!({})), None);
+    }
+
+    #[test]
+    fn degradation_arms_drop_to_none_instead_of_erroring() {
+        // The degrade-per-field contract: one bad int must never fail the
+        // struct (and hence an entire list response) it is embedded in.
+        assert_eq!(roundtrip(serde_json::json!({"v": "12abc"})), None);
+        assert_eq!(roundtrip(serde_json::json!({"v": ""})), None);
+        assert_eq!(roundtrip(serde_json::json!({"v": 1.5})), None);
+        assert_eq!(roundtrip(serde_json::json!({"v": true})), None);
+        assert_eq!(roundtrip(serde_json::json!({"v": [1]})), None);
+        assert_eq!(roundtrip(serde_json::json!({"v": {"n": 1}})), None);
+    }
+
+    #[test]
+    fn serializes_protobuf_json_string_form() {
+        assert_eq!(
+            serde_json::to_value(Wrapper { v: Some(5) }).unwrap(),
+            serde_json::json!({"v": "5"})
+        );
+        assert_eq!(
+            serde_json::to_value(Wrapper { v: None }).unwrap(),
+            serde_json::json!({"v": null})
+        );
+    }
+}

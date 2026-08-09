@@ -259,21 +259,31 @@ custom-agent creation is gated/allowlisted on standard API keys today, so
 most accounts can list but not create:
 
 ```rust,ignore
-use genai_rs::{InteractionRequest, TriggerCreateParams, TriggerStatus, TriggerUpdate};
+use genai_rs::{InteractionInput, InteractionRequest, TriggerCreateParams, TriggerStatus, TriggerUpdate};
+
+// The nested interaction must target a custom agent (an /v1beta/agents
+// resource ID) — a model-only interaction is rejected.
+let interaction = InteractionRequest {
+    agent: Some("agents/my-custom-agent".to_string()),
+    input: InteractionInput::Text("Summarize yesterday's alerts".to_string()),
+    ..Default::default()
+};
 
 // Schedule + IANA time zone + the interaction to run each firing.
 let params = TriggerCreateParams::new("0 9 * * 1-5", "America/Los_Angeles", interaction)
     .with_display_name("weekday-briefing")
-    .with_environment_id(env_id);           // optional: run inside an environment
+    .with_environment_id("env-id");         // optional: run inside an environment
 let trigger = client.create_trigger(&params).await?;
 
-// Pause / resume via partial update; fire immediately; inspect runs.
+// Pause / resume via update; fire immediately; inspect runs.
 let id = trigger.id.clone().expect("created trigger has an ID");
 client
     .update_trigger(&id, &TriggerUpdate::new().with_status(TriggerStatus::Paused))
     .await?;
 let execution = client.run_trigger(&id).await?;
+println!("fired: {:?}", execution.status);
 let runs = client.list_trigger_executions(&id, Some(10), None).await?;
+println!("executions: {}", runs.trigger_executions.len());
 client.delete_trigger(&id).await?;
 ```
 
