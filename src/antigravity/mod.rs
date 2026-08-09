@@ -405,8 +405,9 @@ impl AgentBuilder {
     ///
     /// The hook only fires if [`BuiltinTool::AskQuestion`] is enabled —
     /// it is *not* in [`Capabilities::read_only()`] (the default), so on a
-    /// default builder this hook is a silent no-op: the agent never asks
-    /// and nothing warns. Enable it with
+    /// default builder this hook is a no-op: the agent never asks, and
+    /// `spawn()` emits a `warn!` for the hook-set-but-builtin-disabled
+    /// combination. Enable it with
     /// `Capabilities::read_only().enable(BuiltinTool::AskQuestion)`, which
     /// as a write-capable capability also needs a policy or
     /// [`on_pre_tool`](Self::on_pre_tool) hook to pass the spawn-time
