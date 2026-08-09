@@ -1718,10 +1718,7 @@ fn test_builder_labels_merge_and_replace() {
         .with_model("gemini-3-flash-preview")
         .with_text("Hello")
         .add_label("stale", "1")
-        .with_labels(std::collections::BTreeMap::from([(
-            "fresh".to_string(),
-            "2".to_string(),
-        )]))
+        .with_labels([("fresh", "2")])
         .build()
         .unwrap();
     let value = serde_json::to_value(&request).unwrap();

@@ -1412,11 +1412,20 @@ impl<'a> InteractionBuilder<'a> {
     /// any previously added ones.
     ///
     /// Server-side constraint (verified live 2026-08-08): the Gemini API
-    /// rejects `labels` (Vertex-only); modeled for spec parity. `BTreeMap`
-    /// so the serialized key order is deterministic.
+    /// rejects `labels` (Vertex-only); modeled for spec parity. Stored in a
+    /// `BTreeMap` so the serialized key order is deterministic; a repeated
+    /// key in the input keeps the last value.
     #[must_use]
-    pub fn with_labels(mut self, labels: std::collections::BTreeMap<String, String>) -> Self {
-        self.labels = Some(labels);
+    pub fn with_labels(
+        mut self,
+        labels: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+    ) -> Self {
+        self.labels = Some(
+            labels
+                .into_iter()
+                .map(|(k, v)| (k.into(), v.into()))
+                .collect(),
+        );
         self
     }
 

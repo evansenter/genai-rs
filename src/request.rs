@@ -642,8 +642,11 @@ impl TranscriptionConfig {
         self
     }
 
-    /// Set the contextual-adaptation phrases, replacing any set earlier
-    /// (the `with_*`/`add_*` pair, like the builder's safety settings).
+    /// Set the contextual-adaptation phrases, replacing any set earlier.
+    ///
+    /// This is the one `Vec` field here with an accumulating `add_*`
+    /// companion — phrases are the incremental-assembly case; the other
+    /// list fields take a pre-built `Vec` via their `with_*` setter.
     #[must_use]
     pub fn with_adaptation_phrases(
         mut self,

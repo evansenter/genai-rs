@@ -447,6 +447,10 @@ impl Client {
 
     /// Retrieves an existing interaction by its ID.
     ///
+    /// `interaction_id` is the bare ID (the form [`InteractionResponse::id`](crate::InteractionResponse)
+    /// returns) — not an `interactions/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
+    ///
     /// Useful for checking the status of long-running interactions or agents,
     /// or for retrieving the full conversation history.
     ///
@@ -508,6 +512,10 @@ impl Client {
     }
 
     /// Retrieves an existing interaction by its ID with streaming.
+    ///
+    /// `interaction_id` is the bare ID (the form [`InteractionResponse::id`](crate::InteractionResponse)
+    /// returns) — not an `interactions/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
     ///
     /// Returns a stream of events for the interaction. This is useful for:
     /// - Resuming an interrupted stream using `last_event_id`
@@ -590,6 +598,10 @@ impl Client {
 
     /// Deletes an interaction by its ID.
     ///
+    /// `interaction_id` is the bare ID (the form [`InteractionResponse::id`](crate::InteractionResponse)
+    /// returns) — not an `interactions/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
+    ///
     /// Removes the interaction from the server, freeing up storage and making it
     /// unavailable for future reference via `previous_interaction_id`.
     ///
@@ -613,6 +625,10 @@ impl Client {
     }
 
     /// Cancels an in-progress background interaction.
+    ///
+    /// `interaction_id` is the bare ID (the form [`InteractionResponse::id`](crate::InteractionResponse)
+    /// returns) — not an `interactions/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
     ///
     /// Only applicable to interactions created with `background: true` that are
     /// still in `InProgress` status. Returns the updated interaction with
@@ -721,6 +737,10 @@ impl Client {
 
     /// Retrieves a registered webhook by ID.
     ///
+    /// `webhook_id` is the bare ID (the form [`Webhook::id`](crate::Webhook)
+    /// returns) — not a `webhooks/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
+    ///
     /// # Errors
     ///
     /// Returns an error if the webhook doesn't exist, the HTTP request fails,
@@ -748,6 +768,10 @@ impl Client {
     }
 
     /// Updates a registered webhook.
+    ///
+    /// `webhook_id` is the bare ID (the form [`Webhook::id`](crate::Webhook)
+    /// returns) — not a `webhooks/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
     ///
     /// # Arguments
     ///
@@ -793,6 +817,10 @@ impl Client {
 
     /// Deletes a registered webhook.
     ///
+    /// `webhook_id` is the bare ID (the form [`Webhook::id`](crate::Webhook)
+    /// returns) — not a `webhooks/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
+    ///
     /// # Errors
     ///
     /// Returns an error if the webhook doesn't exist or the HTTP request fails.
@@ -801,6 +829,10 @@ impl Client {
     }
 
     /// Sends a test event to a webhook (`:ping`).
+    ///
+    /// `webhook_id` is the bare ID (the form [`Webhook::id`](crate::Webhook)
+    /// returns) — not a `webhooks/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
     ///
     /// Use this to verify your endpoint receives and validates deliveries
     /// before relying on it for real events.
@@ -817,6 +849,10 @@ impl Client {
     }
 
     /// Rotates a webhook's signing secret (`:rotateSigningSecret`).
+    ///
+    /// `webhook_id` is the bare ID (the form [`Webhook::id`](crate::Webhook)
+    /// returns) — not a `webhooks/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
     ///
     /// Returns the newly generated secret. Pass a
     /// [`RevocationBehavior`](crate::RevocationBehavior) to control whether
@@ -1096,6 +1132,10 @@ impl Client {
 
     /// Retrieves an agent by ID.
     ///
+    /// `agent_id` is the bare ID (the form [`Agent::id`](crate::Agent)
+    /// returns) — not an `agents/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
+    ///
     /// # Errors
     ///
     /// Returns an error if the agent doesn't exist, the HTTP request fails,
@@ -1125,6 +1165,10 @@ impl Client {
     }
 
     /// Deletes an agent by ID.
+    ///
+    /// `agent_id` is the bare ID (the form [`Agent::id`](crate::Agent)
+    /// returns) — not an `agents/...` resource name, which would be
+    /// percent-encoded into a single path segment and 404.
     ///
     /// # Errors
     ///
