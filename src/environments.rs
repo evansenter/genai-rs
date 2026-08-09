@@ -49,6 +49,16 @@ pub enum EnvironmentStatus {
 }
 
 impl EnvironmentStatus {
+    /// The wire string for this status — the single source both `Display`
+    /// and `Serialize` render, so the two can never disagree.
+    fn as_wire(&self) -> &str {
+        match self {
+            Self::Active => "active",
+            Self::Expired => "expired",
+            Self::Unknown { status_type, .. } => status_type,
+        }
+    }
+
     /// Returns true if this is an unknown status.
     #[must_use]
     pub const fn is_unknown(&self) -> bool {
@@ -70,18 +80,6 @@ impl EnvironmentStatus {
         match self {
             Self::Unknown { data, .. } => Some(data),
             _ => None,
-        }
-    }
-}
-
-impl EnvironmentStatus {
-    /// The wire string for this status — the single source both `Display`
-    /// and `Serialize` render, so the two can never disagree.
-    fn as_wire(&self) -> &str {
-        match self {
-            Self::Active => "active",
-            Self::Expired => "expired",
-            Self::Unknown { status_type, .. } => status_type,
         }
     }
 }

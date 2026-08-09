@@ -56,6 +56,17 @@ pub enum TriggerStatus {
 }
 
 impl TriggerStatus {
+    /// The wire string for this status — the single source both `Display`
+    /// and `Serialize` render, so the two can never disagree.
+    fn as_wire(&self) -> &str {
+        match self {
+            Self::Active => "active",
+            Self::Paused => "paused",
+            Self::Error => "error",
+            Self::Unknown { status_type, .. } => status_type,
+        }
+    }
+
     /// Returns true if this is an unknown status.
     #[must_use]
     pub const fn is_unknown(&self) -> bool {
@@ -77,19 +88,6 @@ impl TriggerStatus {
         match self {
             Self::Unknown { data, .. } => Some(data),
             _ => None,
-        }
-    }
-}
-
-impl TriggerStatus {
-    /// The wire string for this status — the single source both `Display`
-    /// and `Serialize` render, so the two can never disagree.
-    fn as_wire(&self) -> &str {
-        match self {
-            Self::Active => "active",
-            Self::Paused => "paused",
-            Self::Error => "error",
-            Self::Unknown { status_type, .. } => status_type,
         }
     }
 }
@@ -177,14 +175,16 @@ pub enum TriggerExecutionStatus {
 }
 
 impl TriggerExecutionStatus {
-    const fn as_wire(&self) -> Option<&'static str> {
+    /// The wire string for this status — the single source both `Display`
+    /// and `Serialize` render, so the two can never disagree.
+    fn as_wire(&self) -> &str {
         match self {
-            Self::InProgress => Some("in_progress"),
-            Self::Completed => Some("completed"),
-            Self::Failed => Some("failed"),
-            Self::Skipped => Some("skipped"),
-            Self::TimedOut => Some("timed_out"),
-            Self::Unknown { .. } => None,
+            Self::InProgress => "in_progress",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Skipped => "skipped",
+            Self::TimedOut => "timed_out",
+            Self::Unknown { status_type, .. } => status_type,
         }
     }
 
@@ -215,13 +215,7 @@ impl TriggerExecutionStatus {
 
 impl fmt::Display for TriggerExecutionStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.as_wire() {
-            Some(s) => write!(f, "{s}"),
-            None => match self {
-                Self::Unknown { status_type, .. } => write!(f, "{status_type}"),
-                _ => unreachable!("as_wire covers all known variants"),
-            },
-        }
+        write!(f, "{}", self.as_wire())
     }
 }
 
@@ -230,13 +224,7 @@ impl Serialize for TriggerExecutionStatus {
     where
         S: serde::Serializer,
     {
-        match self.as_wire() {
-            Some(s) => serializer.serialize_str(s),
-            None => match self {
-                Self::Unknown { status_type, .. } => serializer.serialize_str(status_type),
-                _ => unreachable!("as_wire covers all known variants"),
-            },
-        }
+        serializer.serialize_str(self.as_wire())
     }
 }
 

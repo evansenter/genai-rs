@@ -100,6 +100,21 @@ pub struct AgentQuestion {
     pub is_multi_select: bool,
 }
 
+impl AgentQuestion {
+    /// Creates a question — primarily so hook authors can build fixtures to
+    /// unit-test their `on_questions` closures without spawning a harness
+    /// (the struct is `#[non_exhaustive]`, so it has no literal syntax
+    /// downstream).
+    #[must_use]
+    pub fn new(question: impl Into<String>, choices: Vec<String>, is_multi_select: bool) -> Self {
+        Self {
+            question: question.into(),
+            choices,
+            is_multi_select,
+        }
+    }
+}
+
 /// Answer to a single [`AgentQuestion`].
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]

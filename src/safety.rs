@@ -67,19 +67,21 @@ pub enum HarmCategory {
 }
 
 impl HarmCategory {
-    const fn as_wire(&self) -> Option<&'static str> {
+    /// The wire string for this category — the single source both `Display`
+    /// and `Serialize` render, so the two can never disagree.
+    fn as_wire(&self) -> &str {
         match self {
-            Self::HateSpeech => Some("hate_speech"),
-            Self::DangerousContent => Some("dangerous_content"),
-            Self::Harassment => Some("harassment"),
-            Self::SexuallyExplicit => Some("sexually_explicit"),
-            Self::CivicIntegrity => Some("civic_integrity"),
-            Self::ImageHate => Some("image_hate"),
-            Self::ImageDangerousContent => Some("image_dangerous_content"),
-            Self::ImageHarassment => Some("image_harassment"),
-            Self::ImageSexuallyExplicit => Some("image_sexually_explicit"),
-            Self::Jailbreak => Some("jailbreak"),
-            Self::Unknown { .. } => None,
+            Self::HateSpeech => "hate_speech",
+            Self::DangerousContent => "dangerous_content",
+            Self::Harassment => "harassment",
+            Self::SexuallyExplicit => "sexually_explicit",
+            Self::CivicIntegrity => "civic_integrity",
+            Self::ImageHate => "image_hate",
+            Self::ImageDangerousContent => "image_dangerous_content",
+            Self::ImageHarassment => "image_harassment",
+            Self::ImageSexuallyExplicit => "image_sexually_explicit",
+            Self::Jailbreak => "jailbreak",
+            Self::Unknown { category_type, .. } => category_type,
         }
     }
 
@@ -110,13 +112,7 @@ impl HarmCategory {
 
 impl fmt::Display for HarmCategory {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.as_wire() {
-            Some(s) => write!(f, "{s}"),
-            None => match self {
-                Self::Unknown { category_type, .. } => write!(f, "{category_type}"),
-                _ => unreachable!("as_wire covers all known variants"),
-            },
-        }
+        write!(f, "{}", self.as_wire())
     }
 }
 
@@ -125,13 +121,7 @@ impl Serialize for HarmCategory {
     where
         S: Serializer,
     {
-        match self.as_wire() {
-            Some(s) => serializer.serialize_str(s),
-            None => match self {
-                Self::Unknown { category_type, .. } => serializer.serialize_str(category_type),
-                _ => unreachable!("as_wire covers all known variants"),
-            },
-        }
+        serializer.serialize_str(self.as_wire())
     }
 }
 
@@ -210,14 +200,16 @@ pub enum SafetyThreshold {
 }
 
 impl SafetyThreshold {
-    const fn as_wire(&self) -> Option<&'static str> {
+    /// The wire string for this threshold — the single source both `Display`
+    /// and `Serialize` render, so the two can never disagree.
+    fn as_wire(&self) -> &str {
         match self {
-            Self::BlockLowAndAbove => Some("block_low_and_above"),
-            Self::BlockMediumAndAbove => Some("block_medium_and_above"),
-            Self::BlockOnlyHigh => Some("block_only_high"),
-            Self::BlockNone => Some("block_none"),
-            Self::Off => Some("off"),
-            Self::Unknown { .. } => None,
+            Self::BlockLowAndAbove => "block_low_and_above",
+            Self::BlockMediumAndAbove => "block_medium_and_above",
+            Self::BlockOnlyHigh => "block_only_high",
+            Self::BlockNone => "block_none",
+            Self::Off => "off",
+            Self::Unknown { threshold_type, .. } => threshold_type,
         }
     }
 
@@ -248,13 +240,7 @@ impl SafetyThreshold {
 
 impl fmt::Display for SafetyThreshold {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.as_wire() {
-            Some(s) => write!(f, "{s}"),
-            None => match self {
-                Self::Unknown { threshold_type, .. } => write!(f, "{threshold_type}"),
-                _ => unreachable!("as_wire covers all known variants"),
-            },
-        }
+        write!(f, "{}", self.as_wire())
     }
 }
 
@@ -263,13 +249,7 @@ impl Serialize for SafetyThreshold {
     where
         S: Serializer,
     {
-        match self.as_wire() {
-            Some(s) => serializer.serialize_str(s),
-            None => match self {
-                Self::Unknown { threshold_type, .. } => serializer.serialize_str(threshold_type),
-                _ => unreachable!("as_wire covers all known variants"),
-            },
-        }
+        serializer.serialize_str(self.as_wire())
     }
 }
 
@@ -337,6 +317,16 @@ pub enum SafetyMethod {
 }
 
 impl SafetyMethod {
+    /// The wire string for this method — the single source both `Display`
+    /// and `Serialize` render, so the two can never disagree.
+    fn as_wire(&self) -> &str {
+        match self {
+            Self::Severity => "severity",
+            Self::Probability => "probability",
+            Self::Unknown { method_type, .. } => method_type,
+        }
+    }
+
     /// Returns true if this is an unknown method.
     #[must_use]
     pub const fn is_unknown(&self) -> bool {
@@ -358,18 +348,6 @@ impl SafetyMethod {
         match self {
             Self::Unknown { data, .. } => Some(data),
             _ => None,
-        }
-    }
-}
-
-impl SafetyMethod {
-    /// The wire string for this method — the single source both `Display`
-    /// and `Serialize` render, so the two can never disagree.
-    fn as_wire(&self) -> &str {
-        match self {
-            Self::Severity => "severity",
-            Self::Probability => "probability",
-            Self::Unknown { method_type, .. } => method_type,
         }
     }
 }
