@@ -1884,6 +1884,15 @@ fn map_questions(request: &protocol::UserQuestionsRequest) -> Vec<hooks::AgentQu
                     q.extra.keys().collect::<Vec<_>>()
                 );
             }
+            if let Some(m) = mc
+                && m.question.is_none()
+            {
+                tracing::warn!(
+                    "multiple_choice present but its question text is absent; \
+                     hook sees an empty question above {} choice(s)",
+                    m.choices.len()
+                );
+            }
             hooks::AgentQuestion {
                 question: mc.and_then(|m| m.question.clone()).unwrap_or_default(),
                 choices: mc.map(|m| m.choices.clone()).unwrap_or_default(),
@@ -2098,16 +2107,30 @@ mod agent_tests {
                     }),
                     ..Default::default()
                 },
+                // multiple_choice present with choices but no question text:
+                // the hook sees an empty question above real choices (warned).
+                protocol::UserQuestion {
+                    multiple_choice: Some(protocol::MultipleChoice {
+                        question: None,
+                        choices: vec!["yes".into(), "no".into()],
+                        is_multi_select: None,
+                    }),
+                    ..Default::default()
+                },
             ],
             ..Default::default()
         };
         let batch = map_questions(&request);
-        assert_eq!(batch.len(), 2);
+        assert_eq!(batch.len(), 3);
         assert!(batch[0].question.is_empty());
         assert!(batch[0].choices.is_empty());
         assert!(!batch[0].is_multi_select);
         assert_eq!(batch[1].question, "Sparse");
         assert!(!batch[1].is_multi_select);
+        // Blank question text above real choices: the substitution is
+        // observable to the hook (and warned at map time).
+        assert!(batch[2].question.is_empty());
+        assert_eq!(batch[2].choices, vec!["yes", "no"]);
     }
 
     #[test]
