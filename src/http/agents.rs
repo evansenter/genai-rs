@@ -4,13 +4,13 @@
 //! the agents resource is part of the revisioned Interactions surface
 //! (the generated google-genai bindings apply the revision header globally).
 
-use super::common::{BASE_URL_PREFIX, path_segment, send_and_read, to_body, with_paging_and};
+use super::common::{
+    API_VERSION, BASE_URL_PREFIX, path_segment, send_and_read, to_body, with_paging_and,
+};
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
 use crate::agents::{Agent, AgentListResponse};
 use crate::errors::GenaiError;
-
-const API_VERSION: &str = "v1beta";
 
 fn agents_url() -> String {
     format!("{BASE_URL_PREFIX}/{API_VERSION}/agents")

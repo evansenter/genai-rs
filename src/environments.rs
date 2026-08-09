@@ -245,9 +245,9 @@ impl CreateEnvironmentRequest {
 
 /// Response from listing environments.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct EnvironmentListResponse {
     /// The environments in this page.
-    #[serde(default)]
     pub environments: Vec<Environment>,
     /// Token for fetching the next page, absent on the last page.
     #[serde(skip_serializing_if = "Option::is_none")]

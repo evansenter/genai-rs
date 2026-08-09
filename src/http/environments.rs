@@ -3,13 +3,13 @@
 //! Same header conventions as the other Interactions API resources
 //! (API key + `Api-Revision`); shared plumbing lives in `http/common.rs`.
 
-use super::common::{BASE_URL_PREFIX, path_segment, send_and_read, to_body, with_paging};
+use super::common::{
+    API_VERSION, BASE_URL_PREFIX, path_segment, send_and_read, to_body, with_paging,
+};
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
 use crate::environments::{CreateEnvironmentRequest, Environment, EnvironmentListResponse};
 use crate::errors::GenaiError;
-
-const API_VERSION: &str = "v1beta";
 
 fn environments_url() -> String {
     format!("{BASE_URL_PREFIX}/{API_VERSION}/environments")

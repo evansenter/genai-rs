@@ -16,6 +16,11 @@ impl ApiVersion {
 // --- URL Construction ---
 pub(crate) const BASE_URL_PREFIX: &str = "https://generativelanguage.googleapis.com";
 
+/// The API version path segment shared by every resource URL builder.
+/// Kept in lockstep with [`ApiVersion::V1Beta`] (pinned by a unit test) so
+/// a future version migration is a one-file change.
+pub(crate) const API_VERSION: &str = ApiVersion::V1Beta.as_str();
+
 /// Header name for API key authentication.
 ///
 /// Using header-based authentication is more secure than query parameters because:
@@ -300,6 +305,7 @@ mod tests {
     #[test]
     fn test_api_version_as_str() {
         assert_eq!(ApiVersion::V1Beta.as_str(), "v1beta");
+        assert_eq!(API_VERSION, ApiVersion::V1Beta.as_str());
     }
 
     // --- Tests for Endpoint-based URL construction ---

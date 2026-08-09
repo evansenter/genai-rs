@@ -57,10 +57,11 @@ where
 /// string or unexpected JSON shape to `None` with a `warn!` instead of
 /// failing the enclosing struct (and hence an entire list response).
 ///
-/// Used on the wire-unverified trigger resource family: protobuf-JSON
-/// specifies RFC 3339 strings for `Timestamp`, but the same family already
-/// diverged from expectations once (int64s arrive as strings), so
-/// timestamps degrade per-field the same way the int64s do.
+/// Used on the trigger resource family, whose wire shape is unverified
+/// (protobuf-JSON specifies RFC 3339 strings for `Timestamp`, but this
+/// family already diverged from expectations once — int64s arrive as
+/// strings), and on `Environment` for uniformity with the int64 helpers
+/// next door even though its timestamp encoding was live-verified.
 pub(crate) fn deserialize_lenient_timestamp<'de, D>(
     deserializer: D,
 ) -> Result<Option<chrono::DateTime<chrono::Utc>>, D::Error>

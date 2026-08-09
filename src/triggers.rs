@@ -578,9 +578,9 @@ pub struct TriggerExecution {
 /// The API returns `{}` when no triggers exist (verified live 2026-08-08),
 /// so both fields default.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TriggerListResponse {
     /// The triggers in this page.
-    #[serde(default)]
     pub triggers: Vec<Trigger>,
     /// Token for fetching the next page, absent on the last page.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -589,9 +589,9 @@ pub struct TriggerListResponse {
 
 /// Response from listing a trigger's executions.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TriggerExecutionListResponse {
     /// The executions in this page.
-    #[serde(default)]
     pub trigger_executions: Vec<TriggerExecution>,
     /// Token for fetching the next page, absent on the last page.
     #[serde(skip_serializing_if = "Option::is_none")]
