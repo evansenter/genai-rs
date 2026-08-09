@@ -262,8 +262,8 @@ never asks.
 A question whose *type* this crate doesn't model arrives with
 `is_unknown_type()` true, empty text/choices, and the raw payload in
 `extra` — prefer `Cancel` or `Unanswered` there over guessing (the
-empty-choices guard in the snippet above is what routes that case to
-`Unanswered` instead of selecting index 0 of an empty list).
+`is_unknown_type()` check in the snippet above is what routes that case
+to `Unanswered` rather than selecting index 0 of an empty list).
 `AgentQuestion::unknown(extra)` builds that fixture for unit tests.
 
 The hook is synchronous and runs inline in the harness event pump — don't
