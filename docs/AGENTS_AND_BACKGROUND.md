@@ -242,6 +242,7 @@ let env_id = env.id.clone().expect("create returns an ID");
 let fetched = client.get_environment(&env_id).await?;
 println!("status={:?} files={:?}", fetched.status, fetched.file_count);
 let listed = client.list_environments(Some(10), None).await?;
+println!("environments: {}", listed.environments.len());
 client.delete_environment(&env_id).await?;
 ```
 

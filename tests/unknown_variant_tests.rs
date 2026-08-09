@@ -821,6 +821,30 @@ mod helper_methods {
                 .unwrap();
         let data = chunk.unknown_data().unwrap();
         assert!(data.get("payload").is_some() || data.get("chunk_type").is_some());
+
+        // HarmCategory
+        let category: HarmCategory = serde_json::from_value(json!("test")).unwrap();
+        assert!(category.unknown_data().is_some());
+
+        // SafetyThreshold
+        let threshold: SafetyThreshold = serde_json::from_value(json!("test")).unwrap();
+        assert!(threshold.unknown_data().is_some());
+
+        // SafetyMethod
+        let method: SafetyMethod = serde_json::from_value(json!("test")).unwrap();
+        assert!(method.unknown_data().is_some());
+
+        // EnvironmentStatus
+        let env_status: EnvironmentStatus = serde_json::from_value(json!("test")).unwrap();
+        assert!(env_status.unknown_data().is_some());
+
+        // TriggerStatus
+        let trig_status: TriggerStatus = serde_json::from_value(json!("test")).unwrap();
+        assert!(trig_status.unknown_data().is_some());
+
+        // TriggerExecutionStatus
+        let exec_status: TriggerExecutionStatus = serde_json::from_value(json!("test")).unwrap();
+        assert!(exec_status.unknown_data().is_some());
     }
 }
 

@@ -15,7 +15,9 @@
 
 use futures_util::StreamExt;
 use genai_rs::CallableFunction;
-use genai_rs::antigravity::{AgentEvent, AntigravityAgent, BuiltinTool, Capabilities, policy};
+use genai_rs::antigravity::{
+    AgentEvent, AntigravityAgent, Capabilities, QuestionAnswer, QuestionReply, policy,
+};
 use genai_rs_macros::tool;
 
 /// Returns the current weather for a city.
@@ -37,7 +39,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_api_key(api_key)
         .with_model("gemini-3-flash-preview")
         .with_system_instructions("You are a concise assistant. Prefer tools over guessing.")
-        .with_capabilities(Capabilities::read_only().disable(BuiltinTool::AskQuestion))
+        .with_capabilities(Capabilities::read_only())
+        // Answer agent questions (ask_question builtin) from policy: pick
+        // the first choice when there is one, otherwise leave unanswered.
+        // The hook runs inline in the event pump — never block in it
+        // waiting for a human; answer from policy or pre-collected state.
+        .on_questions(|questions| {
+            QuestionReply::Answers(
+                questions
+                    .iter()
+                    .map(|q| {
+                        println!("[agent asked: {}]", q.question);
+                        if q.choices.is_empty() {
+                            QuestionAnswer::Unanswered
+                        } else {
+                            QuestionAnswer::Choices {
+                                selected: vec![0],
+                                freeform: None,
+                            }
+                        }
+                    })
+                    .collect(),
+            )
+        })
         .add_tool(GetWeatherCallable.declaration())
         .add_policy(policy::deny_all())
         .add_policy(policy::allow("get_weather"))
