@@ -102,8 +102,10 @@ where
 /// Struct-level serde defaults cover only the key-*absent* case (the
 /// live-verified `{}` empty response); a present-but-null or otherwise
 /// malformed list key would otherwise error and zero the whole page — the
-/// same wholesale failure the sibling helpers exist to avoid, on the
-/// wire-unverified resource family. The per-element arm keeps the good
+/// same wholesale failure the sibling helpers exist to avoid. Used by all
+/// five resource list envelopes (agents, webhooks, triggers, trigger
+/// executions, environments), not just the wire-unverified trigger family
+/// that motivated it. The per-element arm keeps the good
 /// entries of a page whose list carries one stray malformed element,
 /// though with the all-`Option` element types this is used with, only a
 /// non-object element can actually reach it.

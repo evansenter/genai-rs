@@ -539,7 +539,8 @@ impl<'de> Deserialize<'de> for RevocationBehavior {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WebhookListResponse {
-    /// The webhooks on this page.
+    /// The webhooks on this page. A null or malformed list degrades to empty.
+    #[serde(deserialize_with = "crate::serde_util::deserialize_lenient_vec")]
     pub webhooks: Vec<Webhook>,
     /// Token for the next page. Absent when there are no more pages.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -790,6 +791,13 @@ mod tests {
         let empty: WebhookListResponse = serde_json::from_str("{}").unwrap();
         assert!(empty.webhooks.is_empty());
         assert!(empty.next_page_token.is_none());
+
+        // Present-but-degenerate list keys degrade like the trigger and
+        // environment envelopes, rather than erroring the page.
+        let null: WebhookListResponse = serde_json::from_value(json!({"webhooks": null})).unwrap();
+        assert!(null.webhooks.is_empty());
+        let bad: WebhookListResponse = serde_json::from_value(json!({"webhooks": 7})).unwrap();
+        assert!(bad.webhooks.is_empty());
     }
 
     #[test]

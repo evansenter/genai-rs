@@ -113,7 +113,8 @@ impl Agent {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentListResponse {
-    /// The agents on this page.
+    /// The agents on this page. A null or malformed list degrades to empty.
+    #[serde(deserialize_with = "crate::serde_util::deserialize_lenient_vec")]
     pub agents: Vec<Agent>,
     /// Token for the next page. Absent when there are no more pages.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -217,5 +218,13 @@ mod tests {
         let empty: AgentListResponse = serde_json::from_str("{}").unwrap();
         assert!(empty.agents.is_empty());
         assert!(empty.next_page_token.is_none());
+
+        // Present-but-degenerate list keys degrade like the trigger and
+        // environment envelopes, rather than erroring the page.
+        let null: AgentListResponse = serde_json::from_value(json!({"agents": null})).unwrap();
+        assert!(null.agents.is_empty());
+        let bad: AgentListResponse =
+            serde_json::from_value(json!({"agents": "corrupted"})).unwrap();
+        assert!(bad.agents.is_empty());
     }
 }
