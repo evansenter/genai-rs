@@ -640,8 +640,19 @@ async fn test_environment_crud_lifecycle() {
         std::panic::resume_unwind(panic);
     }
     deleted.expect("delete_environment");
-    let gone = client.get_environment(&created_id).await;
-    assert!(gone.is_err(), "environment should be gone after delete");
+    // Confirm gone with the same rigor as the trigger probe below: only a
+    // structured 4xx proves the delete landed — any(!) error would also be
+    // satisfied by a transport blip. Retry transients first so a 503
+    // becomes a real answer rather than a panic.
+    let gone = crate::retry_request!([client, created_id] => {
+        client.get_environment(&created_id).await
+    });
+    match gone {
+        Err(genai_rs::GenaiError::Api { status_code, .. }) if (400..500).contains(&status_code) => {
+        }
+        Ok(env) => panic!("environment should be gone after delete, got: {env:?}"),
+        Err(e) => panic!("expected a 4xx for the deleted environment, got: {e}"),
+    }
 }
 
 // =============================================================================

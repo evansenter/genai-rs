@@ -86,8 +86,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 created.new_signing_secret.is_some()
             );
 
-            let list = client.list_webhooks(Some(10), None).await?;
-            println!("Registered webhooks: {}", list.webhooks.len());
+            match client.list_webhooks(Some(10), None).await {
+                Ok(list) => println!("Registered webhooks: {}", list.webhooks.len()),
+                Err(e) => println!("list_webhooks failed: {e}"),
+            }
 
             // Send a test delivery to the endpoint
             match client.ping_webhook(&id).await {
@@ -102,8 +104,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
 
             // Clean up
-            client.delete_webhook(&id).await?;
-            println!("Deleted webhook {id}");
+            match client.delete_webhook(&id).await {
+                Ok(()) => println!("Deleted webhook {id}"),
+                Err(e) => println!("delete_webhook failed: {e} - delete {id} manually"),
+            }
         }
         Err(e) => println!("Webhook resource not available for this account: {e}"),
     }

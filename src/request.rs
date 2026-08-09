@@ -1193,6 +1193,14 @@ pub struct InteractionRequest {
     pub agent_config: Option<AgentConfig>,
 
     /// The input for this interaction
+    ///
+    /// The `serde(default)` tolerates sparse nested projections (e.g. a
+    /// `Trigger` list entry whose interaction omits `input`), but note the
+    /// roundtrip asymmetry: absence deserializes to empty text and
+    /// re-serializes as a *present* `input` key — the one spot in the
+    /// Evergreen surface where a sparse projection gains a field instead
+    /// of preserving absence. Nothing re-sends a deserialized `Trigger`
+    /// today, so the shape is left alone rather than making this Optional.
     #[serde(default)]
     pub input: InteractionInput,
 
