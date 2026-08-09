@@ -234,7 +234,7 @@ pub struct AgentBuilder {
     mcp_servers: Vec<McpServer>,
     policies: Vec<Policy>,
     pre_tool: Option<PreToolHook>,
-    questions: Option<hooks::QuestionHook>,
+    questions: Option<QuestionHook>,
     post_tool: Option<PostToolHook>,
     save_dir: Option<String>,
     conversation_id: Option<String>,
@@ -422,7 +422,7 @@ impl AgentBuilder {
     #[must_use]
     pub fn on_questions(
         mut self,
-        hook: impl Fn(&[hooks::AgentQuestion]) -> hooks::QuestionReply + Send + Sync + 'static,
+        hook: impl Fn(&[AgentQuestion]) -> QuestionReply + Send + Sync + 'static,
     ) -> Self {
         self.questions = Some(Arc::new(hook));
         self
@@ -569,6 +569,18 @@ impl AgentBuilder {
                 "trigger '{}' has a zero interval; trigger intervals must be non-zero",
                 trigger.message
             )));
+        }
+        // Not an error (the combination is harmless), but the likeliest
+        // first-time misconfiguration: a questions hook with the builtin
+        // disabled never fires, and without this there is no signal
+        // distinguishing "the agent chose not to ask" from "asking was
+        // never enabled".
+        if self.questions.is_some() && !self.capabilities.is_enabled(BuiltinTool::AskQuestion) {
+            tracing::warn!(
+                "on_questions hook set but BuiltinTool::AskQuestion is not enabled - the agent \
+                 will never ask questions and the hook will never run. Enable it with \
+                 Capabilities::read_only().enable(BuiltinTool::AskQuestion)."
+            );
         }
 
         // Subagent validation: unique names, and every referenced custom
@@ -800,7 +812,7 @@ pub struct AntigravityAgent {
     dispatcher: ToolDispatcher,
     policy_engine: PolicyEngine,
     pre_tool: Option<PreToolHook>,
-    questions: Option<hooks::QuestionHook>,
+    questions: Option<QuestionHook>,
     post_tool: Option<PostToolHook>,
     conversation_id: Option<String>,
     initial_history: Vec<StepUpdate>,
@@ -1885,7 +1897,7 @@ impl TurnState {
 /// index space [`hooks::QuestionAnswer::Choices`] selections refer to,
 /// so the substitution is observable to the hook and pinned by tests.
 /// Free function so the mapping is unit-testable.
-fn map_questions(request: &protocol::UserQuestionsRequest) -> Vec<hooks::AgentQuestion> {
+fn map_questions(request: &protocol::UserQuestionsRequest) -> Vec<AgentQuestion> {
     request
         .questions
         .iter()
@@ -1918,7 +1930,7 @@ fn map_questions(request: &protocol::UserQuestionsRequest) -> Vec<hooks::AgentQu
             if let Some(m) = mc {
                 extra.extend(m.extra.clone());
             }
-            hooks::AgentQuestion {
+            AgentQuestion {
                 question: mc.and_then(|m| m.question.clone()).unwrap_or_default(),
                 choices: mc.map(|m| m.choices.clone()).unwrap_or_default(),
                 is_multi_select: mc.and_then(|m| m.is_multi_select).unwrap_or(false),
@@ -1939,13 +1951,13 @@ fn map_questions(request: &protocol::UserQuestionsRequest) -> Vec<hooks::AgentQu
 /// `trajectory_id`/`step_index` are left for the caller to fill in. Free
 /// function so the mapping is unit-testable.
 fn map_question_reply(
-    reply: Option<hooks::QuestionReply>,
-    questions: &[hooks::AgentQuestion],
+    reply: Option<QuestionReply>,
+    questions: &[AgentQuestion],
 ) -> protocol::UserQuestionsResponse {
     let question_count = questions.len();
     let (cancelled, answers) = match reply {
-        Some(hooks::QuestionReply::Cancel) => (true, Vec::new()),
-        Some(hooks::QuestionReply::Answers(answers)) => {
+        Some(QuestionReply::Cancel) => (true, Vec::new()),
+        Some(QuestionReply::Answers(answers)) => {
             if answers.len() != question_count {
                 tracing::warn!(
                     "Questions hook returned {} answer(s) for {} question(s); \
@@ -2026,10 +2038,10 @@ mod agent_tests {
     use super::*;
 
     /// `n` three-choice single-select questions for mapping tests.
-    fn question_batch(n: usize) -> Vec<hooks::AgentQuestion> {
+    fn question_batch(n: usize) -> Vec<AgentQuestion> {
         (0..n)
             .map(|i| {
-                hooks::AgentQuestion::new(
+                AgentQuestion::new(
                     format!("q{i}"),
                     vec!["a".into(), "b".into(), "c".into()],
                     false,
@@ -2039,8 +2051,25 @@ mod agent_tests {
     }
 
     #[test]
+    fn on_questions_populates_the_builder_hook() {
+        // Plumbing guard: the seven mapping tests would all stay green if
+        // the builder simply dropped the hook (silently reverting to the
+        // hookless "unanswered" fallback). Pin that on_questions stores
+        // the closure it is given — spawn() moves this field to the agent
+        // verbatim, so the builder side is the observable half without a
+        // live harness.
+        let builder = AntigravityAgent::builder().on_questions(|_| QuestionReply::Cancel);
+        let hook = builder.questions.as_ref().expect("hook stored");
+        assert_eq!(hook(&question_batch(1)), QuestionReply::Cancel);
+        assert!(
+            AntigravityAgent::builder().questions.is_none(),
+            "no hook by default"
+        );
+    }
+
+    #[test]
     fn question_reply_cancel_sets_only_cancelled() {
-        let response = map_question_reply(Some(hooks::QuestionReply::Cancel), &question_batch(2));
+        let response = map_question_reply(Some(QuestionReply::Cancel), &question_batch(2));
         assert_eq!(response.cancelled, Some(true));
         assert!(
             response.response.is_none(),
@@ -2051,7 +2080,7 @@ mod agent_tests {
     #[test]
     fn question_reply_exact_answers_map_to_protocol() {
         let response = map_question_reply(
-            Some(hooks::QuestionReply::Answers(vec![
+            Some(QuestionReply::Answers(vec![
                 hooks::QuestionAnswer::Choices {
                     selected: vec![1, 2],
                     freeform: None,
@@ -2075,7 +2104,7 @@ mod agent_tests {
     #[test]
     fn question_reply_short_list_pads_with_unanswered() {
         let response = map_question_reply(
-            Some(hooks::QuestionReply::Answers(vec![
+            Some(QuestionReply::Answers(vec![
                 hooks::QuestionAnswer::Freeform("only one".into()),
             ])),
             &question_batch(3),
@@ -2090,7 +2119,7 @@ mod agent_tests {
     #[test]
     fn question_reply_long_list_truncates() {
         let response = map_question_reply(
-            Some(hooks::QuestionReply::Answers(vec![
+            Some(QuestionReply::Answers(vec![
                 hooks::QuestionAnswer::Unanswered,
                 hooks::QuestionAnswer::Freeform("extra".into()),
             ])),

@@ -14,7 +14,9 @@
 //! convention); both are accepted here as numbers too.
 
 use crate::environment::{EnvironmentSource, NetworkConfig};
-use crate::serde_util::{deserialize_string_i64, serialize_string_i64};
+use crate::serde_util::{
+    deserialize_lenient_timestamp, deserialize_string_i64, serialize_string_i64,
+};
 use chrono::{DateTime, Utc};
 use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
@@ -151,21 +153,21 @@ pub struct Environment {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+        deserialize_with = "deserialize_lenient_timestamp"
     )]
     pub created: Option<DateTime<Utc>>,
     /// Output only. When the environment was last updated.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+        deserialize_with = "deserialize_lenient_timestamp"
     )]
     pub updated: Option<DateTime<Utc>>,
     /// Output only. When the environment was last accessed.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+        deserialize_with = "deserialize_lenient_timestamp"
     )]
     pub last_accessed: Option<DateTime<Utc>>,
     /// Output only. The number of files in the environment.

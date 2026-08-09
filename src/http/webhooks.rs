@@ -115,11 +115,7 @@ pub async fn rotate_signing_secret(
 
     let mut body = serde_json::Map::new();
     if let Some(behavior) = &revocation_behavior {
-        body.insert(
-            "revocation_behavior".to_string(),
-            serde_json::to_value(behavior)
-                .map_err(|e| GenaiError::Internal(format!("Failed to serialize body: {e}")))?,
-        );
+        body.insert("revocation_behavior".to_string(), to_body(behavior)?);
     }
 
     let text = send_and_read(

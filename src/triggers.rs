@@ -413,9 +413,17 @@ pub struct TriggerCreateParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment_id: Option<String>,
     /// Consecutive failures before the trigger is disabled.
+    ///
+    /// Sends as a plain JSON number. The same logical field on the
+    /// *response*-side [`Trigger`] re-serializes in the protobuf-JSON
+    /// string form (for roundtrip fidelity to captured wire), so a
+    /// read-modify-recreate flow changes the wire spelling — both forms
+    /// are accepted on deserialize.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_consecutive_failures: Option<i64>,
-    /// Per-execution timeout in seconds.
+    /// Per-execution timeout in seconds. Sends as a plain JSON number
+    /// (see [`Self::max_consecutive_failures`] on the wire-form
+    /// asymmetry with [`Trigger`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_timeout_seconds: Option<i64>,
     /// Unrecognized fields, preserved for roundtrip (Evergreen) — lets an

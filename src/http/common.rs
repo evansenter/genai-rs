@@ -212,8 +212,12 @@ pub(crate) fn to_body<B: serde::Serialize>(
 /// hostile or malformed ID (containing `/`, `?`, `#`, ...) cannot rewrite
 /// the request path. IDs from this API are opaque hex/base64url today; this
 /// is defense-in-depth applied uniformly across all resource modules.
-pub(crate) fn path_segment(id: &str) -> String {
-    urlencoding::encode(id).into_owned()
+pub(crate) fn path_segment(id: &str) -> std::borrow::Cow<'_, str> {
+    // Cow: the IDs this API issues are opaque hex/base64url, so the
+    // borrowed no-escaping arm is essentially always taken — no
+    // allocation per URL build. `Cow` implements `Display`, so `format!`
+    // call sites are unchanged.
+    urlencoding::encode(id)
 }
 
 /// Appends `page_size` / `page_token` query params to a URL.

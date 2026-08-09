@@ -692,7 +692,13 @@ async fn test_antigravity_config_accepted() {
     }
     if let Some(env_id) = &response.environment_id {
         let bare_id = env_id.strip_prefix("environments/").unwrap_or(env_id);
-        let _ = client.delete_environment(bare_id).await;
+        // Print both arms like the inline-environment probe: the
+        // response-side environment_id form is unobserved, and a 404 here
+        // is exactly the signal that the prefix assumption is wrong.
+        match client.delete_environment(bare_id).await {
+            Ok(()) => println!("Deleted environment {bare_id}"),
+            Err(e) => println!("delete_environment({bare_id}) failed (tolerated): {e}"),
+        }
     }
 }
 
@@ -779,7 +785,15 @@ async fn test_environment_crud_lifecycle() {
         "Created environment: id={:?} status={:?}",
         created.id, created.status
     );
-    let created_id = created.id.clone().expect("created environment has an id");
+    let created_id = created.id.clone().unwrap_or_else(|| {
+        // No ID means no handle to delete by — the container is leaked
+        // (until it expires). Name it loudly like the trigger and example
+        // siblings instead of a bare expect.
+        panic!(
+            "create_environment returned no ID (protocol violation) — the container is \
+             leaked; hunt it via list_environments"
+        )
+    });
 
     // Run the read assertions in a closure so the delete below also runs
     // on the failure path — a tripped assertion must not leak the
