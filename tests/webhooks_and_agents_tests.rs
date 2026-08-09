@@ -566,12 +566,12 @@ async fn test_transcription_config_accepted() {
                 ),
                 genai_rs::Content::audio_data(TINY_WAV_BASE64, "audio/wav"),
             ])
-            .with_transcription_config(TranscriptionConfig {
-                language_codes: Some(vec!["en-US".to_string()]),
-                diarization_mode: Some("speaker".to_string()),
-                timestamp_granularities: Some(vec!["word".to_string()]),
-                ..Default::default()
-            })
+            .with_transcription_config(
+                TranscriptionConfig::new()
+                    .with_language_codes(["en-US"])
+                    .with_diarization_mode("speaker")
+                    .with_timestamp_granularities(["word"]),
+            )
             .create()
             .await
     })

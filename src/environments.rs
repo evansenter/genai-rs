@@ -371,6 +371,16 @@ mod tests {
             .insert("sources".into(), serde_json::json!([]));
         let json = serde_json::to_value(&request).unwrap();
         assert_eq!(json["sources"], serde_json::json!([]));
+
+        // The deserialize direction: an unmodeled key on the way in lands
+        // in `extra` — pinned because flatten reroutes every sibling
+        // through serde's buffering, where a regression would be silent.
+        let request: CreateEnvironmentRequest = serde_json::from_value(serde_json::json!({
+            "sources": [{"type": "inline", "target": "/a", "content": "one"}],
+            "future_field": true
+        }))
+        .unwrap();
+        assert_eq!(request.extra["future_field"], true);
     }
 
     #[test]

@@ -44,12 +44,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
             ),
             Content::audio_data(DEMO_WAV_BASE64, "audio/wav"),
         ])
-        .with_transcription_config(TranscriptionConfig {
-            language_codes: Some(vec!["en-US".to_string()]),
-            diarization_mode: Some("speaker".to_string()),
-            timestamp_granularities: Some(vec!["word".to_string()]),
-            ..Default::default()
-        })
+        .with_transcription_config(
+            TranscriptionConfig::new()
+                .with_language_codes(["en-US"])
+                .with_diarization_mode("speaker")
+                .with_timestamp_granularities(["word"]),
+        )
         .create()
         .await;
 
@@ -88,10 +88,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
            Content::audio_data(&base64_audio, "audio/mp3"),
        ])
        // Language hints speed up + improve recognition (omit to auto-detect)
-       .with_transcription_config(TranscriptionConfig {{
-           language_codes: Some(vec!["en-US".to_string()]),
-           ..Default::default()
-       }})
+       .with_transcription_config(
+           TranscriptionConfig::new().with_language_codes(["en-US"]),
+       )
        .create()
        .await?;
 "#
@@ -111,10 +110,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
            Content::audio_data(&base64_audio, "audio/mp3"),
        ])
        // Structural speaker labels, beyond what prompting can express
-       .with_transcription_config(TranscriptionConfig {{
-           diarization_mode: Some("speaker".to_string()),
-           ..Default::default()
-       }})
+       .with_transcription_config(
+           TranscriptionConfig::new().with_diarization_mode("speaker"),
+       )
        .create()
        .await?;
 "#

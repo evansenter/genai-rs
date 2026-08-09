@@ -811,6 +811,23 @@ mod tests {
             serde_json::to_value(TriggerUpdate::new()).unwrap(),
             serde_json::json!({})
         );
+
+        // The deserialize direction: an unmodeled key on the way in lands
+        // in `extra` — the documented absorption behavior a config-file
+        // typo relies on, and the direction where a flatten regression
+        // (flatten buffers every sibling through serde's Content, and the
+        // nested interaction deserializers are custom) would be silent.
+        let params: TriggerCreateParams = serde_json::from_value(serde_json::json!({
+            "schedule": "0 9 * * *",
+            "time_zone": "UTC",
+            "interaction": {"agent": "my-agent", "input": "hi"},
+            "future_field": "x"
+        }))
+        .unwrap();
+        assert_eq!(params.extra["future_field"], "x");
+        let update: TriggerUpdate =
+            serde_json::from_value(serde_json::json!({"other": 1})).unwrap();
+        assert_eq!(update.extra["other"], 1);
     }
 
     #[test]

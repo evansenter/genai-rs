@@ -133,10 +133,11 @@ let response = client
 ```
 
 Speech recognition is tunable via
-`with_transcription_config(TranscriptionConfig { .. })`: BCP-47
-`language_codes` hints (omit for auto-detect), `adaptation_phrases` /
-`custom_vocabulary` biasing, `diarization_mode: "speaker"`, and
-`timestamp_granularities: ["word"]` (the SDK-documented value sets —
+`with_transcription_config(TranscriptionConfig::new()...)`: BCP-47
+`with_language_codes` hints (omit for auto-detect),
+`with_adaptation_phrases` / `with_custom_vocabulary` biasing,
+`with_diarization_mode("speaker")`, and
+`with_timestamp_granularities(["word"])` (the SDK-documented value sets —
 kept open strings for forward compatibility). See
 `examples/audio_input.rs` for a runnable demo.
 
