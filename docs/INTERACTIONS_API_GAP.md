@@ -175,7 +175,7 @@ Completed in the 2026-08 sweep against SDK 2.17.0 (the 0.9.0 release):
     live-verified)
 20. ~~`generation_config.transcription_config`, `safety_settings`,
     request `labels` (both Vertex-only), and the `AntigravityConfig`
-    typed generation-config helper.~~ ✅ (`TranscriptionConfig`,
+    typed agent-config helper.~~ ✅ (`TranscriptionConfig`,
     `SafetySetting` in `src/safety.rs`, `with_labels()`/`add_label()`,
     `AntigravityConfig`)
 

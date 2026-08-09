@@ -69,6 +69,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("=== Background interaction with webhook_config ===");
     println!("{}\n", serde_json::to_string_pretty(&request)?);
 
+    // Environments/triggers wire shapes (the live sections below reuse
+    // this request) — printed here so a keyless run still shows them.
+    let env_request = genai_rs::CreateEnvironmentRequest::new().add_source(
+        genai_rs::EnvironmentSource::inline("/etc/motd", "hello from the environments example"),
+    );
+    println!("=== Environment create (POST /v1beta/environments) ===");
+    println!("{}\n", serde_json::to_string_pretty(&env_request)?);
+    println!("=== Triggers list (GET /v1beta/triggers) - no body ===\n");
+
     let Some(_) = api_key else {
         println!("GEMINI_API_KEY not set - skipping live API calls.\n");
         print_footer();
@@ -140,9 +149,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // =========================================================================
     // Verified live 2026-08-08: the full lifecycle works on a standard key.
     println!("\n=== Environments CRUD ===");
-    let env_request = genai_rs::CreateEnvironmentRequest::new().add_source(
-        genai_rs::EnvironmentSource::inline("/etc/motd", "hello from the environments example"),
-    );
     // Print-don't-propagate throughout, like the webhook sections above: an
     // account-gating or transient error must not exit main — the footer (and
     // its delete-what-you-create warning) still has to print.

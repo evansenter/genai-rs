@@ -388,6 +388,12 @@ pub struct TriggerCreateParams {
     /// Per-execution timeout in seconds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_timeout_seconds: Option<i64>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen) — lets an
+    /// unmodeled create-request field be set without a crate release,
+    /// which matters here because trigger creation is agent-gated and the
+    /// body cannot be live-verified against the wire.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl TriggerCreateParams {
@@ -406,6 +412,7 @@ impl TriggerCreateParams {
             environment_id: None,
             max_consecutive_failures: None,
             execution_timeout_seconds: None,
+            extra: serde_json::Map::new(),
         }
     }
 
@@ -457,6 +464,11 @@ pub struct TriggerUpdate {
     /// New status (`active` to resume, `paused` to pause).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<TriggerStatus>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen) — lets an
+    /// unmodeled update field be sent without a crate release. Empty maps
+    /// add nothing to the body, keeping the empty-update-is-`{}` contract.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl TriggerUpdate {
@@ -611,6 +623,30 @@ mod tests {
         assert_eq!(
             executions.trigger_executions[0].status,
             Some(TriggerExecutionStatus::Completed)
+        );
+    }
+
+    #[test]
+    fn create_params_and_update_pass_through_unmodeled_fields() {
+        // Trigger bodies can't be live-verified while creation is
+        // agent-gated, so the Evergreen extra map is the release valve for
+        // fields the crate doesn't model yet (same shape as
+        // CreateEnvironmentRequest::extra next door).
+        let mut params = TriggerCreateParams::new("0 9 * * *", "UTC", probe_interaction());
+        params
+            .extra
+            .insert("future_field".into(), serde_json::json!("x"));
+        let json = serde_json::to_value(&params).unwrap();
+        assert_eq!(json["future_field"], "x");
+
+        let mut update = TriggerUpdate::new();
+        update.extra.insert("other".into(), serde_json::json!(1));
+        let json = serde_json::to_value(&update).unwrap();
+        assert_eq!(json, serde_json::json!({"other": 1}));
+        // An empty map keeps the empty-update-is-{} contract.
+        assert_eq!(
+            serde_json::to_value(TriggerUpdate::new()).unwrap(),
+            serde_json::json!({})
         );
     }
 
