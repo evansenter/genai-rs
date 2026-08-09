@@ -464,6 +464,9 @@ impl Client {
     /// - The HTTP request fails
     /// - Response parsing fails
     /// - The API returns an error
+    ///
+    /// An empty ID is rejected locally as [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn get_interaction(
         &self,
         interaction_id: &str,
@@ -496,6 +499,9 @@ impl Client {
     /// - The HTTP request fails
     /// - Response parsing fails
     /// - The API returns an error
+    ///
+    /// An empty ID is rejected locally as [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn get_interaction_with_input(
         &self,
         interaction_id: &str,
@@ -614,6 +620,9 @@ impl Client {
     /// Returns an error if:
     /// - The HTTP request fails
     /// - The API returns an error
+    ///
+    /// An empty ID is rejected locally as [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn delete_interaction(&self, interaction_id: &str) -> Result<(), GenaiError> {
         tracing::debug!("Deleting interaction: ID={interaction_id}");
 
@@ -651,6 +660,9 @@ impl Client {
     /// - The interaction is not in a cancellable state (not background or already complete)
     /// - The HTTP request fails
     /// - The API returns an error
+    ///
+    /// An empty ID is rejected locally as [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     ///
     /// # Example
     ///
@@ -745,6 +757,9 @@ impl Client {
     ///
     /// Returns an error if the webhook doesn't exist, the HTTP request fails,
     /// or response parsing fails.
+    ///
+    /// An empty ID is rejected locally as [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn get_webhook(&self, webhook_id: &str) -> Result<crate::Webhook, GenaiError> {
         crate::http::webhooks::get_webhook(&self.http, webhook_id).await
     }
@@ -790,6 +805,9 @@ impl Client {
     /// Returns an error if the webhook doesn't exist, the HTTP request fails,
     /// or response parsing fails.
     ///
+    /// An empty ID is rejected locally as [`GenaiError::InvalidInput`]
+    /// before any request is sent.
+    ///
     /// # Example
     ///
     /// ```no_run
@@ -824,6 +842,9 @@ impl Client {
     /// # Errors
     ///
     /// Returns an error if the webhook doesn't exist or the HTTP request fails.
+    ///
+    /// An empty ID is rejected locally as [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn delete_webhook(&self, webhook_id: &str) -> Result<(), GenaiError> {
         crate::http::webhooks::delete_webhook(&self.http, webhook_id).await
     }
@@ -844,6 +865,9 @@ impl Client {
     /// # Errors
     ///
     /// Returns an error if the webhook doesn't exist or the HTTP request fails.
+    ///
+    /// An empty ID is rejected locally as [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn ping_webhook(&self, webhook_id: &str) -> Result<(), GenaiError> {
         crate::http::webhooks::ping_webhook(&self.http, webhook_id).await
     }
@@ -863,6 +887,9 @@ impl Client {
     ///
     /// Returns an error if the webhook doesn't exist, the HTTP request fails,
     /// or response parsing fails.
+    ///
+    /// An empty ID is rejected locally as [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn rotate_webhook_signing_secret(
         &self,
         webhook_id: &str,
@@ -900,6 +927,9 @@ impl Client {
     /// # Errors
     ///
     /// Returns an error on network failure or when the trigger doesn't exist.
+    ///
+    /// An empty ID is rejected locally as [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn get_trigger(&self, trigger_id: &str) -> Result<crate::Trigger, GenaiError> {
         crate::http::triggers::get_trigger(&self.http, trigger_id).await
     }
@@ -938,6 +968,9 @@ impl Client {
     /// # Errors
     ///
     /// Returns an error on network failure or when the trigger doesn't exist.
+    ///
+    /// An empty ID is rejected locally as [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn update_trigger(
         &self,
         trigger_id: &str,
@@ -955,6 +988,9 @@ impl Client {
     /// # Errors
     ///
     /// Returns an error on network failure or when the trigger doesn't exist.
+    ///
+    /// An empty ID is rejected locally as [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn delete_trigger(&self, trigger_id: &str) -> Result<(), GenaiError> {
         crate::http::triggers::delete_trigger(&self.http, trigger_id).await
     }
@@ -975,6 +1011,9 @@ impl Client {
     /// # Errors
     ///
     /// Returns an error on network failure or when the trigger doesn't exist.
+    ///
+    /// An empty ID is rejected locally as [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn run_trigger(
         &self,
         trigger_id: &str,
@@ -1003,6 +1042,9 @@ impl Client {
     /// # Errors
     ///
     /// Returns an error on network failure or when the trigger doesn't exist.
+    ///
+    /// An empty ID is rejected locally as [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn list_trigger_executions(
         &self,
         trigger_id: &str,
@@ -1048,6 +1090,9 @@ impl Client {
     ///
     /// Returns an error on network failure or when the environment doesn't
     /// exist.
+    ///
+    /// An empty ID is rejected locally as [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn get_environment(
         &self,
         environment_id: &str,
@@ -1087,6 +1132,9 @@ impl Client {
     ///
     /// Returns an error on network failure or when the environment doesn't
     /// exist.
+    ///
+    /// An empty ID is rejected locally as [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn delete_environment(&self, environment_id: &str) -> Result<(), GenaiError> {
         crate::http::environments::delete_environment(&self.http, environment_id).await
     }
@@ -1153,6 +1201,9 @@ impl Client {
     ///
     /// Returns an error if the agent doesn't exist, the HTTP request fails,
     /// or response parsing fails.
+    ///
+    /// An empty ID is rejected locally as [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn get_agent(&self, agent_id: &str) -> Result<crate::Agent, GenaiError> {
         crate::http::agents::get_agent(&self.http, agent_id).await
     }
@@ -1186,6 +1237,9 @@ impl Client {
     /// # Errors
     ///
     /// Returns an error if the agent doesn't exist or the HTTP request fails.
+    ///
+    /// An empty ID is rejected locally as [`GenaiError::InvalidInput`]
+    /// before any request is sent.
     pub async fn delete_agent(&self, agent_id: &str) -> Result<(), GenaiError> {
         crate::http::agents::delete_agent(&self.http, agent_id).await
     }

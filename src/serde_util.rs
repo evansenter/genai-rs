@@ -192,10 +192,10 @@ where
 /// crate, `ListFilesResponse::files`, deliberately stays strict: the
 /// Files API is a separate, unrevisioned surface whose element shape is
 /// live-verified, so a malformed element there is evidence of a real
-/// protocol break, not a projection to degrade around. The per-element arm keeps the good
-/// entries of a page whose list carries a stray malformed element; a
-/// non-object element, or one whose modeled field arrives with the wrong
-/// JSON type, reaches it and drops alone.
+/// protocol break, not a projection to degrade around. The per-element
+/// arm keeps the good entries of a page whose list carries a stray
+/// malformed element; a non-object element, or one whose modeled field
+/// arrives with the wrong JSON type, reaches it and drops alone.
 ///
 /// Deliberately envelope-scoped: lists *inside* an element
 /// (`Agent::tools`, `Webhook::signing_secrets`,
