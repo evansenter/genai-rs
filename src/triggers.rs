@@ -500,8 +500,9 @@ pub struct TriggerCreateParams {
     pub time_zone: String,
     /// The interaction request created on each firing. Must target a
     /// custom `agent`; `store` is not allowed here (server-verified —
-    /// both [`TriggerCreateParams::new`] and the deserialize path warn
-    /// when it is set).
+    /// [`TriggerCreateParams::new`], the deserialize path, and
+    /// `create_trigger` itself all warn when it is set, the last covering
+    /// struct literals and post-construction mutation too).
     #[serde(deserialize_with = "deserialize_interaction_warn_store")]
     pub interaction: InteractionRequest,
     /// Human-readable display name.
@@ -517,7 +518,9 @@ pub struct TriggerCreateParams {
     /// string form (for roundtrip fidelity to captured wire), so a
     /// read-modify-recreate flow changes the wire spelling — both forms
     /// are accepted on deserialize (here too, so a config file seeded
-    /// from a stored [`Trigger`] loads cleanly).
+    /// from a stored [`Trigger`] loads cleanly — but strip the stored
+    /// trigger's output-only keys first: they land in [`Self::extra`]
+    /// and are forwarded verbatim, which the API rejects).
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -561,7 +564,7 @@ pub struct TriggerCreateParams {
 /// validation can't be exercised while creation is gated. Called from
 /// both construction paths: [`TriggerCreateParams::new`] and the
 /// deserialize path a config file loads through.
-fn warn_on_store(interaction: &InteractionRequest) {
+pub(crate) fn warn_on_store(interaction: &InteractionRequest) {
     if interaction.store.is_some() {
         tracing::warn!(
             "TriggerCreateParams: `store` is set on the nested interaction; \

@@ -38,6 +38,10 @@ pub async fn create_trigger(
     params: &TriggerCreateParams,
 ) -> Result<Trigger, GenaiError> {
     tracing::debug!("Creating trigger: schedule={}", params.schedule);
+    // The funnel every request passes through, so the pre-flight store
+    // warn also covers params mutated after construction (every field is
+    // pub) — the one path the constructor and deserialize warns miss.
+    crate::triggers::warn_on_store(&params.interaction);
     let text = send_and_read(
         ctx,
         reqwest::Method::POST,
