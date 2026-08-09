@@ -308,6 +308,11 @@ pub struct Trigger {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     /// ID of the environment fired interactions run against.
+    ///
+    /// This wire-unverified family may deliver IDs in `environments/...`
+    /// resource-name form; strip such a prefix before passing the value
+    /// back to an ID-taking client method (they percent-encode a slash
+    /// into the path — see [`Client::get_environment`](crate::Client::get_environment)).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment_id: Option<String>,
     /// Output only. The current status of the trigger.
@@ -347,7 +352,10 @@ pub struct Trigger {
     )]
     pub execution_timeout_seconds: Option<i64>,
     /// Output only. ID of the previous fired interaction, chained into the
-    /// next firing's context.
+    /// next firing's context. May arrive in `interactions/...` resource-name
+    /// form on this wire-unverified family — strip the prefix before
+    /// feeding it back to an ID-taking client method (see
+    /// [`Trigger::environment_id`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_interaction_id: Option<String>,
     /// Output only. When the trigger was created.
@@ -551,6 +559,18 @@ impl TriggerCreateParams {
         time_zone: impl Into<String>,
         interaction: InteractionRequest,
     ) -> Self {
+        // Live-verified server rejection (see the module docs): `store` is
+        // not allowed inside a trigger's nested interaction. Warn here so
+        // the misconfiguration surfaces before the API round-trip — which
+        // the agent gate would otherwise mask — without hard-erroring a
+        // shape whose full validation can't be exercised while creation
+        // is gated.
+        if interaction.store.is_some() {
+            tracing::warn!(
+                "TriggerCreateParams: `store` is set on the nested interaction; \
+                 the API rejects it in trigger requests"
+            );
+        }
         Self {
             schedule: schedule.into(),
             time_zone: time_zone.into(),
@@ -665,13 +685,18 @@ pub struct TriggerExecution {
     /// Output only. The ID of the execution.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
-    /// Output only. The ID of the trigger that fired.
+    /// Output only. The ID of the trigger that fired. Like the other IDs
+    /// on this wire-unverified family, may arrive in `triggers/...`
+    /// resource-name form — strip the prefix before feeding it back to an
+    /// ID-taking client method (see [`Trigger::environment_id`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trigger_id: Option<String>,
-    /// Output only. The interaction created by this firing.
+    /// Output only. The interaction created by this firing (same
+    /// resource-name caveat as [`TriggerExecution::trigger_id`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub interaction_id: Option<String>,
-    /// Output only. The environment the firing ran against.
+    /// Output only. The environment the firing ran against (same
+    /// resource-name caveat as [`TriggerExecution::trigger_id`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment_id: Option<String>,
     /// Output only. Status of this execution.

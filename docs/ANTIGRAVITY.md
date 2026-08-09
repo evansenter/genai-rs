@@ -249,8 +249,10 @@ let agent = AntigravityAgent::builder()
     .await?;
 ```
 
-`QuestionReply::Cancel` cancels the interaction; a short answer list is
-padded with `Unanswered`. (`Freeform(text)` is the ergonomic spelling of
+`QuestionReply::Cancel` sends the cancelled flag with no answers — "stop
+asking"; what the harness then does with the in-flight turn is
+harness-owned and not live-verified. A short answer list is padded with
+`Unanswered`. (`Freeform(text)` is the ergonomic spelling of
 a `Choices` answer with no selection and that freeform text — the two
 produce identical wire.) Without a hook every question is answered
 "unanswered" (with a `warn!`) so the harness never deadlocks — and since
