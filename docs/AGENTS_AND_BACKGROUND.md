@@ -276,8 +276,10 @@ let runs = client.list_trigger_executions(&id, Some(10), None).await?;
 client.delete_trigger(&id).await?;
 ```
 
-`TriggerUpdate` is a genuine partial update (unset fields are omitted from
-the PATCH body). See the `genai_rs::triggers` module docs for the
+`TriggerUpdate` omits unset fields from the PATCH body; note there is no
+`update_mask` on this endpoint (unlike webhooks), so partial-update
+semantics rest on that omission and are unconfirmed until trigger updates
+are live-verifiable. See the `genai_rs::triggers` module docs for the
 execution-status lifecycle and the agent-gating details.
 
 ## Background Execution

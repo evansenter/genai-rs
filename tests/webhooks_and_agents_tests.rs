@@ -585,6 +585,10 @@ async fn test_environment_crud_lifecycle() {
         "/etc/motd",
         "hello from genai-rs environments CRUD",
     ));
+    // Create is a non-idempotent POST, so a retry after a lost response can
+    // orphan a first container — tolerated here (unlike the trigger test's
+    // un-retried create) because environments expire on their own, bounding
+    // the leak, while an un-retried create would flake the whole lifecycle.
     let created = crate::retry_request!([client, request] => {
         client.create_environment(&request).await
     })
@@ -689,10 +693,11 @@ async fn test_triggers_list_and_gated_create() {
     };
     let params = TriggerCreateParams::new("0 5 1 1 *", "UTC", interaction)
         .with_display_name("genai-rs trigger schema probe");
-    let create_result = crate::retry_request!([client, params] => {
-        client.create_trigger(&params).await
-    });
-    match create_result {
+    // Deliberately NOT retry-wrapped: create is a non-idempotent POST, and
+    // a retry after a lost response could leave a second, *scheduled*
+    // trigger behind with no ID to clean up. A transient create failure is
+    // a legible test failure, not a flake worth papering over.
+    match client.create_trigger(&params).await {
         Ok(trigger) => {
             println!("Trigger created (agent gate open): id={:?}", trigger.id);
             if let Some(id) = &trigger.id {

@@ -1294,14 +1294,10 @@ impl AntigravityAgent {
                 self.answer_tool_confirmation(&step, &step_key, turn)
                     .await?;
             }
-            if step.questions_request.is_some()
+            if let Some(questions) = &step.questions_request
                 && turn.mark_wait_handled(&step_key, "questions_request")
             {
-                let questions = step
-                    .questions_request
-                    .clone()
-                    .expect("checked is_some above");
-                self.answer_questions(&step, &questions).await?;
+                self.answer_questions(&step, questions).await?;
             }
         }
         Ok(())

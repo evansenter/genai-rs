@@ -56,6 +56,10 @@ pub async fn list_triggers(
 }
 
 /// Updates a trigger (`PATCH /v1beta/triggers/{id}`).
+///
+/// No `update_mask` query parameter: the SDK spec doesn't define one for
+/// triggers (unlike webhooks), so unset-field omission in the body is the
+/// only update-scoping mechanism. See [`TriggerUpdate`] for the caveat.
 pub async fn update_trigger(
     ctx: &HttpContext,
     trigger_id: &str,

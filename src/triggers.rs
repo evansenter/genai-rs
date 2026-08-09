@@ -305,13 +305,30 @@ pub struct Trigger {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<TriggerStatus>,
     /// Consecutive failures before the trigger is disabled.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    ///
+    /// Tolerates the protobuf-JSON string form on deserialize (live-verified
+    /// on the environments resource's int64s) so one string-encoded int
+    /// can't fail the whole list response. Serialized as a plain number —
+    /// protobuf-JSON accepts both on input.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::serde_util::deserialize_string_i64"
+    )]
     pub max_consecutive_failures: Option<i64>,
     /// Output only. Current count of consecutive failed executions.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::serde_util::deserialize_string_i64"
+    )]
     pub consecutive_failure_count: Option<i64>,
     /// Per-execution timeout in seconds.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::serde_util::deserialize_string_i64"
+    )]
     pub execution_timeout_seconds: Option<i64>,
     /// Output only. ID of the previous fired interaction, chained into the
     /// next firing's context.
@@ -423,7 +440,17 @@ impl TriggerCreateParams {
     }
 }
 
-/// Partial update for a [`Trigger`] — only the set fields change.
+/// Update payload for a [`Trigger`] — unset fields are omitted from the
+/// PATCH body.
+///
+/// Unlike [`Client::update_webhook`](crate::client::Client::update_webhook),
+/// the SDK spec exposes **no `update_mask` parameter** for trigger updates
+/// (google-genai 2.17.0: `triggers.update(id, display_name, status)` only),
+/// so field omission is the only scoping mechanism available. The sibling
+/// webhooks PATCH was observed live (2026-07) to apply exactly the fields
+/// present in the body, but trigger updates are not live-verifiable while
+/// creation is agent-gated — treat the partial-update semantics as
+/// unconfirmed until then.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TriggerUpdate {
     /// New display name.
@@ -550,9 +577,10 @@ mod tests {
             serde_json::json!({"status": "paused"})
         );
 
-        // An empty update must serialize to an empty object — the
-        // skip_serializing_if contract that makes PATCH a genuine partial
-        // update rather than a display-name wipe.
+        // An empty update must serialize to an empty object. There is no
+        // update_mask on this endpoint (see the TriggerUpdate docs), so
+        // omitting unset fields from the body is the only partial-update
+        // mechanism the wire offers — this pins that we never send nulls.
         assert_eq!(
             serde_json::to_value(TriggerUpdate::new()).unwrap(),
             serde_json::json!({})
@@ -564,6 +592,23 @@ mod tests {
         let json = serde_json::to_value(&named).unwrap();
         assert_eq!(json["display_name"], "renamed");
         assert_eq!(json["status"], "active");
+    }
+
+    #[test]
+    fn trigger_int64s_tolerate_string_wire_form() {
+        // The environments resource live-verified that this API family
+        // serializes int64s as protobuf-JSON strings; a trigger doing the
+        // same must degrade per-field, not fail the whole list response.
+        let json = serde_json::json!({
+            "id": "trig-1",
+            "max_consecutive_failures": "3",
+            "consecutive_failure_count": "1",
+            "execution_timeout_seconds": 600
+        });
+        let trigger: Trigger = serde_json::from_value(json).unwrap();
+        assert_eq!(trigger.max_consecutive_failures, Some(3));
+        assert_eq!(trigger.consecutive_failure_count, Some(1));
+        assert_eq!(trigger.execution_timeout_seconds, Some(600));
     }
 
     #[test]
