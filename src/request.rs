@@ -641,6 +641,17 @@ impl TranscriptionConfig {
         self
     }
 
+    /// Set the contextual-adaptation phrases, replacing any set earlier
+    /// (the `with_*`/`add_*` pair, like the builder's safety settings).
+    #[must_use]
+    pub fn with_adaptation_phrases(
+        mut self,
+        phrases: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.adaptation_phrases = Some(phrases.into_iter().map(Into::into).collect());
+        self
+    }
+
     /// Add a single contextual-adaptation phrase, accumulating with any
     /// added earlier.
     #[must_use]

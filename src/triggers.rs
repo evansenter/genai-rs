@@ -420,26 +420,28 @@ where
             Ok(None)
         }
         Some(mut value) => {
-            if let Some(obj) = value.as_object_mut()
-                && let Some(input) = obj.get("input")
-                && let Err(e) = crate::request::input_from_value(input.clone())
-            {
-                tracing::warn!(
-                    "Undeserializable input in trigger interaction ({e}); degrading to empty text"
-                );
-                obj.insert(
-                    "input".to_string(),
-                    serde_json::Value::String(String::new()),
-                );
-            }
+            // Take `input` out and parse the rest — one parse each, no
+            // clone (the catch-all arm above guarantees an object here).
+            // An absent input falls through to the field's serde default.
+            let raw_input = value.as_object_mut().and_then(|obj| obj.remove("input"));
             // Warn-and-drop like the arms above: a type mismatch on a
             // modeled field (numeric `model`, string `tools`) must not
             // zero the whole page either.
-            Ok(serde_json::from_value(value)
-                .map_err(|e| {
-                    tracing::warn!("Undeserializable trigger interaction, dropping: {e}");
-                })
-                .ok())
+            let Ok(mut request) = serde_json::from_value::<InteractionRequest>(value)
+                .map_err(|e| tracing::warn!("Undeserializable trigger interaction, dropping: {e}"))
+            else {
+                return Ok(None);
+            };
+            if let Some(raw) = raw_input {
+                request.input = crate::request::input_from_value(raw).unwrap_or_else(|e| {
+                    tracing::warn!(
+                        "Undeserializable input in trigger interaction ({e}); \
+                         degrading to empty text"
+                    );
+                    crate::request::InteractionInput::default()
+                });
+            }
+            Ok(Some(request))
         }
     }
 }

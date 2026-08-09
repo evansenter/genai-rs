@@ -1768,7 +1768,8 @@ fn test_transcription_config_builder_methods() {
         .with_diarization_mode("speaker")
         .with_timestamp_granularities(["word"])
         .with_custom_vocabulary(["genai-rs"])
-        .add_adaptation_phrase("Interactions API")
+        .with_adaptation_phrases(["stale, replaced wholesale"])
+        .with_adaptation_phrases(["Interactions API"])
         .add_adaptation_phrase("Evergreen");
 
     assert_eq!(

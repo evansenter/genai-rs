@@ -4,7 +4,7 @@
 //! (API key + `Api-Revision`); shared plumbing lives in `http/common.rs`.
 
 use super::common::{
-    API_VERSION, BASE_URL_PREFIX, path_segment, send_and_read, to_body, with_paging,
+    API_VERSION, BASE_URL_PREFIX, path_segment, require_id, send_and_read, to_body, with_paging,
 };
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
@@ -43,6 +43,7 @@ pub async fn get_environment(
     ctx: &HttpContext,
     environment_id: &str,
 ) -> Result<Environment, GenaiError> {
+    require_id(environment_id, "environment")?;
     tracing::debug!("Getting environment: ID={environment_id}");
     let text = send_and_read(
         ctx,
@@ -68,6 +69,7 @@ pub async fn list_environments(
 
 /// Deletes an environment (`DELETE /v1beta/environments/{id}`).
 pub async fn delete_environment(ctx: &HttpContext, environment_id: &str) -> Result<(), GenaiError> {
+    require_id(environment_id, "environment")?;
     tracing::debug!("Deleting environment: ID={environment_id}");
     send_and_read(
         ctx,

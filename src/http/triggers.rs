@@ -4,7 +4,7 @@
 //! (API key + `Api-Revision`); shared plumbing lives in `http/common.rs`.
 
 use super::common::{
-    API_VERSION, BASE_URL_PREFIX, path_segment, send_and_read, to_body, with_paging,
+    API_VERSION, BASE_URL_PREFIX, path_segment, require_id, send_and_read, to_body, with_paging,
 };
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
@@ -50,6 +50,7 @@ pub async fn create_trigger(
 
 /// Retrieves a trigger by ID (`GET /v1beta/triggers/{id}`).
 pub async fn get_trigger(ctx: &HttpContext, trigger_id: &str) -> Result<Trigger, GenaiError> {
+    require_id(trigger_id, "trigger")?;
     tracing::debug!("Getting trigger: ID={trigger_id}");
     let text = send_and_read(ctx, reqwest::Method::GET, &trigger_url(trigger_id), None).await?;
     deserialize_with_context(&text, "Trigger from get")
@@ -77,6 +78,7 @@ pub async fn update_trigger(
     trigger_id: &str,
     update: &TriggerUpdate,
 ) -> Result<Trigger, GenaiError> {
+    require_id(trigger_id, "trigger")?;
     tracing::debug!("Updating trigger: ID={trigger_id}");
     let text = send_and_read(
         ctx,
@@ -90,6 +92,7 @@ pub async fn update_trigger(
 
 /// Deletes a trigger (`DELETE /v1beta/triggers/{id}`).
 pub async fn delete_trigger(ctx: &HttpContext, trigger_id: &str) -> Result<(), GenaiError> {
+    require_id(trigger_id, "trigger")?;
     tracing::debug!("Deleting trigger: ID={trigger_id}");
     send_and_read(ctx, reqwest::Method::DELETE, &trigger_url(trigger_id), None).await?;
     Ok(())
@@ -107,6 +110,7 @@ pub async fn run_trigger(
     ctx: &HttpContext,
     trigger_id: &str,
 ) -> Result<TriggerExecution, GenaiError> {
+    require_id(trigger_id, "trigger")?;
     tracing::debug!("Running trigger: ID={trigger_id}");
     let text = send_and_read(
         ctx,
@@ -126,6 +130,7 @@ pub async fn list_trigger_executions(
     page_size: Option<u32>,
     page_token: Option<&str>,
 ) -> Result<TriggerExecutionListResponse, GenaiError> {
+    require_id(trigger_id, "trigger")?;
     tracing::debug!("Listing trigger executions: ID={trigger_id}");
     let url = with_paging(trigger_executions_url(trigger_id), page_size, page_token);
     let text = send_and_read(ctx, reqwest::Method::GET, &url, None).await?;

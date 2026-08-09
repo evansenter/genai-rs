@@ -208,6 +208,22 @@ pub(crate) fn to_body<B: serde::Serialize>(
     })
 }
 
+/// Rejects an empty resource ID before a URL is built from it.
+///
+/// An empty ID slips past [`path_segment`] (there is no percent-encoding
+/// of nothing) and turns an item URL into the *collection* URL with a
+/// trailing slash — so `delete_x("")` would issue a DELETE against the
+/// collection path instead of failing locally. The same
+/// defense-in-depth argument as the dot-segment arms below.
+pub(crate) fn require_id(id: &str, what: &str) -> Result<(), crate::errors::GenaiError> {
+    if id.is_empty() {
+        return Err(crate::errors::GenaiError::InvalidInput(format!(
+            "{what} ID must not be empty (an empty ID would address the collection URL)"
+        )));
+    }
+    Ok(())
+}
+
 /// Percent-encodes a resource ID for use as a single URL path segment, so a
 /// hostile or malformed ID (containing `/`, `?`, `#`, `..`, ...) cannot
 /// rewrite the request path. IDs from this API are opaque hex/base64url
@@ -345,6 +361,14 @@ mod tests {
             url,
             "https://generativelanguage.googleapis.com/v1beta/interactions/a%2Fb%3Fc/cancel"
         );
+    }
+
+    #[test]
+    fn test_require_id_rejects_empty() {
+        // An empty ID would address the collection URL (trailing slash) —
+        // fail locally instead of issuing the request.
+        assert!(require_id("", "trigger").is_err());
+        assert!(require_id("t-1", "trigger").is_ok());
     }
 
     #[test]

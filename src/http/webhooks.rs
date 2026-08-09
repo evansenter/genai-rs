@@ -5,7 +5,7 @@
 //! (the generated google-genai bindings apply the revision header globally).
 
 use super::common::{
-    API_VERSION, BASE_URL_PREFIX, path_segment, send_and_read, to_body, with_paging,
+    API_VERSION, BASE_URL_PREFIX, path_segment, require_id, send_and_read, to_body, with_paging,
     with_paging_and,
 };
 use super::context::HttpContext;
@@ -43,6 +43,7 @@ pub async fn create_webhook(ctx: &HttpContext, webhook: &Webhook) -> Result<Webh
 
 /// Retrieves a webhook by ID (`GET /v1beta/webhooks/{id}`).
 pub async fn get_webhook(ctx: &HttpContext, webhook_id: &str) -> Result<Webhook, GenaiError> {
+    require_id(webhook_id, "webhook")?;
     tracing::debug!("Getting webhook: ID={webhook_id}");
     let text = send_and_read(ctx, reqwest::Method::GET, &webhook_url(webhook_id), None).await?;
     deserialize_with_context(&text, "Webhook from get")
@@ -71,6 +72,7 @@ pub async fn update_webhook(
     update: &WebhookUpdate,
     update_mask: Option<&str>,
 ) -> Result<Webhook, GenaiError> {
+    require_id(webhook_id, "webhook")?;
     tracing::debug!("Updating webhook: ID={webhook_id}, update_mask={update_mask:?}");
 
     // The last query string in the HTTP layer routes through the shared
@@ -87,6 +89,7 @@ pub async fn update_webhook(
 
 /// Deletes a webhook (`DELETE /v1beta/webhooks/{id}`).
 pub async fn delete_webhook(ctx: &HttpContext, webhook_id: &str) -> Result<(), GenaiError> {
+    require_id(webhook_id, "webhook")?;
     tracing::debug!("Deleting webhook: ID={webhook_id}");
     send_and_read(ctx, reqwest::Method::DELETE, &webhook_url(webhook_id), None).await?;
     Ok(())
@@ -94,6 +97,7 @@ pub async fn delete_webhook(ctx: &HttpContext, webhook_id: &str) -> Result<(), G
 
 /// Sends a test event to a webhook (`POST /v1beta/webhooks/{id}:ping`).
 pub async fn ping_webhook(ctx: &HttpContext, webhook_id: &str) -> Result<(), GenaiError> {
+    require_id(webhook_id, "webhook")?;
     tracing::debug!("Pinging webhook: ID={webhook_id}");
     let url = format!("{}:ping", webhook_url(webhook_id));
     // Request and response bodies are empty per the spec.
@@ -114,6 +118,7 @@ pub async fn rotate_signing_secret(
     webhook_id: &str,
     revocation_behavior: Option<RevocationBehavior>,
 ) -> Result<RotateSigningSecretResponse, GenaiError> {
+    require_id(webhook_id, "webhook")?;
     tracing::debug!("Rotating signing secret: ID={webhook_id}");
     let url = format!("{}:rotateSigningSecret", webhook_url(webhook_id));
 

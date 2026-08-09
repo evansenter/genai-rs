@@ -5,7 +5,7 @@
 //! (the generated google-genai bindings apply the revision header globally).
 
 use super::common::{
-    API_VERSION, BASE_URL_PREFIX, path_segment, send_and_read, to_body, with_paging_and,
+    API_VERSION, BASE_URL_PREFIX, path_segment, require_id, send_and_read, to_body, with_paging_and,
 };
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
@@ -38,6 +38,7 @@ pub async fn create_agent(ctx: &HttpContext, agent: &Agent) -> Result<Agent, Gen
 
 /// Retrieves an agent by ID (`GET /v1beta/agents/{id}`).
 pub async fn get_agent(ctx: &HttpContext, agent_id: &str) -> Result<Agent, GenaiError> {
+    require_id(agent_id, "agent")?;
     tracing::debug!("Getting agent: ID={agent_id}");
     let text = send_and_read(ctx, reqwest::Method::GET, &agent_url(agent_id), None).await?;
     deserialize_with_context(&text, "Agent from get")
@@ -63,6 +64,7 @@ pub async fn list_agents(
 
 /// Deletes an agent (`DELETE /v1beta/agents/{id}`).
 pub async fn delete_agent(ctx: &HttpContext, agent_id: &str) -> Result<(), GenaiError> {
+    require_id(agent_id, "agent")?;
     tracing::debug!("Deleting agent: ID={agent_id}");
     send_and_read(ctx, reqwest::Method::DELETE, &agent_url(agent_id), None).await?;
     Ok(())
