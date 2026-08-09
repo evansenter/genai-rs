@@ -106,9 +106,9 @@ where
 /// five resource list envelopes (agents, webhooks, triggers, trigger
 /// executions, environments), not just the wire-unverified trigger family
 /// that motivated it. The per-element arm keeps the good
-/// entries of a page whose list carries one stray malformed element,
-/// though with the all-`Option` element types this is used with, only a
-/// non-object element can actually reach it.
+/// entries of a page whose list carries a stray malformed element; a
+/// non-object element, or one whose modeled field arrives with the wrong
+/// JSON type, reaches it and drops alone.
 pub(crate) fn deserialize_lenient_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
 where
     D: Deserializer<'de>,

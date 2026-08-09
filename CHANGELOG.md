@@ -69,6 +69,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- All five resource list envelopes (`AgentListResponse`,
+  `WebhookListResponse`, and the new trigger/execution/environment ones)
+  now degrade a null or malformed list key to an empty page and drop
+  undeserializable elements individually with a `tracing::warn!`, instead
+  of failing the whole response. For the two pre-existing types this is a
+  behavior change: `list_agents()`/`list_webhooks()` calls that previously
+  returned `Err` on a malformed page now return the surviving entries.
 - Resource IDs are now percent-encoded when interpolated into URL paths
   (interactions get/delete/cancel/stream and the agents, webhooks, triggers
   and environments item URLs). Well-formed IDs are byte-identical on the

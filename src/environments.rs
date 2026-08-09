@@ -255,7 +255,8 @@ impl CreateEnvironmentRequest {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct EnvironmentListResponse {
-    /// The environments in this page. A null or malformed list degrades to empty.
+    /// The environments in this page. A null or malformed list degrades to
+    /// empty; malformed elements drop individually.
     #[serde(deserialize_with = "crate::serde_util::deserialize_lenient_vec")]
     pub environments: Vec<Environment>,
     /// Token for fetching the next page, absent on the last page.

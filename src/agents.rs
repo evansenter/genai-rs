@@ -113,7 +113,8 @@ impl Agent {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentListResponse {
-    /// The agents on this page. A null or malformed list degrades to empty.
+    /// The agents on this page. A null or malformed list degrades to
+    /// empty; malformed elements drop individually.
     #[serde(deserialize_with = "crate::serde_util::deserialize_lenient_vec")]
     pub agents: Vec<Agent>,
     /// Token for the next page. Absent when there are no more pages.

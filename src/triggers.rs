@@ -701,7 +701,8 @@ pub struct TriggerExecution {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct TriggerListResponse {
-    /// The triggers in this page. A null or malformed list degrades to empty.
+    /// The triggers in this page. A null or malformed list degrades to
+    /// empty; malformed elements drop individually.
     #[serde(deserialize_with = "crate::serde_util::deserialize_lenient_vec")]
     pub triggers: Vec<Trigger>,
     /// Token for fetching the next page, absent on the last page.
@@ -713,7 +714,8 @@ pub struct TriggerListResponse {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct TriggerExecutionListResponse {
-    /// The executions in this page. A null or malformed list degrades to empty.
+    /// The executions in this page. A null or malformed list degrades to
+    /// empty; malformed elements drop individually.
     #[serde(deserialize_with = "crate::serde_util::deserialize_lenient_vec")]
     pub trigger_executions: Vec<TriggerExecution>,
     /// Token for fetching the next page, absent on the last page.
