@@ -5,6 +5,13 @@
 //! (`file_count`/`size_bytes`, 2026-08-08). These helpers absorb that on
 //! deserialize (accepting plain numbers too) and reproduce it on serialize
 //! where roundtrip fidelity to captured wire matters.
+//!
+//! The wire-form fidelity claim is scoped to the int64s: the lenient
+//! timestamps keep chrono's default `Serialize`, which emits valid
+//! RFC 3339 but not necessarily the exact spelling captured from the live
+//! wire (offset form, fractional-second width). A parsed `DateTime` cannot
+//! remember the original formatting, and nothing in the crate re-sends a
+//! deserialized resource, so the asymmetry is deliberate.
 
 use serde::Deserialize;
 use serde::de::Deserializer;

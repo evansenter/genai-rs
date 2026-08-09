@@ -614,7 +614,10 @@ async fn test_safety_settings_and_labels_vertex_gated() {
                     HarmCategory::Harassment,
                     SafetyThreshold::BlockOnlyHigh,
                 )),
-                _ => builder.add_label("team", "genai-rs-ci"),
+                "labels" => builder.add_label("team", "genai-rs-ci"),
+                // Exhaustive on purpose: a catch-all would let a typo (or a
+                // third entry) silently probe labels under the wrong name.
+                other => panic!("unhandled knob {other}"),
             };
             builder.create().await
         });

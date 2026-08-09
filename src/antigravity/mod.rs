@@ -2158,10 +2158,17 @@ mod agent_tests {
                         extra: {
                             let mut m = serde_json::Map::new();
                             m.insert("defaultChoiceIndex".into(), serde_json::json!(1));
+                            // Same key at both levels: the inner value must
+                            // win the merge (the documented precedence).
+                            m.insert("collides".into(), serde_json::json!("inner"));
                             m
                         },
                     }),
-                    ..Default::default()
+                    extra: {
+                        let mut m = serde_json::Map::new();
+                        m.insert("collides".into(), serde_json::json!("outer"));
+                        m
+                    },
                 },
             ],
             ..Default::default()
@@ -2190,6 +2197,9 @@ mod agent_tests {
         // An unmodeled field nested inside multipleChoice merges into the
         // hook-facing extra map (lossless one level down too).
         assert_eq!(batch[2].extra["defaultChoiceIndex"], 1);
+        // Collision precedence pinned like the other two extra maps in
+        // this PR: the inner (multipleChoice-level) value wins the merge.
+        assert_eq!(batch[2].extra["collides"], "inner");
     }
 
     #[test]
