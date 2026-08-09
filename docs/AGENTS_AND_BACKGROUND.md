@@ -275,15 +275,15 @@ let params = TriggerCreateParams::new("0 9 * * 1-5", "America/Los_Angeles", inte
     .with_environment_id("env-id");         // optional: run inside an environment
 let trigger = client.create_trigger(&params).await?;
 
-// Pause / resume via update; fire immediately; inspect runs.
+// Fire immediately and inspect runs, then pause via update.
 let id = trigger.id.clone().expect("created trigger has an ID");
-client
-    .update_trigger(&id, &TriggerUpdate::new().with_status(TriggerStatus::Paused))
-    .await?;
 let execution = client.run_trigger(&id).await?;
 println!("fired: {:?}", execution.status);
 let runs = client.list_trigger_executions(&id, Some(10), None).await?;
 println!("executions: {}", runs.trigger_executions.len());
+client
+    .update_trigger(&id, &TriggerUpdate::new().with_status(TriggerStatus::Paused))
+    .await?;
 client.delete_trigger(&id).await?;
 ```
 

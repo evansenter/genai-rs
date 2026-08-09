@@ -1952,6 +1952,12 @@ fn map_question_reply(
                                 selected.len()
                             );
                         }
+                        if selected.is_empty() && freeform.is_none() {
+                            tracing::warn!(
+                                "Questions hook returned an empty Choices answer with no \
+                                 freeform (did you mean Unanswered?); relaying anyway"
+                            );
+                        }
                         protocol::UserQuestionAnswer {
                             unanswered: None,
                             multiple_choice_answer: Some(protocol::MultipleChoiceAnswer {
