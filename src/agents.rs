@@ -227,5 +227,16 @@ mod tests {
         let bad: AgentListResponse =
             serde_json::from_value(json!({"agents": "corrupted"})).unwrap();
         assert!(bad.agents.is_empty());
+
+        // The element-drop arm, pinned on the concrete type like its
+        // webhooks counterpart: a wrong-typed modeled field or a
+        // non-object element drops alone; the good siblings survive.
+        let partial: AgentListResponse = serde_json::from_value(
+            json!({"agents": [{"id": "a1"}, {"id": 42}, "not-an-object", {"id": "a2"}]}),
+        )
+        .unwrap();
+        assert_eq!(partial.agents.len(), 2);
+        assert_eq!(partial.agents[0].id.as_deref(), Some("a1"));
+        assert_eq!(partial.agents[1].id.as_deref(), Some("a2"));
     }
 }
