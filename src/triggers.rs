@@ -272,7 +272,11 @@ impl<'de> Deserialize<'de> for TriggerExecutionStatus {
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 #[serde(default)]
 pub struct Trigger {
-    /// Output only. The ID of the trigger.
+    /// Output only. The ID of the trigger — the value the ID-taking
+    /// client methods (`get_trigger`, `delete_trigger`, ...) expect.
+    /// Like its siblings on this wire-unverified family (see
+    /// [`Trigger::environment_id`]), it may arrive in `triggers/...`
+    /// resource-name form; strip such a prefix before passing it back.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     /// Cron expression the trigger fires on.
@@ -577,10 +581,15 @@ pub struct TriggerCreateParams {
 /// Warns rather than hard-errors throughout: full validation of this shape
 /// can't be exercised while creation is agent-gated.
 ///
-/// Two checks:
+/// Three checks:
 /// - `store` set: live-verified server rejection (see the module docs) —
 ///   the API rejects `store` inside a trigger's nested interaction, and
 ///   the agent gate would otherwise mask that until the round-trip.
+/// - no `agent`: the other live-verified rejection — a trigger's
+///   interaction must target a custom agent, and a model-only request is
+///   refused ("Agent '' is invalid or not found"). The likelier mistake
+///   of the three, since `with_model(...)` is the muscle memory from
+///   every other entry point in the crate.
 /// - empty input: [`InteractionInput::default()`] is an empty string, so
 ///   a struct literal that sets `agent` and falls through to
 ///   `..Default::default()` without setting `input` compiles, serializes,
@@ -595,6 +604,13 @@ pub(crate) fn warn_on_interaction_footguns(interaction: &InteractionRequest) {
         tracing::warn!(
             "TriggerCreateParams: `store` is set on the nested interaction; \
              the API rejects it in trigger requests"
+        );
+    }
+    if interaction.agent.is_none() {
+        tracing::warn!(
+            "TriggerCreateParams: the nested interaction targets no `agent`; \
+             the API requires a custom agent for triggers and rejects \
+             model-only interactions (\"Agent '' is invalid or not found\")"
         );
     }
     let input_is_empty = match &interaction.input {
@@ -1021,6 +1037,34 @@ mod tests {
         assert!(
             messages.iter().any(|m| m.contains("store")),
             "the deserialize path must warn on store; got: {messages:?}"
+        );
+    }
+
+    #[test]
+    fn missing_agent_warn_fires_on_model_only_interactions() {
+        // The other live-verified rejection: a model-only interaction is
+        // refused ("Agent '' is invalid or not found"), and the agent
+        // gate masks it until the round-trip. Pin that the funnel warns,
+        // and that an agent-targeting interaction stays quiet.
+        let messages = crate::test_subscriber::capture_messages(|| {
+            let interaction = crate::request::InteractionRequest {
+                model: Some("gemini-3-flash-preview".to_string()),
+                input: InteractionInput::Text("Daily audit".to_string()),
+                ..Default::default()
+            };
+            let _ = TriggerCreateParams::new("0 9 * * *", "UTC", interaction);
+        });
+        assert!(
+            messages.iter().any(|m| m.contains("custom agent")),
+            "new() must warn on a model-only interaction; got: {messages:?}"
+        );
+
+        let messages = crate::test_subscriber::capture_messages(|| {
+            let _ = TriggerCreateParams::new("0 9 * * *", "UTC", probe_interaction());
+        });
+        assert!(
+            !messages.iter().any(|m| m.contains("custom agent")),
+            "an agent-targeting interaction must not warn; got: {messages:?}"
         );
     }
 
