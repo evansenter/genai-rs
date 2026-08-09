@@ -405,6 +405,13 @@ where
     let value = Option::<serde_json::Value>::deserialize(deserializer)?;
     match value {
         None | Some(serde_json::Value::Null) => Ok(None),
+        // Catch-all like the serde_util helpers: a non-object interaction
+        // (a stray scalar, an array) degrades to None with a warn! instead
+        // of failing the whole list response.
+        Some(other) if !other.is_object() => {
+            tracing::warn!("Unexpected JSON type for trigger interaction, dropping: {other:?}");
+            Ok(None)
+        }
         Some(mut value) => {
             if let Some(obj) = value.as_object_mut()
                 && let Some(input) = obj.get("input")
@@ -924,6 +931,19 @@ mod tests {
                 interaction.input,
                 crate::request::InteractionInput::Text(String::new())
             );
+        }
+
+        // A non-object `interaction` (stray scalar, array) degrades to
+        // None wholesale — the catch-all arm, uniform with the serde_util
+        // helpers.
+        for bad_interaction in [serde_json::json!(0), serde_json::json!([5])] {
+            let trigger: Trigger = serde_json::from_value(serde_json::json!({
+                "id": "t4",
+                "interaction": bad_interaction
+            }))
+            .unwrap();
+            assert_eq!(trigger.id.as_deref(), Some("t4"));
+            assert!(trigger.interaction.is_none());
         }
 
         // The leniency is scoped to the response side: the same malformed
