@@ -907,14 +907,13 @@ mod tests {
         assert_eq!(interaction.agent.as_deref(), Some("my-agent"));
 
         // An interaction carrying an undeserializable `input` — explicit
-        // null (serde defaults only cover the key-absent case), a stray
-        // scalar, or a malformed steps array — degrades to empty text too,
-        // instead of failing the whole list response.
-        for bad_input in [
-            serde_json::Value::Null,
-            serde_json::json!(0),
-            serde_json::json!([5]),
-        ] {
+        // null (serde defaults only cover the key-absent case) or a stray
+        // scalar — degrades to empty text too, instead of failing the
+        // whole list response. (A malformed steps *array* is deliberately
+        // not in this list: under default features the Evergreen Step
+        // deserializer absorbs unrecognized elements as Unknown steps, so
+        // only scalar shapes are rejectable in every feature mode.)
+        for bad_input in [serde_json::Value::Null, serde_json::json!(0)] {
             let trigger: Trigger = serde_json::from_value(serde_json::json!({
                 "id": "t3",
                 "interaction": {"agent": "my-agent", "input": bad_input}
