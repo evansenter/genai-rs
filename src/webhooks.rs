@@ -285,7 +285,7 @@ pub struct SigningSecret {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp::<_, crate::serde_util::ForSigningSecret>"
     )]
     pub expire_time: Option<DateTime<Utc>>,
 }
@@ -336,7 +336,7 @@ pub struct Webhook {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp::<_, crate::serde_util::ForWebhook>"
     )]
     pub create_time: Option<DateTime<Utc>>,
     /// Output only. When the webhook was last updated. A malformed timestamp
@@ -345,7 +345,7 @@ pub struct Webhook {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp::<_, crate::serde_util::ForWebhook>"
     )]
     pub update_time: Option<DateTime<Utc>>,
 }

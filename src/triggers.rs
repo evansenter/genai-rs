@@ -332,7 +332,7 @@ pub struct Trigger {
         default,
         skip_serializing_if = "Option::is_none",
         serialize_with = "crate::serde_util::serialize_string_i64",
-        deserialize_with = "crate::serde_util::deserialize_string_i64"
+        deserialize_with = "crate::serde_util::deserialize_string_i64::<_, crate::serde_util::ForTrigger>"
     )]
     pub max_consecutive_failures: Option<i64>,
     /// Output only. Current count of consecutive failed executions.
@@ -340,7 +340,7 @@ pub struct Trigger {
         default,
         skip_serializing_if = "Option::is_none",
         serialize_with = "crate::serde_util::serialize_string_i64",
-        deserialize_with = "crate::serde_util::deserialize_string_i64"
+        deserialize_with = "crate::serde_util::deserialize_string_i64::<_, crate::serde_util::ForTrigger>"
     )]
     pub consecutive_failure_count: Option<i64>,
     /// Per-execution timeout in seconds.
@@ -348,7 +348,7 @@ pub struct Trigger {
         default,
         skip_serializing_if = "Option::is_none",
         serialize_with = "crate::serde_util::serialize_string_i64",
-        deserialize_with = "crate::serde_util::deserialize_string_i64"
+        deserialize_with = "crate::serde_util::deserialize_string_i64::<_, crate::serde_util::ForTrigger>"
     )]
     pub execution_timeout_seconds: Option<i64>,
     /// Output only. ID of the previous fired interaction, chained into the
@@ -371,7 +371,7 @@ pub struct Trigger {
         default,
         alias = "created",
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp::<_, crate::serde_util::ForTrigger>"
     )]
     pub create_time: Option<DateTime<Utc>>,
     /// Output only. When the trigger was last updated (`updated` accepted
@@ -380,35 +380,35 @@ pub struct Trigger {
         default,
         alias = "updated",
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp::<_, crate::serde_util::ForTrigger>"
     )]
     pub update_time: Option<DateTime<Utc>>,
     /// Output only. When the trigger last fired.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp::<_, crate::serde_util::ForTrigger>"
     )]
     pub last_run_time: Option<DateTime<Utc>>,
     /// Output only. When the trigger next fires.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp::<_, crate::serde_util::ForTrigger>"
     )]
     pub next_run_time: Option<DateTime<Utc>>,
     /// Output only. When the trigger was last paused.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp::<_, crate::serde_util::ForTrigger>"
     )]
     pub last_pause_time: Option<DateTime<Utc>>,
     /// Output only. When the trigger was last resumed.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp::<_, crate::serde_util::ForTrigger>"
     )]
     pub last_resume_time: Option<DateTime<Utc>>,
 }
@@ -748,21 +748,21 @@ pub struct TriggerExecution {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp::<_, crate::serde_util::ForTriggerExecution>"
     )]
     pub scheduled_time: Option<DateTime<Utc>>,
     /// Output only. When the execution started.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp::<_, crate::serde_util::ForTriggerExecution>"
     )]
     pub start_time: Option<DateTime<Utc>>,
     /// Output only. When the execution finished.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
+        deserialize_with = "crate::serde_util::deserialize_lenient_timestamp::<_, crate::serde_util::ForTriggerExecution>"
     )]
     pub end_time: Option<DateTime<Utc>>,
 }

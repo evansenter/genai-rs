@@ -16,6 +16,37 @@
 use serde::Deserialize;
 use serde::de::Deserializer;
 
+/// Names the resource a lenient helper is deserializing, so its `warn!`
+/// lines say *which* field family degraded — the analogue of the vec
+/// helper's `type_name`. A field name cannot be threaded through
+/// `deserialize_with`, so the resource is the available granularity;
+/// call sites select a marker with turbofish in the serde attribute.
+pub(crate) trait ResourceName {
+    const NAME: &'static str;
+}
+
+macro_rules! resource_markers {
+    ($($ty:ident => $name:literal),* $(,)?) => {
+        $(pub(crate) struct $ty;
+        impl ResourceName for $ty {
+            const NAME: &'static str = $name;
+        })*
+    };
+}
+
+resource_markers! {
+    ForTrigger => "Trigger",
+    ForTriggerExecution => "TriggerExecution",
+    ForEnvironment => "Environment",
+    ForWebhook => "Webhook",
+    ForSigningSecret => "SigningSecret",
+}
+
+#[cfg(test)]
+resource_markers! {
+    ForTest => "TestWrapper",
+}
+
 /// Serializes an optional int64 in the protobuf-JSON string form the API
 /// uses on the wire, keeping deserialize-then-serialize roundtrips faithful
 /// to captured responses.
@@ -32,9 +63,10 @@ where
 
 /// Deserializes an optional int64 that the API serializes as a JSON string
 /// (protobuf JSON convention), accepting a plain number too.
-pub(crate) fn deserialize_string_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+pub(crate) fn deserialize_string_i64<'de, D, R>(deserializer: D) -> Result<Option<i64>, D::Error>
 where
     D: Deserializer<'de>,
+    R: ResourceName,
 {
     let value = Option::<serde_json::Value>::deserialize(deserializer)?;
     match value {
@@ -46,19 +78,25 @@ where
         Some(serde_json::Value::Number(n)) => {
             let parsed = n.as_i64();
             if parsed.is_none() {
-                tracing::warn!("Non-i64 JSON number for int64 field, dropping: {n}");
+                tracing::warn!("Non-i64 JSON number on {}, dropping: {n}", R::NAME);
             }
             Ok(parsed)
         }
         Some(serde_json::Value::String(s)) => {
             let parsed = s.parse().ok();
             if parsed.is_none() {
-                tracing::warn!("Unparseable int64 string from API, dropping: {s:?}");
+                tracing::warn!(
+                    "Unparseable int64 string on {} from API, dropping: {s:?}",
+                    R::NAME
+                );
             }
             Ok(parsed)
         }
         Some(other) => {
-            tracing::warn!("Unexpected JSON type for int64 field, dropping: {other:?}");
+            tracing::warn!(
+                "Unexpected JSON type for int64 field on {}, dropping: {other:?}",
+                R::NAME
+            );
             Ok(None)
         }
     }
@@ -107,11 +145,12 @@ where
 /// field rather than dropping the whole webhook from a listed page (the
 /// element-drop arm of `deserialize_lenient_vec` would otherwise be the
 /// thing that caught it).
-pub(crate) fn deserialize_lenient_timestamp<'de, D>(
+pub(crate) fn deserialize_lenient_timestamp<'de, D, R>(
     deserializer: D,
 ) -> Result<Option<chrono::DateTime<chrono::Utc>>, D::Error>
 where
     D: Deserializer<'de>,
+    R: ResourceName,
 {
     let value = Option::<serde_json::Value>::deserialize(deserializer)?;
     match value {
@@ -121,12 +160,18 @@ where
                 .map(|dt| dt.with_timezone(&chrono::Utc))
                 .ok();
             if parsed.is_none() {
-                tracing::warn!("Unparseable RFC 3339 timestamp from API, dropping: {s:?}");
+                tracing::warn!(
+                    "Unparseable RFC 3339 timestamp on {} from API, dropping: {s:?}",
+                    R::NAME
+                );
             }
             Ok(parsed)
         }
         Some(other) => {
-            tracing::warn!("Unexpected JSON type for timestamp field, dropping: {other:?}");
+            tracing::warn!(
+                "Unexpected JSON type for timestamp field on {}, dropping: {other:?}",
+                R::NAME
+            );
             Ok(None)
         }
     }
@@ -209,7 +254,7 @@ mod tests {
         #[serde(
             default,
             serialize_with = "super::serialize_string_i64",
-            deserialize_with = "super::deserialize_string_i64"
+            deserialize_with = "super::deserialize_string_i64::<_, super::ForTest>"
         )]
         v: Option<i64>,
     }
@@ -273,7 +318,10 @@ mod tests {
 
     #[derive(Debug, PartialEq, Deserialize)]
     struct TsWrapper {
-        #[serde(default, deserialize_with = "super::deserialize_lenient_timestamp")]
+        #[serde(
+            default,
+            deserialize_with = "super::deserialize_lenient_timestamp::<_, super::ForTest>"
+        )]
         t: Option<chrono::DateTime<chrono::Utc>>,
     }
 

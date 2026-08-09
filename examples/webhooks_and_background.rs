@@ -104,14 +104,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // -------------------------------------------------------------------
     println!("=== Live webhook lifecycle ===");
     match client.create_webhook(&webhook).await {
-        Ok(created) => {
-            let id = created.id.clone().unwrap_or_default();
+        // Destructure a present ID like the environments section below:
+        // require_id turns an empty ID into a local InvalidInput on every
+        // follow-up call, so an ID-less create would otherwise leak the
+        // webhook with misattributed errors and no usable handle.
+        Ok(Webhook {
+            id: Some(id),
+            new_signing_secret,
+            ..
+        }) => {
             println!("Created webhook: {id}");
             // Store this secret securely - it is only returned on create.
-            println!(
-                "Signing secret returned: {}",
-                created.new_signing_secret.is_some()
-            );
+            println!("Signing secret returned: {}", new_signing_secret.is_some());
 
             match client.list_webhooks(Some(10), None).await {
                 Ok(list) => println!("Registered webhooks: {}", list.webhooks.len()),
@@ -136,6 +140,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 Err(e) => println!("delete_webhook failed: {e} - delete {id} manually"),
             }
         }
+        Ok(_) => println!(
+            "Webhook created without an ID (protocol violation) - it may \
+             linger; list and delete it manually"
+        ),
         Err(e) => println!("Webhook resource not available for this account: {e}"),
     }
 

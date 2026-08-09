@@ -15,7 +15,7 @@
 
 use crate::environment::{EnvironmentSource, NetworkConfig};
 use crate::serde_util::{
-    deserialize_lenient_timestamp, deserialize_string_i64, serialize_string_i64,
+    ForEnvironment, deserialize_lenient_timestamp, deserialize_string_i64, serialize_string_i64,
 };
 use chrono::{DateTime, Utc};
 use serde::de::Deserializer;
@@ -153,21 +153,21 @@ pub struct Environment {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "deserialize_lenient_timestamp"
+        deserialize_with = "deserialize_lenient_timestamp::<_, ForEnvironment>"
     )]
     pub created: Option<DateTime<Utc>>,
     /// Output only. When the environment was last updated.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "deserialize_lenient_timestamp"
+        deserialize_with = "deserialize_lenient_timestamp::<_, ForEnvironment>"
     )]
     pub updated: Option<DateTime<Utc>>,
     /// Output only. When the environment was last accessed.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "deserialize_lenient_timestamp"
+        deserialize_with = "deserialize_lenient_timestamp::<_, ForEnvironment>"
     )]
     pub last_accessed: Option<DateTime<Utc>>,
     /// Output only. The number of files in the environment.
@@ -175,7 +175,7 @@ pub struct Environment {
         default,
         skip_serializing_if = "Option::is_none",
         serialize_with = "serialize_string_i64",
-        deserialize_with = "deserialize_string_i64"
+        deserialize_with = "deserialize_string_i64::<_, ForEnvironment>"
     )]
     pub file_count: Option<i64>,
     /// Output only. The total size of the environment's files in bytes.
@@ -183,7 +183,7 @@ pub struct Environment {
         default,
         skip_serializing_if = "Option::is_none",
         serialize_with = "serialize_string_i64",
-        deserialize_with = "deserialize_string_i64"
+        deserialize_with = "deserialize_string_i64::<_, ForEnvironment>"
     )]
     pub size_bytes: Option<i64>,
 }

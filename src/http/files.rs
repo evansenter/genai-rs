@@ -49,7 +49,7 @@
 //! # }
 //! ```
 
-use super::common::API_KEY_HEADER;
+use super::common::{API_KEY_HEADER, require_id};
 use super::context::HttpContext;
 use super::error_helpers::{check_response, check_response_wire, deserialize_with_context};
 use crate::errors::GenaiError;
@@ -866,14 +866,16 @@ pub async fn upload_file_chunked_with_chunk_size(
 ///
 /// Returns an error if the request fails or the file doesn't exist.
 pub async fn get_file(ctx: &HttpContext, file_name: &str) -> Result<FileMetadata, GenaiError> {
+    require_id(file_name, "file")?;
     tracing::debug!("Getting file metadata: {}", file_name);
 
     // Deliberately raw — the one interpolation site exempt from the
     // `path_segment` sweep: `file_name` is a full resource name
     // ("files/abc123") whose slash is structural, so percent-encoding
-    // would break every call. The `require_id`/`path_segment` empty-ID
-    // and dot-segment guards therefore do not apply on this path (same
-    // for `delete_file` below).
+    // would break every call. Only the encoding half of the guard pair
+    // is waived: `require_id` above still rejects the empty name that
+    // would otherwise collapse this into a bare API-root URL (same for
+    // `delete_file` below).
     let url = format!("{BASE_URL}/{FILES_API_VERSION}/{file_name}");
 
     let request_id = ctx.next_request_id();
@@ -990,6 +992,7 @@ pub async fn list_files(
 ///
 /// Returns an error if the request fails or the file doesn't exist.
 pub async fn delete_file(ctx: &HttpContext, file_name: &str) -> Result<(), GenaiError> {
+    require_id(file_name, "file")?;
     tracing::debug!("Deleting file: {}", file_name);
 
     // Raw interpolation of a full resource name — see the note in

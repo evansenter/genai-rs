@@ -110,7 +110,9 @@ pub struct AgentQuestion {
     /// crate doesn't model — a modeled multiple-choice question can carry
     /// unmodeled siblings too, so use [`Self::is_unknown_type`] (not this
     /// map's emptiness) to tell whether the question's *type* itself is
-    /// unmodeled.
+    /// unmodeled. Merged from two levels — the question object and its
+    /// `multiple_choice` arm — with the inner value winning should the
+    /// protocol ever grow a colliding key.
     pub extra: serde_json::Map<String, serde_json::Value>,
     /// True when the wire question carried no `multiple_choice` arm.
     pub(crate) unknown_type: bool,
