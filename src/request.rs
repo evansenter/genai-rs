@@ -1291,7 +1291,7 @@ pub struct InteractionRequest {
     /// available on the Gemini Enterprise Agent Platform" (Vertex-only).
     /// The field is modeled for spec parity and forward compatibility.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub labels: Option<std::collections::HashMap<String, String>>,
+    pub labels: Option<std::collections::BTreeMap<String, String>>,
 }
 
 /// Latency/priority service tier for a request.
@@ -1907,7 +1907,6 @@ impl From<DynamicConfig> for AgentConfig {
 /// use genai_rs::{AgentConfig, AntigravityConfig};
 ///
 /// let config: AgentConfig = AntigravityConfig::new()
-///     .with_model("gemini-3-flash-preview")
 ///     .with_max_total_tokens(200_000)
 ///     .into();
 /// ```
@@ -1925,6 +1924,10 @@ impl AntigravityConfig {
     }
 
     /// Set the model the agent uses for its reasoning loop.
+    ///
+    /// A value the agent does not offer fails the interaction with 404
+    /// `not_found` — see the [type docs](AntigravityConfig) for the probe
+    /// notes; leave unset unless you know an accepted value.
     #[must_use]
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());

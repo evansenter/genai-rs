@@ -99,7 +99,7 @@ pub struct InteractionBuilder<'a> {
     webhook_config: Option<WebhookConfig>,
     environment: Option<EnvironmentSpec>,
     safety_settings: Option<Vec<SafetySetting>>,
-    labels: Option<std::collections::HashMap<String, String>>,
+    labels: Option<std::collections::BTreeMap<String, String>>,
     /// Maximum iterations for auto function calling loop
     max_function_call_loops: usize,
     /// Tool service for dependency-injected functions
@@ -1415,7 +1415,7 @@ impl<'a> InteractionBuilder<'a> {
     /// Server-side constraint (verified live 2026-08-08): the Gemini API
     /// rejects `labels` (Vertex-only); modeled for spec parity.
     #[must_use]
-    pub fn with_labels(mut self, labels: std::collections::HashMap<String, String>) -> Self {
+    pub fn with_labels(mut self, labels: std::collections::BTreeMap<String, String>) -> Self {
         self.labels = Some(labels);
         self
     }
@@ -1426,7 +1426,7 @@ impl<'a> InteractionBuilder<'a> {
     #[must_use]
     pub fn add_label(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.labels
-            .get_or_insert_with(std::collections::HashMap::new)
+            .get_or_insert_with(std::collections::BTreeMap::new)
             .insert(key.into(), value.into());
         self
     }

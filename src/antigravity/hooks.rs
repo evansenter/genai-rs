@@ -213,6 +213,11 @@ pub enum QuestionAnswer {
         freeform: Option<String>,
     },
     /// A freeform text answer with no choice selected.
+    ///
+    /// On the wire this is identical to a [`Choices`](Self::Choices)
+    /// answer with an empty `selected` and the text in `freeform` — it is
+    /// the ergonomic spelling of the no-selection case, not a distinct
+    /// answer shape.
     Freeform(String),
     /// Leave this question unanswered.
     Unanswered,

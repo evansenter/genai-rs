@@ -41,7 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   verified live 2026-08-08) — modeled for spec parity and forward
   compatibility, like the existing `Retrieval` tool.
 - **`AntigravityConfig`** typed agent-config helper for server-side
-  `agent("antigravity")` interactions (`model`, `max_total_tokens`).
+  `agent("antigravity-preview-05-2026")` interactions (`model`,
+  `max_total_tokens`; the config's `antigravity` string is only the
+  `agent_config` type discriminant, not an agent ID).
 - **Antigravity bridge: `on_questions` hook** — answer the agent's
   `ask_question` batches programmatically (select choices, freeform text,
   skip, or cancel) instead of the previous always-"unanswered" fallback.

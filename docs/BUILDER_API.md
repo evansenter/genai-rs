@@ -52,7 +52,7 @@ Methods follow a consistent naming pattern based on their behavior:
 | `with_environment(impl Into<EnvironmentSpec>)` | with | replaces | Environment ID string or typed `RemoteEnvironment` |
 | `with_safety_settings(Vec<SafetySetting>)` | with | replaces | Vertex-only (Gemini API rejects with 400) |
 | `add_safety_setting(SafetySetting)` | add | accumulates | Appends one safety setting; Vertex-only |
-| `with_labels(HashMap<String, String>)` | with | replaces | User metadata labels; Vertex-only |
+| `with_labels(BTreeMap<String, String>)` | with | replaces | User metadata labels; Vertex-only |
 | `add_label(key, value)` | add | accumulates | Inserts one label (same key overwrites); Vertex-only |
 | **Input** |
 | `with_text()` | with | replaces | Composes with `with_history()` |

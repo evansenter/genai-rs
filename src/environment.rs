@@ -5,10 +5,13 @@
 //! mounted (GCS buckets, inline files, repositories, skill registries) and
 //! what outbound network access is allowed.
 //!
-//! The wire union accepts either a string environment ID (an environment
-//! created by a previous interaction, echoed as
-//! [`InteractionResponse::environment_id`](crate::InteractionResponse)) or a
-//! typed remote environment object — modeled here as [`EnvironmentSpec`].
+//! The wire union accepts either a string environment ID — an environment
+//! created explicitly via
+//! [`Client::create_environment()`](crate::Client::create_environment) (see
+//! [`environments`](crate::environments)) or by a previous interaction,
+//! echoed as
+//! [`InteractionResponse::environment_id`](crate::InteractionResponse) — or
+//! a typed remote environment object, modeled here as [`EnvironmentSpec`].
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
