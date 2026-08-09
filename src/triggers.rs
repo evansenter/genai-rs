@@ -499,7 +499,10 @@ pub struct TriggerCreateParams {
     /// IANA time zone the schedule is evaluated in (e.g. `"UTC"`).
     pub time_zone: String,
     /// The interaction request created on each firing. Must target a
-    /// custom `agent`; `store` is not allowed here (server-verified).
+    /// custom `agent`; `store` is not allowed here (server-verified —
+    /// both [`TriggerCreateParams::new`] and the deserialize path warn
+    /// when it is set).
+    #[serde(deserialize_with = "deserialize_interaction_warn_store")]
     pub interaction: InteractionRequest,
     /// Human-readable display name.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -551,6 +554,35 @@ pub struct TriggerCreateParams {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+/// Live-verified server rejection (see the module docs): `store` is not
+/// allowed inside a trigger's nested interaction. Warn so the
+/// misconfiguration surfaces before the API round-trip — which the agent
+/// gate would otherwise mask — without hard-erroring a shape whose full
+/// validation can't be exercised while creation is gated. Called from
+/// both construction paths: [`TriggerCreateParams::new`] and the
+/// deserialize path a config file loads through.
+fn warn_on_store(interaction: &InteractionRequest) {
+    if interaction.store.is_some() {
+        tracing::warn!(
+            "TriggerCreateParams: `store` is set on the nested interaction; \
+             the API rejects it in trigger requests"
+        );
+    }
+}
+
+/// Derived [`InteractionRequest`] deserialization plus the `store` warn,
+/// so a config-file load gets the same pre-flight signal as `new()`.
+fn deserialize_interaction_warn_store<'de, D>(
+    deserializer: D,
+) -> Result<InteractionRequest, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let interaction = InteractionRequest::deserialize(deserializer)?;
+    warn_on_store(&interaction);
+    Ok(interaction)
+}
+
 impl TriggerCreateParams {
     /// Creates trigger parameters for `schedule` (cron) in `time_zone`.
     #[must_use]
@@ -559,18 +591,7 @@ impl TriggerCreateParams {
         time_zone: impl Into<String>,
         interaction: InteractionRequest,
     ) -> Self {
-        // Live-verified server rejection (see the module docs): `store` is
-        // not allowed inside a trigger's nested interaction. Warn here so
-        // the misconfiguration surfaces before the API round-trip — which
-        // the agent gate would otherwise mask — without hard-erroring a
-        // shape whose full validation can't be exercised while creation
-        // is gated.
-        if interaction.store.is_some() {
-            tracing::warn!(
-                "TriggerCreateParams: `store` is set on the nested interaction; \
-                 the API rejects it in trigger requests"
-            );
-        }
+        warn_on_store(&interaction);
         Self {
             schedule: schedule.into(),
             time_zone: time_zone.into(),
@@ -914,6 +935,37 @@ mod tests {
         let update: TriggerUpdate =
             serde_json::from_value(serde_json::json!({"other": 1})).unwrap();
         assert_eq!(update.extra["other"], 1);
+    }
+
+    #[test]
+    fn store_warn_fires_on_both_construction_paths() {
+        // The store rejection is server-verified but masked by the agent
+        // gate, so the pre-flight warn is the only signal most users get.
+        // Pin that it fires from new() AND from a config-file load — a
+        // value assertion cannot express either.
+        let messages = crate::test_subscriber::capture_messages(|| {
+            let mut interaction = probe_interaction();
+            interaction.store = Some(true);
+            let _ = TriggerCreateParams::new("0 9 * * *", "UTC", interaction);
+        });
+        assert!(
+            messages.iter().any(|m| m.contains("store")),
+            "new() must warn on store; got: {messages:?}"
+        );
+
+        let messages = crate::test_subscriber::capture_messages(|| {
+            let params: TriggerCreateParams = serde_json::from_value(serde_json::json!({
+                "schedule": "0 9 * * *",
+                "time_zone": "UTC",
+                "interaction": {"agent": "my-agent", "input": "hi", "store": true}
+            }))
+            .unwrap();
+            assert_eq!(params.interaction.store, Some(true));
+        });
+        assert!(
+            messages.iter().any(|m| m.contains("store")),
+            "the deserialize path must warn on store; got: {messages:?}"
+        );
     }
 
     #[test]
