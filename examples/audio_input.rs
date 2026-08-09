@@ -285,9 +285,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
          generation_config.transcription_config"
     );
     println!("  [RES#1] completed: transcription or analysis\n");
-    println!("Multi-turn:");
-    println!("  [REQ#2] POST with text + previousInteractionId");
-    println!("  [RES#2] completed: follow-up using audio context\n");
+    println!("Error handling (Example 4):");
+    println!("  [REQ#2] POST with deliberately invalid base64 audio");
+    println!("  [RES#2] 400 invalid_argument - surfaced as GenaiError::Api\n");
 
     println!("--- Production Considerations ---");
     println!("• Supports WAV, MP3, AIFF, AAC, OGG, FLAC formats");
