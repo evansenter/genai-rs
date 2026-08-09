@@ -467,9 +467,12 @@ list response. The list
 envelope keys are in the same boat: `triggers` matches its path segment
 but `GET .../executions` is modeled with a `trigger_executions` key per
 the SDK spec — `executions` (the path-segment spelling) is likewise
-accepted on deserialize as an alias. With the aliases in place, a
-`LOUD_WIRE=1` confirmation once the agent gate opens is a nice-to-have
-for the remaining un-aliased field names rather than a requirement.
+accepted on deserialize as an alias. The aliases hedge only the
+spellings something actually demonstrates (the environments resource's
+`created`/`updated`, the path segment); the other seven trigger-family
+timestamps have no observed alternative to alias against and would
+still degrade to `None` under a wholesale rename, so a `LOUD_WIRE=1`
+confirmation once the agent gate opens remains worthwhile.
 
 ### ThinkingSummaries (agent_config)
 
