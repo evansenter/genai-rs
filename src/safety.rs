@@ -412,6 +412,19 @@ impl<'de> Deserialize<'de> for SafetyMethod {
 ///     serde_json::json!({"category": "harassment", "threshold": "block_only_high"})
 /// );
 /// ```
+///
+/// # Unknown variants on the send side
+///
+/// All three enums here are open (Evergreen): an unrecognized *string*
+/// wire value deserializes into `Unknown` and re-serializes faithfully.
+/// A **non-string** wire value (e.g. a numeric `category` in a config
+/// file feeding [`TriggerCreateParams`](crate::TriggerCreateParams))
+/// also parses into `Unknown`, but its stored type is the
+/// `<non-string: ...>` debug marker — sending that back produces a
+/// category string that means nothing to the server. Don't echo back a
+/// setting whose `is_unknown()` variant came from a non-string value
+/// (same caveat as
+/// [`TriggerUpdate::with_status`](crate::TriggerUpdate::with_status)).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SafetySetting {
     /// The harm category this setting applies to.
