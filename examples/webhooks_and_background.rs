@@ -112,7 +112,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             id: Some(id),
             new_signing_secret,
             ..
-        }) => {
+        }) if !id.is_empty() => {
             println!("Created webhook: {id}");
             // Store this secret securely - it is only returned on create.
             println!("Signing secret returned: {}", new_signing_secret.is_some());
