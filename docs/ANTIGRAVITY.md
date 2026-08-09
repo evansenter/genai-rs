@@ -231,12 +231,12 @@ let agent = AntigravityAgent::builder()
     .add_policy(policy::deny_all())
     .on_questions(|questions| {
         // Answer each question: pick the first choice, but never guess on
-        // a question with no rendered choices (e.g. an unknown type).
+        // an unmodeled question type or one with no rendered choices.
         QuestionReply::Answers(
             questions
                 .iter()
                 .map(|q| {
-                    if q.choices.is_empty() {
+                    if q.is_unknown_type() || q.choices.is_empty() {
                         QuestionAnswer::Unanswered
                     } else {
                         QuestionAnswer::Choices { selected: vec![0], freeform: None }

@@ -505,13 +505,22 @@ pub struct TriggerCreateParams {
     /// *response*-side [`Trigger`] re-serializes in the protobuf-JSON
     /// string form (for roundtrip fidelity to captured wire), so a
     /// read-modify-recreate flow changes the wire spelling — both forms
-    /// are accepted on deserialize.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// are accepted on deserialize (here too, so a config file seeded
+    /// from a stored [`Trigger`] loads cleanly).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::serde_util::deserialize_string_i64"
+    )]
     pub max_consecutive_failures: Option<i64>,
     /// Per-execution timeout in seconds. Sends as a plain JSON number
     /// (see [`Self::max_consecutive_failures`] on the wire-form
     /// asymmetry with [`Trigger`]).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::serde_util::deserialize_string_i64"
+    )]
     pub execution_timeout_seconds: Option<i64>,
     /// Unrecognized fields, preserved for roundtrip (Evergreen) — lets an
     /// unmodeled create-request field be set without a crate release,
@@ -840,6 +849,23 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(params.extra["future_field"], "x");
+
+        // The int64s accept the protobuf-JSON string form on the way in
+        // (a config seeded from a stored Trigger re-serializes them as
+        // strings) while still sending plain numbers on the way out.
+        let params: TriggerCreateParams = serde_json::from_value(serde_json::json!({
+            "schedule": "0 9 * * *",
+            "time_zone": "UTC",
+            "interaction": {"agent": "my-agent", "input": "hi"},
+            "max_consecutive_failures": "3",
+            "execution_timeout_seconds": "600"
+        }))
+        .unwrap();
+        assert_eq!(params.max_consecutive_failures, Some(3));
+        assert_eq!(params.execution_timeout_seconds, Some(600));
+        let json = serde_json::to_value(&params).unwrap();
+        assert_eq!(json["max_consecutive_failures"], serde_json::json!(3));
+        assert_eq!(json["execution_timeout_seconds"], serde_json::json!(600));
         let update: TriggerUpdate =
             serde_json::from_value(serde_json::json!({"other": 1})).unwrap();
         assert_eq!(update.extra["other"], 1);

@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .iter()
                     .map(|q| {
                         println!("[agent asked: {}]", q.question);
-                        if q.choices.is_empty() {
+                        if q.is_unknown_type() || q.choices.is_empty() {
                             QuestionAnswer::Unanswered
                         } else {
                             QuestionAnswer::Choices {

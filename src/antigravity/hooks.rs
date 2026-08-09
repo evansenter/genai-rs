@@ -131,7 +131,7 @@ impl AgentQuestion {
     ///         questions
     ///             .iter()
     ///             .map(|q| {
-    ///                 if q.choices.is_empty() {
+    ///                 if q.is_unknown_type() || q.choices.is_empty() {
     ///                     QuestionAnswer::Unanswered
     ///                 } else {
     ///                     QuestionAnswer::Choices { selected: vec![0], freeform: None }
