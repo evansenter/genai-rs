@@ -362,13 +362,21 @@ impl SafetyMethod {
     }
 }
 
+impl SafetyMethod {
+    /// The wire string for this method — the single source both `Display`
+    /// and `Serialize` render, so the two can never disagree.
+    fn as_wire(&self) -> &str {
+        match self {
+            Self::Severity => "severity",
+            Self::Probability => "probability",
+            Self::Unknown { method_type, .. } => method_type,
+        }
+    }
+}
+
 impl fmt::Display for SafetyMethod {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Severity => write!(f, "severity"),
-            Self::Probability => write!(f, "probability"),
-            Self::Unknown { method_type, .. } => write!(f, "{method_type}"),
-        }
+        write!(f, "{}", self.as_wire())
     }
 }
 
@@ -377,11 +385,7 @@ impl Serialize for SafetyMethod {
     where
         S: Serializer,
     {
-        match self {
-            Self::Severity => serializer.serialize_str("severity"),
-            Self::Probability => serializer.serialize_str("probability"),
-            Self::Unknown { method_type, .. } => serializer.serialize_str(method_type),
-        }
+        serializer.serialize_str(self.as_wire())
     }
 }
 

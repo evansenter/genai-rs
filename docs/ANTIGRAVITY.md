@@ -214,12 +214,15 @@ hook to answer the questions programmatically — route them to a CLI
 prompt, a chat message, or policy code:
 
 ```rust,ignore
-use genai_rs::antigravity::{BuiltinTool, Capabilities, QuestionAnswer, QuestionReply};
+use genai_rs::antigravity::{BuiltinTool, Capabilities, QuestionAnswer, QuestionReply, policy};
 
 let agent = AntigravityAgent::builder()
     // ...
     // read_only() does not include AskQuestion — enable it explicitly.
     .with_capabilities(Capabilities::read_only().enable(BuiltinTool::AskQuestion))
+    // AskQuestion is write-capable, so the spawn-time safety gate requires
+    // a policy (or on_pre_tool hook) once it is enabled.
+    .add_policy(policy::allow_all())
     .on_questions(|questions| {
         // Answer each question: pick the first choice.
         QuestionReply::Answers(

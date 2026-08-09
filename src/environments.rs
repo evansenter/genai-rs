@@ -74,13 +74,21 @@ impl EnvironmentStatus {
     }
 }
 
+impl EnvironmentStatus {
+    /// The wire string for this status — the single source both `Display`
+    /// and `Serialize` render, so the two can never disagree.
+    fn as_wire(&self) -> &str {
+        match self {
+            Self::Active => "active",
+            Self::Expired => "expired",
+            Self::Unknown { status_type, .. } => status_type,
+        }
+    }
+}
+
 impl fmt::Display for EnvironmentStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Active => write!(f, "active"),
-            Self::Expired => write!(f, "expired"),
-            Self::Unknown { status_type, .. } => write!(f, "{status_type}"),
-        }
+        write!(f, "{}", self.as_wire())
     }
 }
 
@@ -89,11 +97,7 @@ impl Serialize for EnvironmentStatus {
     where
         S: serde::Serializer,
     {
-        match self {
-            Self::Active => serializer.serialize_str("active"),
-            Self::Expired => serializer.serialize_str("expired"),
-            Self::Unknown { status_type, .. } => serializer.serialize_str(status_type),
-        }
+        serializer.serialize_str(self.as_wire())
     }
 }
 

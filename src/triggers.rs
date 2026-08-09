@@ -81,14 +81,22 @@ impl TriggerStatus {
     }
 }
 
+impl TriggerStatus {
+    /// The wire string for this status — the single source both `Display`
+    /// and `Serialize` render, so the two can never disagree.
+    fn as_wire(&self) -> &str {
+        match self {
+            Self::Active => "active",
+            Self::Paused => "paused",
+            Self::Error => "error",
+            Self::Unknown { status_type, .. } => status_type,
+        }
+    }
+}
+
 impl fmt::Display for TriggerStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Active => write!(f, "active"),
-            Self::Paused => write!(f, "paused"),
-            Self::Error => write!(f, "error"),
-            Self::Unknown { status_type, .. } => write!(f, "{status_type}"),
-        }
+        write!(f, "{}", self.as_wire())
     }
 }
 
@@ -97,12 +105,7 @@ impl Serialize for TriggerStatus {
     where
         S: serde::Serializer,
     {
-        match self {
-            Self::Active => serializer.serialize_str("active"),
-            Self::Paused => serializer.serialize_str("paused"),
-            Self::Error => serializer.serialize_str("error"),
-            Self::Unknown { status_type, .. } => serializer.serialize_str(status_type),
-        }
+        serializer.serialize_str(self.as_wire())
     }
 }
 

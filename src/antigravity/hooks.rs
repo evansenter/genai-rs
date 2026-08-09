@@ -90,6 +90,7 @@ pub type PostToolHook = Arc<dyn Fn(&ToolOutcome) + Send + Sync>;
 /// currently always multiple-choice (the only question type the harness
 /// protocol defines).
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct AgentQuestion {
     /// The question text.
     pub question: String,
@@ -101,6 +102,7 @@ pub struct AgentQuestion {
 
 /// Answer to a single [`AgentQuestion`].
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum QuestionAnswer {
     /// Select choices by zero-based index into
     /// [`AgentQuestion::choices`], optionally adding freeform text.
@@ -122,6 +124,7 @@ pub enum QuestionAnswer {
 
 /// Reply to a whole `ask_question` batch.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum QuestionReply {
     /// One answer per question, in order. A short reply is padded with
     /// [`QuestionAnswer::Unanswered`]; extra answers are dropped.
