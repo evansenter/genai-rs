@@ -562,8 +562,12 @@ pub struct TriggerCreateParams {
 /// misconfiguration surfaces before the API round-trip — which the agent
 /// gate would otherwise mask — without hard-erroring a shape whose full
 /// validation can't be exercised while creation is gated. Called from
-/// both construction paths: [`TriggerCreateParams::new`] and the
-/// deserialize path a config file loads through.
+/// [`TriggerCreateParams::new`], the deserialize path a config file
+/// loads through, and `create_trigger` itself — the funnel covering
+/// struct literals and post-construction mutation. The `new`-then-create
+/// flow therefore warns twice; deliberate, trading a duplicate log line
+/// for a fail-fast signal at construction plus a guaranteed pre-wire
+/// one.
 pub(crate) fn warn_on_store(interaction: &InteractionRequest) {
     if interaction.store.is_some() {
         tracing::warn!(
