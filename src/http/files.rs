@@ -903,17 +903,6 @@ pub async fn get_file(ctx: &HttpContext, file_name: &str) -> Result<FileMetadata
     Ok(file)
 }
 
-/// Lists all uploaded files.
-///
-/// # Arguments
-///
-/// * `ctx` - HTTP context (client, API key, wire inspectors)
-/// * `page_size` - Optional maximum number of files to return
-/// * `page_token` - Optional token for pagination
-///
-/// # Errors
-///
-/// Returns an error if the request fails.
 /// Builds the list URL. Extracted from [`list_files`] so the paging
 /// shape is testable like its `with_paging` siblings — the Files API
 /// spells its params `pageSize`/`pageToken`, so it cannot ride the
@@ -938,6 +927,17 @@ fn list_files_url(page_size: Option<u32>, page_token: Option<&str>) -> String {
     url
 }
 
+/// Lists all uploaded files.
+///
+/// # Arguments
+///
+/// * `ctx` - HTTP context (client, API key, wire inspectors)
+/// * `page_size` - Optional maximum number of files to return
+/// * `page_token` - Optional token for pagination
+///
+/// # Errors
+///
+/// Returns an error if the request fails.
 pub async fn list_files(
     ctx: &HttpContext,
     page_size: Option<u32>,

@@ -92,11 +92,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wire; a value containing path metacharacters (`/`, `?`, `#`, `..`) is now
   sent as one encoded segment instead of silently rewriting the request
   path, and an empty resource ID is rejected locally as `InvalidInput`
-  rather than issuing a request against the collection URL. List-endpoint
-  page tokens are likewise percent-encoded (agents, webhooks, triggers,
-  environments and files), so a token carrying a reserved character is no
-  longer truncated on the wire (a standard-base64 `+` previously decoded
-  to a space).
+  rather than issuing a request against the collection URL. The Files API
+  `list_files` page token is likewise percent-encoded (agents and
+  webhooks already encoded theirs, and the new trigger/environment
+  endpoints ride the shared encoder), so a token carrying a reserved
+  character is no longer truncated on the wire (a standard-base64 `+`
+  previously decoded to a space).
 - docs.rs now builds with the `antigravity` feature enabled (the module was
   invisible in the 0.8.0 docs, which were built with default features only),
   with "Available on crate feature ... only" banners on feature-gated items.
