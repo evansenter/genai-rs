@@ -6,6 +6,7 @@
 
 use super::common::{
     API_VERSION, BASE_URL_PREFIX, path_segment, send_and_read, to_body, with_paging,
+    with_paging_and,
 };
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
@@ -72,10 +73,13 @@ pub async fn update_webhook(
 ) -> Result<Webhook, GenaiError> {
     tracing::debug!("Updating webhook: ID={webhook_id}, update_mask={update_mask:?}");
 
-    let mut url = webhook_url(webhook_id);
-    if let Some(mask) = update_mask {
-        url.push_str(&format!("?update_mask={}", urlencoding::encode(mask)));
-    }
+    // The last query string in the HTTP layer routes through the shared
+    // helper too, bringing the mask under its percent-encoding tests.
+    let extra: Vec<(&str, &str)> = update_mask
+        .map(|m| ("update_mask", m))
+        .into_iter()
+        .collect();
+    let url = with_paging_and(webhook_url(webhook_id), None, None, &extra);
 
     let text = send_and_read(ctx, reqwest::Method::PATCH, &url, Some(to_body(update)?)).await?;
     deserialize_with_context(&text, "Webhook from update")

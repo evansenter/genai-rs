@@ -282,7 +282,18 @@ pub struct Trigger {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time_zone: Option<String>,
     /// The interaction request created on each firing.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    ///
+    /// A nested `input` this crate can't deserialize (explicit null, a
+    /// stray scalar, malformed steps) degrades to empty text with a
+    /// `warn!` instead of failing the whole list response — leniency
+    /// scoped to this response side; [`TriggerCreateParams`]'s send-side
+    /// interaction stays strict, so a config-file typo is a clean parse
+    /// error rather than a silently scheduled empty prompt.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_lenient_interaction"
+    )]
     pub interaction: Option<InteractionRequest>,
     /// Human-readable display name.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -372,6 +383,46 @@ pub struct Trigger {
         deserialize_with = "crate::serde_util::deserialize_lenient_timestamp"
     )]
     pub last_resume_time: Option<DateTime<Utc>>,
+}
+
+/// Deserializes `Trigger::interaction`, degrading a nested `input` that
+/// [`InteractionInput`](crate::request::InteractionInput)'s deserializer
+/// rejects (explicit null, a stray scalar, malformed steps) onto the empty
+/// default with a `warn!` before parsing the interaction.
+///
+/// The nested `input` is the one non-`Option` field in the trigger tree,
+/// so without this a projection carrying `input: null` (or `input: 0`)
+/// would propagate a hard error up through `Trigger` and fail the whole
+/// list response — the same wholesale failure the lenient int64 and
+/// timestamp helpers exist to avoid. Scoped here (not on
+/// `InteractionRequest` itself) so the send side stays strict.
+fn deserialize_lenient_interaction<'de, D>(
+    deserializer: D,
+) -> Result<Option<InteractionRequest>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    match value {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(mut value) => {
+            if let Some(obj) = value.as_object_mut()
+                && let Some(input) = obj.get("input")
+                && let Err(e) = crate::request::input_from_value(input.clone())
+            {
+                tracing::warn!(
+                    "Undeserializable input in trigger interaction ({e}); degrading to empty text"
+                );
+                obj.insert(
+                    "input".to_string(),
+                    serde_json::Value::String(String::new()),
+                );
+            }
+            serde_json::from_value(value)
+                .map(Some)
+                .map_err(serde::de::Error::custom)
+        }
+    }
 }
 
 /// Request body for creating a [`Trigger`].
@@ -856,10 +907,14 @@ mod tests {
         assert_eq!(interaction.agent.as_deref(), Some("my-agent"));
 
         // An interaction carrying an undeserializable `input` — explicit
-        // null (serde defaults only cover the key-absent case) or a stray
-        // scalar — degrades to empty text too, instead of failing the
-        // whole list response.
-        for bad_input in [serde_json::Value::Null, serde_json::json!(0)] {
+        // null (serde defaults only cover the key-absent case), a stray
+        // scalar, or a malformed steps array — degrades to empty text too,
+        // instead of failing the whole list response.
+        for bad_input in [
+            serde_json::Value::Null,
+            serde_json::json!(0),
+            serde_json::json!([5]),
+        ] {
             let trigger: Trigger = serde_json::from_value(serde_json::json!({
                 "id": "t3",
                 "interaction": {"agent": "my-agent", "input": bad_input}
@@ -871,6 +926,17 @@ mod tests {
                 crate::request::InteractionInput::Text(String::new())
             );
         }
+
+        // The leniency is scoped to the response side: the same malformed
+        // input in a send-side TriggerCreateParams (e.g. loaded from a
+        // config file) is a clean parse error, not a silently scheduled
+        // empty prompt.
+        let result: Result<TriggerCreateParams, _> = serde_json::from_value(serde_json::json!({
+            "schedule": "0 9 * * *",
+            "time_zone": "UTC",
+            "interaction": {"agent": "my-agent", "input": 0}
+        }));
+        assert!(result.is_err(), "send-side input must stay strict");
     }
 
     #[test]

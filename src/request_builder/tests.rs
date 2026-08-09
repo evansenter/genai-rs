@@ -1756,3 +1756,36 @@ fn test_builder_with_transcription_config() {
     assert_eq!(gc["transcription_config"]["language_codes"][0], "en-US");
     assert_eq!(gc["transcription_config"]["diarization_mode"], "speaker");
 }
+
+#[test]
+fn test_transcription_config_builder_methods() {
+    use crate::TranscriptionConfig;
+
+    // The builder form covers every field the struct-literal form does,
+    // with add_adaptation_phrase accumulating.
+    let config = TranscriptionConfig::new()
+        .with_language_codes(["en-US", "ja-JP"])
+        .with_diarization_mode("speaker")
+        .with_timestamp_granularities(["word"])
+        .with_custom_vocabulary(["genai-rs"])
+        .add_adaptation_phrase("Interactions API")
+        .add_adaptation_phrase("Evergreen");
+
+    assert_eq!(
+        config.language_codes.as_deref(),
+        Some(["en-US".to_string(), "ja-JP".to_string()].as_slice())
+    );
+    assert_eq!(config.diarization_mode.as_deref(), Some("speaker"));
+    assert_eq!(
+        config.timestamp_granularities.as_deref(),
+        Some(["word".to_string()].as_slice())
+    );
+    assert_eq!(
+        config.custom_vocabulary.as_deref(),
+        Some(["genai-rs".to_string()].as_slice())
+    );
+    assert_eq!(
+        config.adaptation_phrases.as_deref(),
+        Some(["Interactions API".to_string(), "Evergreen".to_string()].as_slice())
+    );
+}

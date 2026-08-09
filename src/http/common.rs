@@ -209,15 +209,25 @@ pub(crate) fn to_body<B: serde::Serialize>(
 }
 
 /// Percent-encodes a resource ID for use as a single URL path segment, so a
-/// hostile or malformed ID (containing `/`, `?`, `#`, ...) cannot rewrite
-/// the request path. IDs from this API are opaque hex/base64url today; this
-/// is defense-in-depth applied uniformly across all resource modules.
+/// hostile or malformed ID (containing `/`, `?`, `#`, `..`, ...) cannot
+/// rewrite the request path. IDs from this API are opaque hex/base64url
+/// today; this is defense-in-depth applied uniformly across all resource
+/// modules.
 pub(crate) fn path_segment(id: &str) -> std::borrow::Cow<'_, str> {
-    // Cow: the IDs this API issues are opaque hex/base64url, so the
-    // borrowed no-escaping arm is essentially always taken — no
-    // allocation per URL build. `Cow` implements `Display`, so `format!`
-    // call sites are unchanged.
-    urlencoding::encode(id)
+    // `.` is unreserved, so the encoder passes "." and ".." through
+    // verbatim — and URL parsing applies dot-segment removal, which would
+    // pop the preceding path segment and reach a *different* endpoint.
+    // Percent-encode those two forms explicitly (valid encodings of the
+    // unreserved `.`, and not re-normalized as dot segments).
+    match id {
+        "." => std::borrow::Cow::Borrowed("%2E"),
+        ".." => std::borrow::Cow::Borrowed("%2E%2E"),
+        // Cow: the IDs this API issues are opaque hex/base64url, so the
+        // borrowed no-escaping arm is essentially always taken — no
+        // allocation per URL build. `Cow` implements `Display`, so
+        // `format!` call sites are unchanged.
+        _ => urlencoding::encode(id),
+    }
 }
 
 /// Appends `page_size` / `page_token` query params to a URL.
@@ -335,6 +345,18 @@ mod tests {
             url,
             "https://generativelanguage.googleapis.com/v1beta/interactions/a%2Fb%3Fc/cancel"
         );
+    }
+
+    #[test]
+    fn test_path_segment_encodes_dot_segments() {
+        // `.` is unreserved so the encoder alone passes dot segments
+        // through — and URL parsing would then pop the preceding path
+        // segment, reaching a different endpoint. Pin the explicit
+        // percent-encoded forms.
+        assert_eq!(path_segment("."), "%2E");
+        assert_eq!(path_segment(".."), "%2E%2E");
+        // A dot *inside* an ID is not a dot segment; it stays borrowed.
+        assert_eq!(path_segment("a.b"), "a.b");
     }
 
     #[test]

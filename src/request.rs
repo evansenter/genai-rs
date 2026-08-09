@@ -273,71 +273,54 @@ impl<'de> Deserialize<'de> for InteractionInput {
         D: Deserializer<'de>,
     {
         let value = serde_json::Value::deserialize(deserializer)?;
-        match value {
-            serde_json::Value::String(s) => Ok(Self::Text(s)),
-            serde_json::Value::Array(items) => {
-                // Decide between [Content] and [Step] by inspecting element
-                // type tags. Elements with content tags (text/image/...) are
-                // content blocks; everything else (user_input, function_call,
-                // unknown future types, ...) is treated as steps, the
-                // canonical revision 2026-05-20 form.
-                let is_content = items.iter().all(|item| {
-                    item.get("type")
-                        .and_then(|t| t.as_str())
-                        .is_some_and(|t| CONTENT_TYPE_TAGS.contains(&t))
-                });
-                if is_content && !items.is_empty() {
-                    let contents = serde_json::from_value(serde_json::Value::Array(items))
-                        .map_err(serde::de::Error::custom)?;
-                    Ok(Self::Content(contents))
-                } else {
-                    let steps = serde_json::from_value(serde_json::Value::Array(items))
-                        .map_err(serde::de::Error::custom)?;
-                    Ok(Self::Steps(steps))
-                }
-            }
-            other @ serde_json::Value::Object(_) => {
-                // A single content or step object.
-                let is_content = other
-                    .get("type")
-                    .and_then(|t| t.as_str())
-                    .is_some_and(|t| CONTENT_TYPE_TAGS.contains(&t));
-                if is_content {
-                    let content: Content =
-                        serde_json::from_value(other).map_err(serde::de::Error::custom)?;
-                    Ok(Self::Content(vec![content]))
-                } else {
-                    let step: Step =
-                        serde_json::from_value(other).map_err(serde::de::Error::custom)?;
-                    Ok(Self::Steps(vec![step]))
-                }
-            }
-            other => Err(serde::de::Error::custom(format!(
-                "InteractionInput must be a string, array, or object; got {other}"
-            ))),
-        }
+        input_from_value(value).map_err(serde::de::Error::custom)
     }
 }
 
-/// Deserializes `InteractionRequest::input`, degrading any shape
-/// [`InteractionInput`]'s own deserializer rejects (explicit null, a stray
-/// scalar, malformed nested steps) onto [`InteractionInput::default()`]
-/// with a `warn!`.
-///
-/// `serde(default)` only covers the key-*absent* case; without this, a
-/// nested projection carrying `input: null` (or `input: 0`) would
-/// propagate a hard error up through `Trigger` and fail the whole list
-/// response — the same wholesale failure the lenient int64 and timestamp
-/// helpers exist to avoid, on the one remaining field in that tree.
-fn deserialize_lenient_input<'de, D>(deserializer: D) -> Result<InteractionInput, D::Error>
-where
-    D: serde::de::Deserializer<'de>,
-{
-    let value = serde_json::Value::deserialize(deserializer)?;
-    serde_json::from_value::<InteractionInput>(value).or_else(|e| {
-        tracing::warn!("Undeserializable InteractionRequest input ({e}); degrading to empty text");
-        Ok(InteractionInput::default())
-    })
+/// The by-`Value` body of [`InteractionInput`]'s deserializer, shared with
+/// the lenient trigger-side probe so neither path buffers the tree twice.
+pub(crate) fn input_from_value(value: serde_json::Value) -> Result<InteractionInput, String> {
+    match value {
+        serde_json::Value::String(s) => Ok(InteractionInput::Text(s)),
+        serde_json::Value::Array(items) => {
+            // Decide between [Content] and [Step] by inspecting element
+            // type tags. Elements with content tags (text/image/...) are
+            // content blocks; everything else (user_input, function_call,
+            // unknown future types, ...) is treated as steps, the
+            // canonical revision 2026-05-20 form.
+            let is_content = items.iter().all(|item| {
+                item.get("type")
+                    .and_then(|t| t.as_str())
+                    .is_some_and(|t| CONTENT_TYPE_TAGS.contains(&t))
+            });
+            if is_content && !items.is_empty() {
+                let contents = serde_json::from_value(serde_json::Value::Array(items))
+                    .map_err(|e| e.to_string())?;
+                Ok(InteractionInput::Content(contents))
+            } else {
+                let steps = serde_json::from_value(serde_json::Value::Array(items))
+                    .map_err(|e| e.to_string())?;
+                Ok(InteractionInput::Steps(steps))
+            }
+        }
+        other @ serde_json::Value::Object(_) => {
+            // A single content or step object.
+            let is_content = other
+                .get("type")
+                .and_then(|t| t.as_str())
+                .is_some_and(|t| CONTENT_TYPE_TAGS.contains(&t));
+            if is_content {
+                let content: Content = serde_json::from_value(other).map_err(|e| e.to_string())?;
+                Ok(InteractionInput::Content(vec![content]))
+            } else {
+                let step: Step = serde_json::from_value(other).map_err(|e| e.to_string())?;
+                Ok(InteractionInput::Steps(vec![step]))
+            }
+        }
+        other => Err(format!(
+            "InteractionInput must be a string, array, or object; got {other}"
+        )),
+    }
 }
 
 /// Thinking level for chain-of-thought reasoning.
@@ -609,6 +592,64 @@ pub struct TranscriptionConfig {
     /// open string list (Evergreen).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp_granularities: Option<Vec<String>>,
+}
+
+impl TranscriptionConfig {
+    /// Create a new transcription configuration with default settings.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the BCP-47 language hints (omitted means automatic detection).
+    #[must_use]
+    pub fn with_language_codes(
+        mut self,
+        language_codes: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.language_codes = Some(language_codes.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Set the diarization mode (`"speaker"` is the only value the SDK
+    /// spec documents today; open string per the Evergreen posture).
+    #[must_use]
+    pub fn with_diarization_mode(mut self, mode: impl Into<String>) -> Self {
+        self.diarization_mode = Some(mode.into());
+        self
+    }
+
+    /// Set the timestamp granularities (`"word"` is the only value the SDK
+    /// spec documents today; open string list per the Evergreen posture).
+    #[must_use]
+    pub fn with_timestamp_granularities(
+        mut self,
+        granularities: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.timestamp_granularities = Some(granularities.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Set the domain-specific vocabulary to bias recognition toward,
+    /// replacing any set earlier.
+    #[must_use]
+    pub fn with_custom_vocabulary(
+        mut self,
+        vocabulary: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.custom_vocabulary = Some(vocabulary.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Add a single contextual-adaptation phrase, accumulating with any
+    /// added earlier.
+    #[must_use]
+    pub fn add_adaptation_phrase(mut self, phrase: impl Into<String>) -> Self {
+        self.adaptation_phrases
+            .get_or_insert_with(Vec::new)
+            .push(phrase.into());
+        self
+    }
 }
 
 /// Deserializes `speech_config` from either the spec list form or the legacy
@@ -1221,17 +1262,20 @@ pub struct InteractionRequest {
     /// The input for this interaction
     ///
     /// The `serde(default)` tolerates sparse nested projections (e.g. a
-    /// `Trigger` list entry whose interaction omits `input`), and the
-    /// `deserialize_with` extends that to any undeserializable shape —
-    /// explicit null (serde only applies `default` when the key is
-    /// *absent*), stray scalars, malformed nested steps — so a projection
-    /// degrades to empty text with a `warn!` instead of failing the whole
-    /// list response. Note the roundtrip asymmetry: these shapes
-    /// re-serialize as a *present* `input` key — the one spot in the
-    /// Evergreen surface where a sparse projection gains a field instead
-    /// of preserving absence. Nothing re-sends a deserialized `Trigger`
-    /// today, so the shape is left alone rather than making this Optional.
-    #[serde(default, deserialize_with = "deserialize_lenient_input")]
+    /// `Trigger` list entry whose interaction omits `input`), but this
+    /// deserializer is otherwise *strict*: a malformed or null `input`
+    /// (e.g. a typo in a config file feeding
+    /// [`TriggerCreateParams`](crate::TriggerCreateParams)) is a clean
+    /// parse error, not a silently scheduled empty prompt. The
+    /// *response*-side leniency lives on
+    /// [`Trigger::interaction`](crate::Trigger) instead, where an
+    /// undeserializable nested `input` degrades to empty text rather than
+    /// failing a whole list response. Note the roundtrip asymmetry:
+    /// absence deserializes to empty text and re-serializes as a
+    /// *present* `input` key — the one spot in the Evergreen surface
+    /// where a sparse projection gains a field instead of preserving
+    /// absence.
+    #[serde(default)]
     pub input: InteractionInput,
 
     /// Reference to a previous interaction for stateful conversations

@@ -634,6 +634,8 @@ for prompt in creative_prompts {
 | `frequency_penalty` | `Option<f32>` | Penalize frequent tokens [-2.0, 2.0] |
 | `speech_config` | `Option<SpeechConfig>` | TTS configuration |
 | `image_config` | `Option<ImageConfig>` | Image generation aspect ratio and size |
+| `video_config` | `Option<VideoConfig>` | Video generation settings |
+| `transcription_config` | `Option<TranscriptionConfig>` | Audio-input transcription: language hints, diarization, timestamps |
 
 Note: `top_k` was removed by the API revision 2026-05-20.
 
