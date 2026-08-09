@@ -86,9 +86,10 @@ pub type PostToolHook = Arc<dyn Fn(&ToolOutcome) + Send + Sync>;
 /// A question the agent asked via the `ask_question` builtin.
 ///
 /// Delivered to the hook set with
-/// [`on_questions`](crate::antigravity::AgentBuilder::on_questions);
-/// currently always multiple-choice (the only question type the harness
-/// protocol defines).
+/// [`on_questions`](crate::antigravity::AgentBuilder::on_questions).
+/// Multiple-choice today — but a shape this crate doesn't model arrives
+/// with [`is_unknown_type`](Self::is_unknown_type) set and its raw
+/// payload in [`extra`](Self::extra); check it before rendering.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct AgentQuestion {
