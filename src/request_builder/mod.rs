@@ -1420,7 +1420,9 @@ impl<'a> InteractionBuilder<'a> {
         self
     }
 
-    /// Adds a single metadata label, accumulating with any added earlier.
+    /// Adds a single metadata label, merging with any added earlier — a
+    /// repeated key replaces its previous value (the backing store is a
+    /// map, unlike [`Self::add_safety_setting`]'s accumulating list).
     #[must_use]
     pub fn add_label(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.labels

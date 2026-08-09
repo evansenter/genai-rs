@@ -19,11 +19,19 @@ fn triggers_url() -> String {
 }
 
 fn trigger_url(id: &str) -> String {
-    format!("{BASE_URL_PREFIX}/{API_VERSION}/triggers/{id}")
+    // IDs are opaque hex today, but percent-encode anyway so a hostile or
+    // malformed ID can't rewrite the request path.
+    format!(
+        "{BASE_URL_PREFIX}/{API_VERSION}/triggers/{}",
+        urlencoding::encode(id)
+    )
 }
 
 fn trigger_executions_url(trigger_id: &str) -> String {
-    format!("{BASE_URL_PREFIX}/{API_VERSION}/triggers/{trigger_id}/executions")
+    format!(
+        "{BASE_URL_PREFIX}/{API_VERSION}/triggers/{}/executions",
+        urlencoding::encode(trigger_id)
+    )
 }
 
 /// Creates a trigger (`POST /v1beta/triggers`).
@@ -140,6 +148,11 @@ mod tests {
         assert_eq!(
             trigger_executions_url("trig-123"),
             "https://generativelanguage.googleapis.com/v1beta/triggers/trig-123/executions"
+        );
+        // A path-metacharacter ID is encoded, not interpolated raw.
+        assert_eq!(
+            trigger_url("a/b?c"),
+            "https://generativelanguage.googleapis.com/v1beta/triggers/a%2Fb%3Fc"
         );
     }
 }

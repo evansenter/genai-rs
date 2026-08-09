@@ -16,7 +16,12 @@ fn environments_url() -> String {
 }
 
 fn environment_url(id: &str) -> String {
-    format!("{BASE_URL_PREFIX}/{API_VERSION}/environments/{id}")
+    // IDs are opaque hex today, but percent-encode anyway so a hostile or
+    // malformed ID can't rewrite the request path.
+    format!(
+        "{BASE_URL_PREFIX}/{API_VERSION}/environments/{}",
+        urlencoding::encode(id)
+    )
 }
 
 /// Creates an environment (`POST /v1beta/environments`).
