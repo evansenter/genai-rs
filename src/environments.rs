@@ -255,7 +255,8 @@ impl CreateEnvironmentRequest {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct EnvironmentListResponse {
-    /// The environments in this page.
+    /// The environments in this page. An explicit null degrades to empty.
+    #[serde(deserialize_with = "crate::serde_util::deserialize_null_as_empty_vec")]
     pub environments: Vec<Environment>,
     /// Token for fetching the next page, absent on the last page.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -409,5 +410,12 @@ mod tests {
         let list: EnvironmentListResponse = serde_json::from_value(serde_json::json!({})).unwrap();
         assert!(list.environments.is_empty());
         assert!(list.next_page_token.is_none());
+
+        // An explicit null list key — the one empty shape the struct-level
+        // serde default does not reach — degrades to empty rather than
+        // zeroing the page with an error.
+        let list: EnvironmentListResponse =
+            serde_json::from_value(serde_json::json!({"environments": null})).unwrap();
+        assert!(list.environments.is_empty());
     }
 }

@@ -431,13 +431,14 @@ where
             // The placeholder satisfies the now-required field; a sparse
             // projection's absent input thus deserializes to empty text
             // *on this path only* — the send side keeps input required.
-            let raw_input = value.as_object_mut().and_then(|obj| obj.remove("input"));
-            if let Some(obj) = value.as_object_mut() {
-                obj.insert(
-                    "input".to_string(),
-                    serde_json::Value::String(String::new()),
-                );
-            }
+            let obj = value
+                .as_object_mut()
+                .expect("non-object interactions are handled by the arm above");
+            let raw_input = obj.remove("input");
+            obj.insert(
+                "input".to_string(),
+                serde_json::Value::String(String::new()),
+            );
             // Warn-and-drop like the arms above: a type mismatch on a
             // modeled field (numeric `model`, string `tools`) must not
             // zero the whole page either.
@@ -700,7 +701,8 @@ pub struct TriggerExecution {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct TriggerListResponse {
-    /// The triggers in this page.
+    /// The triggers in this page. An explicit null degrades to empty.
+    #[serde(deserialize_with = "crate::serde_util::deserialize_null_as_empty_vec")]
     pub triggers: Vec<Trigger>,
     /// Token for fetching the next page, absent on the last page.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -711,7 +713,8 @@ pub struct TriggerListResponse {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct TriggerExecutionListResponse {
-    /// The executions in this page.
+    /// The executions in this page. An explicit null degrades to empty.
+    #[serde(deserialize_with = "crate::serde_util::deserialize_null_as_empty_vec")]
     pub trigger_executions: Vec<TriggerExecution>,
     /// Token for fetching the next page, absent on the last page.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -912,6 +915,16 @@ mod tests {
         // GET /v1beta/triggers returns `{}` when nothing exists.
         let list: TriggerListResponse = serde_json::from_value(serde_json::json!({})).unwrap();
         assert!(list.triggers.is_empty());
+
+        // An explicit null list key — the one empty shape the struct-level
+        // serde default does not reach — degrades to empty rather than
+        // zeroing the page with an error.
+        let list: TriggerListResponse =
+            serde_json::from_value(serde_json::json!({"triggers": null})).unwrap();
+        assert!(list.triggers.is_empty());
+        let executions: TriggerExecutionListResponse =
+            serde_json::from_value(serde_json::json!({"trigger_executions": null})).unwrap();
+        assert!(executions.trigger_executions.is_empty());
     }
 
     #[test]

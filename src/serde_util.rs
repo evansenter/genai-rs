@@ -94,6 +94,26 @@ where
     }
 }
 
+/// Deserializes a list field that may arrive as JSON null, degrading it to
+/// an empty vec with a `warn!` instead of failing the enclosing envelope.
+///
+/// Struct-level serde defaults cover only the key-*absent* case (the
+/// live-verified `{}` empty response); a present-but-null key would
+/// otherwise error and zero the whole page — the same wholesale failure
+/// the sibling helpers exist to avoid, on the wire-unverified resource
+/// family.
+pub(crate) fn deserialize_null_as_empty_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    let value = Option::<Vec<T>>::deserialize(deserializer)?;
+    if value.is_none() {
+        tracing::warn!("List field was explicit null; degrading to an empty list");
+    }
+    Ok(value.unwrap_or_default())
+}
+
 #[cfg(test)]
 mod tests {
     use serde::{Deserialize, Serialize};
