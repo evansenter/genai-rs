@@ -2831,15 +2831,18 @@ mod builtins_multiturn {
 
         println!("=== URL Context + Multi-turn ===");
 
-        // Turn 1: Fetch example.com content
-        let result1 = stateful_builder(&client)
-            .with_text(
-                "Fetch and summarize the main content from https://example.com using URL context.",
-            )
-            .with_url_context()
-            .with_store_enabled()
-            .create()
-            .await;
+        // Turn 1: Fetch example.com content. Retry-wrapped like the
+        // google-search sibling so a transient doesn't fail the probe.
+        let result1 = retry_request!([client] => {
+            stateful_builder(&client)
+                .with_text(
+                    "Fetch and summarize the main content from https://example.com using URL context.",
+                )
+                .with_url_context()
+                .with_store_enabled()
+                .create()
+                .await
+        });
 
         let response1 = match result1 {
             Ok(response) => {
