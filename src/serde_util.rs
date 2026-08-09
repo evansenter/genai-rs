@@ -226,11 +226,16 @@ where
         }
         Some(serde_json::Value::Array(items)) => Ok(items
             .into_iter()
-            .filter_map(|item| {
+            .enumerate()
+            .filter_map(|(index, item)| {
                 serde_json::from_value(item)
                     .map_err(|e| {
+                        // The index makes the warn actionable — it names
+                        // *which* element of the page vanished, and this
+                        // warn is the only signal one did (the caller
+                        // just sees a shorter list).
                         tracing::warn!(
-                            "Undeserializable {} list element, dropping: {e}",
+                            "Undeserializable {} list element at index {index}, dropping: {e}",
                             std::any::type_name::<T>()
                         );
                     })

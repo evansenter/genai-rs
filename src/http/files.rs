@@ -866,9 +866,11 @@ pub async fn upload_file_chunked_with_chunk_size(
 /// (the shape every upload response returns), so this positively checks
 /// that shape — prefix present, exactly one non-empty segment after it —
 /// and then routes the ID through [`path_segment`] like every other
-/// resource module. That closes the whole threat family at once (empty
-/// name, `.`/`..` dot segments bare or percent-encoded, `?`/`#` query
-/// and fragment splits, stray extra segments) instead of enumerating
+/// resource module. That closes the whole threat family at once —
+/// `require_id` rejects the empty name and every dot-segment spelling
+/// (WHATWG normalizes the percent-encoded forms at parse time too), the
+/// interior-slash check rejects stray segments, and the encoder defuses
+/// `?`/`#` query and fragment splits — instead of enumerating
 /// threats against a raw interpolation one guard at a time. A name that
 /// fails the shape check could never have addressed a file anyway — the
 /// raw form's URL was a guaranteed 404 or a different endpoint — so
@@ -1093,23 +1095,23 @@ mod tests {
         assert_eq!(file_resource_path("files/a.b.c").unwrap(), "files/a.b.c");
 
         // Shape violations reject locally: missing prefix, empty ID,
-        // extra segments (which also covers `files/../x`).
+        // extra segments (which also covers `files/../x`), and every
+        // dot-segment spelling — WHATWG dot-segment removal matches the
+        // percent-encoded forms case-insensitively at parse time, so
+        // `require_id` rejects them all rather than trusting encoding.
         assert!(file_resource_path("abc123").is_err());
         assert!(file_resource_path("").is_err());
         assert!(file_resource_path("files/").is_err());
         assert!(file_resource_path("files/a/b").is_err());
         assert!(file_resource_path("../../v1beta/files/other").is_err());
+        assert!(file_resource_path("files/..").is_err());
+        assert!(file_resource_path("files/%2e%2e").is_err());
+        assert!(file_resource_path("files/%2E.").is_err());
 
         // Threats that pass the shape check are defused by encoding, so
-        // URL parsing can never treat them structurally: bare and
-        // percent-encoded dot segments (WHATWG pops `%2e%2e` like `..`),
-        // and the query/fragment splitters that would silently retarget
-        // the request.
-        assert_eq!(file_resource_path("files/..").unwrap(), "files/%2E%2E");
-        assert_eq!(
-            file_resource_path("files/%2e%2e").unwrap(),
-            "files/%252e%252e"
-        );
+        // URL parsing can never treat them structurally: the
+        // query/fragment splitters that would silently retarget the
+        // request.
         assert_eq!(
             file_resource_path("files/abc?alt=media").unwrap(),
             "files/abc%3Falt%3Dmedia"

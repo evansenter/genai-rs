@@ -208,17 +208,34 @@ pub(crate) fn to_body<B: serde::Serialize>(
     })
 }
 
-/// Rejects an empty resource ID before a URL is built from it.
+/// Rejects an empty or dot-segment resource ID before a URL is built
+/// from it.
 ///
 /// An empty ID slips past [`path_segment`] (there is no percent-encoding
 /// of nothing) and turns an item URL into the *collection* URL with a
 /// trailing slash — so `delete_x("")` would issue a DELETE against the
-/// collection path instead of failing locally. The same
-/// defense-in-depth argument as the dot-segment arms below.
+/// collection path instead of failing locally.
+///
+/// A dot-segment ID is rejected in every WHATWG spelling (`.` or `..`,
+/// bare or percent-encoded, ASCII case-insensitive) because the URL
+/// parser under reqwest applies dot-segment removal to all of them at
+/// parse time — popping the preceding path segment and addressing the
+/// collection or a different endpoint entirely. Neither form is ever a
+/// real ID (they're opaque hex/base64url), so a loud local
+/// `InvalidInput` beats a request that goes somewhere else.
 pub(crate) fn require_id(id: &str, what: &str) -> Result<(), crate::errors::GenaiError> {
     if id.is_empty() {
         return Err(crate::errors::GenaiError::InvalidInput(format!(
             "{what} ID must not be empty (an empty ID would address the collection or API-root URL)"
+        )));
+    }
+    if matches!(
+        id.to_ascii_lowercase().as_str(),
+        "." | "%2e" | ".." | ".%2e" | "%2e." | "%2e%2e"
+    ) {
+        return Err(crate::errors::GenaiError::InvalidInput(format!(
+            "{what} ID must not be a dot segment (URL parsing would pop \
+             the preceding path segment and address a different endpoint)"
         )));
     }
     Ok(())
@@ -231,13 +248,19 @@ pub(crate) fn require_id(id: &str, what: &str) -> Result<(), crate::errors::Gena
 /// modules.
 pub(crate) fn path_segment(id: &str) -> std::borrow::Cow<'_, str> {
     // `.` is unreserved, so the encoder passes "." and ".." through
-    // verbatim — and URL parsing applies dot-segment removal, which would
-    // pop the preceding path segment and reach a *different* endpoint.
-    // Percent-encode those two forms explicitly (valid encodings of the
-    // unreserved `.`, and not re-normalized as dot segments).
+    // verbatim — and WHATWG dot-segment removal happens at *parse* time
+    // and matches the percent-encoded spellings ASCII case-insensitively
+    // (`%2e`, `.%2e`, `%2e.`, `%2e%2e`), so single-encoding to "%2E"
+    // would STILL be popped by the parser under reqwest. Double-encode
+    // instead: the parser sees an ordinary segment, and the server
+    // decodes it to a nonsense literal ("%2E") that can only 404.
+    // (An ID that *arrives* percent-encoded, like "%2e%2e", is defused
+    // by the catch-all arm the same way — the encoder escapes its `%`.)
+    // `require_id` rejects both dot forms loudly on every current call
+    // site; these arms are the belt for future ones.
     match id {
-        "." => std::borrow::Cow::Borrowed("%2E"),
-        ".." => std::borrow::Cow::Borrowed("%2E%2E"),
+        "." => std::borrow::Cow::Borrowed("%252E"),
+        ".." => std::borrow::Cow::Borrowed("%252E%252E"),
         // Cow: the IDs this API issues are opaque hex/base64url, so the
         // borrowed no-escaping arm is essentially always taken — no
         // allocation per URL build. `Cow` implements `Display`, so
@@ -277,7 +300,16 @@ pub(crate) fn with_paging_and(
         params.push(format!("page_token={}", urlencoding::encode(token)));
     }
     for (key, value) in extra {
-        params.push(format!("{key}={}", urlencoding::encode(value)));
+        // Keys ride the encoder too — a no-op for today's literal keys
+        // (`parent`, `update_mask`, `pageSize`, `pageToken`), but the
+        // signature takes &str for both halves, so a future computed key
+        // must not be the one raw interpolation left in the helper that
+        // claims to own all query encoding.
+        params.push(format!(
+            "{}={}",
+            urlencoding::encode(key),
+            urlencoding::encode(value)
+        ));
     }
     if !params.is_empty() {
         url.push(if url.contains('?') { '&' } else { '?' });
@@ -375,23 +407,57 @@ mod tests {
     }
 
     #[test]
-    fn test_require_id_rejects_empty() {
+    fn test_require_id_rejects_empty_and_dot_segments() {
         // An empty ID would address the collection URL (trailing slash) —
         // fail locally instead of issuing the request.
         assert!(require_id("", "trigger").is_err());
         assert!(require_id("t-1", "trigger").is_ok());
+        // Every WHATWG dot-segment spelling is rejected: the parser
+        // normalizes the percent-encoded forms case-insensitively too,
+        // so all of these would pop the preceding path segment.
+        for hostile in [".", "..", "%2e", "%2E", ".%2e", "%2e.", "%2E%2E", "%2e%2e"] {
+            assert!(
+                require_id(hostile, "trigger").is_err(),
+                "dot-segment spelling {hostile:?} must be rejected"
+            );
+        }
+        // Dots inside an ID are not dot segments.
+        assert!(require_id("a.b", "trigger").is_ok());
     }
 
     #[test]
-    fn test_path_segment_encodes_dot_segments() {
+    fn test_path_segment_defuses_dot_segments_under_the_parser() {
         // `.` is unreserved so the encoder alone passes dot segments
-        // through — and URL parsing would then pop the preceding path
-        // segment, reaching a different endpoint. Pin the explicit
-        // percent-encoded forms.
-        assert_eq!(path_segment("."), "%2E");
-        assert_eq!(path_segment(".."), "%2E%2E");
+        // through — and WHATWG dot-segment removal matches the
+        // percent-encoded spellings too, so single-encoding ("%2E") would
+        // still be popped at parse time. Pin the double-encoded inert
+        // forms.
+        assert_eq!(path_segment("."), "%252E");
+        assert_eq!(path_segment(".."), "%252E%252E");
         // A dot *inside* an ID is not a dot segment; it stays borrowed.
         assert_eq!(path_segment("a.b"), "a.b");
+
+        // The property every resource module actually depends on: a URL
+        // built from a hostile ID survives the parser reqwest uses with
+        // its path structure intact (no dot-segment pop, no query or
+        // fragment split). This is what the string assertions above
+        // cannot express — the pre-fix "%2E%2E" passed those while the
+        // parser popped it anyway.
+        for hostile in [".", "..", "%2e%2e", ".%2e", "a/b", "x?alt=media", "x#frag"] {
+            let url = format!("https://h.test/v1beta/things/{}", path_segment(hostile));
+            let parsed = reqwest::Url::parse(&url).expect("built URL must parse");
+            assert!(
+                parsed.path().starts_with("/v1beta/things/")
+                    && parsed.path().len() > "/v1beta/things/".len(),
+                "ID {hostile:?} must stay inside the item segment; \
+                 parser saw path {:?}",
+                parsed.path()
+            );
+            assert!(
+                parsed.query().is_none() && parsed.fragment().is_none(),
+                "ID {hostile:?} must not split a query or fragment"
+            );
+        }
     }
 
     #[test]

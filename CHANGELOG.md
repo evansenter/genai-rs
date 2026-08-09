@@ -90,10 +90,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resource IDs are now percent-encoded when interpolated into URL paths
   (interactions get/delete/cancel/stream and the agents, webhooks, triggers
   and environments item URLs). Well-formed IDs are byte-identical on the
-  wire; a value containing path metacharacters (`/`, `?`, `#`, `..`) is now
+  wire; a value containing path metacharacters (`/`, `?`, `#`) is now
   sent as one encoded segment instead of silently rewriting the request
-  path, and an empty resource ID is rejected locally as `InvalidInput`
-  rather than issuing a request against the collection URL. The Files
+  path, and an empty or dot-segment resource ID (any WHATWG spelling —
+  `.`/`..` bare or percent-encoded, which the URL parser would otherwise
+  pop at parse time) is rejected locally as `InvalidInput` rather than
+  issuing a request against the collection or a different URL. The Files
   API's `get_file`/`delete_file` now validate the full resource name's
   shape positively — the `files/` prefix plus exactly one non-empty
   segment, with the ID percent-encoded like every other resource — so an

@@ -302,6 +302,13 @@ pub struct Trigger {
     /// scoped to this response side; [`TriggerCreateParams`]'s send-side
     /// interaction stays strict, so a config-file typo is a clean parse
     /// error rather than a silently scheduled empty prompt.
+    ///
+    /// Also lossy for unmodeled keys: [`InteractionRequest`] carries no
+    /// `extra` escape hatch, so an interaction field this crate doesn't
+    /// model is dropped on deserialize rather than preserved — a second
+    /// roundtrip asymmetry alongside the absent-`input` one above. (The
+    /// same currently holds for [`Trigger`]'s own top-level unmodeled
+    /// keys; a response-side `extra` is tracked as issue #406.)
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
