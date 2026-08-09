@@ -86,8 +86,8 @@ Methods follow a consistent naming pattern based on their behavior:
 | `with_seed()` | with | replaces | Deterministic output |
 | `with_stop_sequences()` | with | replaces | Halt generation on sequences |
 | `with_presence_penalty(f32)` | with | replaces | Penalizes tokens already present; range [-2.0, 2.0] |
-| `with_transcription_config(TranscriptionConfig)` | with | replaces | Audio transcription tuning (`generation_config.transcription_config`) |
 | `with_frequency_penalty(f32)` | with | replaces | Penalizes tokens by frequency; range [-2.0, 2.0] |
+| `with_transcription_config(TranscriptionConfig)` | with | replaces | Audio transcription tuning (`generation_config.transcription_config`) |
 | **Response Format & Modalities** |
 | `with_response_format(impl Into<ResponseFormat>)` | with | replaces | Typed format (text/audio/image/video) or a raw JSON schema `serde_json::Value` (maps to the text/`application/json` form) |
 | `with_response_formats(Vec<ResponseFormat>)` | with | replaces | List form — one format per output modality |
