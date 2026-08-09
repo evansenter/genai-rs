@@ -590,38 +590,46 @@ async fn test_safety_settings_and_labels_vertex_gated() {
     // starts succeeding, that knob has launched and this test should be
     // upgraded.
     for knob in ["safety_settings", "labels"] {
-        let builder = client
-            .interaction()
-            .with_model("gemini-3-flash-preview")
-            .with_text("Say OK.");
-        let builder = match knob {
-            "safety_settings" => builder.add_safety_setting(SafetySetting::new(
-                HarmCategory::Harassment,
-                SafetyThreshold::BlockOnlyHigh,
-            )),
-            _ => builder.add_label("team", "genai-rs-ci"),
-        };
+        // Retry transients (429/5xx) so the strict match below only ever
+        // sees a settled outcome.
+        let result = crate::retry_request!([client, knob] => {
+            let builder = client
+                .interaction()
+                .with_model("gemini-3-flash-preview")
+                .with_text("Say OK.");
+            let builder = match knob {
+                "safety_settings" => builder.add_safety_setting(SafetySetting::new(
+                    HarmCategory::Harassment,
+                    SafetyThreshold::BlockOnlyHigh,
+                )),
+                _ => builder.add_label("team", "genai-rs-ci"),
+            };
+            builder.create().await
+        });
 
-        match builder.create().await {
+        match result {
             Ok(response) => println!(
                 "{knob} accepted (launched on the Gemini API?): {:?}",
                 response.status
             ),
-            // Only a structured 4xx proves the request reached the schema
-            // validator — a transport blip would pass the marker check
-            // vacuously, so fail loudly on anything else.
+            // The positive pin: a 400 carrying the documented gate text.
+            // Absent markers alone are necessary but not sufficient — a
+            // 403 on a mis-scoped key would pass that check vacuously, so
+            // anything that isn't the documented rejection fails loudly.
             Err(genai_rs::GenaiError::Api {
-                status_code,
+                status_code: 400,
                 message,
                 ..
-            }) if (400..500).contains(&status_code) => {
+            }) if message.contains("Gemini Enterprise Agent Platform") => {
                 println!("{knob} Vertex-gated as expected: {message}");
                 assert!(
                     !message.contains("Unknown parameter") && !message.contains("Unknown name"),
                     "{knob} schema itself was rejected: {message}"
                 );
             }
-            Err(e) => panic!("{knob}: expected a 4xx Vertex-gate rejection, got: {e}"),
+            Err(e) => {
+                panic!("{knob}: expected acceptance or the documented Vertex-gate 400, got: {e}")
+            }
         }
     }
 }
