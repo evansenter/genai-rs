@@ -5,74 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Changed
-
-- **Default model guidance moves to `gemini-3.6-flash`** (from
-  `gemini-3-flash-preview`) across docs, examples, and tests, and image
-  generation moves to `gemini-3.1-flash-image` (from
-  `gemini-3-pro-image-preview`). Both were probed live before migrating.
-
-  One capability difference surfaced and is worth knowing: `gemini-3.6-flash`
-  returns `400 invalid_request` for **inline (base64) video bytes** while
-  accepting video **by URI**. Image, audio and PDF inline data are
-  unaffected. The three inline-video tests are pinned to a model that
-  accepts that form (`tests/common::VIDEO_INLINE_MODEL`) so they keep
-  testing the bytes path rather than the model's appetite for it.
-
-### Fixed
-
-- **`ThinkingSummaries` sent a value the API now rejects.**
-  `to_agent_config_value()` emitted the SCREAMING_CASE
-  `THINKING_SUMMARIES_AUTO` / `_NONE` spelling; verified live 2026-08-10
-  the API responds `The value 'THINKING_SUMMARIES_AUTO' is not supported
-  for 'agent_config.thinking_summaries'. Supported values: 'auto',
-  'none'.` — so deep-research requests carrying thinking summaries failed
-  outright. Both contexts now emit the lowercase form; deserialization
-  still accepts either spelling.
-
-- **Antigravity harness 0.1.10 support (turn completion was broken).** The
-  supported harness moves 0.1.5 → 0.1.10. Two wire spellings the bridge
-  depends on were renamed in that range, and both failed silently rather
-  than loudly:
-  - `STATE_IDLE` → `STATE_FULLY_IDLE`. Only that value ends a turn, so
-    against a 0.1.6+ harness **every turn ran to its timeout** — no parse
-    error, no failed assertion, just a bare
-    `Timeout { operation: "agent turn" }` after the full budget.
-  - `usageMetadata` → `usageUpdate` (now `{agents[], total}`), which
-    silently zeroed token accounting and was additionally misreported as
-    an unknown payload variant.
-
-  Both old spellings are accepted as aliases, so a single build drives
-  either harness revision; verified by running the full harness suite
-  against 0.1.5 and 0.1.10 (10/10 each). Also adds the non-terminal
-  `STATE_WAITING_FOR_TASKS` state introduced in 0.1.10.
-
-### Added
-
-- Wire enums accept alias spellings, so a value renamed between harness
-  revisions resolves to one variant while `as_wire_str` keeps emitting
-  the canonical (current-harness) form.
-- A stalled turn now diagnoses itself. When a turn times out having seen
-  unrecognized *main-trajectory* states, the timeout names them and
-  points at `SUPPORTED_HARNESS_VERSION` instead of reporting an
-  undifferentiated stall — the failure that took a wire trace to
-  diagnose now reads as a version mismatch on the error itself.
-
-### Changed
-
-- CI's antigravity job now receives `GEMINI_API_KEY` (with the same
-  same-repo guard the integration matrix uses). Its model-backed tests
-  are the only ones that drive a real turn end-to-end, and without a key
-  they self-skipped — which is why the turn-completion break above
-  reached a release unnoticed.
-- `docs/ANTIGRAVITY.md` no longer claims newer harnesses "degrade
-  gracefully". Unknown-value preservation stops a crash, but when a
-  *renamed* value is one the bridge matches on, preservation is exactly
-  what makes the breakage silent.
-
-## [0.9.0] - 2026-08-09
+## [0.9.0] - 2026-08-10
 
 ### Changed (breaking)
 
@@ -87,24 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`antigravity::protocol::MultipleChoice` — behind the `antigravity`
   feature — likewise gains a public flattened `extra` field.)
 
-### Changed
-
-- All five resource list envelopes (`AgentListResponse`,
-  `WebhookListResponse`, and the new trigger/execution/environment ones)
-  now degrade a null or malformed list key to an empty page and drop
-  undeserializable elements individually with a `tracing::warn!`, instead
-  of failing the whole response. For the two pre-existing types this
-  changes observable behavior: `list_agents()`/`list_webhooks()` calls
-  that previously returned `Err` on a malformed page now return the
-  surviving entries.
-- `Webhook::create_time`/`update_time` and `SigningSecret::expire_time`
-  now deserialize leniently like the trigger and environment timestamps:
-  a response whose timestamp encoding diverges from RFC 3339 yields the
-  field as `None` (with a `tracing::warn!`) instead of failing the call —
-  so an absent timestamp on a returned webhook can mean either "not sent"
-  or "sent but unparseable"; the warn log distinguishes them.
-
 ### Added
+
+- Wire enums accept alias spellings, so a value renamed between harness
+  revisions resolves to one variant while `as_wire_str` keeps emitting
+  the canonical (current-harness) form.
+- A stalled turn now diagnoses itself. When a turn times out having seen
+  unrecognized *main-trajectory* states, the timeout names them and
+  points at `SUPPORTED_HARNESS_VERSION` instead of reporting an
+  undifferentiated stall — the failure that took a wire trace to
+  diagnose now reads as a version mismatch on the error itself.
+
 
 - **Triggers resource** (`/v1beta/triggers`): server-side scheduled
   interactions with full CRUD plus `run_trigger` and
@@ -144,6 +70,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resource types uniformly. The pre-existing `Agent` and
   `AgentListResponse` gain it too, completing the set.
 
+### Changed
+
+- **Default model guidance moves to `gemini-3.6-flash`** (from
+  `gemini-3-flash-preview`) across docs, examples, and tests, and image
+  generation moves to `gemini-3.1-flash-image` (from
+  `gemini-3-pro-image-preview`). Both were probed live before migrating.
+
+  One capability difference surfaced and is worth knowing: `gemini-3.6-flash`
+  returns `400 invalid_request` for **inline (base64) video bytes** while
+  accepting video **by URI**. Image, audio and PDF inline data are
+  unaffected. The three inline-video tests are pinned to a model that
+  accepts that form (`tests/common::VIDEO_INLINE_MODEL`) so they keep
+  testing the bytes path rather than the model's appetite for it.
+
+
+- CI's antigravity job now receives `GEMINI_API_KEY` (with the same
+  same-repo guard the integration matrix uses). Its model-backed tests
+  are the only ones that drive a real turn end-to-end, and without a key
+  they self-skipped — which is why the turn-completion break above
+  reached a release unnoticed.
+- `docs/ANTIGRAVITY.md` no longer claims newer harnesses "degrade
+  gracefully". Unknown-value preservation stops a crash, but when a
+  *renamed* value is one the bridge matches on, preservation is exactly
+  what makes the breakage silent.
+
+
+
+- All five resource list envelopes (`AgentListResponse`,
+  `WebhookListResponse`, and the new trigger/execution/environment ones)
+  now degrade a null or malformed list key to an empty page and drop
+  undeserializable elements individually with a `tracing::warn!`, instead
+  of failing the whole response. For the two pre-existing types this
+  changes observable behavior: `list_agents()`/`list_webhooks()` calls
+  that previously returned `Err` on a malformed page now return the
+  surviving entries.
+- `Webhook::create_time`/`update_time` and `SigningSecret::expire_time`
+  now deserialize leniently like the trigger and environment timestamps:
+  a response whose timestamp encoding diverges from RFC 3339 yields the
+  field as `None` (with a `tracing::warn!`) instead of failing the call —
+  so an absent timestamp on a returned webhook can mean either "not sent"
+  or "sent but unparseable"; the warn log distinguishes them.
+
 ### Deprecated
 
 - `response_modalities` is marked deprecated by the official SDK in
@@ -153,6 +121,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from this crate — the API rejects it in every form.)
 
 ### Fixed
+
+- **`ThinkingSummaries` sent a value the API now rejects.**
+  `to_agent_config_value()` emitted the SCREAMING_CASE
+  `THINKING_SUMMARIES_AUTO` / `_NONE` spelling; verified live 2026-08-10
+  the API responds `The value 'THINKING_SUMMARIES_AUTO' is not supported
+  for 'agent_config.thinking_summaries'. Supported values: 'auto',
+  'none'.` — so deep-research requests carrying thinking summaries failed
+  outright. Both contexts now emit the lowercase form; deserialization
+  still accepts either spelling.
+
+- **Antigravity harness 0.1.10 support (turn completion was broken).** The
+  supported harness moves 0.1.5 → 0.1.10. Two wire spellings the bridge
+  depends on were renamed in that range, and both failed silently rather
+  than loudly:
+  - `STATE_IDLE` → `STATE_FULLY_IDLE`. Only that value ends a turn, so
+    against a 0.1.6+ harness **every turn ran to its timeout** — no parse
+    error, no failed assertion, just a bare
+    `Timeout { operation: "agent turn" }` after the full budget.
+  - `usageMetadata` → `usageUpdate` (now `{agents[], total}`), which
+    silently zeroed token accounting and was additionally misreported as
+    an unknown payload variant.
+
+  Both old spellings are accepted as aliases, so a single build drives
+  either harness revision; verified by running the full harness suite
+  against 0.1.5 and 0.1.10 (10/10 each). Also adds the non-terminal
+  `STATE_WAITING_FOR_TASKS` state introduced in 0.1.10.
+
 
 - Resource IDs are now percent-encoded when interpolated into URL paths
   (interactions get/delete/cancel/stream and the agents, webhooks, triggers
