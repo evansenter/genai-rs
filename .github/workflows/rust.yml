@@ -58,9 +58,6 @@ jobs:
   test-antigravity:
     name: Test Suite (antigravity)
     runs-on: ubuntu-latest
-    # Same-repo guard as test-integration: the harness tests below need
-    # GEMINI_API_KEY, so forks must not run them.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -79,7 +76,11 @@ jobs:
       # self-skip without a key — so omitting it here made them pass
       # vacuously, and the harness 0.1.5 -> 0.1.10 terminal-state rename
       # (every turn hanging to timeout) went unnoticed.
+      # Same-repo guard on this step only, not the job: the unit-test step
+      # above needs no key, and gating the whole job would stop forks from
+      # running the antigravity-gated unit tests entirely.
       - name: Run harness integration tests
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
         run: cargo nextest run --features antigravity --run-ignored all -E 'binary(antigravity_harness)'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

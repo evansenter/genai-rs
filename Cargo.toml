@@ -140,6 +140,16 @@ path = "examples/real_world/repo_auditor/main.rs"
 required-features = ["antigravity"]
 
 [[example]]
+name = "session_resume"
+path = "examples/real_world/session_resume/main.rs"
+required-features = ["antigravity"]
+
+[[example]]
+name = "workspace_explorer"
+path = "examples/real_world/workspace_explorer/main.rs"
+required-features = ["antigravity"]
+
+[[example]]
 name = "rag_system"
 path = "examples/real_world/rag_system/main.rs"
 

@@ -1198,8 +1198,15 @@ impl<'de> Deserialize<'de> for OutputEvent {
         // modeled yet, and either key must be consumed here or it falls
         // through to the leftover-key arm below and is misreported as an
         // unknown oneof variant.
+        // Consume `usageUpdate` unconditionally, before choosing between
+        // the two spellings: if a transitional harness ever sent *both*,
+        // leaving it in `map` would hand it to the leftover-key arm below
+        // and surface a bogus `Unknown` payload — the exact misreport this
+        // branch exists to prevent, in the one shape a nested match
+        // wouldn't cover.
+        let usage_update = map.remove("usageUpdate");
         let usage_metadata = match map.remove("usageMetadata") {
-            None | Some(Value::Null) => match map.remove("usageUpdate") {
+            Some(Value::Null) | None => match usage_update {
                 None | Some(Value::Null) => None,
                 Some(Value::Object(mut update)) => match update.remove("total") {
                     None | Some(Value::Null) => None,

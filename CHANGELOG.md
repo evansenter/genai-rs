@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Two antigravity worked examples**, both runnable against a real
+  harness: `examples/real_world/session_resume` (trajectory persistence —
+  the `with_save_dir` + `conversation_id()` + `with_conversation_id` round
+  trip, and the fact that resuming an unknown id comes back *empty* rather
+  than erroring) and `examples/real_world/workspace_explorer` (workspaces
+  with real files, the typed `AgentEvent::ToolAction` stream, and an
+  `on_pre_tool` hook that refuses by content where a name-based policy
+  cannot). Both are covered by new harness integration tests.
+
 - Wire enums accept alias spellings, so a value renamed between harness
   revisions resolves to one variant while `as_wire_str` keeps emitting
   the canonical (current-harness) form.
@@ -121,6 +130,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from this crate — the API rejects it in every form.)
 
 ### Fixed
+
+- **`on_post_tool` reported successful harness tools as failures.** The
+  harness sends `"error": ""` — protobuf's default for an unset string —
+  on calls that succeeded, and the bridge surfaced that as `Some("")`, so
+  `ToolOutcome::error.is_some()` (the check the field's own docs invite)
+  was true for every successful builtin. Blank now normalizes to `None` on
+  both dispatch paths. Found by running the new `workspace_explorer`
+  example against a live harness; invisible to every existing test.
 
 - **`ThinkingSummaries` sent a value the API now rejects.**
   `to_agent_config_value()` emitted the SCREAMING_CASE

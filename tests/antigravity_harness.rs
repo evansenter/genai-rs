@@ -1,12 +1,15 @@
 //! Integration tests against a real `localharness` binary.
 //!
 //! These tests need the binary from the `google-antigravity` wheel
-//! (`pip install google-antigravity==0.1.5`) discoverable via the standard
+//! (`pip install google-antigravity==0.1.10`) discoverable via the standard
 //! order (`ANTIGRAVITY_HARNESS_PATH`, python3 site-packages, `PATH`).
 //!
 //! Most tests do NOT need a Gemini API key: the harness completes its
 //! handshake and conversation init with a placeholder key (verified
-//! against harness 0.1.5). Chat tests need a real `GEMINI_API_KEY`.
+//! against harness 0.1.5 and 0.1.10). Chat tests need a real
+//! `GEMINI_API_KEY` — CI supplies one, because these are the only tests
+//! that drive a real turn end to end and therefore the only guard
+//! against a harness protocol change breaking turn completion.
 //!
 //! Run with:
 //! ```bash
@@ -416,6 +419,191 @@ async fn test_antigravity_policy_denies_custom_tool() {
         .await
         .expect("turn should complete despite the deny (model sees the error)");
     assert!(!response.text().is_empty());
+
+    agent.shutdown().await.expect("shutdown");
+}
+
+// =============================================================================
+// Session persistence (real API key required)
+// =============================================================================
+
+/// The `with_save_dir` + `conversation_id()` + `with_conversation_id` round
+/// trip, which `examples/real_world/session_resume` demonstrates.
+///
+/// Asserts the half that is easy to get silently wrong: resuming an unknown
+/// id is *not* an error, it just comes back empty — so a broken resume looks
+/// exactly like a working one unless `initial_history()` is checked.
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_antigravity_session_resume_restores_history() {
+    let Some(key) = api_key() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+    let save_dir = scratch_dir("agy-resume");
+    let save_path = save_dir.path().to_string_lossy().to_string();
+
+    // --- First session: plant a fact, capture the id, shut down cleanly.
+    let mut agent = AntigravityAgent::builder()
+        .with_turn_timeout(std::time::Duration::from_secs(120))
+        .with_api_key(key.clone())
+        .with_model("gemini-3.6-flash")
+        .with_system_instructions("You are a terse note-keeper. Recall facts when asked.")
+        .with_capabilities(Capabilities::none())
+        .with_save_dir(save_path.clone())
+        .spawn()
+        .await
+        .expect("spawn (fresh)");
+
+    let conversation_id = agent
+        .conversation_id()
+        .expect("harness assigns a conversation id")
+        .to_string();
+    assert!(
+        agent.initial_history().is_empty(),
+        "a fresh conversation must restore nothing"
+    );
+
+    agent
+        .chat("Remember this: the fixture code is xyzzy-42.")
+        .await
+        .expect("first turn");
+    // shutdown(), not drop: this is what makes the trajectory durable.
+    agent.shutdown().await.expect("shutdown (fresh)");
+
+    // --- Second session: same dir + id, in a brand-new agent.
+    let mut resumed = AntigravityAgent::builder()
+        .with_turn_timeout(std::time::Duration::from_secs(120))
+        .with_api_key(key)
+        .with_model("gemini-3.6-flash")
+        .with_system_instructions("You are a terse note-keeper. Recall facts when asked.")
+        .with_capabilities(Capabilities::none())
+        .with_save_dir(save_path)
+        .with_conversation_id(conversation_id.clone())
+        .spawn()
+        .await
+        .expect("spawn (resumed)");
+
+    assert_eq!(
+        resumed.conversation_id(),
+        Some(conversation_id.as_str()),
+        "resuming must keep the same conversation id"
+    );
+    let restored = resumed.initial_history().len();
+    assert!(
+        restored > 0,
+        "resume restored no history — a silently-fresh conversation is \
+         indistinguishable from a working resume without this check"
+    );
+
+    // The planted token cannot come from anywhere but restored history.
+    let response = resumed
+        .chat("What is the fixture code? Reply with just the code.")
+        .await
+        .expect("resumed turn");
+    let text = response.text().to_lowercase();
+    assert!(
+        text.contains("xyzzy-42"),
+        "resumed agent should recall the planted fact, got: {text:?}"
+    );
+
+    resumed.shutdown().await.expect("shutdown (resumed)");
+}
+
+// =============================================================================
+// Workspaces, typed tool actions, and hooks (real API key required)
+// =============================================================================
+
+/// Points the builtins at a real directory and asserts the observable
+/// surface `examples/real_world/workspace_explorer` is built on:
+/// `AgentEvent::ToolAction` actually arrives for harness-executed file
+/// tools, and `on_post_tool` reports a *successful* builtin as successful.
+///
+/// That last assertion is a regression guard: the harness sends
+/// `"error": ""` on success, which the bridge previously surfaced as
+/// `Some("")` — making `ToolOutcome::error.is_some()` true for every
+/// successful call.
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_antigravity_workspace_actions_and_post_tool_success() {
+    let Some(key) = api_key() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+    let workspace = scratch_dir("agy-workspace");
+    std::fs::write(
+        workspace.path().join("NOTES.md"),
+        "The build token is grue-77.\n",
+    )
+    .expect("seed workspace");
+
+    // Every post-tool outcome, so we can assert none of the successful
+    // ones were reported as errors.
+    /// (tool name, error) for each completed tool call.
+    type PostToolLog = std::sync::Arc<std::sync::Mutex<Vec<(String, Option<String>)>>>;
+    let outcomes: PostToolLog = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let hook_outcomes = std::sync::Arc::clone(&outcomes);
+
+    let mut agent = AntigravityAgent::builder()
+        .with_turn_timeout(std::time::Duration::from_secs(120))
+        .with_api_key(key)
+        .with_model("gemini-3.6-flash")
+        .with_system_instructions(
+            "Read the files in the workspace to answer. Use the file tools rather than guessing.",
+        )
+        .add_workspace(workspace.path().to_string_lossy().to_string())
+        .with_capabilities(Capabilities::read_only())
+        .on_post_tool(move |outcome| {
+            hook_outcomes
+                .lock()
+                .unwrap()
+                .push((outcome.name.clone(), outcome.error.clone()));
+        })
+        .spawn()
+        .await
+        .expect("spawn");
+
+    let mut actions: Vec<String> = Vec::new();
+    {
+        let mut stream = agent
+            .send_streaming("What is the build token? Read NOTES.md.")
+            .await
+            .expect("stream");
+        while let Some(event) = stream.next().await {
+            match event.expect("stream event") {
+                AgentEvent::ToolAction { action, .. } => actions.push(action.tool_name()),
+                AgentEvent::Finished(_) => break,
+                _ => {}
+            }
+        }
+    }
+
+    // The workspace is real, so real file tools must have run against it.
+    assert!(
+        !actions.is_empty(),
+        "expected at least one harness ToolAction against the workspace"
+    );
+    assert!(
+        actions
+            .iter()
+            .any(|a| a == "view_file" || a == "list_directory" || a == "search_directory"),
+        "expected a file-tool action, got: {actions:?}"
+    );
+
+    // Regression guard: a successful builtin must not report an error.
+    // Snapshot and release before the shutdown await.
+    let recorded: Vec<(String, Option<String>)> = std::mem::take(&mut *outcomes.lock().unwrap());
+    assert!(
+        !recorded.is_empty(),
+        "on_post_tool should fire for harness-executed builtins"
+    );
+    for (name, error) in &recorded {
+        assert!(
+            error.as_deref().is_none_or(|e| !e.trim().is_empty()),
+            "{name} reported a blank error string as a failure — the harness \
+             sends \"error\": \"\" on success and it must normalize to None"
+        );
+    }
 
     agent.shutdown().await.expect("shutdown");
 }

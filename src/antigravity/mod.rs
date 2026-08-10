@@ -1501,10 +1501,12 @@ impl AntigravityAgent {
                     // wire envelope the harness expects (Item: unwrap
                     // ToolOutcome.result). The error branch keeps the
                     // envelope's error string.
-                    let error = result
-                        .get("error")
-                        .and_then(Value::as_str)
-                        .map(ToString::to_string);
+                    let error = normalize_tool_error(
+                        result
+                            .get("error")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                    );
                     let outcome = ToolOutcome {
                         name: name.clone(),
                         result: error.is_none().then(|| unwrap_result_value(&result)),
@@ -1570,7 +1572,7 @@ impl AntigravityAgent {
                     // Unwrap the `{"result": ...}` envelope for consistency
                     // with the custom-tool dispatch path.
                     result: post_tool_args.result.as_deref().map(unwrap_result_string),
-                    error: post_tool_args.error.clone(),
+                    error: normalize_tool_error(post_tool_args.error.clone()),
                 });
             }
             response.empty_result = Some(protocol::EmptyResult {});
@@ -1772,6 +1774,19 @@ fn unwrap_result_value(value: &Value) -> String {
         };
     }
     value.to_string()
+}
+
+/// Normalizes a tool error into "errored or not".
+///
+/// The harness populates `PostToolArgs.error` with `""` — protobuf's
+/// default for an unset string — on calls that **succeeded**. Passing that
+/// through verbatim makes `ToolOutcome::error.is_some()` true for every
+/// successful harness-executed builtin, which is precisely the check the
+/// field's own docs invite ("the error, if it failed"). Treating blank as
+/// absent keeps `is_some()` meaning what it says, on both the custom-tool
+/// dispatch path and the harness post-tool path.
+fn normalize_tool_error(error: Option<String>) -> Option<String> {
+    error.filter(|e| !e.trim().is_empty())
 }
 
 /// Like [`unwrap_result_value`], for a harness-supplied result *string*
@@ -2346,6 +2361,66 @@ mod agent_tests {
             turn.queue.pop_front(),
             Some(AgentEvent::Finished(_))
         ));
+    }
+
+    #[test]
+    fn stall_diagnosis_names_unrecognized_main_trajectory_states() {
+        // The scenario nobody reproduces on purpose: the harness renames
+        // the terminal state, the Evergreen path absorbs it as Unknown,
+        // and the turn runs to its timeout. Pin that the timeout message
+        // names the culprit instead of reporting a bare stall.
+        let unknown: TrajectoryState =
+            serde_json::from_value(serde_json::json!("STATE_SUPER_IDLE")).unwrap();
+        assert!(unknown.is_unknown(), "fixture must be an Unknown variant");
+
+        let mut turn = TurnState::new(None, None);
+        turn.main_trajectory = Some("main".to_string());
+        let update = trajectory_update(Some("main"), unknown, None);
+        AntigravityAgent::process_trajectory_update(&update, &mut turn).unwrap();
+
+        assert!(!turn.finished, "an unknown state must not end the turn");
+        let diagnosis = turn.stall_diagnosis();
+        assert!(
+            diagnosis.contains("STATE_SUPER_IDLE"),
+            "diagnosis must name the state, got: {diagnosis}"
+        );
+        assert!(
+            diagnosis.contains("version mismatch"),
+            "diagnosis must point at the likely cause, got: {diagnosis}"
+        );
+    }
+
+    #[test]
+    fn stall_diagnosis_ignores_subagent_states_and_clean_turns() {
+        // A clean turn keeps the plain operation name...
+        let turn = TurnState::new(None, None);
+        assert_eq!(turn.stall_diagnosis(), "agent turn");
+
+        // ...and a *subagent* trajectory going somewhere unrecognized is
+        // not the parent's problem, so it must not pollute the parent's
+        // diagnosis (the `is_main` half of the condition).
+        let unknown: TrajectoryState =
+            serde_json::from_value(serde_json::json!("STATE_SUPER_IDLE")).unwrap();
+        let mut turn = TurnState::new(None, None);
+        turn.main_trajectory = Some("main".to_string());
+        let update = trajectory_update(Some("subagent-1"), unknown, None);
+        AntigravityAgent::process_trajectory_update(&update, &mut turn).unwrap();
+        assert_eq!(turn.stall_diagnosis(), "agent turn");
+    }
+
+    #[test]
+    fn tool_error_normalization_treats_blank_as_success() {
+        // The harness sends `"error": ""` (protobuf's default for an unset
+        // string) on calls that SUCCEEDED, so passing it through verbatim
+        // reported every successful builtin as a failure to the
+        // `is_some()` check the field's docs invite.
+        assert_eq!(normalize_tool_error(Some(String::new())), None);
+        assert_eq!(normalize_tool_error(Some("   ".to_string())), None);
+        assert_eq!(normalize_tool_error(None), None);
+        assert_eq!(
+            normalize_tool_error(Some("boom".to_string())),
+            Some("boom".to_string())
+        );
     }
 
     #[test]

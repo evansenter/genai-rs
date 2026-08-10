@@ -309,7 +309,7 @@ write-capable `AskQuestion` builtin), `send_streaming()`, `shutdown()`.
 | `computer_use` | Computer Use capability access |
 | `file_search` | Pre-configured file search store |
 | `google_search` | Google Search grounding access |
-| `antigravity_agent`, `repo_auditor` | `localharness` binary (`pip install google-antigravity==0.1.10`) + `--features antigravity` |
+| `antigravity_agent`, `repo_auditor`, `session_resume`, `workspace_explorer` | `localharness` binary (`pip install google-antigravity==0.1.10`) + `--features antigravity` |
 
 ## Example Progression
 

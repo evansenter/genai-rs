@@ -289,7 +289,7 @@ agent.shutdown().await?;
 ```
 
 The same `#[tool]` functions work in both modes, and `LOUD_WIRE=1` covers
-harness sessions too. Setup (`pip install google-antigravity==0.1.5`),
+harness sessions too. Setup (`pip install google-antigravity==0.1.10`),
 capabilities, policies/hooks, MCP servers, subagents, triggers, and session
 resume are covered in [docs/ANTIGRAVITY.md](docs/ANTIGRAVITY.md); see
 [`repo_auditor`](examples/real_world/repo_auditor/main.rs) for a complete

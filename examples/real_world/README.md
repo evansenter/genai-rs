@@ -15,6 +15,8 @@ This directory contains comprehensive example applications demonstrating practic
 | [Web Scraper Agent](./web_scraper_agent/) | Web research assistant | Google Search grounding, streaming |
 | [Testing Assistant](./testing_assistant/) | Test generation from code | Coverage analysis, property tests |
 | [Repo Auditor](./repo_auditor/) | Agentic security audit (Antigravity harness) | Subagents, policies + hooks, structured report (`--features antigravity`) |
+| [Session Resume](./session_resume/) | Agent that remembers across process restarts | Trajectory persistence, `conversation_id` round trip, `initial_history` (`--features antigravity`) |
+| [Workspace Explorer](./workspace_explorer/) | Watching an agent work, and gating it live | Workspaces, typed `ToolAction` stream, content-based `on_pre_tool` deny (`--features antigravity`) |
 
 ## Running Examples
 
