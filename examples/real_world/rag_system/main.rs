@@ -268,7 +268,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         // Step 4: Send to model with system instruction for RAG behavior
         let response = client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_system_instruction(
                 "You are a helpful assistant answering questions about company policies and \
                  technical documentation. Always cite your sources when referencing the \

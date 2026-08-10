@@ -61,7 +61,7 @@ async fn canary_basic_interaction_no_unknown_content() {
 
     let response = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text("Say hello in exactly one word.")
         .create()
         .await
@@ -99,7 +99,7 @@ async fn canary_response_status_is_known() {
 
     let response = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text("What is 2+2?")
         .create()
         .await
@@ -143,7 +143,7 @@ async fn canary_function_calling_no_unknown_content() {
 
     let response = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text("What's the weather in Paris?")
         .add_functions(vec![get_weather])
         .create()
@@ -179,7 +179,7 @@ async fn canary_thinking_mode_no_unknown_content() {
 
     let response = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text("What is the square root of 144?")
         .with_thinking_level(ThinkingLevel::Low)
         .create()
@@ -213,7 +213,7 @@ async fn canary_streaming_no_unknown_chunks() {
 
     let mut stream = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text("Count from 1 to 5.")
         .create_stream();
 
@@ -252,7 +252,7 @@ async fn canary_google_search_no_unknown_content() {
 
     let response = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text("What is the current population of Tokyo according to recent data?")
         .with_google_search()
         .create()
@@ -286,7 +286,7 @@ async fn canary_code_execution_no_unknown_content() {
         Duration::from_secs(60),
         client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_text("Calculate 123 * 456 using Python code execution.")
             .with_code_execution()
             .create(),
@@ -366,7 +366,7 @@ async fn canary_comprehensive_response_check() {
 
     let response = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text("Hello! Please respond with a friendly greeting.")
         .create()
         .await

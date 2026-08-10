@@ -5,7 +5,7 @@ use super::*;
 #[test]
 fn test_serialize_create_interaction_request_with_model() {
     let request = InteractionRequest {
-        model: Some("gemini-3-flash-preview".to_string()),
+        model: Some("gemini-3.6-flash".to_string()),
         agent: None,
         agent_config: None,
         input: InteractionInput::Text("Hello, world!".to_string()),
@@ -29,7 +29,7 @@ fn test_serialize_create_interaction_request_with_model() {
     let json = serde_json::to_string(&request).expect("Serialization failed");
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-    assert_eq!(value["model"], "gemini-3-flash-preview");
+    assert_eq!(value["model"], "gemini-3.6-flash");
     assert_eq!(value["input"], "Hello, world!");
     assert!(value.get("agent").is_none());
 }
@@ -171,7 +171,8 @@ fn test_tool_choice_allowed_tools_roundtrip() {
 #[test]
 fn test_thinking_summaries_serialization() {
     // GenerationConfig wire format uses lowercase (auto/none)
-    // Note: AgentConfig uses THINKING_SUMMARIES_* via to_agent_config_value() - see agent_config.rs tests
+    // Note: AgentConfig also uses the lowercase form via to_agent_config_value();
+    // the old THINKING_SUMMARIES_* spelling is still accepted on deserialize.
     assert_eq!(
         serde_json::to_string(&ThinkingSummaries::Auto).unwrap(),
         "\"auto\""
@@ -185,7 +186,7 @@ fn test_thinking_summaries_serialization() {
 
 #[test]
 fn test_thinking_summaries_deserialization() {
-    // Test wire format (THINKING_SUMMARIES_*)
+    // Deserialize accepts the legacy THINKING_SUMMARIES_* spelling.
     assert_eq!(
         serde_json::from_str::<ThinkingSummaries>("\"THINKING_SUMMARIES_AUTO\"").unwrap(),
         ThinkingSummaries::Auto
@@ -399,7 +400,7 @@ fn test_deep_research_config_serialization() {
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
 
     assert_eq!(value["type"], "deep-research");
-    assert_eq!(value["thinking_summaries"], "THINKING_SUMMARIES_AUTO");
+    assert_eq!(value["thinking_summaries"], "auto");
 }
 
 #[test]
@@ -527,10 +528,7 @@ fn test_agent_config_helper_methods() {
         .into();
     let value = config.as_value();
     assert_eq!(value.get("type").unwrap(), "deep-research");
-    assert_eq!(
-        value.get("thinking_summaries").unwrap(),
-        "THINKING_SUMMARIES_AUTO"
-    );
+    assert_eq!(value.get("thinking_summaries").unwrap(), "auto");
 }
 
 #[test]
@@ -566,10 +564,7 @@ fn test_create_interaction_request_with_agent_config() {
 
     assert_eq!(value["agent"], "deep-research-pro-preview-12-2025");
     assert_eq!(value["agent_config"]["type"], "deep-research");
-    assert_eq!(
-        value["agent_config"]["thinking_summaries"],
-        "THINKING_SUMMARIES_AUTO"
-    );
+    assert_eq!(value["agent_config"]["thinking_summaries"], "auto");
     assert_eq!(value["background"], true);
     assert_eq!(value["store"], true);
 }
@@ -579,7 +574,8 @@ fn test_create_interaction_request_with_agent_config() {
 /// This test explicitly documents the casing decisions:
 /// - `type` key uses kebab-case for values: "deep-research", "dynamic"
 /// - `thinking_summaries` key uses snake_case per API documentation
-/// - Values use SCREAMING_SNAKE_CASE: "THINKING_SUMMARIES_AUTO", "THINKING_SUMMARIES_NONE"
+/// - Values are lowercase: "auto", "none" (the API rejected the older
+///   SCREAMING_SNAKE_CASE spelling as of 2026-08-10)
 ///
 /// Note: The Gemini Interactions API uses snake_case for field names.
 #[test]
@@ -591,7 +587,7 @@ fn test_agent_config_field_naming_conventions() {
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
 
-    // Expected: {"type":"deep-research","thinking_summaries":"THINKING_SUMMARIES_AUTO"}
+    // Expected: {"type":"deep-research","thinking_summaries":"auto"}
     assert!(
         json.contains("thinking_summaries"),
         "Field should be snake_case 'thinking_summaries', got: {}",
@@ -603,10 +599,10 @@ fn test_agent_config_field_naming_conventions() {
         json
     );
 
-    // Verify value uses wire format THINKING_SUMMARIES_*
+    // Verify value uses the lowercase wire format
     assert!(
-        json.contains(r#""THINKING_SUMMARIES_AUTO""#),
-        "ThinkingSummaries::Auto should serialize to 'THINKING_SUMMARIES_AUTO', got: {}",
+        json.contains(r#""auto""#),
+        "ThinkingSummaries::Auto should serialize to 'auto', got: {}",
         json
     );
 }
@@ -621,7 +617,7 @@ fn test_agent_config_field_naming_conventions() {
 #[test]
 fn test_interaction_request_roundtrip() {
     let original = InteractionRequest {
-        model: Some("gemini-3-flash-preview".to_string()),
+        model: Some("gemini-3.6-flash".to_string()),
         agent: None,
         agent_config: None,
         input: InteractionInput::Text("Hello, world!".to_string()),
@@ -685,7 +681,7 @@ fn test_interaction_request_roundtrip() {
 #[test]
 fn test_response_format_serializes_as_snake_case() {
     let request = InteractionRequest {
-        model: Some("gemini-3-flash-preview".to_string()),
+        model: Some("gemini-3.6-flash".to_string()),
         agent: None,
         agent_config: None,
         input: InteractionInput::Text("test".to_string()),
@@ -891,7 +887,7 @@ fn test_deep_research_config_full_wire_shape() {
 
     let value = serde_json::to_value(&config).unwrap();
     assert_eq!(value["type"], "deep-research");
-    assert_eq!(value["thinking_summaries"], "THINKING_SUMMARIES_AUTO");
+    assert_eq!(value["thinking_summaries"], "auto");
     assert_eq!(value["visualization"], "off");
     assert_eq!(value["collaborative_planning"], true);
     assert_eq!(value["enable_bigquery_tool"], true);
@@ -903,7 +899,7 @@ fn test_request_with_webhook_config_and_environment_wire_shape() {
     use crate::webhooks::WebhookConfig;
 
     let request = InteractionRequest {
-        model: Some("gemini-3-flash-preview".to_string()),
+        model: Some("gemini-3.6-flash".to_string()),
         agent: None,
         agent_config: None,
         input: InteractionInput::Text("Hello".to_string()),

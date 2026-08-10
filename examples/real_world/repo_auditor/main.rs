@@ -160,7 +160,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let mut agent = AntigravityAgent::builder()
         .with_api_key(api_key)
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_system_instructions(AUDITOR_INSTRUCTIONS)
         .add_workspace(&workspace)
         // Read-only built-ins plus subagent delegation. start_subagent is

@@ -22,7 +22,7 @@ async fn main() -> Result<(), genai_rs::GenaiError> {
 
     let response = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text("Explain Rust's ownership model in one sentence.")
         .create()
         .await?;
@@ -249,7 +249,7 @@ use genai_rs::InteractionRequest;
 
 // Build request without executing (Clone + Serialize)
 let request: InteractionRequest = client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Hello!")
     .build()?;
 
@@ -275,7 +275,7 @@ use genai_rs::antigravity::{AntigravityAgent, policy};
 
 let mut agent = AntigravityAgent::builder()
     .with_api_key(std::env::var("GEMINI_API_KEY")?)
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .add_workspace("/path/to/repo")
     .add_policy(policy::deny_all())          // policies evaluated in Rust,
     .add_policy(policy::allow("view_file"))  // before every tool dispatch
@@ -397,7 +397,7 @@ Common issues and solutions are documented in [TROUBLESHOOTING.md](TROUBLESHOOTI
 
 **Quick fixes:**
 - **"API key not valid"** - Check `GEMINI_API_KEY` is set
-- **"Model not found"** - Use `gemini-3-flash-preview`
+- **"Model not found"** - Use `gemini-3.6-flash`
 - **Functions not executing** - Use `create_with_auto_functions()`
 - **TLS errors in minimal containers** - Install a CA bundle (OS trust store is used since reqwest 0.13)
 

@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Policies are evaluated Rust-side before every tool dispatch.
     let mut agent = AntigravityAgent::builder()
         .with_api_key(api_key)
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_system_instructions(
             "You are a concise assistant. Prefer tools over guessing. When a request is \
              ambiguous (e.g. no city given for weather), use ask_question to clarify \

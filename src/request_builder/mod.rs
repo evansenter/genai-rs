@@ -43,7 +43,7 @@ use futures_util::{StreamExt, stream::BoxStream};
 /// let client = Client::builder("api_key".to_string()).build()?;
 ///
 /// let response = client.interaction()
-///     .with_model("gemini-3-flash-preview")
+///     .with_model("gemini-3.6-flash")
 ///     .with_text("What is the capital of France?")
 ///     .create()
 ///     .await?;
@@ -62,7 +62,7 @@ use futures_util::{StreamExt, stream::BoxStream};
 /// # let input = "Hello";
 /// // Build common configuration, then conditionally add previous_interaction
 /// let mut builder = client.interaction()
-///     .with_model("gemini-3-flash-preview")
+///     .with_model("gemini-3.6-flash")
 ///     .with_system_instruction("You are a helpful assistant.")
 ///     .with_content(vec![Content::text(input)]);
 ///
@@ -278,7 +278,7 @@ impl<'a> InteractionBuilder<'a> {
         self
     }
 
-    /// Sets the model to use for this interaction (e.g., "gemini-3-flash-preview").
+    /// Sets the model to use for this interaction (e.g., "gemini-3.6-flash").
     ///
     /// Note: Mutually exclusive with `with_agent()`.
     #[must_use]
@@ -437,7 +437,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// // Simple single-turn message
     /// let response = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Hello!")
     ///     .create()
     ///     .await?;
@@ -448,7 +448,7 @@ impl<'a> InteractionBuilder<'a> {
     ///     Step::model_text("4"),
     /// ];
     /// let response = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_history(history)
     ///     .with_text("And times 3?")  // Appended as final user_input step
     ///     .create()
@@ -485,7 +485,7 @@ impl<'a> InteractionBuilder<'a> {
     /// let client = Client::new("api-key".to_string());
     ///
     /// let response = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_system_instruction("You are a helpful assistant specializing in Rust")
     ///     .with_text("Hello!")
     ///     .create()
@@ -519,7 +519,7 @@ impl<'a> InteractionBuilder<'a> {
     /// let client = Client::builder("api_key".to_string()).build()?;
     ///
     /// let response = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_content(vec![
     ///         Content::text("Describe this image"),
     ///         Content::image_uri("files/abc", "image/png"),
@@ -571,7 +571,7 @@ impl<'a> InteractionBuilder<'a> {
     ///     Step::user_text("And what's that times 3?"),
     /// ];
     /// let response = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_history(history)
     ///     .create()
     ///     .await?;
@@ -606,7 +606,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .conversation()
     ///         .user("What is 2+2?")
     ///         .model("2+2 equals 4.")
@@ -656,7 +656,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Hello")
     ///     .add_tool(ComputerUseConfig::new().excluding(vec!["download_file".to_string()]))
     ///     .add_tool(FileSearchConfig::new(vec!["docs".to_string()]).with_top_k(5))
@@ -702,7 +702,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// let builder = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("What's the temperature in Paris?")
     ///     .add_function(func);
     /// ```
@@ -730,7 +730,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// let builder = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("What's the weather and time?")
     ///     .add_functions(functions);
     /// ```
@@ -770,7 +770,7 @@ impl<'a> InteractionBuilder<'a> {
     /// let service = Arc::new(MyService { db: Database::new() });
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_tool_service(service)
     ///     .with_text("Query the database for users")
     ///     .create_with_auto_functions()
@@ -800,7 +800,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Who won the 2024 World Series?")
     ///     .with_google_search()
     ///     .create()
@@ -840,7 +840,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Find coffee shops near Times Square")
     ///     .with_google_maps()
     ///     .create()
@@ -883,7 +883,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Calculate the factorial of 50")
     ///     .with_code_execution()
     ///     .create()
@@ -929,7 +929,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Summarize the content from https://example.com")
     ///     .with_url_context()
     ///     .create()
@@ -976,7 +976,7 @@ impl<'a> InteractionBuilder<'a> {
     /// ```
     ///
     /// Use this when you want the model to generate images. Requires a model
-    /// that supports image generation (e.g., `gemini-3-pro-image-preview`).
+    /// that supports image generation (e.g., `gemini-3.1-flash-image`).
     ///
     /// # Example
     ///
@@ -989,7 +989,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-pro-image-preview")
+    ///     .with_model("gemini-3.1-flash-image")
     ///     .with_text("A cute cat playing with yarn")
     ///     .with_image_output()
     ///     .create()
@@ -1165,7 +1165,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-pro-image-preview")
+    ///     .with_model("gemini-3.1-flash-image")
     ///     .with_text("Generate a landscape photo")
     ///     .with_image_config(config)
     ///     .create()
@@ -1243,7 +1243,7 @@ impl<'a> InteractionBuilder<'a> {
     /// let client = Client::new("api-key".to_string());
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Transcribe the attached audio")
     ///     .with_transcription_config(
     ///         TranscriptionConfig::new().with_language_codes(["en-US"]),
@@ -1382,7 +1382,7 @@ impl<'a> InteractionBuilder<'a> {
     /// let client = Client::new("api-key".to_string());
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Tell me about safety filters")
     ///     .with_safety_settings(vec![SafetySetting::new(
     ///         HarmCategory::Harassment,
@@ -1513,7 +1513,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Generate info for someone named Alice who is 30 and likes hiking")
     ///     .with_response_format(schema)
     ///     .create()
@@ -1540,7 +1540,7 @@ impl<'a> InteractionBuilder<'a> {
     /// # let client = Client::new("api-key".to_string());
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("What is the current weather in Tokyo?")
     ///     .with_google_search()
     ///     .with_response_format(json!({
@@ -1606,7 +1606,7 @@ impl<'a> InteractionBuilder<'a> {
     /// # let client = Client::new("api-key".to_string());
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-pro-image-preview")
+    ///     .with_model("gemini-3.1-flash-image")
     ///     .with_text("A labeled diagram of a volcano")
     ///     .with_response_formats(vec![
     ///         ResponseFormat::text_plain(),
@@ -1649,7 +1649,7 @@ impl<'a> InteractionBuilder<'a> {
     /// let client = Client::builder("api-key".to_string()).build()?;
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Solve this step by step: 15 * 23")
     ///     .with_thinking_level(ThinkingLevel::Medium)
     ///     .create()
@@ -1685,7 +1685,7 @@ impl<'a> InteractionBuilder<'a> {
     /// let client = Client::builder("api-key".to_string()).build()?;
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Solve this step by step: 15 * 23")
     ///     .with_thinking_level(ThinkingLevel::Medium)
     ///     .with_thinking_summaries(ThinkingSummaries::Auto)
@@ -1718,7 +1718,7 @@ impl<'a> InteractionBuilder<'a> {
     /// // Two requests with the same seed should produce the same output
     /// let response1 = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Generate a random number")
     ///     .with_seed(42)
     ///     .create()
@@ -1726,7 +1726,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// let response2 = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Generate a random number")
     ///     .with_seed(42)
     ///     .create()
@@ -1758,7 +1758,7 @@ impl<'a> InteractionBuilder<'a> {
     /// let client = Client::builder("api-key".to_string()).build()?;
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Write a story")
     ///     .with_stop_sequences(vec!["THE END".to_string(), "---".to_string()])
     ///     .create()
@@ -1795,7 +1795,7 @@ impl<'a> InteractionBuilder<'a> {
     /// // Force the model to use a function
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Get weather in Tokyo")
     ///     .with_function_calling_mode(FunctionCallingMode::Any)
     ///     .create()
@@ -1804,7 +1804,7 @@ impl<'a> InteractionBuilder<'a> {
     /// // Use VALIDATED mode for guaranteed schema adherence
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Get weather in Tokyo")
     ///     .with_function_calling_mode(FunctionCallingMode::Validated)
     ///     .create()
@@ -1848,7 +1848,7 @@ impl<'a> InteractionBuilder<'a> {
     /// let client = Client::builder("api-key".to_string()).build()?;
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Get weather in Tokyo")
     ///     .with_allowed_tools(vec!["get_weather".to_string()])
     ///     .create()
@@ -1879,7 +1879,7 @@ impl<'a> InteractionBuilder<'a> {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let client = Client::new("key".to_string());
     /// let response = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Hello")
     ///     .with_service_tier(ServiceTier::Flex)
     ///     .create()
@@ -1901,7 +1901,7 @@ impl<'a> InteractionBuilder<'a> {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let client = Client::new("key".to_string());
     /// let response = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Summarize the cached document")
     ///     .with_cached_content("cachedContents/xyz")
     ///     .create()
@@ -1974,7 +1974,7 @@ impl<'a> InteractionBuilder<'a> {
     /// let client = Client::builder("api_key".to_string()).build()?;
     ///
     /// let response = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Complex multi-step task")
     ///     .with_max_function_call_loops(10)  // Allow up to 10 iterations
     ///     .create_with_auto_functions()
@@ -2025,7 +2025,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("What is the meaning of life?")
     ///     .with_timeout(Duration::from_secs(30))
     ///     .create()
@@ -2092,7 +2092,7 @@ impl<'a> InteractionBuilder<'a> {
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let client = Client::new("api_key".to_string());
     /// let mut stream = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Write a story")
     ///     .create_stream();
     ///
@@ -2124,7 +2124,7 @@ impl<'a> InteractionBuilder<'a> {
     /// let client = Client::builder("api_key".to_string()).build()?;
     ///
     /// let mut stream = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Count to 5")
     ///     .create_stream();
     ///
@@ -2198,7 +2198,7 @@ impl<'a> InteractionBuilder<'a> {
     /// let client = Client::new("api_key".to_string());
     ///
     /// let request = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Hello!")
     ///     .build()?;
     ///
@@ -2347,7 +2347,7 @@ impl<'a> InteractionBuilder<'a> {
 ///
 /// let response = client
 ///     .interaction()
-///     .with_model("gemini-3-flash-preview")
+///     .with_model("gemini-3.6-flash")
 ///     .conversation()
 ///         .user("What is the capital of France?")
 ///         .model("The capital of France is Paris.")
@@ -2381,7 +2381,7 @@ impl<'a> ConversationBuilder<'a> {
     ///
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .conversation()
     ///         .user("Hello!")
     ///         .done()
@@ -2419,7 +2419,7 @@ impl<'a> ConversationBuilder<'a> {
     ///
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .conversation()
     ///         .user("What is 2+2?")
     ///         .model("2+2 equals 4.")
@@ -2457,7 +2457,7 @@ impl<'a> ConversationBuilder<'a> {
     ///
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .conversation()
     ///         .turn(role, "Dynamic message")
     ///         .done()
@@ -2491,7 +2491,7 @@ impl<'a> ConversationBuilder<'a> {
     ///
     /// let response = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .conversation()
     ///         .user("Hello!")
     ///         .done()  // Returns to InteractionBuilder

@@ -210,7 +210,7 @@ use genai_rs::antigravity::{AntigravityAgent, policy};
 
 let mut agent = AntigravityAgent::builder()
     .with_api_key(std::env::var("GEMINI_API_KEY")?)   // or with_model_target(...)
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_system_instructions("You are a code-review assistant.")
     .with_workspace("/path/to/repo")
     .add_tool(get_weather_declaration())               // same #[tool] fns as Interactions

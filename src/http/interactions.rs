@@ -578,7 +578,7 @@ mod tests {
     fn test_create_interaction_request_serialization() {
         // Verify request serialization works correctly
         let request = InteractionRequest {
-            model: Some("gemini-3-flash-preview".to_string()),
+            model: Some("gemini-3.6-flash".to_string()),
             agent: None,
             agent_config: None,
             input: InteractionInput::Text("Hello".to_string()),
@@ -600,7 +600,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&request).expect("Serialization should work");
-        assert!(json.contains("gemini-3-flash-preview"));
+        assert!(json.contains("gemini-3.6-flash"));
         assert!(json.contains("Hello"));
     }
 
@@ -609,7 +609,7 @@ mod tests {
         // Verify we can deserialize a typical revision 2026-05-20 response
         let response_json = r#"{
             "id": "test_interaction_123",
-            "model": "gemini-3-flash-preview",
+            "model": "gemini-3.6-flash",
             "steps": [{"type": "model_output", "content": [{"type": "text", "text": "Hi there!"}]}],
             "status": "completed"
         }"#;

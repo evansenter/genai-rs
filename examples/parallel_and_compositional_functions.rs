@@ -185,7 +185,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let mut response = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text("What's the weather and time in Tokyo, London, and New York?")
         .add_functions(functions.clone())
         .with_store_enabled()
@@ -239,7 +239,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         // Send results back - no need to resend tools on function result turns
         response = client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_previous_interaction(response.id.as_ref().unwrap())
             .with_history(result_steps) // Just the result steps, no tools needed
             .create()
@@ -262,7 +262,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let mut response = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text("What activities do you recommend for my current location based on the weather?")
         .add_functions(functions.clone())
         .with_store_enabled()
@@ -305,7 +305,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         // But for function result turns, we don't need to
         response = client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_previous_interaction(response.id.as_ref().unwrap())
             .with_history(result_steps)
             .create()

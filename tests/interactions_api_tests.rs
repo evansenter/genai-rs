@@ -377,7 +377,7 @@ mod streaming {
 
         with_timeout(test_timeout(), async {
             let request = InteractionRequest {
-                model: Some("gemini-3-flash-preview".to_string()),
+                model: Some("gemini-3.6-flash".to_string()),
                 agent: None,
                 agent_config: None,
                 input: InteractionInput::Text("Count from 1 to 5.".to_string()),
@@ -1024,7 +1024,13 @@ mod generation_config {
 
         let config = GenerationConfig {
             temperature: Some(0.0),
-            max_output_tokens: Some(100),
+            // Headroom, deliberately: this test is about `temperature`, not
+            // truncation. gemini-3.6-flash spends ~100 thinking tokens on
+            // even this trivial prompt (verified live 2026-08-10: ~99-102
+            // total for a 1-token answer), so the old 100-token cap made
+            // "is there any text left?" a coin flip rather than a
+            // temperature assertion.
+            max_output_tokens: Some(2000),
             top_p: None,
             thinking_level: None,
             ..Default::default()
@@ -1556,7 +1562,7 @@ mod multimodal {
             return;
         };
 
-        let model = "gemini-3-pro-image-preview";
+        let model = "gemini-3.1-flash-image";
         let prompt = "A simple red circle on a white background";
 
         println!("Generating image with model: {}", model);

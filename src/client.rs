@@ -242,14 +242,14 @@ impl Client {
     ///
     /// // Simple interaction
     /// let response = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Hello, world!")
     ///     .create()
     ///     .await?;
     ///
     /// // Stateful conversation (requires stored interaction)
     /// let response2 = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("What did I just say?")
     ///     .with_previous_interaction(response.id.as_ref().expect("stored interaction has id"))
     ///     .create()
@@ -289,7 +289,7 @@ impl Client {
     /// // Build a reusable request with the builder, then execute it.
     /// let request = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Hello, world!")
     ///     .build()?;
     ///
@@ -309,7 +309,7 @@ impl Client {
     /// let client = Client::builder("api_key".to_string()).build()?;
     /// let mut request = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Count to 5")
     ///     .build()?;
     /// request.stream = Some(true);
@@ -344,7 +344,7 @@ impl Client {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::new("api_key".to_string());
     /// let request = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Hello!")
     ///     .build()?;
     ///
@@ -398,7 +398,7 @@ impl Client {
     /// let client = Client::new("api_key".to_string());
     ///
     /// let request = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Count to 5")
     ///     .build()?;
     ///
@@ -1299,7 +1299,7 @@ impl Client {
     ///
     /// // Use in interaction
     /// let response = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_content(vec![
     ///         Content::text("Describe this video"),
     ///         Content::from_file(&file),
@@ -1580,7 +1580,7 @@ impl Client {
     ///
     /// // Use in interaction
     /// let response = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_content(vec![
     ///         Content::text("Describe this video"),
     ///         Content::from_file(&file),

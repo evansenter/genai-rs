@@ -41,7 +41,7 @@ Ground responses in real-time web data.
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("What are the latest Rust 2024 features?")
     .with_google_search()
     .create()
@@ -73,7 +73,7 @@ use genai_rs::{GoogleSearchConfig, SearchType};
 
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Find enterprise deployment guides for Kubernetes")
     .add_tool(GoogleSearchConfig::new().with_search_types(vec![
         SearchType::WebSearch,
@@ -115,7 +115,7 @@ use futures_util::StreamExt;
 
 let mut stream = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Latest AI news?")
     .with_google_search()
     .create_stream();
@@ -141,7 +141,7 @@ Execute Python code in a secure sandbox.
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Calculate the first 20 Fibonacci numbers")
     .with_code_execution()
     .create()
@@ -200,7 +200,7 @@ Fetch and analyze web pages.
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Summarize this article: https://example.com/article")
     .with_url_context()
     .create()
@@ -224,7 +224,7 @@ for result in response.url_context_results() {
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Compare https://example.com/page1 and https://example.com/page2")
     .with_url_context()
     .create()
@@ -265,7 +265,7 @@ use genai_rs::ComputerUseConfig;
 
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Go to example.com and describe what you see")
     .add_tool(ComputerUseConfig::new())  // defaults to the "browser" environment
     .create()
@@ -289,7 +289,7 @@ let config = ComputerUseConfig::new()
 
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Search for Rust tutorials")
     .add_tool(config)
     .create()
@@ -321,7 +321,7 @@ use genai_rs::FileSearchConfig;
 
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("What does the report say about Q4 revenue?")
     .add_tool(FileSearchConfig::new(vec!["stores/my-store-123".to_string()]))
     .create()
@@ -346,7 +346,7 @@ let config = FileSearchConfig::new(vec!["stores/my-store-123".to_string()])
 
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Find all mentions of 'performance optimization'")
     .add_tool(config)
     .create()
@@ -377,7 +377,7 @@ use genai_rs::{Client, RetrievalConfig, VertexAiSearchConfig};
 # let client = Client::new("api-key".to_string());
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("What does our handbook say about vacation policy?")
     .add_tool(RetrievalConfig::new().with_vertex_ai_search(
         VertexAiSearchConfig::new()
@@ -401,7 +401,7 @@ use genai_rs::{
 # let client = Client::new("api-key".to_string());
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Summarize the design documents about caching")
     .add_tool(RetrievalConfig::new().with_rag_store(
         RagStoreConfig::new(vec![
@@ -435,7 +435,7 @@ use genai_rs::{Client, ExaAiSearchConfig, ParallelAiSearchConfig, RetrievalConfi
 let exa_key = std::env::var("EXA_API_KEY")?;
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Find recent papers on speculative decoding")
     .add_tool(RetrievalConfig::new().with_exa_ai_search(
         ExaAiSearchConfig::new(exa_key)
@@ -467,7 +467,7 @@ Ground responses in place and location data.
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Find highly rated coffee shops near the Ferry Building in San Francisco")
     .with_google_maps()
     .create()
@@ -496,7 +496,7 @@ use genai_rs::GoogleMapsConfig;
 
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("What are the best lunch spots nearby?")
     .add_tool(
         GoogleMapsConfig::new()
@@ -521,7 +521,7 @@ use std::collections::HashMap;
 
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("List the files in the project root")
     .add_tool(
         McpServerConfig::new("filesystem", "https://mcp.example.com/fs")
@@ -558,7 +558,7 @@ Multiple built-in tools can be enabled simultaneously.
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Research the latest Rust async features and write example code")
     .with_google_search()      // Find current information
     .with_code_execution()     // Write and test code
@@ -573,7 +573,7 @@ use genai_rs::FileSearchConfig;
 
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Compare our internal report with public benchmarks")
     .add_tool(FileSearchConfig::new(vec!["stores/reports".to_string()]))
     .with_url_context()
@@ -598,7 +598,7 @@ fn get_user_prefs() -> String {
 
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Personalize search results based on my preferences")
     .with_google_search()
     .add_function(GetUserPrefsCallable.declaration())

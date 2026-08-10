@@ -494,7 +494,7 @@ async fn test_conversation_builder_fluent_api() {
 
     let response = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .conversation()
         .user("My name is Alice and I love hiking.")
         .model("Nice to meet you, Alice! Hiking is a wonderful outdoor activity.")

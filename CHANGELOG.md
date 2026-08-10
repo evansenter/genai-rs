@@ -7,7 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Default model guidance moves to `gemini-3.6-flash`** (from
+  `gemini-3-flash-preview`) across docs, examples, and tests, and image
+  generation moves to `gemini-3.1-flash-image` (from
+  `gemini-3-pro-image-preview`). Both were probed live before migrating.
+
+  One capability difference surfaced and is worth knowing: `gemini-3.6-flash`
+  returns `400 invalid_request` for **inline (base64) video bytes** while
+  accepting video **by URI**. Image, audio and PDF inline data are
+  unaffected. The three inline-video tests are pinned to a model that
+  accepts that form (`tests/common::VIDEO_INLINE_MODEL`) so they keep
+  testing the bytes path rather than the model's appetite for it.
+
 ### Fixed
+
+- **`ThinkingSummaries` sent a value the API now rejects.**
+  `to_agent_config_value()` emitted the SCREAMING_CASE
+  `THINKING_SUMMARIES_AUTO` / `_NONE` spelling; verified live 2026-08-10
+  the API responds `The value 'THINKING_SUMMARIES_AUTO' is not supported
+  for 'agent_config.thinking_summaries'. Supported values: 'auto',
+  'none'.` — so deep-research requests carrying thinking summaries failed
+  outright. Both contexts now emit the lowercase form; deserialization
+  still accepts either spelling.
 
 - **Antigravity harness 0.1.10 support (turn completion was broken).** The
   supported harness moves 0.1.5 → 0.1.10. Two wire spellings the bridge
@@ -813,7 +836,7 @@ still rustls.
   ```rust
   // Now possible - conditional chaining
   let mut builder = client.interaction()
-      .with_model("gemini-3-flash-preview")
+      .with_model("gemini-3.6-flash")
       .with_text("Hello");
 
   if let Some(prev_id) = previous_interaction_id {
@@ -927,7 +950,7 @@ let content = Content::text("Hello");  // Static constructor
 ```rust
 // Before (0.6.0)
 let response = client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Describe this image")
     .add_image_file("photo.jpg").await?
     .create()
@@ -935,7 +958,7 @@ let response = client.interaction()
 
 // After (0.7.0) - Option A: Content constructors
 let response = client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_content(vec![
         Content::text("Describe this image"),
         Content::image_data(base64_data, "image/png"),
@@ -947,7 +970,7 @@ let response = client.interaction()
 use genai_rs::image_from_file;
 let image = image_from_file("photo.jpg").await?;
 let response = client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_content(vec![
         Content::text("Describe this image"),
         image,
@@ -961,7 +984,7 @@ let response = client.interaction()
 // Before (0.6.0)
 let file = client.upload_file("video.mp4").await?;
 let response = client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .add_file(&file)
     .with_text("Describe this video")
     .create()
@@ -970,7 +993,7 @@ let response = client.interaction()
 // After (0.7.0)
 let file = client.upload_file("video.mp4").await?;
 let response = client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_content(vec![
         Content::text("Describe this video"),
         Content::from_file(&file),
@@ -996,7 +1019,7 @@ Content::image_data(base64, "image/png").with_resolution(Resolution::High)
 // Before (0.6.0)
 // with_turns().with_text() silently overwrote history - bug!
 let response = client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_turns(history)
     .create()
     .await?;
@@ -1004,7 +1027,7 @@ let response = client.interaction()
 // After (0.7.0)
 // Renamed to with_history(), and now composes correctly with with_text()
 let response = client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_history(history)
     .with_text("Current message")  // Appended as final user turn
     .create()
@@ -1756,7 +1779,7 @@ This release removes the legacy GenerateContent API in favor of the unified Inte
 #### Before (v0.1.x - GenerateContent API):
 ```rust
 let response = client
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_prompt("Hello, world!")
     .generate()
     .await?;
@@ -1768,7 +1791,7 @@ println!("{}", response.text.unwrap());
 ```rust
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Hello, world!")
     .create()
     .await?;
@@ -1780,14 +1803,14 @@ println!("{}", response.text().unwrap_or("No text"));
 ```rust
 // Before
 let stream = client
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_prompt("Hello")
     .generate_stream()?;
 
 // After
 let stream = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Hello")
     .create_stream();
 ```
@@ -1796,7 +1819,7 @@ let stream = client
 ```rust
 // Before
 let response = client
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_prompt("What's the weather?")
     .generate_with_auto_functions()
     .await?;
@@ -1804,7 +1827,7 @@ let response = client
 // After
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("What's the weather?")
     .create_with_auto_functions()
     .await?;

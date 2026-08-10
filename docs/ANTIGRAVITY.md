@@ -74,7 +74,7 @@ use genai_rs::antigravity::{AntigravityAgent, policy};
 
 let mut agent = AntigravityAgent::builder()
     .with_api_key(std::env::var("GEMINI_API_KEY")?)
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_system_instructions("You are a code-review assistant.")
     .add_workspace("/path/to/repo")
     .add_policy(policy::deny_all())

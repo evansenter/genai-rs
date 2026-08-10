@@ -173,7 +173,7 @@ async fn test_file_in_interaction() {
     // Use the file in an interaction
     let response = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_content(vec![
             Content::from_file(&ready_file),
             Content::text("What city is mentioned in this document?"),
@@ -594,7 +594,7 @@ async fn test_chunked_upload_in_interaction() {
     // Use in interaction
     let response = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_content(vec![
             Content::from_file(&ready_file),
             Content::text("What does the file say about a fox?"),

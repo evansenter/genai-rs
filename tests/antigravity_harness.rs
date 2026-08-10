@@ -45,7 +45,7 @@ async fn test_antigravity_spawn_handshake_init_roundtrip() {
     let dir = scratch_dir("agy-init");
     let agent = AntigravityAgent::builder()
         .with_api_key("dummy-key-init-does-not-validate")
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_save_dir(dir.path().to_string_lossy())
         .with_system_instructions("test instructions")
         .add_tool(AntigravityTestWeatherCallable.declaration())
@@ -126,7 +126,7 @@ async fn test_antigravity_trigger_sends_automated_trigger_when_idle() {
     let inspector = Arc::new(WsSendCapture::default());
     let agent = AntigravityAgent::builder()
         .with_api_key("dummy-key-trigger-test")
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .add_trigger(TriggerConfig::new("tick-xyzzy", Duration::from_secs(1)))
         .add_wire_inspector(inspector.clone())
         .spawn()
@@ -165,7 +165,7 @@ async fn test_antigravity_turn_timeout_halts_harness_turn() {
     let inspector = Arc::new(WsSendCapture::default());
     let mut agent = AntigravityAgent::builder()
         .with_api_key("dummy-key-timeout-test")
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         // Far below any network round-trip: the timeout always fires before
         // the turn can produce a terminal event.
         .with_turn_timeout(Duration::from_millis(10))
@@ -209,7 +209,7 @@ async fn test_antigravity_chat_after_trigger_discards_trigger_turn() {
     let inspector = Arc::new(WsSendCapture::default());
     let mut agent = AntigravityAgent::builder()
         .with_api_key("dummy-key-trigger-chat-test")
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_turn_timeout(Duration::from_secs(15))
         .add_trigger(TriggerConfig::new("tick-quux", Duration::from_secs(1)))
         .add_wire_inspector(inspector.clone())
@@ -276,7 +276,7 @@ async fn test_antigravity_subagent_config_accepted_at_init() {
     // (no API key needed for init).
     let agent = AntigravityAgent::builder()
         .with_api_key("dummy-key-subagent-test")
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .add_tool(AntigravityTestWeatherCallable.declaration())
         .add_subagent(
             Subagent::new("weather-checker")
@@ -314,7 +314,7 @@ async fn test_antigravity_chat_basic() {
     let mut agent = AntigravityAgent::builder()
         .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(key)
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_system_instructions("Answer in one short sentence.")
         .spawn()
         .await
@@ -341,7 +341,7 @@ async fn test_antigravity_custom_tool_roundtrip() {
     let mut agent = AntigravityAgent::builder()
         .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(key)
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_system_instructions(
             "You must use the antigravity_test_weather tool to answer weather questions.",
         )
@@ -399,7 +399,7 @@ async fn test_antigravity_policy_denies_custom_tool() {
     let mut agent = AntigravityAgent::builder()
         .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(key)
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_system_instructions(
             "Always try the antigravity_test_weather tool first for weather questions. \
              If a tool fails, say TOOL-DENIED and stop.",

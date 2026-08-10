@@ -459,7 +459,7 @@ impl UsageMetadata {
 ///
 /// let response = client
 ///     .interaction()
-///     .with_model("gemini-3-flash-preview")
+///     .with_model("gemini-3.6-flash")
 ///     .with_text("A cat playing with yarn")
 ///     .with_image_output()
 ///     .create()
@@ -894,7 +894,7 @@ impl InteractionResponse {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let client = Client::new("key".to_string());
     /// let first = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("What is 2+2?")
     ///     .create().await?;
     ///
@@ -903,7 +903,7 @@ impl InteractionResponse {
     /// history.push(Step::user_text("Now multiply that by 3"));
     ///
     /// let second = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_history(history)
     ///     .create().await?;
     /// # Ok(())
@@ -1865,7 +1865,7 @@ mod tests {
         // possible prefix until the field is observed for real.
         let json = r#"{
             "id": "v1_abc123",
-            "model": "gemini-3-flash-preview",
+            "model": "gemini-3.6-flash",
             "status": "completed",
             "steps": [
                 {"type": "thought", "signature": "sig-1"},

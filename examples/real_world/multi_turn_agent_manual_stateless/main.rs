@@ -286,7 +286,7 @@ impl StatelessSupportSession {
         let mut response = self
             .client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_history(self.conversation_history.clone())
             .add_functions(self.functions.clone())
             .with_system_instruction(&self.system_instruction)
@@ -330,7 +330,7 @@ impl StatelessSupportSession {
             response = self
                 .client
                 .interaction()
-                .with_model("gemini-3-flash-preview")
+                .with_model("gemini-3.6-flash")
                 .with_history(self.conversation_history.clone())
                 .add_functions(self.functions.clone())
                 .with_system_instruction(&self.system_instruction)

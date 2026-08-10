@@ -109,7 +109,7 @@ async fn basic_structured_output(client: &Client) -> Result<(), Box<dyn Error>> 
 
     let response = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text("Write a review for the movie 'Inception' (2010). Be concise.")
         .with_response_format(schema)
         .create()
@@ -175,7 +175,7 @@ async fn complex_nested_schema(client: &Client) -> Result<(), Box<dyn Error>> {
 
     let response = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text("Give me a simple pasta recipe with 5 ingredients and 4 steps.")
         .with_response_format(schema)
         .create()
@@ -229,7 +229,7 @@ async fn structured_with_search(client: &Client) -> Result<(), Box<dyn Error>> {
 
     let response = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text("What's the current status of Apple Inc (AAPL) stock? Include any recent news.")
         .with_google_search() // Enable real-time web search
         .with_response_format(schema)
@@ -279,7 +279,7 @@ async fn streaming_structured_output(client: &Client) -> Result<(), Box<dyn Erro
 
     let mut stream = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text("Write a brief review for a wireless mouse. Be concise.")
         .with_response_format(schema)
         .create_stream();

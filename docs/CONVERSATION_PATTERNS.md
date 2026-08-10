@@ -34,7 +34,7 @@ The server maintains conversation history:
 // Turn 1: Start conversation
 let response1 = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("My name is Alice")
     .with_store_enabled()
     .create()
@@ -43,7 +43,7 @@ let response1 = client
 // Turn 2: Server remembers context
 let response2 = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("What's my name?")
     .with_previous_interaction(response1.id.as_ref().unwrap())
     .with_store_enabled()
@@ -73,7 +73,7 @@ let history = vec![
 
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_history(history)
     .create()
     .await?;
@@ -95,7 +95,7 @@ Fluent API for inline conversation construction. `.user()` and `.model()` produc
 # async fn example(client: &Client) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .conversation()
     .user("What is 2+2?")
     .model("2+2 equals 4.")
@@ -116,7 +116,7 @@ let response = client
 # async fn example(client: &Client) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_system_instruction("You are a helpful math tutor")
     .conversation()
     .user("I need help with fractions")
@@ -144,7 +144,7 @@ let multimodal_step = Step::user_input(vec![
 
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_history(vec![multimodal_step])
     .create()
     .await?;
@@ -176,7 +176,7 @@ let history = vec![
 
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_history(history)
     .create()
     .await?;
@@ -203,7 +203,7 @@ let history: Vec<Step> = db_history
 
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_history(history)
     .create()
     .await?;
@@ -234,7 +234,7 @@ loop {
     // Send full history
     let response = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_history(history.clone())
         .create()
         .await?;
@@ -302,7 +302,7 @@ async fn summarize_and_trim(
 
     let summary = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text(&summary_prompt)
         .create()
         .await?;
@@ -326,7 +326,7 @@ System instructions are not inherited across turns by the API — set them expli
 # async fn example(client: &Client, history: Vec<Step>) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_system_instruction("You are a Python expert. Always provide code examples.")
     .with_history(history)
     .create()
@@ -351,7 +351,7 @@ fn get_weather(city: String) -> String {
 
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_history(history)
     .add_function(GetWeatherCallable.declaration())
     .create_with_auto_functions()
@@ -366,7 +366,7 @@ let response = client
 # async fn example(client: &Client, history: Vec<Step>) -> Result<(), genai_rs::GenaiError> {
 let mut stream = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_history(history)
     .create_stream();
 
@@ -430,7 +430,7 @@ Both ConversationBuilder and `with_history()` produce the same wire format — a
 
 ```json
 {
-  "model": "gemini-3-flash-preview",
+  "model": "gemini-3.6-flash",
   "input": [
     { "type": "user_input", "content": [{ "type": "text", "text": "Hello" }] },
     { "type": "model_output", "content": [{ "type": "text", "text": "Hi!" }] },

@@ -20,7 +20,7 @@ const DEMO_MP4_BASE64: &str = "AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAMWb
 async fn main() -> Result<(), Box<dyn Error>> {
     let api_key = env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY not found in environment");
     let client = Client::builder(api_key).build()?;
-    let model_name = "gemini-3-flash-preview";
+    let model_name = "gemini-3.6-flash";
 
     // =========================================================================
     // Example 1: Basic Video Analysis (Fluent Builder Pattern)
@@ -67,7 +67,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    // Using with_content() for multimodal input
    let response = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model("gemini-3.6-flash")
        .with_content(vec![
            Content::text("Describe the key scenes in this video. What's happening?"),
            Content::video_data(&base64_video, "video/mp4"),
@@ -80,7 +80,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    let video = video_from_file("video.mp4").await?;
    let response = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model("gemini-3.6-flash")
        .with_content(vec![
            Content::text("Describe the key scenes in this video."),
            video,
@@ -95,7 +95,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         r#"
    let response = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model("gemini-3.6-flash")
        .with_content(vec![
            Content::text("List all the objects and people visible in this video.
                For each, note when they first appear (approximate timestamp)."),
@@ -111,7 +111,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         r#"
    let response = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model("gemini-3.6-flash")
        .with_content(vec![
            Content::text("What actions or activities are being performed in this video?
                Describe the sequence of events."),
@@ -127,7 +127,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         r#"
    let response = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model("gemini-3.6-flash")
        .with_content(vec![
            Content::text("How many people are in this video? What are they wearing?"),
            Content::video_data(&base64_video, "video/mp4"),
@@ -148,7 +148,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    // First turn: Send video and get initial analysis
    let first = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model("gemini-3.6-flash")
        .with_content(vec![
            Content::text("Describe what's happening in this video."),
            Content::video_data(&base64_video, "video/mp4"),
@@ -160,7 +160,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    // Second turn: Ask follow-up (video is remembered)
    let second = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model("gemini-3.6-flash")
        .with_text("What happens at the 30-second mark?")
        .with_previous_interaction(&first.id)
        .create()
@@ -169,7 +169,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    // Third turn: More specific questions
    let third = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model("gemini-3.6-flash")
        .with_text("What color is the car in the background?")
        .with_previous_interaction(&second.id)
        .create()
@@ -187,7 +187,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         r#"
    let response = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model("gemini-3.6-flash")
        .with_content(vec![
            Content::text("Analyze this video:
                1. What is shown visually?
@@ -271,7 +271,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    // Build the request using with_content
    let response = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model("gemini-3.6-flash")
        .with_content(vec![
            Content::text("Describe what's happening in this video."),
            video_content,
@@ -294,7 +294,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    // Send with with_content
    let response = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model("gemini-3.6-flash")
        .with_content(vec![
            Content::text("Describe what's happening in this video."),
            Content::video_data(&base64_video, "video/mp4"),

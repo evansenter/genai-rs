@@ -46,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // First interaction - must enable store for multi-turn
     let response1 = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text(initial_prompt)
         .with_thinking_level(ThinkingLevel::Medium)
         .with_store_enabled()
@@ -78,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let response2 = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text(followup)
         .with_previous_interaction(interaction_id)
         .with_thinking_level(ThinkingLevel::Medium)
@@ -110,7 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let resp_manual = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text(prompt)
         .with_thinking_level(ThinkingLevel::Low)
         .create()
@@ -135,7 +135,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let resp_followup = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_history(history)
         .with_thinking_level(ThinkingLevel::Low)
         .create()

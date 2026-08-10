@@ -167,7 +167,7 @@ async fn test_interaction_with_webhook_config() {
     // background=true is also set.
     let result = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text("Say hello.")
         .with_background(true)
         .with_webhook_config(
@@ -369,7 +369,7 @@ async fn test_retrieval_tool_request_accepted() {
     // on the Gemini API and this test should be upgraded.
     let result = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text("What does our internal handbook say about PTO?")
         .add_tool(
             RetrievalConfig::new().with_vertex_ai_search(
@@ -412,7 +412,7 @@ async fn test_typed_text_response_format() {
     // raw-schema response_format.
     let response = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text("Generate info for a person named Alice, age 30")
         .with_response_format(ResponseFormat::json_schema(serde_json::json!({
             "type": "object",
@@ -559,7 +559,7 @@ async fn test_transcription_config_accepted() {
     let response = crate::retry_request!([client] => {
         client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_content(vec![
                 genai_rs::Content::text(
                     "Transcribe this short clip. If it is silent, say 'Silent audio.'",
@@ -607,7 +607,7 @@ async fn test_safety_settings_and_labels_vertex_gated() {
         let result = crate::retry_request!([client, knob] => {
             let builder = client
                 .interaction()
-                .with_model("gemini-3-flash-preview")
+                .with_model("gemini-3.6-flash")
                 .with_text("Say OK.");
             let builder = match knob {
                 "safety_settings" => builder.add_safety_setting(SafetySetting::new(
@@ -897,7 +897,7 @@ async fn test_triggers_list_and_gated_create() {
     // interaction is rejected with "Agent '' is invalid or not found").
     // Tolerate the gate; assert the payload schema itself was accepted.
     let interaction = InteractionRequest {
-        model: Some("gemini-3-flash-preview".to_string()),
+        model: Some("gemini-3.6-flash".to_string()),
         input: InteractionInput::Text("Say OK".to_string()),
         ..Default::default()
     };

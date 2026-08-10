@@ -31,7 +31,7 @@ use futures_util::StreamExt;
 use genai_rs::InteractionInput;
 
 /// Model used for all canary tests - update if model availability changes
-const CANARY_MODEL: &str = "gemini-3-flash-preview";
+const CANARY_MODEL: &str = "gemini-3.6-flash";
 
 /// Helper to check a response for unknown step types and panic with details if found
 fn assert_no_unknown_steps(response: &genai_rs::InteractionResponse, context: &str) {

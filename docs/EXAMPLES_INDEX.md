@@ -234,7 +234,7 @@ Generate images from text prompts.
 cargo run --example image_generation
 ```
 **Learn**: `with_image_output()`, `first_image_bytes()`, image iteration.
-**Note**: Requires `gemini-3-pro-image-preview` model.
+**Note**: Requires `gemini-3.1-flash-image` model.
 
 #### text_to_speech
 Convert text to spoken audio.
@@ -303,7 +303,7 @@ write-capable `AskQuestion` builtin), `send_streaming()`, `shutdown()`.
 
 | Example | Special Requirements |
 |---------|---------------------|
-| `image_generation` | `gemini-3-pro-image-preview` model access |
+| `image_generation` | `gemini-3.1-flash-image` model access |
 | `text_to_speech` | `gemini-2.5-pro-preview-tts` model access |
 | `deep_research` | Deep Research agent access |
 | `computer_use` | Computer Use capability access |

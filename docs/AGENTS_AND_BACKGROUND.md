@@ -23,7 +23,7 @@ Gemini supports two types of interactions:
 
 | Type | Entry Point | Execution | Use Case |
 |------|-------------|-----------|----------|
-| **Model** | `with_model("gemini-3-flash-preview")` | Synchronous | Quick responses, streaming |
+| **Model** | `with_model("gemini-3.6-flash")` | Synchronous | Quick responses, streaming |
 | **Agent** | `with_agent("deep-research-pro-preview")` | Background | Long-running tasks, research |
 
 Agents are specialized systems that perform multi-step tasks autonomously.
@@ -37,7 +37,7 @@ Direct interaction with a language model:
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Explain quantum computing")
     .create()
     .await?;
@@ -216,7 +216,7 @@ let follow_up = client
 The Antigravity managed agent above is the one whose config is
 live-verified end to end (2026-08-09): the environment is **required**,
 and `AntigravityConfig` tunes the run — leave its `model` unset (an
-unavailable value 404s, including `gemini-3-flash-preview`, the crate's
+unavailable value 404s, including `gemini-3.6-flash`, the crate's
 default model elsewhere):
 
 ```rust,ignore
@@ -333,7 +333,7 @@ Background mode allows requests to return immediately while processing continues
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")  // or with_agent()
+    .with_model("gemini-3.6-flash")  // or with_agent()
     .with_text("Complex analysis task...")
     .with_background(true)
     .with_store_enabled()  // Must enable storage to retrieve results

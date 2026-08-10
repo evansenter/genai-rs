@@ -37,7 +37,7 @@
 //!
 //! // Use in interaction
 //! let response = client.interaction()
-//!     .with_model("gemini-3-flash-preview")
+//!     .with_model("gemini-3.6-flash")
 //!     .add_file(&file)
 //!     .with_text("Describe this video")
 //!     .create()

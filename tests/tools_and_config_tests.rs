@@ -1245,7 +1245,7 @@ mod image_generation {
             async move {
                 let response = client
                     .interaction()
-                    .with_model("gemini-3-pro-image-preview")
+                    .with_model("gemini-3.1-flash-image")
                     .with_text("Generate a simple image of a red circle on a white background.")
                     .with_response_modalities(vec!["image".to_string()])
                     .with_store_enabled()
@@ -1604,7 +1604,7 @@ mod config_fields {
         // Raw request: the typed InteractionRequest no longer carries the
         // field, so build the JSON body directly.
         let body = json!({
-            "model": "gemini-3-flash-preview",
+            "model": "gemini-3.6-flash",
             "input": "Generate a greeting in Spanish.",
             "response_mime_type": "application/json",
         });

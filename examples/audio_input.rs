@@ -20,7 +20,7 @@ const DEMO_WAV_BASE64: &str = "UklGRuwAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZ
 async fn main() -> Result<(), Box<dyn Error>> {
     let api_key = env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY not found in environment");
     let client = Client::builder(api_key).build()?;
-    let model_name = "gemini-3-flash-preview";
+    let model_name = "gemini-3.6-flash";
 
     // =========================================================================
     // Example 1: Basic Audio Transcription (Fluent Builder Pattern)
@@ -82,7 +82,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
    let response = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model("gemini-3.6-flash")
        .with_content(vec![
            Content::text("Transcribe this audio with proper punctuation."),
            Content::audio_data(&base64_audio, "audio/mp3"),
@@ -101,7 +101,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         r#"
    let response = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model("gemini-3.6-flash")
        .with_content(vec![
            Content::text("Analyze this audio:
                - How many speakers are there?
@@ -123,7 +123,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         r#"
    let response = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model("gemini-3.6-flash")
        .with_content(vec![
            Content::text("In this podcast, what are the main topics discussed?"),
            Content::audio_data(&podcast_audio, "audio/mp3"),
@@ -144,7 +144,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    // First turn: Send audio and get initial analysis
    let first = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model("gemini-3.6-flash")
        .with_content(vec![
            Content::text("Summarize this audio recording."),
            Content::audio_data(&base64_audio, "audio/mp3"),
@@ -156,7 +156,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    // Second turn: Ask follow-up (audio is remembered)
    let second = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model("gemini-3.6-flash")
        .with_text("What emotions did you detect in the speaker's voice?")
        .with_previous_interaction(&first.id)
        .create()
@@ -231,7 +231,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    // Build the request using with_content
    let response = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model("gemini-3.6-flash")
        .with_content(vec![
            Content::text("Transcribe this audio."),
            audio_content,
@@ -255,7 +255,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    // Send with with_content
    let response = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model("gemini-3.6-flash")
        .with_content(vec![
            Content::text("Transcribe this audio."),
            Content::audio_data(&base64_audio, "audio/mp3"),

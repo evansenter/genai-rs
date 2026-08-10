@@ -49,7 +49,7 @@ use genai_rs::{Client, ThinkingLevel};
 
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Solve step by step: If a train travels 120 miles in 2 hours, what's its speed?")
     .with_thinking_level(ThinkingLevel::Medium)
     .create()
@@ -122,7 +122,7 @@ use genai_rs::{ThinkingLevel, ThinkingSummaries};
 
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Explain photosynthesis step by step")
     .with_thinking_level(ThinkingLevel::High)
     .with_thinking_summaries(ThinkingSummaries::Auto)
@@ -154,7 +154,7 @@ use genai_rs::{StepDelta, StreamChunk, ThinkingLevel, ThinkingSummaries};
 
 let mut stream = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Solve: What is 15% of 240?")
     .with_thinking_level(ThinkingLevel::Medium)
     .with_thinking_summaries(ThinkingSummaries::Auto)
@@ -311,7 +311,7 @@ Thinking works with function calling to show reasoning about tool use:
 use genai_rs::CallableFunction;
 
 let response = client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("What's the weather in Tokyo and should I bring an umbrella?")
     .with_thinking_level(ThinkingLevel::Medium)
     .add_function(GetWeatherCallable.declaration())
@@ -338,7 +338,7 @@ When managing conversation history yourself (stateless mode), include the model'
 // Turn 1
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Think about the fastest route from A to B")
     .with_thinking_level(ThinkingLevel::Medium)
     .create()
@@ -351,7 +351,7 @@ history.extend(response.output_steps());
 // Turn 2 - signatures replay automatically via the history
 let followup = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_history(history)
     .with_text("Now assume road B2 is closed")
     .create()

@@ -182,7 +182,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// // Functions are auto-discovered from registry
     /// let result = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("What's the weather in Tokyo?")
     ///     .create_with_auto_functions()
     ///     .await?;
@@ -217,7 +217,7 @@ impl<'a> InteractionBuilder<'a> {
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let client = Client::new("key".to_string());
     /// let result = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("...")
     ///     .with_max_function_call_loops(3)
     ///     .create_with_auto_functions()
@@ -249,7 +249,7 @@ impl<'a> InteractionBuilder<'a> {
     /// # let client = Client::new("key".to_string());
     /// // Per-API-call timeout (30s per model round)
     /// let result = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("What's the weather?")
     ///     .with_timeout(Duration::from_secs(30))
     ///     .create_with_auto_functions()
@@ -259,7 +259,7 @@ impl<'a> InteractionBuilder<'a> {
     /// let result = tokio::time::timeout(
     ///     Duration::from_secs(60),
     ///     client.interaction()
-    ///         .with_model("gemini-3-flash-preview")
+    ///         .with_model("gemini-3.6-flash")
     ///         .with_text("What's the weather?")
     ///         .create_with_auto_functions()
     /// ).await??;
@@ -461,7 +461,7 @@ impl<'a> InteractionBuilder<'a> {
     /// let client = Client::builder("api_key".to_string()).build()?;
     ///
     /// let mut stream = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("What's the weather in Tokyo?")
     ///     .create_stream_with_auto_functions();
     ///
@@ -520,7 +520,7 @@ impl<'a> InteractionBuilder<'a> {
     /// # let client = Client::new("key".to_string());
     /// // Per-chunk timeout (30s between chunks)
     /// let mut stream = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("What's the weather?")
     ///     .with_timeout(Duration::from_secs(30))
     ///     .create_stream_with_auto_functions();
