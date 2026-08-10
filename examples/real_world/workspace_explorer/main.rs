@@ -251,9 +251,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
             Audit::PostTool { name, ok } => {
-                println!("  posttool{name:<20} {}", if *ok { "ok" } else { "error" });
+                println!("  posttool {name:<20} {}", if *ok { "ok" } else { "error" });
             }
-            Audit::Denied { name, reason } => println!("  DENIED  {name:<20} {reason}"),
+            Audit::Denied { name, reason } => println!("  DENIED   {name:<20} {reason}"),
         }
     }
     agent.shutdown().await?;
