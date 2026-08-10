@@ -54,7 +54,7 @@ pub use triggers::TriggerConfig;
 use crate::wire::{LoudWirePrinter, WireInspector};
 use crate::{FunctionDeclaration, ToolService};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -1049,7 +1049,7 @@ impl AntigravityAgent {
                         // turn and desync every turn after it.
                         self.halt_and_drain("recovering from a turn timeout").await;
                         return Err(AntigravityError::Timeout {
-                            operation: "agent turn".to_string(),
+                            operation: turn.stall_diagnosis(),
                             timeout: turn.timeout.unwrap_or_default(),
                         });
                     }
@@ -1433,8 +1433,22 @@ impl AntigravityAgent {
                 return Err(AntigravityError::Turn(message));
             }
             _ => {
-                // Running / subagent idle or cancelled / unknown states:
-                // nothing to do for the parent turn.
+                // Running / waiting-for-tasks / subagent idle or
+                // cancelled: nothing to do for the parent turn.
+                //
+                // An *unrecognized* main-trajectory state is different in
+                // kind, though it lands here too: only `Idle` ends a
+                // turn, so if the harness renamed the terminal state (as
+                // 0.1.10 did — `STATE_IDLE` -> `STATE_FULLY_IDLE`) the
+                // turn runs to its timeout with nothing else to show for
+                // it. Record the value so the timeout can name the cause
+                // instead of reporting a bare stall.
+                if is_main
+                    && let Some(state) = &update.state
+                    && let Some(unknown) = state.unknown_state_type()
+                {
+                    turn.unknown_trajectory_states.insert(unknown.to_string());
+                }
             }
         }
         Ok(())
@@ -1805,6 +1819,10 @@ impl Drop for TurnGuard {
 struct TurnState {
     queue: VecDeque<AgentEvent>,
     finished: bool,
+    /// Unrecognized *main-trajectory* states seen this turn. Populated
+    /// only on the Evergreen `Unknown` path; drives the stall diagnostic
+    /// when a turn times out without ever reaching a terminal state.
+    unknown_trajectory_states: BTreeSet<String>,
     main_trajectory: Option<String>,
     handled_waits: HashMap<(String, u32), HashSet<&'static str>>,
     announced_actions: HashSet<(String, u32)>,
@@ -1829,6 +1847,7 @@ impl TurnState {
         Self {
             queue: VecDeque::new(),
             finished: false,
+            unknown_trajectory_states: BTreeSet::new(),
             main_trajectory: None,
             handled_waits: HashMap::new(),
             announced_actions: HashSet::new(),
@@ -1843,6 +1862,35 @@ impl TurnState {
             deadline: timeout.map(|t| tokio::time::Instant::now() + t),
             _turn_guard: turn_guard,
         }
+    }
+
+    /// Describes *why* a turn stalled, for the timeout error's
+    /// `operation` field.
+    ///
+    /// A bare "agent turn timed out" is the least actionable error the
+    /// bridge can raise: it looks identical whether the model is slow,
+    /// the harness died quietly, or — the case this exists for — the
+    /// harness renamed the terminal trajectory state and the bridge
+    /// stopped recognizing the end of a turn. When unknown
+    /// main-trajectory states were seen, name them and the likely cause,
+    /// so the failure points at the version mismatch instead of looking
+    /// like latency.
+    fn stall_diagnosis(&self) -> String {
+        if self.unknown_trajectory_states.is_empty() {
+            return "agent turn".to_string();
+        }
+        let states: Vec<_> = self
+            .unknown_trajectory_states
+            .iter()
+            .map(String::as_str)
+            .collect();
+        format!(
+            "agent turn (never saw a terminal trajectory state; the harness \
+             sent unrecognized state(s) [{}] that this build does not treat \
+             as terminal — most likely a harness/bridge version mismatch, \
+             see antigravity::SUPPORTED_HARNESS_VERSION)",
+            states.join(", ")
+        )
     }
 
     /// Marks a waiting-state request as handled for the step; returns

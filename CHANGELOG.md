@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Antigravity harness 0.1.10 support (turn completion was broken).** The
+  supported harness moves 0.1.5 → 0.1.10. Two wire spellings the bridge
+  depends on were renamed in that range, and both failed silently rather
+  than loudly:
+  - `STATE_IDLE` → `STATE_FULLY_IDLE`. Only that value ends a turn, so
+    against a 0.1.6+ harness **every turn ran to its timeout** — no parse
+    error, no failed assertion, just a bare
+    `Timeout { operation: "agent turn" }` after the full budget.
+  - `usageMetadata` → `usageUpdate` (now `{agents[], total}`), which
+    silently zeroed token accounting and was additionally misreported as
+    an unknown payload variant.
+
+  Both old spellings are accepted as aliases, so a single build drives
+  either harness revision; verified by running the full harness suite
+  against 0.1.5 and 0.1.10 (10/10 each). Also adds the non-terminal
+  `STATE_WAITING_FOR_TASKS` state introduced in 0.1.10.
+
+### Added
+
+- Wire enums accept alias spellings, so a value renamed between harness
+  revisions resolves to one variant while `as_wire_str` keeps emitting
+  the canonical (current-harness) form.
+- A stalled turn now diagnoses itself. When a turn times out having seen
+  unrecognized *main-trajectory* states, the timeout names them and
+  points at `SUPPORTED_HARNESS_VERSION` instead of reporting an
+  undifferentiated stall — the failure that took a wire trace to
+  diagnose now reads as a version mismatch on the error itself.
+
+### Changed
+
+- CI's antigravity job now receives `GEMINI_API_KEY` (with the same
+  same-repo guard the integration matrix uses). Its model-backed tests
+  are the only ones that drive a real turn end-to-end, and without a key
+  they self-skipped — which is why the turn-completion break above
+  reached a release unnoticed.
+- `docs/ANTIGRAVITY.md` no longer claims newer harnesses "degrade
+  gracefully". Unknown-value preservation stops a crash, but when a
+  *renamed* value is one the bridge matches on, preservation is exactly
+  what makes the breakage silent.
+
 ## [0.9.0] - 2026-08-09
 
 ### Changed (breaking)

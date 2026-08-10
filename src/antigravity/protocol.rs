@@ -98,7 +98,7 @@ macro_rules! wire_string_enum {
     (
         $(#[$meta:meta])*
         $name:ident, $ctx:ident, $unknown_type_fn:ident {
-            $( $(#[$vmeta:meta])* $variant:ident => $wire:literal ),+ $(,)?
+            $( $(#[$vmeta:meta])* $variant:ident => $wire:literal $(| $alias:literal)* ),+ $(,)?
         }
     ) => {
         $(#[$meta])*
@@ -161,7 +161,10 @@ macro_rules! wire_string_enum {
                 let value = Value::deserialize(deserializer)?;
                 if let Value::String(s) = &value {
                     match s.as_str() {
-                        $( $wire => return Ok(Self::$variant), )+
+                        // Aliases accept spellings from other harness
+                        // revisions; `as_wire_str` always emits the
+                        // canonical (current-harness) form.
+                        $( $wire $(| $alias)* => return Ok(Self::$variant), )+
                         _ => {}
                     }
                 }
@@ -231,8 +234,19 @@ wire_string_enum!(
         Unspecified => "STATE_UNSPECIFIED",
         /// The trajectory is processing a turn.
         Running => "STATE_RUNNING",
-        /// The trajectory finished the turn and is awaiting input.
-        Idle => "STATE_IDLE",
+        /// The trajectory finished the turn and is awaiting input — the
+        /// signal that ends a turn.
+        ///
+        /// Harness 0.1.10 renamed this from `STATE_IDLE` to
+        /// `STATE_FULLY_IDLE`; the old spelling is accepted as an alias
+        /// so one build drives either harness revision. Without the
+        /// alias the value degrades to `Unknown` and, because only
+        /// `Idle` ends a turn, every turn silently runs to its timeout.
+        Idle => "STATE_FULLY_IDLE" | "STATE_IDLE",
+        /// The trajectory is blocked on subordinate tasks (e.g. running
+        /// subagents) and will return to `Running`. Explicitly **not**
+        /// terminal — new in harness 0.1.10.
+        WaitingForTasks => "STATE_WAITING_FOR_TASKS",
         /// The turn was cancelled (halt request or pre-turn hook denial).
         Cancelled => "STATE_CANCELLED",
     }
@@ -1177,8 +1191,25 @@ impl<'de> Deserialize<'de> for OutputEvent {
 
         let seq_num = take_i64(&mut map, "seqNum")?;
         let timestamp_micros = take_i64(&mut map, "timestampMicros")?;
+        // Harness 0.1.10 replaced the flat `usageMetadata` with
+        // `usageUpdate: {agents: [...], total: UsageMetadata}`. Read the
+        // aggregate from either spelling so one build drives both
+        // revisions; the per-trajectory `agents` breakdown is not
+        // modeled yet, and either key must be consumed here or it falls
+        // through to the leftover-key arm below and is misreported as an
+        // unknown oneof variant.
         let usage_metadata = match map.remove("usageMetadata") {
-            None | Some(Value::Null) => None,
+            None | Some(Value::Null) => match map.remove("usageUpdate") {
+                None | Some(Value::Null) => None,
+                Some(Value::Object(mut update)) => match update.remove("total") {
+                    None | Some(Value::Null) => None,
+                    Some(total) => Some(serde_json::from_value(total).map_err(D::Error::custom)?),
+                },
+                Some(other) => {
+                    tracing::warn!("Unexpected JSON type for usageUpdate, dropping usage: {other}");
+                    None
+                }
+            },
             Some(v) => Some(serde_json::from_value(v).map_err(D::Error::custom)?),
         };
 
@@ -1996,6 +2027,63 @@ mod tests {
             "enabledHooks": ["LIFECYCLE_HOOK_PRE_TOOL"],
         }});
         assert_eq!(serde_json::to_value(&event).unwrap(), expected);
+    }
+
+    #[test]
+    fn trajectory_terminal_state_accepts_both_harness_spellings() {
+        // Harness 0.1.10 renamed the terminal state. Both spellings must
+        // land on `Idle`, because only `Idle` ends a turn: when this
+        // regressed, every turn ran to its timeout with no parse error
+        // and no failed assertion anywhere — the value was simply
+        // absorbed as `Unknown` and never matched.
+        for wire in ["STATE_FULLY_IDLE", "STATE_IDLE"] {
+            let state: TrajectoryState = serde_json::from_value(json!(wire)).unwrap();
+            assert_eq!(
+                state,
+                TrajectoryState::Idle,
+                "{wire} must deserialize to the terminal Idle state"
+            );
+            assert!(!state.is_unknown(), "{wire} must not degrade to Unknown");
+        }
+        // The canonical (current-harness) spelling is what we re-emit.
+        assert_eq!(TrajectoryState::Idle.as_wire_str(), "STATE_FULLY_IDLE");
+
+        // New in 0.1.10, and deliberately *not* terminal — it means the
+        // trajectory is blocked on subtasks and will return to Running.
+        let waiting: TrajectoryState =
+            serde_json::from_value(json!("STATE_WAITING_FOR_TASKS")).unwrap();
+        assert_eq!(waiting, TrajectoryState::WaitingForTasks);
+        assert!(!waiting.is_unknown());
+
+        // A genuinely unrecognized state still degrades (Evergreen).
+        let bogus: TrajectoryState = serde_json::from_value(json!("STATE_FUTURE")).unwrap();
+        assert!(bogus.is_unknown());
+        assert_eq!(bogus.unknown_state_type(), Some("STATE_FUTURE"));
+    }
+
+    #[test]
+    fn output_event_reads_usage_from_both_harness_shapes() {
+        // 0.1.5 flat form.
+        let flat = r#"{"seqNum": "1", "usageMetadata": {"promptTokenCount": "10", "totalTokenCount": "20"}}"#;
+        let event: OutputEvent = serde_json::from_str(flat).unwrap();
+        let usage = event.usage_metadata.as_ref().expect("flat usage");
+        assert_eq!(usage.prompt_token_count, Some(10));
+        assert_eq!(usage.total_token_count, Some(20));
+
+        // 0.1.10 nested form: the aggregate lives under `total`, with a
+        // per-trajectory breakdown alongside it that we do not model.
+        let nested = r#"{"seqNum": "1", "usageUpdate": {"agents": [{"trajectoryId": "t1", "usage": {"totalTokenCount": "5"}}], "total": {"promptTokenCount": "10", "totalTokenCount": "20"}}}"#;
+        let event: OutputEvent = serde_json::from_str(nested).unwrap();
+        let usage = event.usage_metadata.as_ref().expect("nested usage");
+        assert_eq!(usage.prompt_token_count, Some(10));
+        assert_eq!(usage.total_token_count, Some(20));
+        // Consumed as envelope metadata, not misreported as an unknown
+        // oneof payload (the leftover-key arm would otherwise claim it).
+        assert!(
+            event.payload.is_none(),
+            "usageUpdate must not be read as a payload variant, got {:?}",
+            event.payload
+        );
     }
 
     #[test]

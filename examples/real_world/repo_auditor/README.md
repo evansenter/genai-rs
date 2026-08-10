@@ -41,7 +41,7 @@ denied by Rust code.
 ## Running
 
 ```bash
-pip install google-antigravity==0.1.5   # ships the localharness binary
+pip install google-antigravity==0.1.10   # ships the localharness binary
 # ...or point at an existing binary:
 export ANTIGRAVITY_HARNESS_PATH=/path/to/localharness
 
@@ -132,5 +132,5 @@ Notes from real runs:
   can be verified mechanically
 - Bound turns with `with_turn_timeout`; use `with_save_dir` +
   `conversation_id()` to resume long audits
-- Pin the harness wheel (`google-antigravity==0.1.5`, see
+- Pin the harness wheel (`google-antigravity==0.1.10`, see
   `antigravity::SUPPORTED_HARNESS_VERSION`)

@@ -25,7 +25,7 @@ genai-rs = { version = "0.9", features = ["antigravity"] }
 Install the harness binary (it ships inside the platform-specific wheel):
 
 ```bash
-pip install google-antigravity==0.1.5
+pip install google-antigravity==0.1.10
 ```
 
 ### Version pinning
@@ -33,10 +33,26 @@ pip install google-antigravity==0.1.5
 The harness wire protocol is internal to Google's SDK and changes across
 0.1.x releases. Each genai-rs release is verified against exactly one wheel
 version, exposed as `antigravity::SUPPORTED_HARNESS_VERSION` (currently
-`0.1.5`) — pin that version. Newer harnesses degrade gracefully rather than
-erroring: unknown events, fields, and enum values are preserved in `Unknown`
-variants and `extra` maps (the crate's Evergreen philosophy), but only the
-pinned version is tested end-to-end.
+`0.1.10`) — pin that version.
+
+**Unknown-value preservation is not the same as forward compatibility.**
+Unrecognized events, fields, and enum values are preserved in `Unknown`
+variants and `extra` maps rather than erroring (the crate's Evergreen
+philosophy), so a newer harness will not crash the bridge. But when a
+*renamed* value is one the bridge **matches on**, preservation is exactly
+what makes the breakage silent: the match simply stops firing.
+
+The 0.1.5 → 0.1.10 upgrade is the worked example. `STATE_IDLE` became
+`STATE_FULLY_IDLE`, and since only that value ends a turn, every turn ran
+to its timeout with no error, no failed parse, and a single `warn!` as the
+only evidence. `usageMetadata` likewise became `usageUpdate`, silently
+zeroing token accounting. Both old spellings are now accepted as aliases,
+so one build drives either revision — but the lesson generalizes: when
+moving to an unverified harness, run the integration suite
+(`--run-ignored all -E 'binary(antigravity_harness)'`) rather than
+trusting that a clean parse means a working bridge, and see
+[Debugging](#debugging) for the drift diagnostics that surface this class
+of mismatch.
 
 ### Binary discovery
 

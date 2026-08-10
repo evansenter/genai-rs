@@ -38,7 +38,7 @@ cargo run --example testing_assistant
 ```
 
 The Antigravity-based example additionally needs the `localharness` binary
-(`pip install google-antigravity==0.1.5`) and the crate feature:
+(`pip install google-antigravity==0.1.10`) and the crate feature:
 
 ```bash
 cargo run --example repo_auditor --features antigravity

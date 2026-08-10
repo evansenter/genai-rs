@@ -16,9 +16,17 @@ use super::protocol;
 /// with:
 ///
 /// ```bash
-/// pip install google-antigravity==0.1.5
+/// pip install google-antigravity==0.1.10
 /// ```
-pub const SUPPORTED_HARNESS_VERSION: &str = "0.1.5";
+///
+/// The 0.1.5 → 0.1.10 move renamed two wire spellings that the bridge
+/// depends on (`STATE_IDLE` → `STATE_FULLY_IDLE`, `usageMetadata` →
+/// `usageUpdate`); both old spellings are still accepted, so a single
+/// build drives either revision. "Degrades gracefully" is doing real
+/// work in that sentence above, though — a renamed value an
+/// `Unknown` variant absorbs is invisible until behavior that
+/// *matched* on it silently stops firing.
+pub const SUPPORTED_HARNESS_VERSION: &str = "0.1.10";
 
 /// Harness-executed built-in tools.
 ///

@@ -20,7 +20,7 @@
 //! ## Running
 //!
 //! ```bash
-//! pip install google-antigravity==0.1.5   # or set ANTIGRAVITY_HARNESS_PATH
+//! pip install google-antigravity==0.1.10   # or set ANTIGRAVITY_HARNESS_PATH
 //! export GEMINI_API_KEY=your_api_key
 //! cargo run --example repo_auditor --features antigravity
 //! LOUD_WIRE=1 cargo run --example repo_auditor --features antigravity  # wire trace
@@ -314,7 +314,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!(
         "• Bound runaway turns with with_turn_timeout; add with_save_dir to resume long audits"
     );
-    println!("• Pin the harness wheel (google-antigravity==0.1.5, SUPPORTED_HARNESS_VERSION)");
+    println!("• Pin the harness wheel (google-antigravity==0.1.10, SUPPORTED_HARNESS_VERSION)");
 
     if mismatches > 0 {
         return Err(format!("{mismatches} finding(s) contradict the severity classifier").into());

@@ -58,6 +58,9 @@ jobs:
   test-antigravity:
     name: Test Suite (antigravity)
     runs-on: ubuntu-latest
+    # Same-repo guard as test-integration: the harness tests below need
+    # GEMINI_API_KEY, so forks must not run them.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -67,11 +70,19 @@ jobs:
         run: sudo apt-get update || true; sudo apt-get install -y mold
       - name: Install pinned localharness wheel
         # Version must match SUPPORTED_HARNESS_VERSION in src/antigravity/.
-        run: pip install google-antigravity==0.1.5
+        run: pip install google-antigravity==0.1.10
       - name: Run unit tests with antigravity feature
         run: cargo nextest run --workspace --features antigravity
-      - name: Run harness integration tests (API-key tests self-skip)
+      # The model-backed tests in this binary are the only ones that
+      # drive a real turn end-to-end, which makes them the only guard
+      # against a harness protocol change breaking turn completion. They
+      # self-skip without a key — so omitting it here made them pass
+      # vacuously, and the harness 0.1.5 -> 0.1.10 terminal-state rename
+      # (every turn hanging to timeout) went unnoticed.
+      - name: Run harness integration tests
         run: cargo nextest run --features antigravity --run-ignored all -E 'binary(antigravity_harness)'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
   test-integration:
     name: Integration Tests (${{ matrix.group }})
