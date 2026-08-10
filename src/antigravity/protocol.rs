@@ -24,6 +24,52 @@ use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 
 // =============================================================================
+// Protocol drift telemetry
+// =============================================================================
+
+/// Every unrecognized wire value seen this process, and how often.
+static DRIFT: std::sync::Mutex<Option<BTreeMap<String, usize>>> = std::sync::Mutex::new(None);
+
+/// Records an unrecognized wire value for [`drift_report`].
+///
+/// The Evergreen posture preserves what it does not recognize, which
+/// prevents a crash but produces no *signal*: a `warn!` nobody reads is
+/// the only trace, and behavior keyed on a renamed variant stops firing
+/// silently. Accumulating them makes the degradation inspectable —
+/// programmatically, not by grepping logs.
+pub(crate) fn record_drift(enum_name: &str, value: &str) {
+    if let Ok(mut guard) = DRIFT.lock() {
+        *guard
+            .get_or_insert_with(BTreeMap::new)
+            .entry(format!("{enum_name}={value}"))
+            .or_insert(0) += 1;
+    }
+}
+
+/// Unrecognized wire values seen so far, as `"EnumName=WIRE_VALUE" -> count`.
+///
+/// Empty is the healthy state. A non-empty report means the harness sent
+/// something this build does not model — which, for a value the crate
+/// *matches on*, is the difference between working and silently doing
+/// nothing (see `SUPPORTED_HARNESS_VERSION`). Process-wide and cumulative;
+/// [`clear_drift_report`] resets it.
+#[must_use]
+pub fn drift_report() -> BTreeMap<String, usize> {
+    DRIFT
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .unwrap_or_default()
+}
+
+/// Clears [`drift_report`] (useful between test cases).
+pub fn clear_drift_report() {
+    if let Ok(mut guard) = DRIFT.lock() {
+        *guard = None;
+    }
+}
+
+// =============================================================================
 // Flexible numeric deserialization (proto-JSON int64/uint64 arrive as strings)
 // =============================================================================
 
@@ -125,6 +171,20 @@ macro_rules! wire_string_enum {
                 }
             }
 
+            /// Every wire spelling this enum recognizes, canonical and
+            /// alias alike.
+            ///
+            /// Exists for the protocol-drift guard in
+            /// `tests/antigravity_harness.rs`, which diffs these against
+            /// the enum values in the installed harness wheel's protobuf
+            /// descriptor. A value the harness gained (or renamed) is
+            /// otherwise invisible: it deserializes to `Unknown` and any
+            /// behavior keyed on the old variant silently stops firing.
+            #[must_use]
+            pub const fn all_wire_values() -> &'static [&'static str] {
+                &[$( $wire $(, $alias)* ),+]
+            }
+
             /// Check if this is an unknown value.
             #[must_use]
             pub const fn is_unknown(&self) -> bool {
@@ -177,6 +237,11 @@ macro_rules! wire_string_enum {
                      Preserving in Unknown variant."),
                     $ctx
                 );
+                // Also accumulate it: a warn is only seen by whoever is
+                // reading logs at the time, and this is the signal that
+                // distinguishes "preserved harmlessly" from "the bridge
+                // stopped recognizing something it acts on".
+                record_drift(stringify!($name), &$ctx);
                 Ok(Self::Unknown { $ctx, data: value })
             }
         }

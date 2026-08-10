@@ -1301,7 +1301,11 @@ mod thinking {
 
         let config = GenerationConfig {
             temperature: Some(0.7),
-            max_output_tokens: Some(500),
+            // Headroom for the same reason as the High case below: thinking
+            // draws from this budget. Minimal should need far less, which
+            // is the point of the level — but the assertion here is that
+            // the level is accepted, not that 500 tokens is enough.
+            max_output_tokens: Some(2000),
             thinking_level: Some(ThinkingLevel::Minimal),
             ..Default::default()
         };
@@ -1341,7 +1345,13 @@ mod thinking {
 
         let config = GenerationConfig {
             temperature: Some(0.7),
-            max_output_tokens: Some(1000),
+            // Headroom: thinking tokens are drawn from this same budget,
+            // and ThinkingLevel::High on a step-by-step prompt can consume
+            // 1000 on its own — which surfaced as an intermittent
+            // `Incomplete` status rather than as anything about thinking.
+            // This test is about the level being accepted and honored, not
+            // about truncation behavior.
+            max_output_tokens: Some(8000),
             thinking_level: Some(ThinkingLevel::High),
             ..Default::default()
         };

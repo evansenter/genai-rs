@@ -192,9 +192,11 @@ use genai_rs::{Client, Content, video_from_file};
 
 // From file helper
 let video_content = video_from_file("clip.mp4").await?;
+// video_from_file reads the file into inline bytes, so it needs an
+// inline-capable model too (see the note on the base64 form below).
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model("gemini-3-flash-preview")
     .with_content(vec![
         Content::text("Describe what happens in this video"),
         video_content,
@@ -202,10 +204,14 @@ let response = client
     .create()
     .await?;
 
-// From base64
+// From base64 — NOTE the model. Inline video bytes need a model that
+// accepts them: verified live 2026-08-10, gemini-3.6-flash returns
+// 400 invalid_request for inline video while accepting video by URI.
+// Prefer the Files API URI form below unless you specifically need
+// inline bytes.
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model("gemini-3-flash-preview")
     .with_content(vec![
         Content::text("Summarize this video"),
         Content::video_data(base64_video, "video/mp4"),

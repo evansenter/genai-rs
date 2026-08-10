@@ -84,6 +84,21 @@ jobs:
         run: cargo nextest run --features antigravity --run-ignored all -E 'binary(antigravity_harness)'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      # Examples were compiled but never executed, so bugs that only show
+      # up in a real run stayed invisible: `on_post_tool` reporting every
+      # successful builtin as a failure was found by running one of these
+      # by hand, not by any test. Both finish in seconds.
+      - name: Smoke-run antigravity examples
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          set -eo pipefail
+          for ex in session_resume workspace_explorer; do
+            echo "::group::cargo run --example $ex"
+            cargo run --features antigravity --example "$ex"
+            echo "::endgroup::"
+          done
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
   test-integration:
     name: Integration Tests (${{ matrix.group }})

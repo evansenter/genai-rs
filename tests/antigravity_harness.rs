@@ -607,3 +607,186 @@ async fn test_antigravity_workspace_actions_and_post_tool_success() {
 
     agent.shutdown().await.expect("shutdown");
 }
+
+// =============================================================================
+// Protocol drift guard
+// =============================================================================
+
+/// Dumps `{proto_enum_path: [values]}` from the installed harness wheel.
+///
+/// The wheel ships the compiled `localharness_pb2`, which carries a full
+/// `FileDescriptorProto` — the authoritative list of what the harness can
+/// send. Its module path moved in 0.1.10, so both are tried.
+fn harness_proto_enums() -> Option<serde_json::Value> {
+    const SCRIPT: &str = r#"
+import json, importlib, sys
+from google.protobuf import descriptor_pb2
+mod = None
+for path in ("google.antigravity.proto.localharness_pb2",
+             "google.antigravity.connections.local.localharness_pb2"):
+    try:
+        mod = importlib.import_module(path); break
+    except Exception:
+        continue
+if mod is None:
+    sys.exit(3)
+fdp = descriptor_pb2.FileDescriptorProto()
+mod.DESCRIPTOR.CopyToProto(fdp)
+out = {}
+def walk(msgs, prefix=""):
+    for mt in msgs:
+        full = prefix + mt.name
+        for e in mt.enum_type:
+            out[full + "." + e.name] = sorted(v.name for v in e.value)
+        walk(mt.nested_type, full + ".")
+for e in fdp.enum_type:
+    out[e.name] = sorted(v.name for v in e.value)
+walk(fdp.message_type)
+print(json.dumps(out))
+"#;
+    // Prefer the interpreter that owns the wheel discovery path the crate
+    // itself uses; fall back to whatever `python3` resolves to.
+    let output = std::process::Command::new("python3")
+        .args(["-c", SCRIPT])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        println!(
+            "Skipping: could not import localharness_pb2 ({}). Install the wheel \
+             into the python3 on PATH to run this guard.",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+        return None;
+    }
+    serde_json::from_slice(&output.stdout).ok()
+}
+
+/// Compares a harness descriptor dump against what this crate models,
+/// returning one human-readable line per drifted enum.
+///
+/// Pure and synchronous so the detection logic itself is testable — a
+/// drift guard that cannot be shown to detect drift is worse than none,
+/// because it reads as coverage.
+fn find_enum_drift(harness: &serde_json::Value, modeled: &[(&str, &[&str])]) -> Vec<String> {
+    let mut drift = Vec::new();
+    for (proto_path, known) in modeled {
+        let Some(values) = harness.get(proto_path).and_then(|v| v.as_array()) else {
+            drift.push(format!(
+                "{proto_path}: not present in the harness descriptor — the message or \
+                 enum was renamed or removed"
+            ));
+            continue;
+        };
+        let unmodeled: Vec<&str> = values
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .filter(|v| !known.contains(v))
+            .collect();
+        if !unmodeled.is_empty() {
+            drift.push(format!(
+                "{proto_path}: harness can send {unmodeled:?}, which this crate does not \
+                 model (they would deserialize to Unknown and stop matching); known = {known:?}"
+            ));
+        }
+    }
+    drift
+}
+
+#[test]
+fn drift_detector_catches_the_0_1_10_rename() {
+    // The exact shape of the bug this guard exists for: the harness
+    // renamed the terminal trajectory state, and a crate that models only
+    // the old spelling must be told loudly.
+    let harness = serde_json::json!({
+        "TrajectoryStateUpdate.State": [
+            "STATE_CANCELLED", "STATE_FULLY_IDLE", "STATE_RUNNING",
+            "STATE_UNSPECIFIED", "STATE_WAITING_FOR_TASKS"
+        ]
+    });
+    let stale: &[&str] = &[
+        "STATE_UNSPECIFIED",
+        "STATE_RUNNING",
+        "STATE_IDLE",
+        "STATE_CANCELLED",
+    ];
+    let drift = find_enum_drift(&harness, &[("TrajectoryStateUpdate.State", stale)]);
+    assert_eq!(drift.len(), 1, "expected one drifted enum, got {drift:?}");
+    assert!(drift[0].contains("STATE_FULLY_IDLE"), "got: {}", drift[0]);
+    assert!(
+        drift[0].contains("STATE_WAITING_FOR_TASKS"),
+        "got: {}",
+        drift[0]
+    );
+
+    // And the current model is clean against the same descriptor.
+    let current = genai_rs::antigravity::protocol::TrajectoryState::all_wire_values();
+    assert!(find_enum_drift(&harness, &[("TrajectoryStateUpdate.State", current)]).is_empty());
+}
+
+#[test]
+fn drift_detector_flags_a_missing_enum_and_ignores_retired_values() {
+    // A message/enum that vanished from the descriptor is drift.
+    let empty = serde_json::json!({});
+    let drift = find_enum_drift(&empty, &[("StepUpdate.State", &["STATE_DONE"][..])]);
+    assert_eq!(drift.len(), 1);
+    assert!(drift[0].contains("not present"), "got: {}", drift[0]);
+
+    // A value the crate keeps but the harness no longer sends is NOT
+    // drift — that is exactly what the alias mechanism is for.
+    let harness = serde_json::json!({ "StepUpdate.State": ["STATE_DONE"] });
+    let with_alias: &[&str] = &["STATE_DONE", "STATE_RETIRED_SPELLING"];
+    assert!(find_enum_drift(&harness, &[("StepUpdate.State", with_alias)]).is_empty());
+}
+
+/// Fails when the harness's enum values drift from what this crate models.
+///
+/// This is the guard that would have caught the 0.1.5 -> 0.1.10 break on
+/// the day the wheel was bumped, instead of every agent turn silently
+/// running to its timeout. `STATE_IDLE` became `STATE_FULLY_IDLE`; because
+/// only the `Idle` variant ends a turn and the renamed value was absorbed
+/// as `Unknown`, nothing errored and nothing failed — the bridge simply
+/// stopped recognizing the end of a turn.
+///
+/// Deliberately one-directional: a value the crate knows but the harness
+/// no longer sends is fine (that is what aliases are for). A value the
+/// **harness can send** and the crate does not model is the dangerous
+/// direction, because it lands in `Unknown` and stops matching.
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
+async fn test_antigravity_protocol_enums_have_not_drifted() {
+    use genai_rs::antigravity::protocol::{
+        HookDecision, LifecycleHook, LineAction, ModelType, StepSource, StepState, StepTarget,
+        TrajectoryState,
+    };
+
+    let Some(harness) = harness_proto_enums() else {
+        return;
+    };
+
+    // (proto enum path, what this crate recognizes)
+    let modeled: Vec<(&str, &[&str])> = vec![
+        ("StepUpdate.State", StepState::all_wire_values()),
+        ("StepUpdate.Source", StepSource::all_wire_values()),
+        ("StepUpdate.Target", StepTarget::all_wire_values()),
+        (
+            "TrajectoryStateUpdate.State",
+            TrajectoryState::all_wire_values(),
+        ),
+        ("ModelType", ModelType::all_wire_values()),
+        ("LifecycleHook", LifecycleHook::all_wire_values()),
+        ("PreToolResult.Decision", HookDecision::all_wire_values()),
+        (
+            "ActionEditFile.DiffLine.LineAction",
+            LineAction::all_wire_values(),
+        ),
+    ];
+
+    let drift = find_enum_drift(&harness, &modeled);
+
+    assert!(
+        drift.is_empty(),
+        "harness protocol drift detected — update the wire enums in \
+         src/antigravity/protocol.rs (and docs/ENUM_WIRE_FORMATS.md):\n  {}",
+        drift.join("\n  ")
+    );
+}

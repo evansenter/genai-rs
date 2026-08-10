@@ -43,10 +43,14 @@
 //! [action] list_directory      (allowed)  .
 //! [action] view_file           (allowed)  README.md
 //! [tool]   record_finding      -> ok
-//! [DENIED] record_finding: refusing to record a secret value
 //!
-//! --- Audit trail (4 harness actions, 2 custom calls, 1 denied) ---
+//! --- Audit trail (6 streamed actions, 12 post-tool callbacks, 0 denied) ---
 //! ```
+//!
+//! The deny path is prompt-dependent: the system instruction tells the
+//! agent not to touch credentials, so a well-behaved run never trips the
+//! hook. Seeding `secrets.env` and gating on content means the refusal is
+//! there when it is needed rather than relied upon for the demo.
 
 use futures_util::StreamExt;
 use genai_rs::CallableFunction;
@@ -65,7 +69,11 @@ use std::sync::{Arc, Mutex};
     note(description = "One sentence describing the finding")
 )]
 fn record_finding(file: String, note: String) -> String {
-    format!(r#"{{"recorded": true, "file": "{file}", "note": "{note}"}}"#)
+    // Build it with `json!` rather than interpolating into a string
+    // literal: `note` is free-form model output about code, so a quoted
+    // identifier or a backslash is likely rather than contrived, and
+    // hand-built JSON breaks on both.
+    serde_json::json!({ "recorded": true, "file": file, "note": note }).to_string()
 }
 
 /// One observed event, for the end-of-run audit trail.
@@ -73,8 +81,10 @@ fn record_finding(file: String, note: String) -> String {
 enum Audit {
     /// A harness-executed builtin (file tools, etc.).
     HarnessAction { name: String, allowed: bool },
-    /// A client-executed custom tool call that ran.
-    CustomCall { name: String, ok: bool },
+    /// A completed tool call as seen by `on_post_tool`. Note this fires
+    /// for harness-executed builtins as well as custom tools — the hook is
+    /// "a tool finished", not "your code ran".
+    PostTool { name: String, ok: bool },
     /// A custom tool call the pre-tool hook refused.
     Denied { name: String, reason: String },
 }
@@ -123,16 +133,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Dynamic gate: policies match on *names*, so they cannot express
         // "this particular call is bad". Content-based refusal lives here.
         .on_pre_tool(move |call| {
-            let looks_secret = call.args["note"]
-                .as_str()
-                .into_iter()
-                .chain(call.args["file"].as_str())
+            // The hook is consulted for harness builtins too, and they use
+            // their own argument names — `view_file` sends `file_path`, not
+            // `file`. Reading only the custom tool's keys would silently
+            // allow every builtin (a missing key indexes to Null), so the
+            // gate would cover recording a secret but not *reading* one.
+            const ARG_KEYS: [&str; 5] = ["note", "file", "file_path", "directory_path", "query"];
+            let looks_secret = ARG_KEYS
+                .iter()
+                .filter_map(|k| call.args[*k].as_str())
                 .any(|s| {
                     let s = s.to_lowercase();
                     s.contains("secret") || s.contains("api_key") || s.contains("password")
                 });
             if looks_secret {
-                let reason = "refusing to record a secret value".to_string();
+                let reason = format!("refusing to touch a secret value via {}", call.name);
                 println!("[DENIED] {}: {reason}", call.name);
                 hook_audit.lock().unwrap().push(Audit::Denied {
                     name: call.name.clone(),
@@ -155,7 +170,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "ok"
                 }
             );
-            post_audit.lock().unwrap().push(Audit::CustomCall {
+            post_audit.lock().unwrap().push(Audit::PostTool {
                 name: outcome.name.clone(),
                 ok: outcome.error.is_none(),
             });
@@ -217,7 +232,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .count();
     let calls = trail
         .iter()
-        .filter(|a| matches!(a, Audit::CustomCall { .. }))
+        .filter(|a| matches!(a, Audit::PostTool { .. }))
         .count();
     let denied = trail
         .iter()
@@ -225,7 +240,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .count();
 
     println!(
-        "\n--- Audit trail ({actions} harness actions, {calls} custom calls, {denied} denied) ---"
+        "\n--- Audit trail ({actions} streamed actions, {calls} post-tool callbacks, {denied} denied) ---"
     );
     for entry in trail.iter() {
         match entry {
@@ -235,8 +250,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if *allowed { "ok" } else { "denied" }
                 );
             }
-            Audit::CustomCall { name, ok } => {
-                println!("  call    {name:<20} {}", if *ok { "ok" } else { "error" });
+            Audit::PostTool { name, ok } => {
+                println!("  posttool{name:<20} {}", if *ok { "ok" } else { "error" });
             }
             Audit::Denied { name, reason } => println!("  DENIED  {name:<20} {reason}"),
         }

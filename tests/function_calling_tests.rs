@@ -2295,22 +2295,40 @@ mod multiturn {
 
         let turn1_id = result1.id.clone().expect("Turn 1 should have ID");
 
-        // Turn 2: Follow-up WITHOUT resending tools
+        // Turn 2: Follow-up WITHOUT resending tools.
+        //
+        // Deliberately does NOT ask for a live weather lookup. A prompt like
+        // "what's the weather in Paris?" invites the model to call the tool it
+        // saw in turn 1 — and having not been given it, gemini-3.6-flash
+        // reliably emits a malformed call, which the API rejects with
+        // `400 Model generated invalid JSON syntax`. That failure survives
+        // retries and tells us nothing about the rule under test.
+        //
+        // Asking about the conversation instead exercises both halves of the
+        // documented inheritance contract in one turn: history IS inherited
+        // (the model can answer from turn 1), tools are NOT (no calls come
+        // back, because they were not resent).
         let result2 = retry_request!([client, turn1_id] => {
             stateful_builder(&client)
-                .with_text("What's the weather in Paris?")
+                .with_text("In one word, what topic did I say I was interested in?")
                 .with_previous_interaction(&turn1_id)
                 .create()
                 .await
         })
         .expect("Turn 2 should succeed");
 
-        // Model should NOT have any function calls since we didn't provide tools
+        // Tools are not inherited: no calls, despite turn 1 having declared one.
         let function_calls = result2.function_calls();
         assert!(
             function_calls.is_empty(),
             "Model should not make function calls when tools not provided (got {} calls)",
             function_calls.len()
+        );
+        // History IS inherited: the answer can only come from turn 1.
+        let text = result2.as_text().unwrap_or_default().to_lowercase();
+        assert!(
+            text.contains("weather"),
+            "conversation history should be inherited, got: {text:?}"
         );
     }
 

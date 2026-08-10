@@ -963,6 +963,20 @@ impl AntigravityAgent {
     /// its trajectory), closes stdin (EOF triggers the harness's clean
     /// exit), then escalates to SIGTERM and SIGKILL if it lingers.
     pub async fn shutdown(mut self) -> Result<(), AntigravityError> {
+        // Summarize protocol drift once, at the natural end of a session.
+        // Individual `warn!`s scroll past mid-run; the aggregate is what
+        // tells you the harness spoke a dialect this build only partly
+        // understands — the failure mode that otherwise presents as
+        // "it just didn't do anything".
+        let drift = protocol::drift_report();
+        if !drift.is_empty() {
+            tracing::warn!(
+                "Antigravity session saw {} unrecognized wire value(s) — this build may not \
+                 fully understand this harness (see SUPPORTED_HARNESS_VERSION): {:?}",
+                drift.values().sum::<usize>(),
+                drift
+            );
+        }
         // Stop trigger timers first so nothing writes to the closing socket.
         self.trigger_tasks.abort_all();
         self.session.close().await;

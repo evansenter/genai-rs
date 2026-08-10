@@ -830,7 +830,8 @@ pub const DEFAULT_MODEL: &str = "gemini-3.6-flash";
 ///
 /// Verified live 2026-08-10: [`DEFAULT_MODEL`] rejects inline video with
 /// `400 invalid_request` while accepting video by URI — `test_video_input_from_uri`
-/// passes on it, and the three inline-video tests do not. Pinning those to a
+/// passes on it, and the four inline-video tests do not (three in
+/// `multimodal_tests.rs`, one in `temp_file_tests.rs`). Pinning those to a
 /// model that accepts the inline form keeps them testing *the bytes path*
 /// rather than the default model's appetite for it; every other modality
 /// (image, audio, PDF) works on the default.
