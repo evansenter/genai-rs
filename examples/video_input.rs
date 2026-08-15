@@ -21,7 +21,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let api_key = env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY not found in environment");
     let client = Client::builder(api_key).build()?;
     // This example is about **inline** (base64) video bytes, and the
-    // default `gemini-3.6-flash` rejects those with a 400 while accepting
+    // default model rejects those with a 400 while accepting
     // video by URI (verified live 2026-08-10). So it pins a model that
     // accepts the inline form — the same reason `tests/common`'s
     // VIDEO_INLINE_MODEL exists. If you only need video by URI, the

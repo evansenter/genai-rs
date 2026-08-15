@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a streaming request
     let mut stream = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_text(prompt)
         .with_store_enabled()
         .create_stream();

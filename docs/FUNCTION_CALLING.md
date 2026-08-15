@@ -84,7 +84,7 @@ let _declaration = GetWeatherCallable.declaration();
 // Functions are auto-discovered from the global registry
 let result = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("What's the weather in Tokyo?")
     .create_with_auto_functions()  // Auto-discovers and executes
     .await?;
@@ -100,7 +100,7 @@ use genai_rs::CallableFunction;
 // Only expose specific functions (not all registered ones)
 let result = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("What's the weather in Tokyo?")
     .add_function(GetWeatherCallable.declaration())  // Only weather
     .create_with_auto_functions()
@@ -211,7 +211,7 @@ let service = Arc::new(MyToolService {
 
 let result = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("What's the weather in Tokyo?")
     .with_tool_service(service.clone())  // Inject the service
     .create_with_auto_functions()
@@ -271,7 +271,7 @@ let get_weather = FunctionDeclaration::builder("get_weather")
 // Initial request
 let mut response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("What's the weather in Tokyo?")
     .add_functions(vec![get_weather])
     .create()  // NOT create_with_auto_functions
@@ -295,7 +295,7 @@ while response.has_function_calls() {
     // Send results back as function_result steps
     response = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_previous_interaction(response.id.as_ref().unwrap())
         .with_history(results)
         .create()

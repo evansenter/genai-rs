@@ -203,7 +203,7 @@ GitHub Actions runs: check, test, test-strict-unknown, test-integration (5 matri
 
 ## Project Conventions
 
-- **Model name**: Always use `gemini-3.6-flash` (exceptions: `gemini-3.1-flash-image` for image generation, `gemini-2.5-pro-preview-tts` for text-to-speech, and `tests/common::VIDEO_INLINE_MODEL` for **inline base64 video** — verified live 2026-08-10, `gemini-3.6-flash` returns 400 on inline video bytes while accepting video by URI)
+- **Model name**: Always use `gemini-3.7-flash` (exceptions: `gemini-3.1-flash-image` for image generation, `gemini-2.5-pro-preview-tts` for text-to-speech, and `tests/common::VIDEO_INLINE_MODEL` for **inline base64 video** — verified live 2026-08-10, `gemini-3.7-flash` returns 400 on inline video bytes while accepting video by URI)
 
 ### Naming Conventions
 

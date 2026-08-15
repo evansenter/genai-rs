@@ -15,7 +15,7 @@
 //!
 //!     let response = client
 //!         .interaction()
-//!         .with_model("gemini-3.6-flash")
+//!         .with_model(genai_rs::DEFAULT_MODEL)
 //!         .with_text("Hello, Gemini!")
 //!         .create()
 //!         .await?;
@@ -59,6 +59,42 @@ pub(crate) mod http;
 pub(crate) mod serde_util;
 #[cfg(test)]
 pub(crate) mod test_subscriber;
+
+// =============================================================================
+// Model defaults
+// =============================================================================
+
+/// The model this crate is developed and verified against.
+///
+/// Exposed so that examples, tests and callers name one constant instead of
+/// a string literal. That is not cosmetic: before this existed, a model bump
+/// meant editing ~600 occurrences across the repo, and the sweep is exactly
+/// the kind of mechanical change that misses a few and leaves them silently
+/// pinned to a retired model.
+///
+/// A *default*, not a constraint — [`with_model`](InteractionBuilder::with_model)
+/// accepts any model id, and picking one deliberately is normal.
+///
+/// Capability note: this model rejects **inline (base64) video** with
+/// `400 invalid_request` while accepting video by URI (verified live on both
+/// `test-model` and `gemini-3.7-flash`). Image, audio and PDF inline
+/// data are unaffected. See [`INLINE_VIDEO_MODEL`].
+pub const DEFAULT_MODEL: &str = "gemini-3.7-flash";
+
+/// A model that accepts **inline (base64) video bytes**, which
+/// [`DEFAULT_MODEL`] does not.
+///
+/// Only needed for the inline form; video by URI works on the default.
+pub const INLINE_VIDEO_MODEL: &str = "gemini-3-flash-preview";
+
+/// The model to use for image generation.
+///
+/// Image output is a separate model family from [`DEFAULT_MODEL`]; passing
+/// the default to an image-generation request will not produce images.
+pub const DEFAULT_IMAGE_MODEL: &str = "gemini-3.1-flash-image";
+
+/// The model to use for text-to-speech.
+pub const DEFAULT_TTS_MODEL: &str = "gemini-2.5-pro-preview-tts";
 
 // =============================================================================
 // Core Type Modules

@@ -472,7 +472,7 @@ impl<'de> Deserialize<'de> for StreamChunk {
 ///
 /// ```ignore
 /// let mut last_event_id = None;
-/// let mut stream = client.interaction().with_model("gemini-3.6-flash")
+/// let mut stream = client.interaction().with_model(genai_rs::DEFAULT_MODEL)
 ///     .with_text("Count to 100").create_stream();
 ///
 /// while let Some(result) = stream.next().await {
@@ -764,7 +764,7 @@ mod tests {
     fn test_stream_chunk_completed_roundtrip() {
         let response = InteractionResponse {
             id: Some("test-interaction-123".to_string()),
-            model: Some("gemini-3.6-flash".to_string()),
+            model: Some("test-model".to_string()),
             steps: vec![Step::model_output(vec![Content::text("The answer is 4.")])],
             status: InteractionStatus::Completed,
             ..Default::default()
@@ -815,7 +815,7 @@ mod tests {
     fn test_stream_chunk_created_roundtrip() {
         let response = InteractionResponse {
             id: Some("test-interaction-456".to_string()),
-            model: Some("gemini-3.6-flash".to_string()),
+            model: Some("test-model".to_string()),
             status: InteractionStatus::InProgress,
             ..Default::default()
         };

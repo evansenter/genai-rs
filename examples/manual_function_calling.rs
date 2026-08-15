@@ -101,7 +101,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Step 1: Initial request with function declarations
     let mut response = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_text(prompt)
         .add_functions(functions.clone())
         .create() // NOT create_with_auto_functions() - we handle execution
@@ -139,7 +139,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok_or("Response missing ID. Multi-turn requires store=true (the default).")?;
         response = client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_previous_interaction(prev_id) // Continue the conversation
             .with_history(results) // function_result steps as input
             .add_functions(functions.clone()) // Keep functions available

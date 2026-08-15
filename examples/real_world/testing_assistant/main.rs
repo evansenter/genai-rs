@@ -132,7 +132,7 @@ impl TestingAssistant {
         let response = self
             .client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_system_instruction(
                 "You are an expert test engineer. Generate thorough, maintainable tests \
                  that cover normal cases, edge cases, and error conditions. Use descriptive \
@@ -177,7 +177,7 @@ impl TestingAssistant {
         let response = self
             .client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_system_instruction(
                 "You are a test coverage analyst. Evaluate test completeness, \
                  identify gaps, and suggest specific improvements. Be thorough \
@@ -233,7 +233,7 @@ impl TestingAssistant {
         let response = self
             .client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_system_instruction(
                 "You are a property-based testing expert. Identify mathematical \
                  properties and invariants that should hold for any valid input. \
@@ -267,7 +267,7 @@ impl TestingAssistant {
         let response = self
             .client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_system_instruction(
                 "You are a test engineer. Write a focused, well-named test \
                  for the specific scenario. Include setup if needed and \

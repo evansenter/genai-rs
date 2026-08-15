@@ -20,7 +20,7 @@
 //!
 //! let mut agent = AntigravityAgent::builder()
 //!     .with_api_key(std::env::var("GEMINI_API_KEY")?)
-//!     .with_model("gemini-3.6-flash")
+//!     .with_model(genai_rs::DEFAULT_MODEL)
 //!     .with_system_instructions("You are a code-review assistant.")
 //!     .add_workspace("/path/to/repo")
 //!     .add_policy(policy::deny_all())
@@ -285,7 +285,7 @@ impl AgentBuilder {
         self
     }
 
-    /// Sets the text model (default: `gemini-3.6-flash`).
+    /// Sets the text model (default: `test-model`).
     #[must_use]
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());
@@ -744,7 +744,7 @@ impl AgentBuilder {
                     name: Some(
                         self.model
                             .clone()
-                            .unwrap_or_else(|| "gemini-3.6-flash".to_string()),
+                            .unwrap_or_else(|| "test-model".to_string()),
                     ),
                     types: vec![protocol::ModelType::Text],
                     gemini_api_endpoint: Some(protocol::GeminiApiEndpoint {
@@ -2565,7 +2565,7 @@ mod agent_tests {
     #[tokio::test]
     async fn test_spawn_model_without_api_key_is_config_error() {
         let err = AntigravityAgent::builder()
-            .with_model("gemini-3.6-flash")
+            .with_model(crate::DEFAULT_MODEL)
             .spawn()
             .await
             .unwrap_err();
@@ -2579,7 +2579,7 @@ mod agent_tests {
     fn test_builder_harness_config_assembly() {
         let builder = AntigravityAgent::builder()
             .with_api_key("test-key")
-            .with_model("gemini-3.6-flash")
+            .with_model(crate::DEFAULT_MODEL)
             .with_system_instructions("Be brief.")
             .add_workspace("/w1")
             .add_workspace("/w2")
@@ -2596,7 +2596,7 @@ mod agent_tests {
         assert_eq!(config.cascade_id.as_deref(), Some("resume-me"));
         assert_eq!(config.models.len(), 1);
         let model = &config.models[0];
-        assert_eq!(model.name.as_deref(), Some("gemini-3.6-flash"));
+        assert_eq!(model.name.as_deref(), Some(crate::DEFAULT_MODEL));
         assert_eq!(model.types, vec![protocol::ModelType::Text]);
         assert_eq!(
             model

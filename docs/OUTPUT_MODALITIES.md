@@ -38,7 +38,7 @@ Text is the default output modality - no special configuration needed.
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Explain quantum computing")
     .create()
     .await?;
@@ -304,7 +304,7 @@ use serde_json::json;
 
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Generate a user profile for John Doe, age 30")
     .with_response_format(json!({
         "type": "object",
@@ -350,7 +350,7 @@ let schema = json!({
 
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("List 3 popular smartphones with prices")
     .with_response_format(schema)
     .create()
@@ -384,7 +384,7 @@ Structured output works with built-in tools:
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("What's the weather in Tokyo?")
     .with_google_search()
     .with_response_format(json!({
@@ -452,7 +452,7 @@ The structured output still uses text modality internally:
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Analyze this sentiment")
     .with_response_format(sentiment_schema)
     .create()
@@ -565,7 +565,7 @@ client.interaction()
 
 // Text/JSON - any model works
 client.interaction()
-    .with_model("gemini-3.6-flash")  // Standard model fine
+    .with_model(genai_rs::DEFAULT_MODEL)  // Standard model fine
     .with_response_format(schema)
 ```
 

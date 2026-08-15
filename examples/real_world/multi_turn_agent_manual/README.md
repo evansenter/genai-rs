@@ -29,7 +29,7 @@ This example demonstrates the same customer support agent as `multi_turn_agent_a
 // Build initial request with functions
 let mut response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text(message)
     .add_functions(declarations)
     .with_store_enabled()
@@ -59,7 +59,7 @@ for _ in 0..MAX_ITERATIONS {
     // Send results back
     response = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_previous_interaction(response.id.as_ref().unwrap())
         .set_content(results)
         .with_store_enabled()

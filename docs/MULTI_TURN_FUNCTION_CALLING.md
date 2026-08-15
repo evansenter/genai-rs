@@ -34,7 +34,7 @@ The Gemini Interactions API supports two modes controlled by the `store` paramet
 ```rust,ignore
 // First turn
 let response = client.interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Hi, I'm Alice")
     .with_system_instruction("You are a helpful assistant")
     .with_store_enabled()  // Server stores conversation
@@ -43,7 +43,7 @@ let response = client.interaction()
 
 // Subsequent turns - just chain with previous_interaction_id
 let response = client.interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("What's my name?")  // Model remembers: "Alice"
     .with_previous_interaction(&response.id.unwrap())
     .with_store_enabled()
@@ -75,7 +75,7 @@ let mut history: Vec<Step> = vec![];
 history.push(Step::user_text("Hi, I'm Alice"));
 
 let response = client.interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_history(history.clone())
     .with_system_instruction("You are a helpful assistant")
     .with_store_disabled()  // No server state
@@ -89,7 +89,7 @@ history.extend(response.output_steps());
 history.push(Step::user_text("What's my name?"));
 
 let response = client.interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_history(history.clone())
     .with_system_instruction("You are a helpful assistant")
     .with_store_disabled()
@@ -280,7 +280,7 @@ for _ in 0..MAX_ITERATIONS {
     }
 
     response = client.interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_previous_interaction(response.id.as_ref().unwrap())
         .with_history(results)
         .create()
@@ -385,7 +385,7 @@ When using `previous_interaction_id` (stateful mode), some settings are inherite
 ```rust,ignore
 // First turn
 let response = client.interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Hello!")
     .with_system_instruction("You are a helpful assistant")
     .with_store_enabled()
@@ -394,7 +394,7 @@ let response = client.interaction()
 
 // Subsequent turn - set system_instruction again if needed
 let response = client.interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("What can you help me with?")
     .with_previous_interaction(&response.id.unwrap())
     .with_system_instruction("You are a helpful assistant")  // Set explicitly
@@ -410,7 +410,7 @@ For `create_with_auto_functions()`, the system instruction is automatically incl
 ```rust,ignore
 // System instruction is sent on every internal iteration automatically
 let result = client.interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("What's the weather?")
     .with_system_instruction("You are a weather assistant")
     .create_with_auto_functions()
@@ -425,7 +425,7 @@ let system_prompt = "You are a helpful assistant";
 
 // Each turn: always include system_instruction and tools
 let response = client.interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text(message)
     .add_functions(functions.clone())
     .with_system_instruction(system_prompt)
@@ -547,7 +547,7 @@ impl Agent {
         let response = match &self.last_id {
             Some(prev_id) => {
                 self.client.interaction()
-                    .with_model("gemini-3.6-flash")
+                    .with_model(genai_rs::DEFAULT_MODEL)
                     .with_text(message)
                     .add_functions(self.functions.clone())
                     .with_previous_interaction(prev_id)
@@ -556,7 +556,7 @@ impl Agent {
             }
             None => {
                 self.client.interaction()
-                    .with_model("gemini-3.6-flash")
+                    .with_model(genai_rs::DEFAULT_MODEL)
                     .with_text(message)
                     .add_functions(self.functions.clone())
                     .with_system_instruction("...")
@@ -595,7 +595,7 @@ impl StatelessSession {
         self.history.push(Step::user_text(message));
 
         let response = self.client.interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_history(self.history.clone())
             .add_functions(self.functions.clone())
             .with_system_instruction(&self.system_instruction)

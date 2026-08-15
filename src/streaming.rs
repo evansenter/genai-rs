@@ -16,7 +16,7 @@
 //!
 //! let mut stream = client
 //!     .interaction()
-//!     .with_model("gemini-3.6-flash")
+//!     .with_model(genai_rs::DEFAULT_MODEL)
 //!     .with_text("What's the weather in London?")
 //!     .create_stream_with_auto_functions();
 //!
@@ -440,7 +440,7 @@ impl<'de> Deserialize<'de> for AutoFunctionStreamChunk {
 ///
 /// let mut stream = client
 ///     .interaction()
-///     .with_model("gemini-3.6-flash")
+///     .with_model(genai_rs::DEFAULT_MODEL)
 ///     .with_text("What's the weather in London?")
 ///     .create_stream_with_auto_functions();
 ///
@@ -706,7 +706,7 @@ mod duration_millis {
 /// # let client = Client::new("key".to_string());
 /// let result = client
 ///     .interaction()
-///     .with_model("gemini-3.6-flash")
+///     .with_model(genai_rs::DEFAULT_MODEL)
 ///     .with_text("What's the weather in London?")
 ///     .create_with_auto_functions()
 ///     .await?;
@@ -793,7 +793,7 @@ impl AutoFunctionResult {
 ///
 /// let mut stream = client
 ///     .interaction()
-///     .with_model("gemini-3.6-flash")
+///     .with_model(genai_rs::DEFAULT_MODEL)
 ///     .with_text("What's the weather in London?")
 ///     .create_stream_with_auto_functions();
 ///
@@ -1046,7 +1046,7 @@ mod tests {
         let result = AutoFunctionResult {
             response: crate::InteractionResponse {
                 id: Some("interaction-abc123".to_string()),
-                model: Some("gemini-3.6-flash".to_string()),
+                model: Some("test-model".to_string()),
                 steps: vec![
                     crate::Step::model_text("Based on the weather data:"),
                     crate::Step::model_text("Paris is 18°C and London is 15°C."),
@@ -1088,10 +1088,7 @@ mod tests {
             json_str.contains("interaction-abc123"),
             "Should contain interaction ID"
         );
-        assert!(
-            json_str.contains("gemini-3.6-flash"),
-            "Should contain model name"
-        );
+        assert!(json_str.contains("test-model"), "Should contain model name");
         assert!(
             json_str.contains("get_weather"),
             "Should contain function name"
@@ -1120,10 +1117,7 @@ mod tests {
             deserialized.response.id.as_deref(),
             Some("interaction-abc123")
         );
-        assert_eq!(
-            deserialized.response.model,
-            Some("gemini-3.6-flash".to_string())
-        );
+        assert_eq!(deserialized.response.model, Some("test-model".to_string()));
         assert_eq!(deserialized.response.status, InteractionStatus::Completed);
         assert_eq!(
             deserialized.response.previous_interaction_id,
@@ -1157,7 +1151,7 @@ mod tests {
         let result = AutoFunctionResult {
             response: crate::InteractionResponse {
                 id: Some("interaction-stuck".to_string()),
-                model: Some("gemini-3.6-flash".to_string()),
+                model: Some("test-model".to_string()),
                 steps: vec![crate::Step::function_call(
                     "call-stuck",
                     "get_weather",
@@ -1197,7 +1191,7 @@ mod tests {
         let legacy_json = r#"{
             "response": {
                 "id": "interaction-old",
-                "model": "gemini-3.6-flash",
+                "model": "test-model",
                 "steps": [],
                 "status": "completed"
             },
@@ -1221,7 +1215,7 @@ mod tests {
         // Create a MaxLoopsReached chunk
         let response = crate::InteractionResponse {
             id: Some("interaction-max-loops".to_string()),
-            model: Some("gemini-3.6-flash".to_string()),
+            model: Some("test-model".to_string()),
             steps: vec![crate::Step::function_call(
                 "call-pending",
                 "stuck_function",
@@ -1282,7 +1276,7 @@ mod tests {
         // Simulate MaxLoopsReached being yielded
         let response = crate::InteractionResponse {
             id: Some("max-loops-response".to_string()),
-            model: Some("gemini-3.6-flash".to_string()),
+            model: Some("test-model".to_string()),
             status: InteractionStatus::Completed,
             ..Default::default()
         };
@@ -1404,7 +1398,7 @@ mod tests {
         let chunk = AutoFunctionStreamChunk::ExecutingFunctions {
             response: crate::InteractionResponse {
                 id: Some("interaction-new".to_string()),
-                model: Some("gemini-3.6-flash".to_string()),
+                model: Some("test-model".to_string()),
                 status: InteractionStatus::Completed,
                 ..Default::default()
             },

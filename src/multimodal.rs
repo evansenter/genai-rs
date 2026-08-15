@@ -29,7 +29,7 @@
 //!    # let client = Client::new("key".to_string());
 //!    let response = client
 //!        .interaction()
-//!        .with_model("gemini-3.6-flash")
+//!        .with_model(genai_rs::DEFAULT_MODEL)
 //!        .with_content(vec![
 //!            Content::text("Describe this video"),
 //!            Content::from_uri_and_mime("gs://bucket/large-video.mp4", "video/mp4"),
@@ -50,7 +50,7 @@
 //!    let file = client.upload_file("large-video.mp4").await?;
 //!    let response = client
 //!        .interaction()
-//!        .with_model("gemini-3.6-flash")
+//!        .with_model(genai_rs::DEFAULT_MODEL)
 //!        .with_content(vec![
 //!            Content::text("Describe this video"),
 //!            Content::from_file(&file),
@@ -74,7 +74,7 @@
 //!
 //! let response = client
 //!     .interaction()
-//!     .with_model("gemini-3.6-flash")
+//!     .with_model(genai_rs::DEFAULT_MODEL)
 //!     .with_content(vec![
 //!         Content::text("What's in this image?"),
 //!         image,

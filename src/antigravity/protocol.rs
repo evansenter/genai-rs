@@ -634,7 +634,7 @@ pub struct FilesystemWorkspace {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelConfig {
-    /// Model name, e.g. `gemini-3.6-flash`.
+    /// Model name, e.g. `test-model`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Roles this model serves ([`ModelType::Text`] is required for chat).
@@ -2077,7 +2077,7 @@ mod tests {
                     ..Default::default()
                 }],
                 models: vec![ModelConfig {
-                    name: Some("gemini-3.6-flash".to_string()),
+                    name: Some("test-model".to_string()),
                     types: vec![ModelType::Text],
                     gemini_api_endpoint: Some(GeminiApiEndpoint {
                         api_key: Some("k".to_string()),
@@ -2097,7 +2097,7 @@ mod tests {
             "harnessSideTools": {"runCommand": {"enabled": false}, "viewFile": {"enabled": true}},
             "workspaces": [{"filesystemWorkspace": {"directory": "/w"}}],
             "mcpServers": [{"name": "git", "stdio": {"command": "uvx", "args": ["x"], "env": {"K": "V"}}}],
-            "models": [{"name": "gemini-3.6-flash", "types": ["MODEL_TYPE_TEXT"], "geminiApiEndpoint": {"httpHeaders": {"a": "b"}, "apiKey": "k"}}],
+            "models": [{"name": "test-model", "types": ["MODEL_TYPE_TEXT"], "geminiApiEndpoint": {"httpHeaders": {"a": "b"}, "apiKey": "k"}}],
             "enabledHooks": ["LIFECYCLE_HOOK_PRE_TOOL"],
         }});
         assert_eq!(serde_json::to_value(&event).unwrap(), expected);

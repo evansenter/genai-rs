@@ -50,7 +50,7 @@ let config = GenerationConfig {
 
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Write a short story")
     .with_generation_config(config)
     .create()
@@ -68,7 +68,7 @@ Most common settings have dedicated builder methods:
 # async fn example(client: &Client) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Solve this step by step: 2x + 5 = 15")
     .with_seed(42)
     .with_stop_sequences(vec!["THE END".to_string()])
@@ -147,7 +147,7 @@ Discourage the model from repeating itself. Both penalties accept values in the 
 # async fn example(client: &Client) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Brainstorm 20 startup ideas")
     .with_presence_penalty(0.5)   // Encourage new topics
     .with_frequency_penalty(0.3)  // Reduce word repetition
@@ -184,7 +184,7 @@ let config = GenerationConfig {
 
 | Model | Default Max | Absolute Max |
 |-------|-------------|--------------|
-| gemini-3.6-flash | 8192 | 8192 |
+| gemini-3.7-flash | 8192 | 8192 |
 | gemini-3.1-pro-preview | 8192 | 8192 |
 
 Note: Actual limits vary by model version. Check [Google's documentation](https://ai.google.dev/models/gemini) for current values.
@@ -200,7 +200,7 @@ Seeds enable reproducible outputs for testing and debugging.
 # async fn example(client: &Client) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Generate a random number")
     .with_seed(42)
     .create()
@@ -217,7 +217,7 @@ let response = client
 // Same seed + same input = same output
 let response1 = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("What is 2+2?")
     .with_seed(42)
     .create()
@@ -225,7 +225,7 @@ let response1 = client
 
 let response2 = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("What is 2+2?")
     .with_seed(42)
     .create()
@@ -256,7 +256,7 @@ Halt generation when specific strings are produced.
 # async fn example(client: &Client) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Tell me a story. End with 'THE END'.")
     .with_stop_sequences(vec!["THE END".to_string()])
     .create()
@@ -272,7 +272,7 @@ let response = client
 # async fn example(client: &Client) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Generate a list")
     .with_stop_sequences(vec![
         "---".to_string(),
@@ -336,7 +336,7 @@ Override client-level timeout for specific requests:
 // Long-running analysis task
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Analyze this large document...")
     .with_timeout(Duration::from_secs(300))  // 5 minute timeout
     .create()
@@ -371,7 +371,7 @@ Unrecognized tiers deserialize into `ServiceTier::Unknown { tier_type, data }` (
 # async fn example(client: &Client) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Hello")
     .with_service_tier(ServiceTier::Flex)
     .create()
@@ -389,7 +389,7 @@ Reference an explicit context cache to reuse large, repeated context (e.g., a lo
 # async fn example(client: &Client) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Summarize the cached document")
     .with_cached_content("cachedContents/xyz")
     .create()
@@ -419,7 +419,7 @@ Control how the model uses declared functions. Modes serialize as lowercase stri
 // Force function use
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("What's the weather?")
     .add_function(weather_declaration)
     .with_function_calling_mode(FunctionCallingMode::Any)
@@ -443,7 +443,7 @@ let config = GenerationConfig {
 
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Get current time")
     .add_function(time_declaration)
     .with_generation_config(config)
@@ -462,7 +462,7 @@ let response = client
 # async fn example(client: &Client, weather_declaration: FunctionDeclaration) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Get weather in Tokyo")
     .add_function(weather_declaration)
     .with_allowed_tools(vec!["get_weather".to_string()])
@@ -479,7 +479,7 @@ For full control over the union, use `with_tool_choice()`:
 # async fn example(client: &Client) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("What's the weather?")
     .with_tool_choice(ToolChoice::allowed_tools(
         Some(FunctionCallingMode::Any),
@@ -501,7 +501,7 @@ let response = client
 // Let the API use sensible defaults
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Hello!")
     .create()
     .await?;
@@ -520,7 +520,7 @@ mod tests {
     async fn test_model_output() {
         let response = client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Generate test data")
             .with_seed(TEST_SEED)
             .create()
@@ -539,7 +539,7 @@ mod tests {
 // Factual query - low temperature
 let fact_response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("What is the capital of France?")
     .with_generation_config(GenerationConfig {
         temperature: Some(0.0),
@@ -551,7 +551,7 @@ let fact_response = client
 // Creative task - higher temperature
 let story_response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Write a creative poem about the moon")
     .with_generation_config(GenerationConfig {
         temperature: Some(0.9),
@@ -572,7 +572,7 @@ let story_response = client
 // Quick lookup
 let quick = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("What is 2+2?")
     .with_timeout(Duration::from_secs(30))
     .create()
@@ -581,7 +581,7 @@ let quick = client
 // Complex analysis
 let analysis = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text(&long_document)
     .with_timeout(Duration::from_secs(180))
     .create()
@@ -606,7 +606,7 @@ let creative_config = GenerationConfig {
 for prompt in creative_prompts {
     let response = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_text(prompt)
         .with_generation_config(creative_config.clone())
         .create()

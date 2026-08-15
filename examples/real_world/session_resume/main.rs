@@ -142,7 +142,7 @@ async fn run_one(
         // rather than errors.
         .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(api_key.to_string())
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_system_instructions(
             "You are a terse note-keeping assistant. Acknowledge facts the user \
              gives you, and recall them verbatim when asked.",
@@ -193,7 +193,7 @@ async fn run_two(
     let mut agent = AntigravityAgent::builder()
         .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(api_key.to_string())
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_system_instructions(
             "You are a terse note-keeping assistant. Acknowledge facts the user \
              gives you, and recall them verbatim when asked.",

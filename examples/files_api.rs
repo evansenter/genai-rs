@@ -65,7 +65,7 @@ to analyze multiple times without resending the data.
     println!("3. Using file in interaction...");
     let response = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_content(vec![
             Content::from_file(&ready_file),
             Content::text("What are the main points about the Files API in this document?"),
@@ -85,7 +85,7 @@ to analyze multiple times without resending the data.
     println!("4. Reusing file in another interaction...");
     let response2 = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_content(vec![
             Content::from_file(&ready_file),
             Content::text("What file types are supported according to this document?"),

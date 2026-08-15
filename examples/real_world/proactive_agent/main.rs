@@ -111,7 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // The builder default is *unlimited*; always set a budget.
         .with_turn_timeout(Duration::from_secs(120))
         .with_api_key(api_key)
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_system_instructions(
             "You are a terse monitoring assistant. There is no real sensor \
              log — say so plainly rather than inventing readings.",

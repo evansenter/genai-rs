@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Model constants — one place to change the model.** `DEFAULT_MODEL`,
+  `INLINE_VIDEO_MODEL`, `DEFAULT_IMAGE_MODEL` and `DEFAULT_TTS_MODEL` are
+  now public, and every test, example, doctest and doc snippet references
+  them instead of a string literal.
+
+  Bumping the model previously meant editing ~590 occurrences of the text
+  model plus 27 image and 35 TTS, with no single source of truth. A sweep
+  that size reliably misses a few, and a missed one is invisible: the test
+  keeps passing against a model nobody meant to still be using, until that
+  model is retired and the failure arrives with no obvious cause. It is now
+  a one-line change.
+
+  A new `tests/model_literals.rs` guard fails on any hardcoded
+  `"gemini-<digit>"` outside those constants, so it cannot silently
+  regress. In-crate unit tests use an obviously synthetic `"test-model"` —
+  they exercise serialization round-trips and never cared which model.
+
+### Changed
+
+- **Default model is now `gemini-3.7-flash`** (from `gemini-3.6-flash`).
+  Probed live before migrating: thinking cost on a trivial prompt is
+  unchanged (68 vs 67 tokens), so the `max_output_tokens` headroom in the
+  sampling tests still holds. **It rejects inline (base64) video with the
+  same `400 invalid_request` as 3.6** while accepting video by URI, so the
+  `INLINE_VIDEO_MODEL` pin remains necessary — the bump does not close that
+  gap.
+
 ## [0.9.0] - 2026-08-10
 
 ### Changed (breaking)

@@ -122,7 +122,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // rather than errors.
         .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(api_key)
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_system_instructions(
             "You are exploring a small codebase. List the directory, read the files \
              that look interesting, and call record_finding once for each notable \

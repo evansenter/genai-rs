@@ -11,7 +11,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let client = Client::builder(api_key).build()?;
 
     // 2. Create an interaction using the builder pattern
-    let model_name = "gemini-3.6-flash";
+    let model_name = genai_rs::DEFAULT_MODEL;
     let prompt = "Explain the concept of recursion in programming in one paragraph.";
 
     println!("Creating interaction with model: {model_name}");

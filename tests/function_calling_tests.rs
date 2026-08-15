@@ -563,7 +563,7 @@ mod parallel {
 
                 let response2 = client
                     .interaction()
-                    .with_model("gemini-3.6-flash")
+                    .with_model(genai_rs::DEFAULT_MODEL)
                     .with_previous_interaction(response1.id.as_ref().expect("id required"))
                     .with_history(results)
                     .create()
@@ -633,7 +633,7 @@ mod parallel {
 
                 let response2 = client
                     .interaction()
-                    .with_model("gemini-3.6-flash")
+                    .with_model(genai_rs::DEFAULT_MODEL)
                     .with_previous_interaction(response1.id.as_ref().expect("id required"))
                     .with_history(results)
                     .create()
@@ -1225,7 +1225,7 @@ mod auto_execution {
 
         let result = client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("What's the weather in Seattle?")
             .add_functions(functions)
             .with_store_enabled()
@@ -1316,7 +1316,7 @@ mod stateless {
 
             let response1 = client
                 .interaction()
-                .with_model("gemini-3.6-flash")
+                .with_model(genai_rs::DEFAULT_MODEL)
                 .with_history(history.clone())
                 .add_functions(functions.clone())
                 .with_store_disabled()
@@ -1340,7 +1340,7 @@ mod stateless {
 
             let response2 = client
                 .interaction()
-                .with_model("gemini-3.6-flash")
+                .with_model(genai_rs::DEFAULT_MODEL)
                 .with_history(history.clone())
                 .add_functions(functions.clone())
                 .with_store_disabled()
@@ -1385,7 +1385,7 @@ mod stateless {
         // Stateless with thinking enabled, force function calling
         let response = client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_history(history)
             .add_function(get_weather)
             .with_thinking_level(ThinkingLevel::Medium)
@@ -2205,7 +2205,7 @@ mod multiturn {
         println!("--- Turn 1: Initial request with system instruction ---");
         let result1 = client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("What's the weather in Seattle?")
             .add_functions(functions.clone())
             .with_store_enabled()
@@ -2234,7 +2234,7 @@ mod multiturn {
         println!("\n--- Turn 2: Follow-up conversation ---");
         let result2 = client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("How about in Tokyo?")
             .add_functions(functions.clone())
             .with_store_enabled()
@@ -2255,7 +2255,7 @@ mod multiturn {
         println!("\n--- Turn 3: Follow-up without function call ---");
         let result3 = client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Based on the weather you just told me about Seattle and Tokyo, which city is warmer right now?")
             .add_functions(functions)
             .with_store_enabled()
@@ -2304,7 +2304,7 @@ mod multiturn {
         //
         // Deliberately does NOT ask for a live weather lookup. A prompt like
         // "what's the weather in Paris?" invites the model to call the tool it
-        // saw in turn 1 — and having not been given it, gemini-3.6-flash
+        // saw in turn 1 — and having not been given it, the default model
         // reliably emits a malformed call, which the API rejects with
         // `400 Model generated invalid JSON syntax`. That failure survives
         // retries and tells us nothing about the rule under test.
@@ -2358,7 +2358,7 @@ mod multiturn {
         // Turn 1: Initial request with system instruction
         let response1 = client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("What's the weather in London and what time is it there?")
             .add_functions(functions.clone())
             .with_store_enabled()
@@ -2394,7 +2394,7 @@ mod multiturn {
         // Send function results back
         let response2 = client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_previous_interaction(response1.id.as_ref().expect("Should have ID"))
             .with_history(results)
             .add_functions(functions.clone())
@@ -2412,7 +2412,7 @@ mod multiturn {
         // Turn 3: Follow-up
         let response3 = client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Is it a good time to call someone there?")
             .add_functions(functions)
             .with_store_enabled()
@@ -2444,7 +2444,7 @@ mod multiturn {
                 // Turn 1: Set system instruction to always respond in haiku format
                 let response1 = client
                     .interaction()
-                    .with_model("gemini-3.6-flash")
+                    .with_model(genai_rs::DEFAULT_MODEL)
                     .with_text("Hello!")
                     .with_store_enabled()
                     .with_system_instruction("You are a haiku poet. Always respond in haiku format (5-7-5 syllables). Never break from this format.")
@@ -2456,7 +2456,7 @@ mod multiturn {
                 // Turn 2: Follow-up - system instruction should still be in effect
                 let response2 = client
                     .interaction()
-                    .with_model("gemini-3.6-flash")
+                    .with_model(genai_rs::DEFAULT_MODEL)
                     .with_text("Tell me about the ocean.")
                     .with_store_enabled()
                     .with_previous_interaction(&turn1_id)
@@ -2508,7 +2508,7 @@ mod multiturn {
         // Turn 1: Initial request streaming with auto functions
         let mut stream = client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("What's the weather in Miami?")
             .add_functions(functions.clone())
             .with_store_enabled()
@@ -2547,7 +2547,7 @@ mod multiturn {
         // Turn 2: Follow-up streaming
         let mut stream2 = client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Compare that to New York.")
             .add_functions(functions)
             .with_store_enabled()
@@ -2607,7 +2607,7 @@ mod multiturn {
         println!("--- Turn 1: Trigger function that will fail ---");
         let response1 = client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Get the secret data for key 'test123'")
             .add_function(secret_function.clone())
             .with_store_enabled()
@@ -2632,7 +2632,7 @@ mod multiturn {
         println!("\n--- Sending error result ---");
         let response2 = client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_previous_interaction(response1.id.as_ref().expect("Should have ID"))
             .with_history(vec![error_result])
             .add_function(secret_function)

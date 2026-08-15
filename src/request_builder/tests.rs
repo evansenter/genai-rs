@@ -61,10 +61,10 @@ fn test_interaction_builder_with_model() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Hello");
 
-    assert_eq!(builder.model.as_deref(), Some("gemini-3.6-flash"));
+    assert_eq!(builder.model.as_deref(), Some(crate::DEFAULT_MODEL));
     assert!(builder.agent.is_none());
     assert_eq!(builder.current_message.as_deref(), Some("Hello"));
 }
@@ -86,7 +86,7 @@ fn test_interaction_builder_with_previous_interaction() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Follow-up question")
         .with_previous_interaction("interaction_123");
 
@@ -101,7 +101,7 @@ fn test_interaction_builder_with_system_instruction() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Hello")
         .with_system_instruction("You are a helpful assistant");
 
@@ -125,7 +125,7 @@ fn test_interaction_builder_with_generation_config() {
 
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Hello")
         .with_generation_config(config.clone());
 
@@ -147,7 +147,7 @@ fn test_interaction_builder_with_function() {
 
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Call a function")
         .add_function(func);
 
@@ -160,7 +160,7 @@ fn test_interaction_builder_add_mcp_server() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Use MCP server")
         .add_tool(McpServerConfig::new(
             "my-server",
@@ -185,7 +185,7 @@ fn test_interaction_builder_with_multiple_mcp_servers() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Use multiple MCP servers")
         .add_tool(McpServerConfig::new("server-1", "https://mcp1.example.com"))
         .add_tool(McpServerConfig::new("server-2", "https://mcp2.example.com"));
@@ -204,7 +204,7 @@ fn test_interaction_builder_add_mcp_server_and_other_tools() {
 
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Use MCP and other tools")
         .add_tool(McpServerConfig::new("my-server", "https://mcp.example.com"))
         .with_google_search()
@@ -220,7 +220,7 @@ fn test_interaction_builder_with_google_maps() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Find coffee shops")
         .with_google_maps();
 
@@ -243,7 +243,7 @@ fn test_interaction_builder_add_tool_with_configs() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Test all configs")
         .add_tool(GoogleSearchConfig::new().with_search_types(vec![crate::SearchType::WebSearch]))
         .add_tool(GoogleMapsConfig::new().with_widget())
@@ -281,7 +281,7 @@ fn test_interaction_builder_with_store_disabled() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Temporary interaction")
         .with_store_disabled();
 
@@ -295,7 +295,7 @@ fn test_interaction_builder_with_store_enabled() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Stored interaction")
         .with_store_enabled();
 
@@ -307,21 +307,21 @@ fn test_interaction_builder_build_success() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Hello");
 
     let result = builder.build();
     assert!(result.is_ok());
 
     let request = result.unwrap();
-    assert_eq!(request.model.as_deref(), Some("gemini-3.6-flash"));
+    assert_eq!(request.model.as_deref(), Some(crate::DEFAULT_MODEL));
     assert!(matches!(request.input, crate::InteractionInput::Text(_)));
 }
 
 #[test]
 fn test_interaction_builder_build_missing_input() {
     let client = create_test_client();
-    let builder = client.interaction().with_model("gemini-3.6-flash");
+    let builder = client.interaction().with_model(crate::DEFAULT_MODEL);
 
     let result = builder.build();
     assert!(result.is_err());
@@ -349,7 +349,7 @@ fn test_interaction_builder_with_response_modalities() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Generate an image")
         .with_response_modalities(vec!["IMAGE".to_string()]);
 
@@ -368,7 +368,7 @@ fn test_interaction_builder_with_max_function_call_loops() {
     // Test default value
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Test");
     assert_eq!(
         builder.max_function_call_loops,
@@ -378,7 +378,7 @@ fn test_interaction_builder_with_max_function_call_loops() {
     // Test custom value
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Test")
         .with_max_function_call_loops(10);
     assert_eq!(builder.max_function_call_loops, 10);
@@ -386,7 +386,7 @@ fn test_interaction_builder_with_max_function_call_loops() {
     // Test setting to minimum (1)
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Test")
         .with_max_function_call_loops(1);
     assert_eq!(builder.max_function_call_loops, 1);
@@ -402,7 +402,7 @@ fn test_builder_system_instruction_available() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Hello")
         .with_system_instruction("Be helpful");
 
@@ -415,12 +415,12 @@ fn test_builder_chained_preserves_fields() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Hello")
         .with_system_instruction("Be helpful")
         .with_previous_interaction("prev-123");
 
-    assert_eq!(builder.model.as_deref(), Some("gemini-3.6-flash"));
+    assert_eq!(builder.model.as_deref(), Some(crate::DEFAULT_MODEL));
     assert!(builder.system_instruction.is_some());
     assert_eq!(builder.previous_interaction_id.as_deref(), Some("prev-123"));
 }
@@ -430,7 +430,7 @@ fn test_builder_store_disabled_sets_store_false() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Hello")
         .with_store_disabled();
 
@@ -443,7 +443,7 @@ fn test_store_disabled_with_background_validation_error() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Hello")
         .with_background(true)
         .with_store_disabled();
@@ -466,7 +466,7 @@ fn test_store_disabled_with_previous_interaction_validation_error() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Hello")
         .with_previous_interaction("prev-123")
         .with_store_disabled();
@@ -488,7 +488,7 @@ fn test_builder_chained_can_set_background() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Hello")
         .with_previous_interaction("prev-123")
         .with_background(true);
@@ -501,7 +501,7 @@ fn test_builder_can_set_background() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Hello")
         .with_background(true);
 
@@ -526,7 +526,7 @@ async fn test_auto_functions_rejects_store_disabled() {
 
     let result = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Test")
         .add_function(func)
         .with_store_disabled() // This should be rejected
@@ -556,7 +556,7 @@ async fn test_stream_auto_functions_rejects_store_disabled() {
 
     let mut stream = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Test")
         .add_function(func)
         .with_store_disabled() // This should be rejected
@@ -587,7 +587,7 @@ async fn test_auto_functions_allows_store_true() {
 
     let result = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Test")
         .add_function(func)
         .with_store_enabled() // Explicitly true
@@ -615,7 +615,7 @@ async fn test_auto_functions_allows_store_default() {
 
     let result = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Test")
         .add_function(func)
         // No .with_store() call - uses default (None, which means true on server)
@@ -647,7 +647,7 @@ fn test_interaction_builder_with_history() {
 
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_history(steps);
 
     assert_eq!(builder.history.len(), 3);
@@ -666,14 +666,14 @@ fn test_interaction_builder_build_with_history() {
 
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_history(steps);
 
     let result = builder.build();
     assert!(result.is_ok());
 
     let request = result.unwrap();
-    assert_eq!(request.model.as_deref(), Some("gemini-3.6-flash"));
+    assert_eq!(request.model.as_deref(), Some(crate::DEFAULT_MODEL));
     assert!(matches!(request.input, crate::InteractionInput::Steps(_)));
 }
 
@@ -686,7 +686,7 @@ fn test_interaction_builder_with_single_step() {
 
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_history(steps);
 
     let result = builder.build();
@@ -704,7 +704,7 @@ fn test_with_history_then_with_text_composes_correctly() {
 
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_history(history)
         .with_text("How are you?");
 
@@ -733,7 +733,7 @@ fn test_with_text_then_with_history_composes_correctly() {
     // Order reversed - should produce same result
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("How are you?")
         .with_history(history);
 
@@ -761,7 +761,7 @@ fn test_history_and_text_order_independent() {
     // Build in one order
     let req1 = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_history(history.clone())
         .with_text("Current")
         .build()
@@ -770,7 +770,7 @@ fn test_history_and_text_order_independent() {
     // Build in reverse order
     let req2 = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Current")
         .with_history(history)
         .build()
@@ -790,7 +790,7 @@ fn test_conversation_builder_then_with_text() {
 
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .conversation()
         .user("What is 2+2?")
         .model("4")
@@ -819,7 +819,7 @@ fn test_with_text_only_produces_text_input() {
 
     let request = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Hello!")
         .build()
         .expect("Build should succeed");
@@ -841,7 +841,7 @@ fn test_with_history_only_produces_steps_input() {
 
     let request = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_history(history)
         .build()
         .expect("Build should succeed");
@@ -864,7 +864,7 @@ fn test_chained_preserves_history_and_current_message() {
 
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_history(history)
         .with_text("Current message")
         .with_previous_interaction("prev-123");
@@ -884,7 +884,7 @@ fn test_store_disabled_preserves_history_and_current_message() {
 
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_history(history)
         .with_text("Current message")
         .with_store_disabled();
@@ -908,7 +908,7 @@ fn test_with_content_cannot_combine_with_history() {
 
     let result = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_history(history)
         .with_content(content)
         .build();
@@ -937,7 +937,7 @@ fn test_with_content_and_text_merge() {
     // with_text() then with_content() - text should be prepended to content
     let request = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Describe this image")
         .with_content(vec![image_content.clone()])
         .build()
@@ -962,7 +962,7 @@ fn test_with_content_and_text_merge() {
     // with_content() then with_text() - should also work (order-independent)
     let request2 = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_content(vec![image_content])
         .with_text("Describe this image")
         .build()
@@ -998,7 +998,7 @@ fn test_with_content_alone_works() {
 
     let result = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_content(content)
         .build();
 
@@ -1014,7 +1014,7 @@ fn test_conversation_builder_fluent_api() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .conversation()
         .user("What is 2+2?")
         .model("2+2 equals 4.")
@@ -1040,7 +1040,7 @@ fn test_conversation_builder_with_parts_content() {
 
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .conversation()
         .user(TurnContent::Parts(parts))
         .done();
@@ -1062,7 +1062,7 @@ fn test_conversation_builder_with_turn_method() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .conversation()
         .turn(Role::User, "Hello")
         .turn(Role::Model, "Hi!")
@@ -1076,7 +1076,7 @@ fn test_conversation_builder_empty() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .conversation()
         .done();
 
@@ -1089,13 +1089,13 @@ fn test_conversation_builder_preserves_model() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .conversation()
         .user("Hello")
         .done();
 
     // Model should be preserved through conversation builder
-    assert_eq!(builder.model.as_deref(), Some("gemini-3.6-flash"));
+    assert_eq!(builder.model.as_deref(), Some(crate::DEFAULT_MODEL));
 }
 
 #[test]
@@ -1103,7 +1103,7 @@ fn test_conversation_builder_preserves_system_instruction() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_system_instruction("Be helpful")
         .conversation()
         .user("Hello")
@@ -1120,7 +1120,7 @@ fn test_interaction_builder_with_file_search() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Search my documents")
         .add_tool(FileSearchConfig::new(vec![
             "stores/store-123".to_string(),
@@ -1150,7 +1150,7 @@ fn test_interaction_builder_with_file_search_config() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Search with config")
         .add_tool(
             FileSearchConfig::new(vec!["stores/my-docs".to_string()])
@@ -1185,7 +1185,7 @@ fn test_interaction_builder_with_file_search_and_other_tools() {
 
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Search and process")
         .add_tool(FileSearchConfig::new(vec!["stores/docs".to_string()]))
         .with_google_search()
@@ -1208,7 +1208,7 @@ fn test_interaction_builder_with_file_search_single_store() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Search single store")
         .add_tool(FileSearchConfig::new(vec!["stores/single".to_string()]));
 
@@ -1232,7 +1232,7 @@ fn test_with_image_config() {
 
     let builder = client
         .interaction()
-        .with_model("gemini-3.1-flash-image")
+        .with_model(crate::DEFAULT_IMAGE_MODEL)
         .with_text("Generate a landscape")
         .with_image_config(config);
 
@@ -1255,7 +1255,7 @@ fn test_with_image_config_merges_with_existing_generation_config() {
 
     let builder = client
         .interaction()
-        .with_model("gemini-3.1-flash-image")
+        .with_model(crate::DEFAULT_IMAGE_MODEL)
         .with_text("Generate an image")
         .with_thinking_level(crate::ThinkingLevel::Low)
         .with_image_config(config);
@@ -1277,7 +1277,7 @@ fn test_interaction_builder_with_allowed_tools() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Get weather")
         .with_allowed_tools(vec!["get_weather".to_string(), "get_time".to_string()]);
 
@@ -1299,7 +1299,7 @@ fn test_interaction_builder_with_allowed_tools_preserves_mode() {
     let client = create_test_client();
     let builder = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Get weather")
         .with_tool_choice(ToolChoice::Mode(FunctionCallingMode::Any))
         .with_allowed_tools(vec!["get_weather".to_string()]);
@@ -1326,7 +1326,7 @@ fn test_builder_with_webhook_config() {
     let client = create_test_client();
     let request = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Hello")
         .with_webhook_config(
             WebhookConfig::new()
@@ -1349,7 +1349,7 @@ fn test_builder_with_environment_id() {
     let client = create_test_client();
     let request = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Hello")
         .with_environment("38aac1ae7f30fe9bd67afe42382ea041")
         .build()
@@ -1366,7 +1366,7 @@ fn test_builder_with_typed_remote_environment() {
     let client = create_test_client();
     let request = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Hello")
         .with_environment(
             RemoteEnvironment::new()
@@ -1394,7 +1394,7 @@ fn test_builder_with_response_format_raw_schema_maps_to_text() {
     let client = create_test_client();
     let request = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Generate data")
         .with_response_format(json!({
             "type": "object",
@@ -1419,7 +1419,7 @@ fn test_builder_with_response_format_typed_variant() {
     let client = create_test_client();
     let request = client
         .interaction()
-        .with_model("gemini-2.5-pro-preview-tts")
+        .with_model(crate::DEFAULT_TTS_MODEL)
         .with_text("Read aloud")
         .with_response_format(ResponseFormat::Audio {
             mime_type: Some("audio/mp3".to_string()),
@@ -1444,7 +1444,7 @@ fn test_builder_with_response_formats_list() {
     let client = create_test_client();
     let request = client
         .interaction()
-        .with_model("gemini-3.1-flash-image")
+        .with_model(crate::DEFAULT_IMAGE_MODEL)
         .with_text("A diagram")
         .with_response_formats(vec![
             ResponseFormat::text_plain(),
@@ -1470,7 +1470,7 @@ fn test_builder_with_speech_config_serializes_as_single_entry_list() {
     let client = create_test_client();
     let request = client
         .interaction()
-        .with_model("gemini-2.5-pro-preview-tts")
+        .with_model(crate::DEFAULT_TTS_MODEL)
         .with_text("Hello")
         .with_speech_config(SpeechConfig::with_voice_and_language("Kore", "en-US"))
         .build()
@@ -1490,7 +1490,7 @@ fn test_builder_multi_speaker_speech_configs() {
     let client = create_test_client();
     let request = client
         .interaction()
-        .with_model("gemini-2.5-pro-preview-tts")
+        .with_model(crate::DEFAULT_TTS_MODEL)
         .with_text("Alice: hi\nBob: hey")
         .add_speech_config(SpeechConfig {
             voice: Some("Kore".to_string()),
@@ -1519,7 +1519,7 @@ fn test_builder_with_speech_configs_replaces() {
     let client = create_test_client();
     let request = client
         .interaction()
-        .with_model("gemini-2.5-pro-preview-tts")
+        .with_model(crate::DEFAULT_TTS_MODEL)
         .with_text("Hello")
         .add_speech_config(SpeechConfig::with_voice("Kore"))
         .with_speech_configs(vec![SpeechConfig::with_voice("Puck")])
@@ -1563,7 +1563,7 @@ fn test_builder_retrieval_tool() {
     let client = create_test_client();
     let request = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Search internal docs")
         .add_tool(
             RetrievalConfig::new()
@@ -1616,7 +1616,7 @@ fn test_builder_request_roundtrip_with_new_fields() {
     let client = create_test_client();
     let request = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Hello")
         .with_webhook_config(WebhookConfig::new().with_uris(vec!["https://x.example".into()]))
         .with_environment("env-1")
@@ -1642,7 +1642,7 @@ fn test_builder_safety_settings_replace_and_accumulate() {
     // add_* accumulates: two adds yield two entries, appended after with_*.
     let request = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Hello")
         .with_safety_settings(vec![SafetySetting::new(
             HarmCategory::HateSpeech,
@@ -1675,7 +1675,7 @@ fn test_builder_with_safety_settings_replaces() {
     let client = create_test_client();
     let request = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Hello")
         .add_safety_setting(SafetySetting::new(
             HarmCategory::HateSpeech,
@@ -1699,7 +1699,7 @@ fn test_builder_labels_merge_and_replace() {
     let client = create_test_client();
     let request = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Hello")
         .add_label("team", "search")
         .add_label("env", "ci")
@@ -1715,7 +1715,7 @@ fn test_builder_labels_merge_and_replace() {
     // with_labels replaces wholesale.
     let request = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Hello")
         .add_label("stale", "1")
         .with_labels([("fresh", "2")])
@@ -1733,7 +1733,7 @@ fn test_builder_with_transcription_config() {
     let client = create_test_client();
     let request = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(crate::DEFAULT_MODEL)
         .with_text("Transcribe this")
         .with_generation_config(GenerationConfig {
             temperature: Some(0.5), // pre-existing generation_config must survive

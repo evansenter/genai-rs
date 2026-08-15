@@ -15,7 +15,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let client = Client::builder(api_key).build()?;
 
     // TTS model - use the appropriate model for text-to-speech
-    let model_name = "gemini-2.5-pro-preview-tts";
+    let model_name = genai_rs::DEFAULT_TTS_MODEL;
 
     // =========================================================================
     // Example 1: Basic Text-to-Speech
@@ -143,7 +143,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         r#"
    let response = client
        .interaction()
-       .with_model("gemini-2.5-pro-preview-tts")
+       .with_model(genai_rs::DEFAULT_TTS_MODEL)
        .with_text("Your text here")
        .with_audio_output()
        .with_voice("Kore")
@@ -167,7 +167,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
    let response = client
        .interaction()
-       .with_model("gemini-2.5-pro-preview-tts")
+       .with_model(genai_rs::DEFAULT_TTS_MODEL)
        .with_text("Your text here")
        .with_audio_output()
        .with_speech_config(config)

@@ -26,7 +26,6 @@ use genai_rs::antigravity::{
 use genai_rs_macros::tool;
 
 mod common;
-
 /// Returns a fixed test weather report for a city.
 #[tool(city(description = "The city to get weather for"))]
 fn antigravity_test_weather(city: String) -> String {
@@ -50,7 +49,7 @@ async fn test_antigravity_spawn_handshake_init_roundtrip() {
     let dir = scratch_dir("agy-init");
     let agent = AntigravityAgent::builder()
         .with_api_key("dummy-key-init-does-not-validate")
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_save_dir(dir.path().to_string_lossy())
         .with_system_instructions("test instructions")
         .add_tool(AntigravityTestWeatherCallable.declaration())
@@ -131,7 +130,7 @@ async fn test_antigravity_trigger_sends_automated_trigger_when_idle() {
     let inspector = Arc::new(WsSendCapture::default());
     let agent = AntigravityAgent::builder()
         .with_api_key("dummy-key-trigger-test")
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .add_trigger(TriggerConfig::new("tick-xyzzy", Duration::from_secs(1)))
         .add_wire_inspector(inspector.clone())
         .spawn()
@@ -170,7 +169,7 @@ async fn test_antigravity_turn_timeout_halts_harness_turn() {
     let inspector = Arc::new(WsSendCapture::default());
     let mut agent = AntigravityAgent::builder()
         .with_api_key("dummy-key-timeout-test")
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         // Far below any network round-trip: the timeout always fires before
         // the turn can produce a terminal event.
         .with_turn_timeout(Duration::from_millis(10))
@@ -214,7 +213,7 @@ async fn test_antigravity_chat_after_trigger_discards_trigger_turn() {
     let inspector = Arc::new(WsSendCapture::default());
     let mut agent = AntigravityAgent::builder()
         .with_api_key("dummy-key-trigger-chat-test")
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_turn_timeout(Duration::from_secs(15))
         .add_trigger(TriggerConfig::new("tick-quux", Duration::from_secs(1)))
         .add_wire_inspector(inspector.clone())
@@ -281,7 +280,7 @@ async fn test_antigravity_subagent_config_accepted_at_init() {
     // (no API key needed for init).
     let agent = AntigravityAgent::builder()
         .with_api_key("dummy-key-subagent-test")
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .add_tool(AntigravityTestWeatherCallable.declaration())
         .add_subagent(
             Subagent::new("weather-checker")
@@ -319,7 +318,7 @@ async fn test_antigravity_chat_basic() {
     let mut agent = AntigravityAgent::builder()
         .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(key)
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_system_instructions("Answer in one short sentence.")
         .spawn()
         .await
@@ -346,7 +345,7 @@ async fn test_antigravity_custom_tool_roundtrip() {
     let mut agent = AntigravityAgent::builder()
         .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(key)
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_system_instructions(
             "You must use the antigravity_test_weather tool to answer weather questions.",
         )
@@ -404,7 +403,7 @@ async fn test_antigravity_policy_denies_custom_tool() {
     let mut agent = AntigravityAgent::builder()
         .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(key)
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_system_instructions(
             "Always try the antigravity_test_weather tool first for weather questions. \
              If a tool fails, say TOOL-DENIED and stop.",
@@ -449,7 +448,7 @@ async fn test_antigravity_session_resume_restores_history() {
     let mut agent = AntigravityAgent::builder()
         .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(key.clone())
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_system_instructions("You are a terse note-keeper. Recall facts when asked.")
         .with_capabilities(Capabilities::none())
         .with_save_dir(save_path.clone())
@@ -477,7 +476,7 @@ async fn test_antigravity_session_resume_restores_history() {
     let mut resumed = AntigravityAgent::builder()
         .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(key)
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_system_instructions("You are a terse note-keeper. Recall facts when asked.")
         .with_capabilities(Capabilities::none())
         .with_save_dir(save_path)
@@ -549,7 +548,7 @@ async fn test_antigravity_workspace_actions_and_post_tool_success() {
     let mut agent = AntigravityAgent::builder()
         .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(key)
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_system_instructions(
             "Read the files in the workspace to answer. Use the file tools rather than guessing.",
         )
@@ -638,7 +637,7 @@ async fn test_antigravity_structured_output_follows_response_schema() {
     let mut agent = AntigravityAgent::builder()
         .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(key)
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_capabilities(Capabilities::none())
         .with_response_schema(schema)
         .spawn()
@@ -711,7 +710,7 @@ async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
         // rescued by a timeout that looks like a pass.
         .with_turn_timeout(std::time::Duration::from_secs(180))
         .with_api_key(key)
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_capabilities(Capabilities::none())
         .spawn()
         .await
@@ -861,7 +860,7 @@ async fn test_antigravity_on_questions_answers_reach_the_model() {
     let mut agent = AntigravityAgent::builder()
         .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(key)
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_system_instructions(
             "Before answering anything ambiguous, you MUST use the ask_question \
              tool to ask the user exactly one clarifying question with concrete \
@@ -987,7 +986,7 @@ async fn test_antigravity_subagent_is_actually_invoked() {
     let mut agent = AntigravityAgent::builder()
         .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(key)
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_system_instructions(
             "You have a subagent named `haiku-writer`. For any request to write \
              a haiku you MUST delegate to it with the start_subagent tool rather \
@@ -1085,7 +1084,7 @@ async fn test_antigravity_mcp_server_tool_is_called() {
     let mut agent = AntigravityAgent::builder()
         .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(key)
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_system_instructions(
             "Widget codes can only be obtained by calling the MCP tool named \
              exactly `lookup_widget_code` on the `widgets` server. Call that \

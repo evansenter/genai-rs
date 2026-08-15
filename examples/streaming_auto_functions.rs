@@ -103,7 +103,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Returns AutoFunctionStreamEvent which wraps chunk + event_id for resume support
     let mut stream = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_text(prompt)
         .add_functions(vec![weather_func, time_func, convert_func])
         .create_stream_with_auto_functions();

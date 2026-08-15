@@ -1212,7 +1212,7 @@ impl VideoConfig {
 /// let client = Client::new("api_key".to_string());
 ///
 /// let request = client.interaction()
-///     .with_model("gemini-3.6-flash")
+///     .with_model(genai_rs::DEFAULT_MODEL)
 ///     .with_text("Hello!")
 ///     .build()?;
 ///
@@ -1230,7 +1230,7 @@ impl VideoConfig {
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// # let client = Client::new("api_key".to_string());
 /// # let request = client.interaction()
-/// #     .with_model("gemini-3.6-flash")
+/// #     .with_model(genai_rs::DEFAULT_MODEL)
 /// #     .with_text("Hello!")
 /// #     .build()?;
 /// let response = client.execute(request).await?;
@@ -1247,7 +1247,7 @@ impl VideoConfig {
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// # let client = Client::new("api_key".to_string());
 /// # let request = client.interaction()
-/// #     .with_model("gemini-3.6-flash")
+/// #     .with_model(genai_rs::DEFAULT_MODEL)
 /// #     .with_text("Hello!")
 /// #     .build()?;
 /// let response = loop {
@@ -1262,7 +1262,7 @@ impl VideoConfig {
 /// ```
 #[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct InteractionRequest {
-    /// Model name (e.g., "gemini-3.6-flash") - mutually exclusive with agent
+    /// Model name (e.g., "test-model") - mutually exclusive with agent
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
 
@@ -1992,7 +1992,7 @@ impl From<DynamicConfig> for AgentConfig {
 /// error enumerates the supported config types as `dynamic`,
 /// `deep-research`, `code-mender`, `antigravity`). Setting `model` to a
 /// value the agent doesn't offer returns 404 `not_found` — including
-/// `gemini-3.6-flash`, this crate's default model elsewhere. The
+/// `test-model`, this crate's default model elsewhere. The
 /// agent's model catalog is not enumerable on a standard key, so leave
 /// `model` unset unless you know an accepted value.
 ///

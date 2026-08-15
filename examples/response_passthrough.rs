@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let response1 = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_text("What is 15 * 7? Just give me the number.")
         .create()
         .await?;
@@ -64,7 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let response2 = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_history(history.clone())
         .create()
         .await?;
@@ -86,7 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let response3 = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_history(history2)
         .create()
         .await?;
@@ -106,7 +106,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let resp = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_history(history.clone())
         .create()
         .await?;
@@ -121,7 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let resp2 = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_history(history.clone())
         .create()
         .await?;

@@ -41,7 +41,7 @@ internally, so system_instruction is present on all internal iterations:
 ```rust
 // System instruction set on each turn for clarity
 let result = client.interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text(message)
     .with_previous_interaction(&prev_id)  // Chain to previous turn
     .with_system_instruction("You are a helpful assistant")

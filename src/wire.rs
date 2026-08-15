@@ -1377,7 +1377,7 @@ mod tests {
                 method: "POST".to_string(),
                 url: "https://example.com/v1beta/interactions".to_string(),
                 body: Some(serde_json::json!({
-                    "model": "gemini-3.6-flash",
+                    "model": "test-model",
                     "data": "A".repeat(200),
                 })),
             },

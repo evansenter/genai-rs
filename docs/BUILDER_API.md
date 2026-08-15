@@ -20,7 +20,7 @@ The `InteractionBuilder` provides a fluent interface for constructing requests t
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_system_instruction("You are helpful")
     .with_text("Hello!")
     .create()
@@ -160,7 +160,7 @@ use genai_rs::{Client, Content};
 
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_content(vec![
         Content::text("Describe this image"),
         Content::image_data(base64_data, "image/png"),
@@ -177,7 +177,7 @@ use genai_rs::{Client, Content, image_from_file};
 let image_content = image_from_file("photo.jpg").await?;
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_content(vec![
         Content::text("What's in this image?"),
         image_content,
@@ -219,7 +219,7 @@ Content input (via `with_content()`) is for single-turn multimodal messages. It 
 ```rust,ignore
 // ERROR: Cannot combine content with history
 client.interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_history(conversation_history)
     .with_content(vec![Content::image_data(base64, "image/png")])
     .build()  // Returns Err!
@@ -239,7 +239,7 @@ let mut history = existing_history;
 history.push(multimodal_step);
 
 client.interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_history(history)
     .create()
     .await?;
@@ -252,7 +252,7 @@ You must specify exactly one of `with_model()` or `with_agent()`:
 ```rust,ignore
 // ERROR: Both specified
 client.interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_agent("deep-research-pro-preview-12-2025")
     .build()  // Returns Err!
 
@@ -269,7 +269,7 @@ client.interaction()
 ```rust,ignore
 // ERROR: agent_config without agent
 client.interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_agent_config(DeepResearchConfig::new())
     .with_text("Research AI trends")
     .build()  // Returns Err!
@@ -290,7 +290,7 @@ Certain combinations of builder methods are invalid because they conflict with s
 ```rust,ignore
 // Runtime error from build(): "Chained interactions require storage..."
 client.interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Hello")
     .with_previous_interaction("id-123")
     .with_store_disabled()
@@ -307,7 +307,7 @@ let previous_interaction_id: Option<String> = session.last_interaction_id();
 let should_disable_storage: bool = config.privacy_mode;
 
 let mut builder = client.interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Hello");
 
 // Conditionally add previous interaction
@@ -348,7 +348,7 @@ use genai_rs::CallableFunction;
 
 client.interaction()
     // Target
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     // Context
     .with_system_instruction("You are helpful")
     .with_history(history)
@@ -367,7 +367,7 @@ Call `build()` explicitly when you want to validate without executing:
 
 ```rust,ignore
 let request = client.interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Hello")
     .build()?;  // Validate configuration
 
@@ -381,7 +381,7 @@ For test fixtures or inline conversation construction. `.user()` and `.model()` 
 
 ```rust,ignore
 let response = client.interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .conversation()
         .user("What is 2+2?")
         .model("4")

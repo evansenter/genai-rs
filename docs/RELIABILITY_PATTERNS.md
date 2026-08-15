@@ -74,7 +74,7 @@ where
 let response = with_retry(3, || async {
     client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_text("Hello")
         .create()
         .await
@@ -236,7 +236,7 @@ Override for specific requests:
 // Long analysis task
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text(&large_document)
     .with_timeout(Duration::from_secs(300))  // 5 minutes
     .create()
@@ -446,7 +446,7 @@ use genai_rs::ServiceTier;
 // Batch/offline work tolerates queuing - use Flex
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Summarize this document...")
     .with_service_tier(ServiceTier::Flex)
     .create()
@@ -469,7 +469,7 @@ async fn with_fallback(
 ) -> String {
     match client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_text(prompt)
         .create()
         .await
@@ -493,7 +493,7 @@ async fn with_model_fallback(
     prompt: &str,
 ) -> Result<String, GenaiError> {
     let models = [
-        "gemini-3.6-flash",
+        "gemini-3.7-flash",
         "gemini-3.1-pro-preview",
     ];
 
@@ -541,7 +541,7 @@ impl CachedClient {
         // Make request
         let response = self.client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text(prompt)
             .create()
             .await?;
@@ -610,7 +610,7 @@ where
 async fn health_check(client: &Client) -> bool {
     match client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_text("ping")
         .with_timeout(Duration::from_secs(10))
         .create()
@@ -654,7 +654,7 @@ impl ReliableClient {
         for attempt in 0..=self.max_retries {
             let result = self.client
                 .interaction()
-                .with_model("gemini-3.6-flash")
+                .with_model(genai_rs::DEFAULT_MODEL)
                 .with_text(prompt)
                 .create()
                 .await;

@@ -85,7 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // The builder default is *unlimited*; always set a budget.
         .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(api_key)
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_system_instructions(
             "Widget codes and stock levels come only from the `widgets` MCP \
              tools. Never guess them. List the widgets first if you need to \

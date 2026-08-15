@@ -5,7 +5,7 @@ use super::*;
 #[test]
 fn test_serialize_create_interaction_request_with_model() {
     let request = InteractionRequest {
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         agent: None,
         agent_config: None,
         input: InteractionInput::Text("Hello, world!".to_string()),
@@ -29,7 +29,7 @@ fn test_serialize_create_interaction_request_with_model() {
     let json = serde_json::to_string(&request).expect("Serialization failed");
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-    assert_eq!(value["model"], "gemini-3.6-flash");
+    assert_eq!(value["model"], "test-model");
     assert_eq!(value["input"], "Hello, world!");
     assert!(value.get("agent").is_none());
 }
@@ -617,7 +617,7 @@ fn test_agent_config_field_naming_conventions() {
 #[test]
 fn test_interaction_request_roundtrip() {
     let original = InteractionRequest {
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         agent: None,
         agent_config: None,
         input: InteractionInput::Text("Hello, world!".to_string()),
@@ -681,7 +681,7 @@ fn test_interaction_request_roundtrip() {
 #[test]
 fn test_response_format_serializes_as_snake_case() {
     let request = InteractionRequest {
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         agent: None,
         agent_config: None,
         input: InteractionInput::Text("test".to_string()),
@@ -899,7 +899,7 @@ fn test_request_with_webhook_config_and_environment_wire_shape() {
     use crate::webhooks::WebhookConfig;
 
     let request = InteractionRequest {
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         agent: None,
         agent_config: None,
         input: InteractionInput::Text("Hello".to_string()),
