@@ -43,7 +43,7 @@
 //!
 //! [mcp] mcp_widgets_list_widgets     (allowed)
 //! [mcp] mcp_widgets_lookup_widget    (allowed)
-//! Agent: The flange has code wibble-3317-quux, with 42 in stock.
+//! Agent: The flange has code plonkish-4402-vex, with 42 in stock.
 //!
 //! ✓ The answer carries a value only the MCP server knows.
 //! ```
@@ -54,7 +54,7 @@ use genai_rs::antigravity::{AgentEvent, AntigravityAgent, Capabilities, McpServe
 /// A code only the MCP server knows (see `widgets_server.py`). Its
 /// presence in the answer is the proof the round trip happened — the model
 /// cannot derive it.
-const FLANGE_CODE: &str = "wibble-3317-quux";
+const FLANGE_CODE: &str = "plonkish-4402-vex";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -171,8 +171,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("• Capabilities and MCP are independent — Capabilities::none() still");
     println!("  leaves MCP tools available, which is how you build an agent whose");
     println!("  only tools are external");
-    println!("• Stdio servers are spawned per agent; a slow-starting server delays");
-    println!("  spawn(), so prefer with_timeout_seconds over an unbounded wait");
+    println!("• Stdio servers are spawned per agent, so a slow-starting server");
+    println!("  delays spawn() itself. with_timeout_seconds bounds each tool");
+    println!("  CALL, not startup — budget the spawn on your side if it matters");
     println!("• Tool errors (isError) come back as tool results, not transport");
     println!("  failures — the model sees them and can adapt");
 

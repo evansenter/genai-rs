@@ -17,8 +17,12 @@ PROTOCOL_VERSION = "2024-11-05"
 
 # The inventory. Deliberately arbitrary — nothing in a model's training
 # could supply these, so an answer containing them came from this process.
+#
+# Kept distinct from the token in tests/fixtures/mcp_echo_server.py: that
+# fixture's whole argument is that its value exists nowhere else, and
+# reusing it here would quietly make that false.
 INVENTORY = {
-    "flange": {"code": "wibble-3317-quux", "in_stock": 42},
+    "flange": {"code": "plonkish-4402-vex", "in_stock": 42},
     "grommet": {"code": "zorble-8891-frob", "in_stock": 0},
     "sprocket": {"code": "quaffle-2205-nurb", "in_stock": 7},
 }
