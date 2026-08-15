@@ -91,7 +91,16 @@ enum Audit {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY not set");
+    let api_key = match std::env::var("GEMINI_API_KEY") {
+        Ok(key) if !key.trim().is_empty() => key,
+        _ => {
+            // Empty counts as absent: a fork push gets the secret as ""
+            // rather than unset, and spawning with it fails mid-turn
+            // instead of skipping.
+            println!("Skipping: GEMINI_API_KEY not set");
+            return Ok(());
+        }
+    };
 
     let workspace = seed_workspace()?;
     let workspace_path = workspace.path().to_string_lossy().to_string();
@@ -257,6 +266,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     agent.shutdown().await?;
+
+    // Give the CI smoke run teeth. Printing an empty audit trail and
+    // exiting 0 would pass the very check meant to catch "the agent did
+    // nothing" — the same reason `session_resume` errors on an empty
+    // restored history rather than reporting it.
+    if actions == 0 && calls == 0 {
+        return Err(
+            "the agent took no actions and made no tool calls — nothing was exercised".into(),
+        );
+    }
 
     println!("\n=== Example Complete ===\n");
 

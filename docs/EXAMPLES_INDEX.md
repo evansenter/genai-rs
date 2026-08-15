@@ -114,8 +114,8 @@ Located in `examples/real_world/`:
 | `data_analysis/` | CSV data analysis with functions | Intermediate |
 | `rag_system/` | Retrieval-augmented generation | Advanced |
 | `repo_auditor/` | Agentic security audit on the Antigravity harness: subagent, policies, structured report (`--features antigravity`) | Advanced |
-| [`session_resume/`](../examples/real_world/session_resume/) | Agent that remembers across process restarts | Trajectory persistence, `conversation_id` round trip, `initial_history` (`--features antigravity`) |
-| [`workspace_explorer/`](../examples/real_world/workspace_explorer/) | Watching an agent work, and gating it live | Workspaces, typed `ToolAction` stream, content-based `on_pre_tool` deny (`--features antigravity`) |
+| [`session_resume/`](../examples/real_world/session_resume/) | Agent that remembers across process restarts — trajectory persistence, `conversation_id` round trip, `initial_history` (`--features antigravity`) | Advanced |
+| [`workspace_explorer/`](../examples/real_world/workspace_explorer/) | Watching an agent work and gating it live — workspaces, typed `ToolAction` stream, content-based `on_pre_tool` deny (`--features antigravity`) | Advanced |
 
 ## Example Details
 

@@ -64,7 +64,16 @@ const PLANTED_FACT: &str = "the deploy key rotates on the first Monday of each q
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY not set");
+    let api_key = match std::env::var("GEMINI_API_KEY") {
+        Ok(key) if !key.trim().is_empty() => key,
+        _ => {
+            // Empty counts as absent: a fork push gets the secret as ""
+            // rather than unset, and spawning with it fails mid-turn
+            // instead of skipping.
+            println!("Skipping: GEMINI_API_KEY not set");
+            return Ok(());
+        }
+    };
 
     // A real CLI would use a stable location (e.g. ~/.config/my-agent).
     // A temp dir keeps the example self-contained and re-runnable.

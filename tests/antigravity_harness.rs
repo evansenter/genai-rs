@@ -644,21 +644,48 @@ for e in fdp.enum_type:
 walk(fdp.message_type)
 print(json.dumps(out))
 "#;
-    // Prefer the interpreter that owns the wheel discovery path the crate
-    // itself uses; fall back to whatever `python3` resolves to.
-    let output = std::process::Command::new("python3")
-        .args(["-c", SCRIPT])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        println!(
-            "Skipping: could not import localharness_pb2 ({}). Install the wheel \
-             into the python3 on PATH to run this guard.",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-        return None;
+    // Point the interpreter at the *same* install the tests exercise.
+    // `ANTIGRAVITY_HARNESS_PATH` sits ahead of python3's own site-packages
+    // in the crate's discovery order, so when it is set, comparing against
+    // whatever `python3` happens to import would check a different wheel
+    // than the one under test. Deriving PYTHONPATH from the resolved
+    // harness path keeps the two in sync (and makes a venv install work
+    // with the system python3).
+    let mut command = std::process::Command::new("python3");
+    if let Ok(harness) = std::env::var("ANTIGRAVITY_HARNESS_PATH") {
+        // .../<site-packages>/google/antigravity/bin/localharness
+        let site_packages = std::path::Path::new(&harness)
+            .ancestors()
+            .nth(4)
+            .map(std::path::Path::to_path_buf);
+        if let Some(dir) = site_packages.filter(|d| d.join("google/antigravity").is_dir()) {
+            command.env("PYTHONPATH", dir);
+        }
     }
-    serde_json::from_slice(&output.stdout).ok()
+    let output = command.args(["-c", SCRIPT]).output().ok()?;
+    if output.status.success() {
+        let parsed: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("descriptor dump should be JSON");
+        assert!(
+            parsed.as_object().is_some_and(|m| !m.is_empty()),
+            "the harness descriptor yielded no enums at all — the guard would have \
+             checked nothing"
+        );
+        return Some(parsed);
+    }
+
+    // Reaching here means the harness binary was discoverable (this test is
+    // gated on that) but its descriptor was not. Failing beats skipping:
+    // a guard that goes green when it checked nothing is the same vacuous
+    // pass that let the 0.1.5 -> 0.1.10 rename reach a release. The module
+    // path has already moved once, and the bump that moves it again is
+    // exactly the bump likely to carry a rename with it.
+    panic!(
+        "could not import localharness_pb2 from the installed wheel, so the protocol-drift \
+         guard checked nothing. Both known module paths were tried. If the wheel moved it \
+         again, update the path list in harness_proto_enums.\npython3 stderr: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
 }
 
 /// Compares a harness descriptor dump against what this crate models,
@@ -760,6 +787,9 @@ async fn test_antigravity_protocol_enums_have_not_drifted() {
     };
 
     let Some(harness) = harness_proto_enums() else {
+        // python3 itself is absent — the only remaining reason to skip.
+        // A wheel that is present but unreadable panics inside the helper.
+        println!("Skipping: python3 not available to read the harness descriptor");
         return;
     };
 

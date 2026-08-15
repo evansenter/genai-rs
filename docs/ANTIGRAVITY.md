@@ -516,6 +516,36 @@ println!("restored {} steps", agent.initial_history().len());
 
 ## Debugging
 
+### Diagnosing protocol drift
+
+Three signals exist specifically for the failure mode described under
+[Version pinning](#version-pinning) — a harness that speaks a dialect this
+build only partly understands, which otherwise presents as "the agent just
+didn't do anything":
+
+| Signal | What it tells you |
+|--------|-------------------|
+| `protocol::drift_report()` | Every unrecognized wire value seen, as `"EnumName=WIRE_VALUE" -> count`. Empty is healthy. Process-wide and cumulative; `clear_drift_report()` resets it. |
+| The `warn!` on `shutdown()` | The same aggregate, logged once at the natural end of a session, so it does not scroll past like the per-value warns do. |
+| `AntigravityError::Timeout` | When a turn times out having seen unrecognized *main-trajectory* states, the `operation` field names them and points at `SUPPORTED_HARNESS_VERSION` instead of reporting an undifferentiated stall. |
+
+Programmatic check, for anything long-running:
+
+```rust,ignore
+let drift = genai_rs::antigravity::protocol::drift_report();
+if !drift.is_empty() {
+    eprintln!("harness sent values this build does not model: {drift:?}");
+}
+```
+
+CI runs a stronger version of this: `test_antigravity_protocol_enums_have_not_drifted`
+diffs the installed wheel's protobuf descriptor against the crate's wire
+enums and fails naming any value the harness can send that the crate does
+not model. That is the check that turns a renamed enum from a silent hang
+into a red test.
+
+### Wire inspection
+
 The Antigravity client feeds the crate's canonical wire-inspection layer
 (`genai_rs::wire`). `LOUD_WIRE=1` pretty-prints everything to stderr:
 

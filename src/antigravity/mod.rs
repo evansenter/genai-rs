@@ -971,8 +971,9 @@ impl AntigravityAgent {
         let drift = protocol::drift_report();
         if !drift.is_empty() {
             tracing::warn!(
-                "Antigravity session saw {} unrecognized wire value(s) — this build may not \
-                 fully understand this harness (see SUPPORTED_HARNESS_VERSION): {:?}",
+                "This process has seen {} unrecognized antigravity wire value(s) — this \
+                 build may not fully understand this harness (see \
+                 SUPPORTED_HARNESS_VERSION). Cumulative across agents in this process: {:?}",
                 drift.values().sum::<usize>(),
                 drift
             );

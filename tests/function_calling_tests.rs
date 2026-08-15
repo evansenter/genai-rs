@@ -2325,11 +2325,19 @@ mod multiturn {
             function_calls.len()
         );
         // History IS inherited: the answer can only come from turn 1.
-        let text = result2.as_text().unwrap_or_default().to_lowercase();
-        assert!(
-            text.contains("weather"),
-            "conversation history should be inherited, got: {text:?}"
-        );
+        // Semantic rather than substring — the model may answer
+        // "forecasts" or "meteorology", and a rephrase should not read as
+        // a broken inheritance contract (CLAUDE.md's guidance for
+        // non-deterministic text).
+        let text = result2.as_text().unwrap_or_default().to_string();
+        assert_response_semantic(
+            &client,
+            "The user previously said they were interested in weather data, then asked \
+             what topic they had mentioned.",
+            &text,
+            "Does this identify weather (or an equivalent term like forecasts) as the topic?",
+        )
+        .await;
     }
 
     #[tokio::test]

@@ -22,6 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Protocol-drift diagnostics for the antigravity bridge.**
+  `protocol::drift_report()` returns every unrecognized wire value seen
+  (`"EnumName=WIRE_VALUE" -> count`) with `clear_drift_report()` to reset
+  it, `all_wire_values()` on each wire enum exposes the spellings the
+  crate recognizes, and `shutdown()` logs the aggregate once. Unknown-value
+  preservation previously produced no signal beyond a `warn!` nobody
+  reads — which is what let a renamed value silently stop matching. CI
+  additionally diffs the installed wheel's protobuf descriptor against
+  these enums and fails naming anything the harness can send that the
+  crate does not model. See the Debugging section of `docs/ANTIGRAVITY.md`.
+
 - **Two antigravity worked examples**, both runnable against a real
   harness: `examples/real_world/session_resume` (trajectory persistence —
   the `with_save_dir` + `conversation_id()` + `with_conversation_id` round
@@ -89,7 +100,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   One capability difference surfaced and is worth knowing: `gemini-3.6-flash`
   returns `400 invalid_request` for **inline (base64) video bytes** while
   accepting video **by URI**. Image, audio and PDF inline data are
-  unaffected. The three inline-video tests are pinned to a model that
+  unaffected. The four inline-video tests are pinned to a model that
   accepts that form (`tests/common::VIDEO_INLINE_MODEL`) so they keep
   testing the bytes path rather than the model's appetite for it.
 
