@@ -51,7 +51,7 @@ pub use hooks::{
 pub use streaming::{AgentEvent, AgentEventStream, ErrorSeverity, ToolAction, ToolDecision};
 pub use triggers::TriggerConfig;
 
-use crate::wire::{LoudWirePrinter, WireInspector};
+use crate::wire::WireInspector;
 use crate::{FunctionDeclaration, ToolService};
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -629,8 +629,8 @@ impl AgentBuilder {
         let binary = process::discover_harness(self.harness_path.as_deref())?;
 
         let mut inspectors = self.inspectors.clone();
-        if std::env::var("LOUD_WIRE").is_ok() {
-            inspectors.push(Arc::new(LoudWirePrinter::new()));
+        if let Some(printer) = crate::wire::env_inspector() {
+            inspectors.push(Arc::new(printer));
         }
         let wire = WireContext::new(inspectors);
 
@@ -852,8 +852,20 @@ impl std::fmt::Debug for AntigravityAgent {
 /// while consuming an [`AgentEventStream`]). Obtain via
 /// [`AntigravityAgent::cancel_handle`]; cheap to clone.
 ///
-/// Cancellation makes the in-flight `chat`/stream fail with
-/// [`AntigravityError::Turn`] once the harness confirms.
+/// # What a cancelled turn returns
+///
+/// Harness 0.1.10 answers a halt by taking the trajectory to
+/// `STATE_FULLY_IDLE` — the same terminal state as a natural completion,
+/// not `STATE_CANCELLED`. So the in-flight `chat`/stream **resolves
+/// normally**, returning whatever partial output the turn had produced;
+/// it does not fail with [`AntigravityError::Turn`]. Treat `cancel` as
+/// "stop early and keep what you have", and track the cancellation on
+/// your side if you need to tell a halted turn from a completed one.
+///
+/// [`AntigravityError::Turn`] remains the outcome when the *harness*
+/// cancels a turn itself (`STATE_CANCELLED`), which is a different event
+/// from this handle's halt request. Pinned by
+/// `test_antigravity_cancel_handle_halts_an_in_flight_turn`.
 #[derive(Debug, Clone)]
 pub struct CancelHandle {
     sink: SinkHandle,

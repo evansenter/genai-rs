@@ -1,6 +1,6 @@
 use crate::GenaiError;
 use crate::http::context::HttpContext;
-use crate::wire::{LoudWirePrinter, WireInspector};
+use crate::wire::WireInspector;
 use reqwest::Client as ReqwestClient;
 use std::sync::Arc;
 use std::time::Duration;
@@ -40,14 +40,14 @@ impl std::fmt::Debug for Client {
     }
 }
 
-/// Appends a [`LoudWirePrinter`] when the `LOUD_WIRE` environment variable is
-/// set. Checked once at `Client` construction time.
+/// Appends a [`crate::wire::LoudWirePrinter`] when the `LOUD_WIRE`
+/// environment variable is set, filtered by its value. Checked once at
+/// `Client` construction time; shares
+/// [`crate::wire::env_inspector`] with the antigravity agent builder so
+/// the variable means the same thing on both paths.
 fn with_env_inspectors(mut inspectors: Vec<Arc<dyn WireInspector>>) -> Vec<Arc<dyn WireInspector>> {
-    if let Ok(raw) = std::env::var("LOUD_WIRE") {
-        // The value selects what to print — `1` keeps the historical
-        // firehose, anything else filters. See `wire::WireFilter`.
-        let filter = crate::wire::WireFilter::parse(&raw);
-        inspectors.push(Arc::new(LoudWirePrinter::with_filter(filter)));
+    if let Some(printer) = crate::wire::env_inspector() {
+        inspectors.push(Arc::new(printer));
     }
     inspectors
 }

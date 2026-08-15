@@ -36,7 +36,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   output was unusable for antigravity sessions, where a few turns produce
   thousands of lines. Exposed programmatically as `wire::WireFilter` and
   `LoudWirePrinter::with_filter`; `LoudWirePrinter` is consequently no
-  longer `Copy` (it still derives `Clone`).
+  longer `Copy` (it still derives `Clone`). The antigravity agent
+  builder honors the filter too — it previously re-implemented the env
+  gate and ignored the value, which meant filtering did not work on the
+  one surface that emits WebSocket messages at all.
+
+- **Antigravity e2e coverage for structured output and cancellation.**
+  `with_response_schema` and `CancelHandle` are now exercised against a
+  real harness. The cancellation test corrected a documented claim: harness
+  0.1.10 answers a halt with `STATE_FULLY_IDLE`, the same terminal state as
+  a natural completion, so a cancelled turn **resolves normally with
+  partial output** rather than failing with `AntigravityError::Turn` as
+  `CancelHandle` and `docs/ANTIGRAVITY.md` previously stated. The `Turn`
+  error remains the outcome for harness-initiated cancellation.
 
 - **Protocol-drift diagnostics for the antigravity bridge.**
   `protocol::drift_report()` returns every unrecognized wire value seen

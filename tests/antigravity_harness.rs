@@ -608,6 +608,188 @@ async fn test_antigravity_workspace_actions_and_post_tool_success() {
     agent.shutdown().await.expect("shutdown");
 }
 
+/// `with_response_schema` must actually constrain the final output, and
+/// the result must arrive on `structured_output()` rather than only as
+/// text the caller has to re-parse.
+///
+/// The schema is deliberately not the obvious shape for the question (two
+/// renamed fields plus a number), so a response that happens to look right
+/// cannot be a coincidence of the model's default formatting.
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_antigravity_structured_output_follows_response_schema() {
+    let Some(key) = api_key() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "capital_city": {"type": "string"},
+            "country_name": {"type": "string"},
+            "letters_in_capital": {"type": "integer"},
+        },
+        "required": ["capital_city", "country_name", "letters_in_capital"],
+    });
+
+    let mut agent = AntigravityAgent::builder()
+        .with_turn_timeout(std::time::Duration::from_secs(120))
+        .with_api_key(key)
+        .with_model("gemini-3.6-flash")
+        .with_capabilities(Capabilities::none())
+        .with_response_schema(schema)
+        .spawn()
+        .await
+        .expect("spawn");
+
+    let response = agent
+        .chat("What is the capital of France?")
+        .await
+        .expect("chat turn");
+
+    let output = response
+        .structured_output()
+        .expect("with_response_schema should produce structured_output");
+
+    // Structural, not semantic: the point is that the schema was honored,
+    // not that the model knows French geography.
+    let object = output
+        .as_object()
+        .unwrap_or_else(|| panic!("structured output should be a JSON object, got: {output}"));
+    for key in ["capital_city", "country_name", "letters_in_capital"] {
+        assert!(
+            object.contains_key(key),
+            "structured output is missing required key {key:?}: {output}"
+        );
+    }
+    assert!(
+        object["capital_city"].is_string(),
+        "capital_city should be a string: {output}"
+    );
+    assert!(
+        object["letters_in_capital"].is_i64() || object["letters_in_capital"].is_u64(),
+        "letters_in_capital should be an integer: {output}"
+    );
+
+    agent.shutdown().await.expect("shutdown");
+}
+
+/// A `CancelHandle` taken before a turn must be able to halt that turn
+/// from outside the `&mut self` borrow that `send_streaming` holds — which
+/// is the entire reason the handle exists, and is not exercised anywhere
+/// else.
+///
+/// This test also pins *how* a cancelled turn ends, which is not what the
+/// crate documented before it was run: harness 0.1.10 answers a
+/// `haltRequest` with `STATE_FULLY_IDLE`, not `STATE_CANCELLED`, so the
+/// turn resolves as a normal `Finished` carrying whatever partial output
+/// existed — it does **not** fail with `AntigravityError::Turn`. The
+/// `Cancelled` arm in the turn loop still matters for harness-initiated
+/// cancellation; it is simply not the client-halt path.
+///
+/// The prompt is long on purpose: it has to still be running when the
+/// cancel lands, or the test proves nothing.
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
+    let Some(key) = api_key() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    /// How long after the turn starts the halt is sent.
+    const CANCEL_AFTER: std::time::Duration = std::time::Duration::from_secs(3);
+    /// The turn must end promptly after the halt. Generous enough to
+    /// absorb a slow round trip, far below both the turn timeout and how
+    /// long the un-cancelled prompt would take.
+    const MUST_END_WITHIN: std::time::Duration = std::time::Duration::from_secs(30);
+
+    let mut agent = AntigravityAgent::builder()
+        // Much longer than MUST_END_WITHIN: if the halt is ignored, this
+        // test must fail on the elapsed-time assertion rather than being
+        // rescued by a timeout that looks like a pass.
+        .with_turn_timeout(std::time::Duration::from_secs(180))
+        .with_api_key(key)
+        .with_model("gemini-3.6-flash")
+        .with_capabilities(Capabilities::none())
+        .spawn()
+        .await
+        .expect("spawn");
+
+    // Taken *before* the stream borrows the agent — the handle is the only
+    // way to reach the session while a turn is in flight.
+    let handle = agent.cancel_handle();
+    tokio::spawn(async move {
+        tokio::time::sleep(CANCEL_AFTER).await;
+        let _ = handle.cancel().await;
+    });
+
+    let started = std::time::Instant::now();
+    let (finished, outcome) = {
+        let mut stream = agent
+            .send_streaming(
+                "Write an extremely detailed 3000-word essay about the history of \
+                 the bicycle. Include many sections and go slowly.",
+            )
+            .await
+            .expect("stream");
+
+        let mut finished = false;
+        let mut outcome = Ok(());
+        while let Some(event) = stream.next().await {
+            match event {
+                Ok(AgentEvent::Finished(_)) => {
+                    finished = true;
+                    break;
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    outcome = Err(err);
+                    break;
+                }
+            }
+        }
+        (finished, outcome)
+    };
+    let elapsed = started.elapsed();
+
+    // The assertion that actually proves cancellation: the turn stopped
+    // long before it would have finished on its own, and long before the
+    // turn timeout could have ended it.
+    assert!(
+        elapsed < MUST_END_WITHIN,
+        "the turn ran {elapsed:?}, past the {MUST_END_WITHIN:?} bound — the \
+         halt did not stop it"
+    );
+    assert!(
+        elapsed >= CANCEL_AFTER,
+        "the turn ended in {elapsed:?}, before the halt was even sent — the \
+         model answered too fast for this test to prove anything"
+    );
+
+    match outcome {
+        // The documented-and-verified shape on 0.1.10.
+        Ok(()) => assert!(
+            finished,
+            "the stream ended without a Finished event and without an error"
+        ),
+        // Not what 0.1.10 does, but the turn loop still maps a harness
+        // STATE_CANCELLED here; accept it rather than fail if the harness
+        // changes its mind, and say so loudly.
+        Err(AntigravityError::Turn(message)) => {
+            println!(
+                "note: this harness reported cancellation as a Turn error \
+                 ({message:?}) — 0.1.10 ended the turn as Finished. Update the \
+                 CancelHandle docs if this is the new behavior."
+            );
+        }
+        Err(other) => panic!("unexpected error from a cancelled turn: {other:?}"),
+    }
+
+    agent.shutdown().await.expect("shutdown");
+}
+
 // =============================================================================
 // Protocol drift guard
 // =============================================================================

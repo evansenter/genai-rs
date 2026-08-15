@@ -406,6 +406,13 @@ mod paint {
 /// | *anything else* | A WebSocket payload whose top-level key matches (e.g. `stepUpdate`, `toolCall`) |
 /// | `summary` | Modifier: one line per event instead of full bodies |
 ///
+/// A value that matches no category and no payload key selects **nothing**,
+/// so `LOUD_WIRE=0`, `false`, `off` and `verbose` all print silence. Note
+/// that this is a behavior change: the gate used to be "is the variable set
+/// at all", so those values previously produced the full firehose. If
+/// output has gone missing, an unrecognized selector is the first thing to
+/// check.
+///
 /// # Examples
 ///
 /// ```bash
@@ -505,12 +512,37 @@ impl WireFilter {
     }
 }
 
-/// Envelope bookkeeping present on every harness message, and therefore
-/// useless as a selector: matching on `seqNum` would keep the whole stream.
-/// Excluded from both selector matching and summary rendering so the two
-/// agree on what a message "is".
+/// The printer the `LOUD_WIRE` environment variable asks for, or `None`
+/// when the variable is unset.
+///
+/// Single source of truth for the env gate: both `Client` and the
+/// antigravity `AgentBuilder` install their zero-config inspector through
+/// this, so a filter means the same thing on either path. (They diverged
+/// once — the harness path re-implemented the gate as a bare `is_ok()` and
+/// silently ignored the filter, which is exactly the surface where
+/// filtering matters most.)
+pub(crate) fn env_inspector() -> Option<LoudWirePrinter> {
+    let raw = std::env::var("LOUD_WIRE").ok()?;
+    // The value selects what to print — `1` keeps the historical
+    // firehose, anything else filters. See `WireFilter`.
+    Some(LoudWirePrinter::with_filter(WireFilter::parse(&raw)))
+}
+
+/// Envelope bookkeeping that rides alongside a harness message rather
+/// than being one, and is therefore useless as a selector: matching on
+/// `seqNum` would keep the whole stream, and `usageUpdate` would keep
+/// every message that happens to carry usage.
+///
+/// Deliberately the same set the protocol deserializer strips before it
+/// picks the oneof arm (`OutputEvent::deserialize` removes `seqNum`,
+/// `timestampMicros` and the usage keys) — selection, summary rendering
+/// and deserialization should agree on what a message *is*. Excluded from
+/// both selector matching and summary rendering for that reason.
 fn is_envelope_key(key: &str) -> bool {
-    matches!(key, "seqNum" | "timestampMicros")
+    matches!(
+        key,
+        "seqNum" | "timestampMicros" | "usageMetadata" | "usageUpdate"
+    )
 }
 
 /// Pretty-prints wire events to stderr.
@@ -1069,6 +1101,20 @@ mod filter_tests {
         assert!(f.allows(&ws(json!({"stepUpdate": {}}))));
         let f = WireFilter::parse("seqNum");
         assert!(!f.allows(&ws(json!({"seqNum": "1", "toolCall": {}}))));
+
+        // Usage rides along with a message rather than being one, and the
+        // deserializer strips it before picking the oneof arm — so it must
+        // not select either, or it would keep every message carrying usage.
+        for envelope in ["usageUpdate", "usageMetadata"] {
+            let f = WireFilter::parse(envelope);
+            assert!(
+                !f.allows(&ws(json!({"stepUpdate": {}, envelope: {"total": {}}}))),
+                "{envelope:?} must not act as a selector"
+            );
+        }
+        // ...and the message it rides on still selects normally.
+        let f = WireFilter::parse("stepUpdate");
+        assert!(f.allows(&ws(json!({"stepUpdate": {}, "usageMetadata": {}}))));
     }
 
     #[test]
@@ -1089,7 +1135,34 @@ mod filter_tests {
         assert!(f.is_summary());
         assert!(f.allows(&ws(json!({"toolCall": {}}))));
         assert!(!f.allows(&request()));
+    }
 
+    #[test]
+    fn env_inspector_applies_the_filter_from_the_variable() {
+        use super::env_inspector;
+
+        // SAFETY: nextest runs each test in its own process, so this
+        // mutation is not visible to any other test.
+        unsafe { std::env::set_var("LOUD_WIRE", "toolCall,summary") };
+        let printer = env_inspector().expect("LOUD_WIRE set should yield a printer");
+        assert!(printer.filter.is_summary());
+        assert!(printer.filter.allows(&ws(json!({"toolCall": {}}))));
+        assert!(!printer.filter.allows(&request()));
+
+        // The historical spelling still means everything.
+        unsafe { std::env::set_var("LOUD_WIRE", "1") };
+        let printer = env_inspector().expect("printer");
+        assert_eq!(printer.filter, WireFilter::all());
+
+        unsafe { std::env::remove_var("LOUD_WIRE") };
+        assert!(
+            env_inspector().is_none(),
+            "an unset LOUD_WIRE must install nothing"
+        );
+    }
+
+    #[test]
+    fn summary_survives_an_on_value_in_either_order() {
         // Even alongside an "on" value, summary survives — in either order.
         // `summary` is a modifier, so token position must not change what
         // the value means.

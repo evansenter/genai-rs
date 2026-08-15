@@ -431,8 +431,18 @@ task, take a handle first:
 ```rust,ignore
 let cancel = agent.cancel_handle();
 // ... later, from any task:
-cancel.cancel().await?;   // the in-flight turn fails with AntigravityError::Turn
+cancel.cancel().await?;   // the in-flight turn ends early, keeping partial output
 ```
+
+**What a cancelled turn returns**: harness 0.1.10 answers a halt by taking
+the trajectory to `STATE_FULLY_IDLE` — the same terminal state as a natural
+completion, not `STATE_CANCELLED`. The turn therefore resolves *normally*
+with whatever partial output it had produced, rather than failing with
+`AntigravityError::Turn`. Treat `cancel()` as "stop early and keep what you
+have", and record the cancellation on your side if you need to distinguish
+a halted turn from a completed one. (`AntigravityError::Turn` is still the
+outcome when the harness cancels a turn of its own accord.) Verified live
+by `test_antigravity_cancel_handle_halts_an_in_flight_turn`.
 
 `with_turn_timeout(Duration)` bounds each turn's wall-clock time. When the
 budget is exceeded, the crate halts the harness's still-running turn and
