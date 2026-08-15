@@ -177,6 +177,16 @@ jobs:
           # slow run as a broken example: this mechanism's own misattribution
           # failure, running backwards.
           #
+          # The examples are already compiled by the `cargo nextest run
+          # --workspace --features antigravity` step above — nextest shells
+          # out to `cargo test --no-run`, which builds `--example` targets
+          # too (verified by breaking one: the build fails at that step, not
+          # here). Same features, same dev profile, so `cargo run` below
+          # re-execs an existing binary rather than compiling under the
+          # wrapper. A broken example therefore fails once as a build error
+          # up there, instead of being retried three times down here and
+          # reported as a flaky run.
+          #
           # Note the units. `with_turn_timeout` bounds one *turn*; this
           # wrapper bounds the whole *process*, so the bar is
           # turns x ceiling, not ceiling — plus compile, process start and
