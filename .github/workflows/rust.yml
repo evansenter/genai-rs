@@ -83,8 +83,12 @@ jobs:
       # fires on a fork's own main too (Sync fork), as does a fork-internal
       # PR where head and base are both the fork, and the hard failure
       # below would then fire in a repo that never had the secret.
+      # Owner rather than the full slug: a rename would otherwise make both
+      # key-gated steps skip everywhere including upstream, which is the
+      # same vacuous pass the checks below exist to stop -- only moved to
+      # the `if:`, where no ::error:: can fire.
       - name: Run harness integration tests
-        if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository == 'evansenter/genai-rs'
+        if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
         # --retries 2 for the same reason as the integration matrix: this
         # step now draws on the same shared key, so it sees the same
         # low-rate 429s. A retried test is reported FLAKY, not hidden.
@@ -108,7 +112,7 @@ jobs:
       # successful builtin as a failure was found by running one of these
       # by hand, not by any test. Both finish in seconds.
       - name: Smoke-run antigravity examples
-        if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository == 'evansenter/genai-rs'
+        if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
         # Belt and braces alongside the examples' own with_turn_timeout: a
         # harness that stops signalling turn completion hangs rather than
         # errors, and an unbounded step would burn the runner's full budget

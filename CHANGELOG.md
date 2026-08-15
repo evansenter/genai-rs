@@ -10,9 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Model constants — one place to change the model.** `DEFAULT_MODEL`,
-  `INLINE_VIDEO_MODEL`, `DEFAULT_IMAGE_MODEL` and `DEFAULT_TTS_MODEL` are
-  now public, and every test, example, doctest and doc snippet references
-  them instead of a string literal.
+  `INLINE_VIDEO_MODEL`, `MINIMAL_THINKING_MODEL`, `DEFAULT_IMAGE_MODEL` and
+  `DEFAULT_TTS_MODEL` are now public, and every test, example, doctest and
+  doc snippet references them instead of a string literal.
 
   Bumping the model previously meant editing ~590 occurrences of the text
   model plus 27 image and 35 TTS, with no single source of truth. A sweep
@@ -23,8 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   A new `tests/model_literals.rs` guard fails on any hardcoded
   `"gemini-<digit>"` outside those constants, so it cannot silently
-  regress. In-crate unit tests use an obviously synthetic `"test-model"` —
-  they exercise serialization round-trips and never cared which model.
+  regress. In-crate unit tests use either the constants or an obviously
+  synthetic `"test-model"` — they exercise serialization round-trips and
+  never cared which model, so neither form is a bump site.
 
 ### Changed
 

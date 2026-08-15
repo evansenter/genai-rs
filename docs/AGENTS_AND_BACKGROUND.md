@@ -23,7 +23,7 @@ Gemini supports two types of interactions:
 
 | Type | Entry Point | Execution | Use Case |
 |------|-------------|-----------|----------|
-| **Model** | `with_model("gemini-3.7-flash")` | Synchronous | Quick responses, streaming |
+| **Model** | `with_model(genai_rs::DEFAULT_MODEL)` | Synchronous | Quick responses, streaming |
 | **Agent** | `with_agent("deep-research-pro-preview")` | Background | Long-running tasks, research |
 
 Agents are specialized systems that perform multi-step tasks autonomously.

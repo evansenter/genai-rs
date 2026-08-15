@@ -278,7 +278,7 @@ impl<'a> InteractionBuilder<'a> {
         self
     }
 
-    /// Sets the model to use for this interaction (e.g., crate::DEFAULT_MODEL).
+    /// Sets the model to use for this interaction (e.g. [`DEFAULT_MODEL`](crate::DEFAULT_MODEL)).
     ///
     /// Note: Mutually exclusive with `with_agent()`.
     #[must_use]

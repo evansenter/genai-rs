@@ -47,6 +47,16 @@ fn no_hardcoded_model_ids_outside_the_constants() {
     ];
 
     fn scan(root: &Path, dir: &Path, hits: &mut Vec<String>) {
+        // A scan root that does not exist must not read as one that is
+        // clean. This test's whole argument is that a missed literal is
+        // invisible, so it should not be able to stop covering a directory
+        // silently when one is moved or renamed.
+        assert!(
+            dir.is_dir(),
+            "scan root {} does not exist — this guard would silently stop \
+             covering it",
+            dir.display()
+        );
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
         };
@@ -84,13 +94,15 @@ fn no_hardcoded_model_ids_outside_the_constants() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut hits = Vec::new();
     scan(root, &root.join("src"), &mut hits);
+    // Walks recursively, so the trybuild fixtures in tests/ui/ are covered
+    // too — they are ordinary .rs files and would pin a model just as
+    // invisibly as any other.
     scan(root, &root.join("tests"), &mut hits);
     scan(root, &root.join("examples"), &mut hits);
-    // The other workspace member. Clean today, but it has its own src/ and
-    // tests/ (trybuild fixtures included), and a literal pinned there would
-    // be exactly the invisible one this test exists to catch.
+    // The other workspace member, which is Cargo.toml + src/ only. Clean
+    // today, but a literal pinned there would be exactly the invisible one
+    // this test exists to catch.
     scan(root, &root.join("genai-rs-macros/src"), &mut hits);
-    scan(root, &root.join("genai-rs-macros/tests"), &mut hits);
 
     assert!(
         hits.is_empty(),
