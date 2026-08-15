@@ -1138,8 +1138,9 @@ on a standard key.
 ```
 
 `Visualization`: `"off"` | `"auto"` (+ `Unknown { visualization_type, data }`).
-Note the contrast with `thinking_summaries`, which uses `THINKING_SUMMARIES_*`
-in agent_config; `visualization` is lowercase per the spec.
+`visualization` is lowercase per the spec — as is `thinking_summaries`,
+which the API reversed (it previously took `THINKING_SUMMARIES_*` here and
+now rejects it; see the `ThinkingSummaries` entry above).
 
 **Status**: ✅ Verified live 2026-07: the API's validation error for
 `agent_config.visualization` lists exactly `off` | `auto`;

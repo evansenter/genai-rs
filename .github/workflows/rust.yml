@@ -81,7 +81,10 @@ jobs:
       # running the antigravity-gated unit tests entirely.
       - name: Run harness integration tests
         if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-        run: cargo nextest run --features antigravity --run-ignored all -E 'binary(antigravity_harness)'
+        # --retries 2 for the same reason as the integration matrix: this
+        # step now draws on the same shared key, so it sees the same
+        # low-rate 429s. A retried test is reported FLAKY, not hidden.
+        run: cargo nextest run --features antigravity --run-ignored all --retries 2 -E 'binary(antigravity_harness)'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       # Examples were compiled but never executed, so bugs that only show
@@ -144,7 +147,14 @@ jobs:
             # closed and the skip warning still fires on a failing run —
             # the run where the skip count is most diagnostic.
             rc=0
-            cargo nextest run --test $test --run-ignored all --success-output=final 2>&1 | tee "/tmp/$test.log" || rc=$?
+            # --retries 2: the shared project key sees a low-rate 429 under
+            # a five-way matrix, and nextest is fail-fast — so one transient
+            # error discards the rest of the group (observed: 30 of 37 tests
+            # skipped for a single 429). Retrying only the failed test costs
+            # one call instead of re-running the matrix. Nothing is hidden:
+            # a test that needed a retry is reported FLAKY, which is exactly
+            # what the ci-flakiness-report job is for.
+            cargo nextest run --test $test --run-ignored all --retries 2 --success-output=final 2>&1 | tee "/tmp/$test.log" || rc=$?
             echo "::endgroup::"
             skips=$(grep -c SEMANTIC_VALIDATION_SKIPPED "/tmp/$test.log" || true)
             if [ "${skips:-0}" -gt 3 ]; then

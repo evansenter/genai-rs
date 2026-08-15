@@ -29,19 +29,16 @@
 mod common;
 
 use futures_util::StreamExt;
-use genai_rs::Client;
-use std::env;
-
-/// Helper to create a client for canary tests.
-fn create_client() -> Option<Client> {
-    let api_key = env::var("GEMINI_API_KEY").ok()?;
-    Client::builder(api_key).build().ok()
-}
 
 /// Helper macro to skip tests when API key is not available.
+///
+/// Uses the shared `common::get_client` rather than a local builder: it
+/// warns when the key is set but the client fails to build, which a local
+/// `.ok()?` would render indistinguishable from an unset key — i.e. a
+/// silent skip where a canary is meant to be loud.
 macro_rules! require_api_key {
     ($client:ident) => {
-        let Some($client) = create_client() else {
+        let Some($client) = common::get_client() else {
             eprintln!("Skipping test: GEMINI_API_KEY not set");
             return;
         };
@@ -221,6 +218,10 @@ async fn canary_thinking_mode_no_unknown_content() {
 async fn canary_streaming_no_unknown_chunks() {
     require_api_key!(client);
 
+    // Not wrapped in retry_request! like its siblings: create_stream()
+    // returns a stream rather than a Result, so the whole consume-and-
+    // assert loop would have to move inside the closure. CI runs these
+    // with `nextest --retries 2`, which covers the transient case here.
     let mut stream = client
         .interaction()
         .with_model("gemini-3.6-flash")
