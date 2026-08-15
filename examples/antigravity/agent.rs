@@ -31,7 +31,16 @@ fn get_weather(city: String) -> String {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY not set");
+    let api_key = match std::env::var("GEMINI_API_KEY") {
+        Ok(key) if !key.trim().is_empty() => key,
+        _ => {
+            // Empty counts as absent: a fork push gets the secret as ""
+            // rather than unset, and spawning with it fails mid-turn
+            // instead of skipping.
+            println!("Skipping: GEMINI_API_KEY not set");
+            return Ok(());
+        }
+    };
 
     println!("=== Antigravity Agent ===\n");
 

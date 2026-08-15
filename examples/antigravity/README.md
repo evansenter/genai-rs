@@ -17,7 +17,7 @@ README explaining what it demonstrates and what to look for in the output.
 
 | Example | What it's for | Key surface |
 |---------|---------------|-------------|
-| [`agent.rs`](./agent.rs) | The starter — spawn a harness, take a turn, read the result | `AntigravityAgent::builder()`, Rust `#[tool]` functions, `on_questions` |
+| [`agent.rs`](./agent.rs) (`--example antigravity_agent`) | The starter — spawn a harness, take a turn, read the result | `AntigravityAgent::builder()`, Rust `#[tool]` functions, `on_questions` |
 | [`repo_auditor/`](./repo_auditor/) | Agentic security audit of a checked-in fixture repo | Subagents, policies + hooks, structured report |
 | [`session_resume/`](./session_resume/) | An agent that remembers across process restarts | Trajectory persistence, `conversation_id` round trip, `initial_history` |
 | [`workspace_explorer/`](./workspace_explorer/) | Watching an agent work, and gating it live | Workspaces, typed `ToolAction` stream, content-based `on_pre_tool` deny |

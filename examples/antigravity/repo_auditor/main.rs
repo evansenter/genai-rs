@@ -129,7 +129,16 @@ const AUDIT_TASK: &str = "Audit this project's workspace for security vulnerabil
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY not found in environment");
+    let api_key = match std::env::var("GEMINI_API_KEY") {
+        Ok(key) if !key.trim().is_empty() => key,
+        _ => {
+            // Empty counts as absent: a fork push gets the secret as ""
+            // rather than unset, and spawning with it fails mid-turn
+            // instead of skipping.
+            println!("Skipping: GEMINI_API_KEY not set");
+            return Ok(());
+        }
+    };
 
     // The deliberately vulnerable sample project that ships next to this file.
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))

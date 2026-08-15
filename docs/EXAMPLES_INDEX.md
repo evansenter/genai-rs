@@ -97,7 +97,6 @@ LOUD_WIRE=1 cargo run --example <example_name>
 | `deep_research` | Long-running research agent | Advanced |
 | `webhooks_and_background` | Webhook resource CRUD + per-request webhook routing + environments CRUD + triggers listing | Advanced |
 | `cancel_interaction` | Cancel background tasks | Intermediate |
-| `antigravity_agent` | Local Antigravity harness agent with Rust tools, policies, and the `on_questions` hook (`--features antigravity`) | Advanced |
 
 ### Real-World Applications
 
@@ -124,7 +123,7 @@ all seven are smoke-run in CI:
 
 | Example | Description | Difficulty |
 |---------|-------------|------------|
-| [`agent.rs`](../examples/antigravity/agent.rs) | The starter — spawn a harness, take a turn, Rust `#[tool]` functions, the `on_questions` hook | Advanced |
+| [`agent.rs`](../examples/antigravity/agent.rs) (`--example antigravity_agent`) | The starter — spawn a harness, take a turn, Rust `#[tool]` functions, the `on_questions` hook | Advanced |
 | [`repo_auditor/`](../examples/antigravity/repo_auditor/) | Agentic security audit on a fixture repo — subagents, policies + hooks, structured report | Advanced |
 | [`session_resume/`](../examples/antigravity/session_resume/) | Agent that remembers across process restarts — trajectory persistence, `conversation_id` round trip, `initial_history` | Advanced |
 | [`workspace_explorer/`](../examples/antigravity/workspace_explorer/) | Watching an agent work and gating it live — workspaces, typed `ToolAction` stream, content-based `on_pre_tool` deny | Advanced |

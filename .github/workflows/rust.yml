@@ -129,7 +129,7 @@ jobs:
         run: |
           set -eo pipefail
           # Every example self-skips without a key, so a rotated or cleared
-          # secret would run five processes that each print one line and
+          # secret would run seven processes that each print one line and
           # exit 0 — green, having proven nothing.
           if [ -z "$GEMINI_API_KEY" ]; then
             echo "::error::GEMINI_API_KEY is empty or unset — every example would self-skip and this step would pass having verified nothing"
@@ -146,13 +146,22 @@ jobs:
           # Each attempt gets its own `timeout`, rather than relying on the
           # step budget: an example that hangs is then attributed to that
           # example by name, instead of the whole step dying on the ceiling
-          # and reporting nothing about which one stalled. 300s is well
-          # above any healthy run (the slowest finishes in ~15s) and tight
-          # enough that a single hung example still names itself and lets
-          # the rest of the loop run. It is not a replacement for the step
-          # budget: enough simultaneous hangs (7 examples x 3 attempts is
-          # 105min) still exceed `timeout-minutes` above, and that case
-          # reports as it always did.
+          # and reporting nothing about which one stalled.
+          #
+          # The wrapper must sit *above* each example's own
+          # `with_turn_timeout`, so that a slow-but-legal turn is ended by
+          # the example — which reports a real error naming the turn — and
+          # the wrapper only ever catches a process that stopped responding
+          # altogether. Below it, the wrapper preempts the example's own
+          # ceiling and the loop reads a legal slow turn as a broken
+          # example, which is this mechanism's own misattribution failure
+          # running backwards. Hence per-example budgets: repo_auditor asks
+          # for 600s, the rest declare 120s/180s or inherit the crate's
+          # 300s default.
+          #
+          # Not a replacement for the step budget: enough simultaneous
+          # hangs (6 x 3 x 300s plus 3 x 660s is ~123min) still exceed
+          # `timeout-minutes` above, and that case reports as it always did.
           #
           # All seven, not the five this started with: repo_auditor is the
           # example the README sends people to first and was the only one
@@ -160,15 +169,20 @@ jobs:
           # were compile-only, which is how `on_post_tool` reporting every
           # successful builtin as a failure survived — that was found by
           # running an example by hand. repo_auditor drives subagents over
-          # a fixture repo, so it is the slowest of the seven and the one
-          # the 300s budget is actually sized against.
+          # a fixture repo, so it is the slowest of the seven; this run is
+          # the first measurement of what a healthy one costs.
           for ex in antigravity_agent repo_auditor session_resume workspace_explorer mcp_toolbelt proactive_agent cancellable_turn; do
-            echo "::group::cargo run --example $ex"
+            # Above the example's own with_turn_timeout, never below.
+            case "$ex" in
+              repo_auditor) budget=660 ;;
+              *) budget=300 ;;
+            esac
+            echo "::group::cargo run --example $ex (budget ${budget}s)"
             attempt=1
-            until timeout --signal=TERM --kill-after=30s 300s cargo run --features antigravity --example "$ex"; do
+            until timeout --signal=TERM --kill-after=30s "${budget}s" cargo run --features antigravity --example "$ex"; do
               rc=$?
               if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
-                echo "::warning::$ex timed out after 300s (attempt $attempt)"
+                echo "::warning::$ex timed out after ${budget}s (attempt $attempt)"
               fi
               if [ "$attempt" -ge 3 ]; then
                 echo "::error::$ex failed $attempt times (last exit $rc)"

@@ -1,9 +1,9 @@
 # Repo Auditor Example
 
 Agentic codebase security review running on the local
-[Antigravity harness](../../../docs/ANTIGRAVITY.md) — the `real_world`
-demo for the crate's agent mode (everything else in this directory uses the
-Interactions API).
+[Antigravity harness](../../../docs/ANTIGRAVITY.md) — the fullest of the
+harness examples in this directory, and the one to read after
+[`agent.rs`](../agent.rs).
 
 ## Overview
 
