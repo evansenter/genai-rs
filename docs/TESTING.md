@@ -515,7 +515,7 @@ for transient blips without being able to quietly become the normal path.
 ### Test Fixtures
 
 ```rust,ignore
-use common::{DEFAULT_MODEL, interaction_builder, stateful_builder};
+use common::{interaction_builder, stateful_builder};
 
 // Pre-configured with default model
 let builder = interaction_builder(&client);

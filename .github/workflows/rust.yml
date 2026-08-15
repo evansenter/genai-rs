@@ -171,24 +171,36 @@ jobs:
           # wrapper bounds the whole *process*, so the bar is
           # turns x ceiling, not ceiling — plus compile, process start and
           # harness spawn, which the turn budget never sees. Worst legal
-          # runtime per example, against its budget below:
+          # runtime per example, against its budget below. The third column
+          # is wall clock spent *outside* any turn, which no turn budget
+          # bounds:
           #
-          #   antigravity_agent   3 x 120s =  360s  <  420
-          #   repo_auditor        1 x 600s =  600s  <  660
-          #   session_resume      2 x 120s =  240s  <  300
-          #   proactive_agent     2 x 120s =  240s  <  300
-          #   workspace_explorer  1 x 120s =  120s  <  300
-          #   mcp_toolbelt        1 x 120s =  120s  <  300
-          #   cancellable_turn    1 x 180s =  180s  <  300
+          #                      turns x ceiling   out-of-turn   budget
+          #   antigravity_agent   3 x 120s = 360             —  <  420
+          #   repo_auditor        1 x 600s = 600             —  <  660
+          #   proactive_agent     2 x 120s = 240      30s poll  <  360
+          #   session_resume      2 x 120s = 240     2nd spawn  <  300
+          #   workspace_explorer  1 x 120s = 120             —  <  300
+          #   mcp_toolbelt        1 x 120s = 120             —  <  300
+          #   cancellable_turn    1 x 180s = 180             —  <  300
           #
-          # Re-check this table when an example gains a turn or changes its
-          # budget; every one of them declares a budget explicitly so the
-          # left column can be read off the source.
+          # proactive_agent polls up to 30s for a trigger delivery between
+          # its two turns, so a 300s budget would have left only ~30s for
+          # the link step and spawn — thin enough that a cold runner could
+          # fire the wrapper on a run that stayed inside every budget the
+          # example declares. session_resume spawns a second harness to
+          # prove resume works, so it pays that cost twice against its 60s.
+          #
+          # Re-check this table when an example gains a turn, changes its
+          # budget, or waits on anything outside a turn; every one declares
+          # its budget explicitly so the first column reads off the source.
           #
           # Not a replacement for the step budget: enough simultaneous
-          # hangs (5 x 3 x 300s plus 3 x 660s plus 3 x 420s is ~128min)
-          # still exceed `timeout-minutes` above, and that case reports as
-          # it always did.
+          # hangs run well over the 30min `timeout-minutes` above — three
+          # attempts each, plus `--kill-after` grace and the backoff sleeps
+          # — and that case reports as it always did. Deliberately not
+          # spelled as a total: it would need recomputing on every budget
+          # change, and the conclusion does not turn on the figure.
           #
           # All seven, not the five this started with: repo_auditor is the
           # example the README sends people to first and was the only one
@@ -205,6 +217,9 @@ jobs:
               repo_auditor) budget=660 ;;
               # Declares 120s, but takes three sequential turns.
               antigravity_agent) budget=420 ;;
+              # Two turns at 120s, plus up to 30s polling out-of-turn for
+              # the trigger delivery.
+              proactive_agent) budget=360 ;;
               # The rest are single-turn at 120s, or 180s for cancellable_turn.
               *) budget=300 ;;
             esac
