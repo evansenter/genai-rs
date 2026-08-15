@@ -15,6 +15,16 @@
 //! LOUD_WIRE=1 cargo run --example simple_interaction
 //! ```
 //!
+//! `LOUD_WIRE` also accepts a comma-separated filter — see [`WireFilter`]
+//! for the syntax. `1` (and the other "on" spellings) keeps the historical
+//! everything-pretty-printed behavior; anything else narrows it:
+//!
+//! ```bash
+//! LOUD_WIRE=summary                # one line per event
+//! LOUD_WIRE=request,response       # HTTP only, no WebSocket noise
+//! LOUD_WIRE=toolCall,summary       # one harness message type, one line each
+//! ```
+//!
 //! For programmatic access, register inspectors on the client builder:
 //!
 //! ```no_run
@@ -368,6 +378,141 @@ mod paint {
 // LoudWirePrinter
 // =============================================================================
 
+// =============================================================================
+// WireFilter
+// =============================================================================
+
+/// Which events [`LoudWirePrinter`] should print, and how loudly.
+///
+/// Parsed from the `LOUD_WIRE` environment variable. The firehose is the
+/// right default for a single request, and the wrong one the moment a
+/// harness session is involved: a few turns produce thousands of
+/// pretty-printed lines, and finding the one message that matters means
+/// grepping raw JSON out of the scrollback.
+///
+/// # Syntax
+///
+/// `LOUD_WIRE` takes a comma-separated list. `1`, `true`, or any empty
+/// value means "everything, pretty-printed" — the historical behavior.
+///
+/// | Selector | Keeps |
+/// |----------|-------|
+/// | `request` | HTTP requests |
+/// | `response` | HTTP responses (status, body, error bodies) |
+/// | `sse` | SSE frames |
+/// | `ws` | Every WebSocket message |
+/// | `harness` | Harness spawn and stderr lines |
+/// | `upload` | File-upload start/complete |
+/// | *anything else* | A WebSocket payload whose top-level key matches (e.g. `stepUpdate`, `toolCall`) |
+/// | `summary` | Modifier: one line per event instead of full bodies |
+///
+/// # Examples
+///
+/// ```bash
+/// LOUD_WIRE=1                      # everything (unchanged)
+/// LOUD_WIRE=summary                # everything, one line each
+/// LOUD_WIRE=stepUpdate             # only stepUpdate WS payloads
+/// LOUD_WIRE=toolCall,summary       # tool calls, one line each
+/// LOUD_WIRE=request,response       # HTTP only, no WebSocket noise
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WireFilter {
+    /// Lowercased selectors. Empty means "keep everything".
+    selectors: Vec<String>,
+    /// One line per event instead of pretty-printed bodies.
+    summary: bool,
+}
+
+impl WireFilter {
+    /// A filter that keeps every event, pretty-printed.
+    #[must_use]
+    pub const fn all() -> Self {
+        Self {
+            selectors: Vec::new(),
+            summary: false,
+        }
+    }
+
+    /// Parses a `LOUD_WIRE` value. See the type docs for the syntax.
+    #[must_use]
+    pub fn parse(raw: &str) -> Self {
+        let mut selectors = Vec::new();
+        let mut summary = false;
+        for token in raw.split(',') {
+            let token = token.trim();
+            if token.is_empty() {
+                continue;
+            }
+            match token.to_ascii_lowercase().as_str() {
+                // The historical "on" values select everything.
+                "1" | "true" | "yes" | "on" | "all" => return Self::all_with_summary(summary),
+                "summary" => summary = true,
+                other => selectors.push(other.to_string()),
+            }
+        }
+        Self { selectors, summary }
+    }
+
+    fn all_with_summary(summary: bool) -> Self {
+        Self {
+            selectors: Vec::new(),
+            summary,
+        }
+    }
+
+    /// True when bodies should be collapsed to one line per event.
+    #[must_use]
+    pub const fn is_summary(&self) -> bool {
+        self.summary
+    }
+
+    /// The category name an event belongs to, for selector matching.
+    const fn category(event: &WireEvent) -> &'static str {
+        match event {
+            WireEvent::Request { .. } => "request",
+            WireEvent::ResponseStatus { .. }
+            | WireEvent::ResponseBody { .. }
+            | WireEvent::ErrorBody { .. } => "response",
+            WireEvent::SseFrame { .. } => "sse",
+            WireEvent::UploadStart { .. } | WireEvent::UploadComplete { .. } => "upload",
+            WireEvent::HarnessSpawn { .. } | WireEvent::HarnessStderr { .. } => "harness",
+            WireEvent::WsSend { .. } | WireEvent::WsReceive { .. } => "ws",
+        }
+    }
+
+    /// Whether this event should be printed.
+    #[must_use]
+    pub fn allows(&self, event: &WireEvent) -> bool {
+        if self.selectors.is_empty() {
+            return true;
+        }
+        let category = Self::category(event);
+        if self.selectors.iter().any(|s| s == category) {
+            return true;
+        }
+        // Otherwise a selector may name a WebSocket payload's oneof key,
+        // which is the granularity that actually matters when reading a
+        // harness session (`stepUpdate` vs `toolCall` vs `userInput`).
+        let payload = match event {
+            WireEvent::WsSend { payload, .. } | WireEvent::WsReceive { payload, .. } => payload,
+            _ => return false,
+        };
+        payload.as_object().is_some_and(|map| {
+            map.keys()
+                .filter(|k| !is_envelope_key(k))
+                .any(|key| self.selectors.contains(&key.to_ascii_lowercase()))
+        })
+    }
+}
+
+/// Envelope bookkeeping present on every harness message, and therefore
+/// useless as a selector: matching on `seqNum` would keep the whole stream.
+/// Excluded from both selector matching and summary rendering so the two
+/// agree on what a message "is".
+fn is_envelope_key(key: &str) -> bool {
+    matches!(key, "seqNum" | "timestampMicros")
+}
+
 /// Pretty-prints wire events to stderr.
 ///
 /// This is the inspector installed automatically when the `LOUD_WIRE`
@@ -382,14 +527,76 @@ mod paint {
 /// - Pretty-printed (and, with the `wire-color` feature, colored) JSON
 /// - Base64-heavy `data`/`signature` fields truncated to keep output readable
 /// - Secret fields (e.g. third-party retrieval `api_key`s) fully redacted
-#[derive(Debug, Clone, Copy, Default)]
-pub struct LoudWirePrinter;
+#[derive(Debug, Clone, Default)]
+pub struct LoudWirePrinter {
+    filter: WireFilter,
+}
 
 impl LoudWirePrinter {
-    /// Creates a new printer.
+    /// Creates a printer that prints every event, pretty-printed.
     #[must_use]
     pub const fn new() -> Self {
-        Self
+        Self {
+            filter: WireFilter::all(),
+        }
+    }
+
+    /// Creates a printer restricted by `filter` (see [`WireFilter`]).
+    #[must_use]
+    pub const fn with_filter(filter: WireFilter) -> Self {
+        Self { filter }
+    }
+
+    /// One-line rendering, for `LOUD_WIRE=summary`. Enough to see the
+    /// shape and order of a session without the bodies that make a
+    /// harness run unreadable.
+    fn print_summary(&self, event: &WireEvent) {
+        let (id, label, detail) = match event {
+            WireEvent::Request {
+                id, method, url, ..
+            } => (*id, "REQ", format!("{method} {url}")),
+            WireEvent::ResponseStatus { id, status } => (*id, "RES", format!("status {status}")),
+            WireEvent::ResponseBody { id, body } => (*id, "RES", Self::payload_keys(body)),
+            WireEvent::ErrorBody { id, status, body } => {
+                (*id, "ERR", format!("status {status}, {} bytes", body.len()))
+            }
+            WireEvent::SseFrame { id, event_type, .. } => {
+                (*id, "SSE", event_type.clone().unwrap_or_else(|| "-".into()))
+            }
+            WireEvent::UploadStart {
+                id,
+                file_name,
+                size_bytes,
+                ..
+            } => (*id, "UP", format!("{file_name} ({size_bytes} bytes)")),
+            WireEvent::UploadComplete { id, uri } => (*id, "UP", format!("done {uri}")),
+            WireEvent::HarnessSpawn { id, path, pid } => {
+                (*id, "HARNESS", format!("{path} (pid {pid:?})"))
+            }
+            WireEvent::HarnessStderr { id, line } => (*id, "STDERR", line.clone()),
+            WireEvent::WsSend { id, payload } => (*id, "WS>", Self::payload_keys(payload)),
+            WireEvent::WsReceive { id, payload } => (*id, "WS<", Self::payload_keys(payload)),
+        };
+        eprintln!(
+            "{} {} [#{id}] {label:<7} {detail}",
+            paint::bold("[LOUD_WIRE]"),
+            Self::timestamp()
+        );
+    }
+
+    /// The oneof key(s) of a WebSocket payload — the part that says what
+    /// the message *is*.
+    fn payload_keys(payload: &serde_json::Value) -> String {
+        payload.as_object().map_or_else(
+            || "(non-object)".to_string(),
+            |m| {
+                m.keys()
+                    .filter(|k| !is_envelope_key(k))
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            },
+        )
     }
 
     /// Format the current timestamp for log output (ISO 8601 UTC).
@@ -570,6 +777,13 @@ impl LoudWirePrinter {
 
 impl WireInspector for LoudWirePrinter {
     fn on_event(&self, event: &WireEvent) {
+        if !self.filter.allows(event) {
+            return;
+        }
+        if self.filter.is_summary() {
+            self.print_summary(event);
+            return;
+        }
         match event {
             WireEvent::Request {
                 id,
@@ -788,6 +1002,98 @@ impl WireInspector for TracingForwarder {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::{WireEvent, WireFilter};
+    use serde_json::json;
+
+    fn ws(payload: serde_json::Value) -> WireEvent {
+        WireEvent::WsReceive { id: 1, payload }
+    }
+
+    fn request() -> WireEvent {
+        WireEvent::Request {
+            id: 1,
+            method: "POST".into(),
+            url: "https://x/y".into(),
+            body: None,
+        }
+    }
+
+    #[test]
+    fn on_values_keep_everything() {
+        // The historical spellings must not start filtering anything out.
+        for raw in ["1", "true", "yes", "on", "all", "", "  "] {
+            let f = WireFilter::parse(raw);
+            assert!(f.allows(&request()), "{raw:?} should keep requests");
+            assert!(
+                f.allows(&ws(json!({"stepUpdate": {}}))),
+                "{raw:?} should keep ws"
+            );
+            assert!(!f.is_summary(), "{raw:?} should not imply summary");
+        }
+    }
+
+    #[test]
+    fn category_selectors_filter_by_event_kind() {
+        let f = WireFilter::parse("request");
+        assert!(f.allows(&request()));
+        assert!(!f.allows(&ws(json!({"stepUpdate": {}}))));
+        assert!(!f.allows(&WireEvent::ResponseStatus { id: 1, status: 200 }));
+
+        let f = WireFilter::parse("response");
+        assert!(f.allows(&WireEvent::ResponseStatus { id: 1, status: 200 }));
+        assert!(!f.allows(&request()));
+
+        // `ws` keeps every WebSocket message regardless of payload key.
+        let f = WireFilter::parse("ws");
+        assert!(f.allows(&ws(json!({"toolCall": {}}))));
+        assert!(f.allows(&ws(json!({"anythingElse": {}}))));
+        assert!(!f.allows(&request()));
+    }
+
+    #[test]
+    fn payload_key_selectors_pick_out_one_message_type() {
+        // The granularity that actually matters when reading a harness
+        // session: which oneof arm, not which transport.
+        let f = WireFilter::parse("stepUpdate");
+        assert!(f.allows(&ws(json!({"stepUpdate": {"text": "hi"}}))));
+        assert!(!f.allows(&ws(json!({"toolCall": {}}))));
+        assert!(!f.allows(&request()));
+
+        // Case-insensitive, and envelope metadata does not count as a match.
+        let f = WireFilter::parse("STEPUPDATE");
+        assert!(f.allows(&ws(json!({"stepUpdate": {}}))));
+        let f = WireFilter::parse("seqNum");
+        assert!(!f.allows(&ws(json!({"seqNum": "1", "toolCall": {}}))));
+    }
+
+    #[test]
+    fn selectors_compose_and_summary_is_a_modifier() {
+        let f = WireFilter::parse("stepUpdate,toolCall");
+        assert!(f.allows(&ws(json!({"stepUpdate": {}}))));
+        assert!(f.allows(&ws(json!({"toolCall": {}}))));
+        assert!(!f.allows(&ws(json!({"userInput": "x"}))));
+
+        // `summary` alone changes rendering, not selection.
+        let f = WireFilter::parse("summary");
+        assert!(f.is_summary());
+        assert!(f.allows(&request()));
+        assert!(f.allows(&ws(json!({"anything": {}}))));
+
+        // ...and combines with selectors.
+        let f = WireFilter::parse("toolCall,summary");
+        assert!(f.is_summary());
+        assert!(f.allows(&ws(json!({"toolCall": {}}))));
+        assert!(!f.allows(&request()));
+
+        // Even alongside an "on" value, summary survives.
+        let f = WireFilter::parse("summary,1");
+        assert!(f.is_summary());
+        assert!(f.allows(&request()));
     }
 }
 

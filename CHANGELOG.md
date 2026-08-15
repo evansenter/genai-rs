@@ -22,6 +22,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`LOUD_WIRE` filtering.** The variable now takes a comma-separated
+  filter in addition to `1`: category selectors (`request`, `response`,
+  `sse`, `upload`, `harness`, `ws`), any WebSocket payload key
+  (`stepUpdate`, `toolCall`, …, matched case-insensitively), and a
+  `summary` modifier that collapses each event to one line. The historical
+  "on" spellings (`1`, `true`, `yes`, `on`, `all`, empty) still mean
+  everything-pretty-printed, so existing usage is unchanged. Unfiltered
+  output was unusable for antigravity sessions, where a few turns produce
+  thousands of lines. Exposed programmatically as `wire::WireFilter` and
+  `LoudWirePrinter::with_filter`; `LoudWirePrinter` is consequently no
+  longer `Copy` (it still derives `Clone`).
+
 - **Protocol-drift diagnostics for the antigravity bridge.**
   `protocol::drift_report()` returns every unrecognized wire value seen
   (`"EnumName=WIRE_VALUE" -> count`) with `clear_drift_report()` to reset

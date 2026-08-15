@@ -43,8 +43,11 @@ impl std::fmt::Debug for Client {
 /// Appends a [`LoudWirePrinter`] when the `LOUD_WIRE` environment variable is
 /// set. Checked once at `Client` construction time.
 fn with_env_inspectors(mut inspectors: Vec<Arc<dyn WireInspector>>) -> Vec<Arc<dyn WireInspector>> {
-    if std::env::var("LOUD_WIRE").is_ok() {
-        inspectors.push(Arc::new(LoudWirePrinter::new()));
+    if let Ok(raw) = std::env::var("LOUD_WIRE") {
+        // The value selects what to print — `1` keeps the historical
+        // firehose, anything else filters. See `wire::WireFilter`.
+        let filter = crate::wire::WireFilter::parse(&raw);
+        inspectors.push(Arc::new(LoudWirePrinter::with_filter(filter)));
     }
     inspectors
 }

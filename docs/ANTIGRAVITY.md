@@ -557,6 +557,38 @@ The Antigravity client feeds the crate's canonical wire-inspection layer
 LOUD_WIRE=1 cargo run --example antigravity_agent --features antigravity
 ```
 
+`LOUD_WIRE=1` is the right default for a single HTTP request and the wrong
+one for a harness session: a few turns produce thousands of pretty-printed
+lines, and finding the message that matters means grepping raw JSON out of
+the scrollback. So `LOUD_WIRE` also takes a comma-separated filter.
+
+| Value | Keeps |
+|-------|-------|
+| `1`, `true`, `yes`, `on`, `all` | Everything (unchanged) |
+| `harness` | Spawn and stderr lines |
+| `ws` | Every WebSocket message |
+| `request`, `response`, `sse`, `upload` | The HTTP-side categories |
+| *any other token* | WebSocket messages whose top-level key matches |
+| `summary` | Modifier: one line per event instead of full bodies |
+
+The last two are what make a session readable. Selectors name the proto
+oneof arm — `stepUpdate`, `toolCall`, `userInput`, `trajectoryStateUpdate`
+— matched case-insensitively, and envelope bookkeeping (`seqNum`,
+`timestampMicros`) is ignored so it cannot match everything.
+
+```bash
+LOUD_WIRE=summary                  # the whole session, one line per message
+LOUD_WIRE=toolCall,summary         # just the tool traffic, one line each
+LOUD_WIRE=trajectoryStateUpdate    # why a turn will not finish
+LOUD_WIRE=harness                  # spawn + stderr only, no protocol noise
+```
+
+`LOUD_WIRE=summary` renders each message as its payload keys, which is
+usually enough to see the shape and order of a turn; drop to a selector
+once you know which message you want in full. The same filtering is
+available programmatically via `wire::WireFilter` and
+`LoudWirePrinter::with_filter`.
+
 For programmatic capture, register inspectors on the builder — the
 `WireEvent` variants are `HarnessSpawn`, `WsSend`, `WsReceive`, and
 `HarnessStderr`, sharing one correlation id per harness session:

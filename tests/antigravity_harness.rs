@@ -620,7 +620,12 @@ async fn test_antigravity_workspace_actions_and_post_tool_success() {
 fn harness_proto_enums() -> Option<serde_json::Value> {
     const SCRIPT: &str = r#"
 import json, importlib, sys
-from google.protobuf import descriptor_pb2
+print("interpreter: " + sys.executable, file=sys.stderr)
+try:
+    from google.protobuf import descriptor_pb2
+except Exception as exc:
+    print("google.protobuf is not importable: %r" % (exc,), file=sys.stderr)
+    sys.exit(4)
 mod = None
 for path in ("google.antigravity.proto.localharness_pb2",
              "google.antigravity.connections.local.localharness_pb2"):
@@ -645,21 +650,25 @@ walk(fdp.message_type)
 print(json.dumps(out))
 "#;
     // Point the interpreter at the *same* install the tests exercise.
-    // `ANTIGRAVITY_HARNESS_PATH` sits ahead of python3's own site-packages
-    // in the crate's discovery order, so when it is set, comparing against
-    // whatever `python3` happens to import would check a different wheel
-    // than the one under test. Deriving PYTHONPATH from the resolved
-    // harness path keeps the two in sync (and makes a venv install work
-    // with the system python3).
+    // Two of the crate's four discovery modes put the wheel somewhere the
+    // system `python3` will not import from on its own — an explicit
+    // `ANTIGRAVITY_HARNESS_PATH`, and a `localharness` that a pipx / `uv
+    // tool` install dropped on `PATH`. In both, comparing against whatever
+    // `python3` happens to import would check a different wheel than the
+    // one under test, or none at all. Deriving PYTHONPATH from the
+    // *resolved* harness path (rather than from the env var alone) keeps
+    // the guard aimed at the same install for every mode that has one.
     let mut command = std::process::Command::new("python3");
-    if let Ok(harness) = std::env::var("ANTIGRAVITY_HARNESS_PATH") {
-        // .../<site-packages>/google/antigravity/bin/localharness
-        let site_packages = std::path::Path::new(&harness)
-            .ancestors()
-            .nth(4)
-            .map(std::path::Path::to_path_buf);
-        if let Some(dir) = site_packages.filter(|d| d.join("google/antigravity").is_dir()) {
-            command.env("PYTHONPATH", dir);
+    if let Some(dir) = resolved_harness_site_packages() {
+        // Prepend, never replace: an inherited PYTHONPATH may be the only
+        // thing supplying `google.protobuf` when the wheel and protobuf
+        // live in different trees. Ours goes first so it still wins.
+        let mut entries = vec![dir];
+        if let Some(inherited) = std::env::var_os("PYTHONPATH") {
+            entries.extend(std::env::split_paths(&inherited));
+        }
+        if let Ok(joined) = std::env::join_paths(entries) {
+            command.env("PYTHONPATH", joined);
         }
     }
     let output = command.args(["-c", SCRIPT]).output().ok()?;
@@ -680,12 +689,75 @@ print(json.dumps(out))
     // pass that let the 0.1.5 -> 0.1.10 rename reach a release. The module
     // path has already moved once, and the bump that moves it again is
     // exactly the bump likely to carry a rename with it.
+    //
+    // Which fix to apply depends on *why* the dump failed, so say so — the
+    // script's exit code distinguishes "the module moved again" from "this
+    // interpreter has no wheel". The stderr passthrough names the
+    // interpreter in every case.
+    let diagnosis = match output.status.code() {
+        Some(3) => {
+            "localharness_pb2 was not importable under either known module path. The wheel \
+             most likely moved it again — add the new path to the list in harness_proto_enums."
+        }
+        Some(4) => {
+            "google.protobuf was not importable, so the descriptor could not be read at all. \
+             Install the harness wheel (which depends on protobuf) into the interpreter named \
+             below."
+        }
+        _ => {
+            "the descriptor dump failed before it could emit JSON. If this interpreter has no \
+             harness wheel installed, install one; otherwise read the traceback below."
+        }
+    };
     panic!(
-        "could not import localharness_pb2 from the installed wheel, so the protocol-drift \
-         guard checked nothing. Both known module paths were tried. If the wheel moved it \
-         again, update the path list in harness_proto_enums.\npython3 stderr: {}",
+        "the protocol-drift guard checked nothing: {diagnosis}\n\
+         Expected wheel: google-antigravity=={}\n\
+         python3 stderr: {}",
+        genai_rs::antigravity::SUPPORTED_HARNESS_VERSION,
         String::from_utf8_lossy(&output.stderr).trim()
     );
+}
+
+/// The site-packages directory of the harness install the *crate* would
+/// resolve, when that is somewhere `python3` would not look on its own.
+///
+/// Mirrors `discover_harness`'s order for the two modes that can point
+/// outside the default interpreter: the explicit
+/// `ANTIGRAVITY_HARNESS_PATH`, then `localharness` on `PATH`. The
+/// python3-site-packages mode needs no PYTHONPATH by construction, and the
+/// builder-path mode is not used by these tests.
+///
+/// `None` means "let python3 use its own site-packages", which is correct
+/// whenever the resolved binary does not sit inside a recognizable wheel
+/// layout.
+fn resolved_harness_site_packages() -> Option<std::path::PathBuf> {
+    let from_path_var = || {
+        let path_var = std::env::var_os("PATH")?;
+        std::env::split_paths(&path_var)
+            .map(|dir| dir.join("localharness"))
+            .find(|candidate| candidate.is_file())
+    };
+
+    let harness = std::env::var_os("ANTIGRAVITY_HARNESS_PATH")
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_file())
+        .or_else(from_path_var)?;
+
+    // A `PATH` hit is usually a symlink into the venv that owns the wheel,
+    // so resolve it before reading the layout — the link's own directory
+    // says nothing about where the package lives.
+    let harness = harness.canonicalize().unwrap_or(harness);
+
+    // A wheel install lays the binary out as
+    // .../<site-packages>/google/antigravity/bin/localharness, so the
+    // fourth ancestor is site-packages. Anything else (a symlink farm, a
+    // hand-built binary) fails the layout check and falls back to None
+    // rather than pointing the interpreter somewhere useless.
+    harness
+        .ancestors()
+        .nth(4)
+        .map(std::path::Path::to_path_buf)
+        .filter(|d| d.join("google/antigravity").is_dir())
 }
 
 /// Compares a harness descriptor dump against what this crate models,
