@@ -107,20 +107,25 @@ mod basic {
         };
 
         with_timeout(test_timeout(), async {
-            let response1 = stateful_builder(&client)
-                .with_text("My favorite color is blue.")
-                .create()
-                .await
-                .expect("First interaction failed");
+            let response1 = retry_request!([client] => {
+                stateful_builder(&client)
+                    .with_text("My favorite color is blue.")
+                    .create()
+                    .await
+            })
+            .expect("First interaction failed");
 
             assert_eq!(response1.status, InteractionStatus::Completed);
 
-            let response2 = stateful_builder(&client)
-                .with_previous_interaction(response1.id.as_ref().expect("id should exist"))
-                .with_text("What is my favorite color?")
-                .create()
-                .await
-                .expect("Second interaction failed");
+            let prev_id = response1.id.clone().expect("id should exist");
+            let response2 = retry_request!([client, prev_id] => {
+                stateful_builder(&client)
+                    .with_previous_interaction(&prev_id)
+                    .with_text("What is my favorite color?")
+                    .create()
+                    .await
+            })
+            .expect("Second interaction failed");
 
             assert_eq!(response2.status, InteractionStatus::Completed);
             assert!(
@@ -1411,21 +1416,20 @@ mod conversations {
             let mut previous_id: Option<String> = None;
 
             for (i, message) in messages.iter().enumerate() {
-                let response = match &previous_id {
-                    None => {
-                        stateful_builder(&client)
-                            .with_text(*message)
-                            .create()
-                            .await
+                // A five-turn chain gives a transient 429/5xx five chances
+                // to fail a test that is asserting about conversation
+                // memory, not about transport.
+                let message = (*message).to_string();
+                let prev = previous_id.clone();
+                let response = retry_request!([client, message, prev] => {
+                    let builder = stateful_builder(&client).with_text(&message);
+                    match &prev {
+                        None => builder.create().await,
+                        Some(prev_id) => {
+                            builder.with_previous_interaction(prev_id).create().await
+                        }
                     }
-                    Some(prev_id) => {
-                        stateful_builder(&client)
-                            .with_text(*message)
-                            .with_previous_interaction(prev_id)
-                            .create()
-                            .await
-                    }
-                }
+                })
                 .unwrap_or_else(|e| panic!("Turn {} failed: {:?}", i + 1, e));
 
                 println!("Turn {}: {:?}", i + 1, response.status);
@@ -1464,13 +1468,15 @@ mod conversations {
         let initial_prompt = "What is 15 * 7? Show your work.";
         println!("Turn 1 prompt: {}\n", initial_prompt);
 
-        let response1 = interaction_builder(&client)
-            .with_text(initial_prompt)
-            .with_thinking_level(ThinkingLevel::Medium)
-            .with_store_enabled()
-            .create()
-            .await
-            .expect("Turn 1 failed");
+        let response1 = retry_request!([client] => {
+            interaction_builder(&client)
+                .with_text(initial_prompt)
+                .with_thinking_level(ThinkingLevel::Medium)
+                .with_store_enabled()
+                .create()
+                .await
+        })
+        .expect("Turn 1 failed");
 
         assert_eq!(response1.status, InteractionStatus::Completed);
 
@@ -1491,13 +1497,15 @@ mod conversations {
 
         println!("\nTurn 2 prompt: Now divide that result by 5");
 
-        let response2 = interaction_builder(&client)
-            .with_history(history)
-            .with_thinking_level(ThinkingLevel::Low)
-            .with_store_enabled()
-            .create()
-            .await
-            .expect("Turn 2 failed");
+        let response2 = retry_request!([client, history] => {
+            interaction_builder(&client)
+                .with_history(history.clone())
+                .with_thinking_level(ThinkingLevel::Low)
+                .with_store_enabled()
+                .create()
+                .await
+        })
+        .expect("Turn 2 failed");
 
         assert_eq!(response2.status, InteractionStatus::Completed);
         assert!(response2.has_text(), "Turn 2 should have text response");
