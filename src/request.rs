@@ -1262,7 +1262,7 @@ impl VideoConfig {
 /// ```
 #[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct InteractionRequest {
-    /// Model name (e.g., "test-model") - mutually exclusive with agent
+    /// Model name (e.g. [`DEFAULT_MODEL`](crate::DEFAULT_MODEL)) - mutually exclusive with agent
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
 
@@ -1992,7 +1992,7 @@ impl From<DynamicConfig> for AgentConfig {
 /// error enumerates the supported config types as `dynamic`,
 /// `deep-research`, `code-mender`, `antigravity`). Setting `model` to a
 /// value the agent doesn't offer returns 404 `not_found` — including
-/// `test-model`, this crate's default model elsewhere. The
+/// [`DEFAULT_MODEL`](crate::DEFAULT_MODEL), this crate's default model elsewhere. The
 /// agent's model catalog is not enumerable on a standard key, so leave
 /// `model` unset unless you know an accepted value.
 ///

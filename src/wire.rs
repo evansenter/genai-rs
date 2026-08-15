@@ -645,7 +645,7 @@ impl LoudWirePrinter {
                 (*id, "HARNESS", format!("{path} (pid {pid:?})"))
             }
             WireEvent::HarnessStderr { id, line } => (*id, "STDERR", line.clone()),
-            WireEvent::WsSend { id, payload } => (*id, "WS>", Self::ws_payload_keys(payload)),
+            WireEvent::WsSend { id, payload } => (*id, "WS>", Self::payload_keys(payload)),
             WireEvent::WsReceive { id, payload } => (*id, "WS<", Self::ws_payload_keys(payload)),
         };
         eprintln!(
@@ -670,19 +670,30 @@ impl LoudWirePrinter {
         Self::payload_keys_inner(payload, false)
     }
 
-    /// `payload_keys` for harness WebSocket messages, qualifying a step
-    /// with the action it carried.
+    /// `payload_keys` for harness WebSocket messages the crate *receives*,
+    /// qualifying a step with the action it carried.
+    ///
+    /// Receive-only on purpose. `InputEvent` arms have no actions, so the
+    /// argument that excludes HTTP bodies applies to sends too — and
+    /// `questionResponse` carries an object-valued `response` field, which
+    /// would both render as `questionResponse/response` and be selected by
+    /// `LOUD_WIRE=response`, the category selector for HTTP responses.
     fn ws_payload_keys(payload: &serde_json::Value) -> String {
         Self::payload_keys_inner(payload, true)
     }
 
-    fn payload_keys_inner(payload: &serde_json::Value, qualify: bool) -> String {
+    fn payload_keys_inner(payload: &serde_json::Value, harness_receive: bool) -> String {
         payload.as_object().map_or_else(
             || "(non-object)".to_string(),
             |m| {
                 let keys: Vec<String> = m
                     .iter()
-                    .filter(|(k, _)| !is_envelope_key(k))
+                    // Envelope stripping is a harness-wire notion. On a
+                    // Gemini HTTP response `usageMetadata` is a real
+                    // top-level field, and stripping it there could render
+                    // a body as `(no payload keys)` instead of naming what
+                    // came back.
+                    .filter(|(k, _)| !(harness_receive && is_envelope_key(k)))
                     .map(|(key, value)| {
                         // Qualify a harness message with the action it
                         // carried: a bare "stepUpdate" says almost nothing,
@@ -695,7 +706,7 @@ impl LoudWirePrinter {
                         // renderer and have no actions, so qualifying them
                         // would invent structure that isn't there
                         // (`interaction/outputs`).
-                        if !qualify {
+                        if !harness_receive {
                             return key.clone();
                         }
                         let actions = nested_action_keys(value);
@@ -1269,12 +1280,13 @@ mod filter_tests {
     fn payload_keys_names_the_message_and_labels_the_empty_case() {
         use super::LoudWirePrinter;
 
-        // The case that matters: envelope and payload keys together must
-        // render as the payload alone, using the same `is_envelope_key`
-        // filter selection uses. A divergence between what a summary shows
-        // and what a selector matches would surface here first.
+        // The case that matters: on the harness path, envelope and payload
+        // keys together must render as the payload alone, using the same
+        // `is_envelope_key` filter selection uses. A divergence between
+        // what a summary shows and what a selector matches would surface
+        // here first.
         assert_eq!(
-            LoudWirePrinter::payload_keys(&json!({
+            LoudWirePrinter::ws_payload_keys(&json!({
                 "seqNum": "7",
                 "timestampMicros": "1",
                 "stepUpdate": {"text": "hi"},
@@ -1286,7 +1298,7 @@ mod filter_tests {
         // gets a label rather than a blank detail column. Neutral wording
         // because this renders HTTP bodies too.
         assert_eq!(
-            LoudWirePrinter::payload_keys(&json!({"seqNum": "7", "usageUpdate": {"total": {}}})),
+            LoudWirePrinter::ws_payload_keys(&json!({"seqNum": "7", "usageUpdate": {"total": {}}})),
             "(no payload keys)"
         );
 
@@ -1322,6 +1334,34 @@ mod filter_tests {
         assert_eq!(
             LoudWirePrinter::payload_keys(&json!({"interaction": {"outputs": {}}})),
             "interaction"
+        );
+    }
+
+    #[test]
+    fn send_frames_and_http_bodies_are_not_dressed_up_as_actions() {
+        use super::LoudWirePrinter;
+
+        // An InputEvent arm carrying an object-valued field is still just
+        // that arm. Qualifying it would print `questionResponse/response`
+        // and collide with `response`, the HTTP category selector.
+        let question_response = json!({
+            "questionResponse": {"response": {"answers": []}},
+        });
+        assert_eq!(
+            LoudWirePrinter::payload_keys(&question_response),
+            "questionResponse"
+        );
+
+        // usageMetadata is envelope bookkeeping on the harness wire...
+        assert_eq!(
+            LoudWirePrinter::ws_payload_keys(&json!({"seqNum": "1", "usageMetadata": {}})),
+            "(no payload keys)"
+        );
+        // ...but a real field on a Gemini HTTP response, so the HTTP path
+        // must still name it rather than reporting an empty body.
+        assert_eq!(
+            LoudWirePrinter::payload_keys(&json!({"usageMetadata": {"totalTokens": 7}})),
+            "usageMetadata"
         );
     }
 

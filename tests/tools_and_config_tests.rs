@@ -1316,6 +1316,7 @@ mod thinking {
         // encountered." at create time, which is_retryable already covers.
         let response = retry_request!([client, config] => {
             stateful_builder(&client)
+            .with_model(genai_rs::MINIMAL_THINKING_MODEL)
                 .with_text("What is 2 + 2?")
                 .with_generation_config(config)
                 .create()

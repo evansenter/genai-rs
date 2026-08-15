@@ -77,8 +77,13 @@ pub(crate) mod test_subscriber;
 ///
 /// Capability note: this model rejects **inline (base64) video** with
 /// `400 invalid_request` while accepting video by URI (verified live on both
-/// `test-model` and `gemini-3.7-flash`). Image, audio and PDF inline
+/// `gemini-3.6-flash` and `gemini-3.7-flash`). Image, audio and PDF inline
 /// data are unaffected. See [`INLINE_VIDEO_MODEL`].
+///
+/// It also rejects [`ThinkingLevel::Minimal`] — see
+/// [`MINIMAL_THINKING_MODEL`]. Both gaps are model capability, not library
+/// limits, and both were found by running the live suite against the model
+/// before adopting it.
 pub const DEFAULT_MODEL: &str = "gemini-3.7-flash";
 
 /// A model that accepts **inline (base64) video bytes**, which
@@ -86,6 +91,17 @@ pub const DEFAULT_MODEL: &str = "gemini-3.7-flash";
 ///
 /// Only needed for the inline form; video by URI works on the default.
 pub const INLINE_VIDEO_MODEL: &str = "gemini-3-flash-preview";
+
+/// A model that supports [`ThinkingLevel::Minimal`], which
+/// [`DEFAULT_MODEL`] does not.
+///
+/// `gemini-3.7-flash` rejects `minimal` with
+/// `400 'minimal' is not a supported thinking level for this model.
+/// Allowed values are: high, low, medium.` (verified live 2026-08-15;
+/// `gemini-3.6-flash` and `gemini-3.5-flash` still accept it). The
+/// [`ThinkingLevel::Minimal`] variant remains valid — model support for it
+/// is what varies.
+pub const MINIMAL_THINKING_MODEL: &str = "gemini-3.6-flash";
 
 /// The model to use for image generation.
 ///

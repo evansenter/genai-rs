@@ -634,7 +634,7 @@ pub struct FilesystemWorkspace {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelConfig {
-    /// Model name, e.g. `test-model`.
+    /// Model name, e.g. the crate's [`DEFAULT_MODEL`](crate::DEFAULT_MODEL).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Roles this model serves ([`ModelType::Text`] is required for chat).

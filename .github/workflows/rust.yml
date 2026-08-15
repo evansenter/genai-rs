@@ -84,7 +84,18 @@ jobs:
         # --retries 2 for the same reason as the integration matrix: this
         # step now draws on the same shared key, so it sees the same
         # low-rate 429s. A retried test is reported FLAKY, not hidden.
-        run: cargo nextest run --features antigravity --run-ignored all --retries 2 -E 'binary(antigravity_harness)'
+        run: |
+          set -eo pipefail
+          # These tests self-skip without a key, so a rotated or cleared
+          # secret would turn this step green having run nothing — the exact
+          # vacuous pass that let the 0.1.5 -> 0.1.10 break reach a release
+          # (see the comment above). The `if:` above rules out forks, not a
+          # missing secret.
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::error::GEMINI_API_KEY is empty or unset — the harness tests would self-skip and this step would pass having verified nothing"
+            exit 1
+          fi
+          cargo nextest run --features antigravity --run-ignored all --retries 2 -E 'binary(antigravity_harness)'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       # Examples were compiled but never executed, so bugs that only show
@@ -108,6 +119,13 @@ jobs:
         timeout-minutes: 30
         run: |
           set -eo pipefail
+          # Every example self-skips without a key, so a rotated or cleared
+          # secret would run five processes that each print one line and
+          # exit 0 — green, having proven nothing.
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::error::GEMINI_API_KEY is empty or unset — every example would self-skip and this step would pass having verified nothing"
+            exit 1
+          fi
           # Retry each example, for the same reason the nextest steps use
           # --retries: four of the five hard-fail on LLM-dependent outcomes
           # (no MCP call made, fewer than N chars streamed before the halt,
@@ -115,16 +133,27 @@ jobs:
           # assertions are deliberate — a run that proves nothing must not
           # pass green — but a single unlucky turn should not redden an
           # unrelated PR. `cargo run` has no --retries, hence the loop.
+          #
+          # Each attempt gets its own `timeout`, rather than relying on the
+          # step budget: an example that hangs is then attributed to that
+          # example by name, instead of the whole step dying on the ceiling
+          # and reporting nothing about which one stalled. 300s is well
+          # above any healthy run (the slowest finishes in ~15s) while
+          # staying below the step budget even at 5 examples x 3 attempts.
           for ex in session_resume workspace_explorer mcp_toolbelt proactive_agent cancellable_turn; do
             echo "::group::cargo run --example $ex"
             attempt=1
-            until cargo run --features antigravity --example "$ex"; do
+            until timeout --signal=TERM --kill-after=30s 300s cargo run --features antigravity --example "$ex"; do
+              rc=$?
+              if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+                echo "::warning::$ex timed out after 300s (attempt $attempt)"
+              fi
               if [ "$attempt" -ge 3 ]; then
-                echo "::error::$ex failed $attempt times"
+                echo "::error::$ex failed $attempt times (last exit $rc)"
                 echo "::endgroup::"
                 exit 1
               fi
-              echo "::warning::$ex failed (attempt $attempt), retrying"
+              echo "::warning::$ex failed (attempt $attempt, exit $rc), retrying"
               attempt=$((attempt + 1))
               sleep 5
             done
