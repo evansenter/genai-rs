@@ -26,6 +26,8 @@
 //! These tests run in the `test-integration` CI job. If any canary test fails,
 //! it means the API has drifted and we need to update our types.
 
+mod common;
+
 use futures_util::StreamExt;
 use genai_rs::Client;
 use std::env;
@@ -59,13 +61,15 @@ macro_rules! require_api_key {
 async fn canary_basic_interaction_no_unknown_content() {
     require_api_key!(client);
 
-    let response = client
-        .interaction()
-        .with_model("gemini-3.6-flash")
-        .with_text("Say hello in exactly one word.")
-        .create()
-        .await
-        .expect("API call should succeed");
+    let response = retry_request!([client] => {
+        client
+            .interaction()
+            .with_model("gemini-3.6-flash")
+            .with_text("Say hello in exactly one word.")
+            .create()
+            .await
+    })
+    .expect("API call should succeed");
 
     // Check for Unknown step types in steps
     for (i, step) in response.steps.iter().enumerate() {
@@ -97,13 +101,15 @@ async fn canary_basic_interaction_no_unknown_content() {
 async fn canary_response_status_is_known() {
     require_api_key!(client);
 
-    let response = client
-        .interaction()
-        .with_model("gemini-3.6-flash")
-        .with_text("What is 2+2?")
-        .create()
-        .await
-        .expect("API call should succeed");
+    let response = retry_request!([client] => {
+        client
+            .interaction()
+            .with_model("gemini-3.6-flash")
+            .with_text("What is 2+2?")
+            .create()
+            .await
+    })
+    .expect("API call should succeed");
 
     assert!(
         !response.status.is_unknown(),
@@ -141,14 +147,16 @@ async fn canary_function_calling_no_unknown_content() {
         .required(vec!["city".to_string()])
         .build();
 
-    let response = client
-        .interaction()
-        .with_model("gemini-3.6-flash")
-        .with_text("What's the weather in Paris?")
-        .add_functions(vec![get_weather])
-        .create()
-        .await
-        .expect("API call should succeed");
+    let response = retry_request!([client, get_weather] => {
+        client
+            .interaction()
+            .with_model("gemini-3.6-flash")
+            .with_text("What's the weather in Paris?")
+            .add_functions(vec![get_weather.clone()])
+            .create()
+            .await
+    })
+    .expect("API call should succeed");
 
     // Check all output step types
     for (i, step) in response.steps.iter().enumerate() {
@@ -177,14 +185,16 @@ async fn canary_thinking_mode_no_unknown_content() {
 
     use genai_rs::ThinkingLevel;
 
-    let response = client
-        .interaction()
-        .with_model("gemini-3.6-flash")
-        .with_text("What is the square root of 144?")
-        .with_thinking_level(ThinkingLevel::Low)
-        .create()
-        .await
-        .expect("API call should succeed");
+    let response = retry_request!([client] => {
+        client
+            .interaction()
+            .with_model("gemini-3.6-flash")
+            .with_text("What is the square root of 144?")
+            .with_thinking_level(ThinkingLevel::Low)
+            .create()
+            .await
+    })
+    .expect("API call should succeed");
 
     // Check all output step types including thoughts
     for (i, step) in response.steps.iter().enumerate() {
@@ -250,14 +260,16 @@ async fn canary_streaming_no_unknown_chunks() {
 async fn canary_google_search_no_unknown_content() {
     require_api_key!(client);
 
-    let response = client
-        .interaction()
-        .with_model("gemini-3.6-flash")
-        .with_text("What is the current population of Tokyo according to recent data?")
-        .with_google_search()
-        .create()
-        .await
-        .expect("API call should succeed");
+    let response = retry_request!([client] => {
+        client
+            .interaction()
+            .with_model("gemini-3.6-flash")
+            .with_text("What is the current population of Tokyo according to recent data?")
+            .with_google_search()
+            .create()
+            .await
+    })
+    .expect("API call should succeed");
 
     // Check all output step types
     for (i, step) in response.steps.iter().enumerate() {
@@ -364,13 +376,15 @@ fn canary_builtin_tools_are_known() {
 async fn canary_comprehensive_response_check() {
     require_api_key!(client);
 
-    let response = client
-        .interaction()
-        .with_model("gemini-3.6-flash")
-        .with_text("Hello! Please respond with a friendly greeting.")
-        .create()
-        .await
-        .expect("API call should succeed");
+    let response = retry_request!([client] => {
+        client
+            .interaction()
+            .with_model("gemini-3.6-flash")
+            .with_text("Hello! Please respond with a friendly greeting.")
+            .create()
+            .await
+    })
+    .expect("API call should succeed");
 
     // Check status
     assert!(

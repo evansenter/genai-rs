@@ -2,6 +2,8 @@
 //!
 //! These tests verify file upload, listing, deletion, and integration with interactions.
 
+mod common;
+
 use genai_rs::{Client, Content};
 use std::time::Duration;
 
@@ -171,16 +173,18 @@ async fn test_file_in_interaction() {
     );
 
     // Use the file in an interaction
-    let response = client
-        .interaction()
-        .with_model("gemini-3.6-flash")
-        .with_content(vec![
-            Content::from_file(&ready_file),
-            Content::text("What city is mentioned in this document?"),
-        ])
-        .create()
-        .await
-        .expect("Interaction should succeed");
+    let response = retry_request!([client, ready_file] => {
+        client
+            .interaction()
+            .with_model("gemini-3.6-flash")
+            .with_content(vec![
+                Content::from_file(&ready_file),
+                Content::text("What city is mentioned in this document?"),
+            ])
+            .create()
+            .await
+    })
+    .expect("Interaction should succeed");
 
     // Verify we got a response - the model should return something
     let text = response.as_text().expect("Response should have text");
@@ -592,16 +596,18 @@ async fn test_chunked_upload_in_interaction() {
     assert!(ready_file.is_active(), "File should be active");
 
     // Use in interaction
-    let response = client
-        .interaction()
-        .with_model("gemini-3.6-flash")
-        .with_content(vec![
-            Content::from_file(&ready_file),
-            Content::text("What does the file say about a fox?"),
-        ])
-        .create()
-        .await
-        .expect("Interaction should succeed");
+    let response = retry_request!([client, ready_file] => {
+        client
+            .interaction()
+            .with_model("gemini-3.6-flash")
+            .with_content(vec![
+                Content::from_file(&ready_file),
+                Content::text("What does the file say about a fox?"),
+            ])
+            .create()
+            .await
+    })
+    .expect("Interaction should succeed");
 
     // Verify we got a response
     let text = response.as_text().expect("Response should have text");
