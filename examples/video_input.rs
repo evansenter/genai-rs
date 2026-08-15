@@ -22,7 +22,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let client = Client::builder(api_key).build()?;
     // This example is about **inline** (base64) video bytes, and
     // DEFAULT_MODEL rejects those with a 400 while accepting video by URI
-    // (verified live 2026-08-10). Hence INLINE_VIDEO_MODEL, which exists
+    // (verified live on gemini-3.6-flash 2026-08-10 and again on
+    // gemini-3.7-flash 2026-08-15). Hence INLINE_VIDEO_MODEL, which exists
     // for exactly this gap. If you only need video by URI, the default
     // model is fine; see the Files API section below.
     let model_name = genai_rs::INLINE_VIDEO_MODEL;

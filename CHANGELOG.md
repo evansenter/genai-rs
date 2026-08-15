@@ -27,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   synthetic `"test-model"` — they exercise serialization round-trips and
   never cared which model, so neither form is a bump site.
 
+### Changed (breaking)
+
+- **`AgentBuilder`'s per-turn budget defaults to `DEFAULT_TURN_TIMEOUT`
+  (300s) instead of being unlimited.** An unbounded turn does not fail when
+  the harness stops signalling completion — it *hangs*, which is strictly
+  less diagnosable than an error and looks identical to latency. That is
+  the exact shape of the 0.1.10 break this crate just shipped a fix for.
+  `without_turn_timeout()` restores the old behavior explicitly.
+
 ### Changed
 
 - **Default model is now `gemini-3.7-flash`** (from `gemini-3.6-flash`).
@@ -44,13 +53,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     The variant stays valid — model support is what varies — and the new
     `MINIMAL_THINKING_MODEL` constant pins the test so it keeps exercising
     the `minimal` wire path.
-
-- **`AgentBuilder`'s per-turn budget defaults to `DEFAULT_TURN_TIMEOUT`
-  (300s) instead of being unlimited.** An unbounded turn does not fail when
-  the harness stops signalling completion — it *hangs*, which is strictly
-  less diagnosable than an error and looks identical to latency. That is
-  the exact shape of the 0.1.10 break this crate just shipped a fix for.
-  `without_turn_timeout()` restores the old behavior explicitly.
 
 - **`LOUD_WIRE` summary labels are scoped to received harness frames.**
   Outgoing `InputEvent` arms have no actions, so qualifying them produced

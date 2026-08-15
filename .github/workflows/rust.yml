@@ -179,7 +179,11 @@ jobs:
     name: Integration Tests (${{ matrix.group }})
     needs: check
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    # Owner check for the same reason as the antigravity steps: the vacuous-
+    # pass guard below hard-fails on a missing key, and `push` fires on a
+    # fork's own main too, so without it a fork would go red for a secret it
+    # was never going to have.
+    if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
     strategy:
       fail-fast: false
       matrix:
@@ -206,6 +210,18 @@ jobs:
       - name: Run integration tests (${{ matrix.group }})
         run: |
           set -eo pipefail
+          # Every test in these five groups is #[ignore = "Requires API key"]
+          # and self-skips when get_client() finds no key, so a rotated or
+          # cleared secret would print ~217 skip lines across the matrix and
+          # report green having called the API zero times. That is the same
+          # vacuous pass guarded on the antigravity steps above, on the suite
+          # with the most coverage and the one release validation leans on.
+          # The SEMANTIC_VALIDATION_SKIPPED escalation below is the same
+          # argument applied to a partial skip; this is the total case.
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::error::GEMINI_API_KEY is empty or unset — every integration test would self-skip and this job would pass having verified nothing"
+            exit 1
+          fi
           for test in ${{ matrix.tests }}; do
             echo "::group::Running $test"
             # --success-output=final keeps passing-test output (notably the

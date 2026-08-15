@@ -216,8 +216,8 @@ let follow_up = client
 The Antigravity managed agent above is the one whose config is
 live-verified end to end (2026-08-09): the environment is **required**,
 and `AntigravityConfig` tunes the run — leave its `model` unset (an
-unavailable value 404s, including `gemini-3.7-flash`, the crate's
-default model elsewhere):
+unavailable value 404s — as `gemini-3.6-flash` did when this was
+recorded, despite being a valid model for ordinary interactions):
 
 ```rust,ignore
 use genai_rs::{AntigravityConfig, EnvironmentSource, RemoteEnvironment};

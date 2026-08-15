@@ -1128,8 +1128,9 @@ non-video models.
 the supported `agent_config.type` values as `dynamic`, `deep-research`,
 `code-mender`, `antigravity`. `model` is server-validated per agent — an
 unavailable value returns 404 `not_found` (observed with
-`gemini-3.7-flash`), and the agent's model catalog is not enumerable
-on a standard key.
+`gemini-3.6-flash`, and not re-checked since — the agent model catalog
+is not enumerable, so there is no way to), and the agent's model catalog
+is not enumerable on a standard key.
 
 ### Visualization (Deep Research agent_config)
 
