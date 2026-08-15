@@ -1869,12 +1869,14 @@ pub struct ActionCompaction {
 /// `ActionInvokeSubagent` — subagent invocation marker.
 ///
 /// The invoked subagent's `name` is modeled as an optional typed field, but
-/// **harness 0.1.5 does not populate it**: the `invokeSubagent` step action
-/// is an empty message on the wire (verified with `LOUD_WIRE=1` — the step
-/// only carries the generic text `"Invoke subagent"`). The field is here so
-/// that a future harness emitting the name surfaces it without an API break;
-/// until then it stays `None`, and any unexpected field is preserved in
-/// `extra` (Evergreen).
+/// **the harness does not populate it** (verified live on 0.1.5 and again
+/// on 0.1.10 by `test_antigravity_subagent_is_actually_invoked`, which
+/// delegates for real and reports the answer rather than asserting the old
+/// one): the `invokeSubagent` step action is an empty message on the wire,
+/// and the step only carries the generic text `"Invoke subagent"`. The
+/// field is here so that a future harness emitting the name surfaces it
+/// without an API break; until then it stays `None`, and any unexpected
+/// field is preserved in `extra` (Evergreen).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ActionInvokeSubagent {

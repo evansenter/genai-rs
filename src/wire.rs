@@ -623,19 +623,22 @@ impl LoudWirePrinter {
     /// usage (a bare `seqNum` + `usageUpdate` deserializes with no payload
     /// at all), so an empty key list is a real message and not a bug.
     /// Label it rather than printing a blank detail column, which in the
-    /// one format meant for skimming would read as a rendering fault.
+    /// one format meant for skimming would read as a rendering fault. The
+    /// label stays neutral because this also renders HTTP response bodies,
+    /// where there is no envelope to speak of.
     fn payload_keys(payload: &serde_json::Value) -> String {
         payload.as_object().map_or_else(
             || "(non-object)".to_string(),
             |m| {
-                let keys: Vec<&String> = m.keys().filter(|k| !is_envelope_key(k)).collect();
+                let keys: Vec<&str> = m
+                    .keys()
+                    .filter(|k| !is_envelope_key(k))
+                    .map(String::as_str)
+                    .collect();
                 if keys.is_empty() {
-                    "(envelope only)".to_string()
+                    "(no payload keys)".to_string()
                 } else {
-                    keys.iter()
-                        .map(|k| k.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    keys.join(", ")
                 }
             },
         )

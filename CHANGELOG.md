@@ -41,9 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gate and ignored the value, which meant filtering did not work on the
   one surface that emits WebSocket messages at all.
 
-- **Antigravity e2e coverage for structured output and cancellation.**
-  `with_response_schema`, `CancelHandle` and the `on_questions` hook are
-  now exercised against a real harness. The cancellation test corrected a documented claim: harness
+- **Antigravity e2e coverage for the last untested surfaces.**
+  `with_response_schema`, `CancelHandle`, the `on_questions` hook,
+  `add_mcp_server` and subagent *invocation* (as opposed to subagent
+  config, which was already covered) are now exercised against a real
+  harness — the MCP test drives a stdio server fixture end to end and
+  asserts on a token the model cannot have guessed.
+
+  The cancellation test corrected a documented claim: harness
   0.1.10 answers a halt with `STATE_FULLY_IDLE`, the same terminal state as
   a natural completion, so a cancelled turn **resolves normally with
   partial output** rather than failing with `AntigravityError::Turn` as

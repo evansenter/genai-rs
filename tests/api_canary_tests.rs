@@ -15,6 +15,11 @@
 //! These tests make 6 API calls and typically complete in 12-60 seconds total.
 //! Consider using `--test-threads=1` to avoid rate limiting.
 //!
+//! Every call goes through `retry_request!`. These canaries exist to detect
+//! *unknown content types*, so a transient 429 or 5xx failing one is a false
+//! alarm about the API's shape — and one that reads as "Google changed the
+//! protocol" when it means "the project ran out of quota".
+//!
 //! # Feature Flags
 //!
 //! These tests are SKIPPED when `strict-unknown` feature is enabled, since they
@@ -57,13 +62,15 @@ fn assert_no_unknown_steps(response: &genai_rs::InteractionResponse, context: &s
 async fn canary_basic_text_interaction() {
     let client = get_client().expect("GEMINI_API_KEY must be set");
 
-    let response = client
-        .interaction()
-        .with_model(CANARY_MODEL)
-        .with_text("Say 'hello' and nothing else.")
-        .create()
-        .await
-        .expect("API call should succeed");
+    let response = retry_request!([client] => {
+        client
+            .interaction()
+            .with_model(CANARY_MODEL)
+            .with_text("Say 'hello' and nothing else.")
+            .create()
+            .await
+    })
+    .expect("API call should succeed");
 
     assert_no_unknown_steps(&response, "basic text interaction");
 }
@@ -132,14 +139,16 @@ async fn canary_function_calling_interaction() {
         .description("Get the current time")
         .build();
 
-    let response = client
-        .interaction()
-        .with_model(CANARY_MODEL)
-        .with_text("What time is it?")
-        .add_functions(vec![get_time])
-        .create()
-        .await
-        .expect("API call should succeed");
+    let response = retry_request!([client, get_time] => {
+        client
+            .interaction()
+            .with_model(CANARY_MODEL)
+            .with_text("What time is it?")
+            .add_functions(vec![get_time.clone()])
+            .create()
+            .await
+    })
+    .expect("API call should succeed");
 
     assert_no_unknown_steps(&response, "function calling interaction");
 
@@ -163,13 +172,15 @@ async fn canary_function_calling_interaction() {
         ));
         let history = InteractionInput::Steps(steps);
 
-        let followup = client
-            .interaction()
-            .with_model(CANARY_MODEL)
-            .with_input(history)
-            .create()
-            .await
-            .expect("Follow-up API call should succeed");
+        let followup = retry_request!([client, history] => {
+            client
+                .interaction()
+                .with_model(CANARY_MODEL)
+                .with_input(history.clone())
+                .create()
+                .await
+        })
+        .expect("Follow-up API call should succeed");
 
         assert_no_unknown_steps(&followup, "function calling follow-up");
     }
@@ -229,13 +240,15 @@ async fn canary_multimodal_interaction() {
         Content::image_data(common::TINY_RED_PNG_BASE64, "image/png"),
     ]);
 
-    let response = client
-        .interaction()
-        .with_model(CANARY_MODEL)
-        .with_input(input)
-        .create()
-        .await
-        .expect("API call should succeed");
+    let response = retry_request!([client, input] => {
+        client
+            .interaction()
+            .with_model(CANARY_MODEL)
+            .with_input(input.clone())
+            .create()
+            .await
+    })
+    .expect("API call should succeed");
 
     assert_no_unknown_steps(&response, "multimodal interaction");
 }
@@ -256,14 +269,16 @@ async fn canary_thinking_model_interaction() {
         ..Default::default()
     };
 
-    let response = client
-        .interaction()
-        .with_model(CANARY_MODEL)
-        .with_text("What is 15 * 23?")
-        .with_generation_config(config)
-        .create()
-        .await
-        .expect("API call should succeed");
+    let response = retry_request!([client, config] => {
+        client
+            .interaction()
+            .with_model(CANARY_MODEL)
+            .with_text("What is 15 * 23?")
+            .with_generation_config(config.clone())
+            .create()
+            .await
+    })
+    .expect("API call should succeed");
 
     assert_no_unknown_steps(&response, "thinking model interaction");
 }

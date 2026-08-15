@@ -25,6 +25,8 @@ use genai_rs::antigravity::{
 };
 use genai_rs_macros::tool;
 
+mod common;
+
 /// Returns a fixed test weather report for a city.
 #[tool(city(description = "The city to get weather for"))]
 fn antigravity_test_weather(city: String) -> String {
@@ -734,12 +736,16 @@ async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
 
     let handle = agent.cancel_handle();
     let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
+    // Three-valued on purpose: "never reached the threshold" and "the halt
+    // request itself failed" want different diagnostics, and collapsing
+    // them would point a future debugger at the model's speed when the
+    // real fault was the halt.
     let canceller = tokio::spawn(async move {
         if started_rx.await.is_err() {
             // Stream ended before generating enough to halt.
-            return false;
+            return None;
         }
-        handle.cancel().await.is_ok()
+        Some(handle.cancel().await)
     });
 
     let started = std::time::Instant::now();
@@ -781,14 +787,18 @@ async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
         (finished, produced, outcome)
     };
     let elapsed = started.elapsed();
-    let cancel_sent = canceller.await.expect("canceller task");
-
-    assert!(
-        cancel_sent,
-        "the turn streamed only {produced} chars, below the \
-         {OUTPUT_BEFORE_CANCEL} needed before halting, so no halt was sent — \
-         this run proves nothing about cancellation"
-    );
+    match canceller.await.expect("canceller task") {
+        Some(Ok(())) => {}
+        Some(Err(err)) => panic!(
+            "the halt request itself failed after {produced} chars of output: \
+             {err:?}"
+        ),
+        None => panic!(
+            "the turn streamed only {produced} chars, below the \
+             {OUTPUT_BEFORE_CANCEL} needed before halting, so no halt was sent \
+             — this run proves nothing about cancellation"
+        ),
+    }
 
     // The assertion that actually proves cancellation: the turn stopped
     // long before it would have finished on its own, and long before the
@@ -826,9 +836,11 @@ async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
 /// the turn well enough for the model to act on it.
 ///
 /// Without a hook the crate replies "unanswered" to every question, which
-/// never deadlocks but also never proves the reply path works — so the
-/// assertion is that the *answer* came back, not merely that a question
-/// arrived.
+/// never deadlocks but also never proves the reply path works. So the
+/// closing assertion is semantic: the final answer has to reflect the
+/// choice the hook selected. A harness that dropped every answer on the
+/// floor and let the model proceed on its own would pass a
+/// "was a question asked?" test unchanged.
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_antigravity_on_questions_answers_reach_the_model() {
@@ -838,6 +850,7 @@ async fn test_antigravity_on_questions_answers_reach_the_model() {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
     };
+    let key_for_validation = key.clone();
 
     /// The questions the hook saw, so the test can assert on them after
     /// the turn rather than from inside a sync closure.
@@ -860,19 +873,20 @@ async fn test_antigravity_on_questions_answers_reach_the_model() {
         .add_policy(policy::allow_all())
         .on_questions(move |questions| {
             hook_asked.lock().unwrap().extend_from_slice(questions);
-            // Answer the first choice of every question, plus a marker the
-            // model can echo. The marker is arbitrary so that a response
-            // containing it cannot have come from anywhere else.
+            // Always the *last* choice, never the first: models tend to
+            // list their own preferred option first, so picking it would
+            // leave "the model ignored the answer and did what it wanted"
+            // indistinguishable from "the answer arrived".
             QuestionReply::Answers(
                 questions
                     .iter()
                     .map(|q| {
                         if q.choices.is_empty() {
-                            QuestionAnswer::Freeform("zarquon-91".to_string())
+                            QuestionAnswer::Freeform("the last option".to_string())
                         } else {
                             QuestionAnswer::Choices {
-                                selected: vec![0],
-                                freeform: Some("zarquon-91".to_string()),
+                                selected: vec![q.choices.len() - 1],
+                                freeform: None,
                             }
                         }
                     })
@@ -915,6 +929,222 @@ async fn test_antigravity_on_questions_answers_reach_the_model() {
     assert!(
         !text.trim().is_empty(),
         "the turn produced no text after the question was answered"
+    );
+
+    // ...and the answer must have *landed*. Semantic rather than a
+    // substring match, per CLAUDE.md: the model is free to phrase the
+    // recommendation however it likes, but it is not free to recommend
+    // from a category the user did not pick.
+    let selected: Vec<&str> = questions
+        .iter()
+        .filter_map(|q| q.choices.last().map(String::as_str))
+        .collect();
+    if selected.is_empty() {
+        // No multiple-choice question to check against; the freeform arm
+        // of the hook ran instead.
+        println!("note: no choice-bearing question, skipping the choice check");
+    } else {
+        let client = genai_rs::Client::builder(key_for_validation)
+            .build()
+            .expect("validation client");
+        let context = format!(
+            "The assistant asked the user a clarifying question and the user \
+             selected this option: {}",
+            selected.join(" | ")
+        );
+        common::assert_response_semantic(
+            &client,
+            &context,
+            &text,
+            "Is this response consistent with the option the user selected, \
+             rather than a different category?",
+        )
+        .await;
+    }
+
+    agent.shutdown().await.expect("shutdown");
+}
+
+/// A configured subagent must actually be *invoked*, not merely accepted
+/// at init — `test_antigravity_subagent_config_accepted_at_init` covers
+/// the config half and stops there.
+///
+/// This also re-checks a documented claim that was pinned against harness
+/// 0.1.5: `ActionInvokeSubagent::name` says the harness sends an empty
+/// message and the name is always `None`. That is exactly the kind of
+/// version-pinned claim that goes stale silently, so the test reports what
+/// 0.1.10 actually does rather than asserting the old answer.
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_antigravity_subagent_is_actually_invoked() {
+    use genai_rs::antigravity::Subagent;
+
+    let Some(key) = api_key() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    let mut agent = AntigravityAgent::builder()
+        .with_turn_timeout(std::time::Duration::from_secs(120))
+        .with_api_key(key)
+        .with_model("gemini-3.6-flash")
+        .with_system_instructions(
+            "You have a subagent named `haiku-writer`. For any request to write \
+             a haiku you MUST delegate to it with the start_subagent tool rather \
+             than writing one yourself.",
+        )
+        .add_subagent(
+            Subagent::new("haiku-writer")
+                .with_description("Writes a haiku on any topic.")
+                .with_system_instructions("Reply with a haiku and nothing else."),
+        )
+        .with_capabilities(Capabilities::read_only().enable(BuiltinTool::StartSubagent))
+        .add_policy(policy::allow_all())
+        .spawn()
+        .await
+        .expect("spawn");
+
+    // (tool name, reported subagent name) for every action in the turn,
+    // including the subagent's own trajectory.
+    let mut actions: Vec<(String, Option<String>)> = Vec::new();
+    {
+        let mut stream = agent
+            .send_streaming("Write me a haiku about rust the programming language.")
+            .await
+            .expect("stream");
+        while let Some(event) = stream.next().await {
+            match event.expect("stream event") {
+                AgentEvent::ToolAction { action, .. } => actions.push((
+                    action.tool_name(),
+                    action.subagent_name().map(ToString::to_string),
+                )),
+                AgentEvent::Finished(_) => break,
+                _ => {}
+            }
+        }
+    }
+
+    let invocations: Vec<&(String, Option<String>)> = actions
+        .iter()
+        .filter(|(name, _)| name == "start_subagent")
+        .collect();
+    assert!(
+        !invocations.is_empty(),
+        "the model never delegated to the subagent — no start_subagent action \
+         in the turn. Saw: {actions:?}"
+    );
+
+    // Report rather than assert: the crate documents `name` as always
+    // `None` on 0.1.5, and the point of running this live is to notice if
+    // that stopped being true.
+    let named: Vec<&str> = invocations
+        .iter()
+        .filter_map(|(_, subagent)| subagent.as_deref())
+        .collect();
+    if named.is_empty() {
+        println!(
+            "invokeSubagent carried no name ({} invocation(s)) — matches the \
+             documented 0.1.5 behavior, still true on 0.1.10",
+            invocations.len()
+        );
+    } else {
+        println!(
+            "NOTE: invokeSubagent now reports names {named:?} — update the \
+             ActionInvokeSubagent docs, which say the name is always None"
+        );
+    }
+
+    agent.shutdown().await.expect("shutdown");
+}
+
+/// An MCP server configured via `add_mcp_server` must actually be reached:
+/// the harness has to spawn it, discover its tools, and call one on the
+/// model's behalf.
+///
+/// The fixture server returns a token that exists nowhere else, so a
+/// response containing it can only have come from a real round trip —
+/// which is the difference between testing the wire config and testing
+/// that MCP works.
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_antigravity_mcp_server_tool_is_called() {
+    use genai_rs::antigravity::McpServer;
+
+    let Some(key) = api_key() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    // Same token as tests/fixtures/mcp_echo_server.py.
+    const WIDGET_CODE: &str = "wibble-3317-quux";
+
+    let fixture =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mcp_echo_server.py");
+    assert!(fixture.is_file(), "missing fixture: {}", fixture.display());
+
+    let mut agent = AntigravityAgent::builder()
+        .with_turn_timeout(std::time::Duration::from_secs(120))
+        .with_api_key(key)
+        .with_model("gemini-3.6-flash")
+        .with_system_instructions(
+            "Widget codes can only be obtained by calling the MCP tool named \
+             exactly `lookup_widget_code` on the `widgets` server. Call that \
+             tool by that exact name — do not invent a different tool name, \
+             and do not guess the code. Report the code verbatim.",
+        )
+        .add_mcp_server(
+            McpServer::stdio("python3", [fixture.to_string_lossy().to_string()])
+                .with_name("widgets"),
+        )
+        // No builtins: MCP servers are configured independently of the
+        // builtin capability set, so this leaves the MCP tool as the only
+        // thing to call. Without it the model wanders into grep/find over
+        // the whole repo when its first attempt misses (observed: a
+        // repo-wide grep that timed out and ate the turn budget).
+        .with_capabilities(Capabilities::none())
+        // MCP tools run harness-side, so they go through the policy engine
+        // like any other harness tool.
+        .add_policy(policy::allow_all())
+        .spawn()
+        .await
+        .expect("spawn with an MCP server");
+
+    let mut actions: Vec<String> = Vec::new();
+    let mut text = String::new();
+    {
+        let mut stream = agent
+            .send_streaming("What is the code for the widget named `flange`?")
+            .await
+            .expect("stream");
+        while let Some(event) = stream.next().await {
+            match event.expect("stream event") {
+                AgentEvent::ToolAction { action, .. } => actions.push(action.tool_name()),
+                AgentEvent::Finished(response) => {
+                    text = response.text().to_string();
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+    println!("actions: {actions:?}");
+    println!("response: {text}");
+
+    // The tool-name spelling is the crate's own `mcp_<server>_<tool>`
+    // convention, which is also what a policy target has to match — so
+    // this pins the naming as well as the round trip.
+    assert!(
+        actions
+            .iter()
+            .any(|a| a == "mcp_widgets_lookup_widget_code"),
+        "no MCP tool action for the configured server; saw {actions:?}"
+    );
+
+    // Deterministic value, not LLM phrasing: the token cannot be guessed,
+    // so its presence proves the server's answer reached the model.
+    assert!(
+        text.contains(WIDGET_CODE),
+        "the response does not carry the MCP server's token {WIDGET_CODE:?}: {text}"
     );
 
     agent.shutdown().await.expect("shutdown");
