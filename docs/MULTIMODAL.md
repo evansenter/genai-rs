@@ -205,8 +205,9 @@ let response = client
     .await?;
 
 // From base64 — NOTE the model. Inline video bytes need a model that
-// accepts them: verified live 2026-08-10, gemini-3.7-flash returns
-// 400 invalid_request for inline video while accepting video by URI.
+// accepts them: verified live on gemini-3.6-flash (2026-08-10) and again
+// on gemini-3.7-flash (2026-08-15), both of which return 400
+// invalid_request for inline video while accepting video by URI.
 // Prefer the Files API URI form below unless you specifically need
 // inline bytes.
 let response = client

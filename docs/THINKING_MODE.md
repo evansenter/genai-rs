@@ -33,10 +33,16 @@ Under API revision 2026-05-20, thinking appears in `response.steps` as `Step::Th
 
 | Level | Description | Token Cost | Use Case |
 |-------|-------------|------------|----------|
-| `Minimal` | Minimal reasoning | Low | Quick checks |
+| `Minimal` [^minimal] | Minimal reasoning | Low | Quick checks |
 | `Low` | Light reasoning | Moderate | Simple problems |
 | `Medium` | Balanced reasoning | Higher | Moderate complexity |
 | `High` | Extensive reasoning | Highest | Complex problems |
+
+[^minimal]: `Minimal` is not accepted by every model. `DEFAULT_MODEL` rejects
+it with a 400 (verified live 2026-08-15), so the snippets below — which all
+pass `genai_rs::DEFAULT_MODEL` — will fail if you swap their level for
+`Minimal`. Use `genai_rs::MINIMAL_THINKING_MODEL` instead, which is pinned to
+a model that supports it.
 
 Higher levels produce more detailed reasoning but consume more tokens. To skip thinking entirely, simply omit `with_thinking_level()`.
 

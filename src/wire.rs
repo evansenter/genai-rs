@@ -512,7 +512,12 @@ impl WireFilter {
         };
         payload.as_object().is_some_and(|map| {
             map.iter()
-                .filter(|(k, _)| !is_envelope_key(k))
+                // Gated the same way `payload_keys_inner` gates it, so a
+                // key that renders on a line can also select it. Latent
+                // either way today — an `InputEvent` serializes as a lone
+                // oneof key and carries no envelope — but the two sides
+                // drifting is the failure this pairing exists to prevent.
+                .filter(|(k, _)| !(harness_receive && is_envelope_key(k)))
                 .any(|(key, value)| {
                     if self.selectors.contains(&key.to_ascii_lowercase()) {
                         return true;
@@ -1391,6 +1396,24 @@ mod filter_tests {
             id: 1,
             payload: json!({"stepUpdate": {"mcpTool": {"name": "x"}}}),
         }));
+
+        // Envelope stripping is gated the same way on both sides. A
+        // received frame's seqNum neither renders nor selects...
+        let received = WireEvent::WsReceive {
+            id: 1,
+            payload: json!({"seqNum": "7", "stepUpdate": {"text": "hi"}}),
+        };
+        assert!(!WireFilter::parse("seqNum").allows(&received));
+        // ...while on a send it does both, rather than one without the other.
+        let send_with_envelope = WireEvent::WsSend {
+            id: 1,
+            payload: json!({"seqNum": "7", "userInput": {}}),
+        };
+        assert!(WireFilter::parse("seqNum").allows(&send_with_envelope));
+        assert!(
+            LoudWirePrinter::payload_keys(&json!({"seqNum": "7", "userInput": {}}))
+                .contains("seqNum")
+        );
     }
 
     #[test]

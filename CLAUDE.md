@@ -208,12 +208,14 @@ GitHub Actions runs: check, test, test-strict-unknown, test-integration (5 matri
   | Constant | Use for |
   |----------|---------|
   | `DEFAULT_MODEL` | Everything, unless a row below applies |
-  | `INLINE_VIDEO_MODEL` | **Inline base64 video** — `DEFAULT_MODEL` returns 400 on inline video bytes while accepting video by URI (verified live 2026-08-10) |
+  | `INLINE_VIDEO_MODEL` | **Inline base64 video** — `DEFAULT_MODEL` returns 400 on inline video bytes while accepting video by URI (verified live on `gemini-3.6-flash` 2026-08-10, `gemini-3.7-flash` 2026-08-15) |
   | `MINIMAL_THINKING_MODEL` | `ThinkingLevel::Minimal` — `DEFAULT_MODEL` rejects it as unsupported (verified live 2026-08-15) |
   | `DEFAULT_IMAGE_MODEL` | Image generation |
   | `DEFAULT_TTS_MODEL` | Text-to-speech |
 
-  In-crate unit tests use a synthetic `"test-model"` instead: they exercise serialization round-trips and never cared which model, so they should not be model-bump sites. That does not extend to non-test code — a fallback model id that reaches the wire must be a real one.
+  In-crate unit tests may use either the constants or the synthetic `"test-model"`; the tree does both. They exercise serialization round-trips and never cared which model, so the only rule that matters is that neither form is a model-bump site. Prefer `"test-model"` where the id is pure filler, and a constant where the test reads better naming a real default.
+
+  None of this extends to non-test code: a fallback model id that reaches the wire must be a real one. `AgentBuilder`'s default was briefly swept to `"test-model"` on exactly this confusion.
 
 ### Naming Conventions
 

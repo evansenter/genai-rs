@@ -27,9 +27,13 @@ fn no_hardcoded_model_ids_outside_the_constants() {
     use std::path::Path;
 
     // A quoted id followed by a digit: matches "gemini-3.7-flash" but not
-    // an unrelated identifier like "gemini-base".
+    // an unrelated identifier like "gemini-base". The optional `models/`
+    // covers the resource-name form the Files and Interactions APIs use
+    // ("models/gemini-3.7-flash"), which the opening-quote anchor would
+    // otherwise let past — nothing in the repo writes one today, and this
+    // keeps it that way.
     static MODEL_LITERAL: std::sync::LazyLock<regex::Regex> =
-        std::sync::LazyLock::new(|| regex::Regex::new(r#""gemini-\d"#).unwrap());
+        std::sync::LazyLock::new(|| regex::Regex::new(r#""(models/)?gemini-\d"#).unwrap());
 
     /// Where a model id may legitimately appear as a literal.
     ///
@@ -75,17 +79,24 @@ fn no_hardcoded_model_ids_outside_the_constants() {
         }
     }
 
+    // The root crate *is* the workspace root, so `target/` sits beside
+    // these and is never walked.
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut hits = Vec::new();
     scan(root, &root.join("src"), &mut hits);
     scan(root, &root.join("tests"), &mut hits);
     scan(root, &root.join("examples"), &mut hits);
+    // The other workspace member. Clean today, but it has its own src/ and
+    // tests/ (trybuild fixtures included), and a literal pinned there would
+    // be exactly the invisible one this test exists to catch.
+    scan(root, &root.join("genai-rs-macros/src"), &mut hits);
+    scan(root, &root.join("genai-rs-macros/tests"), &mut hits);
 
     assert!(
         hits.is_empty(),
         "hardcoded model id(s) found — use genai_rs::DEFAULT_MODEL (or \
-         INLINE_VIDEO_MODEL / DEFAULT_IMAGE_MODEL / DEFAULT_TTS_MODEL) so a \
-         model bump stays a one-line change:\n  {}",
+         INLINE_VIDEO_MODEL / MINIMAL_THINKING_MODEL / DEFAULT_IMAGE_MODEL / \
+         DEFAULT_TTS_MODEL) so a model bump stays a one-line change:\n  {}",
         hits.join("\n  ")
     );
 }
