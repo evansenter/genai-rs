@@ -618,15 +618,25 @@ impl LoudWirePrinter {
 
     /// The oneof key(s) of a WebSocket payload — the part that says what
     /// the message *is*.
+    ///
+    /// The harness does send messages whose only non-envelope content is
+    /// usage (a bare `seqNum` + `usageUpdate` deserializes with no payload
+    /// at all), so an empty key list is a real message and not a bug.
+    /// Label it rather than printing a blank detail column, which in the
+    /// one format meant for skimming would read as a rendering fault.
     fn payload_keys(payload: &serde_json::Value) -> String {
         payload.as_object().map_or_else(
             || "(non-object)".to_string(),
             |m| {
-                m.keys()
-                    .filter(|k| !is_envelope_key(k))
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                let keys: Vec<&String> = m.keys().filter(|k| !is_envelope_key(k)).collect();
+                if keys.is_empty() {
+                    "(envelope only)".to_string()
+                } else {
+                    keys.iter()
+                        .map(|k| k.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                }
             },
         )
     }

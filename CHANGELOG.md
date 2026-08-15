@@ -42,8 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one surface that emits WebSocket messages at all.
 
 - **Antigravity e2e coverage for structured output and cancellation.**
-  `with_response_schema` and `CancelHandle` are now exercised against a
-  real harness. The cancellation test corrected a documented claim: harness
+  `with_response_schema`, `CancelHandle` and the `on_questions` hook are
+  now exercised against a real harness. The cancellation test corrected a documented claim: harness
   0.1.10 answers a halt with `STATE_FULLY_IDLE`, the same terminal state as
   a natural completion, so a cancelled turn **resolves normally with
   partial output** rather than failing with `AntigravityError::Turn` as

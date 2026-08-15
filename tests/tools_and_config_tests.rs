@@ -1431,7 +1431,15 @@ mod sampling {
         // Low top_p = more focused/deterministic
         let config = GenerationConfig {
             temperature: Some(1.0),
-            max_output_tokens: Some(100),
+            // Headroom, deliberately: this test is about `top_p`, not
+            // truncation. gemini-3.6-flash spends ~100 thinking tokens on
+            // even this trivial prompt (verified live 2026-08-10: ~99-102
+            // total for a 1-token answer), so the old 100-token cap made
+            // "is there any text left?" a coin flip rather than a top_p
+            // assertion — the same fix as its siblings
+            // `test_generation_config_temperature` (100 -> 2000) and
+            // `test_generation_config_thinking_level_high` (1000 -> 8000).
+            max_output_tokens: Some(2000),
             top_p: Some(0.1), // Very focused
             ..Default::default()
         };

@@ -698,8 +698,6 @@ async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
         return;
     };
 
-    /// How long after the turn starts the halt is sent.
-    const CANCEL_AFTER: std::time::Duration = std::time::Duration::from_secs(3);
     /// The turn must end promptly after the halt. Generous enough to
     /// absorb a slow round trip, far below both the turn timeout and how
     /// long the un-cancelled prompt would take.
@@ -719,14 +717,33 @@ async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
 
     // Taken *before* the stream borrows the agent — the handle is the only
     // way to reach the session while a turn is in flight.
+    //
+    // The halt fires on accumulated output rather than on a timer: a fixed
+    // delay races the model, and losing that race ("it answered before we
+    // cancelled") is an inconclusive run reported as a defect. Keying off
+    // real output means the turn is provably mid-generation when the halt
+    // is sent.
+    //
+    // The threshold is deliberately not "the first delta" — the harness
+    // emits a step before the upstream request is even in flight, and
+    // halting there cancelled the POST rather than a running generation.
+    // Any real answer to this prompt clears this bar many times over, so
+    // failing to reach it means something is broken, not merely fast.
+    /// Characters of streamed text/thinking to see before halting.
+    const OUTPUT_BEFORE_CANCEL: usize = 200;
+
     let handle = agent.cancel_handle();
-    tokio::spawn(async move {
-        tokio::time::sleep(CANCEL_AFTER).await;
-        let _ = handle.cancel().await;
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
+    let canceller = tokio::spawn(async move {
+        if started_rx.await.is_err() {
+            // Stream ended before generating enough to halt.
+            return false;
+        }
+        handle.cancel().await.is_ok()
     });
 
     let started = std::time::Instant::now();
-    let (finished, outcome) = {
+    let (finished, produced, outcome) = {
         let mut stream = agent
             .send_streaming(
                 "Write an extremely detailed 3000-word essay about the history of \
@@ -735,10 +752,21 @@ async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
             .await
             .expect("stream");
 
+        let mut started_tx = Some(started_tx);
         let mut finished = false;
+        let mut produced = 0usize;
         let mut outcome = Ok(());
         while let Some(event) = stream.next().await {
             match event {
+                Ok(AgentEvent::TextDelta(chunk) | AgentEvent::ThinkingDelta(chunk)) => {
+                    produced += chunk.chars().count();
+                    // Fire once, when generation is demonstrably underway.
+                    if produced >= OUTPUT_BEFORE_CANCEL
+                        && let Some(tx) = started_tx.take()
+                    {
+                        let _ = tx.send(());
+                    }
+                }
                 Ok(AgentEvent::Finished(_)) => {
                     finished = true;
                     break;
@@ -750,9 +778,17 @@ async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
                 }
             }
         }
-        (finished, outcome)
+        (finished, produced, outcome)
     };
     let elapsed = started.elapsed();
+    let cancel_sent = canceller.await.expect("canceller task");
+
+    assert!(
+        cancel_sent,
+        "the turn streamed only {produced} chars, below the \
+         {OUTPUT_BEFORE_CANCEL} needed before halting, so no halt was sent — \
+         this run proves nothing about cancellation"
+    );
 
     // The assertion that actually proves cancellation: the turn stopped
     // long before it would have finished on its own, and long before the
@@ -761,11 +797,6 @@ async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
         elapsed < MUST_END_WITHIN,
         "the turn ran {elapsed:?}, past the {MUST_END_WITHIN:?} bound — the \
          halt did not stop it"
-    );
-    assert!(
-        elapsed >= CANCEL_AFTER,
-        "the turn ended in {elapsed:?}, before the halt was even sent — the \
-         model answered too fast for this test to prove anything"
     );
 
     match outcome {
@@ -786,6 +817,105 @@ async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
         }
         Err(other) => panic!("unexpected error from a cancelled turn: {other:?}"),
     }
+
+    agent.shutdown().await.expect("shutdown");
+}
+
+/// The `on_questions` hook end to end: the harness's `ask_question`
+/// builtin must reach the hook, and the hook's answer must get back into
+/// the turn well enough for the model to act on it.
+///
+/// Without a hook the crate replies "unanswered" to every question, which
+/// never deadlocks but also never proves the reply path works — so the
+/// assertion is that the *answer* came back, not merely that a question
+/// arrived.
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_antigravity_on_questions_answers_reach_the_model() {
+    use genai_rs::antigravity::{AgentQuestion, QuestionAnswer, QuestionReply};
+
+    let Some(key) = api_key() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    /// The questions the hook saw, so the test can assert on them after
+    /// the turn rather than from inside a sync closure.
+    type QuestionLog = std::sync::Arc<std::sync::Mutex<Vec<AgentQuestion>>>;
+    let asked: QuestionLog = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let hook_asked = std::sync::Arc::clone(&asked);
+
+    let mut agent = AntigravityAgent::builder()
+        .with_turn_timeout(std::time::Duration::from_secs(120))
+        .with_api_key(key)
+        .with_model("gemini-3.6-flash")
+        .with_system_instructions(
+            "Before answering anything ambiguous, you MUST use the ask_question \
+             tool to ask the user exactly one clarifying question with concrete \
+             choices. Then answer using their choice.",
+        )
+        // AskQuestion is write-capable, so it needs a policy to clear the
+        // spawn-time gate even though questions bypass the policy engine.
+        .with_capabilities(Capabilities::read_only().enable(BuiltinTool::AskQuestion))
+        .add_policy(policy::allow_all())
+        .on_questions(move |questions| {
+            hook_asked.lock().unwrap().extend_from_slice(questions);
+            // Answer the first choice of every question, plus a marker the
+            // model can echo. The marker is arbitrary so that a response
+            // containing it cannot have come from anywhere else.
+            QuestionReply::Answers(
+                questions
+                    .iter()
+                    .map(|q| {
+                        if q.choices.is_empty() {
+                            QuestionAnswer::Freeform("zarquon-91".to_string())
+                        } else {
+                            QuestionAnswer::Choices {
+                                selected: vec![0],
+                                freeform: Some("zarquon-91".to_string()),
+                            }
+                        }
+                    })
+                    .collect(),
+            )
+        })
+        .spawn()
+        .await
+        .expect("spawn");
+
+    let response = agent
+        .chat(
+            "I want a recommendation. Ask me one clarifying question first, \
+             then give me a one-sentence recommendation.",
+        )
+        .await
+        .expect("chat turn");
+    let text = response.text().to_string();
+    println!("final response: {text}");
+
+    let questions = std::mem::take(&mut *asked.lock().unwrap());
+    assert!(
+        !questions.is_empty(),
+        "on_questions never fired — the ask_question builtin did not reach \
+         the hook (response was: {text})"
+    );
+    for question in &questions {
+        println!(
+            "asked: {:?} choices={:?} multi={}",
+            question.question, question.choices, question.is_multi_select
+        );
+        assert!(
+            !question.question.trim().is_empty(),
+            "a question arrived with no text: {question:?}"
+        );
+    }
+
+    // The turn must have continued past the question rather than stalling
+    // on it — the reply path is what this test is really about.
+    assert!(
+        !text.trim().is_empty(),
+        "the turn produced no text after the question was answered"
+    );
 
     agent.shutdown().await.expect("shutdown");
 }

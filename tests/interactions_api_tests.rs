@@ -148,11 +148,15 @@ mod basic {
             return;
         };
 
-        let response = stateful_builder(&client)
-            .with_text("Hello, world!")
-            .create()
-            .await
-            .expect("Interaction failed");
+        // The interaction is only setup for the get; a transient 429/5xx
+        // here says nothing about whether get_interaction works.
+        let response = retry_request!([client] => {
+            stateful_builder(&client)
+                .with_text("Hello, world!")
+                .create()
+                .await
+        })
+        .expect("Interaction failed");
 
         let retrieved = client
             .get_interaction(response.id.as_ref().expect("id should exist"))
@@ -172,11 +176,14 @@ mod basic {
             return;
         };
 
-        let response = stateful_builder(&client)
-            .with_text("Test interaction for deletion")
-            .create()
-            .await
-            .expect("Interaction failed");
+        // Setup for the delete, same as above.
+        let response = retry_request!([client] => {
+            stateful_builder(&client)
+                .with_text("Test interaction for deletion")
+                .create()
+                .await
+        })
+        .expect("Interaction failed");
 
         client
             .delete_interaction(response.id.as_ref().expect("id should exist"))
