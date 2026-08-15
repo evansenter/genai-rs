@@ -159,16 +159,31 @@ jobs:
           # example by name, instead of the whole step dying on the ceiling
           # and reporting nothing about which one stalled.
           #
-          # The wrapper must sit *above* each example's own
-          # `with_turn_timeout`, so that a slow-but-legal turn is ended by
-          # the example — which reports a real error naming the turn — and
-          # the wrapper only ever catches a process that stopped responding
-          # altogether. Below it, the wrapper preempts the example's own
-          # ceiling and the loop reads a legal slow turn as a broken
-          # example, which is this mechanism's own misattribution failure
-          # running backwards. Hence per-example budgets: repo_auditor asks
-          # for 600s, the rest declare 120s/180s or inherit the crate's
-          # 300s default.
+          # The wrapper must sit above each example's worst *legal* runtime,
+          # so a slow-but-legal run is ended by the example — which reports a
+          # real error naming the turn — and the wrapper only ever catches a
+          # process that stopped responding altogether. Below it, the wrapper
+          # preempts the example's own ceiling and the loop reads a legal
+          # slow run as a broken example: this mechanism's own misattribution
+          # failure, running backwards.
+          #
+          # Note the units. `with_turn_timeout` bounds one *turn*; this
+          # wrapper bounds the whole *process*, so the bar is
+          # turns x ceiling, not ceiling — plus compile, process start and
+          # harness spawn, which the turn budget never sees. Worst legal
+          # runtime per example, against its budget below:
+          #
+          #   antigravity_agent   3 x 120s =  360s  <  420
+          #   repo_auditor        1 x 600s =  600s  <  660
+          #   session_resume      2 x 120s =  240s  <  300
+          #   proactive_agent     2 x 120s =  240s  <  300
+          #   workspace_explorer  1 x 120s =  120s  <  300
+          #   mcp_toolbelt        1 x 120s =  120s  <  300
+          #   cancellable_turn    1 x 180s =  180s  <  300
+          #
+          # Re-check this table when an example gains a turn or changes its
+          # budget; every one of them declares a budget explicitly so the
+          # left column can be read off the source.
           #
           # Not a replacement for the step budget: enough simultaneous
           # hangs (5 x 3 x 300s plus 3 x 660s plus 3 x 420s is ~128min)
@@ -188,15 +203,9 @@ jobs:
             case "$ex" in
               # Declares 600s.
               repo_auditor) budget=660 ;;
-              # Declares nothing, so it inherits the crate's 300s
-              # DEFAULT_TURN_TIMEOUT — deliberately, being the starter that
-              # shows you get a sane budget for free. A 300s wrapper would
-              # therefore be *equal* to its ceiling, not above it, and the
-              # wrapper's clock starts earlier still: it covers the example's
-              # compile, process start and harness spawn. Headroom for all of
-              # that, so the example's own timeout is always what fires.
+              # Declares 120s, but takes three sequential turns.
               antigravity_agent) budget=420 ;;
-              # The rest declare 120s, or 180s for cancellable_turn.
+              # The rest are single-turn at 120s, or 180s for cancellable_turn.
               *) budget=300 ;;
             esac
             echo "::group::cargo run --example $ex (budget ${budget}s)"

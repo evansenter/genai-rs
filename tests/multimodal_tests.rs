@@ -363,8 +363,8 @@ mod video {
 
         let response = crate::retry_request!([client, contents] => {
             stateful_builder(&client)
-                // Inline video bytes — see VIDEO_INLINE_MODEL.
-                .with_model(crate::common::VIDEO_INLINE_MODEL)
+                // Inline video bytes — see INLINE_VIDEO_MODEL.
+                .with_model(genai_rs::INLINE_VIDEO_MODEL)
                 .with_input(InteractionInput::Content(contents))
                 .create()
                 .await
@@ -557,8 +557,8 @@ mod mixed_media {
 
         let result = crate::retry_request!([client, contents] => {
             stateful_builder(&client)
-                // Inline video bytes — see VIDEO_INLINE_MODEL.
-                .with_model(crate::common::VIDEO_INLINE_MODEL)
+                // Inline video bytes — see INLINE_VIDEO_MODEL.
+                .with_model(genai_rs::INLINE_VIDEO_MODEL)
                 .with_input(InteractionInput::Content(contents))
                 .create()
                 .await
@@ -993,8 +993,8 @@ mod bytes_loading {
         let result = crate::retry_request!([client, contents] => {
             client
                 .interaction()
-                // Inline video bytes — see VIDEO_INLINE_MODEL.
-                .with_model(crate::common::VIDEO_INLINE_MODEL)
+                // Inline video bytes — see INLINE_VIDEO_MODEL.
+                .with_model(genai_rs::INLINE_VIDEO_MODEL)
                 .with_content(contents)
                 .create()
                 .await

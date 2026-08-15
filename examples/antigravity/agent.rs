@@ -21,6 +21,7 @@ use genai_rs::antigravity::{
     AgentEvent, AntigravityAgent, BuiltinTool, Capabilities, QuestionAnswer, QuestionReply, policy,
 };
 use genai_rs_macros::tool;
+use std::time::Duration;
 
 /// Returns the current weather for a city.
 #[tool(city(description = "The city to get weather for"))]
@@ -54,6 +55,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
              ambiguous (e.g. no city given for weather), use ask_question to clarify \
              instead of assuming.",
         )
+        // Explicit, though DEFAULT_TURN_TIMEOUT (300s) would already bound
+        // these: the budget is per *turn*, and this example takes three, so
+        // leaving it implicit makes the worst legal run 900s — more than
+        // anything wrapping the process can reasonably sit above. Every
+        // other harness example declares one for the same reason.
+        .with_turn_timeout(Duration::from_secs(120))
         // read_only() does not include AskQuestion — enable it explicitly
         // so the on_questions hook below is reachable.
         .with_capabilities(Capabilities::read_only().enable(BuiltinTool::AskQuestion))
@@ -185,7 +192,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "• Call agent.shutdown() for graceful exit; dropping kills the harness without persistence"
     );
     println!("• Use with_save_dir + conversation_id() to resume sessions across runs");
-    println!("• Set with_turn_timeout to bound runaway agent turns");
+    println!(
+        "• Turns are bounded at 300s by default (DEFAULT_TURN_TIMEOUT); \
+with_turn_timeout raises or lowers it, without_turn_timeout removes it"
+    );
 
     Ok(())
 }
