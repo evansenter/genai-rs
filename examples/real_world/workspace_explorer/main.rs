@@ -260,7 +260,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match entry {
             Audit::HarnessAction { name, allowed } => {
                 println!(
-                    "  action  {name:<20} {}",
+                    // Three spaces, not two: "action" is 6 chars against
+                    // "posttool"/"DENIED" at 8/6+pad, so the name column
+                    // only lines up at width 11.
+                    "  action   {name:<20} {}",
                     if *allowed { "ok" } else { "denied" }
                 );
             }
