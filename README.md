@@ -84,11 +84,11 @@ live-verification notes are in
 
 ```toml
 [dependencies]
-genai-rs = "0.9"
+genai-rs = "0.10"
 tokio = { version = "1.0", features = ["full"] }
 
 # Required together, if you use the #[tool] macro
-genai-rs-macros = "0.9"  # The macro itself
+genai-rs-macros = "0.10"  # The macro itself
 async-trait = "0.1"      # Referenced by #[tool]-generated code
 serde_json = "1.0"       # Referenced by #[tool]-generated code
 
