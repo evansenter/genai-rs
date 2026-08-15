@@ -1996,10 +1996,11 @@ impl From<DynamicConfig> for AgentConfig {
 /// **accepted** on `antigravity-preview-05-2026` (the server's validation
 /// error enumerates the supported config types as `dynamic`,
 /// `deep-research`, `code-mender`, `antigravity`). Setting `model` to a
-/// value the agent doesn't offer returns 404 `not_found` — including
-/// [`DEFAULT_MODEL`](crate::DEFAULT_MODEL), this crate's default model elsewhere. The
-/// agent's model catalog is not enumerable on a standard key, so leave
-/// `model` unset unless you know an accepted value.
+/// value the agent doesn't offer returns 404 `not_found` — as
+/// `gemini-3.6-flash` did when this was recorded, despite being a valid
+/// model for ordinary interactions. The agent's model catalog is not
+/// enumerable on a standard key, so leave `model` unset unless you know an
+/// accepted value.
 ///
 /// # Example
 ///
