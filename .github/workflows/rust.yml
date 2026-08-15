@@ -124,15 +124,21 @@ jobs:
         #
         # A runner-budget cap, not a bound above the retry loop's worst
         # case. It was the latter when this was five examples at 120s/180s;
-        # seven examples with 300s/420s/660s wrappers put the pathological
-        # case at ~128min, well over this. That is deliberate: the per-attempt
-        # `timeout` below is what attributes a hang to an example by name,
-        # and it does that job whenever a *small* number of examples hang,
-        # which is every case observed. A pileup big enough to reach 30min
-        # is a different failure, and a step-level timeout is the accepted
-        # reporting for it — raising this ceiling to cover the worst case
+        # with seven examples and wrappers of 300s/360s/420s/660s, three
+        # attempts apiece run well past this. That is deliberate: the
+        # per-attempt `timeout` below is what attributes a hang to an example
+        # by name, and it does that job whenever a small number of examples
+        # hang, which is every case observed. Reaching this ceiling is a
+        # different failure, and a step-level timeout is the accepted
+        # reporting for it — raising the ceiling to cover the worst case
         # would mean a wedged run burning two hours of runner before saying
         # anything.
+        #
+        # repo_auditor can reach it unaccompanied (3 x 660s is 33min), so
+        # this is not only a pileup case. Attribution survives even then:
+        # its per-attempt `::warning::` timed-out lines print as they go,
+        # and only the terminal failed-N-times line is lost to the step
+        # timeout.
         timeout-minutes: 30
         run: |
           set -eo pipefail
@@ -179,7 +185,7 @@ jobs:
           #   antigravity_agent   3 x 120s = 360             —  <  420
           #   repo_auditor        1 x 600s = 600             —  <  660
           #   proactive_agent     2 x 120s = 240      30s poll  <  360
-          #   session_resume      2 x 120s = 240     2nd spawn  <  300
+          #   session_resume      2 x 120s = 240     2nd spawn  <  360
           #   workspace_explorer  1 x 120s = 120             —  <  300
           #   mcp_toolbelt        1 x 120s = 120             —  <  300
           #   cancellable_turn    1 x 180s = 180             —  <  300
@@ -189,7 +195,10 @@ jobs:
           # the link step and spawn — thin enough that a cold runner could
           # fire the wrapper on a run that stayed inside every budget the
           # example declares. session_resume spawns a second harness to
-          # prove resume works, so it pays that cost twice against its 60s.
+          # prove resume works, and at 300s its 60s of headroom would have
+          # covered two spawns at that same ~30s apiece — so it gets the
+          # same treatment, rather than a story about why a second spawn is
+          # cheaper to absorb than the poll was.
           #
           # Re-check this table when an example gains a turn, changes its
           # budget, or waits on anything outside a turn; every one declares
@@ -220,6 +229,9 @@ jobs:
               # Two turns at 120s, plus up to 30s polling out-of-turn for
               # the trigger delivery.
               proactive_agent) budget=360 ;;
+              # Two turns at 120s, and it spawns a second harness to prove
+              # resume works — two spawns to absorb, not one.
+              session_resume) budget=360 ;;
               # The rest are single-turn at 120s, or 180s for cancellable_turn.
               *) budget=300 ;;
             esac

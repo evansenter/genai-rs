@@ -82,7 +82,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Serving tools from: {}\n", server_script.display());
 
     let mut agent = AntigravityAgent::builder()
-        // The builder default is *unlimited*; always set a budget.
+        // Tighter than the 300s DEFAULT_TURN_TIMEOUT an unset budget now
+        // resolves to: this example should fail fast, not sit for five
+        // minutes. `without_turn_timeout()` is what opts out entirely.
         .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(api_key)
         .with_model(genai_rs::DEFAULT_MODEL)

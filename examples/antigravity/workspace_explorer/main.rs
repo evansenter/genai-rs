@@ -116,9 +116,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let post_audit = Arc::clone(&audit);
 
     let mut agent = AntigravityAgent::builder()
-        // The builder default is *unlimited*. Always set a budget: the
-        // failure mode without one is a turn that never ends (a harness
-        // that renames its terminal state does exactly this), which hangs
+        // Tighter than the 300s DEFAULT_TURN_TIMEOUT an unset budget now
+        // resolves to. Set one deliberately either way: with no budget at
+        // all — `without_turn_timeout()` — a turn that never ends (a
+        // harness that renames its terminal state does exactly this) hangs
         // rather than errors.
         .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(api_key)
