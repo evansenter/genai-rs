@@ -90,6 +90,11 @@ jobs:
       # by hand, not by any test. Both finish in seconds.
       - name: Smoke-run antigravity examples
         if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        # Belt and braces alongside the examples' own with_turn_timeout: a
+        # harness that stops signalling turn completion hangs rather than
+        # errors, and an unbounded step would burn the runner's full budget
+        # instead of going red.
+        timeout-minutes: 15
         run: |
           set -eo pipefail
           for ex in session_resume workspace_explorer; do

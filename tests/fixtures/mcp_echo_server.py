@@ -36,6 +36,11 @@ TOOLS = [
 ]
 
 # The marker the test greps for. Arbitrary on purpose.
+#
+# Duplicated as WIDGET_CODE in test_antigravity_mcp_server_tool_is_called
+# (tests/antigravity_harness.rs) — change both together. Getting it wrong
+# fails loudly rather than silently: the assertion prints the expected
+# token alongside the model's response.
 WIDGET_CODE = "wibble-3317-quux"
 
 

@@ -1151,6 +1151,38 @@ mod filter_tests {
     }
 
     #[test]
+    fn payload_keys_names_the_message_and_labels_the_empty_case() {
+        use super::LoudWirePrinter;
+
+        // The case that matters: envelope and payload keys together must
+        // render as the payload alone, using the same `is_envelope_key`
+        // filter selection uses. A divergence between what a summary shows
+        // and what a selector matches would surface here first.
+        assert_eq!(
+            LoudWirePrinter::payload_keys(&json!({
+                "seqNum": "7",
+                "timestampMicros": "1",
+                "stepUpdate": {"text": "hi"},
+            })),
+            "stepUpdate"
+        );
+
+        // A real message whose only content is usage — not a bug, so it
+        // gets a label rather than a blank detail column. Neutral wording
+        // because this renders HTTP bodies too.
+        assert_eq!(
+            LoudWirePrinter::payload_keys(&json!({"seqNum": "7", "usageUpdate": {"total": {}}})),
+            "(no payload keys)"
+        );
+
+        // Non-JSON frames arrive as a bare string.
+        assert_eq!(
+            LoudWirePrinter::payload_keys(&json!("not an object")),
+            "(non-object)"
+        );
+    }
+
+    #[test]
     fn env_inspector_applies_the_filter_from_the_variable() {
         use super::env_inspector;
 

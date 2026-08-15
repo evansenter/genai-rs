@@ -136,6 +136,11 @@ async fn run_one(
     id_file: &Path,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut agent = AntigravityAgent::builder()
+        // The builder default is *unlimited*. Always set a budget: the
+        // failure mode without one is a turn that never ends (a harness
+        // that renames its terminal state does exactly this), which hangs
+        // rather than errors.
+        .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(api_key.to_string())
         .with_model("gemini-3.6-flash")
         .with_system_instructions(
@@ -186,6 +191,7 @@ async fn run_two(
     println!("Resuming conversation: {conversation_id}");
 
     let mut agent = AntigravityAgent::builder()
+        .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(api_key.to_string())
         .with_model("gemini-3.6-flash")
         .with_system_instructions(

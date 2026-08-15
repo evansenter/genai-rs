@@ -106,7 +106,10 @@ mod basic {
             return;
         };
 
-        with_timeout(test_timeout(), async {
+        // Extended, not the 60s default: two retried calls plus their round
+        // trips can exceed it on a slow API day, and the surface would then
+        // be an opaque harness timeout instead of the underlying error.
+        with_timeout(extended_test_timeout(), async {
             let response1 = retry_request!([client] => {
                 stateful_builder(&client)
                     .with_text("My favorite color is blue.")

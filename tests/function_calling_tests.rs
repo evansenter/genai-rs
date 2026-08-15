@@ -464,12 +464,14 @@ mod parallel {
                 .required(vec!["timezone".to_string()])
                 .build();
 
-            let response1 = stateful_builder(&client)
-                .with_text("Tell me BOTH the weather in Paris AND the time in CET. Call both functions.")
-                .add_functions(vec![get_weather, get_time])
-                .create()
-                .await
-                .expect("First interaction failed");
+            let response1 = retry_request!([client, get_weather, get_time] => {
+                stateful_builder(&client)
+                    .with_text("Tell me BOTH the weather in Paris AND the time in CET. Call both functions.")
+                    .add_functions(vec![get_weather.clone(), get_time.clone()])
+                    .create()
+                    .await
+            })
+            .expect("First interaction failed");
 
             let calls = response1.function_calls();
             if calls.is_empty() {
@@ -495,12 +497,15 @@ mod parallel {
 
             println!("Sending {} function result(s) WITHOUT resending tools", results.len());
 
-            let response2 = stateful_builder(&client)
-                .with_previous_interaction(response1.id.as_ref().expect("id should exist"))
-                .with_history(results)
-                .create()
-                .await
-                .expect("Parallel results turn failed - tools should not be required");
+            let prev_id = response1.id.clone().expect("id should exist");
+            let response2 = retry_request!([client, prev_id, results] => {
+                stateful_builder(&client)
+                    .with_previous_interaction(&prev_id)
+                    .with_history(results.clone())
+                    .create()
+                    .await
+            })
+            .expect("Parallel results turn failed - tools should not be required");
 
             println!("Step 2 status: {:?}", response2.status);
             if response2.has_text() {

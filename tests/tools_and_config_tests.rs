@@ -727,11 +727,13 @@ mod structured_output {
             "required": ["name", "age", "email"]
         });
 
-        let result = stateful_builder(&client)
-            .with_text("Generate a fake user profile with a name, age, and email address.")
-            .with_response_format(schema)
-            .create()
-            .await;
+        let result = retry_request!([client, schema] => {
+            stateful_builder(&client)
+                .with_text("Generate a fake user profile with a name, age, and email address.")
+                .with_response_format(schema.clone())
+                .create()
+                .await
+        });
 
         let response = result.expect("Structured output request should succeed");
         assert_eq!(response.status, InteractionStatus::Completed);
