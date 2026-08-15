@@ -1055,7 +1055,7 @@ mod tests {
         // and that an agent-targeting interaction stays quiet.
         let messages = crate::test_subscriber::capture_messages(|| {
             let interaction = crate::request::InteractionRequest {
-                model: Some("gemini-3.6-flash".to_string()),
+                model: Some("test-model".to_string()),
                 input: InteractionInput::Text("Daily audit".to_string()),
                 ..Default::default()
             };

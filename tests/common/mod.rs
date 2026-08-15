@@ -192,7 +192,7 @@ where
 /// ```ignore
 /// let response = retry_on_any_error(2, Duration::from_secs(2), || async {
 ///     let resp = client.interaction()
-///         .with_model("gemini-3.1-flash-image")
+///         .with_model(genai_rs::DEFAULT_IMAGE_MODEL)
 ///         .with_text("Generate an image of a cat")
 ///         .create()
 ///         .await?;
@@ -823,20 +823,14 @@ pub const TINY_PDF_BASE64: &str = "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZ
 // Test Fixture Builders (Issue #82)
 // =============================================================================
 
-/// Default model used across all tests.
-pub const DEFAULT_MODEL: &str = "gemini-3.6-flash";
-
-/// Model for tests that send **inline (base64) video bytes**.
-///
-/// Verified live 2026-08-10: [`DEFAULT_MODEL`] rejects inline video with
-/// `400 invalid_request` while accepting video by URI — `test_video_input_from_uri`
-/// passes on it, and the four inline-video tests do not (three in
-/// `multimodal_tests.rs`, one in `temp_file_tests.rs`). Pinning those to a
-/// model that accepts the inline form keeps them testing *the bytes path*
-/// rather than the default model's appetite for it; every other modality
-/// (image, audio, PDF) works on the default.
-#[allow(dead_code)]
-pub const VIDEO_INLINE_MODEL: &str = "gemini-3-flash-preview";
+// Inline-video tests reference `genai_rs::INLINE_VIDEO_MODEL` directly
+// rather than an alias here. Verified live on `gemini-3.6-flash`
+// (2026-08-10) and again on `gemini-3.7-flash` (2026-08-15):
+// `genai_rs::DEFAULT_MODEL` rejects inline video with `400 invalid_request`
+// while accepting video by URI — `test_video_input_from_uri` passes on it,
+// and the four inline-video tests do not (three in `multimodal_tests.rs`,
+// one in `temp_file_tests.rs`). Every other modality (image, audio, PDF)
+// works on the default.
 
 /// Creates a pre-configured interaction builder with the default model.
 ///
@@ -856,7 +850,7 @@ pub const VIDEO_INLINE_MODEL: &str = "gemini-3-flash-preview";
 /// ```
 #[allow(dead_code)]
 pub fn interaction_builder(client: &Client) -> genai_rs::InteractionBuilder<'_> {
-    client.interaction().with_model(DEFAULT_MODEL)
+    client.interaction().with_model(genai_rs::DEFAULT_MODEL)
 }
 
 /// Creates a stateful interaction builder with storage enabled.

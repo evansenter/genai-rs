@@ -36,7 +36,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // -------------------------------------------------------------------
     let vertex_request = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_text("What does our handbook say about vacation policy?")
         .add_tool(
             RetrievalConfig::new().with_vertex_ai_search(
@@ -57,7 +57,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // -------------------------------------------------------------------
     let rag_request = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_text("Summarize the design documents about caching")
         .add_tool(
             RetrievalConfig::new().with_rag_store(
@@ -88,7 +88,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // -------------------------------------------------------------------
     let exa_request = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_text("Find recent papers on speculative decoding")
         .add_tool(
             RetrievalConfig::new().with_exa_ai_search(

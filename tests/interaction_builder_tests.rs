@@ -11,9 +11,7 @@
 //! - **multimodal**: add_* methods for images, audio, video, documents
 
 mod common;
-
 mod basic {
-    use crate::common::DEFAULT_MODEL;
     use genai_rs::{
         Client, Content, FunctionDeclaration, GenerationConfig, InteractionInput, ThinkingLevel,
     };
@@ -38,7 +36,7 @@ mod basic {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_input(complex_input);
 
         // Verify the builder stored the complex input correctly
@@ -62,7 +60,7 @@ mod basic {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_agent("my-agent")
             .with_text("Hello");
 
@@ -81,7 +79,7 @@ mod basic {
 
         let _builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text(&long_text);
 
         // Builder accepts large text inputs without size validation
@@ -96,7 +94,7 @@ mod basic {
 
         let _builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text(unicode_text);
 
         // Builder handles Unicode and multi-byte characters correctly
@@ -107,7 +105,10 @@ mod basic {
         // Test with empty string input
         let client = Client::new("test-api-key".to_string());
 
-        let _builder = client.interaction().with_model(DEFAULT_MODEL).with_text("");
+        let _builder = client
+            .interaction()
+            .with_model(genai_rs::DEFAULT_MODEL)
+            .with_text("");
 
         // Builder allows empty string inputs without validation
     }
@@ -119,7 +120,7 @@ mod basic {
 
         let mut builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Test");
 
         // Add 10 functions
@@ -152,7 +153,7 @@ mod basic {
 
         let _builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Test")
             .with_generation_config(config);
 
@@ -187,7 +188,7 @@ mod basic {
 
         let _builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Generate a person")
             .with_response_format(complex_schema);
 
@@ -213,7 +214,7 @@ mod basic {
 
         let _builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Complex query")
             .with_system_instruction("Be helpful")
             .add_function(func)
@@ -232,7 +233,7 @@ mod basic {
 
         let _builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Test 1")
             .with_text("Test 2") // Overwrites previous text
             .with_system_instruction("Instruction 1")
@@ -251,7 +252,7 @@ mod basic {
         // Basic request
         let basic = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Hello")
             .with_system_instruction("Focus on Rust");
 
@@ -261,7 +262,7 @@ mod basic {
         // With previous interaction (follow-up)
         let followup = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Continue")
             .with_previous_interaction("prev-id")
             .with_system_instruction("Focus on testing");
@@ -275,7 +276,7 @@ mod basic {
         // With store disabled
         let store_disabled = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Quick query")
             .with_store_disabled()
             .with_system_instruction("Be concise");
@@ -291,7 +292,7 @@ mod basic {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Continue")
             .with_previous_interaction("prev-id")
             .with_system_instruction("You are a helpful coding assistant");
@@ -311,7 +312,7 @@ mod basic {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Hello")
             .with_system_instruction("First instruction")
             .with_system_instruction("Second instruction");
@@ -326,7 +327,6 @@ mod basic {
 }
 
 mod validation {
-    use crate::common::DEFAULT_MODEL;
     use genai_rs::Client;
 
     #[test]
@@ -334,7 +334,7 @@ mod validation {
         // Verify that build fails when no input is provided
         let client = Client::new("test-api-key".to_string());
 
-        let builder = client.interaction().with_model(DEFAULT_MODEL);
+        let builder = client.interaction().with_model(genai_rs::DEFAULT_MODEL);
 
         let result = builder.build();
 
@@ -374,20 +374,19 @@ mod validation {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Hello");
 
         let result = builder.build();
         assert!(result.is_ok());
 
         let request = result.unwrap();
-        assert_eq!(request.model.as_deref(), Some(DEFAULT_MODEL));
+        assert_eq!(request.model.as_deref(), Some(genai_rs::DEFAULT_MODEL));
         assert!(request.agent.is_none());
     }
 }
 
 mod tools {
-    use crate::common::DEFAULT_MODEL;
     use genai_rs::{Client, FunctionDeclaration, Tool};
 
     #[test]
@@ -397,7 +396,7 @@ mod tools {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("What's the weather today?")
             .with_google_search();
 
@@ -424,7 +423,7 @@ mod tools {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("What's the weather today?")
             .add_function(func)
             .with_google_search();
@@ -449,7 +448,7 @@ mod tools {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Calculate the factorial of 10")
             .with_code_execution();
 
@@ -472,7 +471,7 @@ mod tools {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Search for prime numbers and calculate the first 10")
             .with_code_execution()
             .with_google_search();
@@ -497,7 +496,7 @@ mod tools {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Summarize the content from https://example.com")
             .with_url_context();
 
@@ -523,7 +522,7 @@ mod tools {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Fetch and analyze https://example.com")
             .add_function(func)
             .with_url_context();
@@ -548,7 +547,7 @@ mod tools {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Use all tools")
             .with_google_search()
             .with_code_execution()
@@ -569,7 +568,6 @@ mod tools {
 }
 
 mod edge_cases {
-    use crate::common::DEFAULT_MODEL;
     use genai_rs::{Client, FunctionDeclaration};
 
     #[test]
@@ -618,7 +616,10 @@ mod edge_cases {
         // Verify that empty text is allowed (API will validate)
         let client = Client::new("test-api-key".to_string());
 
-        let builder = client.interaction().with_model(DEFAULT_MODEL).with_text("");
+        let builder = client
+            .interaction()
+            .with_model(genai_rs::DEFAULT_MODEL)
+            .with_text("");
 
         let result = builder.build();
         // Empty text should be accepted at builder level
@@ -632,7 +633,7 @@ mod edge_cases {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Continue conversation")
             .with_previous_interaction("prev-interaction-123");
 
@@ -657,7 +658,7 @@ mod edge_cases {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Call functions")
             .add_function(func)
             .with_max_function_call_loops(5);
@@ -669,7 +670,6 @@ mod edge_cases {
 }
 
 mod multimodal {
-    use crate::common::DEFAULT_MODEL;
     use genai_rs::{
         Client, Content, FunctionDeclaration, GenerationConfig, InteractionInput, Tool,
         detect_mime_type,
@@ -697,7 +697,7 @@ mod multimodal {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_content(vec![Content::image_data("base64data", "image/jpeg")]);
 
         let result = builder.build();
@@ -725,7 +725,7 @@ mod multimodal {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_content(vec![
                 Content::text("Analyze this image"),
                 Content::image_data("base64data", "image/png"),
@@ -762,7 +762,7 @@ mod multimodal {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_content(vec![
                 Content::image_data("img1", "image/jpeg"),
                 Content::image_data("img2", "image/png"),
@@ -787,7 +787,7 @@ mod multimodal {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_content(vec![
                 Content::text("Describe this image"),
                 Content::from_uri_and_mime("gs://bucket/image.jpg", "image/jpeg"),
@@ -817,7 +817,7 @@ mod multimodal {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_content(vec![Content::audio_data("audiodata", "audio/wav")]);
 
         let result = builder.build();
@@ -843,7 +843,7 @@ mod multimodal {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_content(vec![Content::video_data("videodata", "video/mp4")]);
 
         let result = builder.build();
@@ -869,7 +869,7 @@ mod multimodal {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_content(vec![Content::document_data("pdfdata", "application/pdf")]);
 
         let result = builder.build();
@@ -895,7 +895,7 @@ mod multimodal {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_content(vec![
                 Content::text("Summarize this document"),
                 Content::from_uri_and_mime("gs://bucket/report.pdf", "application/pdf"),
@@ -924,7 +924,7 @@ mod multimodal {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_content(vec![
                 Content::text("Describe this audio"),
                 Content::from_uri_and_mime("gs://bucket/audio.mp3", "audio/mp3"),
@@ -954,7 +954,7 @@ mod multimodal {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_content(vec![
                 Content::text("Describe this video"),
                 Content::from_uri_and_mime("gs://bucket/video.mp4", "video/mp4"),
@@ -997,7 +997,7 @@ mod multimodal {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_content(vec![
                 Content::text("Analyze this image and describe it"),
                 Content::image_data("imagedata", "image/jpeg"),
@@ -1041,7 +1041,7 @@ mod multimodal {
 
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_content(vec![
                 Content::text("First"),
                 Content::image_data("second", "image/jpeg"),
@@ -1093,7 +1093,7 @@ mod multimodal {
         // Test image MIME type
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_content(vec![Content::from_uri_and_mime(
                 "https://example.com/image.png",
                 "image/png",
@@ -1117,7 +1117,7 @@ mod multimodal {
         // Test video MIME type
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_content(vec![Content::from_uri_and_mime(
                 "https://example.com/video.mp4",
                 "video/mp4",
@@ -1139,7 +1139,7 @@ mod multimodal {
         // Test document MIME type (application/pdf)
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_content(vec![Content::from_uri_and_mime(
                 "https://example.com/doc.pdf",
                 "application/pdf",
@@ -1161,7 +1161,7 @@ mod multimodal {
         // Test text/* routes to Document
         let builder = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_content(vec![Content::from_uri_and_mime(
                 "https://example.com/file.txt",
                 "text/plain",
@@ -1183,7 +1183,6 @@ mod multimodal {
 }
 
 mod new_request_options {
-    use crate::common::DEFAULT_MODEL;
     use genai_rs::{Client, FunctionCallingMode, InteractionInput, ServiceTier, Step, ToolChoice};
     use serde_json::json;
 
@@ -1199,7 +1198,7 @@ mod new_request_options {
         ] {
             let request = client
                 .interaction()
-                .with_model(DEFAULT_MODEL)
+                .with_model(genai_rs::DEFAULT_MODEL)
                 .with_text("Hello")
                 .with_service_tier(tier.clone())
                 .build()
@@ -1218,7 +1217,7 @@ mod new_request_options {
 
         let request = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Hello")
             .with_cached_content("cachedContents/xyz")
             .build()
@@ -1239,7 +1238,7 @@ mod new_request_options {
 
         let request = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Hello")
             .with_presence_penalty(0.5)
             .with_frequency_penalty(-0.25)
@@ -1274,7 +1273,7 @@ mod new_request_options {
         ] {
             let request = client
                 .interaction()
-                .with_model(DEFAULT_MODEL)
+                .with_model(genai_rs::DEFAULT_MODEL)
                 .with_text("Hello")
                 .with_tool_choice(ToolChoice::Mode(mode.clone()))
                 .build()
@@ -1298,7 +1297,7 @@ mod new_request_options {
 
         let request = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Hello")
             .with_tool_choice(ToolChoice::allowed_tools(
                 Some(FunctionCallingMode::Any),
@@ -1321,7 +1320,7 @@ mod new_request_options {
 
         let request = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Hello")
             .with_allowed_tools(vec!["get_weather".to_string(), "get_time".to_string()])
             .build()
@@ -1354,7 +1353,7 @@ mod new_request_options {
 
         let request = client
             .interaction()
-            .with_model(DEFAULT_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_history(vec![
                 Step::user_text("What is the capital of France?"),
                 Step::model_text("The capital of France is Paris."),

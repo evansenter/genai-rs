@@ -1128,8 +1128,8 @@ non-video models.
 the supported `agent_config.type` values as `dynamic`, `deep-research`,
 `code-mender`, `antigravity`. `model` is server-validated per agent — an
 unavailable value returns 404 `not_found` (observed with
-`gemini-3.6-flash`), and the agent's model catalog is not enumerable
-on a standard key.
+`gemini-3.6-flash`, and not re-checked since — the agent's model catalog
+is not enumerable on a standard key, so there is no way to).
 
 ### Visualization (Deep Research agent_config)
 
@@ -1202,7 +1202,7 @@ When adding new enums, always test the actual wire format with `curl`:
 curl -s "https://generativelanguage.googleapis.com/v1beta/interactions?key=$GEMINI_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Api-Revision: 2026-05-20" \
-  -d '{"model": "gemini-3.6-flash", "input": "test", ...}'
+  -d '{"model": "gemini-3.7-flash", "input": "test", ...}'
 ```
 
 Common patterns to try:

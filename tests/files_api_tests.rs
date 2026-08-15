@@ -3,7 +3,6 @@
 //! These tests verify file upload, listing, deletion, and integration with interactions.
 
 mod common;
-
 use genai_rs::{Client, Content};
 use std::time::Duration;
 
@@ -176,7 +175,7 @@ async fn test_file_in_interaction() {
     let response = retry_request!([client, ready_file] => {
         client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_content(vec![
                 Content::from_file(&ready_file),
                 Content::text("What city is mentioned in this document?"),
@@ -599,7 +598,7 @@ async fn test_chunked_upload_in_interaction() {
     let response = retry_request!([client, ready_file] => {
         client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_content(vec![
                 Content::from_file(&ready_file),
                 Content::text("What does the file say about a fox?"),

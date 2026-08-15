@@ -20,13 +20,13 @@ const DEMO_MP4_BASE64: &str = "AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAMWb
 async fn main() -> Result<(), Box<dyn Error>> {
     let api_key = env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY not found in environment");
     let client = Client::builder(api_key).build()?;
-    // This example is about **inline** (base64) video bytes, and the
-    // default `gemini-3.6-flash` rejects those with a 400 while accepting
-    // video by URI (verified live 2026-08-10). So it pins a model that
-    // accepts the inline form — the same reason `tests/common`'s
-    // VIDEO_INLINE_MODEL exists. If you only need video by URI, the
-    // default model is fine; see the Files API section below.
-    let model_name = "gemini-3-flash-preview";
+    // This example is about **inline** (base64) video bytes, and
+    // DEFAULT_MODEL rejects those with a 400 while accepting video by URI
+    // (verified live on gemini-3.6-flash 2026-08-10 and again on
+    // gemini-3.7-flash 2026-08-15). Hence INLINE_VIDEO_MODEL, which exists
+    // for exactly this gap. If you only need video by URI, the default
+    // model is fine; see the Files API section below.
+    let model_name = genai_rs::INLINE_VIDEO_MODEL;
 
     // =========================================================================
     // Example 1: Basic Video Analysis (Fluent Builder Pattern)
@@ -73,7 +73,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    // Using with_content() for multimodal input
    let response = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model(genai_rs::INLINE_VIDEO_MODEL)
        .with_content(vec![
            Content::text("Describe the key scenes in this video. What's happening?"),
            Content::video_data(&base64_video, "video/mp4"),
@@ -86,7 +86,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    let video = video_from_file("video.mp4").await?;
    let response = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model(genai_rs::INLINE_VIDEO_MODEL)
        .with_content(vec![
            Content::text("Describe the key scenes in this video."),
            video,
@@ -101,7 +101,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         r#"
    let response = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model(genai_rs::INLINE_VIDEO_MODEL)
        .with_content(vec![
            Content::text("List all the objects and people visible in this video.
                For each, note when they first appear (approximate timestamp)."),
@@ -117,7 +117,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         r#"
    let response = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model(genai_rs::INLINE_VIDEO_MODEL)
        .with_content(vec![
            Content::text("What actions or activities are being performed in this video?
                Describe the sequence of events."),
@@ -133,7 +133,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         r#"
    let response = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model(genai_rs::INLINE_VIDEO_MODEL)
        .with_content(vec![
            Content::text("How many people are in this video? What are they wearing?"),
            Content::video_data(&base64_video, "video/mp4"),
@@ -154,7 +154,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    // First turn: Send video and get initial analysis
    let first = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model(genai_rs::INLINE_VIDEO_MODEL)
        .with_content(vec![
            Content::text("Describe what's happening in this video."),
            Content::video_data(&base64_video, "video/mp4"),
@@ -166,7 +166,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    // Second turn: Ask follow-up (video is remembered)
    let second = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model(genai_rs::INLINE_VIDEO_MODEL)
        .with_text("What happens at the 30-second mark?")
        .with_previous_interaction(&first.id)
        .create()
@@ -175,7 +175,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    // Third turn: More specific questions
    let third = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model(genai_rs::INLINE_VIDEO_MODEL)
        .with_text("What color is the car in the background?")
        .with_previous_interaction(&second.id)
        .create()
@@ -193,7 +193,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         r#"
    let response = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model(genai_rs::INLINE_VIDEO_MODEL)
        .with_content(vec![
            Content::text("Analyze this video:
                1. What is shown visually?
@@ -277,7 +277,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    // Build the request using with_content
    let response = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model(genai_rs::INLINE_VIDEO_MODEL)
        .with_content(vec![
            Content::text("Describe what's happening in this video."),
            video_content,
@@ -300,7 +300,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    // Send with with_content
    let response = client
        .interaction()
-       .with_model("gemini-3-flash-preview")
+       .with_model(genai_rs::INLINE_VIDEO_MODEL)
        .with_content(vec![
            Content::text("Describe what's happening in this video."),
            Content::video_data(&base64_video, "video/mp4"),

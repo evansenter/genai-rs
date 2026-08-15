@@ -92,7 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // whether cancellation worked.
         .with_turn_timeout(TURN_BUDGET)
         .with_api_key(api_key)
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_capabilities(Capabilities::none())
         .spawn()
         .await?;

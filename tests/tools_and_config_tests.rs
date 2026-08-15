@@ -1247,7 +1247,7 @@ mod image_generation {
             async move {
                 let response = client
                     .interaction()
-                    .with_model("gemini-3.1-flash-image")
+                    .with_model(genai_rs::DEFAULT_IMAGE_MODEL)
                     .with_text("Generate a simple image of a red circle on a white background.")
                     .with_response_modalities(vec!["image".to_string()])
                     .with_store_enabled()
@@ -1316,6 +1316,7 @@ mod thinking {
         // encountered." at create time, which is_retryable already covers.
         let response = retry_request!([client, config] => {
             stateful_builder(&client)
+                .with_model(genai_rs::MINIMAL_THINKING_MODEL)
                 .with_text("What is 2 + 2?")
                 .with_generation_config(config)
                 .create()
@@ -1434,9 +1435,12 @@ mod sampling {
         let config = GenerationConfig {
             temperature: Some(1.0),
             // Headroom, deliberately: this test is about `top_p`, not
-            // truncation. gemini-3.6-flash spends ~100 thinking tokens on
-            // even this trivial prompt (verified live 2026-08-10: ~99-102
-            // total for a 1-token answer), so the old 100-token cap made
+            // truncation. These models spend ~100 thinking tokens on even
+            // this trivial prompt (measured on gemini-3.6-flash, verified
+            // live 2026-08-10: ~99-102 total for a 1-token answer; not
+            // re-measured on 3.7, which is why the number names the model
+            // it came from — the headroom holds either way), so the old
+            // 100-token cap made
             // "is there any text left?" a coin flip rather than a top_p
             // assertion — the same fix as its siblings
             // `test_generation_config_temperature` (100 -> 2000) and
@@ -1624,7 +1628,7 @@ mod config_fields {
         // Raw request: the typed InteractionRequest no longer carries the
         // field, so build the JSON body directly.
         let body = json!({
-            "model": "gemini-3.6-flash",
+            "model": genai_rs::DEFAULT_MODEL,
             "input": "Generate a greeting in Spanish.",
             "response_mime_type": "application/json",
         });

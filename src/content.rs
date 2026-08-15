@@ -1676,7 +1676,7 @@ impl Content {
     /// let content = Content::from_file(&file);
     ///
     /// let response = client.interaction()
-    ///     .with_model("gemini-3.6-flash")
+    ///     .with_model(genai_rs::DEFAULT_MODEL)
     ///     .with_content(vec![
     ///         Content::text("Describe this video"),
     ///         content,

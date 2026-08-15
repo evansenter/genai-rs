@@ -115,7 +115,7 @@ impl WebResearchAgent {
         let response = self
             .client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_system_instruction(
                 "You are a professional research analyst. Synthesize information from \
                  multiple sources, verify facts when possible, and clearly indicate \
@@ -191,7 +191,7 @@ impl WebResearchAgent {
         let response = self
             .client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_system_instruction(
                 "You are a market research analyst. Provide accurate, up-to-date \
                  competitive intelligence. Focus on verifiable facts and recent \
@@ -221,7 +221,7 @@ impl WebResearchAgent {
         let mut stream = self
             .client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_system_instruction(
                 "You are a research assistant. Provide well-sourced, accurate information. \
                  Organize your response with clear sections and cite sources inline.",
@@ -273,7 +273,7 @@ impl WebResearchAgent {
         let response = self
             .client
             .interaction()
-            .with_model("gemini-3.6-flash")
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_system_instruction(
                 "You are a fact-checker. Verify claims using reliable sources. \
                  Be objective and cite your sources. If evidence is inconclusive, \

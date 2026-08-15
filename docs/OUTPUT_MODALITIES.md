@@ -38,7 +38,7 @@ Text is the default output modality - no special configuration needed.
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Explain quantum computing")
     .create()
     .await?;
@@ -67,7 +67,7 @@ Generate images from text prompts.
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3.1-flash-image")  // Image generation model required
+    .with_model(genai_rs::DEFAULT_IMAGE_MODEL)  // Image generation model required
     .with_text("A sunset over mountains, digital art style")
     .with_image_output()
     .create()
@@ -128,7 +128,7 @@ Convert text to spoken audio.
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-2.5-pro-preview-tts")  // TTS model required
+    .with_model(genai_rs::DEFAULT_TTS_MODEL)  // TTS model required
     .with_text("Hello, welcome to genai-rs!")
     .with_audio_output()
     .with_voice("Kore")
@@ -158,7 +158,7 @@ Available voices include:
 // Simple voice selection
 let response = client
     .interaction()
-    .with_model("gemini-2.5-pro-preview-tts")
+    .with_model(genai_rs::DEFAULT_TTS_MODEL)
     .with_text("Welcome to our service")
     .with_audio_output()
     .with_voice("Puck")
@@ -180,7 +180,7 @@ let config = SpeechConfig {
 
 let response = client
     .interaction()
-    .with_model("gemini-2.5-pro-preview-tts")
+    .with_model(genai_rs::DEFAULT_TTS_MODEL)
     .with_text("Good morning, everyone!")
     .with_audio_output()
     .with_speech_config(config)
@@ -231,7 +231,7 @@ use genai_rs::SpeechConfig;
 
 let response = client
     .interaction()
-    .with_model("gemini-2.5-pro-preview-tts")
+    .with_model(genai_rs::DEFAULT_TTS_MODEL)
     .with_text("Alice: Hi Bob!\nBob: Hey Alice, lovely day!")
     .with_audio_output()
     .with_speech_configs(vec![
@@ -304,7 +304,7 @@ use serde_json::json;
 
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Generate a user profile for John Doe, age 30")
     .with_response_format(json!({
         "type": "object",
@@ -350,7 +350,7 @@ let schema = json!({
 
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("List 3 popular smartphones with prices")
     .with_response_format(schema)
     .create()
@@ -384,7 +384,7 @@ Structured output works with built-in tools:
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("What's the weather in Tokyo?")
     .with_google_search()
     .with_response_format(json!({
@@ -431,7 +431,7 @@ let image = ResponseFormat::Image {
 // List form: one format per requested modality
 let response = client
     .interaction()
-    .with_model("gemini-3.1-flash-image")
+    .with_model(genai_rs::DEFAULT_IMAGE_MODEL)
     .with_text("A labeled diagram of a volcano")
     .with_response_formats(vec![ResponseFormat::text_plain(), image])
     .create()
@@ -452,7 +452,7 @@ The structured output still uses text modality internally:
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Analyze this sentiment")
     .with_response_format(sentiment_schema)
     .create()
@@ -555,17 +555,17 @@ for content in response.thought_summaries() {
 ```rust,ignore
 // Image generation - requires image model
 client.interaction()
-    .with_model("gemini-3.1-flash-image")  // Correct
+    .with_model(genai_rs::DEFAULT_IMAGE_MODEL)  // Correct
     .with_image_output()
 
 // TTS - requires TTS model
 client.interaction()
-    .with_model("gemini-2.5-pro-preview-tts")  // Correct
+    .with_model(genai_rs::DEFAULT_TTS_MODEL)  // Correct
     .with_audio_output()
 
 // Text/JSON - any model works
 client.interaction()
-    .with_model("gemini-3.6-flash")  // Standard model fine
+    .with_model(genai_rs::DEFAULT_MODEL)  // Standard model fine
     .with_response_format(schema)
 ```
 

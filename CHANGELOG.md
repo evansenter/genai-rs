@@ -5,6 +5,74 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Model constants — one place to change the model.** `DEFAULT_MODEL`,
+  `INLINE_VIDEO_MODEL`, `MINIMAL_THINKING_MODEL`, `DEFAULT_IMAGE_MODEL` and
+  `DEFAULT_TTS_MODEL` are now public, and every test, example, doctest and
+  doc snippet references them instead of a string literal.
+
+  Bumping the model previously meant editing ~590 occurrences of the text
+  model plus 27 image and 35 TTS, with no single source of truth. A sweep
+  that size reliably misses a few, and a missed one is invisible: the test
+  keeps passing against a model nobody meant to still be using, until that
+  model is retired and the failure arrives with no obvious cause. It is now
+  a one-line change.
+
+  A new `tests/model_literals.rs` guard fails on any hardcoded
+  `"gemini-<digit>"` outside those constants, so it cannot silently
+  regress. In-crate unit tests use either the constants or an obviously
+  synthetic `"test-model"` — they exercise serialization round-trips and
+  never cared which model, so neither form is a bump site.
+
+### Changed (breaking)
+
+- **`AgentBuilder`'s per-turn budget defaults to `DEFAULT_TURN_TIMEOUT`
+  (300s) instead of being unlimited.** An unbounded turn does not fail when
+  the harness stops signalling completion — it *hangs*, which is strictly
+  less diagnosable than an error and looks identical to latency. That is
+  the exact shape of the 0.1.10 break this crate just shipped a fix for.
+  `without_turn_timeout()` restores the old behavior explicitly.
+
+### Changed
+
+- **Antigravity examples moved to `examples/antigravity/`.** All seven —
+  the `agent.rs` starter (was `examples/antigravity_agent.rs`) and the six
+  projects (was `examples/real_world/*`) — now sit in one directory,
+  mirroring `src/antigravity/`. They share a setup story the rest of
+  `examples/` does not: every one needs the `antigravity` feature *and* the
+  `localharness` binary. Example **names are unchanged**, so
+  `cargo run --example repo_auditor --features antigravity` still works;
+  only paths moved. The group has its own
+  [README](examples/antigravity/README.md), and `examples/real_world/`
+  points at it.
+
+- **Default model is now `gemini-3.7-flash`** (from `gemini-3.6-flash`).
+  Thinking cost on a trivial prompt is unchanged (68 vs 67 tokens), so the
+  `max_output_tokens` headroom in the sampling tests still holds. The full
+  live suite was run against it — 208 integration tests — which surfaced
+  two capability gaps, neither of which unit tests could have shown:
+
+  - **Inline (base64) video is rejected** with the same `400
+    invalid_request` as 3.6, while video by URI works. `INLINE_VIDEO_MODEL`
+    remains necessary; the bump does not close that gap.
+  - **`ThinkingLevel::Minimal` is rejected**: *"'minimal' is not a
+    supported thinking level for this model. Allowed values are: high, low,
+    medium."* `gemini-3.6-flash` and `gemini-3.5-flash` still accept it.
+    The variant stays valid — model support is what varies — and the new
+    `MINIMAL_THINKING_MODEL` constant pins the test so it keeps exercising
+    the `minimal` wire path.
+
+- **`LOUD_WIRE` summary labels are scoped to received harness frames.**
+  Outgoing `InputEvent` arms have no actions, so qualifying them produced
+  `questionResponse/response` and collided with `response`, the HTTP
+  category selector. Envelope stripping is likewise harness-only:
+  `usageMetadata` is bookkeeping on that wire but a real field on a Gemini
+  HTTP response, where stripping it could render a body as
+  `(no payload keys)`.
+
 ## [0.9.0] - 2026-08-10
 
 ### Changed (breaking)

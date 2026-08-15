@@ -21,6 +21,7 @@ use genai_rs::antigravity::{
     AgentEvent, AntigravityAgent, BuiltinTool, Capabilities, QuestionAnswer, QuestionReply, policy,
 };
 use genai_rs_macros::tool;
+use std::time::Duration;
 
 /// Returns the current weather for a city.
 #[tool(city(description = "The city to get weather for"))]
@@ -31,7 +32,16 @@ fn get_weather(city: String) -> String {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY not set");
+    let api_key = match std::env::var("GEMINI_API_KEY") {
+        Ok(key) if !key.trim().is_empty() => key,
+        _ => {
+            // Empty counts as absent: a fork push gets the secret as ""
+            // rather than unset, and spawning with it fails mid-turn
+            // instead of skipping.
+            println!("Skipping: GEMINI_API_KEY not set");
+            return Ok(());
+        }
+    };
 
     println!("=== Antigravity Agent ===\n");
 
@@ -39,12 +49,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Policies are evaluated Rust-side before every tool dispatch.
     let mut agent = AntigravityAgent::builder()
         .with_api_key(api_key)
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_system_instructions(
             "You are a concise assistant. Prefer tools over guessing. When a request is \
              ambiguous (e.g. no city given for weather), use ask_question to clarify \
              instead of assuming.",
         )
+        // Explicit, though DEFAULT_TURN_TIMEOUT (300s) would already bound
+        // these: the budget is per *turn*, and this example takes three, so
+        // leaving it implicit makes the worst legal run 900s — more than
+        // anything wrapping the process can reasonably sit above. Every
+        // other harness example declares one for the same reason.
+        .with_turn_timeout(Duration::from_secs(120))
         // read_only() does not include AskQuestion — enable it explicitly
         // so the on_questions hook below is reachable.
         .with_capabilities(Capabilities::read_only().enable(BuiltinTool::AskQuestion))
@@ -176,7 +192,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "• Call agent.shutdown() for graceful exit; dropping kills the harness without persistence"
     );
     println!("• Use with_save_dir + conversation_id() to resume sessions across runs");
-    println!("• Set with_turn_timeout to bound runaway agent turns");
+    println!(
+        "• Turns are bounded at {}s by default (DEFAULT_TURN_TIMEOUT); \
+with_turn_timeout raises or lowers it, without_turn_timeout removes it",
+        genai_rs::antigravity::DEFAULT_TURN_TIMEOUT.as_secs()
+    );
 
     Ok(())
 }

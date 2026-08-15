@@ -20,7 +20,7 @@ use super::*;
 fn test_deserialize_interaction_response_completed() {
     let response_json = r#"{
         "id": "interaction_123",
-        "model": "gemini-3.6-flash",
+        "model": "test-model",
         "steps": [
             {"type": "user_input", "content": [{"type": "text", "text": "Hello"}]},
             {"type": "model_output", "content": [{"type": "text", "text": "Hi there!"}]}
@@ -37,7 +37,7 @@ fn test_deserialize_interaction_response_completed() {
         serde_json::from_str(response_json).expect("Deserialization failed");
 
     assert_eq!(response.id.as_deref(), Some("interaction_123"));
-    assert_eq!(response.model.as_deref(), Some("gemini-3.6-flash"));
+    assert_eq!(response.model.as_deref(), Some("test-model"));
     assert_eq!(response.status, InteractionStatus::Completed);
     assert_eq!(response.steps.len(), 2);
     assert_eq!(response.as_text(), Some("Hi there!"));
@@ -132,7 +132,7 @@ fn test_usage_metadata_grounding_tool_count() {
 fn test_interaction_response_text() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![Step::model_output(vec![
             Content::text("Hello"),
@@ -166,7 +166,7 @@ fn test_interaction_response_text_output_text_fallback() {
 fn test_interaction_response_thoughts() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::thought("sig_1"),
@@ -196,7 +196,7 @@ fn test_interaction_response_thoughts() {
 fn test_interaction_response_no_thoughts() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![Step::model_text("Just text, no thoughts.")],
         ..Default::default()
@@ -230,7 +230,7 @@ fn test_interaction_response_thought_summaries() {
 fn test_interaction_response_function_calls() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::function_call(
@@ -272,7 +272,7 @@ fn test_function_call_step_without_id_becomes_unknown() {
     // Step::Unknown with the data preserved.
     let response_json = r#"{
         "id": "test_id",
-        "model": "gemini-3.6-flash",
+        "model": "test-model",
         "steps": [
             {"type": "function_call", "name": "get_weather", "arguments": {"location": "Tokyo"}}
         ],
@@ -294,7 +294,7 @@ fn test_function_call_step_without_id_becomes_unknown() {
 fn test_interaction_response_mixed_content() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::model_text("Let me check"),
@@ -315,7 +315,7 @@ fn test_interaction_response_mixed_content() {
 fn test_interaction_response_empty_steps() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![],
         ..Default::default()
@@ -334,7 +334,7 @@ fn test_interaction_response_empty_steps() {
 fn test_interaction_response_has_unknown() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::model_text("Here's the result:"),
@@ -363,7 +363,7 @@ fn test_interaction_response_has_unknown() {
 fn test_interaction_response_no_unknown() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![Step::model_text("Normal response")],
         ..Default::default()
@@ -379,7 +379,7 @@ fn test_interaction_response_no_unknown() {
 fn test_step_summary() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::model_output(vec![Content::text("Text 1"), Content::text("Text 2")]),
@@ -417,7 +417,7 @@ fn test_step_summary() {
 fn test_step_summary_empty() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![],
         ..Default::default()
@@ -473,7 +473,7 @@ fn test_step_summary_display_with_unknown() {
 fn test_step_summary_with_built_in_tools() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::CodeExecutionCall {
@@ -538,7 +538,7 @@ fn test_step_summary_with_built_in_tools() {
 fn test_interaction_response_code_execution_helpers() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::model_text("Here's the code:"),
@@ -584,7 +584,7 @@ fn test_interaction_response_code_execution_helpers() {
 fn test_interaction_response_google_search_helpers() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::GoogleSearchResult {
@@ -610,7 +610,7 @@ fn test_interaction_response_google_search_helpers() {
 fn test_interaction_response_url_context_helpers() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![Step::UrlContextResult {
             call_id: "ctx_123".to_string(),
@@ -635,7 +635,7 @@ fn test_interaction_response_url_context_helpers() {
 fn test_interaction_response_google_maps_helpers() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::GoogleMapsResult {
@@ -678,7 +678,7 @@ fn test_interaction_response_google_maps_helpers() {
 fn test_interaction_response_google_maps_helpers_empty() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![Step::model_text("No maps here.")],
         ..Default::default()
@@ -694,7 +694,7 @@ fn test_interaction_response_google_maps_helpers_empty() {
 fn test_interaction_response_function_results() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::function_result(
@@ -744,7 +744,7 @@ fn test_interaction_response_function_results_text_payload() {
 fn test_interaction_response_no_function_results() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![Step::model_text("Just text")],
         ..Default::default()
@@ -760,7 +760,7 @@ fn test_interaction_response_no_function_results() {
 fn test_interaction_response_google_search_call_helpers() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::GoogleSearchCall {
@@ -799,7 +799,7 @@ fn test_interaction_response_google_search_call_helpers() {
 fn test_interaction_response_no_google_search_calls() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![Step::model_text("No search")],
         ..Default::default()
@@ -816,7 +816,7 @@ fn test_interaction_response_no_google_search_calls() {
 fn test_interaction_response_url_context_call_helpers() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::UrlContextCall {
@@ -853,7 +853,7 @@ fn test_interaction_response_url_context_call_helpers() {
 fn test_interaction_response_no_url_context_calls() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![],
         ..Default::default()
@@ -870,7 +870,7 @@ fn test_interaction_response_no_url_context_calls() {
 fn test_interaction_response_code_execution_call_singular() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::CodeExecutionCall {
@@ -902,7 +902,7 @@ fn test_interaction_response_code_execution_call_singular() {
 fn test_interaction_response_no_code_execution_call() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![Step::model_text("No code")],
         ..Default::default()
@@ -915,7 +915,7 @@ fn test_interaction_response_no_code_execution_call() {
 fn test_interaction_response_code_execution_calls_plural() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::CodeExecutionCall {
@@ -951,7 +951,7 @@ fn test_interaction_response_code_execution_calls_plural() {
 fn test_interaction_response_code_execution_results() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::CodeExecutionResult {
@@ -990,7 +990,7 @@ fn test_interaction_response_code_execution_results() {
 fn test_interaction_response_no_code_execution_results() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![Step::model_text("No code")],
         ..Default::default()
@@ -1005,7 +1005,7 @@ fn test_interaction_response_no_code_execution_results() {
 fn test_interaction_response_google_search_results() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::GoogleSearchResult {
@@ -1042,7 +1042,7 @@ fn test_interaction_response_google_search_results() {
 fn test_interaction_response_no_google_search_results() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![],
         ..Default::default()
@@ -1056,7 +1056,7 @@ fn test_interaction_response_no_google_search_results() {
 fn test_interaction_response_url_context_results() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::UrlContextResult {
@@ -1095,7 +1095,7 @@ fn test_interaction_response_url_context_results() {
 fn test_interaction_response_no_url_context_results() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![],
         ..Default::default()
@@ -1115,7 +1115,7 @@ fn test_interaction_response_complex_roundtrip() {
     // Build a response with many different step types
     let response = InteractionResponse {
         id: Some("complex-interaction-xyz".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             // Thought with signature (thinking models)
@@ -1204,10 +1204,7 @@ fn test_interaction_response_complex_roundtrip() {
         json_str.contains("complex-interaction-xyz"),
         "Should contain ID"
     );
-    assert!(
-        json_str.contains("gemini-3.6-flash"),
-        "Should contain model"
-    );
+    assert!(json_str.contains("test-model"), "Should contain model");
     assert!(
         json_str.contains("get_weather"),
         "Should contain function name"
@@ -1237,7 +1234,7 @@ fn test_interaction_response_complex_roundtrip() {
 
     // Verify top-level fields
     assert_eq!(deserialized.id.as_deref(), Some("complex-interaction-xyz"));
-    assert_eq!(deserialized.model, Some("gemini-3.6-flash".to_string()));
+    assert_eq!(deserialized.model, Some("test-model".to_string()));
     assert_eq!(deserialized.status, InteractionStatus::Completed);
     assert_eq!(
         deserialized.previous_interaction_id,
@@ -1406,7 +1403,7 @@ fn test_interaction_response_deserialize_without_id() {
     // When store=false, the API response does not include an id field.
     // This test verifies that we can deserialize such responses correctly.
     let json = r#"{
-        "model": "gemini-3.6-flash",
+        "model": "test-model",
         "steps": [{"type": "model_output", "content": [{"type": "text", "text": "Hi there!"}]}],
         "status": "completed"
     }"#;
@@ -1415,7 +1412,7 @@ fn test_interaction_response_deserialize_without_id() {
         serde_json::from_str(json).expect("Deserialization should succeed without id");
 
     assert!(response.id.is_none(), "ID should be None when not present");
-    assert_eq!(response.model, Some("gemini-3.6-flash".to_string()));
+    assert_eq!(response.model, Some("test-model".to_string()));
     assert_eq!(response.status, InteractionStatus::Completed);
     assert!(!response.steps.is_empty());
 }
@@ -1426,7 +1423,7 @@ fn test_interaction_response_deserialize_with_id() {
     // This test verifies that we can still deserialize such responses correctly.
     let json = r#"{
         "id": "interaction-abc123",
-        "model": "gemini-3.6-flash",
+        "model": "test-model",
         "steps": [{"type": "model_output", "content": [{"type": "text", "text": "Hi there!"}]}],
         "status": "completed"
     }"#;
@@ -1439,7 +1436,7 @@ fn test_interaction_response_deserialize_with_id() {
         Some("interaction-abc123"),
         "ID should be present when included"
     );
-    assert_eq!(response.model, Some("gemini-3.6-flash".to_string()));
+    assert_eq!(response.model, Some("test-model".to_string()));
     assert_eq!(response.status, InteractionStatus::Completed);
 }
 
@@ -1449,7 +1446,7 @@ fn test_interaction_response_serialize_without_id() {
     // This uses skip_serializing_if to avoid "id": null in the output.
     let response = InteractionResponse {
         id: None,
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![Step::model_text("Hello")],
         ..Default::default()
@@ -1469,7 +1466,7 @@ fn test_interaction_response_roundtrip_without_id() {
     // Verify roundtrip serialization works correctly when id is None.
     let original = InteractionResponse {
         id: None,
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![Step::model_text("Test response")],
         ..Default::default()
@@ -1490,7 +1487,7 @@ fn test_interaction_response_roundtrip_without_id() {
 fn test_function_call_info_to_owned() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![Step::function_call(
             "call_123",
@@ -1519,7 +1516,7 @@ fn test_owned_function_call_info_outlives_response() {
     let owned_calls: Vec<OwnedFunctionCallInfo> = {
         let response = InteractionResponse {
             id: Some("test_id".to_string()),
-            model: Some("gemini-3.6-flash".to_string()),
+            model: Some("test-model".to_string()),
             status: InteractionStatus::RequiresAction,
             steps: vec![
                 Step::function_call("call_1", "func_a", serde_json::json!({"x": 1})),
@@ -1615,7 +1612,7 @@ fn test_interaction_response_has_annotations() {
     // Response with annotations
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![Step::model_output(vec![Content::Text {
             text: Some("According to the source, climate change is accelerating.".to_string()),
@@ -1637,7 +1634,7 @@ fn test_interaction_response_no_annotations() {
     // Response without annotations
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![Step::model_text("Plain text without citations.")],
         ..Default::default()
@@ -1651,7 +1648,7 @@ fn test_interaction_response_empty_annotations_not_counted() {
     // Response with empty annotations array (should not count as having annotations)
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![Step::model_output(vec![Content::Text {
             text: Some("Text with empty annotations.".to_string()),
@@ -1668,7 +1665,7 @@ fn test_interaction_response_all_annotations() {
     // Response with multiple text blocks, each with annotations
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::model_output(vec![Content::Text {
@@ -1712,7 +1709,7 @@ fn test_interaction_response_all_annotations_empty() {
     // Response with no annotations at all
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::model_text("No annotations here."),
@@ -1730,7 +1727,7 @@ fn test_interaction_response_all_annotations_skips_non_text() {
     // Verify all_annotations only looks at Text content, not other types
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::model_output(vec![
@@ -1768,7 +1765,7 @@ fn test_interaction_response_all_annotations_skips_non_text() {
 fn test_interaction_response_has_file_search_results() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![Step::FileSearchResult {
             call_id: "call_123".to_string(),
@@ -1789,7 +1786,7 @@ fn test_interaction_response_has_file_search_results() {
 fn test_interaction_response_no_file_search_results() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![Step::model_text("No file search here")],
         ..Default::default()
@@ -1802,7 +1799,7 @@ fn test_interaction_response_no_file_search_results() {
 fn test_interaction_response_file_search_results_extraction() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::FileSearchResult {
@@ -1851,7 +1848,7 @@ fn test_interaction_response_file_search_results_extraction() {
 fn test_interaction_response_file_search_results_empty_results() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![Step::FileSearchResult {
             call_id: "call_empty".to_string(),
@@ -1877,7 +1874,7 @@ fn test_interaction_response_file_search_results_empty_results() {
 fn model_output_response(content: Vec<Content>) -> InteractionResponse {
     InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![Step::model_output(content)],
         ..Default::default()
@@ -1991,7 +1988,7 @@ fn test_image_info_extension_none_mime_type_defaults_to_png() {
 fn test_images_iterator_returns_only_images_with_data() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::model_output(vec![
@@ -2016,7 +2013,7 @@ fn test_images_iterator_returns_only_images_with_data() {
 fn test_images_iterator_empty_when_no_images() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![Step::model_text("Just text"), Step::thought("sig_thought")],
         ..Default::default()
@@ -2030,7 +2027,7 @@ fn test_images_iterator_empty_when_no_images() {
 fn test_images_iterator_empty_steps() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![],
         ..Default::default()
@@ -2048,7 +2045,7 @@ fn test_images_iterator_empty_steps() {
 fn test_audios_iterator_returns_only_audios_with_data() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-2.5-pro-preview-tts".to_string()),
+        model: Some(crate::DEFAULT_TTS_MODEL.to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::model_output(vec![
@@ -2076,7 +2073,7 @@ fn test_audios_iterator_returns_only_audios_with_data() {
 fn test_audios_iterator_empty_when_no_audios() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![Step::model_text("Just text"), Step::thought("sig_thought")],
         ..Default::default()
@@ -2090,7 +2087,7 @@ fn test_audios_iterator_empty_when_no_audios() {
 fn test_audios_iterator_empty_steps() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-2.5-pro-preview-tts".to_string()),
+        model: Some(crate::DEFAULT_TTS_MODEL.to_string()),
         status: InteractionStatus::Completed,
         steps: vec![],
         ..Default::default()
@@ -2177,7 +2174,7 @@ fn test_has_audio_false_when_uri_only() {
 fn test_output_steps_returns_owned_steps() {
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![Step::model_text("Response text")],
         ..Default::default()
@@ -2197,7 +2194,7 @@ fn test_output_steps_extends_history() {
     // The documented multi-turn pattern: history.extend(response.output_steps())
     let response = InteractionResponse {
         id: Some("test_id".to_string()),
-        model: Some("gemini-3.6-flash".to_string()),
+        model: Some("test-model".to_string()),
         status: InteractionStatus::Completed,
         steps: vec![
             Step::thought("sig"),
@@ -2247,7 +2244,7 @@ fn test_deserialize_response_object_and_service_tier() {
     let wire = serde_json::json!({
         "id": "interaction_123",
         "object": "interaction",
-        "model": "gemini-3.6-flash",
+        "model": "test-model",
         "service_tier": "standard",
         "status": "completed",
         "steps": [
@@ -2287,7 +2284,7 @@ fn test_deserialize_response_webhook_config_echo() {
     let wire = serde_json::json!({
         "id": "interaction_123",
         "object": "interaction",
-        "model": "gemini-3.6-flash",
+        "model": "test-model",
         "status": "in_progress",
         "steps": [],
         "webhook_config": {

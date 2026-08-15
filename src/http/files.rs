@@ -37,7 +37,7 @@
 //!
 //! // Use in interaction
 //! let response = client.interaction()
-//!     .with_model("gemini-3.6-flash")
+//!     .with_model(genai_rs::DEFAULT_MODEL)
 //!     .add_file(&file)
 //!     .with_text("Describe this video")
 //!     .create()

@@ -262,7 +262,7 @@ impl SupportSession {
                 // Subsequent turns: chain to previous, include system instruction
                 self.client
                     .interaction()
-                    .with_model("gemini-3.6-flash")
+                    .with_model(genai_rs::DEFAULT_MODEL)
                     .with_text(message)
                     .add_functions(functions)
                     .with_store_enabled()
@@ -275,7 +275,7 @@ impl SupportSession {
                 // First turn: same setup, system instruction included
                 self.client
                     .interaction()
-                    .with_model("gemini-3.6-flash")
+                    .with_model(genai_rs::DEFAULT_MODEL)
                     .with_text(message)
                     .add_functions(functions)
                     .with_store_enabled()

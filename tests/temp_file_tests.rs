@@ -495,10 +495,10 @@ async fn test_video_from_temp_file() {
 
     let response = crate::retry_request!([client, contents] => {
         stateful_builder(&client)
-            // Inline video bytes — see VIDEO_INLINE_MODEL. `video_from_file`
+            // Inline video bytes — see INLINE_VIDEO_MODEL. `video_from_file`
             // reads the file into base64 inline data, so this is the same
             // path the multimodal inline-video tests pin.
-            .with_model(crate::common::VIDEO_INLINE_MODEL)
+            .with_model(genai_rs::INLINE_VIDEO_MODEL)
             .with_input(InteractionInput::Content(contents))
             .create()
             .await

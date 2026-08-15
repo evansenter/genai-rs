@@ -136,13 +136,14 @@ async fn run_one(
     id_file: &Path,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut agent = AntigravityAgent::builder()
-        // The builder default is *unlimited*. Always set a budget: the
-        // failure mode without one is a turn that never ends (a harness
-        // that renames its terminal state does exactly this), which hangs
+        // Tighter than the 300s DEFAULT_TURN_TIMEOUT an unset budget now
+        // resolves to. Set one deliberately either way: with no budget at
+        // all — `without_turn_timeout()` — a turn that never ends (a
+        // harness that renames its terminal state does exactly this) hangs
         // rather than errors.
         .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(api_key.to_string())
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_system_instructions(
             "You are a terse note-keeping assistant. Acknowledge facts the user \
              gives you, and recall them verbatim when asked.",
@@ -193,7 +194,7 @@ async fn run_two(
     let mut agent = AntigravityAgent::builder()
         .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(api_key.to_string())
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_system_instructions(
             "You are a terse note-keeping assistant. Acknowledge facts the user \
              gives you, and recall them verbatim when asked.",

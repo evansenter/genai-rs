@@ -18,7 +18,7 @@ use std::io::{Write, stdout};
 async fn main() -> Result<(), Box<dyn Error>> {
     let api_key = env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY not found in environment");
     let client = Client::builder(api_key).build()?;
-    let model_name = "gemini-3.6-flash";
+    let model_name = genai_rs::DEFAULT_MODEL;
 
     // =========================================================================
     // Example 1: Setting a Persona

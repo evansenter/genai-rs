@@ -30,7 +30,6 @@
 //! the expected "unsupported file uri" error.
 
 mod common;
-
 mod image {
     use crate::common::{
         SAMPLE_IMAGE_URL, TINY_BLUE_PNG_BASE64, TINY_RED_PNG_BASE64, assert_response_semantic,
@@ -364,8 +363,8 @@ mod video {
 
         let response = crate::retry_request!([client, contents] => {
             stateful_builder(&client)
-                // Inline video bytes — see VIDEO_INLINE_MODEL.
-                .with_model(crate::common::VIDEO_INLINE_MODEL)
+                // Inline video bytes — see INLINE_VIDEO_MODEL.
+                .with_model(genai_rs::INLINE_VIDEO_MODEL)
                 .with_input(InteractionInput::Content(contents))
                 .create()
                 .await
@@ -558,8 +557,8 @@ mod mixed_media {
 
         let result = crate::retry_request!([client, contents] => {
             stateful_builder(&client)
-                // Inline video bytes — see VIDEO_INLINE_MODEL.
-                .with_model(crate::common::VIDEO_INLINE_MODEL)
+                // Inline video bytes — see INLINE_VIDEO_MODEL.
+                .with_model(genai_rs::INLINE_VIDEO_MODEL)
                 .with_input(InteractionInput::Content(contents))
                 .create()
                 .await
@@ -777,7 +776,7 @@ mod file_loading {
         let response = crate::retry_request!([client, contents] => {
             client
                 .interaction()
-                .with_model("gemini-3.6-flash")
+                .with_model(genai_rs::DEFAULT_MODEL)
                 .with_content(contents)
                 .create()
                 .await
@@ -847,7 +846,7 @@ mod file_loading {
         let response = crate::retry_request!([client, contents] => {
             client
                 .interaction()
-                .with_model("gemini-3.6-flash")
+                .with_model(genai_rs::DEFAULT_MODEL)
                 .with_content(contents)
                 .create()
                 .await
@@ -917,7 +916,7 @@ mod bytes_loading {
         let response = crate::retry_request!([client, contents] => {
             client
                 .interaction()
-                .with_model("gemini-3.6-flash")
+                .with_model(genai_rs::DEFAULT_MODEL)
                 .with_content(contents)
                 .create()
                 .await
@@ -961,7 +960,7 @@ mod bytes_loading {
         let result = crate::retry_request!([client, contents] => {
             client
                 .interaction()
-                .with_model("gemini-3.6-flash")
+                .with_model(genai_rs::DEFAULT_MODEL)
                 .with_content(contents)
                 .create()
                 .await
@@ -994,8 +993,8 @@ mod bytes_loading {
         let result = crate::retry_request!([client, contents] => {
             client
                 .interaction()
-                // Inline video bytes — see VIDEO_INLINE_MODEL.
-                .with_model(crate::common::VIDEO_INLINE_MODEL)
+                // Inline video bytes — see INLINE_VIDEO_MODEL.
+                .with_model(genai_rs::INLINE_VIDEO_MODEL)
                 .with_content(contents)
                 .create()
                 .await
@@ -1033,7 +1032,7 @@ mod bytes_loading {
         let result = crate::retry_request!([client, contents] => {
             client
                 .interaction()
-                .with_model("gemini-3.6-flash")
+                .with_model(genai_rs::DEFAULT_MODEL)
                 .with_content(contents)
                 .create()
                 .await
@@ -1072,7 +1071,7 @@ mod text_to_speech {
         };
 
         // TTS requires a specific model
-        let tts_model = "gemini-2.5-pro-preview-tts";
+        let tts_model = genai_rs::DEFAULT_TTS_MODEL;
 
         // TTS can be slow - use extended timeout
         with_timeout(extended_test_timeout(), async {
@@ -1118,7 +1117,7 @@ mod text_to_speech {
             return;
         };
 
-        let tts_model = "gemini-2.5-pro-preview-tts";
+        let tts_model = genai_rs::DEFAULT_TTS_MODEL;
 
         // TTS can be slow - use extended timeout
         with_timeout(extended_test_timeout(), async {
@@ -1178,7 +1177,7 @@ mod text_to_speech {
         };
 
         let http_client = ReqwestClient::new();
-        let tts_model = "gemini-2.5-pro-preview-tts";
+        let tts_model = genai_rs::DEFAULT_TTS_MODEL;
         let url = "https://generativelanguage.googleapis.com/v1beta/interactions";
 
         // Test 1: Nested format (should FAIL with 400)

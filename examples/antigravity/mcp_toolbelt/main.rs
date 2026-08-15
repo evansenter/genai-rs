@@ -73,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // directory. A real deployment would name a command on PATH instead,
     // e.g. McpServer::stdio("uvx", ["mcp-server-git"]).
     let server_script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("examples/real_world/mcp_toolbelt/widgets_server.py");
+        .join("examples/antigravity/mcp_toolbelt/widgets_server.py");
     if !server_script.is_file() {
         return Err(format!("missing MCP server script: {}", server_script.display()).into());
     }
@@ -82,10 +82,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Serving tools from: {}\n", server_script.display());
 
     let mut agent = AntigravityAgent::builder()
-        // The builder default is *unlimited*; always set a budget.
+        // Tighter than the 300s DEFAULT_TURN_TIMEOUT an unset budget now
+        // resolves to: this example should fail fast, not sit for five
+        // minutes. `without_turn_timeout()` is what opts out entirely.
         .with_turn_timeout(std::time::Duration::from_secs(120))
         .with_api_key(api_key)
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_system_instructions(
             "Widget codes and stock levels come only from the `widgets` MCP \
              tools. Never guess them. List the widgets first if you need to \

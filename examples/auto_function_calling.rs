@@ -95,7 +95,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let result = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_text(prompt)
         // No with_functions() needed - auto-discovers from registry!
         .create_with_auto_functions()
@@ -128,7 +128,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let result2 = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_text(limited_prompt)
         .add_function(weather_func) // Only weather, not time
         .create_with_auto_functions()
@@ -153,7 +153,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut stream = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_text(stream_prompt)
         .add_function(time_func) // Provide declaration but no auto-execution
         .create_stream(); // Note: create_stream, not create_stream_with_auto_functions
@@ -212,7 +212,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let result = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_text(auto_prompt)
         .add_function(GetWeatherCallable.declaration())
         .with_function_calling_mode(FunctionCallingMode::Auto) // Model decides
@@ -237,7 +237,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let result = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_text(any_prompt)
         .add_function(GetWeatherCallable.declaration())
         .with_function_calling_mode(FunctionCallingMode::Any) // MUST call a function
@@ -259,7 +259,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let result = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_text(none_prompt)
         .add_function(GetWeatherCallable.declaration())
         .with_function_calling_mode(FunctionCallingMode::None) // Disabled
@@ -279,7 +279,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let result = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_text(validated_prompt)
         .add_function(GetWeatherCallable.declaration())
         .with_function_calling_mode(FunctionCallingMode::Validated) // Schema adherence

@@ -87,7 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let response = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_content(vec![
             Content::text("Analyze this JSON data. How many users are there and what roles exist?"),
             // Note: Use text/plain for JSON - API doesn't support application/json as document type
@@ -107,7 +107,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let response = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_content(vec![
             Content::text("Parse this CSV and calculate the average age of all employees."),
             // Note: Use text/plain for CSV - API doesn't support text/csv as document type
@@ -127,7 +127,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let response = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_content(vec![
             Content::text("Summarize this markdown document in one sentence."),
             // text/markdown is supported for markdown content
@@ -150,7 +150,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let response = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_content(vec![
             Content::text("What is the main purpose of this project based on the README?"),
             readme_content,
@@ -170,7 +170,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let doc = document_from_file("CHANGELOG.md").await?;
     let response = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_content(vec![
             Content::text("List the main sections in this markdown file."),
             doc,

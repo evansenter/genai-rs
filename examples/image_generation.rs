@@ -57,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ==========================================================================
     println!("--- Example 1: Birman Cat ---\n");
 
-    let model = "gemini-3.1-flash-image";
+    let model = genai_rs::DEFAULT_IMAGE_MODEL;
     let prompt = "A white and orange Birman cat sitting cozily on an electric blanket on a couch.";
 
     println!("Model: {}", model);

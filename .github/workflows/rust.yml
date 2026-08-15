@@ -78,36 +78,84 @@ jobs:
       # (every turn hanging to timeout) went unnoticed.
       # Same-repo guard on this step only, not the job: the unit-test step
       # above needs no key, and gating the whole job would stop forks from
-      # running the antigravity-gated unit tests entirely.
+      # running the antigravity-gated unit tests entirely. The repository
+      # check is part of that guard rather than redundant with it: `push`
+      # fires on a fork's own main too (Sync fork), as does a fork-internal
+      # PR where head and base are both the fork, and the hard failure
+      # below would then fire in a repo that never had the secret.
+      # Owner rather than the full slug: a rename would otherwise make both
+      # key-gated steps skip everywhere including upstream, which is the
+      # same vacuous pass the checks below exist to stop -- only moved to
+      # the `if:`, where no ::error:: can fire.
       - name: Run harness integration tests
-        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
         # --retries 2 for the same reason as the integration matrix: this
         # step now draws on the same shared key, so it sees the same
         # low-rate 429s. A retried test is reported FLAKY, not hidden.
-        run: cargo nextest run --features antigravity --run-ignored all --retries 2 -E 'binary(antigravity_harness)'
+        run: |
+          set -eo pipefail
+          # These tests self-skip without a key, so a rotated or cleared
+          # secret would turn this step green having run nothing — the exact
+          # vacuous pass that let the 0.1.5 -> 0.1.10 break reach a release
+          # (see the comment above). The `if:` above rules out forks --
+          # including a fork's own push to main, which satisfies the
+          # event_name arm -- but cannot see a rotated or cleared secret.
+          # Trimmed, to match the `Ok(key) if !key.trim().is_empty()` the
+          # tests and examples gate on: a secret of just whitespace would
+          # pass a bare -z and then skip everything downstream anyway.
+          if [ -z "${GEMINI_API_KEY//[[:space:]]/}" ]; then
+            echo "::error::GEMINI_API_KEY is empty or unset — the harness tests would self-skip and this step would pass having verified nothing"
+            exit 1
+          fi
+          cargo nextest run --features antigravity --run-ignored all --retries 2 -E 'binary(antigravity_harness)'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       # Examples were compiled but never executed, so bugs that only show
       # up in a real run stayed invisible: `on_post_tool` reporting every
       # successful builtin as a failure was found by running one of these
-      # by hand, not by any test. Both finish in seconds.
+      # by hand, not by any test. Most finish in seconds; repo_auditor
+      # drives subagents and is the one whose cost is not yet measured.
       - name: Smoke-run antigravity examples
-        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
         # Belt and braces alongside the examples' own with_turn_timeout: a
         # harness that stops signalling turn completion hangs rather than
         # errors, and an unbounded step would burn the runner's full budget
         # instead of going red.
         #
-        # Sized above what the retry loop below can actually spend: five
-        # examples, up to three attempts each, per-turn budgets of 120s
-        # (180s for cancellable_turn) plus spawn and backoff. At 15 the
-        # ceiling sat *below* the retry policy's own worst case, so a run
-        # where a few examples retried would go red on the timeout — which
-        # reads as "an example failed" rather than "the retries ran long",
-        # the exact misattribution the retry loop exists to avoid.
+        # A runner-budget cap, not a bound above the retry loop's worst
+        # case. It was the latter when this was five examples at 120s/180s;
+        # with seven examples and wrappers of 300s/360s/420s/660s, three
+        # attempts apiece run well past this. That is deliberate: the
+        # per-attempt `timeout` below is what attributes a hang to an example
+        # by name, and it does that job whenever a small number of examples
+        # hang, which is every case observed. Reaching this ceiling is a
+        # different failure, and a step-level timeout is the accepted
+        # reporting for it — raising the ceiling to cover the worst case
+        # would mean a wedged run burning two hours of runner before saying
+        # anything.
+        #
+        # repo_auditor can reach it unaccompanied (3 x 660s is 33min), so
+        # this is not only a pileup case. Attribution survives even then:
+        # its per-attempt `::warning::` timed-out lines print as they go,
+        # and only the terminal failed-N-times line is lost to the step
+        # timeout. It is ordered *last* in the loop below for that reason:
+        # the six faster examples finish and report before the one that can
+        # exhaust the ceiling starts, so a hang there costs its own coverage
+        # rather than theirs. A step killed mid-list leaves no signal
+        # separating "passed" from "never ran".
         timeout-minutes: 30
         run: |
           set -eo pipefail
+          # Every example self-skips without a key, so a rotated or cleared
+          # secret would run seven processes that each print one line and
+          # exit 0 — green, having proven nothing.
+          # Trimmed, to match the `Ok(key) if !key.trim().is_empty()` the
+          # tests and examples gate on: a secret of just whitespace would
+          # pass a bare -z and then skip everything downstream anyway.
+          if [ -z "${GEMINI_API_KEY//[[:space:]]/}" ]; then
+            echo "::error::GEMINI_API_KEY is empty or unset — every example would self-skip and this step would pass having verified nothing"
+            exit 1
+          fi
           # Retry each example, for the same reason the nextest steps use
           # --retries: four of the five hard-fail on LLM-dependent outcomes
           # (no MCP call made, fewer than N chars streamed before the halt,
@@ -115,16 +163,105 @@ jobs:
           # assertions are deliberate — a run that proves nothing must not
           # pass green — but a single unlucky turn should not redden an
           # unrelated PR. `cargo run` has no --retries, hence the loop.
-          for ex in session_resume workspace_explorer mcp_toolbelt proactive_agent cancellable_turn; do
-            echo "::group::cargo run --example $ex"
+          #
+          # Each attempt gets its own `timeout`, rather than relying on the
+          # step budget: an example that hangs is then attributed to that
+          # example by name, instead of the whole step dying on the ceiling
+          # and reporting nothing about which one stalled.
+          #
+          # The wrapper must sit above each example's worst *legal* runtime,
+          # so a slow-but-legal run is ended by the example — which reports a
+          # real error naming the turn — and the wrapper only ever catches a
+          # process that stopped responding altogether. Below it, the wrapper
+          # preempts the example's own ceiling and the loop reads a legal
+          # slow run as a broken example: this mechanism's own misattribution
+          # failure, running backwards.
+          #
+          # The examples are already compiled by the `cargo nextest run
+          # --workspace --features antigravity` step above — nextest shells
+          # out to `cargo test --no-run`, which builds `--example` targets
+          # too (verified by breaking one: the build fails at that step, not
+          # here). Same features, same dev profile, so `cargo run` below
+          # re-execs an existing binary rather than compiling under the
+          # wrapper. A broken example therefore fails once as a build error
+          # up there, instead of being retried three times down here and
+          # reported as a flaky run.
+          #
+          # Note the units. `with_turn_timeout` bounds one *turn*; this
+          # wrapper bounds the whole *process*, so the bar is
+          # turns x ceiling, not ceiling — plus compile, process start and
+          # harness spawn, which the turn budget never sees. Worst legal
+          # runtime per example, against its budget below. The third column
+          # is wall clock spent *outside* any turn, which no turn budget
+          # bounds:
+          #
+          #                      turns x ceiling   out-of-turn   budget
+          #   antigravity_agent   3 x 120s = 360             —  <  420
+          #   repo_auditor        1 x 600s = 600             —  <  660
+          #   proactive_agent     2 x 120s = 240      30s poll  <  360
+          #   session_resume      2 x 120s = 240     2nd spawn  <  360
+          #   workspace_explorer  1 x 120s = 120             —  <  300
+          #   mcp_toolbelt        1 x 120s = 120             —  <  300
+          #   cancellable_turn    1 x 180s = 180             —  <  300
+          #
+          # proactive_agent polls up to 30s for a trigger delivery between
+          # its two turns, so a 300s budget would have left only ~30s for
+          # the link step and spawn — thin enough that a cold runner could
+          # fire the wrapper on a run that stayed inside every budget the
+          # example declares. session_resume spawns a second harness to
+          # prove resume works, and at 300s its 60s of headroom would have
+          # covered two spawns at that same ~30s apiece — so it gets the
+          # same treatment, rather than a story about why a second spawn is
+          # cheaper to absorb than the poll was.
+          #
+          # Re-check this table when an example gains a turn, changes its
+          # budget, or waits on anything outside a turn; every one declares
+          # its budget explicitly so the first column reads off the source.
+          #
+          # Not a replacement for the step budget: enough simultaneous
+          # hangs run well over the 30min `timeout-minutes` above — three
+          # attempts each, plus `--kill-after` grace and the backoff sleeps
+          # — and that case reports as it always did. Deliberately not
+          # spelled as a total: it would need recomputing on every budget
+          # change, and the conclusion does not turn on the figure.
+          #
+          # All seven, not the five this started with: repo_auditor is the
+          # example the README sends people to first and was the only one
+          # never executed here, and antigravity_agent is the starter. Both
+          # were compile-only, which is how `on_post_tool` reporting every
+          # successful builtin as a failure survived — that was found by
+          # running an example by hand. repo_auditor drives subagents over
+          # a fixture repo, so it is the slowest of the seven; this run is
+          # the first measurement of what a healthy one costs.
+          for ex in antigravity_agent session_resume workspace_explorer mcp_toolbelt proactive_agent cancellable_turn repo_auditor; do
+            # Above the example's own with_turn_timeout, never below.
+            case "$ex" in
+              # Declares 600s.
+              repo_auditor) budget=660 ;;
+              # Declares 120s, but takes three sequential turns.
+              antigravity_agent) budget=420 ;;
+              # Two turns at 120s, plus up to 30s polling out-of-turn for
+              # the trigger delivery.
+              proactive_agent) budget=360 ;;
+              # Two turns at 120s, and it spawns a second harness to prove
+              # resume works — two spawns to absorb, not one.
+              session_resume) budget=360 ;;
+              # The rest are single-turn at 120s, or 180s for cancellable_turn.
+              *) budget=300 ;;
+            esac
+            echo "::group::cargo run --example $ex (budget ${budget}s)"
             attempt=1
-            until cargo run --features antigravity --example "$ex"; do
+            until timeout --signal=TERM --kill-after=30s "${budget}s" cargo run --features antigravity --example "$ex"; do
+              rc=$?
+              if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+                echo "::warning::$ex timed out after ${budget}s (attempt $attempt)"
+              fi
               if [ "$attempt" -ge 3 ]; then
-                echo "::error::$ex failed $attempt times"
+                echo "::error::$ex failed $attempt times (last exit $rc)"
                 echo "::endgroup::"
                 exit 1
               fi
-              echo "::warning::$ex failed (attempt $attempt), retrying"
+              echo "::warning::$ex failed (attempt $attempt, exit $rc), retrying"
               attempt=$((attempt + 1))
               sleep 5
             done
@@ -137,7 +274,11 @@ jobs:
     name: Integration Tests (${{ matrix.group }})
     needs: check
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    # Owner check for the same reason as the antigravity steps: the vacuous-
+    # pass guard below hard-fails on a missing key, and `push` fires on a
+    # fork's own main too, so without it a fork would go red for a secret it
+    # was never going to have.
+    if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
     strategy:
       fail-fast: false
       matrix:
@@ -164,6 +305,21 @@ jobs:
       - name: Run integration tests (${{ matrix.group }})
         run: |
           set -eo pipefail
+          # Every test in these five groups is #[ignore = "Requires API key"]
+          # and self-skips when get_client() finds no key, so a rotated or
+          # cleared secret would print ~217 skip lines across the matrix and
+          # report green having called the API zero times. That is the same
+          # vacuous pass guarded on the antigravity steps above, on the suite
+          # with the most coverage and the one release validation leans on.
+          # The SEMANTIC_VALIDATION_SKIPPED escalation below is the same
+          # argument applied to a partial skip; this is the total case.
+          # Trimmed, to match the `Ok(key) if !key.trim().is_empty()` the
+          # tests and examples gate on: a secret of just whitespace would
+          # pass a bare -z and then skip everything downstream anyway.
+          if [ -z "${GEMINI_API_KEY//[[:space:]]/}" ]; then
+            echo "::error::GEMINI_API_KEY is empty or unset — every integration test would self-skip and this job would pass having verified nothing"
+            exit 1
+          fi
           for test in ${{ matrix.tests }}; do
             echo "::group::Running $test"
             # --success-output=final keeps passing-test output (notably the

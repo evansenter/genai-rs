@@ -338,7 +338,12 @@ pub(crate) fn input_from_value(value: serde_json::Value) -> Result<InteractionIn
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ThinkingLevel {
-    /// Minimal reasoning, fastest responses
+    /// Minimal reasoning, fastest responses.
+    ///
+    /// Not supported by every model: [`DEFAULT_MODEL`](crate::DEFAULT_MODEL)
+    /// rejects it with a 400 (verified live 2026-08-15). Use
+    /// [`MINIMAL_THINKING_MODEL`](crate::MINIMAL_THINKING_MODEL), which is
+    /// pinned to a model that accepts it.
     Minimal,
     /// Light reasoning for simple problems
     Low,
@@ -1212,7 +1217,7 @@ impl VideoConfig {
 /// let client = Client::new("api_key".to_string());
 ///
 /// let request = client.interaction()
-///     .with_model("gemini-3.6-flash")
+///     .with_model(genai_rs::DEFAULT_MODEL)
 ///     .with_text("Hello!")
 ///     .build()?;
 ///
@@ -1230,7 +1235,7 @@ impl VideoConfig {
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// # let client = Client::new("api_key".to_string());
 /// # let request = client.interaction()
-/// #     .with_model("gemini-3.6-flash")
+/// #     .with_model(genai_rs::DEFAULT_MODEL)
 /// #     .with_text("Hello!")
 /// #     .build()?;
 /// let response = client.execute(request).await?;
@@ -1247,7 +1252,7 @@ impl VideoConfig {
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// # let client = Client::new("api_key".to_string());
 /// # let request = client.interaction()
-/// #     .with_model("gemini-3.6-flash")
+/// #     .with_model(genai_rs::DEFAULT_MODEL)
 /// #     .with_text("Hello!")
 /// #     .build()?;
 /// let response = loop {
@@ -1262,7 +1267,7 @@ impl VideoConfig {
 /// ```
 #[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct InteractionRequest {
-    /// Model name (e.g., "gemini-3.6-flash") - mutually exclusive with agent
+    /// Model name (e.g. [`DEFAULT_MODEL`](crate::DEFAULT_MODEL)) - mutually exclusive with agent
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
 
@@ -1991,10 +1996,11 @@ impl From<DynamicConfig> for AgentConfig {
 /// **accepted** on `antigravity-preview-05-2026` (the server's validation
 /// error enumerates the supported config types as `dynamic`,
 /// `deep-research`, `code-mender`, `antigravity`). Setting `model` to a
-/// value the agent doesn't offer returns 404 `not_found` — including
-/// `gemini-3.6-flash`, this crate's default model elsewhere. The
-/// agent's model catalog is not enumerable on a standard key, so leave
-/// `model` unset unless you know an accepted value.
+/// value the agent doesn't offer returns 404 `not_found` — as
+/// `gemini-3.6-flash` did when this was recorded, despite being a valid
+/// model for ordinary interactions. The agent's model catalog is not
+/// enumerable on a standard key, so leave `model` unset unless you know an
+/// accepted value.
 ///
 /// # Example
 ///

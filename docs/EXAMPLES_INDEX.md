@@ -97,11 +97,11 @@ LOUD_WIRE=1 cargo run --example <example_name>
 | `deep_research` | Long-running research agent | Advanced |
 | `webhooks_and_background` | Webhook resource CRUD + per-request webhook routing + environments CRUD + triggers listing | Advanced |
 | `cancel_interaction` | Cancel background tasks | Intermediate |
-| `antigravity_agent` | Local Antigravity harness agent with Rust tools, policies, and the `on_questions` hook (`--features antigravity`) | Advanced |
 
 ### Real-World Applications
 
-Located in `examples/real_world/`:
+Located in `examples/real_world/`. These run against the Interactions API
+and need nothing but a key:
 
 | Example | Description | Difficulty |
 |---------|-------------|------------|
@@ -113,12 +113,23 @@ Located in `examples/real_world/`:
 | `testing_assistant/` | Test generation from code | Intermediate |
 | `data_analysis/` | CSV data analysis with functions | Intermediate |
 | `rag_system/` | Retrieval-augmented generation | Advanced |
-| `repo_auditor/` | Agentic security audit on the Antigravity harness: subagent, policies, structured report (`--features antigravity`) | Advanced |
-| [`session_resume/`](../examples/real_world/session_resume/) | Agent that remembers across process restarts — trajectory persistence, `conversation_id` round trip, `initial_history` (`--features antigravity`) | Advanced |
-| [`workspace_explorer/`](../examples/real_world/workspace_explorer/) | Watching an agent work and gating it live — workspaces, typed `ToolAction` stream, content-based `on_pre_tool` deny (`--features antigravity`) | Advanced |
-| [`mcp_toolbelt/`](../examples/real_world/mcp_toolbelt/) | Giving an agent tools it didn't ship with — `add_mcp_server` (stdio), `mcp_<server>_<tool>` policy targets, MCP alongside `Capabilities::none()` (`--features antigravity`) | Advanced |
-| [`proactive_agent/`](../examples/real_world/proactive_agent/) | Work that starts without a user turn — `add_trigger`, observing deliveries via a wire inspector, the trigger/user-turn discard boundary (`--features antigravity`) | Advanced |
-| [`cancellable_turn/`](../examples/real_world/cancellable_turn/) | Stopping an agent mid-thought — `cancel_handle` from another task, partial output kept, contrast with `with_turn_timeout` (`--features antigravity`) | Advanced |
+
+### Antigravity Harness
+
+Located in [`examples/antigravity/`](../examples/antigravity/), grouped the
+way `src/antigravity/` is. All seven need the `antigravity` feature **and**
+the `localharness` binary (`pip install google-antigravity==0.1.10`), and
+all seven are smoke-run in CI:
+
+| Example | Description | Difficulty |
+|---------|-------------|------------|
+| [`agent.rs`](../examples/antigravity/agent.rs) (`--example antigravity_agent`) | The starter — spawn a harness, take a turn, Rust `#[tool]` functions, the `on_questions` hook | Advanced |
+| [`repo_auditor/`](../examples/antigravity/repo_auditor/) | Agentic security audit on a fixture repo — subagents, policies + hooks, structured report | Advanced |
+| [`session_resume/`](../examples/antigravity/session_resume/) | Agent that remembers across process restarts — trajectory persistence, `conversation_id` round trip, `initial_history` | Advanced |
+| [`workspace_explorer/`](../examples/antigravity/workspace_explorer/) | Watching an agent work and gating it live — workspaces, typed `ToolAction` stream, content-based `on_pre_tool` deny | Advanced |
+| [`mcp_toolbelt/`](../examples/antigravity/mcp_toolbelt/) | Giving an agent tools it didn't ship with — `add_mcp_server` (stdio), `mcp_<server>_<tool>` policy targets, MCP alongside `Capabilities::none()` | Advanced |
+| [`proactive_agent/`](../examples/antigravity/proactive_agent/) | Work that starts without a user turn — `add_trigger`, observing deliveries via a wire inspector, the trigger/user-turn discard boundary | Advanced |
+| [`cancellable_turn/`](../examples/antigravity/cancellable_turn/) | Stopping an agent mid-thought — `cancel_handle` from another task, partial output kept, contrast with `with_turn_timeout` | Advanced |
 
 ## Example Details
 

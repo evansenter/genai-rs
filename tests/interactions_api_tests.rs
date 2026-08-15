@@ -392,7 +392,7 @@ mod streaming {
 
         with_timeout(test_timeout(), async {
             let request = InteractionRequest {
-                model: Some("gemini-3.6-flash".to_string()),
+                model: Some(genai_rs::DEFAULT_MODEL.to_string()),
                 agent: None,
                 agent_config: None,
                 input: InteractionInput::Text("Count from 1 to 5.".to_string()),
@@ -1040,7 +1040,7 @@ mod generation_config {
         let config = GenerationConfig {
             temperature: Some(0.0),
             // Headroom, deliberately: this test is about `temperature`, not
-            // truncation. gemini-3.6-flash spends ~100 thinking tokens on
+            // truncation. The default model spends ~100 thinking tokens on
             // even this trivial prompt (verified live 2026-08-10: ~99-102
             // total for a 1-token answer), so the old 100-token cap made
             // "is there any text left?" a coin flip rather than a
@@ -1580,7 +1580,7 @@ mod multimodal {
             return;
         };
 
-        let model = "gemini-3.1-flash-image";
+        let model = genai_rs::DEFAULT_IMAGE_MODEL;
         let prompt = "A simple red circle on a white background";
 
         println!("Generating image with model: {}", model);

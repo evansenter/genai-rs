@@ -15,7 +15,7 @@
 //!
 //!     let response = client
 //!         .interaction()
-//!         .with_model("gemini-3.6-flash")
+//!         .with_model(genai_rs::DEFAULT_MODEL)
 //!         .with_text("Hello, Gemini!")
 //!         .create()
 //!         .await?;
@@ -59,6 +59,71 @@ pub(crate) mod http;
 pub(crate) mod serde_util;
 #[cfg(test)]
 pub(crate) mod test_subscriber;
+
+// =============================================================================
+// Model defaults
+// =============================================================================
+
+/// The model this crate is developed and verified against.
+///
+/// Exposed so that examples, tests and callers name one constant instead of
+/// a string literal. That is not cosmetic: before this existed, a model bump
+/// meant editing ~600 occurrences across the repo, and the sweep is exactly
+/// the kind of mechanical change that misses a few and leaves them silently
+/// pinned to a retired model.
+///
+/// A *default*, not a constraint — [`with_model`](InteractionBuilder::with_model)
+/// accepts any model id, and picking one deliberately is normal.
+///
+/// Capability note: this model rejects **inline (base64) video** with
+/// `400 invalid_request` while accepting video by URI (verified live on both
+/// `gemini-3.6-flash` and `gemini-3.7-flash`). Image, audio and PDF inline
+/// data are unaffected. See [`INLINE_VIDEO_MODEL`].
+///
+/// It also rejects [`ThinkingLevel::Minimal`] — see
+/// [`MINIMAL_THINKING_MODEL`]. Both gaps are model capability, not library
+/// limits, and both were found by running the live suite against the model
+/// before adopting it.
+pub const DEFAULT_MODEL: &str = "gemini-3.7-flash";
+
+/// A model that accepts **inline (base64) video bytes**, which
+/// [`DEFAULT_MODEL`] does not.
+///
+/// Only needed for the inline form; video by URI works on the default.
+///
+/// Re-pin independently of [`DEFAULT_MODEL`]: this tracks whichever model
+/// currently has the capability, so it goes stale when *that* model is
+/// retired rather than when the default moves. The literal guard cannot
+/// help here — its whole job is to keep ids in this file, so an id that is
+/// stale *in* this file is invisible to it by construction.
+pub const INLINE_VIDEO_MODEL: &str = "gemini-3-flash-preview";
+
+/// A model that supports [`ThinkingLevel::Minimal`], which
+/// [`DEFAULT_MODEL`] does not.
+///
+/// `gemini-3.7-flash` rejects `minimal` with
+/// `400 'minimal' is not a supported thinking level for this model.
+/// Allowed values are: high, low, medium.` (verified live 2026-08-15;
+/// `gemini-3.6-flash` and `gemini-3.5-flash` still accept it). The
+/// [`ThinkingLevel::Minimal`] variant remains valid — model support for it
+/// is what varies.
+///
+/// Re-pin independently of [`DEFAULT_MODEL`], as with [`INLINE_VIDEO_MODEL`]
+/// — and sooner: this is pinned to the model the crate just migrated *off*,
+/// so it goes stale when 3.6 is retired. `gemini-3.5-flash` also accepts
+/// `minimal`, so the fix at that point is another re-pin here, not a
+/// redesign. Left unfixed it surfaces as a 404 on an unrelated-looking
+/// model inside a test whose subject is a thinking level.
+pub const MINIMAL_THINKING_MODEL: &str = "gemini-3.6-flash";
+
+/// The model to use for image generation.
+///
+/// Image output is a separate model family from [`DEFAULT_MODEL`]; passing
+/// the default to an image-generation request will not produce images.
+pub const DEFAULT_IMAGE_MODEL: &str = "gemini-3.1-flash-image";
+
+/// The model to use for text-to-speech.
+pub const DEFAULT_TTS_MODEL: &str = "gemini-2.5-pro-preview-tts";
 
 // =============================================================================
 // Core Type Modules

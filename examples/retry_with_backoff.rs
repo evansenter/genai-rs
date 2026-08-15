@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let client = Client::builder(api_key).build()?;
 
-    let model = "gemini-3.6-flash";
+    let model = genai_rs::DEFAULT_MODEL;
     let prompt = "What is the Rust programming language known for? Answer in one sentence.";
 
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");

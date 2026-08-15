@@ -22,7 +22,7 @@ async fn main() -> Result<(), genai_rs::GenaiError> {
 
     let response = client
         .interaction()
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_text("Explain Rust's ownership model in one sentence.")
         .create()
         .await?;
@@ -249,7 +249,7 @@ use genai_rs::InteractionRequest;
 
 // Build request without executing (Clone + Serialize)
 let request: InteractionRequest = client.interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Hello!")
     .build()?;
 
@@ -275,7 +275,7 @@ use genai_rs::antigravity::{AntigravityAgent, policy};
 
 let mut agent = AntigravityAgent::builder()
     .with_api_key(std::env::var("GEMINI_API_KEY")?)
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .add_workspace("/path/to/repo")
     .add_policy(policy::deny_all())          // policies evaluated in Rust,
     .add_policy(policy::allow("view_file"))  // before every tool dispatch
@@ -291,9 +291,14 @@ agent.shutdown().await?;
 The same `#[tool]` functions work in both modes, and `LOUD_WIRE=1` covers
 harness sessions too. Setup (`pip install google-antigravity==0.1.10`),
 capabilities, policies/hooks, MCP servers, subagents, triggers, and session
-resume are covered in [docs/ANTIGRAVITY.md](docs/ANTIGRAVITY.md); see
-[`repo_auditor`](examples/real_world/repo_auditor/main.rs) for a complete
-agentic code-review application.
+resume are covered in [docs/ANTIGRAVITY.md](docs/ANTIGRAVITY.md).
+
+Seven runnable examples live in
+[`examples/antigravity/`](examples/antigravity/) — grouped there the way
+`src/antigravity/` is, since they all need the feature and the harness
+binary. Start with [`agent.rs`](examples/antigravity/agent.rs); see
+[`repo_auditor`](examples/antigravity/repo_auditor/) for a complete
+agentic code-review application with subagents and a structured report.
 
 ## Documentation
 
@@ -397,7 +402,7 @@ Common issues and solutions are documented in [TROUBLESHOOTING.md](TROUBLESHOOTI
 
 **Quick fixes:**
 - **"API key not valid"** - Check `GEMINI_API_KEY` is set
-- **"Model not found"** - Use `gemini-3.6-flash`
+- **"Model not found"** - Use `gemini-3.7-flash`
 - **Functions not executing** - Use `create_with_auto_functions()`
 - **TLS errors in minimal containers** - Install a CA bundle (OS trust store is used since reqwest 0.13)
 

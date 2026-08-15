@@ -20,7 +20,7 @@
 //!
 //! let mut agent = AntigravityAgent::builder()
 //!     .with_api_key(std::env::var("GEMINI_API_KEY")?)
-//!     .with_model("gemini-3.6-flash")
+//!     .with_model(genai_rs::DEFAULT_MODEL)
 //!     .with_system_instructions("You are a code-review assistant.")
 //!     .add_workspace("/path/to/repo")
 //!     .add_policy(policy::deny_all())
@@ -220,6 +220,41 @@ impl ChatResponse {
 // Builder
 // =============================================================================
 
+/// Default wall-clock budget for a single agent turn.
+///
+/// Generous enough for real agent work (tool calls, subagents) while still
+/// bounding the failure mode that motivated having a default at all: a
+/// harness that stops signalling turn completion hangs rather than errors.
+/// Override with [`AgentBuilder::with_turn_timeout`], or remove it
+/// deliberately with [`AgentBuilder::without_turn_timeout`].
+pub const DEFAULT_TURN_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Whether the caller has chosen a per-turn budget, and what.
+///
+/// Three states rather than `Option<Duration>` because "unset" and
+/// "explicitly unlimited" must resolve differently: the first gets
+/// [`DEFAULT_TURN_TIMEOUT`], the second gets nothing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum TurnBudget {
+    /// No choice made — resolves to [`DEFAULT_TURN_TIMEOUT`].
+    #[default]
+    Unset,
+    /// `without_turn_timeout()`: run until the harness ends the turn.
+    Unlimited,
+    /// `with_turn_timeout(d)`.
+    Explicit(Duration),
+}
+
+impl TurnBudget {
+    fn resolve(self) -> Option<Duration> {
+        match self {
+            Self::Unset => Some(DEFAULT_TURN_TIMEOUT),
+            Self::Unlimited => None,
+            Self::Explicit(d) => Some(d),
+        }
+    }
+}
+
 /// Builder for [`AntigravityAgent`]. Create via
 /// [`AntigravityAgent::builder`].
 #[derive(Default)]
@@ -242,7 +277,7 @@ pub struct AgentBuilder {
     response_schema: Option<Value>,
     app_data_dir: Option<String>,
     skills_paths: Vec<String>,
-    turn_timeout: Option<Duration>,
+    turn_timeout: TurnBudget,
     inspectors: Vec<Arc<dyn WireInspector>>,
     triggers: Vec<TriggerConfig>,
     subagents: Vec<Subagent>,
@@ -285,7 +320,7 @@ impl AgentBuilder {
         self
     }
 
-    /// Sets the text model (default: `gemini-3.6-flash`).
+    /// Sets the text model (default: [`DEFAULT_MODEL`](crate::DEFAULT_MODEL)).
     #[must_use]
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());
@@ -485,10 +520,29 @@ impl AgentBuilder {
 
     /// Sets a wall-clock budget per turn. When exceeded, `chat` /
     /// `send_streaming` fail with [`AntigravityError::Timeout`].
-    /// Default: unlimited.
+    ///
+    /// Defaults to [`DEFAULT_TURN_TIMEOUT`]. Raise it for agents that
+    /// legitimately run long (deep subagent trees, many tool calls); lower
+    /// it for interactive use where a stall should surface fast.
     #[must_use]
     pub fn with_turn_timeout(mut self, timeout: Duration) -> Self {
-        self.turn_timeout = Some(timeout);
+        self.turn_timeout = TurnBudget::Explicit(timeout);
+        self
+    }
+
+    /// Removes the per-turn budget entirely, so a turn runs until the
+    /// harness ends it.
+    ///
+    /// Deliberately explicit rather than the default. An unbounded turn
+    /// does not fail when the harness stops signalling completion — it
+    /// *hangs*, which is strictly less diagnosable than an error and looks
+    /// identical to latency. That is not hypothetical: harness 0.1.10
+    /// renamed the terminal trajectory state, and every turn ran to its
+    /// budget with no error, no failed parse, and nothing in the logs.
+    /// Callers who want that behavior should say so.
+    #[must_use]
+    pub fn without_turn_timeout(mut self) -> Self {
+        self.turn_timeout = TurnBudget::Unlimited;
         self
     }
 
@@ -678,7 +732,7 @@ impl AgentBuilder {
             post_tool: self.post_tool,
             conversation_id: None,
             initial_history: Vec::new(),
-            turn_timeout: self.turn_timeout,
+            turn_timeout: self.turn_timeout.resolve(),
             idle: Arc::new(tokio::sync::watch::channel(true).0),
             trigger_fired: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             turn_sync: Arc::new(tokio::sync::Mutex::new(())),
@@ -741,10 +795,13 @@ impl AgentBuilder {
             .as_ref()
             .map(|api_key| {
                 vec![protocol::ModelConfig {
+                    // A real model id, not a placeholder: this is the id the
+                    // harness is actually asked to run when the caller never
+                    // called `with_model`.
                     name: Some(
                         self.model
                             .clone()
-                            .unwrap_or_else(|| "gemini-3.6-flash".to_string()),
+                            .unwrap_or_else(|| crate::DEFAULT_MODEL.to_string()),
                     ),
                     types: vec![protocol::ModelType::Text],
                     gemini_api_endpoint: Some(protocol::GeminiApiEndpoint {
@@ -2565,7 +2622,7 @@ mod agent_tests {
     #[tokio::test]
     async fn test_spawn_model_without_api_key_is_config_error() {
         let err = AntigravityAgent::builder()
-            .with_model("gemini-3.6-flash")
+            .with_model(crate::DEFAULT_MODEL)
             .spawn()
             .await
             .unwrap_err();
@@ -2576,10 +2633,52 @@ mod agent_tests {
     }
 
     #[test]
+    fn turn_budget_resolves_unset_to_the_default_and_opt_out_to_none() {
+        // The distinction that matters: "never chose" must not be the same
+        // as "chose unlimited", or the default could not exist at all.
+        assert_eq!(
+            TurnBudget::Unset.resolve(),
+            Some(DEFAULT_TURN_TIMEOUT),
+            "an untouched builder must carry a budget — an unbounded turn hangs \
+             rather than errors when the harness stops signalling completion"
+        );
+        assert_eq!(TurnBudget::Unlimited.resolve(), None);
+        let explicit = Duration::from_secs(7);
+        assert_eq!(TurnBudget::Explicit(explicit).resolve(), Some(explicit));
+
+        // And the builder wires each spelling to the right state.
+        assert_eq!(AgentBuilder::default().turn_timeout, TurnBudget::Unset);
+        assert_eq!(
+            AgentBuilder::default()
+                .with_turn_timeout(explicit)
+                .turn_timeout,
+            TurnBudget::Explicit(explicit)
+        );
+        assert_eq!(
+            AgentBuilder::default().without_turn_timeout().turn_timeout,
+            TurnBudget::Unlimited
+        );
+    }
+
+    #[test]
+    fn harness_config_falls_back_to_a_real_model_when_none_is_set() {
+        // `with_model` is optional, so this fallback is the id the harness
+        // is actually asked to run. The model sweep that introduced
+        // DEFAULT_MODEL briefly replaced it with the synthetic "test-model"
+        // used by the serialization tests — which the literal guard cannot
+        // catch, because removing a literal is exactly what it wants.
+        let builder = AntigravityAgent::builder().with_api_key("test-key");
+        let dispatcher = ToolDispatcher::new(builder.tools.clone(), &builder.tool_services);
+        let config = builder.build_harness_config(&dispatcher);
+
+        assert_eq!(config.models[0].name.as_deref(), Some(crate::DEFAULT_MODEL));
+    }
+
+    #[test]
     fn test_builder_harness_config_assembly() {
         let builder = AntigravityAgent::builder()
             .with_api_key("test-key")
-            .with_model("gemini-3.6-flash")
+            .with_model(crate::DEFAULT_MODEL)
             .with_system_instructions("Be brief.")
             .add_workspace("/w1")
             .add_workspace("/w2")
@@ -2596,7 +2695,7 @@ mod agent_tests {
         assert_eq!(config.cascade_id.as_deref(), Some("resume-me"));
         assert_eq!(config.models.len(), 1);
         let model = &config.models[0];
-        assert_eq!(model.name.as_deref(), Some("gemini-3.6-flash"));
+        assert_eq!(model.name.as_deref(), Some(crate::DEFAULT_MODEL));
         assert_eq!(model.types, vec![protocol::ModelType::Text]);
         assert_eq!(
             model

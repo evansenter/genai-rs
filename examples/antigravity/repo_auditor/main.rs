@@ -31,7 +31,7 @@
 //! ```text
 //! === Repo Auditor (Antigravity harness) ===
 //!
-//! Workspace: .../examples/real_world/repo_auditor/fixture
+//! Workspace: .../examples/antigravity/repo_auditor/fixture
 //! Harness up. conversation_id=Some("9d772d7c9085062190aefd6723785b77")
 //!
 //! --- Audit in progress ---
@@ -129,11 +129,20 @@ const AUDIT_TASK: &str = "Audit this project's workspace for security vulnerabil
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY not found in environment");
+    let api_key = match std::env::var("GEMINI_API_KEY") {
+        Ok(key) if !key.trim().is_empty() => key,
+        _ => {
+            // Empty counts as absent: a fork push gets the secret as ""
+            // rather than unset, and spawning with it fails mid-turn
+            // instead of skipping.
+            println!("Skipping: GEMINI_API_KEY not set");
+            return Ok(());
+        }
+    };
 
     // The deliberately vulnerable sample project that ships next to this file.
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("examples/real_world/repo_auditor/fixture")
+        .join("examples/antigravity/repo_auditor/fixture")
         .canonicalize()?;
     let workspace = fixture.to_string_lossy().into_owned();
 
@@ -160,7 +169,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let mut agent = AntigravityAgent::builder()
         .with_api_key(api_key)
-        .with_model("gemini-3.6-flash")
+        .with_model(genai_rs::DEFAULT_MODEL)
         .with_system_instructions(AUDITOR_INSTRUCTIONS)
         .add_workspace(&workspace)
         // Read-only built-ins plus subagent delegation. start_subagent is

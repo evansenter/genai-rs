@@ -27,7 +27,7 @@ Output shows:
 ```text
 [REQ#1] POST https://generativelanguage.googleapis.com/v1beta/interactions
 {
-  "model": "gemini-3.6-flash",
+  "model": "gemini-3.7-flash",
   "input": "Hello!",
   ...
 }
@@ -105,15 +105,15 @@ GenaiError::Api { status_code: 404, message: "Model not found..." }
 ```
 
 **Solutions:**
-1. Check model name spelling: `gemini-3.6-flash` (not `gemini-flash`)
+1. Check model name spelling: `gemini-3.7-flash` (not `gemini-flash`)
 2. Verify model availability in your region
 3. Check if model requires special access
 
 ```rust,ignore
 // Correct model names
-const STANDARD_MODEL: &str = "gemini-3.6-flash";
-const IMAGE_MODEL: &str = "gemini-3.1-flash-image";
-const TTS_MODEL: &str = "gemini-2.5-pro-preview-tts";
+const STANDARD_MODEL: &str = genai_rs::DEFAULT_MODEL;
+const IMAGE_MODEL: &str = genai_rs::DEFAULT_IMAGE_MODEL;
+const TTS_MODEL: &str = genai_rs::DEFAULT_TTS_MODEL;
 ```
 
 ### Rate Limited (429)
@@ -158,7 +158,7 @@ GenaiError::Timeout(duration)
 // Increase timeout
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text(complex_prompt)
     .with_timeout(Duration::from_secs(180))
     .create()
@@ -302,7 +302,7 @@ let decl = FunctionDeclaration::builder("set_unit")
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("What's the weather?")
     .with_store_enabled()  // Explicit, but default is true
     .create()
@@ -425,7 +425,7 @@ match client
 
 1. **Ensure correct model:**
 ```rust,ignore
-.with_model("gemini-3.1-flash-image")  // NOT gemini-3.6-flash
+.with_model(genai_rs::DEFAULT_IMAGE_MODEL)  // NOT DEFAULT_MODEL
 ```
 
 2. **Ensure image output enabled:**
@@ -495,7 +495,7 @@ let mut stream = client.interaction().create_stream();
 
 3. **Use appropriate model:**
 ```rust,ignore
-// gemini-3.6-flash is faster than gemini-3.1-pro-preview
+// gemini-3.7-flash is faster than gemini-3.1-pro-preview
 ```
 
 ### High Token Usage

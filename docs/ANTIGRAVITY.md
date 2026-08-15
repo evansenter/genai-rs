@@ -11,7 +11,7 @@ your tools, hooks, and policies are ordinary Rust.
 > **Note**: All code blocks in this guide use `rust,ignore` because the
 > `antigravity` feature is off by default and doctests run without it.
 > The same snippets are exercised (compiled and run) by
-> `examples/antigravity_agent.rs` and `tests/antigravity_harness.rs`.
+> `examples/antigravity/agent.rs` and `tests/antigravity_harness.rs`.
 
 ## Setup
 
@@ -74,7 +74,7 @@ use genai_rs::antigravity::{AntigravityAgent, policy};
 
 let mut agent = AntigravityAgent::builder()
     .with_api_key(std::env::var("GEMINI_API_KEY")?)
-    .with_model("gemini-3.6-flash")
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_system_instructions("You are a code-review assistant.")
     .add_workspace("/path/to/repo")
     .add_policy(policy::deny_all())
@@ -449,6 +449,33 @@ budget is exceeded, the crate halts the harness's still-running turn and
 drains its remaining events before returning `AntigravityError::Timeout`, so
 the next turn starts from a clean stream.
 
+The deadline is absolute, stamped when the turn starts, and it covers the
+whole turn rather than the gaps between harness events. For
+`send_streaming` that includes time **your** code spends between polls of
+the stream — so a consumer that renders events interactively, or awaits a
+confirmation mid-turn, is spending the same budget the harness is. Raise it,
+or call `without_turn_timeout()`, for consumers that pause mid-turn; the
+`Timeout` error they would otherwise get carries a stall diagnosis pointing
+at the harness, which is the wrong place to look.
+
+**Turns are bounded by default** — `DEFAULT_TURN_TIMEOUT`, 300s — so you get
+an error rather than a hang without opting in. An unbounded turn does not
+*fail* when the harness stops signalling completion; it hangs, which is
+strictly less diagnosable than an error and looks identical to latency from
+the outside. That is not hypothetical: harness 0.1.10 renamed the terminal
+trajectory state, and every turn ran on with no error, no failed parse and
+nothing in the logs.
+
+Raise it for agents that legitimately run long (deep subagent trees, many
+tool calls), lower it for interactive use where a stall should surface fast,
+or remove it deliberately:
+
+```rust,ignore
+let mut agent = AntigravityAgent::builder()
+    .without_turn_timeout()  // runs until the harness ends the turn
+    .spawn().await?;
+```
+
 ## Structured output
 
 ```rust,ignore
@@ -497,7 +524,7 @@ Delivery semantics (see `antigravity::triggers` for details):
   (`earliest step index is out of bounds: 0 vs 0`). The session dies with
   it, so the next send fails on a closed socket or a broken pipe. One
   completed turn is enough. Reproduced by
-  `examples/real_world/proactive_agent`, which opens with a turn for
+  `examples/antigravity/proactive_agent`, which opens with a turn for
   exactly this reason.
 - A firing is delivered **only while the agent is idle** (no
   `chat`/`send_streaming` turn in flight). If it comes due mid-turn, it is
