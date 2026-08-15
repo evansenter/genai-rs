@@ -41,6 +41,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gate and ignored the value, which meant filtering did not work on the
   one surface that emits WebSocket messages at all.
 
+- **Three more antigravity worked examples**, all runnable against a real
+  harness and smoke-run in CI: `mcp_toolbelt` (external tools over MCP,
+  with a dependency-free stdio server fixture and the `mcp_<server>_<tool>`
+  policy-target spelling), `proactive_agent` (`add_trigger`, and observing
+  deliveries through a wire inspector — the only way to see one today), and
+  `cancellable_turn` (`cancel_handle` from another task, keeping partial
+  output). Together with the existing four, every antigravity builder
+  surface now has an example.
+
+  Writing them surfaced a harness limitation now documented in
+  `docs/ANTIGRAVITY.md`: **a trigger that fires into a conversation with no
+  history crashes harness 0.1.10 outright** (`earliest step index is out of
+  bounds: 0 vs 0`), taking the session with it. One completed turn first
+  avoids it.
+
 - **Antigravity e2e coverage for the last untested surfaces.**
   `with_response_schema`, `CancelHandle`, the `on_questions` hook,
   `add_mcp_server` and subagent *invocation* (as opposed to subagent

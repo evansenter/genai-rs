@@ -150,6 +150,21 @@ path = "examples/real_world/workspace_explorer/main.rs"
 required-features = ["antigravity"]
 
 [[example]]
+name = "mcp_toolbelt"
+path = "examples/real_world/mcp_toolbelt/main.rs"
+required-features = ["antigravity"]
+
+[[example]]
+name = "proactive_agent"
+path = "examples/real_world/proactive_agent/main.rs"
+required-features = ["antigravity"]
+
+[[example]]
+name = "cancellable_turn"
+path = "examples/real_world/cancellable_turn/main.rs"
+required-features = ["antigravity"]
+
+[[example]]
 name = "rag_system"
 path = "examples/real_world/rag_system/main.rs"
 

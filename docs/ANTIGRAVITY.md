@@ -490,6 +490,15 @@ Delivery semantics (see `antigravity::triggers` for details):
 
 - The first firing happens after the first interval elapses, not
   immediately. Intervals must be non-zero (`spawn()` validates).
+- **Give the conversation one real turn before a trigger can fire.** On
+  harness 0.1.10, a trigger delivered into a conversation with no history
+  crashes the harness *process* — its pre-invocation hook asks for "tokens
+  since the last checkpoint", finds no steps, and aborts the agent run
+  (`earliest step index is out of bounds: 0 vs 0`). The session dies with
+  it, so the next send fails on a closed socket or a broken pipe. One
+  completed turn is enough. Reproduced by
+  `examples/real_world/proactive_agent`, which opens with a turn for
+  exactly this reason.
 - A firing is delivered **only while the agent is idle** (no
   `chat`/`send_streaming` turn in flight). If it comes due mid-turn, it is
   deferred until the turn ends, and missed intervals collapse into a single

@@ -100,7 +100,7 @@ jobs:
         timeout-minutes: 15
         run: |
           set -eo pipefail
-          for ex in session_resume workspace_explorer; do
+          for ex in session_resume workspace_explorer mcp_toolbelt proactive_agent cancellable_turn; do
             echo "::group::cargo run --example $ex"
             cargo run --features antigravity --example "$ex"
             echo "::endgroup::"
