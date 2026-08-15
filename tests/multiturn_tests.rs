@@ -191,13 +191,20 @@ async fn test_conversation_function_then_text() {
         .required(vec!["city".to_string()])
         .build();
 
+    // Every turn goes through retry_request! for the same reason the
+    // branch test below does: three sequential live calls give a transient
+    // 429/5xx three chances to fail the run, and a rate limit is not what
+    // this test is asserting about.
+    //
     // Turn 1: Trigger function call
-    let response1 = stateful_builder(&client)
-        .with_text("What's the weather in Tokyo?")
-        .add_function(get_weather.clone())
-        .create()
-        .await
-        .expect("Turn 1 failed");
+    let response1 = retry_request!([client, get_weather] => {
+        stateful_builder(&client)
+            .with_text("What's the weather in Tokyo?")
+            .add_function(get_weather.clone())
+            .create()
+            .await
+    })
+    .expect("Turn 1 failed");
 
     println!("Turn 1 status: {:?}", response1.status);
 
@@ -216,13 +223,16 @@ async fn test_conversation_function_then_text() {
         json!({"temperature": "25°C", "conditions": "sunny"}),
     );
 
-    let response2 = stateful_builder(&client)
-        .with_previous_interaction(response1.id.as_ref().expect("id should exist"))
-        .with_history(vec![result])
-        .add_function(get_weather.clone())
-        .create()
-        .await
-        .expect("Turn 2 failed");
+    let prev_id = response1.id.clone().expect("id should exist");
+    let response2 = retry_request!([client, prev_id, get_weather, result] => {
+        stateful_builder(&client)
+            .with_previous_interaction(&prev_id)
+            .with_history(vec![result.clone()])
+            .add_function(get_weather.clone())
+            .create()
+            .await
+    })
+    .expect("Turn 2 failed");
 
     println!("Turn 2 status: {:?}", response2.status);
     if response2.has_text() {
@@ -230,13 +240,16 @@ async fn test_conversation_function_then_text() {
     }
 
     // Turn 3: Follow-up text question (no function call expected)
-    let response3 = stateful_builder(&client)
-        .with_previous_interaction(response2.id.as_ref().expect("id should exist"))
-        .with_text("Should I bring a jacket?")
-        .add_function(get_weather)
-        .create()
-        .await
-        .expect("Turn 3 failed");
+    let prev_id = response2.id.clone().expect("id should exist");
+    let response3 = retry_request!([client, prev_id, get_weather] => {
+        stateful_builder(&client)
+            .with_previous_interaction(&prev_id)
+            .with_text("Should I bring a jacket?")
+            .add_function(get_weather.clone())
+            .create()
+            .await
+    })
+    .expect("Turn 3 failed");
 
     println!("Turn 3 status: {:?}", response3.status);
     assert!(response3.has_text(), "Turn 3 should have text response");

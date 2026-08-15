@@ -718,18 +718,49 @@ print(json.dumps(out))
     );
 }
 
+/// python3's site-packages directories, as the crate's discovery sees
+/// them. Kept in step with `python_site_dirs` in
+/// `src/antigravity/process.rs`; an empty result (no python3) simply means
+/// that discovery step matches nothing, which is what the crate does too.
+fn python_site_dirs() -> Vec<std::path::PathBuf> {
+    let output = std::process::Command::new("python3")
+        .arg("-c")
+        .arg(
+            "import site\n\
+             paths = list(getattr(site, 'getsitepackages', lambda: [])())\n\
+             usersite = getattr(site, 'getusersitepackages', lambda: None)()\n\
+             if usersite: paths.append(usersite)\n\
+             print('\\n'.join(paths))",
+        )
+        .output();
+    match output {
+        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(std::path::PathBuf::from)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// The site-packages directory of the harness install the *crate* would
 /// resolve, when that is somewhere `python3` would not look on its own.
 ///
-/// Mirrors `discover_harness`'s order for the two modes that can point
-/// outside the default interpreter: the explicit
-/// `ANTIGRAVITY_HARNESS_PATH`, then `localharness` on `PATH`. The
-/// python3-site-packages mode needs no PYTHONPATH by construction, and the
-/// builder-path mode is not used by these tests.
+/// Mirrors `discover_harness`'s order — `ANTIGRAVITY_HARNESS_PATH`, then
+/// python3's own site-packages, then `localharness` on `PATH` — minus the
+/// builder-path mode, which these tests do not use.
+///
+/// The site-packages step is included even though it never *produces* a
+/// PYTHONPATH, because it is a precedence step: with the env var unset, a
+/// wheel in python3's site-packages, and a second `localharness` on `PATH`
+/// (pipx / `uv tool`), skipping it would prepend the `PATH` copy's
+/// site-packages and win — comparing the crate's model against the wheel
+/// the crate is *not* running.
 ///
 /// `None` means "let python3 use its own site-packages", which is correct
-/// whenever the resolved binary does not sit inside a recognizable wheel
-/// layout.
+/// both there and whenever the resolved binary does not sit inside a
+/// recognizable wheel layout.
 fn resolved_harness_site_packages() -> Option<std::path::PathBuf> {
     let from_path_var = || {
         let path_var = std::env::var_os("PATH")?;
@@ -738,10 +769,21 @@ fn resolved_harness_site_packages() -> Option<std::path::PathBuf> {
             .find(|candidate| candidate.is_file())
     };
 
-    let harness = std::env::var_os("ANTIGRAVITY_HARNESS_PATH")
+    let harness = match std::env::var_os("ANTIGRAVITY_HARNESS_PATH")
         .map(std::path::PathBuf::from)
         .filter(|p| p.is_file())
-        .or_else(from_path_var)?;
+    {
+        Some(explicit) => explicit,
+        // python3 would find its own copy before anything on PATH, so
+        // leaving PYTHONPATH alone is what keeps the two in sync.
+        None if python_site_dirs()
+            .iter()
+            .any(|d| d.join("google/antigravity/bin/localharness").is_file()) =>
+        {
+            return None;
+        }
+        None => from_path_var()?,
+    };
 
     // A `PATH` hit is usually a symlink into the venv that owns the wheel,
     // so resolve it before reading the layout — the link's own directory

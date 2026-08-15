@@ -26,9 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   filter in addition to `1`: category selectors (`request`, `response`,
   `sse`, `upload`, `harness`, `ws`), any WebSocket payload key
   (`stepUpdate`, `toolCall`, …, matched case-insensitively), and a
-  `summary` modifier that collapses each event to one line. The historical
-  "on" spellings (`1`, `true`, `yes`, `on`, `all`, empty) still mean
-  everything-pretty-printed, so existing usage is unchanged. Unfiltered
+  `summary` modifier that collapses each event to one line (order-free:
+  `1,summary` and `summary,1` agree). The historical "on" spellings (`1`,
+  `true`, `yes`, `on`, `all`, empty) still mean everything-pretty-printed.
+  Note that the gate was previously "is the variable set at all", so *any*
+  value produced the firehose; other values are now parsed as selectors,
+  and a value matching no category and no payload key — `0`, `false`,
+  `off` — prints nothing where it previously printed everything. Unfiltered
   output was unusable for antigravity sessions, where a few turns produce
   thousands of lines. Exposed programmatically as `wire::WireFilter` and
   `LoudWirePrinter::with_filter`; `LoudWirePrinter` is consequently no

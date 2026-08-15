@@ -438,6 +438,7 @@ impl WireFilter {
     pub fn parse(raw: &str) -> Self {
         let mut selectors = Vec::new();
         let mut summary = false;
+        let mut keep_all = false;
         for token in raw.split(',') {
             let token = token.trim();
             if token.is_empty() {
@@ -445,19 +446,18 @@ impl WireFilter {
             }
             match token.to_ascii_lowercase().as_str() {
                 // The historical "on" values select everything.
-                "1" | "true" | "yes" | "on" | "all" => return Self::all_with_summary(summary),
+                "1" | "true" | "yes" | "on" | "all" => keep_all = true,
                 "summary" => summary = true,
                 other => selectors.push(other.to_string()),
             }
         }
-        Self { selectors, summary }
-    }
-
-    fn all_with_summary(summary: bool) -> Self {
-        Self {
-            selectors: Vec::new(),
-            summary,
+        // Deliberately after the loop rather than an early return: `summary`
+        // is a modifier, so `1,summary` and `summary,1` must mean the same
+        // thing. Returning on the "on" arm would honor only the latter.
+        if keep_all {
+            selectors.clear();
         }
+        Self { selectors, summary }
     }
 
     /// True when bodies should be collapsed to one line per event.
@@ -1090,10 +1090,18 @@ mod filter_tests {
         assert!(f.allows(&ws(json!({"toolCall": {}}))));
         assert!(!f.allows(&request()));
 
-        // Even alongside an "on" value, summary survives.
-        let f = WireFilter::parse("summary,1");
-        assert!(f.is_summary());
-        assert!(f.allows(&request()));
+        // Even alongside an "on" value, summary survives — in either order.
+        // `summary` is a modifier, so token position must not change what
+        // the value means.
+        for raw in ["summary,1", "1,summary", "stepUpdate,1,summary"] {
+            let f = WireFilter::parse(raw);
+            assert!(f.is_summary(), "{raw:?} should keep summary");
+            assert!(f.allows(&request()), "{raw:?} should keep everything");
+            assert!(
+                f.allows(&ws(json!({"toolCall": {}}))),
+                "{raw:?}: an \"on\" value overrides narrower selectors"
+            );
+        }
     }
 }
 
