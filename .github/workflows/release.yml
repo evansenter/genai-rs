@@ -39,7 +39,10 @@ jobs:
           # integration test self-skips without a key, so a rotated or
           # cleared secret would validate a release by calling the API zero
           # times and still go green — gating a publish on nothing.
-          if [ -z "$GEMINI_API_KEY" ]; then
+          # Trimmed, to match the `Ok(key) if !key.trim().is_empty()` the
+          # tests and examples gate on: a secret of just whitespace would
+          # pass a bare -z and then skip everything downstream anyway.
+          if [ -z "${GEMINI_API_KEY//[[:space:]]/}" ]; then
             echo "::error::GEMINI_API_KEY is empty or unset — every integration test would self-skip and this release would validate having verified nothing"
             exit 1
           fi

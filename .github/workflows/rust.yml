@@ -100,7 +100,10 @@ jobs:
           # (see the comment above). The `if:` above rules out forks --
           # including a fork's own push to main, which satisfies the
           # event_name arm -- but cannot see a rotated or cleared secret.
-          if [ -z "$GEMINI_API_KEY" ]; then
+          # Trimmed, to match the `Ok(key) if !key.trim().is_empty()` the
+          # tests and examples gate on: a secret of just whitespace would
+          # pass a bare -z and then skip everything downstream anyway.
+          if [ -z "${GEMINI_API_KEY//[[:space:]]/}" ]; then
             echo "::error::GEMINI_API_KEY is empty or unset — the harness tests would self-skip and this step would pass having verified nothing"
             exit 1
           fi
@@ -110,7 +113,8 @@ jobs:
       # Examples were compiled but never executed, so bugs that only show
       # up in a real run stayed invisible: `on_post_tool` reporting every
       # successful builtin as a failure was found by running one of these
-      # by hand, not by any test. Both finish in seconds.
+      # by hand, not by any test. Most finish in seconds; repo_auditor
+      # drives subagents and is the one whose cost is not yet measured.
       - name: Smoke-run antigravity examples
         if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
         # Belt and braces alongside the examples' own with_turn_timeout: a
@@ -118,20 +122,27 @@ jobs:
         # errors, and an unbounded step would burn the runner's full budget
         # instead of going red.
         #
-        # Sized above what the retry loop below can actually spend: five
-        # examples, up to three attempts each, per-turn budgets of 120s
-        # (180s for cancellable_turn) plus spawn and backoff. At 15 the
-        # ceiling sat *below* the retry policy's own worst case, so a run
-        # where a few examples retried would go red on the timeout — which
-        # reads as "an example failed" rather than "the retries ran long",
-        # the exact misattribution the retry loop exists to avoid.
+        # A runner-budget cap, not a bound above the retry loop's worst
+        # case. It was the latter when this was five examples at 120s/180s;
+        # seven examples with 300s/420s/660s wrappers put the pathological
+        # case at ~128min, well over this. That is deliberate: the per-attempt
+        # `timeout` below is what attributes a hang to an example by name,
+        # and it does that job whenever a *small* number of examples hang,
+        # which is every case observed. A pileup big enough to reach 30min
+        # is a different failure, and a step-level timeout is the accepted
+        # reporting for it — raising this ceiling to cover the worst case
+        # would mean a wedged run burning two hours of runner before saying
+        # anything.
         timeout-minutes: 30
         run: |
           set -eo pipefail
           # Every example self-skips without a key, so a rotated or cleared
           # secret would run seven processes that each print one line and
           # exit 0 — green, having proven nothing.
-          if [ -z "$GEMINI_API_KEY" ]; then
+          # Trimmed, to match the `Ok(key) if !key.trim().is_empty()` the
+          # tests and examples gate on: a secret of just whitespace would
+          # pass a bare -z and then skip everything downstream anyway.
+          if [ -z "${GEMINI_API_KEY//[[:space:]]/}" ]; then
             echo "::error::GEMINI_API_KEY is empty or unset — every example would self-skip and this step would pass having verified nothing"
             exit 1
           fi
@@ -160,8 +171,9 @@ jobs:
           # 300s default.
           #
           # Not a replacement for the step budget: enough simultaneous
-          # hangs (6 x 3 x 300s plus 3 x 660s is ~123min) still exceed
-          # `timeout-minutes` above, and that case reports as it always did.
+          # hangs (5 x 3 x 300s plus 3 x 660s plus 3 x 420s is ~128min)
+          # still exceed `timeout-minutes` above, and that case reports as
+          # it always did.
           #
           # All seven, not the five this started with: repo_auditor is the
           # example the README sends people to first and was the only one
@@ -174,7 +186,17 @@ jobs:
           for ex in antigravity_agent repo_auditor session_resume workspace_explorer mcp_toolbelt proactive_agent cancellable_turn; do
             # Above the example's own with_turn_timeout, never below.
             case "$ex" in
+              # Declares 600s.
               repo_auditor) budget=660 ;;
+              # Declares nothing, so it inherits the crate's 300s
+              # DEFAULT_TURN_TIMEOUT — deliberately, being the starter that
+              # shows you get a sane budget for free. A 300s wrapper would
+              # therefore be *equal* to its ceiling, not above it, and the
+              # wrapper's clock starts earlier still: it covers the example's
+              # compile, process start and harness spawn. Headroom for all of
+              # that, so the example's own timeout is always what fires.
+              antigravity_agent) budget=420 ;;
+              # The rest declare 120s, or 180s for cancellable_turn.
               *) budget=300 ;;
             esac
             echo "::group::cargo run --example $ex (budget ${budget}s)"
@@ -241,7 +263,10 @@ jobs:
           # with the most coverage and the one release validation leans on.
           # The SEMANTIC_VALIDATION_SKIPPED escalation below is the same
           # argument applied to a partial skip; this is the total case.
-          if [ -z "$GEMINI_API_KEY" ]; then
+          # Trimmed, to match the `Ok(key) if !key.trim().is_empty()` the
+          # tests and examples gate on: a secret of just whitespace would
+          # pass a bare -z and then skip everything downstream anyway.
+          if [ -z "${GEMINI_API_KEY//[[:space:]]/}" ]; then
             echo "::error::GEMINI_API_KEY is empty or unset — every integration test would self-skip and this job would pass having verified nothing"
             exit 1
           fi
