@@ -28,7 +28,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 [package]
 name = "genai-rs"
-version = "0.9.0"
+version = "0.10.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -54,7 +54,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 workspace = true
 
 [dependencies]
-genai-rs-macros = { version = "0.9.0", path = "./genai-rs-macros" }
+genai-rs-macros = { version = "0.10.0", path = "./genai-rs-macros" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }
