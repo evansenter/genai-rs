@@ -138,7 +138,11 @@ jobs:
         # this is not only a pileup case. Attribution survives even then:
         # its per-attempt `::warning::` timed-out lines print as they go,
         # and only the terminal failed-N-times line is lost to the step
-        # timeout.
+        # timeout. It is ordered *last* in the loop below for that reason:
+        # the six faster examples finish and report before the one that can
+        # exhaust the ceiling starts, so a hang there costs its own coverage
+        # rather than theirs. A step killed mid-list leaves no signal
+        # separating "passed" from "never ran".
         timeout-minutes: 30
         run: |
           set -eo pipefail
@@ -219,7 +223,7 @@ jobs:
           # running an example by hand. repo_auditor drives subagents over
           # a fixture repo, so it is the slowest of the seven; this run is
           # the first measurement of what a healthy one costs.
-          for ex in antigravity_agent repo_auditor session_resume workspace_explorer mcp_toolbelt proactive_agent cancellable_turn; do
+          for ex in antigravity_agent session_resume workspace_explorer mcp_toolbelt proactive_agent cancellable_turn repo_auditor; do
             # Above the example's own with_turn_timeout, never below.
             case "$ex" in
               # Declares 600s.

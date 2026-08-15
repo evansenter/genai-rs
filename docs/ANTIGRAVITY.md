@@ -449,6 +449,15 @@ budget is exceeded, the crate halts the harness's still-running turn and
 drains its remaining events before returning `AntigravityError::Timeout`, so
 the next turn starts from a clean stream.
 
+The deadline is absolute, stamped when the turn starts, and it covers the
+whole turn rather than the gaps between harness events. For
+`send_streaming` that includes time **your** code spends between polls of
+the stream — so a consumer that renders events interactively, or awaits a
+confirmation mid-turn, is spending the same budget the harness is. Raise it,
+or call `without_turn_timeout()`, for consumers that pause mid-turn; the
+`Timeout` error they would otherwise get carries a stall diagnosis pointing
+at the harness, which is the wrong place to look.
+
 **Turns are bounded by default** — `DEFAULT_TURN_TIMEOUT`, 300s — so you get
 an error rather than a hang without opting in. An unbounded turn does not
 *fail* when the harness stops signalling completion; it hangs, which is

@@ -193,8 +193,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!("• Use with_save_dir + conversation_id() to resume sessions across runs");
     println!(
-        "• Turns are bounded at 300s by default (DEFAULT_TURN_TIMEOUT); \
-with_turn_timeout raises or lowers it, without_turn_timeout removes it"
+        "• Turns are bounded at {}s by default (DEFAULT_TURN_TIMEOUT); \
+with_turn_timeout raises or lowers it, without_turn_timeout removes it",
+        genai_rs::antigravity::DEFAULT_TURN_TIMEOUT.as_secs()
     );
 
     Ok(())
