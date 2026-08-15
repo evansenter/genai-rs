@@ -1558,9 +1558,15 @@ async fn test_antigravity_protocol_enums_have_not_drifted() {
     // Field names the crate reads by hand rather than through serde's
     // derive — every one of these is a `map.remove(..)` / `get(..)` on a
     // string literal, so a rename turns into a silent `None` rather than a
-    // parse error. `usageMetadata` is listed because it is still read as
-    // the pre-0.1.10 spelling; if the harness ever drops it entirely, the
-    // alias handling is what needs revisiting.
+    // parse error.
+    //
+    // `usageMetadata` is deliberately absent even though the crate still
+    // reads it: it is pre-0.1.10 back-compat, 0.1.10 descriptors no longer
+    // carry the field, and listing it would make this guard fail forever
+    // on a spelling we keep only for older harnesses. The guard is
+    // one-directional — it asks "can the harness still send what we read",
+    // not "do we read everything it sends" — so a legacy alias belongs
+    // outside it.
     let fields: Vec<(&str, &[&str])> = vec![
         (
             "OutputEvent",

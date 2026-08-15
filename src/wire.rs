@@ -519,14 +519,16 @@ impl WireFilter {
                     // nothing — which is exactly what it did until an example
                     // advertised it and printed silence.
                     //
-                    // Deliberately only one level: deeper would start matching
-                    // leaf field names across unrelated messages, and the
-                    // selector list is not scoped by message type.
-                    value.as_object().is_some_and(|inner| {
-                        inner
-                            .keys()
-                            .any(|nested| self.selectors.contains(&nested.to_ascii_lowercase()))
-                    })
+                    // Restricted to *object-valued* nested keys, which is
+                    // what an action is — matching a scalar like `text`
+                    // would print a line labelled with some unrelated
+                    // action rather than the key that matched. And only one
+                    // level: deeper would match leaf field names across
+                    // unrelated messages, since selectors are not scoped by
+                    // message type.
+                    nested_action_keys(value)
+                        .iter()
+                        .any(|nested| self.selectors.contains(&nested.to_ascii_lowercase()))
                 })
         })
     }
@@ -546,6 +548,23 @@ pub(crate) fn env_inspector() -> Option<LoudWirePrinter> {
     // The value selects what to print — `1` keeps the historical
     // firehose, anything else filters. See `WireFilter`.
     Some(LoudWirePrinter::with_filter(WireFilter::parse(&raw)))
+}
+
+/// The object-valued keys one level inside a payload value — the step
+/// *actions* (`mcpTool`, `runCommand`, `viewFile`, …), as opposed to a
+/// step's scalar fields (`text`, `stepIndex`, `state`).
+///
+/// Shared by selection and summary rendering so the two cannot disagree
+/// about what a line is "about": a nested selector matches exactly the
+/// keys the label can name.
+fn nested_action_keys(value: &serde_json::Value) -> Vec<&str> {
+    value.as_object().map_or_else(Vec::new, |inner| {
+        inner
+            .iter()
+            .filter(|(_, v)| v.is_object())
+            .map(|(k, _)| k.as_str())
+            .collect()
+    })
 }
 
 /// Envelope bookkeeping that rides alongside a harness message rather
@@ -626,8 +645,8 @@ impl LoudWirePrinter {
                 (*id, "HARNESS", format!("{path} (pid {pid:?})"))
             }
             WireEvent::HarnessStderr { id, line } => (*id, "STDERR", line.clone()),
-            WireEvent::WsSend { id, payload } => (*id, "WS>", Self::payload_keys(payload)),
-            WireEvent::WsReceive { id, payload } => (*id, "WS<", Self::payload_keys(payload)),
+            WireEvent::WsSend { id, payload } => (*id, "WS>", Self::ws_payload_keys(payload)),
+            WireEvent::WsReceive { id, payload } => (*id, "WS<", Self::ws_payload_keys(payload)),
         };
         eprintln!(
             "{} {} [#{id}] {label:<7} {detail}",
@@ -645,8 +664,19 @@ impl LoudWirePrinter {
     /// Label it rather than printing a blank detail column, which in the
     /// one format meant for skimming would read as a rendering fault. The
     /// label stays neutral because this also renders HTTP response bodies,
-    /// where there is no envelope to speak of.
+    /// where there is no envelope to speak of — and those stay unqualified
+    /// for the same reason (see `ws_payload_keys`).
     fn payload_keys(payload: &serde_json::Value) -> String {
+        Self::payload_keys_inner(payload, false)
+    }
+
+    /// `payload_keys` for harness WebSocket messages, qualifying a step
+    /// with the action it carried.
+    fn ws_payload_keys(payload: &serde_json::Value) -> String {
+        Self::payload_keys_inner(payload, true)
+    }
+
+    fn payload_keys_inner(payload: &serde_json::Value, qualify: bool) -> String {
         payload.as_object().map_or_else(
             || "(non-object)".to_string(),
             |m| {
@@ -654,24 +684,29 @@ impl LoudWirePrinter {
                     .iter()
                     .filter(|(k, _)| !is_envelope_key(k))
                     .map(|(key, value)| {
-                        // Qualify with the nested object-valued key when
-                        // there is one: a bare "stepUpdate" says almost
-                        // nothing, while "stepUpdate/mcpTool" says which
-                        // action the step carried — and matches what a
-                        // nested selector selects on, so asking for
-                        // `mcpTool` no longer prints lines labelled
-                        // `stepUpdate`. Scalar fields (stepIndex, text,
-                        // state) are skipped, so message types without a
-                        // nested object render exactly as before.
-                        let action = value.as_object().and_then(|inner| {
-                            inner
-                                .iter()
-                                .find(|(_, v)| v.is_object())
-                                .map(|(k, _)| k.as_str())
-                        });
-                        match action {
-                            Some(action) => format!("{key}/{action}"),
-                            None => key.clone(),
+                        // Qualify a harness message with the action it
+                        // carried: a bare "stepUpdate" says almost nothing,
+                        // while "stepUpdate/mcpTool" says which action ran
+                        // — and names exactly what a nested selector can
+                        // match, so asking for `mcpTool` cannot produce a
+                        // line labelled with a different key.
+                        //
+                        // WebSocket only. HTTP response bodies share this
+                        // renderer and have no actions, so qualifying them
+                        // would invent structure that isn't there
+                        // (`interaction/outputs`).
+                        if !qualify {
+                            return key.clone();
+                        }
+                        let actions = nested_action_keys(value);
+                        if actions.is_empty() {
+                            key.clone()
+                        } else {
+                            // Every action, not just the first: a step
+                            // carries one in practice, but naming only the
+                            // lowest-sorting of several would reintroduce
+                            // the label/selector mismatch in a rarer shape.
+                            format!("{key}/{}", actions.join("+"))
                         }
                     })
                     .collect();
@@ -1222,6 +1257,12 @@ mod filter_tests {
         // or selectors would start colliding across unrelated messages.
         let f = WireFilter::parse("serverName");
         assert!(!f.allows(&step_with_mcp));
+
+        // Scalar fields are not selectors either: `allows` and the summary
+        // qualifier share `nested_action_keys`, so a selector can only
+        // match something the label is able to name.
+        let f = WireFilter::parse("stepIndex");
+        assert!(!f.allows(&step_with_mcp));
     }
 
     #[test]
@@ -1259,7 +1300,7 @@ mod filter_tests {
         // say which action ran and agree with what a nested selector
         // matched on.
         assert_eq!(
-            LoudWirePrinter::payload_keys(&json!({
+            LoudWirePrinter::ws_payload_keys(&json!({
                 "seqNum": "3",
                 "stepUpdate": {
                     "stepIndex": 2,
@@ -1271,10 +1312,16 @@ mod filter_tests {
         );
         // Scalar-only payloads are unqualified, exactly as before.
         assert_eq!(
-            LoudWirePrinter::payload_keys(&json!({
+            LoudWirePrinter::ws_payload_keys(&json!({
                 "trajectoryStateUpdate": {"state": "STATE_FULLY_IDLE", "trajectoryId": "t-0"},
             })),
             "trajectoryStateUpdate"
+        );
+        // HTTP bodies go through the unqualified path, so a nested object
+        // in a response body is not dressed up as an action.
+        assert_eq!(
+            LoudWirePrinter::payload_keys(&json!({"interaction": {"outputs": {}}})),
+            "interaction"
         );
     }
 

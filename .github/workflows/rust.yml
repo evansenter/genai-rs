@@ -97,7 +97,15 @@ jobs:
         # harness that stops signalling turn completion hangs rather than
         # errors, and an unbounded step would burn the runner's full budget
         # instead of going red.
-        timeout-minutes: 15
+        #
+        # Sized above what the retry loop below can actually spend: five
+        # examples, up to three attempts each, per-turn budgets of 120s
+        # (180s for cancellable_turn) plus spawn and backoff. At 15 the
+        # ceiling sat *below* the retry policy's own worst case, so a run
+        # where a few examples retried would go red on the timeout — which
+        # reads as "an example failed" rather than "the retries ran long",
+        # the exact misattribution the retry loop exists to avoid.
+        timeout-minutes: 30
         run: |
           set -eo pipefail
           # Retry each example, for the same reason the nextest steps use
