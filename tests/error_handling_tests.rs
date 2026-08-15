@@ -627,7 +627,7 @@ fn test_client_with_empty_api_key() {
     assert!(
         client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_text("test")
             .build()
             .is_ok()
@@ -659,10 +659,7 @@ fn test_interaction_builder_missing_content() {
         .unwrap();
 
     // Building a request without content should fail
-    let result = client
-        .interaction()
-        .with_model("gemini-3-flash-preview")
-        .build();
+    let result = client.interaction().with_model("gemini-3.6-flash").build();
 
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
@@ -692,7 +689,7 @@ async fn test_invalid_api_key_returns_auth_error() {
 
     let result = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text("Hello")
         .create()
         .await;
@@ -738,7 +735,7 @@ async fn test_malformed_api_key() {
 
     let result = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text("Hello")
         .create()
         .await;

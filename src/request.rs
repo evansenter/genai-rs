@@ -1212,7 +1212,7 @@ impl VideoConfig {
 /// let client = Client::new("api_key".to_string());
 ///
 /// let request = client.interaction()
-///     .with_model("gemini-3-flash-preview")
+///     .with_model("gemini-3.6-flash")
 ///     .with_text("Hello!")
 ///     .build()?;
 ///
@@ -1230,7 +1230,7 @@ impl VideoConfig {
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// # let client = Client::new("api_key".to_string());
 /// # let request = client.interaction()
-/// #     .with_model("gemini-3-flash-preview")
+/// #     .with_model("gemini-3.6-flash")
 /// #     .with_text("Hello!")
 /// #     .build()?;
 /// let response = client.execute(request).await?;
@@ -1247,7 +1247,7 @@ impl VideoConfig {
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// # let client = Client::new("api_key".to_string());
 /// # let request = client.interaction()
-/// #     .with_model("gemini-3-flash-preview")
+/// #     .with_model("gemini-3.6-flash")
 /// #     .with_text("Hello!")
 /// #     .build()?;
 /// let response = loop {
@@ -1262,7 +1262,7 @@ impl VideoConfig {
 /// ```
 #[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct InteractionRequest {
-    /// Model name (e.g., "gemini-3-flash-preview") - mutually exclusive with agent
+    /// Model name (e.g., "gemini-3.6-flash") - mutually exclusive with agent
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
 
@@ -1557,20 +1557,26 @@ impl ThinkingSummaries {
         }
     }
 
-    /// Convert to the agent_config wire format (THINKING_SUMMARIES_*).
+    /// Convert to the `agent_config` wire format (`"auto"` / `"none"`).
     ///
-    /// AgentConfig uses a different wire format than GenerationConfig:
-    /// - GenerationConfig: lowercase ("auto", "none")
-    /// - AgentConfig: SCREAMING_CASE ("THINKING_SUMMARIES_AUTO", "THINKING_SUMMARIES_NONE")
+    /// This used to emit the SCREAMING_CASE `THINKING_SUMMARIES_*` form,
+    /// which the API accepted when `DeepResearchConfig` was written.
+    /// Verified live 2026-08-10, it no longer does:
+    ///
+    /// ```text
+    /// The value 'THINKING_SUMMARIES_AUTO' is not supported for
+    /// 'agent_config.thinking_summaries'. Supported values: 'auto', 'none'.
+    /// ```
+    ///
+    /// So both contexts now take the lowercase spelling and this agrees
+    /// with [`Serialize`]. The seam is kept rather than inlined because
+    /// the two spellings diverged once and could again; deserialization
+    /// still accepts either form (Evergreen).
     #[must_use]
     pub fn to_agent_config_value(&self) -> serde_json::Value {
         match self {
-            ThinkingSummaries::Auto => {
-                serde_json::Value::String("THINKING_SUMMARIES_AUTO".to_string())
-            }
-            ThinkingSummaries::None => {
-                serde_json::Value::String("THINKING_SUMMARIES_NONE".to_string())
-            }
+            ThinkingSummaries::Auto => serde_json::Value::String("auto".to_string()),
+            ThinkingSummaries::None => serde_json::Value::String("none".to_string()),
             ThinkingSummaries::Unknown { summaries_type, .. } => {
                 // For unknown values, preserve the original format
                 serde_json::Value::String(summaries_type.clone())
@@ -1986,7 +1992,7 @@ impl From<DynamicConfig> for AgentConfig {
 /// error enumerates the supported config types as `dynamic`,
 /// `deep-research`, `code-mender`, `antigravity`). Setting `model` to a
 /// value the agent doesn't offer returns 404 `not_found` — including
-/// `gemini-3-flash-preview`, this crate's default model elsewhere. The
+/// `gemini-3.6-flash`, this crate's default model elsewhere. The
 /// agent's model catalog is not enumerable on a standard key, so leave
 /// `model` unset unless you know an accepted value.
 ///
@@ -2075,12 +2081,12 @@ mod tests {
         // AgentConfig uses THINKING_SUMMARIES_* format via to_agent_config_value()
         assert_eq!(
             ThinkingSummaries::Auto.to_agent_config_value(),
-            serde_json::Value::String("THINKING_SUMMARIES_AUTO".to_string())
+            serde_json::Value::String("auto".to_string())
         );
 
         assert_eq!(
             ThinkingSummaries::None.to_agent_config_value(),
-            serde_json::Value::String("THINKING_SUMMARIES_NONE".to_string())
+            serde_json::Value::String("none".to_string())
         );
     }
 
@@ -2128,7 +2134,7 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
 
         assert_eq!(value["type"], "deep-research");
-        assert_eq!(value["thinking_summaries"], "THINKING_SUMMARIES_AUTO");
+        assert_eq!(value["thinking_summaries"], "auto");
     }
 
     #[test]

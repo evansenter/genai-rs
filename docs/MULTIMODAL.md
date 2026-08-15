@@ -35,7 +35,7 @@ use genai_rs::{Client, Content};
 // From base64 data
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_content(vec![
         Content::text("What's in this image?"),
         Content::image_data(base64_string, "image/png"),
@@ -46,7 +46,7 @@ let response = client
 // From URI (Files API or public URL)
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_content(vec![
         Content::text("Describe the uploaded image"),
         Content::image_uri(&file_metadata.uri, "image/png"),
@@ -65,7 +65,7 @@ let image_content = image_from_file("photo.jpg").await?;
 
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_content(vec![
         Content::text("What do you see?"),
         image_content,
@@ -82,7 +82,7 @@ use genai_rs::{Client, Content};
 // Compare multiple images
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_content(vec![
         Content::text("Compare these images:"),
         Content::image_data(base64_image1, "image/png"),
@@ -112,7 +112,7 @@ use genai_rs::{Client, Content, audio_from_file};
 let audio_content = audio_from_file("recording.mp3").await?;
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_content(vec![
         Content::text("Transcribe this audio"),
         audio_content,
@@ -123,7 +123,7 @@ let response = client
 // From base64
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_content(vec![
         Content::text("What's being said?"),
         Content::audio_data(base64_audio, "audio/mp3"),
@@ -192,6 +192,8 @@ use genai_rs::{Client, Content, video_from_file};
 
 // From file helper
 let video_content = video_from_file("clip.mp4").await?;
+// video_from_file reads the file into inline bytes, so it needs an
+// inline-capable model too (see the note on the base64 form below).
 let response = client
     .interaction()
     .with_model("gemini-3-flash-preview")
@@ -202,7 +204,11 @@ let response = client
     .create()
     .await?;
 
-// From base64
+// From base64 — NOTE the model. Inline video bytes need a model that
+// accepts them: verified live 2026-08-10, gemini-3.6-flash returns
+// 400 invalid_request for inline video while accepting video by URI.
+// Prefer the Files API URI form below unless you specifically need
+// inline bytes.
 let response = client
     .interaction()
     .with_model("gemini-3-flash-preview")
@@ -221,7 +227,7 @@ let file = client
 
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_content(vec![
         Content::text("What's in this video?"),
         Content::video_uri(&file.uri, "video/mp4"),
@@ -251,7 +257,7 @@ use genai_rs::{Client, Content, document_from_file};
 let doc_content = document_from_file("report.pdf").await?;
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_content(vec![
         Content::text("Summarize this document"),
         doc_content,
@@ -262,7 +268,7 @@ let response = client
 // From base64
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_content(vec![
         Content::text("Extract key points from this PDF"),
         Content::document_data(base64_pdf, "application/pdf"),
@@ -276,7 +282,7 @@ let response = client
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_content(vec![
         Content::text("Analyze this code"),
         Content::document_data(base64_text, "text/plain"),
@@ -355,7 +361,7 @@ if metadata.is_active() {
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_content(vec![
         Content::text("Analyze this file"),
         Content::from_file(&file),
@@ -405,7 +411,7 @@ use genai_rs::{Client, Content, Resolution};
 // With resolution using builder method
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_content(vec![
         Content::text("What color is this?"),
         Content::image_data(base64, "image/png").with_resolution(Resolution::Low),
@@ -512,7 +518,7 @@ Generate images from text prompts.
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3-pro-image-preview")  // Image generation model
+    .with_model("gemini-3.1-flash-image")  // Image generation model
     .with_text("A sunset over mountains, digital art style")
     .with_image_output()
     .create()

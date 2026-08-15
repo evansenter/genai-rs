@@ -114,6 +114,11 @@ Located in `examples/real_world/`:
 | `data_analysis/` | CSV data analysis with functions | Intermediate |
 | `rag_system/` | Retrieval-augmented generation | Advanced |
 | `repo_auditor/` | Agentic security audit on the Antigravity harness: subagent, policies, structured report (`--features antigravity`) | Advanced |
+| [`session_resume/`](../examples/real_world/session_resume/) | Agent that remembers across process restarts — trajectory persistence, `conversation_id` round trip, `initial_history` (`--features antigravity`) | Advanced |
+| [`workspace_explorer/`](../examples/real_world/workspace_explorer/) | Watching an agent work and gating it live — workspaces, typed `ToolAction` stream, content-based `on_pre_tool` deny (`--features antigravity`) | Advanced |
+| [`mcp_toolbelt/`](../examples/real_world/mcp_toolbelt/) | Giving an agent tools it didn't ship with — `add_mcp_server` (stdio), `mcp_<server>_<tool>` policy targets, MCP alongside `Capabilities::none()` (`--features antigravity`) | Advanced |
+| [`proactive_agent/`](../examples/real_world/proactive_agent/) | Work that starts without a user turn — `add_trigger`, observing deliveries via a wire inspector, the trigger/user-turn discard boundary (`--features antigravity`) | Advanced |
+| [`cancellable_turn/`](../examples/real_world/cancellable_turn/) | Stopping an agent mid-thought — `cancel_handle` from another task, partial output kept, contrast with `with_turn_timeout` (`--features antigravity`) | Advanced |
 
 ## Example Details
 
@@ -234,7 +239,7 @@ Generate images from text prompts.
 cargo run --example image_generation
 ```
 **Learn**: `with_image_output()`, `first_image_bytes()`, image iteration.
-**Note**: Requires `gemini-3-pro-image-preview` model.
+**Note**: Requires `gemini-3.1-flash-image` model.
 
 #### text_to_speech
 Convert text to spoken audio.
@@ -297,19 +302,19 @@ cargo run --example antigravity_agent --features antigravity
 harness, `policy::deny_all()`/`allow()`, `on_questions()` (enabling the
 write-capable `AskQuestion` builtin), `send_streaming()`, `shutdown()`.
 **Note**: Requires the `localharness` binary
-(`pip install google-antigravity==0.1.5`) and `GEMINI_API_KEY`.
+(`pip install google-antigravity==0.1.10`) and `GEMINI_API_KEY`.
 
 ## Prerequisites by Example
 
 | Example | Special Requirements |
 |---------|---------------------|
-| `image_generation` | `gemini-3-pro-image-preview` model access |
+| `image_generation` | `gemini-3.1-flash-image` model access |
 | `text_to_speech` | `gemini-2.5-pro-preview-tts` model access |
 | `deep_research` | Deep Research agent access |
 | `computer_use` | Computer Use capability access |
 | `file_search` | Pre-configured file search store |
 | `google_search` | Google Search grounding access |
-| `antigravity_agent`, `repo_auditor` | `localharness` binary (`pip install google-antigravity==0.1.5`) + `--features antigravity` |
+| `antigravity_agent`, `repo_auditor`, `session_resume`, `workspace_explorer`, `mcp_toolbelt`, `proactive_agent`, `cancellable_turn` | `localharness` binary (`pip install google-antigravity==0.1.10`) + `--features antigravity` |
 
 ## Example Progression
 

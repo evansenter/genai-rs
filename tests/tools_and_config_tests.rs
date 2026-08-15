@@ -727,11 +727,13 @@ mod structured_output {
             "required": ["name", "age", "email"]
         });
 
-        let result = stateful_builder(&client)
-            .with_text("Generate a fake user profile with a name, age, and email address.")
-            .with_response_format(schema)
-            .create()
-            .await;
+        let result = retry_request!([client, schema] => {
+            stateful_builder(&client)
+                .with_text("Generate a fake user profile with a name, age, and email address.")
+                .with_response_format(schema.clone())
+                .create()
+                .await
+        });
 
         let response = result.expect("Structured output request should succeed");
         assert_eq!(response.status, InteractionStatus::Completed);
@@ -1245,7 +1247,7 @@ mod image_generation {
             async move {
                 let response = client
                     .interaction()
-                    .with_model("gemini-3-pro-image-preview")
+                    .with_model("gemini-3.1-flash-image")
                     .with_text("Generate a simple image of a red circle on a white background.")
                     .with_response_modalities(vec!["image".to_string()])
                     .with_store_enabled()
@@ -1301,7 +1303,11 @@ mod thinking {
 
         let config = GenerationConfig {
             temperature: Some(0.7),
-            max_output_tokens: Some(500),
+            // Headroom for the same reason as the High case below: thinking
+            // draws from this budget. Minimal should need far less, which
+            // is the point of the level — but the assertion here is that
+            // the level is accepted, not that 500 tokens is enough.
+            max_output_tokens: Some(2000),
             thinking_level: Some(ThinkingLevel::Minimal),
             ..Default::default()
         };
@@ -1341,7 +1347,13 @@ mod thinking {
 
         let config = GenerationConfig {
             temperature: Some(0.7),
-            max_output_tokens: Some(1000),
+            // Headroom: thinking tokens are drawn from this same budget,
+            // and ThinkingLevel::High on a step-by-step prompt can consume
+            // 1000 on its own — which surfaced as an intermittent
+            // `Incomplete` status rather than as anything about thinking.
+            // This test is about the level being accepted and honored, not
+            // about truncation behavior.
+            max_output_tokens: Some(8000),
             thinking_level: Some(ThinkingLevel::High),
             ..Default::default()
         };
@@ -1421,7 +1433,15 @@ mod sampling {
         // Low top_p = more focused/deterministic
         let config = GenerationConfig {
             temperature: Some(1.0),
-            max_output_tokens: Some(100),
+            // Headroom, deliberately: this test is about `top_p`, not
+            // truncation. gemini-3.6-flash spends ~100 thinking tokens on
+            // even this trivial prompt (verified live 2026-08-10: ~99-102
+            // total for a 1-token answer), so the old 100-token cap made
+            // "is there any text left?" a coin flip rather than a top_p
+            // assertion — the same fix as its siblings
+            // `test_generation_config_temperature` (100 -> 2000) and
+            // `test_generation_config_thinking_level_high` (1000 -> 8000).
+            max_output_tokens: Some(2000),
             top_p: Some(0.1), // Very focused
             ..Default::default()
         };
@@ -1604,7 +1624,7 @@ mod config_fields {
         // Raw request: the typed InteractionRequest no longer carries the
         // field, so build the JSON body directly.
         let body = json!({
-            "model": "gemini-3-flash-preview",
+            "model": "gemini-3.6-flash",
             "input": "Generate a greeting in Spanish.",
             "response_mime_type": "application/json",
         });

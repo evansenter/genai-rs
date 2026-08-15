@@ -165,7 +165,7 @@ if api_key.is_empty() || !api_key.starts_with("AI") {
 // Error: GenaiError::Api { status_code: 404, message: "Model not found..." }
 
 // Prevention: Use known model constants
-const MODEL: &str = "gemini-3-flash-preview";
+const MODEL: &str = "gemini-3.6-flash";
 ```
 
 ### Rate Limiting
@@ -184,7 +184,7 @@ const MODEL: &str = "gemini-3-flash-preview";
 // Prevention: Set appropriate timeout
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Complex analysis task...")
     .with_timeout(Duration::from_secs(120))  // 2 minutes
     .create()
@@ -416,7 +416,7 @@ loop {
         client.get_interaction_stream(id, Some(event_id))
     } else {
         client.interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_text("Tell me a story")
             .with_store_enabled()  // Required to resume by interaction ID
             .create_stream()

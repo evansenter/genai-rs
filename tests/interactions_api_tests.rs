@@ -106,21 +106,29 @@ mod basic {
             return;
         };
 
-        with_timeout(test_timeout(), async {
-            let response1 = stateful_builder(&client)
-                .with_text("My favorite color is blue.")
-                .create()
-                .await
-                .expect("First interaction failed");
+        // Extended, not the 60s default: two retried calls plus their round
+        // trips can exceed it on a slow API day, and the surface would then
+        // be an opaque harness timeout instead of the underlying error.
+        with_timeout(extended_test_timeout(), async {
+            let response1 = retry_request!([client] => {
+                stateful_builder(&client)
+                    .with_text("My favorite color is blue.")
+                    .create()
+                    .await
+            })
+            .expect("First interaction failed");
 
             assert_eq!(response1.status, InteractionStatus::Completed);
 
-            let response2 = stateful_builder(&client)
-                .with_previous_interaction(response1.id.as_ref().expect("id should exist"))
-                .with_text("What is my favorite color?")
-                .create()
-                .await
-                .expect("Second interaction failed");
+            let prev_id = response1.id.clone().expect("id should exist");
+            let response2 = retry_request!([client, prev_id] => {
+                stateful_builder(&client)
+                    .with_previous_interaction(&prev_id)
+                    .with_text("What is my favorite color?")
+                    .create()
+                    .await
+            })
+            .expect("Second interaction failed");
 
             assert_eq!(response2.status, InteractionStatus::Completed);
             assert!(
@@ -148,11 +156,15 @@ mod basic {
             return;
         };
 
-        let response = stateful_builder(&client)
-            .with_text("Hello, world!")
-            .create()
-            .await
-            .expect("Interaction failed");
+        // The interaction is only setup for the get; a transient 429/5xx
+        // here says nothing about whether get_interaction works.
+        let response = retry_request!([client] => {
+            stateful_builder(&client)
+                .with_text("Hello, world!")
+                .create()
+                .await
+        })
+        .expect("Interaction failed");
 
         let retrieved = client
             .get_interaction(response.id.as_ref().expect("id should exist"))
@@ -172,11 +184,14 @@ mod basic {
             return;
         };
 
-        let response = stateful_builder(&client)
-            .with_text("Test interaction for deletion")
-            .create()
-            .await
-            .expect("Interaction failed");
+        // Setup for the delete, same as above.
+        let response = retry_request!([client] => {
+            stateful_builder(&client)
+                .with_text("Test interaction for deletion")
+                .create()
+                .await
+        })
+        .expect("Interaction failed");
 
         client
             .delete_interaction(response.id.as_ref().expect("id should exist"))
@@ -377,7 +392,7 @@ mod streaming {
 
         with_timeout(test_timeout(), async {
             let request = InteractionRequest {
-                model: Some("gemini-3-flash-preview".to_string()),
+                model: Some("gemini-3.6-flash".to_string()),
                 agent: None,
                 agent_config: None,
                 input: InteractionInput::Text("Count from 1 to 5.".to_string()),
@@ -1024,7 +1039,13 @@ mod generation_config {
 
         let config = GenerationConfig {
             temperature: Some(0.0),
-            max_output_tokens: Some(100),
+            // Headroom, deliberately: this test is about `temperature`, not
+            // truncation. gemini-3.6-flash spends ~100 thinking tokens on
+            // even this trivial prompt (verified live 2026-08-10: ~99-102
+            // total for a 1-token answer), so the old 100-token cap made
+            // "is there any text left?" a coin flip rather than a
+            // temperature assertion.
+            max_output_tokens: Some(2000),
             top_p: None,
             thinking_level: None,
             ..Default::default()
@@ -1398,21 +1419,20 @@ mod conversations {
             let mut previous_id: Option<String> = None;
 
             for (i, message) in messages.iter().enumerate() {
-                let response = match &previous_id {
-                    None => {
-                        stateful_builder(&client)
-                            .with_text(*message)
-                            .create()
-                            .await
+                // A five-turn chain gives a transient 429/5xx five chances
+                // to fail a test that is asserting about conversation
+                // memory, not about transport.
+                let message = (*message).to_string();
+                let prev = previous_id.clone();
+                let response = retry_request!([client, message, prev] => {
+                    let builder = stateful_builder(&client).with_text(&message);
+                    match &prev {
+                        None => builder.create().await,
+                        Some(prev_id) => {
+                            builder.with_previous_interaction(prev_id).create().await
+                        }
                     }
-                    Some(prev_id) => {
-                        stateful_builder(&client)
-                            .with_text(*message)
-                            .with_previous_interaction(prev_id)
-                            .create()
-                            .await
-                    }
-                }
+                })
                 .unwrap_or_else(|e| panic!("Turn {} failed: {:?}", i + 1, e));
 
                 println!("Turn {}: {:?}", i + 1, response.status);
@@ -1451,13 +1471,15 @@ mod conversations {
         let initial_prompt = "What is 15 * 7? Show your work.";
         println!("Turn 1 prompt: {}\n", initial_prompt);
 
-        let response1 = interaction_builder(&client)
-            .with_text(initial_prompt)
-            .with_thinking_level(ThinkingLevel::Medium)
-            .with_store_enabled()
-            .create()
-            .await
-            .expect("Turn 1 failed");
+        let response1 = retry_request!([client] => {
+            interaction_builder(&client)
+                .with_text(initial_prompt)
+                .with_thinking_level(ThinkingLevel::Medium)
+                .with_store_enabled()
+                .create()
+                .await
+        })
+        .expect("Turn 1 failed");
 
         assert_eq!(response1.status, InteractionStatus::Completed);
 
@@ -1478,13 +1500,15 @@ mod conversations {
 
         println!("\nTurn 2 prompt: Now divide that result by 5");
 
-        let response2 = interaction_builder(&client)
-            .with_history(history)
-            .with_thinking_level(ThinkingLevel::Low)
-            .with_store_enabled()
-            .create()
-            .await
-            .expect("Turn 2 failed");
+        let response2 = retry_request!([client, history] => {
+            interaction_builder(&client)
+                .with_history(history.clone())
+                .with_thinking_level(ThinkingLevel::Low)
+                .with_store_enabled()
+                .create()
+                .await
+        })
+        .expect("Turn 2 failed");
 
         assert_eq!(response2.status, InteractionStatus::Completed);
         assert!(response2.has_text(), "Turn 2 should have text response");
@@ -1556,7 +1580,7 @@ mod multimodal {
             return;
         };
 
-        let model = "gemini-3-pro-image-preview";
+        let model = "gemini-3.1-flash-image";
         let prompt = "A simple red circle on a white background";
 
         println!("Generating image with model: {}", model);

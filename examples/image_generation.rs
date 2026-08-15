@@ -16,7 +16,7 @@
 //! # Model Support
 //!
 //! Image generation requires a model that supports the "image" response modality.
-//! Currently supported: `gemini-3-pro-image-preview`
+//! Currently supported: `gemini-3.1-flash-image`
 //!
 //! # Regional Availability
 //!
@@ -57,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ==========================================================================
     println!("--- Example 1: Birman Cat ---\n");
 
-    let model = "gemini-3-pro-image-preview";
+    let model = "gemini-3.1-flash-image";
     let prompt = "A white and orange Birman cat sitting cozily on an electric blanket on a couch.";
 
     println!("Model: {}", model);
@@ -169,7 +169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("--- Key Takeaways ---");
     println!("• with_image_output() sets response modality to \"image\"");
-    println!("• Requires gemini-3-pro-image-preview model");
+    println!("• Requires gemini-3.1-flash-image model");
     println!("• response.first_image_bytes() extracts the first image");
     println!("• response.images() iterator for multiple images with metadata\n");
 
@@ -199,9 +199,7 @@ fn handle_image_generation_error(e: &GenaiError) {
             eprintln!("API Error (HTTP {}): {}", status_code, message);
 
             if message.contains("not found") || message.contains("not supported") {
-                eprintln!(
-                    "\nNote: Image generation requires the gemini-3-pro-image-preview model."
-                );
+                eprintln!("\nNote: Image generation requires the gemini-3.1-flash-image model.");
                 eprintln!("This model may not be available in all regions or API configurations.");
             }
         }

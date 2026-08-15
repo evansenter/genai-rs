@@ -22,7 +22,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let client = Client::builder(api_key).build()?;
 
     // 2. Create an interaction with code execution enabled
-    let model_name = "gemini-3-flash-preview";
+    let model_name = "gemini-3.6-flash";
     let prompt = "Calculate the first 20 prime numbers using Python. \
                   Show both the code and explain the results.";
 

@@ -5,7 +5,7 @@
 //!
 //! Requirements:
 //! - The `localharness` binary (ships in the `google-antigravity` Python
-//!   wheel): `pip install google-antigravity==0.1.5`, or set
+//!   wheel): `pip install google-antigravity==0.1.10`, or set
 //!   `ANTIGRAVITY_HARNESS_PATH` to the binary.
 //! - `GEMINI_API_KEY` for model calls.
 //!
@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Policies are evaluated Rust-side before every tool dispatch.
     let mut agent = AntigravityAgent::builder()
         .with_api_key(api_key)
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_system_instructions(
             "You are a concise assistant. Prefer tools over guessing. When a request is \
              ambiguous (e.g. no city given for weather), use ask_question to clarify \
@@ -162,7 +162,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("--- Production Considerations ---");
     println!(
-        "• Pin the harness: pip install google-antigravity==0.1.5 (see SUPPORTED_HARNESS_VERSION)"
+        "• Pin the harness: pip install google-antigravity==0.1.10 (see SUPPORTED_HARNESS_VERSION)"
     );
     println!("• Always add policies before enabling write tools (run_command, edit_file)");
     println!(

@@ -19,7 +19,7 @@ Uses Gemini's built-in search capability:
 
 ```rust
 client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text(query)
     .with_google_search()  // Enable real-time web search
     .create()

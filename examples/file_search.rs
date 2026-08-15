@@ -31,7 +31,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         "stores/your-store-id-here".to_string(), // Replace with your store ID
     ];
 
-    let model_name = "gemini-3-flash-preview";
+    let model_name = "gemini-3.6-flash";
     let prompt = "What information do my documents contain about Rust programming?";
 
     println!("=== File Search Example ===\n");

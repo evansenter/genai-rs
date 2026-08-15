@@ -379,7 +379,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         let result = client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_system_instruction(
                 "You are a data analyst assistant. Use the available tools to analyze \
                  the sales data and answer questions. Always provide clear, concise \

@@ -22,7 +22,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let client = Client::builder(api_key).build()?;
 
     // 2. Create an interaction with Google Search enabled
-    let model_name = "gemini-3-flash-preview";
+    let model_name = "gemini-3.6-flash";
     let prompt = "What are the latest developments in Rust programming language in 2024? \
                   Include specific version numbers and features.";
 

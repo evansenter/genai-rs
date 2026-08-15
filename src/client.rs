@@ -1,6 +1,6 @@
 use crate::GenaiError;
 use crate::http::context::HttpContext;
-use crate::wire::{LoudWirePrinter, WireInspector};
+use crate::wire::WireInspector;
 use reqwest::Client as ReqwestClient;
 use std::sync::Arc;
 use std::time::Duration;
@@ -40,11 +40,14 @@ impl std::fmt::Debug for Client {
     }
 }
 
-/// Appends a [`LoudWirePrinter`] when the `LOUD_WIRE` environment variable is
-/// set. Checked once at `Client` construction time.
+/// Appends a [`crate::wire::LoudWirePrinter`] when the `LOUD_WIRE`
+/// environment variable is set, filtered by its value. Checked once at
+/// `Client` construction time; shares
+/// [`crate::wire::env_inspector`] with the antigravity agent builder so
+/// the variable means the same thing on both paths.
 fn with_env_inspectors(mut inspectors: Vec<Arc<dyn WireInspector>>) -> Vec<Arc<dyn WireInspector>> {
-    if std::env::var("LOUD_WIRE").is_ok() {
-        inspectors.push(Arc::new(LoudWirePrinter::new()));
+    if let Some(printer) = crate::wire::env_inspector() {
+        inspectors.push(Arc::new(printer));
     }
     inspectors
 }
@@ -242,14 +245,14 @@ impl Client {
     ///
     /// // Simple interaction
     /// let response = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Hello, world!")
     ///     .create()
     ///     .await?;
     ///
     /// // Stateful conversation (requires stored interaction)
     /// let response2 = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("What did I just say?")
     ///     .with_previous_interaction(response.id.as_ref().expect("stored interaction has id"))
     ///     .create()
@@ -289,7 +292,7 @@ impl Client {
     /// // Build a reusable request with the builder, then execute it.
     /// let request = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Hello, world!")
     ///     .build()?;
     ///
@@ -309,7 +312,7 @@ impl Client {
     /// let client = Client::builder("api_key".to_string()).build()?;
     /// let mut request = client
     ///     .interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Count to 5")
     ///     .build()?;
     /// request.stream = Some(true);
@@ -344,7 +347,7 @@ impl Client {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::new("api_key".to_string());
     /// let request = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Hello!")
     ///     .build()?;
     ///
@@ -398,7 +401,7 @@ impl Client {
     /// let client = Client::new("api_key".to_string());
     ///
     /// let request = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_text("Count to 5")
     ///     .build()?;
     ///
@@ -1299,7 +1302,7 @@ impl Client {
     ///
     /// // Use in interaction
     /// let response = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_content(vec![
     ///         Content::text("Describe this video"),
     ///         Content::from_file(&file),
@@ -1580,7 +1583,7 @@ impl Client {
     ///
     /// // Use in interaction
     /// let response = client.interaction()
-    ///     .with_model("gemini-3-flash-preview")
+    ///     .with_model("gemini-3.6-flash")
     ///     .with_content(vec![
     ///         Content::text("Describe this video"),
     ///         Content::from_file(&file),

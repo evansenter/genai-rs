@@ -332,7 +332,7 @@ impl SupportSession {
                 // Subsequent turns: chain to previous, include system instruction
                 self.client
                     .interaction()
-                    .with_model("gemini-3-flash-preview")
+                    .with_model("gemini-3.6-flash")
                     .with_text(message)
                     .add_functions(self.functions.clone())
                     .with_store_enabled()
@@ -345,7 +345,7 @@ impl SupportSession {
                 // First turn: same setup, system instruction included
                 self.client
                     .interaction()
-                    .with_model("gemini-3-flash-preview")
+                    .with_model("gemini-3.6-flash")
                     .with_text(message)
                     .add_functions(self.functions.clone())
                     .with_store_enabled()
@@ -381,7 +381,7 @@ impl SupportSession {
             response = self
                 .client
                 .interaction()
-                .with_model("gemini-3-flash-preview")
+                .with_model("gemini-3.6-flash")
                 .with_previous_interaction(response.id.as_ref().ok_or("Missing interaction ID")?)
                 .with_history(results)
                 .with_store_enabled()

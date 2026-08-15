@@ -464,12 +464,14 @@ mod parallel {
                 .required(vec!["timezone".to_string()])
                 .build();
 
-            let response1 = stateful_builder(&client)
-                .with_text("Tell me BOTH the weather in Paris AND the time in CET. Call both functions.")
-                .add_functions(vec![get_weather, get_time])
-                .create()
-                .await
-                .expect("First interaction failed");
+            let response1 = retry_request!([client, get_weather, get_time] => {
+                stateful_builder(&client)
+                    .with_text("Tell me BOTH the weather in Paris AND the time in CET. Call both functions.")
+                    .add_functions(vec![get_weather.clone(), get_time.clone()])
+                    .create()
+                    .await
+            })
+            .expect("First interaction failed");
 
             let calls = response1.function_calls();
             if calls.is_empty() {
@@ -495,12 +497,15 @@ mod parallel {
 
             println!("Sending {} function result(s) WITHOUT resending tools", results.len());
 
-            let response2 = stateful_builder(&client)
-                .with_previous_interaction(response1.id.as_ref().expect("id should exist"))
-                .with_history(results)
-                .create()
-                .await
-                .expect("Parallel results turn failed - tools should not be required");
+            let prev_id = response1.id.clone().expect("id should exist");
+            let response2 = retry_request!([client, prev_id, results] => {
+                stateful_builder(&client)
+                    .with_previous_interaction(&prev_id)
+                    .with_history(results.clone())
+                    .create()
+                    .await
+            })
+            .expect("Parallel results turn failed - tools should not be required");
 
             println!("Step 2 status: {:?}", response2.status);
             if response2.has_text() {
@@ -558,7 +563,7 @@ mod parallel {
 
                 let response2 = client
                     .interaction()
-                    .with_model("gemini-3-flash-preview")
+                    .with_model("gemini-3.6-flash")
                     .with_previous_interaction(response1.id.as_ref().expect("id required"))
                     .with_history(results)
                     .create()
@@ -628,7 +633,7 @@ mod parallel {
 
                 let response2 = client
                     .interaction()
-                    .with_model("gemini-3-flash-preview")
+                    .with_model("gemini-3.6-flash")
                     .with_previous_interaction(response1.id.as_ref().expect("id required"))
                     .with_history(results)
                     .create()
@@ -1220,7 +1225,7 @@ mod auto_execution {
 
         let result = client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_text("What's the weather in Seattle?")
             .add_functions(functions)
             .with_store_enabled()
@@ -1311,7 +1316,7 @@ mod stateless {
 
             let response1 = client
                 .interaction()
-                .with_model("gemini-3-flash-preview")
+                .with_model("gemini-3.6-flash")
                 .with_history(history.clone())
                 .add_functions(functions.clone())
                 .with_store_disabled()
@@ -1335,7 +1340,7 @@ mod stateless {
 
             let response2 = client
                 .interaction()
-                .with_model("gemini-3-flash-preview")
+                .with_model("gemini-3.6-flash")
                 .with_history(history.clone())
                 .add_functions(functions.clone())
                 .with_store_disabled()
@@ -1380,7 +1385,7 @@ mod stateless {
         // Stateless with thinking enabled, force function calling
         let response = client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_history(history)
             .add_function(get_weather)
             .with_thinking_level(ThinkingLevel::Medium)
@@ -2200,7 +2205,7 @@ mod multiturn {
         println!("--- Turn 1: Initial request with system instruction ---");
         let result1 = client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_text("What's the weather in Seattle?")
             .add_functions(functions.clone())
             .with_store_enabled()
@@ -2229,7 +2234,7 @@ mod multiturn {
         println!("\n--- Turn 2: Follow-up conversation ---");
         let result2 = client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_text("How about in Tokyo?")
             .add_functions(functions.clone())
             .with_store_enabled()
@@ -2250,7 +2255,7 @@ mod multiturn {
         println!("\n--- Turn 3: Follow-up without function call ---");
         let result3 = client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_text("Based on the weather you just told me about Seattle and Tokyo, which city is warmer right now?")
             .add_functions(functions)
             .with_store_enabled()
@@ -2295,23 +2300,49 @@ mod multiturn {
 
         let turn1_id = result1.id.clone().expect("Turn 1 should have ID");
 
-        // Turn 2: Follow-up WITHOUT resending tools
+        // Turn 2: Follow-up WITHOUT resending tools.
+        //
+        // Deliberately does NOT ask for a live weather lookup. A prompt like
+        // "what's the weather in Paris?" invites the model to call the tool it
+        // saw in turn 1 — and having not been given it, gemini-3.6-flash
+        // reliably emits a malformed call, which the API rejects with
+        // `400 Model generated invalid JSON syntax`. That failure survives
+        // retries and tells us nothing about the rule under test.
+        //
+        // Asking about the conversation instead exercises both halves of the
+        // documented inheritance contract in one turn: history IS inherited
+        // (the model can answer from turn 1), tools are NOT (no calls come
+        // back, because they were not resent).
         let result2 = retry_request!([client, turn1_id] => {
             stateful_builder(&client)
-                .with_text("What's the weather in Paris?")
+                .with_text("In one word, what topic did I say I was interested in?")
                 .with_previous_interaction(&turn1_id)
                 .create()
                 .await
         })
         .expect("Turn 2 should succeed");
 
-        // Model should NOT have any function calls since we didn't provide tools
+        // Tools are not inherited: no calls, despite turn 1 having declared one.
         let function_calls = result2.function_calls();
         assert!(
             function_calls.is_empty(),
             "Model should not make function calls when tools not provided (got {} calls)",
             function_calls.len()
         );
+        // History IS inherited: the answer can only come from turn 1.
+        // Semantic rather than substring — the model may answer
+        // "forecasts" or "meteorology", and a rephrase should not read as
+        // a broken inheritance contract (CLAUDE.md's guidance for
+        // non-deterministic text).
+        let text = result2.as_text().unwrap_or_default().to_string();
+        assert_response_semantic(
+            &client,
+            "The user previously said they were interested in weather data, then asked \
+             what topic they had mentioned.",
+            &text,
+            "Does this identify weather (or an equivalent term like forecasts) as the topic?",
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -2327,7 +2358,7 @@ mod multiturn {
         // Turn 1: Initial request with system instruction
         let response1 = client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_text("What's the weather in London and what time is it there?")
             .add_functions(functions.clone())
             .with_store_enabled()
@@ -2363,7 +2394,7 @@ mod multiturn {
         // Send function results back
         let response2 = client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_previous_interaction(response1.id.as_ref().expect("Should have ID"))
             .with_history(results)
             .add_functions(functions.clone())
@@ -2381,7 +2412,7 @@ mod multiturn {
         // Turn 3: Follow-up
         let response3 = client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_text("Is it a good time to call someone there?")
             .add_functions(functions)
             .with_store_enabled()
@@ -2413,7 +2444,7 @@ mod multiturn {
                 // Turn 1: Set system instruction to always respond in haiku format
                 let response1 = client
                     .interaction()
-                    .with_model("gemini-3-flash-preview")
+                    .with_model("gemini-3.6-flash")
                     .with_text("Hello!")
                     .with_store_enabled()
                     .with_system_instruction("You are a haiku poet. Always respond in haiku format (5-7-5 syllables). Never break from this format.")
@@ -2425,7 +2456,7 @@ mod multiturn {
                 // Turn 2: Follow-up - system instruction should still be in effect
                 let response2 = client
                     .interaction()
-                    .with_model("gemini-3-flash-preview")
+                    .with_model("gemini-3.6-flash")
                     .with_text("Tell me about the ocean.")
                     .with_store_enabled()
                     .with_previous_interaction(&turn1_id)
@@ -2477,7 +2508,7 @@ mod multiturn {
         // Turn 1: Initial request streaming with auto functions
         let mut stream = client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_text("What's the weather in Miami?")
             .add_functions(functions.clone())
             .with_store_enabled()
@@ -2516,7 +2547,7 @@ mod multiturn {
         // Turn 2: Follow-up streaming
         let mut stream2 = client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_text("Compare that to New York.")
             .add_functions(functions)
             .with_store_enabled()
@@ -2576,7 +2607,7 @@ mod multiturn {
         println!("--- Turn 1: Trigger function that will fail ---");
         let response1 = client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_text("Get the secret data for key 'test123'")
             .add_function(secret_function.clone())
             .with_store_enabled()
@@ -2601,7 +2632,7 @@ mod multiturn {
         println!("\n--- Sending error result ---");
         let response2 = client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_previous_interaction(response1.id.as_ref().expect("Should have ID"))
             .with_history(vec![error_result])
             .add_function(secret_function)

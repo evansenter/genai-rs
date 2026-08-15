@@ -15,6 +15,11 @@ This directory contains comprehensive example applications demonstrating practic
 | [Web Scraper Agent](./web_scraper_agent/) | Web research assistant | Google Search grounding, streaming |
 | [Testing Assistant](./testing_assistant/) | Test generation from code | Coverage analysis, property tests |
 | [Repo Auditor](./repo_auditor/) | Agentic security audit (Antigravity harness) | Subagents, policies + hooks, structured report (`--features antigravity`) |
+| [Session Resume](./session_resume/) | Agent that remembers across process restarts | Trajectory persistence, `conversation_id` round trip, `initial_history` (`--features antigravity`) |
+| [Workspace Explorer](./workspace_explorer/) | Watching an agent work, and gating it live | Workspaces, typed `ToolAction` stream, content-based `on_pre_tool` deny (`--features antigravity`) |
+| [MCP Toolbelt](./mcp_toolbelt/) | Giving an agent tools it didn't ship with | `add_mcp_server` (stdio), `mcp_<server>_<tool>` policy targets (`--features antigravity`) |
+| [Proactive Agent](./proactive_agent/) | Work that starts without a user turn | `add_trigger`, observing deliveries via a wire inspector (`--features antigravity`) |
+| [Cancellable Turn](./cancellable_turn/) | Stopping an agent mid-thought | `cancel_handle` from another task, partial output kept (`--features antigravity`) |
 
 ## Running Examples
 
@@ -38,7 +43,7 @@ cargo run --example testing_assistant
 ```
 
 The Antigravity-based example additionally needs the `localharness` binary
-(`pip install google-antigravity==0.1.5`) and the crate feature:
+(`pip install google-antigravity==0.1.10`) and the crate feature:
 
 ```bash
 cargo run --example repo_auditor --features antigravity

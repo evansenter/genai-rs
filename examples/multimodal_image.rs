@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let response = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_content(vec![
             Content::text("What color is this image? Describe it."),
             Content::image_data(TINY_RED_PNG_BASE64, "image/png"),
@@ -78,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let comparison = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_content(comparison_contents)
         .with_store_enabled()
         .create()
@@ -96,7 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Low resolution - good for simple color/shape detection, costs fewer tokens
     let low_res_response = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_content(vec![
             Content::text("What color is this image?"),
             Content::image_data(TINY_RED_PNG_BASE64, "image/png").with_resolution(Resolution::Low),
@@ -115,7 +115,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // High resolution - for detailed analysis of complex images
     let high_res_response = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_content(vec![
             Content::text("What color is this image?"),
             Content::image_data(TINY_RED_PNG_BASE64, "image/png").with_resolution(Resolution::High),
@@ -135,7 +135,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nUsing Content::image_data().with_resolution() builder:");
     let helper_response = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_content(vec![
             Content::text("Describe this image briefly."),
             Content::image_data(TINY_BLUE_PNG_BASE64, "image/png")
@@ -154,7 +154,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let follow_up = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_previous_interaction(
             comparison
                 .id

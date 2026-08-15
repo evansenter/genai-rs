@@ -132,7 +132,7 @@ fn test_deserialize_interaction_completed_event() {
         "event_type": "interaction.completed",
         "interaction": {
             "id": "interaction_456",
-            "model": "gemini-3-flash-preview",
+            "model": "gemini-3.6-flash",
             "steps": [
                 {"type": "user_input", "content": [{"type": "text", "text": "Count to 3"}]},
                 {"type": "model_output", "content": [{"type": "text", "text": "1, 2, 3"}]}

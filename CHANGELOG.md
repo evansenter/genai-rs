@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.0] - 2026-08-09
+## [0.9.0] - 2026-08-10
 
 ### Changed (breaking)
 
@@ -20,24 +20,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`antigravity::protocol::MultipleChoice` — behind the `antigravity`
   feature — likewise gains a public flattened `extra` field.)
 
-### Changed
-
-- All five resource list envelopes (`AgentListResponse`,
-  `WebhookListResponse`, and the new trigger/execution/environment ones)
-  now degrade a null or malformed list key to an empty page and drop
-  undeserializable elements individually with a `tracing::warn!`, instead
-  of failing the whole response. For the two pre-existing types this
-  changes observable behavior: `list_agents()`/`list_webhooks()` calls
-  that previously returned `Err` on a malformed page now return the
-  surviving entries.
-- `Webhook::create_time`/`update_time` and `SigningSecret::expire_time`
-  now deserialize leniently like the trigger and environment timestamps:
-  a response whose timestamp encoding diverges from RFC 3339 yields the
-  field as `None` (with a `tracing::warn!`) instead of failing the call —
-  so an absent timestamp on a returned webhook can mean either "not sent"
-  or "sent but unparseable"; the warn log distinguishes them.
-
 ### Added
+
+- **`LOUD_WIRE` filtering.** The variable now takes a comma-separated
+  filter in addition to `1`: category selectors (`request`, `response`,
+  `sse`, `upload`, `harness`, `ws`), any WebSocket payload key
+  (`stepUpdate`, `toolCall`, …, matched case-insensitively), and a
+  `summary` modifier that collapses each event to one line (order-free:
+  `1,summary` and `summary,1` agree). The historical "on" spellings (`1`,
+  `true`, `yes`, `on`, `all`, empty) still mean everything-pretty-printed.
+  Note that the gate was previously "is the variable set at all", so *any*
+  value produced the firehose; other values are now parsed as selectors,
+  and a value matching no category and no payload key — `0`, `false`,
+  `off` — prints nothing where it previously printed everything. Unfiltered
+  output was unusable for antigravity sessions, where a few turns produce
+  thousands of lines. Exposed programmatically as `wire::WireFilter` and
+  `LoudWirePrinter::with_filter`; `LoudWirePrinter` is consequently no
+  longer `Copy` (it still derives `Clone`). The antigravity agent
+  builder honors the filter too — it previously re-implemented the env
+  gate and ignored the value, which meant filtering did not work on the
+  one surface that emits WebSocket messages at all.
+
+- **`LOUD_WIRE` selectors reach step actions.** A selector now matches one
+  level into a WebSocket payload, so `LOUD_WIRE=mcpTool` (or `runCommand`,
+  `viewFile`, …) selects the steps carrying that action — previously those
+  names matched nothing at all, because every builtin action lives under
+  the single `stepUpdate` key. Summary lines are qualified to match
+  (`stepUpdate/mcpTool`), so what you asked for is what the output names.
+
+- **The protocol-drift guard now covers field renames, not just enum
+  values.** The 0.1.5 → 0.1.10 upgrade shipped one of each — `STATE_IDLE`
+  → `STATE_FULLY_IDLE` (a value) and `usageMetadata` → `usageUpdate` (a
+  field) — so a guard checking only enums would have caught half the break
+  it was written for. It now also checks the `OutputEvent` and `InputEvent`
+  wire fields the crate reads by hand, where a rename yields a silent
+  `None` rather than a parse error.
+
+- **Three more antigravity worked examples**, all runnable against a real
+  harness and smoke-run in CI: `mcp_toolbelt` (external tools over MCP,
+  with a dependency-free stdio server fixture and the `mcp_<server>_<tool>`
+  policy-target spelling), `proactive_agent` (`add_trigger`, and observing
+  deliveries through a wire inspector — the only way to see one today), and
+  `cancellable_turn` (`cancel_handle` from another task, keeping partial
+  output). Together with the existing four, every antigravity builder
+  surface now has an example.
+
+  Writing them surfaced a harness limitation now documented in
+  `docs/ANTIGRAVITY.md`: **a trigger that fires into a conversation with no
+  history crashes harness 0.1.10 outright** (`earliest step index is out of
+  bounds: 0 vs 0`), taking the session with it. One completed turn first
+  avoids it.
+
+- **Antigravity e2e coverage for the last untested surfaces.**
+  `with_response_schema`, `CancelHandle`, the `on_questions` hook,
+  `add_mcp_server` and subagent *invocation* (as opposed to subagent
+  config, which was already covered) are now exercised against a real
+  harness — the MCP test drives a stdio server fixture end to end and
+  asserts on a token the model cannot have guessed.
+
+  The cancellation test corrected a documented claim: harness
+  0.1.10 answers a halt with `STATE_FULLY_IDLE`, the same terminal state as
+  a natural completion, so a cancelled turn **resolves normally with
+  partial output** rather than failing with `AntigravityError::Turn` as
+  `CancelHandle` and `docs/ANTIGRAVITY.md` previously stated. The `Turn`
+  error remains the outcome for harness-initiated cancellation.
+
+- **Protocol-drift diagnostics for the antigravity bridge.**
+  `protocol::drift_report()` returns every unrecognized wire value seen
+  (`"EnumName=WIRE_VALUE" -> count`) with `clear_drift_report()` to reset
+  it, `all_wire_values()` on each wire enum exposes the spellings the
+  crate recognizes, and `shutdown()` logs the aggregate once. Unknown-value
+  preservation previously produced no signal beyond a `warn!` nobody
+  reads — which is what let a renamed value silently stop matching. CI
+  additionally diffs the installed wheel's protobuf descriptor against
+  these enums and fails naming anything the harness can send that the
+  crate does not model. See the Debugging section of `docs/ANTIGRAVITY.md`.
+
+- **Two antigravity worked examples**, both runnable against a real
+  harness: `examples/real_world/session_resume` (trajectory persistence —
+  the `with_save_dir` + `conversation_id()` + `with_conversation_id` round
+  trip, and the fact that resuming an unknown id comes back *empty* rather
+  than erroring) and `examples/real_world/workspace_explorer` (workspaces
+  with real files, the typed `AgentEvent::ToolAction` stream, and an
+  `on_pre_tool` hook that refuses by content where a name-based policy
+  cannot). Both are covered by new harness integration tests.
+
+- Wire enums accept alias spellings, so a value renamed between harness
+  revisions resolves to one variant while `as_wire_str` keeps emitting
+  the canonical (current-harness) form.
+- A stalled turn now diagnoses itself. When a turn times out having seen
+  unrecognized *main-trajectory* states, the timeout names them and
+  points at `SUPPORTED_HARNESS_VERSION` instead of reporting an
+  undifferentiated stall — the failure that took a wire trace to
+  diagnose now reads as a version mismatch on the error itself.
+
 
 - **Triggers resource** (`/v1beta/triggers`): server-side scheduled
   interactions with full CRUD plus `run_trigger` and
@@ -77,6 +153,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resource types uniformly. The pre-existing `Agent` and
   `AgentListResponse` gain it too, completing the set.
 
+### Changed
+
+- **Default model guidance moves to `gemini-3.6-flash`** (from
+  `gemini-3-flash-preview`) across docs, examples, and tests, and image
+  generation moves to `gemini-3.1-flash-image` (from
+  `gemini-3-pro-image-preview`). Both were probed live before migrating.
+
+  One capability difference surfaced and is worth knowing: `gemini-3.6-flash`
+  returns `400 invalid_request` for **inline (base64) video bytes** while
+  accepting video **by URI**. Image, audio and PDF inline data are
+  unaffected. The four inline-video tests are pinned to a model that
+  accepts that form (`tests/common::VIDEO_INLINE_MODEL`) so they keep
+  testing the bytes path rather than the model's appetite for it.
+
+
+- CI's antigravity job now receives `GEMINI_API_KEY` (with the same
+  same-repo guard the integration matrix uses). Its model-backed tests
+  are the only ones that drive a real turn end-to-end, and without a key
+  they self-skipped — which is why the turn-completion break above
+  reached a release unnoticed.
+- `docs/ANTIGRAVITY.md` no longer claims newer harnesses "degrade
+  gracefully". Unknown-value preservation stops a crash, but when a
+  *renamed* value is one the bridge matches on, preservation is exactly
+  what makes the breakage silent.
+
+
+
+- All five resource list envelopes (`AgentListResponse`,
+  `WebhookListResponse`, and the new trigger/execution/environment ones)
+  now degrade a null or malformed list key to an empty page and drop
+  undeserializable elements individually with a `tracing::warn!`, instead
+  of failing the whole response. For the two pre-existing types this
+  changes observable behavior: `list_agents()`/`list_webhooks()` calls
+  that previously returned `Err` on a malformed page now return the
+  surviving entries.
+- `Webhook::create_time`/`update_time` and `SigningSecret::expire_time`
+  now deserialize leniently like the trigger and environment timestamps:
+  a response whose timestamp encoding diverges from RFC 3339 yields the
+  field as `None` (with a `tracing::warn!`) instead of failing the call —
+  so an absent timestamp on a returned webhook can mean either "not sent"
+  or "sent but unparseable"; the warn log distinguishes them.
+
 ### Deprecated
 
 - `response_modalities` is marked deprecated by the official SDK in
@@ -86,6 +204,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from this crate — the API rejects it in every form.)
 
 ### Fixed
+
+- **`on_post_tool` reported successful harness tools as failures.** The
+  harness sends `"error": ""` — protobuf's default for an unset string —
+  on calls that succeeded, and the bridge surfaced that as `Some("")`, so
+  `ToolOutcome::error.is_some()` (the check the field's own docs invite)
+  was true for every successful builtin. Blank now normalizes to `None` on
+  both dispatch paths. Found by running the new `workspace_explorer`
+  example against a live harness; invisible to every existing test.
+
+- **`ThinkingSummaries` sent a value the API now rejects.**
+  `to_agent_config_value()` emitted the SCREAMING_CASE
+  `THINKING_SUMMARIES_AUTO` / `_NONE` spelling; verified live 2026-08-10
+  the API responds `The value 'THINKING_SUMMARIES_AUTO' is not supported
+  for 'agent_config.thinking_summaries'. Supported values: 'auto',
+  'none'.` — so deep-research requests carrying thinking summaries failed
+  outright. Both contexts now emit the lowercase form; deserialization
+  still accepts either spelling.
+
+- **Antigravity harness 0.1.10 support (turn completion was broken).** The
+  supported harness moves 0.1.5 → 0.1.10. Two wire spellings the bridge
+  depends on were renamed in that range, and both failed silently rather
+  than loudly:
+  - `STATE_IDLE` → `STATE_FULLY_IDLE`. Only that value ends a turn, so
+    against a 0.1.6+ harness **every turn ran to its timeout** — no parse
+    error, no failed assertion, just a bare
+    `Timeout { operation: "agent turn" }` after the full budget.
+  - `usageMetadata` → `usageUpdate` (now `{agents[], total}`), which
+    silently zeroed token accounting and was additionally misreported as
+    an unknown payload variant.
+
+  Both old spellings are accepted as aliases, so a single build drives
+  either harness revision; verified by running the full harness suite
+  against 0.1.5 and 0.1.10 (10/10 each). Also adds the non-terminal
+  `STATE_WAITING_FOR_TASKS` state introduced in 0.1.10.
+
 
 - Resource IDs are now percent-encoded when interpolated into URL paths
   (interactions get/delete/cancel/stream and the agents, webhooks, triggers
@@ -769,7 +922,7 @@ still rustls.
   ```rust
   // Now possible - conditional chaining
   let mut builder = client.interaction()
-      .with_model("gemini-3-flash-preview")
+      .with_model("gemini-3.6-flash")
       .with_text("Hello");
 
   if let Some(prev_id) = previous_interaction_id {
@@ -883,7 +1036,7 @@ let content = Content::text("Hello");  // Static constructor
 ```rust
 // Before (0.6.0)
 let response = client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Describe this image")
     .add_image_file("photo.jpg").await?
     .create()
@@ -891,7 +1044,7 @@ let response = client.interaction()
 
 // After (0.7.0) - Option A: Content constructors
 let response = client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_content(vec![
         Content::text("Describe this image"),
         Content::image_data(base64_data, "image/png"),
@@ -903,7 +1056,7 @@ let response = client.interaction()
 use genai_rs::image_from_file;
 let image = image_from_file("photo.jpg").await?;
 let response = client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_content(vec![
         Content::text("Describe this image"),
         image,
@@ -917,7 +1070,7 @@ let response = client.interaction()
 // Before (0.6.0)
 let file = client.upload_file("video.mp4").await?;
 let response = client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .add_file(&file)
     .with_text("Describe this video")
     .create()
@@ -926,7 +1079,7 @@ let response = client.interaction()
 // After (0.7.0)
 let file = client.upload_file("video.mp4").await?;
 let response = client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_content(vec![
         Content::text("Describe this video"),
         Content::from_file(&file),
@@ -952,7 +1105,7 @@ Content::image_data(base64, "image/png").with_resolution(Resolution::High)
 // Before (0.6.0)
 // with_turns().with_text() silently overwrote history - bug!
 let response = client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_turns(history)
     .create()
     .await?;
@@ -960,7 +1113,7 @@ let response = client.interaction()
 // After (0.7.0)
 // Renamed to with_history(), and now composes correctly with with_text()
 let response = client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_history(history)
     .with_text("Current message")  // Appended as final user turn
     .create()
@@ -1712,7 +1865,7 @@ This release removes the legacy GenerateContent API in favor of the unified Inte
 #### Before (v0.1.x - GenerateContent API):
 ```rust
 let response = client
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_prompt("Hello, world!")
     .generate()
     .await?;
@@ -1724,7 +1877,7 @@ println!("{}", response.text.unwrap());
 ```rust
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Hello, world!")
     .create()
     .await?;
@@ -1736,14 +1889,14 @@ println!("{}", response.text().unwrap_or("No text"));
 ```rust
 // Before
 let stream = client
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_prompt("Hello")
     .generate_stream()?;
 
 // After
 let stream = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Hello")
     .create_stream();
 ```
@@ -1752,7 +1905,7 @@ let stream = client
 ```rust
 // Before
 let response = client
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_prompt("What's the weather?")
     .generate_with_auto_functions()
     .await?;
@@ -1760,7 +1913,7 @@ let response = client
 // After
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("What's the weather?")
     .create_with_auto_functions()
     .await?;

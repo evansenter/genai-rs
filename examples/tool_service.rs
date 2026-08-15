@@ -161,7 +161,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let result1 = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text(prompt1)
         .with_tool_service(service.clone()) // Clone the Arc, not the service
         .create_with_auto_functions()
@@ -189,7 +189,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let result2 = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_text(prompt2)
         .with_tool_service(service.clone()) // Same service instance
         .create_with_auto_functions()

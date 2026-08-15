@@ -149,7 +149,7 @@ impl CodeAssistant {
         let response = self
             .client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_system_instruction(
                 "You are an expert code analyst. Analyze code thoroughly and provide \
                  actionable insights. Focus on code quality, maintainability, and \
@@ -205,7 +205,7 @@ impl CodeAssistant {
         let response = self
             .client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_system_instruction(
                 "You are a technical writer specializing in code documentation. \
                  Write clear, concise documentation that explains the purpose, \
@@ -236,7 +236,7 @@ impl CodeAssistant {
         let response = self
             .client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_system_instruction(
                 "You are a patient programming tutor. Explain code clearly and \
                  thoroughly, using analogies where helpful. Assume the reader \
@@ -273,7 +273,7 @@ impl CodeAssistant {
         let response = self
             .client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_system_instruction(
                 "You are a senior software engineer conducting a code review. \
                  Focus on maintainability, readability, and best practices. \

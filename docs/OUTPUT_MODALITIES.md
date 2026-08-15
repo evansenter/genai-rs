@@ -23,7 +23,7 @@ Gemini models can generate different types of output content:
 | Modality | Method | Model Required | Use Case |
 |----------|--------|----------------|----------|
 | **Text** | Default | Any | Conversations, analysis |
-| **Image** | `with_image_output()` | `gemini-3-pro-image-preview` | Image generation |
+| **Image** | `with_image_output()` | `gemini-3.1-flash-image` | Image generation |
 | **Audio** | `with_audio_output()` | `gemini-2.5-pro-preview-tts` | Text-to-speech |
 | **Video** | `with_video_output()` | Video-capable model (e.g., Veo previews) | Video generation (background) |
 | **JSON** | `with_response_format()` | Any | Structured data extraction |
@@ -38,7 +38,7 @@ Text is the default output modality - no special configuration needed.
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Explain quantum computing")
     .create()
     .await?;
@@ -67,7 +67,7 @@ Generate images from text prompts.
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3-pro-image-preview")  // Image generation model required
+    .with_model("gemini-3.1-flash-image")  // Image generation model required
     .with_text("A sunset over mountains, digital art style")
     .with_image_output()
     .create()
@@ -115,7 +115,7 @@ Image generation requires specific models:
 
 | Model | Capability |
 |-------|------------|
-| `gemini-3-pro-image-preview` | Text-to-image generation |
+| `gemini-3.1-flash-image` | Text-to-image generation |
 
 Note: Image generation may not be available in all regions.
 
@@ -304,7 +304,7 @@ use serde_json::json;
 
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Generate a user profile for John Doe, age 30")
     .with_response_format(json!({
         "type": "object",
@@ -350,7 +350,7 @@ let schema = json!({
 
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("List 3 popular smartphones with prices")
     .with_response_format(schema)
     .create()
@@ -384,7 +384,7 @@ Structured output works with built-in tools:
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("What's the weather in Tokyo?")
     .with_google_search()
     .with_response_format(json!({
@@ -431,7 +431,7 @@ let image = ResponseFormat::Image {
 // List form: one format per requested modality
 let response = client
     .interaction()
-    .with_model("gemini-3-pro-image-preview")
+    .with_model("gemini-3.1-flash-image")
     .with_text("A labeled diagram of a volcano")
     .with_response_formats(vec![ResponseFormat::text_plain(), image])
     .create()
@@ -452,7 +452,7 @@ The structured output still uses text modality internally:
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Analyze this sentiment")
     .with_response_format(sentiment_schema)
     .create()
@@ -555,7 +555,7 @@ for content in response.thought_summaries() {
 ```rust,ignore
 // Image generation - requires image model
 client.interaction()
-    .with_model("gemini-3-pro-image-preview")  // Correct
+    .with_model("gemini-3.1-flash-image")  // Correct
     .with_image_output()
 
 // TTS - requires TTS model
@@ -565,7 +565,7 @@ client.interaction()
 
 // Text/JSON - any model works
 client.interaction()
-    .with_model("gemini-3-flash-preview")  // Standard model fine
+    .with_model("gemini-3.6-flash")  // Standard model fine
     .with_response_format(schema)
 ```
 

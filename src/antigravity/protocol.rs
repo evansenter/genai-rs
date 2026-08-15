@@ -24,6 +24,52 @@ use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 
 // =============================================================================
+// Protocol drift telemetry
+// =============================================================================
+
+/// Every unrecognized wire value seen this process, and how often.
+static DRIFT: std::sync::Mutex<Option<BTreeMap<String, usize>>> = std::sync::Mutex::new(None);
+
+/// Records an unrecognized wire value for [`drift_report`].
+///
+/// The Evergreen posture preserves what it does not recognize, which
+/// prevents a crash but produces no *signal*: a `warn!` nobody reads is
+/// the only trace, and behavior keyed on a renamed variant stops firing
+/// silently. Accumulating them makes the degradation inspectable —
+/// programmatically, not by grepping logs.
+pub(crate) fn record_drift(enum_name: &str, value: &str) {
+    if let Ok(mut guard) = DRIFT.lock() {
+        *guard
+            .get_or_insert_with(BTreeMap::new)
+            .entry(format!("{enum_name}={value}"))
+            .or_insert(0) += 1;
+    }
+}
+
+/// Unrecognized wire values seen so far, as `"EnumName=WIRE_VALUE" -> count`.
+///
+/// Empty is the healthy state. A non-empty report means the harness sent
+/// something this build does not model — which, for a value the crate
+/// *matches on*, is the difference between working and silently doing
+/// nothing (see `SUPPORTED_HARNESS_VERSION`). Process-wide and cumulative;
+/// [`clear_drift_report`] resets it.
+#[must_use]
+pub fn drift_report() -> BTreeMap<String, usize> {
+    DRIFT
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .unwrap_or_default()
+}
+
+/// Clears [`drift_report`] (useful between test cases).
+pub fn clear_drift_report() {
+    if let Ok(mut guard) = DRIFT.lock() {
+        *guard = None;
+    }
+}
+
+// =============================================================================
 // Flexible numeric deserialization (proto-JSON int64/uint64 arrive as strings)
 // =============================================================================
 
@@ -98,7 +144,7 @@ macro_rules! wire_string_enum {
     (
         $(#[$meta:meta])*
         $name:ident, $ctx:ident, $unknown_type_fn:ident {
-            $( $(#[$vmeta:meta])* $variant:ident => $wire:literal ),+ $(,)?
+            $( $(#[$vmeta:meta])* $variant:ident => $wire:literal $(| $alias:literal)* ),+ $(,)?
         }
     ) => {
         $(#[$meta])*
@@ -123,6 +169,20 @@ macro_rules! wire_string_enum {
                     $( Self::$variant => $wire, )+
                     Self::Unknown { $ctx, .. } => $ctx,
                 }
+            }
+
+            /// Every wire spelling this enum recognizes, canonical and
+            /// alias alike.
+            ///
+            /// Exists for the protocol-drift guard in
+            /// `tests/antigravity_harness.rs`, which diffs these against
+            /// the enum values in the installed harness wheel's protobuf
+            /// descriptor. A value the harness gained (or renamed) is
+            /// otherwise invisible: it deserializes to `Unknown` and any
+            /// behavior keyed on the old variant silently stops firing.
+            #[must_use]
+            pub const fn all_wire_values() -> &'static [&'static str] {
+                &[$( $wire $(, $alias)* ),+]
             }
 
             /// Check if this is an unknown value.
@@ -161,7 +221,10 @@ macro_rules! wire_string_enum {
                 let value = Value::deserialize(deserializer)?;
                 if let Value::String(s) = &value {
                     match s.as_str() {
-                        $( $wire => return Ok(Self::$variant), )+
+                        // Aliases accept spellings from other harness
+                        // revisions; `as_wire_str` always emits the
+                        // canonical (current-harness) form.
+                        $( $wire $(| $alias)* => return Ok(Self::$variant), )+
                         _ => {}
                     }
                 }
@@ -174,6 +237,11 @@ macro_rules! wire_string_enum {
                      Preserving in Unknown variant."),
                     $ctx
                 );
+                // Also accumulate it: a warn is only seen by whoever is
+                // reading logs at the time, and this is the signal that
+                // distinguishes "preserved harmlessly" from "the bridge
+                // stopped recognizing something it acts on".
+                record_drift(stringify!($name), &$ctx);
                 Ok(Self::Unknown { $ctx, data: value })
             }
         }
@@ -231,8 +299,19 @@ wire_string_enum!(
         Unspecified => "STATE_UNSPECIFIED",
         /// The trajectory is processing a turn.
         Running => "STATE_RUNNING",
-        /// The trajectory finished the turn and is awaiting input.
-        Idle => "STATE_IDLE",
+        /// The trajectory finished the turn and is awaiting input — the
+        /// signal that ends a turn.
+        ///
+        /// Harness 0.1.10 renamed this from `STATE_IDLE` to
+        /// `STATE_FULLY_IDLE`; the old spelling is accepted as an alias
+        /// so one build drives either harness revision. Without the
+        /// alias the value degrades to `Unknown` and, because only
+        /// `Idle` ends a turn, every turn silently runs to its timeout.
+        Idle => "STATE_FULLY_IDLE" | "STATE_IDLE",
+        /// The trajectory is blocked on subordinate tasks (e.g. running
+        /// subagents) and will return to `Running`. Explicitly **not**
+        /// terminal — new in harness 0.1.10.
+        WaitingForTasks => "STATE_WAITING_FOR_TASKS",
         /// The turn was cancelled (halt request or pre-turn hook denial).
         Cancelled => "STATE_CANCELLED",
     }
@@ -555,7 +634,7 @@ pub struct FilesystemWorkspace {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelConfig {
-    /// Model name, e.g. `gemini-3-flash-preview`.
+    /// Model name, e.g. `gemini-3.6-flash`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Roles this model serves ([`ModelType::Text`] is required for chat).
@@ -1177,8 +1256,32 @@ impl<'de> Deserialize<'de> for OutputEvent {
 
         let seq_num = take_i64(&mut map, "seqNum")?;
         let timestamp_micros = take_i64(&mut map, "timestampMicros")?;
+        // Harness 0.1.10 replaced the flat `usageMetadata` with
+        // `usageUpdate: {agents: [...], total: UsageMetadata}`. Read the
+        // aggregate from either spelling so one build drives both
+        // revisions; the per-trajectory `agents` breakdown is not
+        // modeled yet, and either key must be consumed here or it falls
+        // through to the leftover-key arm below and is misreported as an
+        // unknown oneof variant.
+        // Consume `usageUpdate` unconditionally, before choosing between
+        // the two spellings: if a transitional harness ever sent *both*,
+        // leaving it in `map` would hand it to the leftover-key arm below
+        // and surface a bogus `Unknown` payload — the exact misreport this
+        // branch exists to prevent, in the one shape a nested match
+        // wouldn't cover.
+        let usage_update = map.remove("usageUpdate");
         let usage_metadata = match map.remove("usageMetadata") {
-            None | Some(Value::Null) => None,
+            Some(Value::Null) | None => match usage_update {
+                None | Some(Value::Null) => None,
+                Some(Value::Object(mut update)) => match update.remove("total") {
+                    None | Some(Value::Null) => None,
+                    Some(total) => Some(serde_json::from_value(total).map_err(D::Error::custom)?),
+                },
+                Some(other) => {
+                    tracing::warn!("Unexpected JSON type for usageUpdate, dropping usage: {other}");
+                    None
+                }
+            },
             Some(v) => Some(serde_json::from_value(v).map_err(D::Error::custom)?),
         };
 
@@ -1766,12 +1869,14 @@ pub struct ActionCompaction {
 /// `ActionInvokeSubagent` — subagent invocation marker.
 ///
 /// The invoked subagent's `name` is modeled as an optional typed field, but
-/// **harness 0.1.5 does not populate it**: the `invokeSubagent` step action
-/// is an empty message on the wire (verified with `LOUD_WIRE=1` — the step
-/// only carries the generic text `"Invoke subagent"`). The field is here so
-/// that a future harness emitting the name surfaces it without an API break;
-/// until then it stays `None`, and any unexpected field is preserved in
-/// `extra` (Evergreen).
+/// **the harness does not populate it** (verified live on 0.1.5 and again
+/// on 0.1.10 by `test_antigravity_subagent_is_actually_invoked`, which
+/// delegates for real and reports the answer rather than asserting the old
+/// one): the `invokeSubagent` step action is an empty message on the wire,
+/// and the step only carries the generic text `"Invoke subagent"`. The
+/// field is here so that a future harness emitting the name surfaces it
+/// without an API break; until then it stays `None`, and any unexpected
+/// field is preserved in `extra` (Evergreen).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ActionInvokeSubagent {
@@ -1972,7 +2077,7 @@ mod tests {
                     ..Default::default()
                 }],
                 models: vec![ModelConfig {
-                    name: Some("gemini-3-flash-preview".to_string()),
+                    name: Some("gemini-3.6-flash".to_string()),
                     types: vec![ModelType::Text],
                     gemini_api_endpoint: Some(GeminiApiEndpoint {
                         api_key: Some("k".to_string()),
@@ -1992,10 +2097,67 @@ mod tests {
             "harnessSideTools": {"runCommand": {"enabled": false}, "viewFile": {"enabled": true}},
             "workspaces": [{"filesystemWorkspace": {"directory": "/w"}}],
             "mcpServers": [{"name": "git", "stdio": {"command": "uvx", "args": ["x"], "env": {"K": "V"}}}],
-            "models": [{"name": "gemini-3-flash-preview", "types": ["MODEL_TYPE_TEXT"], "geminiApiEndpoint": {"httpHeaders": {"a": "b"}, "apiKey": "k"}}],
+            "models": [{"name": "gemini-3.6-flash", "types": ["MODEL_TYPE_TEXT"], "geminiApiEndpoint": {"httpHeaders": {"a": "b"}, "apiKey": "k"}}],
             "enabledHooks": ["LIFECYCLE_HOOK_PRE_TOOL"],
         }});
         assert_eq!(serde_json::to_value(&event).unwrap(), expected);
+    }
+
+    #[test]
+    fn trajectory_terminal_state_accepts_both_harness_spellings() {
+        // Harness 0.1.10 renamed the terminal state. Both spellings must
+        // land on `Idle`, because only `Idle` ends a turn: when this
+        // regressed, every turn ran to its timeout with no parse error
+        // and no failed assertion anywhere — the value was simply
+        // absorbed as `Unknown` and never matched.
+        for wire in ["STATE_FULLY_IDLE", "STATE_IDLE"] {
+            let state: TrajectoryState = serde_json::from_value(json!(wire)).unwrap();
+            assert_eq!(
+                state,
+                TrajectoryState::Idle,
+                "{wire} must deserialize to the terminal Idle state"
+            );
+            assert!(!state.is_unknown(), "{wire} must not degrade to Unknown");
+        }
+        // The canonical (current-harness) spelling is what we re-emit.
+        assert_eq!(TrajectoryState::Idle.as_wire_str(), "STATE_FULLY_IDLE");
+
+        // New in 0.1.10, and deliberately *not* terminal — it means the
+        // trajectory is blocked on subtasks and will return to Running.
+        let waiting: TrajectoryState =
+            serde_json::from_value(json!("STATE_WAITING_FOR_TASKS")).unwrap();
+        assert_eq!(waiting, TrajectoryState::WaitingForTasks);
+        assert!(!waiting.is_unknown());
+
+        // A genuinely unrecognized state still degrades (Evergreen).
+        let bogus: TrajectoryState = serde_json::from_value(json!("STATE_FUTURE")).unwrap();
+        assert!(bogus.is_unknown());
+        assert_eq!(bogus.unknown_state_type(), Some("STATE_FUTURE"));
+    }
+
+    #[test]
+    fn output_event_reads_usage_from_both_harness_shapes() {
+        // 0.1.5 flat form.
+        let flat = r#"{"seqNum": "1", "usageMetadata": {"promptTokenCount": "10", "totalTokenCount": "20"}}"#;
+        let event: OutputEvent = serde_json::from_str(flat).unwrap();
+        let usage = event.usage_metadata.as_ref().expect("flat usage");
+        assert_eq!(usage.prompt_token_count, Some(10));
+        assert_eq!(usage.total_token_count, Some(20));
+
+        // 0.1.10 nested form: the aggregate lives under `total`, with a
+        // per-trajectory breakdown alongside it that we do not model.
+        let nested = r#"{"seqNum": "1", "usageUpdate": {"agents": [{"trajectoryId": "t1", "usage": {"totalTokenCount": "5"}}], "total": {"promptTokenCount": "10", "totalTokenCount": "20"}}}"#;
+        let event: OutputEvent = serde_json::from_str(nested).unwrap();
+        let usage = event.usage_metadata.as_ref().expect("nested usage");
+        assert_eq!(usage.prompt_token_count, Some(10));
+        assert_eq!(usage.total_token_count, Some(20));
+        // Consumed as envelope metadata, not misreported as an unknown
+        // oneof payload (the leftover-key arm would otherwise claim it).
+        assert!(
+            event.payload.is_none(),
+            "usageUpdate must not be read as a payload variant, got {:?}",
+            event.payload
+        );
     }
 
     #[test]

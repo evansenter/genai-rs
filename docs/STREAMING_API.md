@@ -43,7 +43,7 @@ The key decision points are:
 # async fn example() -> Result<(), genai_rs::GenaiError> {
 # let client = Client::new("your-api-key".to_string());
 let response = client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Write a poem about Rust")
     .create()
     .await?;
@@ -68,7 +68,7 @@ use genai_rs::{Client, StreamChunk};
 # async fn example() -> Result<(), genai_rs::GenaiError> {
 # let client = Client::new("your-api-key".to_string());
 let mut stream = client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Write a poem about Rust")
     .create_stream();
 
@@ -316,7 +316,7 @@ use genai_rs::{Client, StreamChunk};
 let client = Client::new("your-api-key".to_string());
 
 let mut stream = client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Count to 10")
     .create_stream();
 
@@ -412,7 +412,7 @@ use genai_rs::{Client, Step, StreamChunk};
 let client = Client::new("your-api-key".to_string());
 
 let mut stream = client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("What's the weather in Tokyo?")
     .add_functions(functions)
     .create_stream();
@@ -464,7 +464,7 @@ let client = Client::new("your-api-key".to_string());
 
 // Functions are auto-discovered from the #[tool] registry / tool service.
 let mut stream = client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("What's the weather in Tokyo?")
     .create_stream_with_auto_functions();
 
@@ -527,7 +527,7 @@ use genai_rs::{AutoFunctionResultAccumulator, AutoFunctionStreamChunk, Client};
 # async fn example() -> Result<(), genai_rs::GenaiError> {
 # let client = Client::new("your-api-key".to_string());
 # let mut stream = client.interaction()
-#     .with_model("gemini-3-flash-preview")
+#     .with_model("gemini-3.6-flash")
 #     .with_text("What's the weather in Tokyo?")
 #     .create_stream_with_auto_functions();
 let mut accumulator = AutoFunctionResultAccumulator::new();
@@ -581,7 +581,7 @@ let mut last_event_id: Option<String> = None;
 let mut interaction_id: Option<String> = None;
 
 let mut stream = client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Count to 100")
     .with_store_enabled()  // Required for resume
     .create_stream();
@@ -760,7 +760,7 @@ impl StreamingSession {
         let mut full_text = String::new();
 
         let mut stream = self.client.interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_text(prompt)
             .with_store_enabled()
             .create_stream();
@@ -846,7 +846,7 @@ async fn stream_with_retry(
         } else {
             // Initial stream
             Box::pin(client.interaction()
-                .with_model("gemini-3-flash-preview")
+                .with_model("gemini-3.6-flash")
                 .with_text(prompt)
                 .with_store_enabled()
                 .create_stream())
@@ -953,7 +953,7 @@ With `LOUD_WIRE=1`, you'll see the raw SSE events:
 
 ```text
 [REQ#1] POST /v1beta/interactions?alt=sse
-  model: gemini-3-flash-preview
+  model: gemini-3.6-flash
   input: "Write a poem"
 
 [RES#1] SSE stream:

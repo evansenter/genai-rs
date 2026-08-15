@@ -20,7 +20,7 @@
 //!
 //! let mut agent = AntigravityAgent::builder()
 //!     .with_api_key(std::env::var("GEMINI_API_KEY")?)
-//!     .with_model("gemini-3-flash-preview")
+//!     .with_model("gemini-3.6-flash")
 //!     .with_system_instructions("You are a code-review assistant.")
 //!     .add_workspace("/path/to/repo")
 //!     .add_policy(policy::deny_all())
@@ -51,10 +51,10 @@ pub use hooks::{
 pub use streaming::{AgentEvent, AgentEventStream, ErrorSeverity, ToolAction, ToolDecision};
 pub use triggers::TriggerConfig;
 
-use crate::wire::{LoudWirePrinter, WireInspector};
+use crate::wire::WireInspector;
 use crate::{FunctionDeclaration, ToolService};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -285,7 +285,7 @@ impl AgentBuilder {
         self
     }
 
-    /// Sets the text model (default: `gemini-3-flash-preview`).
+    /// Sets the text model (default: `gemini-3.6-flash`).
     #[must_use]
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());
@@ -629,8 +629,8 @@ impl AgentBuilder {
         let binary = process::discover_harness(self.harness_path.as_deref())?;
 
         let mut inspectors = self.inspectors.clone();
-        if std::env::var("LOUD_WIRE").is_ok() {
-            inspectors.push(Arc::new(LoudWirePrinter::new()));
+        if let Some(printer) = crate::wire::env_inspector() {
+            inspectors.push(Arc::new(printer));
         }
         let wire = WireContext::new(inspectors);
 
@@ -744,7 +744,7 @@ impl AgentBuilder {
                     name: Some(
                         self.model
                             .clone()
-                            .unwrap_or_else(|| "gemini-3-flash-preview".to_string()),
+                            .unwrap_or_else(|| "gemini-3.6-flash".to_string()),
                     ),
                     types: vec![protocol::ModelType::Text],
                     gemini_api_endpoint: Some(protocol::GeminiApiEndpoint {
@@ -852,8 +852,20 @@ impl std::fmt::Debug for AntigravityAgent {
 /// while consuming an [`AgentEventStream`]). Obtain via
 /// [`AntigravityAgent::cancel_handle`]; cheap to clone.
 ///
-/// Cancellation makes the in-flight `chat`/stream fail with
-/// [`AntigravityError::Turn`] once the harness confirms.
+/// # What a cancelled turn returns
+///
+/// Harness 0.1.10 answers a halt by taking the trajectory to
+/// `STATE_FULLY_IDLE` — the same terminal state as a natural completion,
+/// not `STATE_CANCELLED`. So the in-flight `chat`/stream **resolves
+/// normally**, returning whatever partial output the turn had produced;
+/// it does not fail with [`AntigravityError::Turn`]. Treat `cancel` as
+/// "stop early and keep what you have", and track the cancellation on
+/// your side if you need to tell a halted turn from a completed one.
+///
+/// [`AntigravityError::Turn`] remains the outcome when the *harness*
+/// cancels a turn itself (`STATE_CANCELLED`), which is a different event
+/// from this handle's halt request. Pinned by
+/// `test_antigravity_cancel_handle_halts_an_in_flight_turn`.
 #[derive(Debug, Clone)]
 pub struct CancelHandle {
     sink: SinkHandle,
@@ -963,6 +975,21 @@ impl AntigravityAgent {
     /// its trajectory), closes stdin (EOF triggers the harness's clean
     /// exit), then escalates to SIGTERM and SIGKILL if it lingers.
     pub async fn shutdown(mut self) -> Result<(), AntigravityError> {
+        // Summarize protocol drift once, at the natural end of a session.
+        // Individual `warn!`s scroll past mid-run; the aggregate is what
+        // tells you the harness spoke a dialect this build only partly
+        // understands — the failure mode that otherwise presents as
+        // "it just didn't do anything".
+        let drift = protocol::drift_report();
+        if !drift.is_empty() {
+            tracing::warn!(
+                "This process has seen {} unrecognized antigravity wire value(s) — this \
+                 build may not fully understand this harness (see \
+                 SUPPORTED_HARNESS_VERSION). Cumulative across agents in this process: {:?}",
+                drift.values().sum::<usize>(),
+                drift
+            );
+        }
         // Stop trigger timers first so nothing writes to the closing socket.
         self.trigger_tasks.abort_all();
         self.session.close().await;
@@ -1049,7 +1076,7 @@ impl AntigravityAgent {
                         // turn and desync every turn after it.
                         self.halt_and_drain("recovering from a turn timeout").await;
                         return Err(AntigravityError::Timeout {
-                            operation: "agent turn".to_string(),
+                            operation: turn.stall_diagnosis(),
                             timeout: turn.timeout.unwrap_or_default(),
                         });
                     }
@@ -1433,8 +1460,22 @@ impl AntigravityAgent {
                 return Err(AntigravityError::Turn(message));
             }
             _ => {
-                // Running / subagent idle or cancelled / unknown states:
-                // nothing to do for the parent turn.
+                // Running / waiting-for-tasks / subagent idle or
+                // cancelled: nothing to do for the parent turn.
+                //
+                // An *unrecognized* main-trajectory state is different in
+                // kind, though it lands here too: only `Idle` ends a
+                // turn, so if the harness renamed the terminal state (as
+                // 0.1.10 did — `STATE_IDLE` -> `STATE_FULLY_IDLE`) the
+                // turn runs to its timeout with nothing else to show for
+                // it. Record the value so the timeout can name the cause
+                // instead of reporting a bare stall.
+                if is_main
+                    && let Some(state) = &update.state
+                    && let Some(unknown) = state.unknown_state_type()
+                {
+                    turn.unknown_trajectory_states.insert(unknown.to_string());
+                }
             }
         }
         Ok(())
@@ -1487,10 +1528,12 @@ impl AntigravityAgent {
                     // wire envelope the harness expects (Item: unwrap
                     // ToolOutcome.result). The error branch keeps the
                     // envelope's error string.
-                    let error = result
-                        .get("error")
-                        .and_then(Value::as_str)
-                        .map(ToString::to_string);
+                    let error = normalize_tool_error(
+                        result
+                            .get("error")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                    );
                     let outcome = ToolOutcome {
                         name: name.clone(),
                         result: error.is_none().then(|| unwrap_result_value(&result)),
@@ -1556,7 +1599,7 @@ impl AntigravityAgent {
                     // Unwrap the `{"result": ...}` envelope for consistency
                     // with the custom-tool dispatch path.
                     result: post_tool_args.result.as_deref().map(unwrap_result_string),
-                    error: post_tool_args.error.clone(),
+                    error: normalize_tool_error(post_tool_args.error.clone()),
                 });
             }
             response.empty_result = Some(protocol::EmptyResult {});
@@ -1760,6 +1803,19 @@ fn unwrap_result_value(value: &Value) -> String {
     value.to_string()
 }
 
+/// Normalizes a tool error into "errored or not".
+///
+/// The harness populates `PostToolArgs.error` with `""` — protobuf's
+/// default for an unset string — on calls that **succeeded**. Passing that
+/// through verbatim makes `ToolOutcome::error.is_some()` true for every
+/// successful harness-executed builtin, which is precisely the check the
+/// field's own docs invite ("the error, if it failed"). Treating blank as
+/// absent keeps `is_some()` meaning what it says, on both the custom-tool
+/// dispatch path and the harness post-tool path.
+fn normalize_tool_error(error: Option<String>) -> Option<String> {
+    error.filter(|e| !e.trim().is_empty())
+}
+
 /// Like [`unwrap_result_value`], for a harness-supplied result *string*
 /// (the `PostToolArgs.result` wire field). Only a lone-`result` JSON object
 /// envelope is unwrapped; any other payload (plain text, a multi-key object)
@@ -1805,6 +1861,10 @@ impl Drop for TurnGuard {
 struct TurnState {
     queue: VecDeque<AgentEvent>,
     finished: bool,
+    /// Unrecognized *main-trajectory* states seen this turn. Populated
+    /// only on the Evergreen `Unknown` path; drives the stall diagnostic
+    /// when a turn times out without ever reaching a terminal state.
+    unknown_trajectory_states: BTreeSet<String>,
     main_trajectory: Option<String>,
     handled_waits: HashMap<(String, u32), HashSet<&'static str>>,
     announced_actions: HashSet<(String, u32)>,
@@ -1829,6 +1889,7 @@ impl TurnState {
         Self {
             queue: VecDeque::new(),
             finished: false,
+            unknown_trajectory_states: BTreeSet::new(),
             main_trajectory: None,
             handled_waits: HashMap::new(),
             announced_actions: HashSet::new(),
@@ -1843,6 +1904,35 @@ impl TurnState {
             deadline: timeout.map(|t| tokio::time::Instant::now() + t),
             _turn_guard: turn_guard,
         }
+    }
+
+    /// Describes *why* a turn stalled, for the timeout error's
+    /// `operation` field.
+    ///
+    /// A bare "agent turn timed out" is the least actionable error the
+    /// bridge can raise: it looks identical whether the model is slow,
+    /// the harness died quietly, or — the case this exists for — the
+    /// harness renamed the terminal trajectory state and the bridge
+    /// stopped recognizing the end of a turn. When unknown
+    /// main-trajectory states were seen, name them and the likely cause,
+    /// so the failure points at the version mismatch instead of looking
+    /// like latency.
+    fn stall_diagnosis(&self) -> String {
+        if self.unknown_trajectory_states.is_empty() {
+            return "agent turn".to_string();
+        }
+        let states: Vec<_> = self
+            .unknown_trajectory_states
+            .iter()
+            .map(String::as_str)
+            .collect();
+        format!(
+            "agent turn (never saw a terminal trajectory state; the harness \
+             sent unrecognized state(s) [{}] that this build does not treat \
+             as terminal — most likely a harness/bridge version mismatch, \
+             see antigravity::SUPPORTED_HARNESS_VERSION)",
+            states.join(", ")
+        )
     }
 
     /// Marks a waiting-state request as handled for the step; returns
@@ -2301,6 +2391,66 @@ mod agent_tests {
     }
 
     #[test]
+    fn stall_diagnosis_names_unrecognized_main_trajectory_states() {
+        // The scenario nobody reproduces on purpose: the harness renames
+        // the terminal state, the Evergreen path absorbs it as Unknown,
+        // and the turn runs to its timeout. Pin that the timeout message
+        // names the culprit instead of reporting a bare stall.
+        let unknown: TrajectoryState =
+            serde_json::from_value(serde_json::json!("STATE_SUPER_IDLE")).unwrap();
+        assert!(unknown.is_unknown(), "fixture must be an Unknown variant");
+
+        let mut turn = TurnState::new(None, None);
+        turn.main_trajectory = Some("main".to_string());
+        let update = trajectory_update(Some("main"), unknown, None);
+        AntigravityAgent::process_trajectory_update(&update, &mut turn).unwrap();
+
+        assert!(!turn.finished, "an unknown state must not end the turn");
+        let diagnosis = turn.stall_diagnosis();
+        assert!(
+            diagnosis.contains("STATE_SUPER_IDLE"),
+            "diagnosis must name the state, got: {diagnosis}"
+        );
+        assert!(
+            diagnosis.contains("version mismatch"),
+            "diagnosis must point at the likely cause, got: {diagnosis}"
+        );
+    }
+
+    #[test]
+    fn stall_diagnosis_ignores_subagent_states_and_clean_turns() {
+        // A clean turn keeps the plain operation name...
+        let turn = TurnState::new(None, None);
+        assert_eq!(turn.stall_diagnosis(), "agent turn");
+
+        // ...and a *subagent* trajectory going somewhere unrecognized is
+        // not the parent's problem, so it must not pollute the parent's
+        // diagnosis (the `is_main` half of the condition).
+        let unknown: TrajectoryState =
+            serde_json::from_value(serde_json::json!("STATE_SUPER_IDLE")).unwrap();
+        let mut turn = TurnState::new(None, None);
+        turn.main_trajectory = Some("main".to_string());
+        let update = trajectory_update(Some("subagent-1"), unknown, None);
+        AntigravityAgent::process_trajectory_update(&update, &mut turn).unwrap();
+        assert_eq!(turn.stall_diagnosis(), "agent turn");
+    }
+
+    #[test]
+    fn tool_error_normalization_treats_blank_as_success() {
+        // The harness sends `"error": ""` (protobuf's default for an unset
+        // string) on calls that SUCCEEDED, so passing it through verbatim
+        // reported every successful builtin as a failure to the
+        // `is_some()` check the field's docs invite.
+        assert_eq!(normalize_tool_error(Some(String::new())), None);
+        assert_eq!(normalize_tool_error(Some("   ".to_string())), None);
+        assert_eq!(normalize_tool_error(None), None);
+        assert_eq!(
+            normalize_tool_error(Some("boom".to_string())),
+            Some("boom".to_string())
+        );
+    }
+
+    #[test]
     fn test_main_trajectory_cancelled_fails_turn() {
         let mut turn = TurnState::new(None, None);
         turn.main_trajectory = Some("main".to_string());
@@ -2415,7 +2565,7 @@ mod agent_tests {
     #[tokio::test]
     async fn test_spawn_model_without_api_key_is_config_error() {
         let err = AntigravityAgent::builder()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .spawn()
             .await
             .unwrap_err();
@@ -2429,7 +2579,7 @@ mod agent_tests {
     fn test_builder_harness_config_assembly() {
         let builder = AntigravityAgent::builder()
             .with_api_key("test-key")
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_system_instructions("Be brief.")
             .add_workspace("/w1")
             .add_workspace("/w2")
@@ -2446,7 +2596,7 @@ mod agent_tests {
         assert_eq!(config.cascade_id.as_deref(), Some("resume-me"));
         assert_eq!(config.models.len(), 1);
         let model = &config.models[0];
-        assert_eq!(model.name.as_deref(), Some("gemini-3-flash-preview"));
+        assert_eq!(model.name.as_deref(), Some("gemini-3.6-flash"));
         assert_eq!(model.types, vec![protocol::ModelType::Text]);
         assert_eq!(
             model

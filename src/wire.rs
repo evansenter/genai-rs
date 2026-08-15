@@ -15,6 +15,16 @@
 //! LOUD_WIRE=1 cargo run --example simple_interaction
 //! ```
 //!
+//! `LOUD_WIRE` also accepts a comma-separated filter — see [`WireFilter`]
+//! for the syntax. `1` (and the other "on" spellings) keeps the historical
+//! everything-pretty-printed behavior; anything else narrows it:
+//!
+//! ```bash
+//! LOUD_WIRE=summary                # one line per event
+//! LOUD_WIRE=request,response       # HTTP only, no WebSocket noise
+//! LOUD_WIRE=toolCall,summary       # one harness message type, one line each
+//! ```
+//!
 //! For programmatic access, register inspectors on the client builder:
 //!
 //! ```no_run
@@ -368,6 +378,212 @@ mod paint {
 // LoudWirePrinter
 // =============================================================================
 
+// =============================================================================
+// WireFilter
+// =============================================================================
+
+/// Which events [`LoudWirePrinter`] should print, and how loudly.
+///
+/// Parsed from the `LOUD_WIRE` environment variable. The firehose is the
+/// right default for a single request, and the wrong one the moment a
+/// harness session is involved: a few turns produce thousands of
+/// pretty-printed lines, and finding the one message that matters means
+/// grepping raw JSON out of the scrollback.
+///
+/// # Syntax
+///
+/// `LOUD_WIRE` takes a comma-separated list. `1`, `true`, or any empty
+/// value means "everything, pretty-printed" — the historical behavior.
+///
+/// | Selector | Keeps |
+/// |----------|-------|
+/// | `request` | HTTP requests |
+/// | `response` | HTTP responses (status, body, error bodies) |
+/// | `sse` | SSE frames |
+/// | `ws` | Every WebSocket message |
+/// | `harness` | Harness spawn and stderr lines |
+/// | `upload` | File-upload start/complete |
+/// | *anything else* | A WebSocket payload whose top-level key matches (e.g. `stepUpdate`, `toolCall`), or whose *nested* key one level in matches (e.g. `mcpTool`, `runCommand` — the step actions that all live under `stepUpdate`) |
+/// | `summary` | Modifier: one line per event instead of full bodies |
+///
+/// A value that matches no category and no payload key selects **nothing**,
+/// so `LOUD_WIRE=0`, `false`, `off` and `verbose` all print silence. Note
+/// that this is a behavior change: the gate used to be "is the variable set
+/// at all", so those values previously produced the full firehose. If
+/// output has gone missing, an unrecognized selector is the first thing to
+/// check.
+///
+/// # Examples
+///
+/// ```bash
+/// LOUD_WIRE=1                      # everything (unchanged)
+/// LOUD_WIRE=summary                # everything, one line each
+/// LOUD_WIRE=stepUpdate             # only stepUpdate WS payloads
+/// LOUD_WIRE=toolCall,summary       # tool calls, one line each
+/// LOUD_WIRE=request,response       # HTTP only, no WebSocket noise
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WireFilter {
+    /// Lowercased selectors. Empty means "keep everything".
+    selectors: Vec<String>,
+    /// One line per event instead of pretty-printed bodies.
+    summary: bool,
+}
+
+impl WireFilter {
+    /// A filter that keeps every event, pretty-printed.
+    #[must_use]
+    pub const fn all() -> Self {
+        Self {
+            selectors: Vec::new(),
+            summary: false,
+        }
+    }
+
+    /// Parses a `LOUD_WIRE` value. See the type docs for the syntax.
+    #[must_use]
+    pub fn parse(raw: &str) -> Self {
+        let mut selectors = Vec::new();
+        let mut summary = false;
+        let mut keep_all = false;
+        for token in raw.split(',') {
+            let token = token.trim();
+            if token.is_empty() {
+                continue;
+            }
+            match token.to_ascii_lowercase().as_str() {
+                // The historical "on" values select everything.
+                "1" | "true" | "yes" | "on" | "all" => keep_all = true,
+                "summary" => summary = true,
+                other => selectors.push(other.to_string()),
+            }
+        }
+        // Deliberately after the loop rather than an early return: `summary`
+        // is a modifier, so `1,summary` and `summary,1` must mean the same
+        // thing. Returning on the "on" arm would honor only the latter.
+        if keep_all {
+            selectors.clear();
+        }
+        Self { selectors, summary }
+    }
+
+    /// True when bodies should be collapsed to one line per event.
+    #[must_use]
+    pub const fn is_summary(&self) -> bool {
+        self.summary
+    }
+
+    /// The category name an event belongs to, for selector matching.
+    const fn category(event: &WireEvent) -> &'static str {
+        match event {
+            WireEvent::Request { .. } => "request",
+            WireEvent::ResponseStatus { .. }
+            | WireEvent::ResponseBody { .. }
+            | WireEvent::ErrorBody { .. } => "response",
+            WireEvent::SseFrame { .. } => "sse",
+            WireEvent::UploadStart { .. } | WireEvent::UploadComplete { .. } => "upload",
+            WireEvent::HarnessSpawn { .. } | WireEvent::HarnessStderr { .. } => "harness",
+            WireEvent::WsSend { .. } | WireEvent::WsReceive { .. } => "ws",
+        }
+    }
+
+    /// Whether this event should be printed.
+    #[must_use]
+    pub fn allows(&self, event: &WireEvent) -> bool {
+        if self.selectors.is_empty() {
+            return true;
+        }
+        let category = Self::category(event);
+        if self.selectors.iter().any(|s| s == category) {
+            return true;
+        }
+        // Otherwise a selector may name a WebSocket payload's oneof key,
+        // which is the granularity that actually matters when reading a
+        // harness session (`stepUpdate` vs `toolCall` vs `userInput`).
+        let payload = match event {
+            WireEvent::WsSend { payload, .. } | WireEvent::WsReceive { payload, .. } => payload,
+            _ => return false,
+        };
+        payload.as_object().is_some_and(|map| {
+            map.iter()
+                .filter(|(k, _)| !is_envelope_key(k))
+                .any(|(key, value)| {
+                    if self.selectors.contains(&key.to_ascii_lowercase()) {
+                        return true;
+                    }
+                    // ...and one level deeper, because the granularity a
+                    // reader usually wants is *which action* a step carried,
+                    // and every builtin action (`mcpTool`, `runCommand`,
+                    // `viewFile`, …) hides under the single `stepUpdate` key.
+                    // Without this, `LOUD_WIRE=mcpTool` silently matches
+                    // nothing — which is exactly what it did until an example
+                    // advertised it and printed silence.
+                    //
+                    // Restricted to *object-valued* nested keys, which is
+                    // what an action is — matching a scalar like `text`
+                    // would print a line labelled with some unrelated
+                    // action rather than the key that matched. And only one
+                    // level: deeper would match leaf field names across
+                    // unrelated messages, since selectors are not scoped by
+                    // message type.
+                    nested_action_keys(value)
+                        .iter()
+                        .any(|nested| self.selectors.contains(&nested.to_ascii_lowercase()))
+                })
+        })
+    }
+}
+
+/// The printer the `LOUD_WIRE` environment variable asks for, or `None`
+/// when the variable is unset.
+///
+/// Single source of truth for the env gate: both `Client` and the
+/// antigravity `AgentBuilder` install their zero-config inspector through
+/// this, so a filter means the same thing on either path. (They diverged
+/// once — the harness path re-implemented the gate as a bare `is_ok()` and
+/// silently ignored the filter, which is exactly the surface where
+/// filtering matters most.)
+pub(crate) fn env_inspector() -> Option<LoudWirePrinter> {
+    let raw = std::env::var("LOUD_WIRE").ok()?;
+    // The value selects what to print — `1` keeps the historical
+    // firehose, anything else filters. See `WireFilter`.
+    Some(LoudWirePrinter::with_filter(WireFilter::parse(&raw)))
+}
+
+/// The object-valued keys one level inside a payload value — the step
+/// *actions* (`mcpTool`, `runCommand`, `viewFile`, …), as opposed to a
+/// step's scalar fields (`text`, `stepIndex`, `state`).
+///
+/// Shared by selection and summary rendering so the two cannot disagree
+/// about what a line is "about": a nested selector matches exactly the
+/// keys the label can name.
+fn nested_action_keys(value: &serde_json::Value) -> Vec<&str> {
+    value.as_object().map_or_else(Vec::new, |inner| {
+        inner
+            .iter()
+            .filter(|(_, v)| v.is_object())
+            .map(|(k, _)| k.as_str())
+            .collect()
+    })
+}
+
+/// Envelope bookkeeping that rides alongside a harness message rather
+/// than being one, and is therefore useless as a selector: matching on
+/// `seqNum` would keep the whole stream, and `usageUpdate` would keep
+/// every message that happens to carry usage.
+///
+/// Deliberately the same set the protocol deserializer strips before it
+/// picks the oneof arm (`OutputEvent::deserialize` removes `seqNum`,
+/// `timestampMicros` and the usage keys) — selection, summary rendering
+/// and deserialization should agree on what a message *is*. Excluded from
+/// both selector matching and summary rendering for that reason.
+fn is_envelope_key(key: &str) -> bool {
+    matches!(
+        key,
+        "seqNum" | "timestampMicros" | "usageMetadata" | "usageUpdate"
+    )
+}
+
 /// Pretty-prints wire events to stderr.
 ///
 /// This is the inspector installed automatically when the `LOUD_WIRE`
@@ -382,14 +598,125 @@ mod paint {
 /// - Pretty-printed (and, with the `wire-color` feature, colored) JSON
 /// - Base64-heavy `data`/`signature` fields truncated to keep output readable
 /// - Secret fields (e.g. third-party retrieval `api_key`s) fully redacted
-#[derive(Debug, Clone, Copy, Default)]
-pub struct LoudWirePrinter;
+#[derive(Debug, Clone, Default)]
+pub struct LoudWirePrinter {
+    filter: WireFilter,
+}
 
 impl LoudWirePrinter {
-    /// Creates a new printer.
+    /// Creates a printer that prints every event, pretty-printed.
     #[must_use]
     pub const fn new() -> Self {
-        Self
+        Self {
+            filter: WireFilter::all(),
+        }
+    }
+
+    /// Creates a printer restricted by `filter` (see [`WireFilter`]).
+    #[must_use]
+    pub const fn with_filter(filter: WireFilter) -> Self {
+        Self { filter }
+    }
+
+    /// One-line rendering, for `LOUD_WIRE=summary`. Enough to see the
+    /// shape and order of a session without the bodies that make a
+    /// harness run unreadable.
+    fn print_summary(&self, event: &WireEvent) {
+        let (id, label, detail) = match event {
+            WireEvent::Request {
+                id, method, url, ..
+            } => (*id, "REQ", format!("{method} {url}")),
+            WireEvent::ResponseStatus { id, status } => (*id, "RES", format!("status {status}")),
+            WireEvent::ResponseBody { id, body } => (*id, "RES", Self::payload_keys(body)),
+            WireEvent::ErrorBody { id, status, body } => {
+                (*id, "ERR", format!("status {status}, {} bytes", body.len()))
+            }
+            WireEvent::SseFrame { id, event_type, .. } => {
+                (*id, "SSE", event_type.clone().unwrap_or_else(|| "-".into()))
+            }
+            WireEvent::UploadStart {
+                id,
+                file_name,
+                size_bytes,
+                ..
+            } => (*id, "UP", format!("{file_name} ({size_bytes} bytes)")),
+            WireEvent::UploadComplete { id, uri } => (*id, "UP", format!("done {uri}")),
+            WireEvent::HarnessSpawn { id, path, pid } => {
+                (*id, "HARNESS", format!("{path} (pid {pid:?})"))
+            }
+            WireEvent::HarnessStderr { id, line } => (*id, "STDERR", line.clone()),
+            WireEvent::WsSend { id, payload } => (*id, "WS>", Self::ws_payload_keys(payload)),
+            WireEvent::WsReceive { id, payload } => (*id, "WS<", Self::ws_payload_keys(payload)),
+        };
+        eprintln!(
+            "{} {} [#{id}] {label:<7} {detail}",
+            paint::bold("[LOUD_WIRE]"),
+            Self::timestamp()
+        );
+    }
+
+    /// The oneof key(s) of a WebSocket payload — the part that says what
+    /// the message *is*.
+    ///
+    /// The harness does send messages whose only non-envelope content is
+    /// usage (a bare `seqNum` + `usageUpdate` deserializes with no payload
+    /// at all), so an empty key list is a real message and not a bug.
+    /// Label it rather than printing a blank detail column, which in the
+    /// one format meant for skimming would read as a rendering fault. The
+    /// label stays neutral because this also renders HTTP response bodies,
+    /// where there is no envelope to speak of — and those stay unqualified
+    /// for the same reason (see `ws_payload_keys`).
+    fn payload_keys(payload: &serde_json::Value) -> String {
+        Self::payload_keys_inner(payload, false)
+    }
+
+    /// `payload_keys` for harness WebSocket messages, qualifying a step
+    /// with the action it carried.
+    fn ws_payload_keys(payload: &serde_json::Value) -> String {
+        Self::payload_keys_inner(payload, true)
+    }
+
+    fn payload_keys_inner(payload: &serde_json::Value, qualify: bool) -> String {
+        payload.as_object().map_or_else(
+            || "(non-object)".to_string(),
+            |m| {
+                let keys: Vec<String> = m
+                    .iter()
+                    .filter(|(k, _)| !is_envelope_key(k))
+                    .map(|(key, value)| {
+                        // Qualify a harness message with the action it
+                        // carried: a bare "stepUpdate" says almost nothing,
+                        // while "stepUpdate/mcpTool" says which action ran
+                        // — and names exactly what a nested selector can
+                        // match, so asking for `mcpTool` cannot produce a
+                        // line labelled with a different key.
+                        //
+                        // WebSocket only. HTTP response bodies share this
+                        // renderer and have no actions, so qualifying them
+                        // would invent structure that isn't there
+                        // (`interaction/outputs`).
+                        if !qualify {
+                            return key.clone();
+                        }
+                        let actions = nested_action_keys(value);
+                        if actions.is_empty() {
+                            key.clone()
+                        } else {
+                            // Every action, not just the first: a step
+                            // carries one in practice, but naming only the
+                            // lowest-sorting of several would reintroduce
+                            // the label/selector mismatch in a rarer shape.
+                            format!("{key}/{}", actions.join("+"))
+                        }
+                    })
+                    .collect();
+                if keys.is_empty() {
+                    "(no payload keys)".to_string()
+                } else {
+                    keys.join(", ")
+                }
+            },
+        )
     }
 
     /// Format the current timestamp for log output (ISO 8601 UTC).
@@ -570,6 +897,13 @@ impl LoudWirePrinter {
 
 impl WireInspector for LoudWirePrinter {
     fn on_event(&self, event: &WireEvent) {
+        if !self.filter.allows(event) {
+            return;
+        }
+        if self.filter.is_summary() {
+            self.print_summary(event);
+            return;
+        }
         match event {
             WireEvent::Request {
                 id,
@@ -792,6 +1126,247 @@ impl WireInspector for TracingForwarder {
 }
 
 #[cfg(test)]
+mod filter_tests {
+    use super::{WireEvent, WireFilter};
+    use serde_json::json;
+
+    fn ws(payload: serde_json::Value) -> WireEvent {
+        WireEvent::WsReceive { id: 1, payload }
+    }
+
+    fn request() -> WireEvent {
+        WireEvent::Request {
+            id: 1,
+            method: "POST".into(),
+            url: "https://x/y".into(),
+            body: None,
+        }
+    }
+
+    #[test]
+    fn on_values_keep_everything() {
+        // The historical spellings must not start filtering anything out.
+        for raw in ["1", "true", "yes", "on", "all", "", "  "] {
+            let f = WireFilter::parse(raw);
+            assert!(f.allows(&request()), "{raw:?} should keep requests");
+            assert!(
+                f.allows(&ws(json!({"stepUpdate": {}}))),
+                "{raw:?} should keep ws"
+            );
+            assert!(!f.is_summary(), "{raw:?} should not imply summary");
+        }
+    }
+
+    #[test]
+    fn category_selectors_filter_by_event_kind() {
+        let f = WireFilter::parse("request");
+        assert!(f.allows(&request()));
+        assert!(!f.allows(&ws(json!({"stepUpdate": {}}))));
+        assert!(!f.allows(&WireEvent::ResponseStatus { id: 1, status: 200 }));
+
+        let f = WireFilter::parse("response");
+        assert!(f.allows(&WireEvent::ResponseStatus { id: 1, status: 200 }));
+        assert!(!f.allows(&request()));
+
+        // `ws` keeps every WebSocket message regardless of payload key.
+        let f = WireFilter::parse("ws");
+        assert!(f.allows(&ws(json!({"toolCall": {}}))));
+        assert!(f.allows(&ws(json!({"anythingElse": {}}))));
+        assert!(!f.allows(&request()));
+    }
+
+    #[test]
+    fn payload_key_selectors_pick_out_one_message_type() {
+        // The granularity that actually matters when reading a harness
+        // session: which oneof arm, not which transport.
+        let f = WireFilter::parse("stepUpdate");
+        assert!(f.allows(&ws(json!({"stepUpdate": {"text": "hi"}}))));
+        assert!(!f.allows(&ws(json!({"toolCall": {}}))));
+        assert!(!f.allows(&request()));
+
+        // Case-insensitive, and envelope metadata does not count as a match.
+        let f = WireFilter::parse("STEPUPDATE");
+        assert!(f.allows(&ws(json!({"stepUpdate": {}}))));
+        let f = WireFilter::parse("seqNum");
+        assert!(!f.allows(&ws(json!({"seqNum": "1", "toolCall": {}}))));
+
+        // Usage rides along with a message rather than being one, and the
+        // deserializer strips it before picking the oneof arm — so it must
+        // not select either, or it would keep every message carrying usage.
+        for envelope in ["usageUpdate", "usageMetadata"] {
+            let f = WireFilter::parse(envelope);
+            assert!(
+                !f.allows(&ws(json!({"stepUpdate": {}, envelope: {"total": {}}}))),
+                "{envelope:?} must not act as a selector"
+            );
+        }
+        // ...and the message it rides on still selects normally.
+        let f = WireFilter::parse("stepUpdate");
+        assert!(f.allows(&ws(json!({"stepUpdate": {}, "usageMetadata": {}}))));
+    }
+
+    #[test]
+    fn selectors_compose_and_summary_is_a_modifier() {
+        let f = WireFilter::parse("stepUpdate,toolCall");
+        assert!(f.allows(&ws(json!({"stepUpdate": {}}))));
+        assert!(f.allows(&ws(json!({"toolCall": {}}))));
+        assert!(!f.allows(&ws(json!({"userInput": "x"}))));
+
+        // `summary` alone changes rendering, not selection.
+        let f = WireFilter::parse("summary");
+        assert!(f.is_summary());
+        assert!(f.allows(&request()));
+        assert!(f.allows(&ws(json!({"anything": {}}))));
+
+        // ...and combines with selectors.
+        let f = WireFilter::parse("toolCall,summary");
+        assert!(f.is_summary());
+        assert!(f.allows(&ws(json!({"toolCall": {}}))));
+        assert!(!f.allows(&request()));
+    }
+
+    #[test]
+    fn nested_selectors_reach_step_actions() {
+        // The case this exists for: every builtin action lives one level
+        // under `stepUpdate`, so a top-level-only match made the most
+        // useful selector ("show me the MCP calls") match nothing.
+        let step_with_mcp = ws(json!({
+            "seqNum": "3",
+            "stepUpdate": {
+                "stepIndex": 2,
+                "mcpTool": {"serverName": "widgets", "toolName": "list_widgets"},
+            },
+        }));
+        let step_with_view = ws(json!({
+            "stepUpdate": {"stepIndex": 4, "viewFile": {"path": "/tmp/x"}},
+        }));
+
+        let f = WireFilter::parse("mcpTool");
+        assert!(f.allows(&step_with_mcp));
+        assert!(
+            !f.allows(&step_with_view),
+            "a nested selector must still discriminate between actions"
+        );
+
+        // The enclosing key keeps working, and still matches both.
+        let f = WireFilter::parse("stepUpdate");
+        assert!(f.allows(&step_with_mcp));
+        assert!(f.allows(&step_with_view));
+
+        // Only one level deep: a leaf inside the action is not a selector,
+        // or selectors would start colliding across unrelated messages.
+        let f = WireFilter::parse("serverName");
+        assert!(!f.allows(&step_with_mcp));
+
+        // Scalar fields are not selectors either: `allows` and the summary
+        // qualifier share `nested_action_keys`, so a selector can only
+        // match something the label is able to name.
+        let f = WireFilter::parse("stepIndex");
+        assert!(!f.allows(&step_with_mcp));
+    }
+
+    #[test]
+    fn payload_keys_names_the_message_and_labels_the_empty_case() {
+        use super::LoudWirePrinter;
+
+        // The case that matters: envelope and payload keys together must
+        // render as the payload alone, using the same `is_envelope_key`
+        // filter selection uses. A divergence between what a summary shows
+        // and what a selector matches would surface here first.
+        assert_eq!(
+            LoudWirePrinter::payload_keys(&json!({
+                "seqNum": "7",
+                "timestampMicros": "1",
+                "stepUpdate": {"text": "hi"},
+            })),
+            "stepUpdate"
+        );
+
+        // A real message whose only content is usage — not a bug, so it
+        // gets a label rather than a blank detail column. Neutral wording
+        // because this renders HTTP bodies too.
+        assert_eq!(
+            LoudWirePrinter::payload_keys(&json!({"seqNum": "7", "usageUpdate": {"total": {}}})),
+            "(no payload keys)"
+        );
+
+        // Non-JSON frames arrive as a bare string.
+        assert_eq!(
+            LoudWirePrinter::payload_keys(&json!("not an object")),
+            "(non-object)"
+        );
+
+        // A step carrying an action is qualified with it, so summary lines
+        // say which action ran and agree with what a nested selector
+        // matched on.
+        assert_eq!(
+            LoudWirePrinter::ws_payload_keys(&json!({
+                "seqNum": "3",
+                "stepUpdate": {
+                    "stepIndex": 2,
+                    "text": "List widgets",
+                    "mcpTool": {"serverName": "widgets"},
+                },
+            })),
+            "stepUpdate/mcpTool"
+        );
+        // Scalar-only payloads are unqualified, exactly as before.
+        assert_eq!(
+            LoudWirePrinter::ws_payload_keys(&json!({
+                "trajectoryStateUpdate": {"state": "STATE_FULLY_IDLE", "trajectoryId": "t-0"},
+            })),
+            "trajectoryStateUpdate"
+        );
+        // HTTP bodies go through the unqualified path, so a nested object
+        // in a response body is not dressed up as an action.
+        assert_eq!(
+            LoudWirePrinter::payload_keys(&json!({"interaction": {"outputs": {}}})),
+            "interaction"
+        );
+    }
+
+    #[test]
+    fn env_inspector_applies_the_filter_from_the_variable() {
+        use super::env_inspector;
+
+        // SAFETY: nextest runs each test in its own process, so this
+        // mutation is not visible to any other test.
+        unsafe { std::env::set_var("LOUD_WIRE", "toolCall,summary") };
+        let printer = env_inspector().expect("LOUD_WIRE set should yield a printer");
+        assert!(printer.filter.is_summary());
+        assert!(printer.filter.allows(&ws(json!({"toolCall": {}}))));
+        assert!(!printer.filter.allows(&request()));
+
+        // The historical spelling still means everything.
+        unsafe { std::env::set_var("LOUD_WIRE", "1") };
+        let printer = env_inspector().expect("printer");
+        assert_eq!(printer.filter, WireFilter::all());
+
+        unsafe { std::env::remove_var("LOUD_WIRE") };
+        assert!(
+            env_inspector().is_none(),
+            "an unset LOUD_WIRE must install nothing"
+        );
+    }
+
+    #[test]
+    fn summary_survives_an_on_value_in_either_order() {
+        // Even alongside an "on" value, summary survives — in either order.
+        // `summary` is a modifier, so token position must not change what
+        // the value means.
+        for raw in ["summary,1", "1,summary", "stepUpdate,1,summary"] {
+            let f = WireFilter::parse(raw);
+            assert!(f.is_summary(), "{raw:?} should keep summary");
+            assert!(f.allows(&request()), "{raw:?} should keep everything");
+            assert!(
+                f.allows(&ws(json!({"toolCall": {}}))),
+                "{raw:?}: an \"on\" value overrides narrower selectors"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -802,7 +1377,7 @@ mod tests {
                 method: "POST".to_string(),
                 url: "https://example.com/v1beta/interactions".to_string(),
                 body: Some(serde_json::json!({
-                    "model": "gemini-3-flash-preview",
+                    "model": "gemini-3.6-flash",
                     "data": "A".repeat(200),
                 })),
             },

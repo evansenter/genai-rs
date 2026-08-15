@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let response = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .conversation()
         .user("What is 2+2?")
         .model("2+2 equals 4.")
@@ -57,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let response = client
         .interaction()
-        .with_model("gemini-3-flash-preview")
+        .with_model("gemini-3.6-flash")
         .with_history(history)
         .create()
         .await?;
@@ -91,7 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Send full conversation history
         let response = client
             .interaction()
-            .with_model("gemini-3-flash-preview")
+            .with_model("gemini-3.6-flash")
             .with_history(history.clone())
             .create()
             .await?;

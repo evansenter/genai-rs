@@ -20,7 +20,8 @@ use serde_json::json;
 // ThinkingSummaries Wire Format Tests
 // CONTEXT-DEPENDENT SERIALIZATION:
 // - GenerationConfig: lowercase ("auto", "none") via Serialize impl
-// - AgentConfig: SCREAMING_CASE ("THINKING_SUMMARIES_AUTO") via to_agent_config_value()
+// - AgentConfig: lowercase ("auto") via to_agent_config_value(); the older
+//   SCREAMING_CASE spelling is still accepted on deserialize only
 // - Deserialization: SCREAMING_CASE always (what API returns)
 // =============================================================================
 
@@ -46,19 +47,13 @@ mod thinking_summaries {
     #[test]
     fn auto_to_agent_config_uses_screaming_case() {
         let value = ThinkingSummaries::Auto;
-        assert_eq!(
-            value.to_agent_config_value(),
-            json!("THINKING_SUMMARIES_AUTO")
-        );
+        assert_eq!(value.to_agent_config_value(), json!("auto"));
     }
 
     #[test]
     fn none_to_agent_config_uses_screaming_case() {
         let value = ThinkingSummaries::None;
-        assert_eq!(
-            value.to_agent_config_value(),
-            json!("THINKING_SUMMARIES_NONE")
-        );
+        assert_eq!(value.to_agent_config_value(), json!("none"));
     }
 
     // Deserialization accepts SCREAMING_CASE (what API returns)

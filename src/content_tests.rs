@@ -1281,7 +1281,7 @@ fn test_deserialize_response_with_built_in_tool_steps() {
     // Test deserializing a full response whose steps include built-in tools
     let response_json = r#"{
         "id": "interaction_789",
-        "model": "gemini-3-flash-preview",
+        "model": "gemini-3.6-flash",
         "steps": [
             {"type": "model_output", "content": [{"type": "text", "text": "Here's the result:"}]},
             {"type": "code_execution_call", "id": "call_abc", "arguments": {"code": "print(42)", "language": "python"}},
@@ -1314,7 +1314,7 @@ fn test_deserialize_response_with_unknown_steps() {
     // Test deserializing a full response that contains truly unknown steps
     let response_json = r#"{
         "id": "interaction_789",
-        "model": "gemini-3-flash-preview",
+        "model": "gemini-3.6-flash",
         "steps": [
             {"type": "model_output", "content": [{"type": "text", "text": "Result:"}]},
             {"type": "future_tool_result", "data": "some_data"},

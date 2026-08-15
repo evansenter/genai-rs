@@ -67,11 +67,71 @@ jobs:
         run: sudo apt-get update || true; sudo apt-get install -y mold
       - name: Install pinned localharness wheel
         # Version must match SUPPORTED_HARNESS_VERSION in src/antigravity/.
-        run: pip install google-antigravity==0.1.5
+        run: pip install google-antigravity==0.1.10
       - name: Run unit tests with antigravity feature
         run: cargo nextest run --workspace --features antigravity
-      - name: Run harness integration tests (API-key tests self-skip)
-        run: cargo nextest run --features antigravity --run-ignored all -E 'binary(antigravity_harness)'
+      # The model-backed tests in this binary are the only ones that
+      # drive a real turn end-to-end, which makes them the only guard
+      # against a harness protocol change breaking turn completion. They
+      # self-skip without a key — so omitting it here made them pass
+      # vacuously, and the harness 0.1.5 -> 0.1.10 terminal-state rename
+      # (every turn hanging to timeout) went unnoticed.
+      # Same-repo guard on this step only, not the job: the unit-test step
+      # above needs no key, and gating the whole job would stop forks from
+      # running the antigravity-gated unit tests entirely.
+      - name: Run harness integration tests
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        # --retries 2 for the same reason as the integration matrix: this
+        # step now draws on the same shared key, so it sees the same
+        # low-rate 429s. A retried test is reported FLAKY, not hidden.
+        run: cargo nextest run --features antigravity --run-ignored all --retries 2 -E 'binary(antigravity_harness)'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      # Examples were compiled but never executed, so bugs that only show
+      # up in a real run stayed invisible: `on_post_tool` reporting every
+      # successful builtin as a failure was found by running one of these
+      # by hand, not by any test. Both finish in seconds.
+      - name: Smoke-run antigravity examples
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        # Belt and braces alongside the examples' own with_turn_timeout: a
+        # harness that stops signalling turn completion hangs rather than
+        # errors, and an unbounded step would burn the runner's full budget
+        # instead of going red.
+        #
+        # Sized above what the retry loop below can actually spend: five
+        # examples, up to three attempts each, per-turn budgets of 120s
+        # (180s for cancellable_turn) plus spawn and backoff. At 15 the
+        # ceiling sat *below* the retry policy's own worst case, so a run
+        # where a few examples retried would go red on the timeout — which
+        # reads as "an example failed" rather than "the retries ran long",
+        # the exact misattribution the retry loop exists to avoid.
+        timeout-minutes: 30
+        run: |
+          set -eo pipefail
+          # Retry each example, for the same reason the nextest steps use
+          # --retries: four of the five hard-fail on LLM-dependent outcomes
+          # (no MCP call made, fewer than N chars streamed before the halt,
+          # no trigger inside the window, empty restored history). Those
+          # assertions are deliberate — a run that proves nothing must not
+          # pass green — but a single unlucky turn should not redden an
+          # unrelated PR. `cargo run` has no --retries, hence the loop.
+          for ex in session_resume workspace_explorer mcp_toolbelt proactive_agent cancellable_turn; do
+            echo "::group::cargo run --example $ex"
+            attempt=1
+            until cargo run --features antigravity --example "$ex"; do
+              if [ "$attempt" -ge 3 ]; then
+                echo "::error::$ex failed $attempt times"
+                echo "::endgroup::"
+                exit 1
+              fi
+              echo "::warning::$ex failed (attempt $attempt), retrying"
+              attempt=$((attempt + 1))
+              sleep 5
+            done
+            echo "::endgroup::"
+          done
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
   test-integration:
     name: Integration Tests (${{ matrix.group }})
@@ -112,7 +172,14 @@ jobs:
             # closed and the skip warning still fires on a failing run —
             # the run where the skip count is most diagnostic.
             rc=0
-            cargo nextest run --test $test --run-ignored all --success-output=final 2>&1 | tee "/tmp/$test.log" || rc=$?
+            # --retries 2: the shared project key sees a low-rate 429 under
+            # a five-way matrix, and nextest is fail-fast — so one transient
+            # error discards the rest of the group (observed: 30 of 37 tests
+            # skipped for a single 429). Retrying only the failed test costs
+            # one call instead of re-running the matrix. Nothing is hidden:
+            # a test that needed a retry is reported FLAKY, which is exactly
+            # what the ci-flakiness-report job is for.
+            cargo nextest run --test $test --run-ignored all --retries 2 --success-output=final 2>&1 | tee "/tmp/$test.log" || rc=$?
             echo "::endgroup::"
             skips=$(grep -c SEMANTIC_VALIDATION_SKIPPED "/tmp/$test.log" || true)
             if [ "${skips:-0}" -gt 3 ]; then

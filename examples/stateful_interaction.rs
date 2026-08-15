@@ -10,7 +10,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Create the client
     let client = Client::builder(api_key).build()?;
 
-    let model_name = "gemini-3-flash-preview";
+    let model_name = "gemini-3.6-flash";
 
     // === First interaction ===
     println!("=== FIRST INTERACTION ===\n");

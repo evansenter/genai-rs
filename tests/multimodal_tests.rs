@@ -364,6 +364,8 @@ mod video {
 
         let response = crate::retry_request!([client, contents] => {
             stateful_builder(&client)
+                // Inline video bytes — see VIDEO_INLINE_MODEL.
+                .with_model(crate::common::VIDEO_INLINE_MODEL)
                 .with_input(InteractionInput::Content(contents))
                 .create()
                 .await
@@ -556,6 +558,8 @@ mod mixed_media {
 
         let result = crate::retry_request!([client, contents] => {
             stateful_builder(&client)
+                // Inline video bytes — see VIDEO_INLINE_MODEL.
+                .with_model(crate::common::VIDEO_INLINE_MODEL)
                 .with_input(InteractionInput::Content(contents))
                 .create()
                 .await
@@ -773,7 +777,7 @@ mod file_loading {
         let response = crate::retry_request!([client, contents] => {
             client
                 .interaction()
-                .with_model("gemini-3-flash-preview")
+                .with_model("gemini-3.6-flash")
                 .with_content(contents)
                 .create()
                 .await
@@ -843,7 +847,7 @@ mod file_loading {
         let response = crate::retry_request!([client, contents] => {
             client
                 .interaction()
-                .with_model("gemini-3-flash-preview")
+                .with_model("gemini-3.6-flash")
                 .with_content(contents)
                 .create()
                 .await
@@ -913,7 +917,7 @@ mod bytes_loading {
         let response = crate::retry_request!([client, contents] => {
             client
                 .interaction()
-                .with_model("gemini-3-flash-preview")
+                .with_model("gemini-3.6-flash")
                 .with_content(contents)
                 .create()
                 .await
@@ -957,7 +961,7 @@ mod bytes_loading {
         let result = crate::retry_request!([client, contents] => {
             client
                 .interaction()
-                .with_model("gemini-3-flash-preview")
+                .with_model("gemini-3.6-flash")
                 .with_content(contents)
                 .create()
                 .await
@@ -990,7 +994,8 @@ mod bytes_loading {
         let result = crate::retry_request!([client, contents] => {
             client
                 .interaction()
-                .with_model("gemini-3-flash-preview")
+                // Inline video bytes — see VIDEO_INLINE_MODEL.
+                .with_model(crate::common::VIDEO_INLINE_MODEL)
                 .with_content(contents)
                 .create()
                 .await
@@ -1028,7 +1033,7 @@ mod bytes_loading {
         let result = crate::retry_request!([client, contents] => {
             client
                 .interaction()
-                .with_model("gemini-3-flash-preview")
+                .with_model("gemini-3.6-flash")
                 .with_content(contents)
                 .create()
                 .await

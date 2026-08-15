@@ -25,7 +25,7 @@ genai-rs = { version = "0.9", features = ["antigravity"] }
 Install the harness binary (it ships inside the platform-specific wheel):
 
 ```bash
-pip install google-antigravity==0.1.5
+pip install google-antigravity==0.1.10
 ```
 
 ### Version pinning
@@ -33,10 +33,26 @@ pip install google-antigravity==0.1.5
 The harness wire protocol is internal to Google's SDK and changes across
 0.1.x releases. Each genai-rs release is verified against exactly one wheel
 version, exposed as `antigravity::SUPPORTED_HARNESS_VERSION` (currently
-`0.1.5`) — pin that version. Newer harnesses degrade gracefully rather than
-erroring: unknown events, fields, and enum values are preserved in `Unknown`
-variants and `extra` maps (the crate's Evergreen philosophy), but only the
-pinned version is tested end-to-end.
+`0.1.10`) — pin that version.
+
+**Unknown-value preservation is not the same as forward compatibility.**
+Unrecognized events, fields, and enum values are preserved in `Unknown`
+variants and `extra` maps rather than erroring (the crate's Evergreen
+philosophy), so a newer harness will not crash the bridge. But when a
+*renamed* value is one the bridge **matches on**, preservation is exactly
+what makes the breakage silent: the match simply stops firing.
+
+The 0.1.5 → 0.1.10 upgrade is the worked example. `STATE_IDLE` became
+`STATE_FULLY_IDLE`, and since only that value ends a turn, every turn ran
+to its timeout with no error, no failed parse, and a single `warn!` as the
+only evidence. `usageMetadata` likewise became `usageUpdate`, silently
+zeroing token accounting. Both old spellings are now accepted as aliases,
+so one build drives either revision — but the lesson generalizes: when
+moving to an unverified harness, run the integration suite
+(`--run-ignored all -E 'binary(antigravity_harness)'`) rather than
+trusting that a clean parse means a working bridge, and see
+[Debugging](#debugging) for the drift diagnostics that surface this class
+of mismatch.
 
 ### Binary discovery
 
@@ -58,7 +74,7 @@ use genai_rs::antigravity::{AntigravityAgent, policy};
 
 let mut agent = AntigravityAgent::builder()
     .with_api_key(std::env::var("GEMINI_API_KEY")?)
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_system_instructions("You are a code-review assistant.")
     .add_workspace("/path/to/repo")
     .add_policy(policy::deny_all())
@@ -415,8 +431,18 @@ task, take a handle first:
 ```rust,ignore
 let cancel = agent.cancel_handle();
 // ... later, from any task:
-cancel.cancel().await?;   // the in-flight turn fails with AntigravityError::Turn
+cancel.cancel().await?;   // the in-flight turn ends early, keeping partial output
 ```
+
+**What a cancelled turn returns**: harness 0.1.10 answers a halt by taking
+the trajectory to `STATE_FULLY_IDLE` — the same terminal state as a natural
+completion, not `STATE_CANCELLED`. The turn therefore resolves *normally*
+with whatever partial output it had produced, rather than failing with
+`AntigravityError::Turn`. Treat `cancel()` as "stop early and keep what you
+have", and record the cancellation on your side if you need to distinguish
+a halted turn from a completed one. (`AntigravityError::Turn` is still the
+outcome when the harness cancels a turn of its own accord.) Verified live
+by `test_antigravity_cancel_handle_halts_an_in_flight_turn`.
 
 `with_turn_timeout(Duration)` bounds each turn's wall-clock time. When the
 budget is exceeded, the crate halts the harness's still-running turn and
@@ -464,6 +490,15 @@ Delivery semantics (see `antigravity::triggers` for details):
 
 - The first firing happens after the first interval elapses, not
   immediately. Intervals must be non-zero (`spawn()` validates).
+- **Give the conversation one real turn before a trigger can fire.** On
+  harness 0.1.10, a trigger delivered into a conversation with no history
+  crashes the harness *process* — its pre-invocation hook asks for "tokens
+  since the last checkpoint", finds no steps, and aborts the agent run
+  (`earliest step index is out of bounds: 0 vs 0`). The session dies with
+  it, so the next send fails on a closed socket or a broken pipe. One
+  completed turn is enough. Reproduced by
+  `examples/real_world/proactive_agent`, which opens with a turn for
+  exactly this reason.
 - A firing is delivered **only while the agent is idle** (no
   `chat`/`send_streaming` turn in flight). If it comes due mid-turn, it is
   deferred until the turn ends, and missed intervals collapse into a single
@@ -500,6 +535,36 @@ println!("restored {} steps", agent.initial_history().len());
 
 ## Debugging
 
+### Diagnosing protocol drift
+
+Three signals exist specifically for the failure mode described under
+[Version pinning](#version-pinning) — a harness that speaks a dialect this
+build only partly understands, which otherwise presents as "the agent just
+didn't do anything":
+
+| Signal | What it tells you |
+|--------|-------------------|
+| `protocol::drift_report()` | Every unrecognized wire value seen, as `"EnumName=WIRE_VALUE" -> count`. Empty is healthy. Process-wide and cumulative; `clear_drift_report()` resets it. |
+| The `warn!` on `shutdown()` | The same aggregate, logged once at the natural end of a session, so it does not scroll past like the per-value warns do. |
+| `AntigravityError::Timeout` | When a turn times out having seen unrecognized *main-trajectory* states, the `operation` field names them and points at `SUPPORTED_HARNESS_VERSION` instead of reporting an undifferentiated stall. |
+
+Programmatic check, for anything long-running:
+
+```rust,ignore
+let drift = genai_rs::antigravity::protocol::drift_report();
+if !drift.is_empty() {
+    eprintln!("harness sent values this build does not model: {drift:?}");
+}
+```
+
+CI runs a stronger version of this: `test_antigravity_protocol_enums_have_not_drifted`
+diffs the installed wheel's protobuf descriptor against the crate's wire
+enums and fails naming any value the harness can send that the crate does
+not model. That is the check that turns a renamed enum from a silent hang
+into a red test.
+
+### Wire inspection
+
 The Antigravity client feeds the crate's canonical wire-inspection layer
 (`genai_rs::wire`). `LOUD_WIRE=1` pretty-prints everything to stderr:
 
@@ -510,6 +575,38 @@ The Antigravity client feeds the crate's canonical wire-inspection layer
 ```bash
 LOUD_WIRE=1 cargo run --example antigravity_agent --features antigravity
 ```
+
+`LOUD_WIRE=1` is the right default for a single HTTP request and the wrong
+one for a harness session: a few turns produce thousands of pretty-printed
+lines, and finding the message that matters means grepping raw JSON out of
+the scrollback. So `LOUD_WIRE` also takes a comma-separated filter.
+
+| Value | Keeps |
+|-------|-------|
+| `1`, `true`, `yes`, `on`, `all` | Everything (unchanged) |
+| `harness` | Spawn and stderr lines |
+| `ws` | Every WebSocket message |
+| `request`, `response`, `sse`, `upload` | The HTTP-side categories |
+| *any other token* | WebSocket messages whose top-level key matches |
+| `summary` | Modifier: one line per event instead of full bodies |
+
+The last two are what make a session readable. Selectors name the proto
+oneof arm — `stepUpdate`, `toolCall`, `userInput`, `trajectoryStateUpdate`
+— matched case-insensitively, and envelope bookkeeping (`seqNum`,
+`timestampMicros`) is ignored so it cannot match everything.
+
+```bash
+LOUD_WIRE=summary                  # the whole session, one line per message
+LOUD_WIRE=toolCall,summary         # just the tool traffic, one line each
+LOUD_WIRE=trajectoryStateUpdate    # why a turn will not finish
+LOUD_WIRE=harness                  # spawn + stderr only, no protocol noise
+```
+
+`LOUD_WIRE=summary` renders each message as its payload keys, which is
+usually enough to see the shape and order of a turn; drop to a selector
+once you know which message you want in full. The same filtering is
+available programmatically via `wire::WireFilter` and
+`LoudWirePrinter::with_filter`.
 
 For programmatic capture, register inspectors on the builder — the
 `WireEvent` variants are `HarnessSpawn`, `WsSend`, `WsReceive`, and

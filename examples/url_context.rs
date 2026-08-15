@@ -22,7 +22,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let client = Client::builder(api_key).build()?;
 
     // 2. Create an interaction with URL context enabled
-    let model_name = "gemini-3-flash-preview";
+    let model_name = "gemini-3.6-flash";
     let prompt = "Please fetch and summarize the main content from https://example.com. \
                   What is the purpose of this domain?";
 

@@ -105,7 +105,7 @@ Helper methods on each type:
 | `InteractionStatus` | snake_case | `"in_progress"`, `"requires_action"`, `"budget_exceeded"` | `budget_exceeded` new; pending live verification (2026-05-20 revision). `Default` is `InProgress` |
 | `SearchType` | snake_case string | `"web_search"`, `"image_search"`, `"enterprise_web_search"` | `enterprise_web_search` new; pending live verification (2026-05-20 revision) |
 | `GroundingToolCount` | `{"type": ..., "count": n}` | `{"type": "google_search", "count": 2}` | In `usage.grounding_tool_count`. Pending live verification (2026-05-20 revision) |
-| `ThinkingSummaries` | `THINKING_SUMMARIES_*` | `"THINKING_SUMMARIES_AUTO"` | Docs claim `auto`/`none` - **wrong** |
+| `ThinkingSummaries` | lowercase | `"auto"`, `"none"` | Send side. Was `THINKING_SUMMARIES_*` until the API reversed it (see below); both accepted on deserialize |
 | `ThinkingLevel` | lowercase | `"low"`, `"medium"`, `"high"` | Docs are correct |
 | `Resolution` | snake_case | `"low"`, `"medium"`, `"high"`, `"ultra_high"` | Image/video content |
 | `Tool::FileSearch` | snake_case object | `{"type": "file_search", ...}` | Rust: `store_names`, Wire: `file_search_store_names` |
@@ -484,17 +484,28 @@ Used in `agent_config.thinking_summaries` for Deep Research agent.
 {
   "agent_config": {
     "type": "deep-research",
-    "thinking_summaries": "THINKING_SUMMARIES_AUTO"
+    "thinking_summaries": "auto"
   }
 }
 ```
 
-| Rust Enum | Wire Value | Doc Claims (wrong) |
-|-----------|------------|-------------------|
-| `ThinkingSummaries::Auto` | `"THINKING_SUMMARIES_AUTO"` | `"auto"` |
-| `ThinkingSummaries::None` | `"THINKING_SUMMARIES_NONE"` | `"none"` |
+| Rust Enum | Wire Value (send) | Also accepted (deserialize) |
+|-----------|-------------------|-----------------------------|
+| `ThinkingSummaries::Auto` | `"auto"` | `"THINKING_SUMMARIES_AUTO"` |
+| `ThinkingSummaries::None` | `"none"` | `"THINKING_SUMMARIES_NONE"` |
 
-**Discovered**: 2026-01-04 - API returned `"unknown enum value: 'auto'"` until we tested the fully-qualified format.
+**This reversed.** History, because the reversal is the point:
+
+- **2026-01-04** — the API rejected `"auto"` with `unknown enum value: 'auto'`,
+  so `to_agent_config_value()` was written to emit `THINKING_SUMMARIES_*`
+  while `generation_config` kept lowercase. Two spellings, two contexts.
+- **2026-08-10** — verified live, exactly inverted:
+  `The value 'THINKING_SUMMARIES_AUTO' is not supported for
+  'agent_config.thinking_summaries'. Supported values: 'auto', 'none'.`
+  Deep-research requests carrying thinking summaries failed outright.
+
+Both contexts now emit lowercase. Deserialization accepts either spelling,
+so config files written against the old format still load.
 
 ### ThinkingLevel (generation_config)
 
@@ -1117,7 +1128,7 @@ non-video models.
 the supported `agent_config.type` values as `dynamic`, `deep-research`,
 `code-mender`, `antigravity`. `model` is server-validated per agent — an
 unavailable value returns 404 `not_found` (observed with
-`gemini-3-flash-preview`), and the agent's model catalog is not enumerable
+`gemini-3.6-flash`), and the agent's model catalog is not enumerable
 on a standard key.
 
 ### Visualization (Deep Research agent_config)
@@ -1127,8 +1138,9 @@ on a standard key.
 ```
 
 `Visualization`: `"off"` | `"auto"` (+ `Unknown { visualization_type, data }`).
-Note the contrast with `thinking_summaries`, which uses `THINKING_SUMMARIES_*`
-in agent_config; `visualization` is lowercase per the spec.
+`visualization` is lowercase per the spec — as is `thinking_summaries`,
+which the API reversed (it previously took `THINKING_SUMMARIES_*` here and
+now rejects it; see the `ThinkingSummaries` entry above).
 
 **Status**: ✅ Verified live 2026-07: the API's validation error for
 `agent_config.visualization` lists exactly `off` | `auto`;
@@ -1190,7 +1202,7 @@ When adding new enums, always test the actual wire format with `curl`:
 curl -s "https://generativelanguage.googleapis.com/v1beta/interactions?key=$GEMINI_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Api-Revision: 2026-05-20" \
-  -d '{"model": "gemini-3-flash-preview", "input": "test", ...}'
+  -d '{"model": "gemini-3.6-flash", "input": "test", ...}'
 ```
 
 Common patterns to try:
@@ -1245,7 +1257,24 @@ If a `test-support` feature for constructing mock instances becomes commonly req
 The `genai_rs::antigravity::protocol` module speaks the localharness
 proto-JSON protocol (see `docs/ANTIGRAVITY.md`). Wire formats were verified
 against the descriptor set and a live harness from the
-`google-antigravity` 0.1.5 wheel (`LOUD_WIRE=1` on a real session):
+`google-antigravity` 0.1.10 wheel, and re-verified against 0.1.5
+(`LOUD_WIRE=1` on a real session, plus a descriptor diff between the two):
+
+### Alias spellings — a documented exception to Preserve Data Roundtrip
+
+These enums accept **alias** wire values: a value renamed between harness
+revisions deserializes to one variant, and `as_wire_str` re-emits the
+*canonical* (current-harness) spelling. So `STATE_IDLE` in, `STATE_FULLY_IDLE`
+out — deliberately **not** a faithful roundtrip, which is a departure from
+the Preserve Data Roundtrip principle in CLAUDE.md.
+
+The trade is worth naming. These are inbound-only enums (the client never
+sends a `TrajectoryState`), so the asymmetry cannot reach the wire; what it
+buys is one build that drives either harness revision. The alternative —
+preserving the old spelling as an `Unknown` variant — is what caused the
+0.1.5 → 0.1.10 breakage in the first place: `STATE_IDLE` became
+`STATE_FULLY_IDLE`, only `Idle` ends a turn, and every turn silently ran to
+its timeout. Preservation without recognition is not compatibility.
 
 - Field names are **camelCase**; enums are **SCREAMING_SNAKE_CASE** strings.
 - 64-bit integers (`seqNum`, token counts) arrive as JSON **strings**; the
@@ -1258,7 +1287,7 @@ Enums with Unknown variants (same pattern and helper methods as above):
 | `StepState` | src/antigravity/protocol.rs | `state_type` | `STATE_ACTIVE`, `STATE_DONE`, `STATE_WAITING_FOR_USER`, `STATE_ERROR` |
 | `StepSource` | src/antigravity/protocol.rs | `source_type` | `SOURCE_SYSTEM`, `SOURCE_USER`, `SOURCE_MODEL` |
 | `StepTarget` | src/antigravity/protocol.rs | `target_type` | `TARGET_USER`, `TARGET_MODEL`, `TARGET_ENVIRONMENT` |
-| `TrajectoryState` | src/antigravity/protocol.rs | `state_type` | `STATE_RUNNING`, `STATE_IDLE`, `STATE_CANCELLED` |
+| `TrajectoryState` | src/antigravity/protocol.rs | `state_type` | `STATE_RUNNING`, `STATE_FULLY_IDLE` (terminal; alias `STATE_IDLE`), `STATE_WAITING_FOR_TASKS`, `STATE_CANCELLED` |
 | `ModelType` | src/antigravity/protocol.rs | `model_type` | `MODEL_TYPE_TEXT`, `MODEL_TYPE_IMAGE` |
 | `LifecycleHook` | src/antigravity/protocol.rs | `hook_type` | `LIFECYCLE_HOOK_PRE_TOOL`, `LIFECYCLE_HOOK_POST_TOOL`, ... |
 | `HookDecision` | src/antigravity/protocol.rs | `decision_type` | `ALLOW`, `DENY` |

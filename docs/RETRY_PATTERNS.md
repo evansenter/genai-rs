@@ -23,7 +23,7 @@ Rather than building an opinionated retry system that won't fit everyone's needs
 
 ```rust
 let request = client.interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model("gemini-3.6-flash")
     .with_text("Hello")
     .build()?;
 
