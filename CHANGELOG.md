@@ -41,6 +41,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gate and ignored the value, which meant filtering did not work on the
   one surface that emits WebSocket messages at all.
 
+- **`LOUD_WIRE` selectors reach step actions.** A selector now matches one
+  level into a WebSocket payload, so `LOUD_WIRE=mcpTool` (or `runCommand`,
+  `viewFile`, …) selects the steps carrying that action — previously those
+  names matched nothing at all, because every builtin action lives under
+  the single `stepUpdate` key. Summary lines are qualified to match
+  (`stepUpdate/mcpTool`), so what you asked for is what the output names.
+
+- **The protocol-drift guard now covers field renames, not just enum
+  values.** The 0.1.5 → 0.1.10 upgrade shipped one of each — `STATE_IDLE`
+  → `STATE_FULLY_IDLE` (a value) and `usageMetadata` → `usageUpdate` (a
+  field) — so a guard checking only enums would have caught half the break
+  it was written for. It now also checks the `OutputEvent` and `InputEvent`
+  wire fields the crate reads by hand, where a rename yields a silent
+  `None` rather than a parse error.
+
 - **Three more antigravity worked examples**, all runnable against a real
   harness and smoke-run in CI: `mcp_toolbelt` (external tools over MCP,
   with a dependency-free stdio server fixture and the `mcp_<server>_<tool>`

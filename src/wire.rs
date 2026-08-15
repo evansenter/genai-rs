@@ -403,7 +403,7 @@ mod paint {
 /// | `ws` | Every WebSocket message |
 /// | `harness` | Harness spawn and stderr lines |
 /// | `upload` | File-upload start/complete |
-/// | *anything else* | A WebSocket payload whose top-level key matches (e.g. `stepUpdate`, `toolCall`) |
+/// | *anything else* | A WebSocket payload whose top-level key matches (e.g. `stepUpdate`, `toolCall`), or whose *nested* key one level in matches (e.g. `mcpTool`, `runCommand` — the step actions that all live under `stepUpdate`) |
 /// | `summary` | Modifier: one line per event instead of full bodies |
 ///
 /// A value that matches no category and no payload key selects **nothing**,
@@ -505,9 +505,29 @@ impl WireFilter {
             _ => return false,
         };
         payload.as_object().is_some_and(|map| {
-            map.keys()
-                .filter(|k| !is_envelope_key(k))
-                .any(|key| self.selectors.contains(&key.to_ascii_lowercase()))
+            map.iter()
+                .filter(|(k, _)| !is_envelope_key(k))
+                .any(|(key, value)| {
+                    if self.selectors.contains(&key.to_ascii_lowercase()) {
+                        return true;
+                    }
+                    // ...and one level deeper, because the granularity a
+                    // reader usually wants is *which action* a step carried,
+                    // and every builtin action (`mcpTool`, `runCommand`,
+                    // `viewFile`, …) hides under the single `stepUpdate` key.
+                    // Without this, `LOUD_WIRE=mcpTool` silently matches
+                    // nothing — which is exactly what it did until an example
+                    // advertised it and printed silence.
+                    //
+                    // Deliberately only one level: deeper would start matching
+                    // leaf field names across unrelated messages, and the
+                    // selector list is not scoped by message type.
+                    value.as_object().is_some_and(|inner| {
+                        inner
+                            .keys()
+                            .any(|nested| self.selectors.contains(&nested.to_ascii_lowercase()))
+                    })
+                })
         })
     }
 }
@@ -630,10 +650,30 @@ impl LoudWirePrinter {
         payload.as_object().map_or_else(
             || "(non-object)".to_string(),
             |m| {
-                let keys: Vec<&str> = m
-                    .keys()
-                    .filter(|k| !is_envelope_key(k))
-                    .map(String::as_str)
+                let keys: Vec<String> = m
+                    .iter()
+                    .filter(|(k, _)| !is_envelope_key(k))
+                    .map(|(key, value)| {
+                        // Qualify with the nested object-valued key when
+                        // there is one: a bare "stepUpdate" says almost
+                        // nothing, while "stepUpdate/mcpTool" says which
+                        // action the step carried — and matches what a
+                        // nested selector selects on, so asking for
+                        // `mcpTool` no longer prints lines labelled
+                        // `stepUpdate`. Scalar fields (stepIndex, text,
+                        // state) are skipped, so message types without a
+                        // nested object render exactly as before.
+                        let action = value.as_object().and_then(|inner| {
+                            inner
+                                .iter()
+                                .find(|(_, v)| v.is_object())
+                                .map(|(k, _)| k.as_str())
+                        });
+                        match action {
+                            Some(action) => format!("{key}/{action}"),
+                            None => key.clone(),
+                        }
+                    })
                     .collect();
                 if keys.is_empty() {
                     "(no payload keys)".to_string()
@@ -1151,6 +1191,40 @@ mod filter_tests {
     }
 
     #[test]
+    fn nested_selectors_reach_step_actions() {
+        // The case this exists for: every builtin action lives one level
+        // under `stepUpdate`, so a top-level-only match made the most
+        // useful selector ("show me the MCP calls") match nothing.
+        let step_with_mcp = ws(json!({
+            "seqNum": "3",
+            "stepUpdate": {
+                "stepIndex": 2,
+                "mcpTool": {"serverName": "widgets", "toolName": "list_widgets"},
+            },
+        }));
+        let step_with_view = ws(json!({
+            "stepUpdate": {"stepIndex": 4, "viewFile": {"path": "/tmp/x"}},
+        }));
+
+        let f = WireFilter::parse("mcpTool");
+        assert!(f.allows(&step_with_mcp));
+        assert!(
+            !f.allows(&step_with_view),
+            "a nested selector must still discriminate between actions"
+        );
+
+        // The enclosing key keeps working, and still matches both.
+        let f = WireFilter::parse("stepUpdate");
+        assert!(f.allows(&step_with_mcp));
+        assert!(f.allows(&step_with_view));
+
+        // Only one level deep: a leaf inside the action is not a selector,
+        // or selectors would start colliding across unrelated messages.
+        let f = WireFilter::parse("serverName");
+        assert!(!f.allows(&step_with_mcp));
+    }
+
+    #[test]
     fn payload_keys_names_the_message_and_labels_the_empty_case() {
         use super::LoudWirePrinter;
 
@@ -1179,6 +1253,28 @@ mod filter_tests {
         assert_eq!(
             LoudWirePrinter::payload_keys(&json!("not an object")),
             "(non-object)"
+        );
+
+        // A step carrying an action is qualified with it, so summary lines
+        // say which action ran and agree with what a nested selector
+        // matched on.
+        assert_eq!(
+            LoudWirePrinter::payload_keys(&json!({
+                "seqNum": "3",
+                "stepUpdate": {
+                    "stepIndex": 2,
+                    "text": "List widgets",
+                    "mcpTool": {"serverName": "widgets"},
+                },
+            })),
+            "stepUpdate/mcpTool"
+        );
+        // Scalar-only payloads are unqualified, exactly as before.
+        assert_eq!(
+            LoudWirePrinter::payload_keys(&json!({
+                "trajectoryStateUpdate": {"state": "STATE_FULLY_IDLE", "trajectoryId": "t-0"},
+            })),
+            "trajectoryStateUpdate"
         );
     }
 

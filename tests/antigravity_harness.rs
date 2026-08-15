@@ -1185,6 +1185,21 @@ def walk(msgs, prefix=""):
         full = prefix + mt.name
         for e in mt.enum_type:
             out[full + "." + e.name] = sorted(v.name for v in e.value)
+        # Message fields under a "fields:" prefix so one dump carries both
+        # kinds without colliding with an enum path, in the camelCase
+        # spelling the wire uses (which is what the crate matches on).
+        #
+        # CopyToProto does not populate json_name, so derive it the way
+        # proto3 does — lowerCamelCase of the snake_case name — and fall
+        # back to json_name only if it is actually set. Reading json_name
+        # alone yields a list of empty strings, which looks exactly like
+        # "the harness sends nothing" and reports drift for every field.
+        def json_name(f):
+            if f.json_name:
+                return f.json_name
+            head, *rest = f.name.split("_")
+            return head + "".join(w.capitalize() for w in rest)
+        out["fields:" + full] = sorted(json_name(f) for f in mt.field)
         walk(mt.nested_type, full + ".")
 for e in fdp.enum_type:
     out[e.name] = sorted(v.name for v in e.value)
@@ -1219,7 +1234,7 @@ print(json.dumps(out))
             serde_json::from_slice(&output.stdout).expect("descriptor dump should be JSON");
         assert!(
             parsed.as_object().is_some_and(|m| !m.is_empty()),
-            "the harness descriptor yielded no enums at all — the guard would have \
+            "the harness descriptor yielded nothing at all — the guard would have \
              checked nothing"
         );
         return Some(parsed);
@@ -1375,6 +1390,77 @@ fn find_enum_drift(harness: &serde_json::Value, modeled: &[(&str, &[&str])]) -> 
     drift
 }
 
+/// Compares harness message *fields* against the wire names this crate
+/// reads by hand, returning one line per field that has gone missing.
+///
+/// Enum-value drift and field drift are different failure modes, and the
+/// 0.1.5 -> 0.1.10 upgrade shipped one of each: `STATE_IDLE` ->
+/// `STATE_FULLY_IDLE` (a value) and `usageMetadata` -> `usageUpdate` (a
+/// field). A guard covering only the first would have caught only half of
+/// the break it was written for.
+///
+/// Deliberately one-directional, like the enum check: a field the harness
+/// has that the crate ignores is not drift, but a field the crate reads
+/// that the harness no longer has means a `get()` silently returning
+/// `None` forever.
+fn find_field_drift(harness: &serde_json::Value, modeled: &[(&str, &[&str])]) -> Vec<String> {
+    let mut drift = Vec::new();
+    for (message, required) in modeled {
+        let key = format!("fields:{message}");
+        let Some(fields) = harness.get(&key).and_then(|v| v.as_array()) else {
+            drift.push(format!(
+                "{message}: not present in the harness descriptor — the message was \
+                 renamed or removed"
+            ));
+            continue;
+        };
+        let present: Vec<&str> = fields
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect();
+        let missing: Vec<&&str> = required.iter().filter(|f| !present.contains(f)).collect();
+        if !missing.is_empty() {
+            drift.push(format!(
+                "{message}: this crate reads {missing:?}, which the harness no longer \
+                 sends (the read silently yields None); harness has = {present:?}"
+            ));
+        }
+    }
+    drift
+}
+
+#[test]
+fn field_drift_detector_catches_the_usage_rename() {
+    // The other half of the 0.1.10 break, replayed: the crate reads
+    // `usageMetadata`, the harness renamed it to `usageUpdate`, and token
+    // accounting silently zeroed.
+    let harness = serde_json::json!({
+        "fields:OutputEvent": ["seqNum", "timestampMicros", "usageUpdate", "stepUpdate"],
+    });
+    let drift = find_field_drift(
+        &harness,
+        &[("OutputEvent", &["seqNum", "usageMetadata"] as &[&str])],
+    );
+    assert_eq!(drift.len(), 1, "expected one drift line, got {drift:?}");
+    assert!(
+        drift[0].contains("usageMetadata"),
+        "the report must name the field that vanished: {}",
+        drift[0]
+    );
+
+    // A field the harness added but the crate ignores is not drift.
+    let quiet = find_field_drift(&harness, &[("OutputEvent", &["seqNum"] as &[&str])]);
+    assert!(
+        quiet.is_empty(),
+        "extra harness fields are not drift: {quiet:?}"
+    );
+
+    // A renamed *message* is reported rather than passing vacuously.
+    let gone = find_field_drift(&harness, &[("StepUpdate", &["mcpTool"] as &[&str])]);
+    assert_eq!(gone.len(), 1);
+    assert!(gone[0].contains("not present"));
+}
+
 #[test]
 fn drift_detector_catches_the_0_1_10_rename() {
     // The exact shape of the bug this guard exists for: the harness
@@ -1467,11 +1553,52 @@ async fn test_antigravity_protocol_enums_have_not_drifted() {
         ),
     ];
 
-    let drift = find_enum_drift(&harness, &modeled);
+    let mut drift = find_enum_drift(&harness, &modeled);
+
+    // Field names the crate reads by hand rather than through serde's
+    // derive — every one of these is a `map.remove(..)` / `get(..)` on a
+    // string literal, so a rename turns into a silent `None` rather than a
+    // parse error. `usageMetadata` is listed because it is still read as
+    // the pre-0.1.10 spelling; if the harness ever drops it entirely, the
+    // alias handling is what needs revisiting.
+    let fields: Vec<(&str, &[&str])> = vec![
+        (
+            "OutputEvent",
+            &[
+                "seqNum",
+                "timestampMicros",
+                "usageUpdate",
+                "stepUpdate",
+                "trajectoryStateUpdate",
+                "toolCall",
+                "initializeConversationResponse",
+                "callHookRequest",
+                "sessionEndResponse",
+            ],
+        ),
+        // Every InputEvent arm this crate can send. `config` is
+        // deliberately absent: the init message is not an InputEvent arm,
+        // which the guard caught when this list first claimed otherwise.
+        (
+            "InputEvent",
+            &[
+                "userInput",
+                "complexUserInput",
+                "toolConfirmation",
+                "toolResponse",
+                "questionResponse",
+                "haltRequest",
+                "automatedTrigger",
+                "callHookResponse",
+                "sessionEndRequest",
+            ],
+        ),
+    ];
+    drift.extend(find_field_drift(&harness, &fields));
 
     assert!(
         drift.is_empty(),
-        "harness protocol drift detected — update the wire enums in \
+        "harness protocol drift detected — update the wire enums/fields in \
          src/antigravity/protocol.rs (and docs/ENUM_WIRE_FORMATS.md):\n  {}",
         drift.join("\n  ")
     );

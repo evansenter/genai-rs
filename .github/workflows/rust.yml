@@ -100,9 +100,26 @@ jobs:
         timeout-minutes: 15
         run: |
           set -eo pipefail
+          # Retry each example, for the same reason the nextest steps use
+          # --retries: four of the five hard-fail on LLM-dependent outcomes
+          # (no MCP call made, fewer than N chars streamed before the halt,
+          # no trigger inside the window, empty restored history). Those
+          # assertions are deliberate — a run that proves nothing must not
+          # pass green — but a single unlucky turn should not redden an
+          # unrelated PR. `cargo run` has no --retries, hence the loop.
           for ex in session_resume workspace_explorer mcp_toolbelt proactive_agent cancellable_turn; do
             echo "::group::cargo run --example $ex"
-            cargo run --features antigravity --example "$ex"
+            attempt=1
+            until cargo run --features antigravity --example "$ex"; do
+              if [ "$attempt" -ge 3 ]; then
+                echo "::error::$ex failed $attempt times"
+                echo "::endgroup::"
+                exit 1
+              fi
+              echo "::warning::$ex failed (attempt $attempt), retrying"
+              attempt=$((attempt + 1))
+              sleep 5
+            done
             echo "::endgroup::"
           done
         env:
