@@ -73,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // directory. A real deployment would name a command on PATH instead,
     // e.g. McpServer::stdio("uvx", ["mcp-server-git"]).
     let server_script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("examples/real_world/mcp_toolbelt/widgets_server.py");
+        .join("examples/antigravity/mcp_toolbelt/widgets_server.py");
     if !server_script.is_file() {
         return Err(format!("missing MCP server script: {}", server_script.display()).into());
     }

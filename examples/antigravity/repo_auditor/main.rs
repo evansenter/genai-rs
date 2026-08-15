@@ -31,7 +31,7 @@
 //! ```text
 //! === Repo Auditor (Antigravity harness) ===
 //!
-//! Workspace: .../examples/real_world/repo_auditor/fixture
+//! Workspace: .../examples/antigravity/repo_auditor/fixture
 //! Harness up. conversation_id=Some("9d772d7c9085062190aefd6723785b77")
 //!
 //! --- Audit in progress ---
@@ -133,7 +133,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // The deliberately vulnerable sample project that ships next to this file.
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("examples/real_world/repo_auditor/fixture")
+        .join("examples/antigravity/repo_auditor/fixture")
         .canonicalize()?;
     let workspace = fixture.to_string_lossy().into_owned();
 

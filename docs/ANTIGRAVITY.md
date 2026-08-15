@@ -11,7 +11,7 @@ your tools, hooks, and policies are ordinary Rust.
 > **Note**: All code blocks in this guide use `rust,ignore` because the
 > `antigravity` feature is off by default and doctests run without it.
 > The same snippets are exercised (compiled and run) by
-> `examples/antigravity_agent.rs` and `tests/antigravity_harness.rs`.
+> `examples/antigravity/agent.rs` and `tests/antigravity_harness.rs`.
 
 ## Setup
 
@@ -515,7 +515,7 @@ Delivery semantics (see `antigravity::triggers` for details):
   (`earliest step index is out of bounds: 0 vs 0`). The session dies with
   it, so the next send fails on a closed socket or a broken pipe. One
   completed turn is enough. Reproduced by
-  `examples/real_world/proactive_agent`, which opens with a turn for
+  `examples/antigravity/proactive_agent`, which opens with a turn for
   exactly this reason.
 - A firing is delivered **only while the agent is idle** (no
   `chat`/`send_streaming` turn in flight). If it comes due mid-turn, it is

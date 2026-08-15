@@ -429,7 +429,7 @@ async fn test_antigravity_policy_denies_custom_tool() {
 // =============================================================================
 
 /// The `with_save_dir` + `conversation_id()` + `with_conversation_id` round
-/// trip, which `examples/real_world/session_resume` demonstrates.
+/// trip, which `examples/antigravity/session_resume` demonstrates.
 ///
 /// Asserts the half that is easy to get silently wrong: resuming an unknown
 /// id is *not* an error, it just comes back empty — so a broken resume looks
@@ -516,7 +516,7 @@ async fn test_antigravity_session_resume_restores_history() {
 // =============================================================================
 
 /// Points the builtins at a real directory and asserts the observable
-/// surface `examples/real_world/workspace_explorer` is built on:
+/// surface `examples/antigravity/workspace_explorer` is built on:
 /// `AgentEvent::ToolAction` actually arrives for harness-executed file
 /// tools, and `on_post_tool` reports a *successful* builtin as successful.
 ///

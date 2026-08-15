@@ -90,6 +90,12 @@ pub const DEFAULT_MODEL: &str = "gemini-3.7-flash";
 /// [`DEFAULT_MODEL`] does not.
 ///
 /// Only needed for the inline form; video by URI works on the default.
+///
+/// Re-pin independently of [`DEFAULT_MODEL`]: this tracks whichever model
+/// currently has the capability, so it goes stale when *that* model is
+/// retired rather than when the default moves. The literal guard cannot
+/// help here — its whole job is to keep ids in this file, so an id that is
+/// stale *in* this file is invisible to it by construction.
 pub const INLINE_VIDEO_MODEL: &str = "gemini-3-flash-preview";
 
 /// A model that supports [`ThinkingLevel::Minimal`], which
@@ -101,6 +107,13 @@ pub const INLINE_VIDEO_MODEL: &str = "gemini-3-flash-preview";
 /// `gemini-3.6-flash` and `gemini-3.5-flash` still accept it). The
 /// [`ThinkingLevel::Minimal`] variant remains valid — model support for it
 /// is what varies.
+///
+/// Re-pin independently of [`DEFAULT_MODEL`], as with [`INLINE_VIDEO_MODEL`]
+/// — and sooner: this is pinned to the model the crate just migrated *off*,
+/// so it goes stale when 3.6 is retired. `gemini-3.5-flash` also accepts
+/// `minimal`, so the fix at that point is another re-pin here, not a
+/// redesign. Left unfixed it surfaces as a 404 on an unrelated-looking
+/// model inside a test whose subject is a thinking level.
 pub const MINIMAL_THINKING_MODEL: &str = "gemini-3.6-flash";
 
 /// The model to use for image generation.

@@ -38,6 +38,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Antigravity examples moved to `examples/antigravity/`.** All seven —
+  the `agent.rs` starter (was `examples/antigravity_agent.rs`) and the six
+  projects (was `examples/real_world/*`) — now sit in one directory,
+  mirroring `src/antigravity/`. They share a setup story the rest of
+  `examples/` does not: every one needs the `antigravity` feature *and* the
+  `localharness` binary. Example **names are unchanged**, so
+  `cargo run --example repo_auditor --features antigravity` still works;
+  only paths moved. The group has its own
+  [README](examples/antigravity/README.md), and `examples/real_world/`
+  points at it.
+
 - **Default model is now `gemini-3.7-flash`** (from `gemini-3.6-flash`).
   Thinking cost on a trivial prompt is unchanged (68 vs 67 tokens), so the
   `max_output_tokens` headroom in the sampling tests still holds. The full

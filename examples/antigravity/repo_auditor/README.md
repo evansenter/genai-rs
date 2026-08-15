@@ -62,7 +62,7 @@ Trimmed from a real run:
 ```text
 === Repo Auditor (Antigravity harness) ===
 
-Workspace: .../examples/real_world/repo_auditor/fixture
+Workspace: .../examples/antigravity/repo_auditor/fixture
 Harness up. conversation_id=Some("9d772d7c9085062190aefd6723785b77")
 
 --- Audit in progress ---

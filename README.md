@@ -291,9 +291,14 @@ agent.shutdown().await?;
 The same `#[tool]` functions work in both modes, and `LOUD_WIRE=1` covers
 harness sessions too. Setup (`pip install google-antigravity==0.1.10`),
 capabilities, policies/hooks, MCP servers, subagents, triggers, and session
-resume are covered in [docs/ANTIGRAVITY.md](docs/ANTIGRAVITY.md); see
-[`repo_auditor`](examples/real_world/repo_auditor/main.rs) for a complete
-agentic code-review application.
+resume are covered in [docs/ANTIGRAVITY.md](docs/ANTIGRAVITY.md).
+
+Seven runnable examples live in
+[`examples/antigravity/`](examples/antigravity/) — grouped there the way
+`src/antigravity/` is, since they all need the feature and the harness
+binary. Start with [`agent.rs`](examples/antigravity/agent.rs); see
+[`repo_auditor`](examples/antigravity/repo_auditor/) for a complete
+agentic code-review application with subagents and a structured report.
 
 ## Documentation
 

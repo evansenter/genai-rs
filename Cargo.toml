@@ -128,42 +128,46 @@ antigravity = ["dep:tokio-tungstenite", "dep:libc"]
 name = "antigravity_harness"
 required-features = ["antigravity"]
 
-# Feature-gated examples
+# Antigravity harness examples (examples/antigravity/). Grouped in their own
+# directory the way src/antigravity/ is: every one needs the feature and the
+# localharness binary, which is a different setup story from the rest.
+# Names are unchanged by that move, so `cargo run --example <name>` still works.
 [[example]]
 name = "antigravity_agent"
+path = "examples/antigravity/agent.rs"
 required-features = ["antigravity"]
 
-# Real-world example applications
 [[example]]
 name = "repo_auditor"
-path = "examples/real_world/repo_auditor/main.rs"
+path = "examples/antigravity/repo_auditor/main.rs"
 required-features = ["antigravity"]
 
 [[example]]
 name = "session_resume"
-path = "examples/real_world/session_resume/main.rs"
+path = "examples/antigravity/session_resume/main.rs"
 required-features = ["antigravity"]
 
 [[example]]
 name = "workspace_explorer"
-path = "examples/real_world/workspace_explorer/main.rs"
+path = "examples/antigravity/workspace_explorer/main.rs"
 required-features = ["antigravity"]
 
 [[example]]
 name = "mcp_toolbelt"
-path = "examples/real_world/mcp_toolbelt/main.rs"
+path = "examples/antigravity/mcp_toolbelt/main.rs"
 required-features = ["antigravity"]
 
 [[example]]
 name = "proactive_agent"
-path = "examples/real_world/proactive_agent/main.rs"
+path = "examples/antigravity/proactive_agent/main.rs"
 required-features = ["antigravity"]
 
 [[example]]
 name = "cancellable_turn"
-path = "examples/real_world/cancellable_turn/main.rs"
+path = "examples/antigravity/cancellable_turn/main.rs"
 required-features = ["antigravity"]
 
+# Real-world example applications
 [[example]]
 name = "rag_system"
 path = "examples/real_world/rag_system/main.rs"
