@@ -449,6 +449,24 @@ budget is exceeded, the crate halts the harness's still-running turn and
 drains its remaining events before returning `AntigravityError::Timeout`, so
 the next turn starts from a clean stream.
 
+**Turns are bounded by default** — `DEFAULT_TURN_TIMEOUT`, 300s — so you get
+an error rather than a hang without opting in. An unbounded turn does not
+*fail* when the harness stops signalling completion; it hangs, which is
+strictly less diagnosable than an error and looks identical to latency from
+the outside. That is not hypothetical: harness 0.1.10 renamed the terminal
+trajectory state, and every turn ran on with no error, no failed parse and
+nothing in the logs.
+
+Raise it for agents that legitimately run long (deep subagent trees, many
+tool calls), lower it for interactive use where a stall should surface fast,
+or remove it deliberately:
+
+```rust,ignore
+let mut agent = AntigravityAgent::builder()
+    .without_turn_timeout()  // runs until the harness ends the turn
+    .spawn().await?;
+```
+
 ## Structured output
 
 ```rust,ignore

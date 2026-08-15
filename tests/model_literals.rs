@@ -32,34 +32,35 @@ fn no_hardcoded_model_ids_outside_the_constants() {
         std::sync::LazyLock::new(|| regex::Regex::new(r#""gemini-\d"#).unwrap());
 
     /// Where a model id may legitimately appear as a literal.
+    ///
+    /// Matched as exact repo-relative paths, not suffixes: `src/lib.rs`
+    /// must not also exempt some future nested `.../src/lib.rs`.
     const ALLOWED: &[&str] = &[
         // The constants themselves.
         "src/lib.rs",
-        // Records which model versions a behavior was verified against;
-        // naming them is the point.
-        "tests/common/mod.rs",
-        // Pinned deliberately with an explanation at the site.
-        "examples/video_input.rs",
         // This file: its own comment names a model to explain the pattern.
         "tests/model_literals.rs",
     ];
 
-    fn scan(dir: &Path, hits: &mut Vec<String>) {
+    fn scan(root: &Path, dir: &Path, hits: &mut Vec<String>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
         };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                scan(&path, hits);
+                scan(root, &path, hits);
                 continue;
             }
             if path.extension().is_none_or(|e| e != "rs") {
                 continue;
             }
-            let rel = path.to_string_lossy().replace('\\', "/");
-            let rel = rel.trim_start_matches("./").to_string();
-            if ALLOWED.iter().any(|a| rel.ends_with(a)) {
+            let rel = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            if ALLOWED.contains(&rel.as_str()) {
                 continue;
             }
             let Ok(text) = std::fs::read_to_string(&path) else {
@@ -76,9 +77,9 @@ fn no_hardcoded_model_ids_outside_the_constants() {
 
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut hits = Vec::new();
-    scan(&root.join("src"), &mut hits);
-    scan(&root.join("tests"), &mut hits);
-    scan(&root.join("examples"), &mut hits);
+    scan(root, &root.join("src"), &mut hits);
+    scan(root, &root.join("tests"), &mut hits);
+    scan(root, &root.join("examples"), &mut hits);
 
     assert!(
         hits.is_empty(),

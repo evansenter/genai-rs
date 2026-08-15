@@ -146,7 +146,7 @@ kept open strings for forward compatibility). See
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-2.5-pro-preview-tts")  // TTS-specific model
+    .with_model(genai_rs::DEFAULT_TTS_MODEL)  // TTS-specific model
     .with_text("Hello, welcome to genai-rs!")
     .with_audio_output()
     .with_voice("Kore")  // Optional voice selection
@@ -196,7 +196,7 @@ let video_content = video_from_file("clip.mp4").await?;
 // inline-capable model too (see the note on the base64 form below).
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model(genai_rs::INLINE_VIDEO_MODEL)
     .with_content(vec![
         Content::text("Describe what happens in this video"),
         video_content,
@@ -211,7 +211,7 @@ let response = client
 // inline bytes.
 let response = client
     .interaction()
-    .with_model("gemini-3-flash-preview")
+    .with_model(genai_rs::INLINE_VIDEO_MODEL)
     .with_content(vec![
         Content::text("Summarize this video"),
         Content::video_data(base64_video, "video/mp4"),
@@ -518,7 +518,7 @@ Generate images from text prompts.
 ```rust,ignore
 let response = client
     .interaction()
-    .with_model("gemini-3.1-flash-image")  // Image generation model
+    .with_model(genai_rs::DEFAULT_IMAGE_MODEL)  // Image generation model
     .with_text("A sunset over mountains, digital art style")
     .with_image_output()
     .create()

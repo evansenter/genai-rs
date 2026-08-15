@@ -112,8 +112,8 @@ GenaiError::Api { status_code: 404, message: "Model not found..." }
 ```rust,ignore
 // Correct model names
 const STANDARD_MODEL: &str = genai_rs::DEFAULT_MODEL;
-const IMAGE_MODEL: &str = "gemini-3.1-flash-image";
-const TTS_MODEL: &str = "gemini-2.5-pro-preview-tts";
+const IMAGE_MODEL: &str = genai_rs::DEFAULT_IMAGE_MODEL;
+const TTS_MODEL: &str = genai_rs::DEFAULT_TTS_MODEL;
 ```
 
 ### Rate Limited (429)

@@ -165,7 +165,7 @@ if api_key.is_empty() || !api_key.starts_with("AI") {
 // Error: GenaiError::Api { status_code: 404, message: "Model not found..." }
 
 // Prevention: Use known model constants
-const MODEL: &str = "gemini-3.7-flash";
+const MODEL: &str = genai_rs::DEFAULT_MODEL;
 ```
 
 ### Rate Limiting

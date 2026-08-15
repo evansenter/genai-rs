@@ -138,8 +138,12 @@ jobs:
           # step budget: an example that hangs is then attributed to that
           # example by name, instead of the whole step dying on the ceiling
           # and reporting nothing about which one stalled. 300s is well
-          # above any healthy run (the slowest finishes in ~15s) while
-          # staying below the step budget even at 5 examples x 3 attempts.
+          # above any healthy run (the slowest finishes in ~15s) and tight
+          # enough that a single hung example still names itself and lets
+          # the rest of the loop run. It is not a replacement for the step
+          # budget: enough simultaneous hangs (5 examples x 3 attempts is
+          # 75min) still exceed `timeout-minutes` above, and that case
+          # reports as it always did.
           for ex in session_resume workspace_explorer mcp_toolbelt proactive_agent cancellable_turn; do
             echo "::group::cargo run --example $ex"
             attempt=1

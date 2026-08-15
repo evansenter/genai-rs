@@ -493,7 +493,7 @@ async fn with_model_fallback(
     prompt: &str,
 ) -> Result<String, GenaiError> {
     let models = [
-        "gemini-3.7-flash",
+        genai_rs::DEFAULT_MODEL,
         "gemini-3.1-pro-preview",
     ];
 

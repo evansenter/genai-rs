@@ -500,8 +500,14 @@ impl WireFilter {
         // Otherwise a selector may name a WebSocket payload's oneof key,
         // which is the granularity that actually matters when reading a
         // harness session (`stepUpdate` vs `toolCall` vs `userInput`).
-        let payload = match event {
-            WireEvent::WsSend { payload, .. } | WireEvent::WsReceive { payload, .. } => payload,
+        // Received frames get the extra nested-action granularity below;
+        // sends are matched on their arm alone, for the same reason
+        // `ws_payload_keys` only qualifies receives. Selection and summary
+        // rendering must agree about what a line is *about*, and an
+        // `InputEvent` arm has no action to descend into.
+        let (payload, harness_receive) = match event {
+            WireEvent::WsSend { payload, .. } => (payload, false),
+            WireEvent::WsReceive { payload, .. } => (payload, true),
             _ => return false,
         };
         payload.as_object().is_some_and(|map| {
@@ -510,6 +516,9 @@ impl WireFilter {
                 .any(|(key, value)| {
                     if self.selectors.contains(&key.to_ascii_lowercase()) {
                         return true;
+                    }
+                    if !harness_receive {
+                        return false;
                     }
                     // ...and one level deeper, because the granularity a
                     // reader usually wants is *which action* a step carried,
@@ -1363,6 +1372,25 @@ mod filter_tests {
             LoudWirePrinter::payload_keys(&json!({"usageMetadata": {"totalTokens": 7}})),
             "usageMetadata"
         );
+
+        // Selection has to agree with that labelling, or `LOUD_WIRE=response`
+        // would keep a line rendered `questionResponse` — a selector matching
+        // nothing the printed label contains.
+        let send = WireEvent::WsSend {
+            id: 1,
+            payload: question_response.clone(),
+        };
+        assert!(
+            !WireFilter::parse("response").allows(&send),
+            "a send frame must not be selected by an action nested inside its arm"
+        );
+        // The arm itself still selects it.
+        assert!(WireFilter::parse("questionResponse").allows(&send));
+        // And a received frame keeps the nested granularity it was added for.
+        assert!(WireFilter::parse("mcpTool").allows(&WireEvent::WsReceive {
+            id: 1,
+            payload: json!({"stepUpdate": {"mcpTool": {"name": "x"}}}),
+        }));
     }
 
     #[test]

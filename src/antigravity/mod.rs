@@ -220,8 +220,6 @@ impl ChatResponse {
 // Builder
 // =============================================================================
 
-/// Builder for [`AntigravityAgent`]. Create via
-/// [`AntigravityAgent::builder`].
 /// Default wall-clock budget for a single agent turn.
 ///
 /// Generous enough for real agent work (tool calls, subagents) while still
@@ -257,6 +255,8 @@ impl TurnBudget {
     }
 }
 
+/// Builder for [`AntigravityAgent`]. Create via
+/// [`AntigravityAgent::builder`].
 #[derive(Default)]
 pub struct AgentBuilder {
     harness_path: Option<PathBuf>,
@@ -795,10 +795,13 @@ impl AgentBuilder {
             .as_ref()
             .map(|api_key| {
                 vec![protocol::ModelConfig {
+                    // A real model id, not a placeholder: this is the id the
+                    // harness is actually asked to run when the caller never
+                    // called `with_model`.
                     name: Some(
                         self.model
                             .clone()
-                            .unwrap_or_else(|| "test-model".to_string()),
+                            .unwrap_or_else(|| crate::DEFAULT_MODEL.to_string()),
                     ),
                     types: vec![protocol::ModelType::Text],
                     gemini_api_endpoint: Some(protocol::GeminiApiEndpoint {
@@ -2655,6 +2658,20 @@ mod agent_tests {
             AgentBuilder::default().without_turn_timeout().turn_timeout,
             TurnBudget::Unlimited
         );
+    }
+
+    #[test]
+    fn harness_config_falls_back_to_a_real_model_when_none_is_set() {
+        // `with_model` is optional, so this fallback is the id the harness
+        // is actually asked to run. The model sweep that introduced
+        // DEFAULT_MODEL briefly replaced it with the synthetic "test-model"
+        // used by the serialization tests — which the literal guard cannot
+        // catch, because removing a literal is exactly what it wants.
+        let builder = AntigravityAgent::builder().with_api_key("test-key");
+        let dispatcher = ToolDispatcher::new(builder.tools.clone(), &builder.tool_services);
+        let config = builder.build_harness_config(&dispatcher);
+
+        assert_eq!(config.models[0].name.as_deref(), Some(crate::DEFAULT_MODEL));
     }
 
     #[test]
