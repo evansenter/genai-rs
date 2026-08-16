@@ -318,6 +318,55 @@ pub struct CreateFileSearchStoreRequest {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+impl CreateFileSearchStoreRequest {
+    /// Creates an empty request.
+    ///
+    /// The builder methods exist because this type is `#[non_exhaustive]`:
+    /// downstream crates can use neither struct-literal syntax nor the
+    /// `..Default::default()` functional-update form on it, so without them
+    /// the only route to [`extra`](Self::extra) — the reason
+    /// [`create_file_search_store_with_request`](crate::Client::create_file_search_store_with_request)
+    /// exists at all — is `default()` followed by field assignment.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the human-readable display name.
+    #[must_use]
+    pub fn with_display_name(mut self, display_name: impl Into<String>) -> Self {
+        self.display_name = Some(display_name.into());
+        self
+    }
+
+    /// Adds an unmodeled field, sent flat alongside the modeled ones.
+    ///
+    /// ```
+    /// use genai_rs::CreateFileSearchStoreRequest;
+    ///
+    /// let request = CreateFileSearchStoreRequest::new()
+    ///     .with_display_name("my-docs")
+    ///     .with_extra("customChunkingConfig", serde_json::json!({"maxTokensPerChunk": 200}));
+    ///
+    /// assert_eq!(
+    ///     serde_json::to_value(&request).unwrap(),
+    ///     serde_json::json!({
+    ///         "displayName": "my-docs",
+    ///         "customChunkingConfig": {"maxTokensPerChunk": 200}
+    ///     })
+    /// );
+    /// ```
+    #[must_use]
+    pub fn with_extra(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<serde_json::Value>,
+    ) -> Self {
+        self.extra.insert(key.into(), value.into());
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

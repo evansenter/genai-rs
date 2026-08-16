@@ -340,7 +340,21 @@ pub async fn upload_to_file_search_store(
         })?
         .to_string();
 
-    get_document(ctx, &document_name).await
+    // The bytes are already accepted by this point, so a failure here — a
+    // transient 5xx, or the document not being readable yet on this
+    // read-after-write — means the upload succeeded but the caller is holding
+    // an error. Without the name in it they cannot wait on the document,
+    // delete it, or tell a failed upload from a landed one; recovery would
+    // mean listing the store and guessing by display name, which is not
+    // unique. Same reasoning as the unresolved-operation arm above: keep the
+    // handle attached to the error.
+    get_document(ctx, &document_name).await.map_err(|e| {
+        GenaiError::Internal(format!(
+            "Upload succeeded and created '{document_name}', but reading it back \
+             failed: {e}. The document exists — use that name to wait on or \
+             delete it."
+        ))
+    })
 }
 
 #[cfg(test)]

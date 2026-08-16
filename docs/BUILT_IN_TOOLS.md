@@ -584,7 +584,7 @@ let response = client
     .await?;
 ```
 
-### Document Analysis with Web Context
+### Document Analysis with Code Execution
 
 ```rust,ignore
 use genai_rs::FileSearchConfig;
@@ -592,12 +592,26 @@ use genai_rs::FileSearchConfig;
 let response = client
     .interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
-    .with_text("Compare our internal report with public benchmarks")
+    .with_text("Total the quarterly figures in our internal report")
     .add_tool(FileSearchConfig::new(vec![store.name.clone()]))
-    .with_url_context()
+    .with_code_execution()
     .create()
     .await?;
 ```
+
+#### File Search cannot be combined with the other retrieval tools
+
+The API rejects File Search alongside either web-retrieval tool, with a 400
+naming the pair (verified live 2026-08-16 against `gemini-3.7-flash`):
+
+| Combination | Result |
+|-------------|--------|
+| `file_search` + `google_search` | **400** — "`'google_search'` and `'file_search'` cannot be combined in the same request. Please choose one to continue." |
+| `file_search` + `url_context` | **400** — same message, naming `url_context` |
+| `file_search` + `code_execution` | Accepted |
+
+To ground on both internal documents and the web, run two interactions and
+combine the results yourself.
 
 ### With Client-Side Functions
 

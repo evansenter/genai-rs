@@ -632,7 +632,7 @@ Used to enable semantic document retrieval from file search stores.
 {
   "tools": [{
     "type": "file_search",
-    "file_search_store_names": ["stores/my-store-123"],
+    "file_search_store_names": ["fileSearchStores/my-store-123"],
     "top_k": 10,
     "metadata_filter": "category = 'technical'"
   }]
@@ -641,13 +641,21 @@ Used to enable semantic document retrieval from file search stores.
 
 | Rust Field | Wire Name | Required | Notes |
 |------------|-----------|----------|-------|
-| `store_names` | `file_search_store_names` | Yes | Array of store identifiers |
+| `store_names` | `file_search_store_names` | Yes | Full store resource names (`fileSearchStores/<id>`), as returned by `Client::create_file_search_store` |
 | `top_k` | `top_k` | No | Number of results to return |
 | `metadata_filter` | `metadata_filter` | No | Filter expression |
 
 **Note**: The RFC proposed `file_ids` but the actual API uses `file_search_store_names` (stores, not individual files).
 
-**Verified**: 2026-01-05 - Request format tested with `LOUD_WIRE=1 cargo run --example file_search`.
+**Verified**: 2026-08-16 — request format tested with `LOUD_WIRE=1 cargo run --example file_search`
+against a store the example provisions itself. The earlier 2026-01-05 stamp
+predated `Client::create_file_search_store`, so the example it names could not
+have run against a real store.
+
+**Rejected combinations** (400, verified live 2026-08-16): `file_search` with
+`google_search`, and `file_search` with `url_context` — "cannot be combined in
+the same request. Please choose one to continue." `file_search` with
+`code_execution` is accepted.
 
 ### FileSearchCall / FileSearchResult (steps)
 
@@ -659,28 +667,27 @@ Returned when the model retrieves documents from file search stores. Revision
 ```
 
 ```json
-{
-  "type": "file_search_result",
-  "call_id": "call_abc123",
-  "result": [
-    {
-      "title": "Document.pdf",
-      "text": "Relevant content from the document...",
-      "file_search_store": "stores/my-store-123"
-    }
-  ]
-}
+{ "type": "file_search_result", "call_id": "call_abc123" }
 ```
+
+> **`result` is never populated on this API.** Verified live 2026-08-16
+> against a store with indexed, `STATE_ACTIVE` documents that demonstrably
+> grounded the answer: `has_file_search_results()` is true and
+> `file_search_results()` is empty. Retrieved chunks are folded into the
+> response text rather than surfaced separately. The `result` array below is
+> the spec's shape, modeled for forward compatibility — treat an empty set as
+> expected, not as "the search found nothing". Tracked in #429.
 
 | Rust Field | Wire Name | Notes |
 |------------|-----------|-------|
 | `call_id` | `call_id` | snake_case in JSON |
-| `result` | `result` | Array of FileSearchResultItem |
-| `result[].title` | `title` | Document title |
-| `result[].text` | `text` | Retrieved text snippet |
-| `result[].store` | `file_search_store` | snake_case in JSON |
+| `result` | `result` | Array of FileSearchResultItem — spec-present, never observed |
+| `result[].title` | `title` | Document title (unobserved) |
+| `result[].text` | `text` | Retrieved text snippet (unobserved) |
+| `result[].store` | `file_search_store` | snake_case in JSON (unobserved) |
 
-**Status**: Item shape verified 2026-01 pre-revision (as `Content`); step form pending live verification (2026-05-20 revision).
+**Status**: Step form verified live 2026-08-16 — the `file_search_call` and
+`file_search_result` steps arrive, the latter with no `result` payload.
 
 ### GoogleSearchCall / GoogleSearchResult (steps)
 
