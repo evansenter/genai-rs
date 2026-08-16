@@ -561,6 +561,13 @@ jobs:
             target/release/examples current-sizes.json
           cat current-sizes.json
 
+      # The size check decides whether a PR goes red, and its interesting
+      # behaviours are all comparisons it either makes or silently declines
+      # to make — including the mode where it compares nothing and reports
+      # "all examples within threshold". Fixtures, so that stays checked.
+      - name: Test the size-check script
+        run: .github/scripts/tests/test_check_example_sizes.sh
+
       - name: Fetch the size baseline from main
         if: github.event_name == 'pull_request'
         env:
@@ -569,19 +576,37 @@ jobs:
           set -euo pipefail
           # Best-effort: a missing baseline (first run after this lands, or
           # an expired artifact) must not fail the job — the compare step
-          # skips and says so.
-          RUN_ID=$(gh run list --workflow Rust --branch main --status success \
-            --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null || echo "")
-          if [ -n "$RUN_ID" ]; then
-            gh run download "$RUN_ID" --name size-baseline --dir baseline 2>/dev/null \
-              || echo "No size-baseline artifact on run $RUN_ID"
+          # skips and warns.
+          #
+          # `// empty`, not a bare `.[0].databaseId`: on an empty result set
+          # jq prints the literal string "null", which passes `[ -n ]` and
+          # sends the download after run "null".
+          #
+          # Several runs, not just the newest: a run whose artifact expired
+          # or whose upload did not happen would otherwise mean no baseline
+          # at all, even with an older successful run still carrying one.
+          RUN_IDS=$(gh run list --workflow Rust --branch main --status success \
+            --limit 10 --json databaseId --jq '.[].databaseId // empty' 2>/dev/null || echo "")
+          for run_id in $RUN_IDS; do
+            if gh run download "$run_id" --name size-baseline --dir baseline 2>/dev/null; then
+              echo "Baseline from run $run_id"
+              break
+            fi
+          done
+          if [ -f baseline/current-sizes.json ]; then
+            cp baseline/current-sizes.json baseline-sizes.json
+          else
+            echo "No size-baseline artifact on any of the last 10 successful main runs"
+            : > baseline-sizes.json
           fi
-          [ -f baseline/current-sizes.json ] || : > baseline-sizes.json
-          [ -f baseline/current-sizes.json ] && cp baseline/current-sizes.json baseline-sizes.json
-          true
 
       - name: Check size deltas
         if: github.event_name == 'pull_request'
+        env:
+          # The escape hatch the failure message promises. Kept in the
+          # workflow rather than the script so the script needs no `gh` and
+          # stays runnable — and testable — outside Actions.
+          SIZE_GROWTH_OK: ${{ contains(github.event.pull_request.labels.*.name, 'size-growth-ok') }}
         run: |
           .github/scripts/check_example_sizes.sh compare \
             baseline-sizes.json current-sizes.json 15

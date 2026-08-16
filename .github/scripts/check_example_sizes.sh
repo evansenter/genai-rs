@@ -62,7 +62,13 @@ measure() {
         echo "}"
     } > "$out"
 
-    echo "Measured $(jq 'length' < "$out") example binaries -> $out"
+    local count
+    count=$(jq 'length' < "$out")
+    if [ "$count" -eq 0 ]; then
+        echo "::error::Measured 0 example binaries in $1 — nothing to compare." >&2
+        return 1
+    fi
+    echo "Measured $count example binaries -> $out"
 }
 
 # Fails when any example present in BOTH files grew by more than the
@@ -72,7 +78,11 @@ compare() {
     local baseline="$1" current="$2" max_growth="${3:-15}"
 
     if [ ! -s "$baseline" ]; then
-        echo "::notice::No baseline available — skipping the delta check."
+        # `warning`, not `notice`: a gate that is not running must not look
+        # the same as a gate that ran clean. Main has had >90-day gaps in
+        # this repo, which outlives artifact retention, so this path is
+        # reachable without anyone doing anything wrong.
+        echo "::warning::No baseline available — the delta check did NOT run."
         echo "A baseline is published on every push to main; the first PR after"
         echo "this job lands has nothing to compare against."
         return 0
@@ -94,8 +104,13 @@ compare() {
                 name: $k,
                 was: $was,
                 now: .value,
+                # Rounded once, then both printed and compared. Comparing
+                # the raw value while printing the rounded one made +15.04%
+                # fail with "grew +15% ... over the +15% threshold", which
+                # reads as a bug in the checker rather than a real
+                # regression.
                 pct: ($pct * 10 | round / 10),
-                over: ($pct > $max)
+                over: (($pct * 10 | round / 10) > $max)
               }
           ]
         | sort_by(-.pct)[]
@@ -118,6 +133,11 @@ compare() {
     fi
 
     failed=$(grep -c '^FAIL' <<< "$report" || true)
+    if [ "${failed:-0}" -gt 0 ] && [ "${SIZE_GROWTH_OK:-}" = "true" ]; then
+        echo
+        echo "::notice::$failed example(s) over threshold, waved through by the \`size-growth-ok\` label."
+        return 0
+    fi
     if [ "${failed:-0}" -gt 0 ]; then
         echo
         while IFS=$'\t' read -r status name was now pct; do
@@ -125,13 +145,30 @@ compare() {
             echo "::error::$name grew $pct (${was} -> ${now} bytes), over the +${max_growth}% threshold"
         done <<< "$report"
         echo
-        echo "If this growth is intended, say so in the PR — the baseline"
-        echo "refreshes automatically once the change lands on main."
+        echo "If this growth is intended: add the \`size-growth-ok\` label to"
+        echo "the PR and re-run this job. The baseline refreshes automatically"
+        echo "once the change lands on main, so the override is only needed"
+        echo "for the one PR that introduces the growth."
+        return 1
+    fi
+
+    # An empty intersection means the check compared nothing and would
+    # otherwise report "All examples within threshold" — the dangerous mode,
+    # because a silently disabled gate is indistinguishable from a passing
+    # one. The hash-suffix filter in `measure` guards the one known cause;
+    # this guards the symptom, whatever the cause.
+    local compared
+    compared=$(grep -c . <<< "$report" || true)
+    if [ "${compared:-0}" -eq 0 ]; then
+        echo
+        echo "::error::No examples were comparable: the baseline has $(jq 'length' < "$baseline") \
+entries and the current build has $(jq 'length' < "$current"), but they share no keys. \
+The delta check is not running."
         return 1
     fi
 
     echo
-    echo "All examples within +${max_growth}% of baseline."
+    echo "All examples within +${max_growth}% of baseline (${compared} compared)."
 }
 
 case "${1:-}" in
