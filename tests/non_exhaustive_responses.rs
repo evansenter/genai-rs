@@ -102,7 +102,19 @@ fn response_structs_are_non_exhaustive() {
     // scanning those files as public API. This is how the first version of
     // this parser failed — it split on " mod ", which misses a line starting
     // with `mod `, i.e. every declaration in this block.
-    for expected in ["content_tests", "proptest_tests", "response_tests"] {
+    // All six, not a sample. `test_subscriber` in particular is the only one
+    // declared `pub(crate) mod`, so it is the sole case exercising the
+    // ` mod ` split branch — a sample of bare `mod NAME;` lines would pin
+    // only the other branch, which is the same partial-parser gap this
+    // assertion exists to catch.
+    for expected in [
+        "content_tests",
+        "proptest_tests",
+        "request_tests",
+        "response_tests",
+        "streaming_tests",
+        "test_subscriber",
+    ] {
         assert!(
             test_modules.contains(expected),
             "lib.rs declares `#[cfg(test)] mod {expected};` but the parser did \
@@ -124,11 +136,7 @@ fn response_structs_are_non_exhaustive() {
         if rel.contains("antigravity") {
             continue;
         }
-        // `src/NAME.rs`, or anything under `src/NAME/`, for a cfg-test NAME.
-        let stem = file.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-        let under_test_module = test_modules.contains(stem)
-            || test_modules.iter().any(|m| rel.contains(&format!("/{m}/")));
-        if under_test_module {
+        if is_test_only_path(&rel, &test_modules) {
             continue;
         }
         let text =
@@ -448,6 +456,18 @@ pub struct AfterSemicolonGatedItem {}
     );
 }
 
+/// Whether a repo-relative path belongs to a `#[cfg(test)]` module.
+///
+/// Matches `src/NAME.rs` exactly, plus anything under `src/NAME/`. Scoped to
+/// the exact path rather than the file stem: a future `src/http/response_tests.rs`
+/// must not drop out of the scan merely because `response_tests` happens to
+/// be a gated module name at the crate root.
+fn is_test_only_path(rel: &str, test_modules: &BTreeSet<String>) -> bool {
+    test_modules
+        .iter()
+        .any(|m| rel.ends_with(&format!("src/{m}.rs")) || rel.contains(&format!("src/{m}/")))
+}
+
 /// Module paths `lib.rs` declares under a `#[cfg(test)]` attribute.
 ///
 /// Those files compile only under test, so their `pub struct`s are not API —
@@ -504,6 +524,51 @@ fn manual_deserialize_targets(text: &str) -> BTreeSet<String> {
             Some(after.split(['<', ' ', '{']).next()?.trim().to_string())
         })
         .collect()
+}
+
+/// Pins the file-level skip and the `lib.rs` parser.
+///
+/// The main test cannot: none of the six gated files declares a `pub struct`,
+/// so it passes identically whether the skip is correct, deleted, or dropping
+/// every file under `src/`. That is the silent inertness this file argues
+/// against everywhere else — and the round-5 cfg-test bug is what it looks
+/// like when it bites.
+#[test]
+fn the_test_module_skip_is_scoped_to_the_declared_paths() {
+    let lib_rs = "\
+#[cfg(test)]
+pub(crate) mod test_subscriber;
+
+pub mod client;
+
+#[cfg(test)]
+mod response_tests;
+
+mod not_gated;
+";
+    let modules = cfg_test_modules(lib_rs);
+    assert_eq!(
+        modules,
+        BTreeSet::from(["test_subscriber".to_string(), "response_tests".to_string()]),
+        "both declaration forms parse, and an ungated `mod` is not collected"
+    );
+
+    // Skipped: the declared file, and anything under a directory of that name.
+    assert!(is_test_only_path("/src/response_tests.rs", &modules));
+    assert!(is_test_only_path(
+        "/src/test_subscriber/helper.rs",
+        &modules
+    ));
+
+    // Not skipped: a same-stem file elsewhere in the tree. Matching on the
+    // bare stem would drop this one, which is a real file a caller's response
+    // types could live in.
+    assert!(
+        !is_test_only_path("/src/http/response_tests.rs", &modules),
+        "the skip is scoped to src/NAME.rs, not to any file named NAME.rs"
+    );
+    assert!(!is_test_only_path("/src/response.rs", &modules));
+    assert!(!is_test_only_path("/src/not_gated.rs", &modules));
 }
 
 /// Recursively collects `.rs` files under `dir`.
