@@ -230,3 +230,19 @@ jobs:
               --label "ci-health")
             echo "Created issue: $NEW_ISSUE"
           fi
+
+      # Scheduled runs fail quietly (#431): the only built-in signal is an
+      # email to whoever last committed this file. Gated on `schedule`
+      # because a push/PR failure is already visible as a red check.
+      - name: Escalate a failing scheduled run
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: .github/scripts/report_scheduled_failure.sh "CI Flakiness Report" "$RUN_URL"
+
+      - name: Clear the failure issue once the run recovers
+        if: success() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: .github/scripts/resolve_scheduled_failure.sh "CI Flakiness Report"

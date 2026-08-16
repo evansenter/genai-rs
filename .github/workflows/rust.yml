@@ -25,7 +25,7 @@ jobs:
         # ceiling only ever trips on a stall, and it trips fast enough to be
         # worth re-running. The other mold installs below refer back here.
         timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+        run: sudo apt-get update || true; sudo apt-get install -y mold; cp .cargo/config.toml.example .cargo/config.toml
       - name: Check workspace
         run: cargo check --workspace --all-targets --all-features
 
@@ -40,7 +40,7 @@ jobs:
       - name: Install mold linker
         # Same stall ceiling as the other mold installs above.
         timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+        run: sudo apt-get update || true; sudo apt-get install -y mold; cp .cargo/config.toml.example .cargo/config.toml
       - name: Run unit tests
         run: cargo nextest run --workspace
       - name: Run doctests (default features)
@@ -59,7 +59,7 @@ jobs:
       - name: Install mold linker
         # Same stall ceiling as the other mold installs above.
         timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+        run: sudo apt-get update || true; sudo apt-get install -y mold; cp .cargo/config.toml.example .cargo/config.toml
       - name: Run unit tests with strict-unknown feature
         run: cargo nextest run --workspace --features strict-unknown
       - name: Run doctests with strict-unknown feature
@@ -76,7 +76,7 @@ jobs:
       - name: Install mold linker
         # Same stall ceiling as the other mold installs above.
         timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+        run: sudo apt-get update || true; sudo apt-get install -y mold; cp .cargo/config.toml.example .cargo/config.toml
       - name: Install pinned localharness wheel
         # Version must match SUPPORTED_HARNESS_VERSION in src/antigravity/.
         run: pip install google-antigravity==0.1.10
@@ -315,7 +315,7 @@ jobs:
       - name: Install mold linker
         # Same stall ceiling as the other mold installs above.
         timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+        run: sudo apt-get update || true; sudo apt-get install -y mold; cp .cargo/config.toml.example .cargo/config.toml
       - name: Run integration tests (${{ matrix.group }})
         run: |
           set -eo pipefail
@@ -390,7 +390,7 @@ jobs:
       - name: Install mold linker
         # Same stall ceiling as the other mold installs above.
         timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+        run: sudo apt-get update || true; sudo apt-get install -y mold; cp .cargo/config.toml.example .cargo/config.toml
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
@@ -404,7 +404,7 @@ jobs:
       - name: Install mold linker
         # Same stall ceiling as the other mold installs above.
         timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+        run: sudo apt-get update || true; sudo apt-get install -y mold; cp .cargo/config.toml.example .cargo/config.toml
       - name: Check documentation (all features)
         run: cargo doc --workspace --no-deps --all-features --document-private-items
         env:
@@ -429,7 +429,7 @@ jobs:
       - name: Install mold linker
         # Same stall ceiling as the other mold installs above.
         timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+        run: sudo apt-get update || true; sudo apt-get install -y mold; cp .cargo/config.toml.example .cargo/config.toml
       - name: Check workspace with MSRV
         run: cargo check --workspace
 
@@ -457,7 +457,7 @@ jobs:
         if: runner.os == 'Linux'
         # Same stall ceiling as the other mold installs above.
         timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+        run: sudo apt-get update || true; sudo apt-get install -y mold; cp .cargo/config.toml.example .cargo/config.toml
       - name: Build
         run: cargo build --workspace --release
       - name: Run tests
@@ -479,7 +479,7 @@ jobs:
       - name: Install mold linker
         # Same stall ceiling as the other mold installs above.
         timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+        run: sudo apt-get update || true; sudo apt-get install -y mold; cp .cargo/config.toml.example .cargo/config.toml
       - name: Generate coverage
         run: cargo llvm-cov --workspace --lcov --output-path lcov.info
       - uses: codecov/codecov-action@v4
@@ -500,7 +500,7 @@ jobs:
       - name: Install mold linker
         # Same stall ceiling as the other mold installs above.
         timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+        run: sudo apt-get update || true; sudo apt-get install -y mold; cp .cargo/config.toml.example .cargo/config.toml
       - name: Clean build time
         run: |
           echo "## Build Metrics" >> $GITHUB_STEP_SUMMARY

@@ -25,7 +25,7 @@ jobs:
         # `update` should not fail the release when the install can still
         # proceed from cached lists.
         timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+        run: sudo apt-get update || true; sudo apt-get install -y mold; cp .cargo/config.toml.example .cargo/config.toml
       - name: Check workspace
         run: cargo check --workspace --all-targets --all-features
       - name: Run unit tests
@@ -113,7 +113,7 @@ jobs:
         # `update` should not fail the release when the install can still
         # proceed from cached lists.
         timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+        run: sudo apt-get update || true; sudo apt-get install -y mold; cp .cargo/config.toml.example .cargo/config.toml
 
       - name: Verify tag matches Cargo.toml version
         run: |

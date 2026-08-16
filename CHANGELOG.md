@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **The mold linker is now opt-in** (#428). `.cargo/config.toml` was checked
+  in and set `-fuse-ld=mold` unconditionally, so a clone on a machine without
+  mold failed every build before compiling anything:
+
+  ```text
+  error: linking with `cc` failed: exit status: 1
+    = note: collect2: fatal error: cannot find 'ld'
+  ```
+
+  `ld`, `lld` and `gold` are all present in that state — the missing binary
+  is mold, which the message never names. CI installs mold explicitly, so
+  this only ever hit new contributors and fresh containers.
+
+  The config now ships as `.cargo/config.toml.example`; run
+  `./scripts/setup-dev.sh` to enable it (it checks for mold first and is a
+  no-op without it). CI enables it alongside its existing mold install, so
+  build times there are unchanged.
+
+- **Scheduled workflows escalate their own failures** (#431). The flakiness
+  report failed 22 days running, then stopped firing for ~10 weeks, and none
+  of the three transitions produced a signal anyone acted on. `CI Flakiness
+  Report` and `Security Audit` now open a rolling `ci-health` issue on a
+  failing scheduled run, comment on each subsequent failure, and close it on
+  recovery.
+
 ## [0.10.0] - 2026-08-16
 
 ### Added

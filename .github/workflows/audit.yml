@@ -15,6 +15,7 @@ on:
 permissions:
   contents: read
   checks: write  # Required for rustsec/audit-check to post results
+  issues: write  # Required to escalate a silently-failing scheduled run (#431)
 
 jobs:
   security:
@@ -26,3 +27,19 @@ jobs:
         uses: rustsec/audit-check@v1.4.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Scheduled runs fail quietly (#431): the only built-in signal is an
+      # email to whoever last committed this file. Gated on `schedule`
+      # because a push/PR failure is already visible as a red check.
+      - name: Escalate a failing scheduled run
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: .github/scripts/report_scheduled_failure.sh "Security Audit" "$RUN_URL"
+
+      - name: Clear the failure issue once the run recovers
+        if: success() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: .github/scripts/resolve_scheduled_failure.sh "Security Audit"
