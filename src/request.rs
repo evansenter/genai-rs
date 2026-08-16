@@ -1349,11 +1349,6 @@ pub struct InteractionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_tier: Option<ServiceTier>,
 
-    /// Name of an explicit context cache to use for this request
-    /// (e.g., `cachedContents/xyz`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cached_content: Option<String>,
-
     /// Per-request webhook routing: deliver this request's events to the
     /// given URIs (instead of the registered webhooks) with optional
     /// user metadata echoed on each event.

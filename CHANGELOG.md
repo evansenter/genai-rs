@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+
+- **Breaking: `with_cached_content()` and `InteractionRequest.cached_content`.**
+  The Interactions API rejects the field outright:
+
+  ```
+  400 Unknown parameter 'cached_content'
+  ```
+
+  `cachedContent` and `cached_content_name` are rejected too, so it isn't a
+  spelling problem. The `/v1beta/cachedContents` resource works fine — a cache
+  creates and reports its token count — but nothing in the Interactions API
+  consumes one, so the builder method could only ever produce a 400.
+
+  It shipped because the field was modeled from the spec and never live-probed;
+  its test asserted the field *serialized* correctly, which it did.
+
+  This follows the `response_mime_type` precedent — rejected outright, so
+  removed — rather than the `safety_settings` / `Tool::Retrieval` one, where
+  the API explicitly names the feature as Vertex-only and the surface is kept
+  for spec parity.
+
+  Implicit caching is unaffected and still reported via
+  `usage.total_cached_tokens`.
+
 ## [0.10.0] - 2026-08-16
 
 ### Added

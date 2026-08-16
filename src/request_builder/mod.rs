@@ -95,7 +95,6 @@ pub struct InteractionBuilder<'a> {
     store: Option<bool>,
     system_instruction: Option<String>,
     service_tier: Option<ServiceTier>,
-    cached_content: Option<String>,
     webhook_config: Option<WebhookConfig>,
     environment: Option<EnvironmentSpec>,
     safety_settings: Option<Vec<SafetySetting>>,
@@ -160,7 +159,6 @@ impl<'a> InteractionBuilder<'a> {
             store: None,
             system_instruction: None,
             service_tier: None,
-            cached_content: None,
             webhook_config: None,
             environment: None,
             safety_settings: None,
@@ -1893,28 +1891,6 @@ impl<'a> InteractionBuilder<'a> {
         self
     }
 
-    /// References an explicit context cache for this request.
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use genai_rs::Client;
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let client = Client::new("key".to_string());
-    /// let response = client.interaction()
-    ///     .with_model(genai_rs::DEFAULT_MODEL)
-    ///     .with_text("Summarize the cached document")
-    ///     .with_cached_content("cachedContents/xyz")
-    ///     .create()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[must_use]
-    pub fn with_cached_content(mut self, cached_content: impl Into<String>) -> Self {
-        self.cached_content = Some(cached_content.into());
-        self
-    }
-
     /// Sets the presence penalty (range [-2.0, 2.0]).
     ///
     /// Positive values penalize tokens that already appeared in the text,
@@ -2317,7 +2293,6 @@ impl<'a> InteractionBuilder<'a> {
             store: self.store,
             system_instruction: self.system_instruction,
             service_tier: self.service_tier,
-            cached_content: self.cached_content,
             webhook_config: self.webhook_config,
             environment: self.environment,
             safety_settings: self.safety_settings,

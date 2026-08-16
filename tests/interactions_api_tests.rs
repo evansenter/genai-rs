@@ -406,7 +406,6 @@ mod streaming {
                 store: Some(true),
                 system_instruction: None,
                 service_tier: None,
-                cached_content: None,
                 webhook_config: None,
                 environment: None,
                 safety_settings: None,
