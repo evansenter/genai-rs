@@ -551,3 +551,16 @@ jobs:
             fi
           done
 
+
+  workflow-scripts:
+    name: Workflow Scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The rolling-issue step has broken silently twice — once diffing
+      # against the body's top-10 table, once losing `gh issue edit` entirely
+      # while still echoing "Updated issue" and going green. Neither is
+      # visible to `bash -n`. This runs the step against a stubbed `gh` and
+      # asserts the calls it makes.
+      - name: Rolling flakiness issue
+        run: .github/scripts/tests/test_flakiness_rolling_issue.sh

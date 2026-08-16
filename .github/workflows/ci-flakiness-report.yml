@@ -350,6 +350,16 @@ jobs:
               echo "Commented: $(wc -l <<<"$NEW_NAMES") newly flaky test(s)"
             fi
 
+            # After the comment, per the ordering rationale above. `--title`
+            # is what retitles an adopted legacy issue in place, and the body
+            # is what commits the new `flaky-baseline`; without this the
+            # issue is never touched, `$TITLE` never starts matching, and
+            # every run recomputes an empty baseline and re-announces the
+            # full set.
+            gh issue edit "$EXISTING_ISSUE" \
+              --title "$TITLE" \
+              --body-file "flakiness_report.md"
+
             echo "Updated issue: ${{ github.server_url }}/${{ github.repository }}/issues/$EXISTING_ISSUE"
           else
             echo "Creating new issue"
