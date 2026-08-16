@@ -53,7 +53,10 @@ measure() {
             [ -x "$f" ] || continue
 
             local size
-            size=$(stat -c%s "$f")
+            # `wc -c`, not `stat -c%s`: the latter is GNU-only, and `measure` is the
+            # one subcommand that would then not run on a macOS checkout — against
+            # the whole reason this was extracted into a script.
+            size=$(wc -c < "$f")
             [ $first -eq 1 ] || echo ","
             first=0
             printf '  "%s": %s' "$name" "$size"
@@ -145,10 +148,12 @@ compare() {
             echo "::error::$name grew $pct (${was} -> ${now} bytes), over the +${max_growth}% threshold"
         done <<< "$report"
         echo
-        echo "If this growth is intended: add the \`size-growth-ok\` label to"
-        echo "the PR and re-run this job. The baseline refreshes automatically"
-        echo "once the change lands on main, so the override is only needed"
-        echo "for the one PR that introduces the growth."
+        echo "If this growth is intended: add the \`size-growth-ok\` label, then"
+        echo "push a commit. (Re-running does not work — a re-run replays the"
+        echo "original event payload, so the new label is not in it, and this"
+        echo "workflow does not trigger on \`labeled\`.) The baseline refreshes"
+        echo "automatically once the change lands on main, so the override is"
+        echo "only needed for the PR that introduces the growth."
         return 1
     fi
 

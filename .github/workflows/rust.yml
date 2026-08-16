@@ -504,6 +504,17 @@ jobs:
       actions: read # `gh run download` for the baseline artifact
     steps:
       - uses: actions/checkout@v4
+      # First, before the clean release build: this depends only on bash and
+      # jq, does not read `target/`, and fails in seconds. Late, a broken
+      # assertion surfaced minutes in with the expensive work already sunk.
+      #
+      # The size check decides whether a PR goes red, and its interesting
+      # behaviours are all comparisons it either makes or silently declines
+      # to make — including the mode where it compares nothing and reports
+      # "all examples within threshold". Fixtures, so that stays checked.
+      - name: Test the size-check script
+        run: .github/scripts/tests/test_check_example_sizes.sh
+
       - uses: dtolnay/rust-toolchain@stable
       - name: Install mold linker
         # Same stall ceiling as the other mold installs above.
@@ -560,13 +571,6 @@ jobs:
           .github/scripts/check_example_sizes.sh measure \
             target/release/examples current-sizes.json
           cat current-sizes.json
-
-      # The size check decides whether a PR goes red, and its interesting
-      # behaviours are all comparisons it either makes or silently declines
-      # to make — including the mode where it compares nothing and reports
-      # "all examples within threshold". Fixtures, so that stays checked.
-      - name: Test the size-check script
-        run: .github/scripts/tests/test_check_example_sizes.sh
 
       - name: Fetch the size baseline from main
         if: github.event_name == 'pull_request'

@@ -116,6 +116,25 @@ SIZE_GROWTH_OK=true run_compare "$WORK/base.json" "$WORK/big.json" 15
 expect_rc     "override on: waves the growth through" 0
 expect_output "override on: says why" "size-growth-ok"
 
+# --- The hash-suffix filter, which is the behaviour that matters most in
+#     `measure`: without it the key set changes every rebuild, every entry
+#     reads as new, and the delta check is silently disabled. The disjoint
+#     guard above catches the symptom; this catches it at the edit.
+mkdir -p "$WORK/bins"
+: > "$WORK/bins/simple_interaction"
+: > "$WORK/bins/simple_interaction-0123456789abcdef"
+: > "$WORK/bins/simple_interaction.d"
+chmod +x "$WORK/bins/simple_interaction" "$WORK/bins/simple_interaction-0123456789abcdef"
+rc=0
+out=$(bash "$SCRIPT" measure "$WORK/bins" "$WORK/bins.json" 2>&1) || rc=$?
+expect_rc "measure: succeeds over a populated directory" 0
+if [ "$(jq -r 'keys | join(",")' < "$WORK/bins.json")" = "simple_interaction" ]; then
+  echo "ok   - measure: keeps the unsuffixed name and drops the hashed rebuild"
+else
+  echo "FAIL - measure: expected exactly {simple_interaction}, got $(jq -c 'keys' < "$WORK/bins.json")"
+  failures=$((failures + 1))
+fi
+
 # --- `measure` over an empty directory must not report success: a run that
 #     measured nothing feeds an empty map into the comparison above.
 mkdir -p "$WORK/nothing"
