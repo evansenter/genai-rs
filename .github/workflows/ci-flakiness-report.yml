@@ -303,22 +303,45 @@ jobs:
             # from before this marker existed — has no baseline and reports
             # everything as new; that is correct, since it is also the first
             # time anyone is being told.
+            #
+            # What that state can mean is bounded by what it holds: every
+            # test that failed somewhere in the rolling 7-day window. So this
+            # detects "newly flaky in this window", not "never seen before" —
+            # a test that goes quiet for eight days and fails once is
+            # announced again. Worth a ping, and worth not overstating, since
+            # the two readings diverge exactly for the long-tail intermittent
+            # tests this report exists to surface.
+            #
+            # `tr -d "\r"` because a body edited through the web UI comes back
+            # CRLF-normalized, which would break the `$`-anchored marker
+            # match. That failure is silent in the worst direction: an
+            # unparseable marker is indistinguishable from an absent one, and
+            # absent means "report everything".
             PREVIOUS_NAMES=$(gh issue view "$EXISTING_ISSUE" --json body --jq .body \
+              | tr -d '\r' \
               | sed -n '/^<!-- flaky-baseline$/,/^-->$/p' \
               | sed '1d;$d' | sort -u)
             CURRENT_NAMES=$(jq -r '.[].name' tests.json | sort -u)
             NEW_NAMES=$(comm -13 <(echo "$PREVIOUS_NAMES") <(echo "$CURRENT_NAMES") | sed '/^$/d')
 
-            gh issue edit "$EXISTING_ISSUE" \
-              --title "$TITLE" \
-              --body-file "flakiness_report.md"
-
+            # Comment first, then edit. The edit commits the new baseline, so
+            # doing it first means a failed comment — a secondary rate limit
+            # on the adoption run, which posts ~48 entries at once, is the
+            # realistic case — advances the baseline past tests that were
+            # never announced, and nothing announces them tomorrow either.
+            # This order makes that retryable: a failed comment leaves the old
+            # baseline, so the next run recomputes the same set. The
+            # mirror-image risk is re-announcing once after a failed edit,
+            # which is the cheaper way to be wrong for a path that exists to
+            # avoid missing signal rather than to avoid repeating it.
             if [ -n "$NEW_NAMES" ]; then
               gh issue comment "$EXISTING_ISSUE" --body "$(
                 echo "**Newly flaky since the last report:**"
                 echo
                 sed 's/^/- `/; s/$/`/' <<<"$NEW_NAMES"
                 echo
+                echo "New to the rolling 7-day window — a test that had gone"
+                echo "quiet for longer than the window counts as new again."
                 echo "The body above has the full current window."
                 echo
                 echo "---"
