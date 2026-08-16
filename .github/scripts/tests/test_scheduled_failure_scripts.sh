@@ -66,13 +66,34 @@ check() {
   fi
 }
 
+# Runs a script under the stubbed `gh`, keeping its output *and* its status.
+#
+# The tolerance has to live off the command substitution. `out=$(... || true)`
+# discards the exit status, so a script that died before reaching its
+# create-or-update branch produces output containing no "issue create" — and
+# the negative assertions below, the two written specifically to catch
+# duplicate filing, would report ok for the wrong reason. Keeping the
+# tolerance is still right: a failing script should print its output through
+# `check` rather than killing the harness under `set -e`.
+run_script() {
+  local label="$1"
+  shift
+  local rc=0
+  out=$(PATH="$WORK:$PATH" bash "$@" 2>&1) || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "FAIL - $label: the script exited $rc"
+    sed 's/^/         /' <<<"$out"
+    failures=$((failures + 1))
+  fi
+}
+
 TITLE_FLAKY="Scheduled workflow failing: CI Flakiness Report"
 
 # --- Reporting: an existing issue must be updated and commented on, not
 #     duplicated. This is the assertion the $ENV.TITLE bug would fail.
 make_gh_stub "[{\"title\":\"$TITLE_FLAKY\",\"number\":77},{\"title\":\"unrelated\",\"number\":2}]"
-out=$(PATH="$WORK:$PATH" bash "$SCRIPTS/report_scheduled_failure.sh" \
-  "CI Flakiness Report" "https://example/run/1" 2>&1 || true)
+run_script "report_scheduled_failure.sh" "$SCRIPTS/report_scheduled_failure.sh" \
+  "CI Flakiness Report" "https://example/run/1"
 check "reporting: finds the existing issue" "Updated issue #77" "$out"
 check "reporting: edits its body"           "issue edit 77"     "$out"
 check "reporting: comments on repeat"       "Still failing"     "$out"
@@ -87,22 +108,22 @@ fi
 
 # --- Reporting: nothing matching means a fresh issue.
 make_gh_stub '[{"title":"unrelated","number":2}]'
-out=$(PATH="$WORK:$PATH" bash "$SCRIPTS/report_scheduled_failure.sh" \
-  "CI Flakiness Report" "https://example/run/1" 2>&1 || true)
+run_script "report_scheduled_failure.sh" "$SCRIPTS/report_scheduled_failure.sh" \
+  "CI Flakiness Report" "https://example/run/1"
 check "reporting: files a new issue when none matches" "issue create" "$out"
 check "reporting: labels it for the scoped lookup" "ci-health-escalation" "$out"
 
 # --- Resolving: an open issue is commented on and closed.
 make_gh_stub "[{\"title\":\"$TITLE_FLAKY\",\"number\":77}]"
-out=$(PATH="$WORK:$PATH" bash "$SCRIPTS/resolve_scheduled_failure.sh" \
-  "CI Flakiness Report" 2>&1 || true)
+run_script "resolve_scheduled_failure.sh" "$SCRIPTS/resolve_scheduled_failure.sh" \
+  "CI Flakiness Report"
 check "resolving: closes the issue"  "issue close 77" "$out"
 check "resolving: says why"          "Recovered"      "$out"
 
 # --- Resolving: nothing open is a clean no-op, not an error.
 make_gh_stub '[]'
-out=$(PATH="$WORK:$PATH" bash "$SCRIPTS/resolve_scheduled_failure.sh" \
-  "CI Flakiness Report" 2>&1 || true)
+run_script "resolve_scheduled_failure.sh" "$SCRIPTS/resolve_scheduled_failure.sh" \
+  "CI Flakiness Report"
 check "resolving: no-op when nothing is open" "No open failure issue" "$out"
 
 # --- Reporting: the body carries streak length, which is the thing #431 is
@@ -111,8 +132,8 @@ make_gh_stub "[{\"title\":\"$TITLE_FLAKY\",\"number\":77}]" \
   '{"createdAt":"2026-05-01T00:00:00Z","comments":[
       {"body":"Still failing: x","createdAt":"2026-05-02T00:00:00Z"},
       {"body":"Still failing: x","createdAt":"2026-05-03T00:00:00Z"}]}'
-out=$(PATH="$WORK:$PATH" bash "$SCRIPTS/report_scheduled_failure.sh" \
-  "CI Flakiness Report" "https://example/run/1" 2>&1 || true)
+run_script "report_scheduled_failure.sh" "$SCRIPTS/report_scheduled_failure.sh" \
+  "CI Flakiness Report" "https://example/run/1"
 # Two prior "Still failing" comments + the run that opened it + this run.
 check "streak: counts the run that opened the issue" \
   "Failing since 2026-05-01 — 4 consecutive scheduled runs" "$out"
@@ -125,16 +146,16 @@ make_gh_stub "[{\"title\":\"$TITLE_FLAKY\",\"number\":77}]" \
       {"body":"Still failing: x","createdAt":"2026-05-02T00:00:00Z"},
       {"body":"Recovered — the scheduled run succeeded. Closing.","createdAt":"2026-05-03T00:00:00Z"},
       {"body":"Still failing: x","createdAt":"2026-06-10T00:00:00Z"}]}'
-out=$(PATH="$WORK:$PATH" bash "$SCRIPTS/report_scheduled_failure.sh" \
-  "CI Flakiness Report" "https://example/run/1" 2>&1 || true)
+run_script "report_scheduled_failure.sh" "$SCRIPTS/report_scheduled_failure.sh" \
+  "CI Flakiness Report" "https://example/run/1"
 check "streak: a recovery resets the count" \
   "Failing since 2026-06-10 — 2 consecutive scheduled runs" "$out"
 
 # --- The third argument replaces the default body paragraph. `audit.yml`
 #     relies on this to avoid pointing a reader at CI health.
 make_gh_stub '[]'
-out=$(PATH="$WORK:$PATH" bash "$SCRIPTS/report_scheduled_failure.sh" \
-  "Security Audit" "https://example/run/1" "CUSTOM CONTEXT PARAGRAPH" 2>&1 || true)
+run_script "report_scheduled_failure.sh" "$SCRIPTS/report_scheduled_failure.sh" \
+  "Security Audit" "https://example/run/1" "CUSTOM CONTEXT PARAGRAPH"
 check "context: the override reaches the body" "CUSTOM CONTEXT PARAGRAPH" "$out"
 if grep -q "Scheduled workflows fail quietly" <<<"$out"; then
   echo "FAIL - context: the default paragraph survived the override"
@@ -179,6 +200,35 @@ else
   echo "FAIL - escalation labels have drifted: report='$report_label' resolve='$resolve_label'"
   failures=$((failures + 1))
 fi
+
+# The recovery prefix is the same shape of coupling, one layer less obvious:
+# the resolver *writes* the comment and the reporter *matches* on it to reset
+# the streak. Reword the resolver and the reset silently stops firing — the
+# streak then spans a recovery that did happen, reporting a number that is
+# simply wrong. Every stubbed assertion above still passes, which is exactly
+# why this is checked here rather than left to a fixture.
+#
+# Reachable, not theoretical: the reporter's lookup uses `--state all`, so a
+# recovered-then-refailed workflow takes the reset path every time.
+report_recovery=$(sed -n 's/^RECOVERY_PREFIX="\([^"]*\)".*/\1/p' "$SCRIPTS/report_scheduled_failure.sh" | head -1 || true)
+resolve_recovery=$(sed -n 's/^RECOVERY_PREFIX="\([^"]*\)".*/\1/p' "$SCRIPTS/resolve_scheduled_failure.sh" | head -1 || true)
+if [ -n "$report_recovery" ] && [ "$report_recovery" = "$resolve_recovery" ]; then
+  echo "ok   - both scripts agree on the recovery prefix ($report_recovery)"
+else
+  echo "FAIL - recovery prefixes have drifted: report='$report_recovery' resolve='$resolve_recovery'"
+  failures=$((failures + 1))
+fi
+
+# ...and the resolver's comment must actually start with the prefix it
+# declares, or the constant agrees with itself while the wire format does not.
+resolve_body=$(sed -n 's/^gh issue comment "\$EXISTING" --body "\(.*\)/\1/p' "$SCRIPTS/resolve_scheduled_failure.sh" | head -1 || true)
+case "$resolve_body" in
+  "\$RECOVERY_PREFIX"*)
+    echo "ok   - the resolver's comment is built from the declared prefix" ;;
+  *)
+    echo "FAIL - the resolver's comment does not begin with \$RECOVERY_PREFIX: '$resolve_body'"
+    failures=$((failures + 1)) ;;
+esac
 
 echo
 if [ "$failures" -gt 0 ]; then
