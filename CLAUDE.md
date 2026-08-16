@@ -269,7 +269,8 @@ After merging version bump PR:
    before the tag exists rather than after):
    `RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo +nightly doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs`
    (matches the `[package.metadata.docs.rs]` feature set; `-D warnings` here
-   is deliberately stricter than docs.rs and the CI gate — warnings are an
+   is deliberately stricter than docs.rs; it matches the CI gate flag for
+   flag, and differs by running on nightly where CI runs stable — warnings are an
    early signal locally, but only hard errors fail the actual docs.rs build)
 1. **Tag the release**: `git tag -a vX.Y.Z origin/main -m "Release vX.Y.Z"`
 2. **Push tag**: `git push origin vX.Y.Z`

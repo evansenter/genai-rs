@@ -63,11 +63,15 @@ For testing, users should use integration tests against the real API, or mock
 at the HTTP layer rather than the response-type layer.
 
 Since revision 2026-05-20, `InteractionResponse` derives `Default` and uses
-`#[serde(default)]`, so fixtures can be built with `..Default::default()`.
-Note that `#[non_exhaustive]` does not block that form for a type that also
-derives `Default` — it blocks struct-literal and FRU syntax, not
-`T::default()` followed by public-field assignment. So this is not an
-in-crate privilege, and on the types below it is not restricted at all.
+`#[serde(default)]`, so fixtures can be built with `..Default::default()` —
+which works from outside the crate only because that type does *not* carry
+`#[non_exhaustive]` today. On a type that did, that syntax would be blocked:
+`..Default::default()` is functional-update syntax, and the attribute bars a
+struct expression including the FRU form. The external route that survives
+is `T::default()` followed by public-field assignment, which is why the
+attribute alone does not make a type unconstructible — worth knowing before
+the #430 sweep lands and someone reaches for a fixture on a newly annotated
+type.
 
 **Known gap**, wider than the rule suggests and including the flagship type.
 `InteractionResponse` (`src/response.rs:782`) does not carry the attribute:
@@ -243,7 +247,12 @@ Separately, docs.rs itself only fails on hard errors, not warnings.
 
 **Decision.** `make test` and `make test-all` exclude doctests; CI runs
 `cargo test --workspace --doc`. The local docs.rs verification uses
-`-D warnings`, deliberately stricter than docs.rs and than the CI gate.
+`-D warnings`, deliberately stricter than docs.rs. Not stricter than the CI
+gate, though — `rust.yml`'s docs.rs-feature-set step already sets
+`RUSTDOCFLAGS: --cfg docsrs -D warnings`, flag for flag. What the local run
+buys is the *toolchain*: CI runs it on stable, and docs.rs builds on
+nightly, so nightly-only breakage is otherwise caught by `release.yml`'s
+validate job — after the tag exists.
 
 **Consequences.** A doctest can break locally without being noticed until CI.
 Accepted: CI catches them, and the local loop stays fast. The `-D warnings`
