@@ -59,8 +59,9 @@ the literal being blocked, so they hold either way.
 Stated as the rule; see the gap below for how far the tree currently follows
 it.
 
-**Consequences.** Users cannot hand-build a response to test against — which
-is the point:
+**Consequences.** Where the rule is followed, users cannot hand-build a
+response to test against — which is the point. (The qualifier is load-bearing
+on this tree: see the gap below.)
 
 - Response types represent API responses, not user-constructed data
 - Mocking them in unit tests gives false confidence
