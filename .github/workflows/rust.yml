@@ -637,13 +637,18 @@ jobs:
       # where a pathological binary would otherwise go unremarked.
       - name: Sanity ceiling
         run: |
-          for f in target/release/examples/*; do
-            if [ -f "$f" ] && [[ "$(basename "$f")" != *.d ]]; then
-              size=$(stat -c%s "$f")
-              if [ "$size" -gt 67108864 ]; then
-                echo "::error::Binary $(basename $f) exceeds the 64MB sanity ceiling: $size bytes"
-                exit 1
-              fi
-            fi
-          done
+          # Reads current-sizes.json rather than re-deriving with GNU-only
+          # `stat -c%s`. `measure` already wrote every size portably — round 2
+          # swapped it off `stat` precisely so the script runs on a macOS
+          # checkout — and this loop re-implemented the `.d` filter while
+          # still walking the hash-suffixed duplicates. One definition of "an
+          # example binary and its size", shared by the backstop and the
+          # delta check.
+          over=$(jq -r 'to_entries[] | select(.value > 67108864)
+            | "::error::Binary \(.key) exceeds the 64MB sanity ceiling: \(.value) bytes"' \
+            current-sizes.json)
+          if [ -n "$over" ]; then
+            echo "$over"
+            exit 1
+          fi
 

@@ -202,7 +202,9 @@ entry (both are dropped by the same filter). The delta check is not running."
         echo "If the key set changed on purpose — an examples/ reorganisation or a"
         echo "mass rename — this is self-clearing: the baseline refreshes on the next"
         echo "push to main. To land the change before then, add the \`size-growth-ok\`"
-        echo "label and push a commit; it waives this guard as well as the threshold."
+        echo "label and push a commit; it waives this guard as well as the"
+        echo "threshold. Create the label if the picker does not offer it — the"
+        echo "workflow matches on name."
         return 1
     fi
 

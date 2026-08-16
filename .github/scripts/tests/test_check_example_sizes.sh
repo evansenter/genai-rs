@@ -116,6 +116,16 @@ expect_rc     "disjoint keys: fails rather than passing vacuously" 1
 expect_output "disjoint keys: says the check did not run" "not running"
 refute_output "disjoint keys: does not claim a pass" "All examples within"
 
+# --- The override has two branches now; this is the second, which turns off
+#     the disjoint guard. A branch reachable only by adding a label to a PR
+#     is one nobody exercises by accident, and this is the guard the header
+#     calls out as protecting against "a gate reporting all examples within
+#     threshold while comparing nothing".
+SIZE_GROWTH_OK=true run_compare "$WORK/base.json" "$WORK/disjoint.json" 15
+expect_rc     "disjoint + override: waves the guard through" 0
+expect_output "disjoint + override: says why" "Nothing was comparable"
+unset SIZE_GROWTH_OK
+
 # --- The label override the failure message promises.
 run_compare "$WORK/base.json" "$WORK/big.json" 15
 expect_rc "override off: still fails" 1
