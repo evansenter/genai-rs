@@ -569,7 +569,6 @@ This happens automatically across multiple loop iterations.
 ### 1. Return JSON from Functions
 
 ```rust,ignore
-use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 #[tool(city(description = "City name"))]
@@ -582,7 +581,6 @@ fn get_weather(city: String) -> String {
 ### 2. Handle Errors Gracefully
 
 ```rust,ignore
-use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 #[tool(id(description = "User ID"))]
@@ -601,7 +599,6 @@ fn get_user(id: i32) -> String {
 ### 3. Validate Inputs
 
 ```rust,ignore
-use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 #[tool(query(description = "Search query"))]
