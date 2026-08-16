@@ -522,11 +522,20 @@ annotation when any appear, and a **failed step** past a per-run threshold
 current numbers) — the escape hatch stays available for transient blips
 without being able to quietly become the normal path.
 
-A skip that is a stable property of the environment rather than an
-unverified assertion — no `GEMINI_API_KEY`, a key not allowlisted for
-computer use — is deliberately left unmarked. Marking those would
-annotate every run forever, which is noise; the marked cases are the ones
-where a green run might be hiding a real regression.
+The rule for whether a skip gets a marker is **distinguishability, not
+stability**. A skip whose guard is narrow enough that it cannot be a
+disguised regression is left unmarked: no `GEMINI_API_KEY`, or a key not
+allowlisted for computer use — that guard matches on the tool name *and*
+an unavailability phrase, so nothing else can reach it. Marking those
+would annotate every run forever, which is noise.
+
+A skip reached from a catch-all branch is marked, however stable its
+cause may turn out to be. The MCP `Err`-arm skip is the example: it fires
+on any error its triage guard did not recognise, so it cannot tell a
+third-party outage from a rejection phrased in words the guard misses. A
+permanently unreachable server is every bit as stable as an un-allowlisted
+key — what separates them is that one of the two branches could be hiding
+a real regression.
 
 ### Test Fixtures
 

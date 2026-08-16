@@ -561,7 +561,8 @@ MCP activity is *modeled* in `response.steps` as `Step::McpServerToolCall { name
 > if a tool was actually invoked — it is a single aggregate with no per-tool
 > breakdown, so it isolates the MCP server only when MCP is the sole declared
 > tool. Combine it with another — see [Combining Tools](#combining-tools) —
-> and a search the model runs instead of the MCP call makes it non-zero too. That it excludes *declaration* overhead
+> and a search the model runs instead of the MCP call makes it non-zero too.
+> That it excludes *declaration* overhead
 > is measured, not inferred from the field's own doc ("tokens used for
 > tool/function calling overhead", which would admit it): declaring the tool
 > alongside a prompt the model answers from its own knowledge returns

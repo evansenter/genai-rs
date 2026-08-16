@@ -300,6 +300,10 @@ pub struct UsageMetadata {
     /// declared. So a non-zero value means a tool was actually invoked,
     /// which makes this the usable signal for server-side tools whose steps
     /// the API does not yet report by type (see `docs/BUILT_IN_TOOLS.md`).
+    /// It is a single aggregate across all tools, though, so it identifies
+    /// *which* tool only when one is declared —
+    /// [`InteractionResponse::tool_use_tokens`] is the caller-facing
+    /// accessor and carries the fuller story.
     #[serde(
         skip_serializing_if = "Option::is_none",
         deserialize_with = "deserialize_optional_token_count"
