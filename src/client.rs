@@ -1953,7 +1953,7 @@ mod tests {
         // would see 3. Previously that depended on whether the sibling
         // test's unconditional `remove_var` had already landed; now that the
         // sibling restores instead of clearing, it would be deterministic.
-        let guard = crate::test_subscriber::LoudWireGuard::acquire();
+        let mut guard = crate::test_subscriber::LoudWireGuard::acquire();
         guard.unset();
 
         let client = Client::builder("test_key".to_string())
@@ -1974,7 +1974,7 @@ mod tests {
         // Held across the whole set/build/unset/build sequence so no other
         // test builds a client inside the LOUD_WIRE=1 window, and so the
         // ambient value is restored on drop rather than cleared.
-        let guard = crate::test_subscriber::LoudWireGuard::acquire();
+        let mut guard = crate::test_subscriber::LoudWireGuard::acquire();
 
         guard.set("1");
         let with_env = Client::builder("test_key".to_string()).build().unwrap();

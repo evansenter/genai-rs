@@ -1425,7 +1425,7 @@ mod filter_tests {
         // reads LOUD_WIRE at construction, so a client built concurrently
         // with this window sees a stray printer (#418). Same guard as the
         // client.rs mutator; it also restores the ambient value on drop.
-        let guard = crate::test_subscriber::LoudWireGuard::acquire();
+        let mut guard = crate::test_subscriber::LoudWireGuard::acquire();
 
         guard.set("toolCall,summary");
         let printer = env_inspector().expect("LOUD_WIRE set should yield a printer");

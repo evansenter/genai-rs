@@ -153,7 +153,7 @@ impl LoudWireGuard {
 
     /// Sets `LOUD_WIRE` until the next mutation on this guard, or until it
     /// drops — whichever comes first.
-    pub(crate) fn set(&self, value: &str) {
+    pub(crate) fn set(&mut self, value: &str) {
         // SAFETY: test-only env mutation, serialized against every other
         // LOUD_WIRE *mutator* by the lock this guard holds.
         //
@@ -174,7 +174,7 @@ impl LoudWireGuard {
 
     /// Clears `LOUD_WIRE` until the next mutation on this guard, or until it
     /// drops — whichever comes first.
-    pub(crate) fn unset(&self) {
+    pub(crate) fn unset(&mut self) {
         // SAFETY: as above.
         unsafe { std::env::remove_var("LOUD_WIRE") };
     }
@@ -202,12 +202,12 @@ mod loud_wire_guard_tests {
         // LOUD_WIRE-sensitive tests, and its own drop puts the real ambient
         // value back afterwards. The guards under test are built with
         // `nested()` because the mutex is not reentrant.
-        let ambient = LoudWireGuard::acquire();
+        let mut ambient = LoudWireGuard::acquire();
 
         // A guard taken over a set value must put that value back.
         ambient.set("ambient-value");
         {
-            let guard = LoudWireGuard::nested();
+            let mut guard = LoudWireGuard::nested();
             guard.set("temporary");
             assert_eq!(
                 std::env::var("LOUD_WIRE").as_deref(),
@@ -224,7 +224,7 @@ mod loud_wire_guard_tests {
         // And an absent one must come back absent.
         ambient.unset();
         {
-            let guard = LoudWireGuard::nested();
+            let mut guard = LoudWireGuard::nested();
             guard.set("temporary");
             assert_eq!(
                 std::env::var("LOUD_WIRE").as_deref(),
