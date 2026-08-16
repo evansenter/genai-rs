@@ -125,7 +125,12 @@ make_gh_stub '[{"title":"unrelated","number":2}]'
 run_script "report_scheduled_failure.sh" "$SCRIPTS/report_scheduled_failure.sh" \
   "CI Flakiness Report" "https://example/run/1"
 check "reporting: files a new issue when none matches" "issue create" "$out"
-check "reporting: labels it for the scoped lookup" "ci-health-escalation" "$out"
+# Anchored to the create call: the script also runs `gh label create
+# ci-health-escalation` unconditionally, whose log line contains the same
+# string — so an unanchored grep passed even with the label dropped from
+# `issue create`. An issue filed without it is invisible to the resolver,
+# which then no-ops forever.
+check "reporting: labels it for the scoped lookup" "issue create.*ci-health-escalation" "$out"
 
 # --- Resolving: an open issue is commented on and closed.
 make_gh_stub "[{\"title\":\"$TITLE_FLAKY\",\"number\":77}]"
@@ -179,6 +184,23 @@ run_script "report_scheduled_failure.sh" "$SCRIPTS/report_scheduled_failure.sh" 
   "CI Flakiness Report" "https://example/run/1"
 check "streak: a re-failure right after recovery dates itself today" \
   "Failing since $(date -u +%Y-%m-%d) — 1 scheduled run" "$out"
+
+# --- ...and the cap must also fire when the returned page happens to
+#     contain a Recovered. Deriving it from the post-reset tail made it
+#     unreachable there — that expression tops out at total-1, i.e. 99 on
+#     a full page — so the branch printed a confident streak over a
+#     history it could not see.
+python3 - > "$WORK/capped_recovery.json" <<'FIXTURE'
+import json
+comments = [{"body": "Recovered — the scheduled run succeeded. Closing.",
+             "createdAt": "2026-05-02T00:00:00Z"}]
+comments += [{"body": "Still failing: x", "createdAt": "2026-05-03T00:00:00Z"}] * 99
+print(json.dumps({"createdAt": "2026-05-01T00:00:00Z", "comments": comments}))
+FIXTURE
+make_gh_stub "[{\"title\":\"$TITLE_FLAKY\",\"number\":77}]" "$(cat "$WORK/capped_recovery.json")"
+run_script "report_scheduled_failure.sh" "$SCRIPTS/report_scheduled_failure.sh" \
+  "CI Flakiness Report" "https://example/run/1"
+check "streak: caps a full page that contains a recovery" "Failing for at least" "$out"
 
 # --- Annotations survive a body that has been through the web UI, which
 #     normalises to CRLF. That is the sequence the marker exists for: a human

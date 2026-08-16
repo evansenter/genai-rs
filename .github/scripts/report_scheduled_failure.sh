@@ -113,13 +113,14 @@ streak_line() {
   parsed=$(jq -r \
     --arg recovered "$RECOVERY_PREFIX" \
     --arg failing "$FAILURE_PREFIX" '
-    ((.comments // []) | map(.body | startswith($recovered)) | rindex(true)) as $r
+    ((.comments // []) | length) as $total
+    | ((.comments // []) | map(.body | startswith($recovered)) | rindex(true)) as $r
     | (if $r == null
        then {opened: .createdAt, rest: (.comments // [])}
        else {opened: null,       rest: ((.comments // [])[($r + 1):])}
        end)
     | (.rest | map(select(.body | startswith($failing)))) as $sf
-    | "\(($sf | length) + (if .opened == null then 1 else 2 end))|\(.opened // $sf[0].createdAt // "")|\(((.rest | length) + ($r // 0)) >= 100)"
+    | "\(($sf | length) + (if .opened == null then 1 else 2 end))|\(.opened // $sf[0].createdAt // "")|\($total >= 100)"
   ' <<<"$view" 2>/dev/null) || return 0
 
   # `|`, not a tab. Tab is an IFS *whitespace* character, so bash collapses a
