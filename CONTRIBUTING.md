@@ -17,12 +17,24 @@ error: linking with `cc` failed: exit status: 1
   = note: collect2: fatal error: cannot find 'ld'
 ```
 
-`ld` is present; `mold` is not. Install it (`sudo apt install mold`), or
-override for your shell:
+`ld` is present; `mold` is not. The zero-install way out is to drop the flag
+entirely — the env var overrides `target.x86_64-unknown-linux-gnu.rustflags`
+from `.cargo/config.toml`, falling back to the system linker:
+
+```bash
+export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS=""
+```
+
+Slower, but always present. For the fast path install a linker first —
+`sudo apt install mold`, or `lld` and:
 
 ```bash
 export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-arg=-fuse-ld=lld"
 ```
+
+Note that `lld` is no more installed by default than `mold` is: reaching for
+that line without installing it reproduces the same failure under a
+different name.
 
 (Tracked as #428 — the config hard-requires a non-default tool.)
 

@@ -13,11 +13,14 @@ turned out wrong is more useful than no record — see D-010, which exists
 precisely because a feature was marked done without evidence.
 
 **Format**: context (what forced a choice) → decision → consequences
-(including what it costs). No template ceremony beyond that.
+(including what it costs), and a date on the heading. No template ceremony
+beyond that. The date is not decoration: entries written against open work
+say "pending at the time of writing", and once that work lands the clause is
+only readable if the file says when it was written.
 
 ---
 
-## D-001 — Evergreen soft-typing: preserve unknown data, never reject it
+## D-001 — Evergreen soft-typing: preserve unknown data, never reject it (2026-08-16)
 
 **Context.** The Gemini API adds enum variants, content types, and fields
 without warning. A client that rejects what it doesn't recognize breaks on
@@ -40,7 +43,7 @@ unknowns rather than tolerate them.
 
 ---
 
-## D-002 — Response structs are `#[non_exhaustive]`; users cannot construct them
+## D-002 — Response structs are `#[non_exhaustive]`; users cannot construct them (2026-08-16)
 
 **Context.** Response types grow fields as the API does. If users can build
 them with struct literals, every added field is a breaking change.
@@ -66,11 +69,11 @@ Since revision 2026-05-20, `InteractionResponse` derives `Default` and uses
 `Environment`, `Agent`, `Webhook` — do not carry the attribute, so adding a
 field to them *is* breaking. Tracked in #430.
 
-*Relocated from `docs/ENUM_WIRE_FORMATS.md` ("Structs and `#[non_exhaustive]`").*
+*Also stated as a rule in `docs/ENUM_WIRE_FORMATS.md` ("Structs and `#[non_exhaustive]`"), which does not mention the #430 gap named above.*
 
 ---
 
-## D-003 — Antigravity alias enums deliberately break round-trip fidelity
+## D-003 — Antigravity alias enums deliberately break round-trip fidelity (2026-08-16)
 
 **Context.** The Antigravity harness renames enum values between revisions.
 `STATE_IDLE` became `STATE_FULLY_IDLE` in 0.1.5 → 0.1.10, and treating the old
@@ -85,18 +88,20 @@ and worth naming as such. It is safe here because these are inbound-only
 enums — the client never sends a `TrajectoryState` — so the asymmetry cannot
 reach the wire. What it buys is one build driving either harness revision.
 
-*Relocated from `docs/ENUM_WIRE_FORMATS.md` (Antigravity enums section).*
+*Also stated as a rule in `docs/ENUM_WIRE_FORMATS.md` (Antigravity enums section).*
 
 ---
 
-## D-004 — Verify API surface from generated bindings first, prose docs last
+## D-004 — Verify API surface from generated bindings first, prose docs last (2026-08-16)
 
 **Context.** Three sources describe the API and they disagree, consistently in
-one direction. Two features found in the 2026-08 sweep against SDK 2.17.0
-(`docs/INTERACTIONS_API_GAP.md`) — video `processing` (a
-~127x token-cost lever) and a widened `speech_config` union — appear in
-*neither* `ai.google.dev` page. Conversely, the bindings describe a
-`speech_config` object arm the API rejects outright.
+one direction. Two features found in the 2026-08 SDK 2.17.0 sweep — video
+`processing` (#434, a ~127x token-cost lever) and a widened `speech_config`
+union — appear in *neither* `ai.google.dev` page. Conversely, the bindings describe a
+`Tool::Retrieval` and an `enable_bigquery_tool` flag that the endpoint
+rejects as Vertex-only (`docs/INTERACTIONS_API_GAP.md`, "Vertex-only
+findings") — recorded rejections, cited rather than recalled, because the
+whole argument here is that prose should not be taken at its word.
 
 **Decision.** Rank sources: (1) generated bindings from `google-genai`, which
 ship ahead of prose; (2) live probes, which are ground truth and often
@@ -116,7 +121,7 @@ and produced a "surface fully covered" conclusion that was false (#421).
 
 ---
 
-## D-005 — Spec-present but API-rejected: remove, or keep for parity?
+## D-005 — Spec-present but API-rejected: remove, or keep for parity? (2026-08-16)
 
 **Context.** Several fields exist in the generated bindings but are rejected by
 the Gemini endpoint. They fall into two groups, and the API's own error text
@@ -142,7 +147,7 @@ correctly, which it did. See D-010.
 
 ---
 
-## D-006 — Model ids live in constants, and only in `src/lib.rs`
+## D-006 — Model ids live in constants, and only in `src/lib.rs` (2026-08-16)
 
 **Context.** Bumping the model previously meant editing ~600 occurrences of a
 string literal. A sweep that size reliably misses a few, and a missed one is
@@ -169,11 +174,11 @@ The literal guard cannot protect the constants file itself: its whole job is
 to keep ids in that file, so an id that is stale *in* that file is invisible to
 it by construction.
 
-*Relocated from CLAUDE.md (model constants table).*
+*Also stated as a rule in CLAUDE.md (model constants table).*
 
 ---
 
-## D-007 — Breaking changes are preferred over compatibility shims
+## D-007 — Breaking changes are preferred over compatibility shims (2026-08-16)
 
 **Context.** Pre-1.0 library tracking a beta API that itself makes breaking
 changes.
@@ -186,11 +191,11 @@ compatibility.
 surface stays small and there is no long tail of half-supported spellings.
 CHANGELOG entries carry migration notes for anything user-facing.
 
-*Relocated from CLAUDE.md ("Versioning Philosophy").*
+*Also stated as a rule in CLAUDE.md ("Versioning Philosophy").*
 
 ---
 
-## D-008 — Tests are organized by feature, not by pattern
+## D-008 — Tests are organized by feature, not by pattern (2026-08-16)
 
 **Context.** Multi-turn conversation patterns appear across
 `multiturn_tests.rs`, `streaming_multiturn_tests.rs`,
@@ -205,11 +210,11 @@ testing function calling.
 "what is this test primarily verifying?" The payoff is that every test for a
 feature is in one place.
 
-*Relocated from `docs/TESTING.md` ("Intentional Design Decisions").*
+*Also stated as a rule in `docs/TESTING.md` ("Intentional Design Decisions").*
 
 ---
 
-## D-009 — Doctests run in CI only; the docs.rs check is stricter than docs.rs
+## D-009 — Doctests run in CI only; the docs.rs check is stricter than docs.rs (2026-08-16)
 
 **Context.** Doctests add real compile overhead to every local `make test`.
 Separately, docs.rs itself only fails on hard errors, not warnings.
@@ -222,11 +227,11 @@ Separately, docs.rs itself only fails on hard errors, not warnings.
 Accepted: CI catches them, and the local loop stays fast. The `-D warnings`
 strictness is an early signal, not a prediction of what docs.rs will reject.
 
-*Relocated from CLAUDE.md (Testing / Release Steps).*
+*Also stated as a rule in CLAUDE.md (Testing / Release Steps).*
 
 ---
 
-## D-010 — A structural test is not evidence a feature works
+## D-010 — A structural test is not evidence a feature works (2026-08-16)
 
 **Context.** `cached_content` was marked complete in the gap analysis and had
 a passing test, `test_with_cached_content_sets_field_and_wire_format`, which
@@ -253,7 +258,7 @@ request fails.
 
 ---
 
-## D-011 — Record structural moves
+## D-011 — Record structural moves (2026-08-16)
 
 **Context.** #265 spent seven months pointing at `genai-client/src/models/shared.rs`,
 a path that no longer exists. The crate was restructured with no record, so a
