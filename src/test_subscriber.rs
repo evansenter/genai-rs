@@ -1,6 +1,13 @@
-//! Test-only scoped `tracing` subscriber helpers, for pinning that a
-//! log signal actually fires — value assertions cannot distinguish a
-//! degradation arm that warns from one that went silent.
+//! Test-only support shared across the crate's unit tests.
+//!
+//! Two things live here:
+//!
+//! - Scoped `tracing` subscriber helpers, for pinning that a log signal
+//!   actually fires — value assertions cannot distinguish a degradation arm
+//!   that warns from one that went silent.
+//! - [`LoudWireGuard`], which serializes the crate's `LOUD_WIRE` mutators
+//!   and restores the ambient value. It lives here rather than beside either
+//!   mutator because both `client.rs` and `wire.rs` need it (#418).
 
 use std::sync::{Arc, Mutex};
 use tracing::span;
@@ -100,7 +107,7 @@ static LOUD_WIRE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// would leave the rest of the process running without it, changing what
 /// unrelated tests observe.
 pub(crate) struct LoudWireGuard {
-    _lock: std::sync::MutexGuard<'static, ()>,
+    _lock: Option<std::sync::MutexGuard<'static, ()>>,
     prior: Option<String>,
 }
 
@@ -113,7 +120,22 @@ impl LoudWireGuard {
     pub(crate) fn acquire() -> Self {
         let lock = LOUD_WIRE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         Self {
-            _lock: lock,
+            _lock: Some(lock),
+            prior: std::env::var("LOUD_WIRE").ok(),
+        }
+    }
+
+    /// Same save/restore behavior, but without taking the lock — for a caller
+    /// that already holds it.
+    ///
+    /// The mutex is not reentrant, so the test that asserts on the restore
+    /// path cannot call [`LoudWireGuard::acquire`] a second time to get a
+    /// guard to observe. It holds one real guard for its duration and builds
+    /// the guards under test with this.
+    #[cfg(test)]
+    fn nested() -> Self {
+        Self {
+            _lock: None,
             prior: std::env::var("LOUD_WIRE").ok(),
         }
     }
@@ -139,5 +161,49 @@ impl Drop for LoudWireGuard {
             Some(value) => unsafe { std::env::set_var("LOUD_WIRE", value) },
             None => unsafe { std::env::remove_var("LOUD_WIRE") },
         }
+    }
+}
+
+#[cfg(test)]
+mod loud_wire_guard_tests {
+    use super::LoudWireGuard;
+
+    /// The restore-on-drop path, which is the subtlest part of the guard and
+    /// was otherwise unasserted.
+    #[test]
+    fn restores_the_ambient_value_on_drop() {
+        // Held for the whole test. It serializes against the other
+        // LOUD_WIRE-sensitive tests, and its own drop puts the real ambient
+        // value back afterwards. The guards under test are built with
+        // `nested()` because the mutex is not reentrant.
+        let ambient = LoudWireGuard::acquire();
+
+        // A guard taken over a set value must put that value back.
+        ambient.set("ambient-value");
+        {
+            let guard = LoudWireGuard::nested();
+            guard.set("temporary");
+            assert_eq!(
+                std::env::var("LOUD_WIRE").as_deref(),
+                Ok("temporary"),
+                "set() should take effect while the guard is held"
+            );
+        }
+        assert_eq!(
+            std::env::var("LOUD_WIRE").as_deref(),
+            Ok("ambient-value"),
+            "drop must restore the value the guard found, not clear it"
+        );
+
+        // And an absent one must come back absent.
+        ambient.unset();
+        {
+            let guard = LoudWireGuard::nested();
+            guard.set("temporary");
+        }
+        assert!(
+            std::env::var("LOUD_WIRE").is_err(),
+            "drop must clear when the guard found nothing set"
+        );
     }
 }

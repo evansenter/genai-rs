@@ -1946,7 +1946,15 @@ mod tests {
         // Held for the build: an unrelated LOUD_WIRE=1 window would add a
         // third inspector to this client. The guard is shared with the
         // other LOUD_WIRE mutator in `src/wire.rs`.
-        let _guard = crate::test_subscriber::LoudWireGuard::acquire();
+        //
+        // `unset()` because the guard blocks *concurrent* mutators but does
+        // not neutralize an *ambient* one: under `LOUD_WIRE=1 cargo test`,
+        // `build()` would append a printer on top of the two Noops and this
+        // would see 3. Previously that depended on whether the sibling
+        // test's unconditional `remove_var` had already landed; now that the
+        // sibling restores instead of clearing, it would be deterministic.
+        let guard = crate::test_subscriber::LoudWireGuard::acquire();
+        guard.unset();
 
         let client = Client::builder("test_key".to_string())
             .add_wire_inspector(Arc::new(Noop))
