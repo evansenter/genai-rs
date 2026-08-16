@@ -97,7 +97,7 @@ expect_rc "shrinkage: passes" 0
 echo '{"alpha": 1000000, "beta": 2000000, "gamma": 9000000}' > "$WORK/added.json"
 run_compare "$WORK/base.json" "$WORK/added.json" 15
 expect_rc     "new example: passes" 0
-expect_output "new example: is reported" "New examples"
+expect_output "new example: is reported" "No usable baseline.*gamma"
 
 # --- No baseline: the check cannot run. It must say so as a warning, because
 #     a gate that is not running must not look like a gate that ran clean.
@@ -163,7 +163,7 @@ expect_rc     "zero baseline: does not abort the filter" 0
 expect_output "zero baseline: treated as uncomparable, like a new example" "1 compared"
 # ...and it must actually be *reported*, not silently dropped from every
 # list — which is what `select($base[.] == null)` did to it.
-expect_output "zero baseline: the entry is named, not silently dropped" "New examples.*alpha"
+expect_output "zero baseline: the entry is named, not silently dropped" "No usable baseline.*alpha"
 
 # --- A removed example should be reported, not silently dropped.
 echo '{"alpha": 1000000}' > "$WORK/removed.json"

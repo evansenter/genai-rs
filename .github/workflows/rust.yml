@@ -539,20 +539,31 @@ jobs:
           end=$(date +%s)
           duration=$((end - start))
           echo "| Examples build | ${duration}s |" >> $GITHUB_STEP_SUMMARY
+      - name: Measure example sizes
+        run: |
+          .github/scripts/check_example_sizes.sh measure \
+            target/release/examples current-sizes.json
+          cat current-sizes.json
+
+      # Rendered from current-sizes.json, not re-derived. This was the last
+      # step in the job with its own size-measuring implementation (`ls -lh`
+      # through `awk`), so the job carried two — and it sampled a hardcoded
+      # three examples, silently omitting every other one, including the
+      # antigravity targets and `multi_turn_agent_manual_stateless` that are
+      # among the likeliest to move. One definition of "an example binary and
+      # its size", now shared by the summary, the delta check and the
+      # backstop.
       - name: Binary sizes
         run: |
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Example Binary Sizes" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Example | Size |" >> $GITHUB_STEP_SUMMARY
-          echo "|---------|------|" >> $GITHUB_STEP_SUMMARY
-          for f in target/release/examples/simple_interaction target/release/examples/auto_function_calling target/release/examples/streaming; do
-            if [ -f "$f" ]; then
-              size=$(ls -lh "$f" | awk '{print $5}')
-              name=$(basename "$f")
-              echo "| $name | $size |" >> $GITHUB_STEP_SUMMARY
-            fi
-          done
+          {
+            echo ""
+            echo "### Example Binary Sizes"
+            echo ""
+            echo "| Example | Size |"
+            echo "|---------|------|"
+            jq -r 'to_entries | sort_by(-.value)[]
+              | "| \(.key) | \(.value / 1048576 * 10 | round / 10) MB |"' current-sizes.json
+          } >> $GITHUB_STEP_SUMMARY
       # Per-example delta against the last main build, not an absolute
       # ceiling. The old 16MB ceiling had been raised three times (10 -> 12
       # -> 16), each time only after going red on an unrelated PR: an
@@ -565,12 +576,6 @@ jobs:
       # a committed file: sizes are toolchain- and linker-dependent, so a
       # committed number would encode one machine's toolchain and drift
       # against every other.
-      - name: Measure example sizes
-        run: |
-          .github/scripts/check_example_sizes.sh measure \
-            target/release/examples current-sizes.json
-          cat current-sizes.json
-
       - name: Fetch the size baseline from main
         if: github.event_name == 'pull_request'
         env:
@@ -611,6 +616,14 @@ jobs:
             : > baseline-sizes.json
           fi
 
+      # PR-only, both here and on the fetch above, and that is a deliberate
+      # trust boundary rather than leftover scoping: a direct push to main has
+      # no PR to fail and no label to waive with, and the same run then
+      # publishes its sizes as the new baseline — so growth arriving that way
+      # is absorbed rather than flagged. Safe while branch protection requires
+      # PRs into main; if that ever changes, the fix is to run `compare`
+      # advisory-only on main pushes (fetch, compare, swallow the status) so
+      # drift lands in the step summary before the baseline is overwritten.
       - name: Check size deltas
         if: github.event_name == 'pull_request'
         env:

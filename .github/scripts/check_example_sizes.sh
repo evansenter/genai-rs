@@ -144,7 +144,11 @@ compare() {
         | [$cur | keys[] | select(($base[.] // 0) <= 0)] | join(", ")' "$current" "$baseline")
     if [ -n "$added" ]; then
         echo
-        echo "::notice::New examples (no baseline, not checked): $added"
+        # "No *usable* baseline": round 7 widened the selector to fold in
+        # zero-size baseline entries, for which a baseline does exist — it is
+        # just unusable as a divisor. Saying "no baseline" for a key plainly
+        # present in the artifact starts the reader from a wrong hypothesis.
+        echo "::notice::No usable baseline, not checked (new, or zero-size in the baseline): $added"
     fi
 
     # Symmetric to the above. A removed or renamed example silently leaves
