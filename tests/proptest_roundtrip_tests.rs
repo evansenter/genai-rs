@@ -131,18 +131,10 @@ fn arb_modality_tokens() -> impl Strategy<Value = ModalityTokens> {
         ],
         any::<u32>(),
     )
-        // Built through JSON rather than a struct literal: these response
-        // types are `#[non_exhaustive]`, so an integration test cannot use
-        // struct-expression syntax on them. Same approach the module doc
-        // describes for `AutoFunctionResult`. Unwrap is sound — the shape is
-        // fixed here and only the values vary.
-        .prop_map(|(modality, tokens)| {
-            serde_json::from_value(serde_json::json!({
-                "modality": modality,
-                "tokens": tokens,
-            }))
-            .expect("ModalityTokens shape is fixed by this strategy")
-        })
+        // `ModalityTokens` is `#[non_exhaustive]` and derives no `Default`,
+        // so unlike the strategies below it needs the constructor rather
+        // than default-then-assign.
+        .prop_map(|(modality, tokens)| ModalityTokens::new(modality, tokens))
 }
 
 /// Strategy for generating an optional Vec of ModalityTokens.
@@ -180,26 +172,22 @@ fn arb_usage_metadata() -> impl Strategy<Value = UsageMetadata> {
                 cached_tokens_by_modality,
                 tool_use_tokens_by_modality,
             )| {
-                // Via JSON — `UsageMetadata` is `#[non_exhaustive]`. Nulls
-                // are dropped so absent stays absent rather than becoming an
-                // explicit null, which the roundtrip would then disagree on.
-                let mut wire = serde_json::json!({
-                    "total_input_tokens": total_input_tokens,
-                    "total_output_tokens": total_output_tokens,
-                    "total_tokens": total_tokens,
-                    "total_cached_tokens": total_cached_tokens,
-                    "total_thought_tokens": total_thought_tokens,
-                    "total_tool_use_tokens": total_tool_use_tokens,
-                    "input_tokens_by_modality": input_tokens_by_modality,
-                    "output_tokens_by_modality": output_tokens_by_modality,
-                    "cached_tokens_by_modality": cached_tokens_by_modality,
-                    "tool_use_tokens_by_modality": tool_use_tokens_by_modality,
-                });
-                if let Some(map) = wire.as_object_mut() {
-                    map.retain(|_, v| !v.is_null());
-                }
-                let usage: UsageMetadata = serde_json::from_value(wire)
-                    .expect("UsageMetadata shape is fixed by this strategy");
+                // `#[non_exhaustive]` blocks the struct literal from an
+                // integration test, but not default-then-assign. Preferred
+                // over a JSON detour: exact, and it does not push every
+                // generated value through Serialize/Deserialize before the
+                // roundtrip assertion sees it.
+                let mut usage = UsageMetadata::default();
+                usage.total_input_tokens = total_input_tokens;
+                usage.total_output_tokens = total_output_tokens;
+                usage.total_tokens = total_tokens;
+                usage.total_cached_tokens = total_cached_tokens;
+                usage.total_thought_tokens = total_thought_tokens;
+                usage.total_tool_use_tokens = total_tool_use_tokens;
+                usage.input_tokens_by_modality = input_tokens_by_modality;
+                usage.output_tokens_by_modality = output_tokens_by_modality;
+                usage.cached_tokens_by_modality = cached_tokens_by_modality;
+                usage.tool_use_tokens_by_modality = tool_use_tokens_by_modality;
                 usage
             },
         )
@@ -311,26 +299,19 @@ fn arb_interaction_response() -> impl Strategy<Value = InteractionResponse> {
                 created,
                 updated,
             )| {
-                // Via JSON — `InteractionResponse` is `#[non_exhaustive]`,
-                // so neither a struct literal nor `..Default::default()` is
-                // available to an integration test.
-                let mut wire = serde_json::json!({
-                    "id": id,
-                    "model": model,
-                    "agent": agent,
-                    "steps": steps,
-                    "status": status,
-                    "usage": usage,
-                    "previous_interaction_id": previous_interaction_id,
-                    "environment_id": environment_id,
-                    "created": created,
-                    "updated": updated,
-                });
-                if let Some(map) = wire.as_object_mut() {
-                    map.retain(|_, v| !v.is_null());
-                }
-                let response: InteractionResponse = serde_json::from_value(wire)
-                    .expect("InteractionResponse shape is fixed by this strategy");
+                // Default-then-assign: `#[non_exhaustive]` blocks the struct
+                // literal and `..Default::default()` here, but not this.
+                let mut response = InteractionResponse::default();
+                response.id = id;
+                response.model = model;
+                response.agent = agent;
+                response.steps = steps;
+                response.status = status;
+                response.usage = usage;
+                response.previous_interaction_id = previous_interaction_id;
+                response.environment_id = environment_id;
+                response.created = created;
+                response.updated = updated;
                 response
             },
         )

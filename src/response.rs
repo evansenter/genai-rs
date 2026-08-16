@@ -240,6 +240,21 @@ pub struct ModalityTokens {
     pub tokens: u32,
 }
 
+impl ModalityTokens {
+    /// Creates a modality token count.
+    ///
+    /// This type is `#[non_exhaustive]` and derives neither `Default` nor
+    /// anything else that would let a downstream crate build one, so without
+    /// this constructor `serde` would be the only route to a value.
+    #[must_use]
+    pub fn new(modality: impl Into<String>, tokens: u32) -> Self {
+        Self {
+            modality: modality.into(),
+            tokens,
+        }
+    }
+}
+
 /// Per-tool grounding invocation count.
 ///
 /// Reported in [`UsageMetadata::grounding_tool_count`]. Known `tool_type`

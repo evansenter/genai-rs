@@ -618,6 +618,7 @@ pub struct StreamMetadata {
 /// - `interaction.completed`: Final complete interaction (terminal)
 /// - `error`: Error occurred during streaming (terminal)
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct InteractionStreamEvent {
     /// Event type (e.g., "step.delta", "interaction.completed")
     pub event_type: String,

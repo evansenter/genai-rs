@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking: response structs are now `#[non_exhaustive]`.** The convention
+  was already documented in `docs/ENUM_WIRE_FORMATS.md`, but 31 deserializable
+  response types had drifted from it — including the five (`Trigger`,
+  `TriggerExecution`, `Environment`, `Agent`, `Webhook`) that adding an `extra`
+  field had just turned into a breaking change. Under the convention that
+  would have been a non-event.
+
+  **What breaks:** struct-literal construction of these types from another
+  crate, and `..Default::default()` functional-update syntax. Exhaustive
+  `match` on them needs a `..` arm.
+
+  **What still works:** `T::default()` followed by field assignment, on every
+  one of these types that derives `Default` — which is most of them, including
+  `InteractionResponse`, `UsageMetadata`, `Agent`, `Trigger`, `Environment`,
+  `Webhook` and the `*ListResponse` wrappers. That is the migration for most
+  call sites:
+
+  ```rust
+  // before
+  let response = InteractionResponse { id: Some("x".into()), ..Default::default() };
+  // after
+  let mut response = InteractionResponse::default();
+  response.id = Some("x".into());
+  ```
+
+  For the few with neither `Default` nor a constructor, deserialize a JSON
+  fixture. `ModalityTokens` gains a `new()` in this release for that reason.
+
+  Request-side types are deliberately untouched: `GenerationConfig`,
+  `FunctionDeclaration`, the tool configs and the create/update bodies are
+  yours to build, and closing them would cost construction syntax while
+  gaining the crate nothing.
+
+  `tests/non_exhaustive_responses.rs` now fails the build on a new response
+  struct without the attribute, so the backlog cannot re-accumulate.
+
+### Added
+
+- **`ModalityTokens::new()`** — the type had no `Default` and no constructor,
+  so closing it above would otherwise have left `serde` as the only way to
+  produce one.
+
 ## [0.10.0] - 2026-08-16
 
 ### Added

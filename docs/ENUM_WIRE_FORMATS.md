@@ -1263,11 +1263,23 @@ an attribute being *absent* — that is how the five structs in #430 diverged �
 so adding a new response type without it now fails the build, and exempting
 one requires saying so in a list that explains why.
 
-**Constructing fixtures.** `InteractionResponse` derives `Default` and uses
-`#[serde(default)]`, so in-crate tests can still write
-`InteractionResponse { status: ..., ..Default::default() }`. Integration tests
-and downstream crates cannot; build them by deserializing a JSON fixture
-instead, as `tests/proptest_roundtrip_tests.rs` does.
+**Constructing fixtures.** `#[non_exhaustive]` removes struct-literal and
+functional-update (`..Default::default()`) syntax outside the crate. It does
+*not* remove `T::default()` followed by field assignment, and most of these
+types derive `Default`:
+
+```text
+// In-crate, still fine:
+InteractionResponse { status: InteractionStatus::Completed, ..Default::default() }
+
+// From an integration test or a downstream crate:
+let mut response = InteractionResponse::default();
+response.status = InteractionStatus::Completed;
+```
+
+Only the types with neither `Default` nor a constructor need a JSON fixture —
+`FileMetadata`, `FileUploadResponse`, `StreamError`, `OwnedFunctionCallInfo`.
+`tests/proptest_roundtrip_tests.rs` shows both routes.
 
 If a `test-support` feature for constructing mock instances becomes commonly requested, we'll consider adding it.
 
