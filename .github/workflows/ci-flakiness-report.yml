@@ -226,8 +226,22 @@ jobs:
           # would have made the `--title` retitle below permanently
           # unreachable. `gh issue list` returns newest-first, so `first`
           # picks the most recent.
+          #
+          # Single-use scaffolding: it fires once, on the first run after this
+          # lands, and is inert forever after. Once that adoption run is
+          # confirmed green this branch (and the concatenation below) can be
+          # deleted — leaving it live means anyone hand-filing an issue titled
+          # "CI Flakiness Report - Week of ..." would have it silently
+          # adopted and retitled.
           LEGACY_PREFIX="CI Flakiness Report - Week of"
 
+          # Exact matches are concatenated *ahead* of legacy ones so the
+          # rolling issue always wins when both exist, and legacy adoption
+          # only happens when there is no rolling issue at all. A single
+          # flattened `select(a or b)` would instead pick by `gh issue list`
+          # order, so a legacy-titled issue created after the rolling one
+          # would be retitled into a duplicate.
+          #
           # No `2>/dev/null || echo ""`: a rate-limited or failing lookup
           # would be indistinguishable from "no issue exists" and fall
           # through to the create branch, forking the rolling issue. `set -e`
@@ -241,7 +255,7 @@ jobs:
             --state open \
             --limit 100 \
             --json number,title \
-            --jq "[.[] | select(.title == \"$TITLE\" or (.title | startswith(\"$LEGACY_PREFIX\"))) | .number] | first // empty")
+            --jq "([.[] | select(.title == \"$TITLE\") | .number] + [.[] | select(.title | startswith(\"$LEGACY_PREFIX\")) | .number]) | first // empty")
 
           if [ -n "$EXISTING_ISSUE" ]; then
             echo "Updating existing issue #$EXISTING_ISSUE"
