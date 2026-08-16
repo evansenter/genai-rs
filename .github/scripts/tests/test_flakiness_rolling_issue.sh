@@ -119,8 +119,15 @@ check() {
 expect_order() {
   local label="$1" first="$2" second="$3"
   local a b
-  a=$(grep -n -- "$first" <<<"$out" | head -1 | cut -d: -f1)
-  b=$(grep -n -- "$second" <<<"$out" | head -1 | cut -d: -f1)
+  # `|| true` on both: a non-matching `grep -n` exits 1, `pipefail` carries
+  # that past the successful `head` and `cut`, and `set -e` then kills the
+  # harness — on precisely the missing-`gh issue comment` regression this
+  # helper exists to catch. Without it the run ends on a bare non-zero exit
+  # with no `FAIL -` line and no output dump, and the cases below never run,
+  # which makes the `${a:-none}` fallback in the message below unreachable by
+  # construction. Same trap the sibling harness documents.
+  a=$(grep -n -- "$first" <<<"$out" | head -1 | cut -d: -f1 || true)
+  b=$(grep -n -- "$second" <<<"$out" | head -1 | cut -d: -f1 || true)
   if [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]; then
     echo "ok   - $label"
   else

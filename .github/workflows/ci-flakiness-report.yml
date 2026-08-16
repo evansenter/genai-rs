@@ -194,6 +194,15 @@ jobs:
       - name: Generate report
         id: report
         run: |
+          # `set -euo pipefail`, matching the collect and rolling-issue steps.
+          # Actions' default shell is `bash -e {0}`, so `-u` and `-o pipefail`
+          # are off — and this step gained its first pipeline below, whose
+          # output becomes persistent state. A `jq` failure there would be
+          # swallowed by the successful `sort -u`, the marker would be written
+          # empty, and an empty marker is indistinguishable from an absent one
+          # — which the update branch deliberately reads as "report
+          # everything", so the next run announces the full set.
+          set -euo pipefail
           .github/scripts/generate_flakiness_report.sh \
             --trends trends.json \
             --tests tests.json \
