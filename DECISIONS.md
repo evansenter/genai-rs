@@ -94,14 +94,21 @@ reach the wire. What it buys is one build driving either harness revision.
 
 ## D-004 — Verify API surface from generated bindings first, prose docs last (2026-08-16)
 
-**Context.** Three sources describe the API and they disagree, consistently in
-one direction. Two features found in the 2026-08 SDK 2.17.0 sweep — video
-`processing` (#434, a ~127x token-cost lever) and a widened `speech_config`
-union — appear in *neither* `ai.google.dev` page. Conversely, the bindings describe a
-`Tool::Retrieval` and an `enable_bigquery_tool` flag that the endpoint
-rejects as Vertex-only (`docs/INTERACTIONS_API_GAP.md`, "Vertex-only
-findings") — recorded rejections, cited rather than recalled, because the
-whole argument here is that prose should not be taken at its word.
+**Context.** Three sources describe the API and they disagree, consistently
+in one direction. Video `processing` — a ~127x token-cost lever, 455 input
+tokens for a clipped static window against 57,775 for agentic (#419, modeled
+in #434) — is in the `google-genai` 2.18.1 bindings and in *neither*
+`ai.google.dev` page. It is also absent from 2.17.0, which is the version
+`docs/INTERACTIONS_API_GAP.md` last swept against (its header, and the
+completed list at `:166`), so the sweep that concluded "fully covered" could
+not have seen it. The widened `speech_config` union is the same shape found
+one sweep earlier (`INTERACTIONS_API_GAP.md:149`, item 11).
+
+Conversely, the bindings describe a Retrieval tool and an
+`enable_bigquery_tool` flag that the endpoint rejects as Vertex-only
+(`INTERACTIONS_API_GAP.md:88-93`). Cited by line rather than recalled,
+because the whole argument here is that prose should not be taken at its
+word — including this paragraph.
 
 **Decision.** Rank sources: (1) generated bindings from `google-genai`, which
 ship ahead of prose; (2) live probes, which are ground truth and often
@@ -116,8 +123,9 @@ both the staleness marker that says so in its header and a recurring sweep
 that files an issue when the SDK moves. Both are pending at the time of
 writing.
 
-Getting this ordering backwards is what let both of those features sit unmodeled
-and produced a "surface fully covered" conclusion that was false (#421).
+Getting this ordering backwards is what let video `processing` sit unmodeled
+behind a "surface fully covered" conclusion that was false (#421) — the
+sweep was real, and a version behind.
 
 ---
 
@@ -210,7 +218,7 @@ testing function calling.
 "what is this test primarily verifying?" The payoff is that every test for a
 feature is in one place.
 
-*Also stated as a rule in `docs/TESTING.md` ("Intentional Design Decisions").*
+*Also stated as a rule in `docs/TESTING.md` ("Test Organization Philosophy" → "Tests Organized by Feature, Not Pattern").*
 
 ---
 

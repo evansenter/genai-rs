@@ -54,14 +54,27 @@ run in CI only, not in `make test` (see D-009).
 sources disagree, consistently in one direction — see D-004 in
 [DECISIONS.md](DECISIONS.md). Order:
 
-1. **Generated bindings** — `google-genai`'s `_gaos/types/interactions/*.py`;
-   diff two releases to spot new surface
+1. **Generated bindings** — `google-genai`'s `_gaos/types/interactions/*.py`.
+   This repo does not depend on that Python package, so there is no path in
+   the tree that leads there; fetch two releases and diff them:
+
+   ```bash
+   pip download --no-deps --no-binary :all: google-genai==2.17.0 google-genai==2.18.1
+   # unpack both, then:
+   diff -ru google_genai-2.17.0/google/genai/_gaos/types/interactions \
+            google_genai-2.18.1/google/genai/_gaos/types/interactions
+   ```
+
+   The version last swept against is in the `docs/INTERACTIONS_API_GAP.md`
+   header — currently 2.17.0, which is why the 2.18.1 `processing` field
+   (#419) went unmodeled behind a "fully covered" conclusion
 2. **Live probe** — `curl` against `generativelanguage.googleapis.com`, or a
    test with `LOUD_WIRE=1`
 3. **Prose docs** — `ai.google.dev` and this repo's own; both lag
 
-Changes to wire format need a live probe, not a spec reading. Two features
-found in the 2026-08 SDK sweep appear in neither published doc, and one field
+Changes to wire format need a live probe, not a spec reading. Video
+`processing` (#419) appears in the 2.18.1 bindings and in neither published
+doc, and one field
 (`cached_content`) was modeled from the spec and has been rejected by the API
 for its entire shipped life — its removal is pending in #439.
 
