@@ -196,25 +196,41 @@ jobs:
           path: summary.json
           retention-days: 14
 
-      - name: Create or update issue
+      - name: Create or update the rolling report issue
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
-          TITLE="CI Flakiness Report - Week of $(date -u +"%Y-%m-%d")"
+          # One rolling issue, updated in place — NOT one issue per run.
+          #
+          # This job runs daily over a rolling 7-day window (DAYS_BACK=7), so
+          # consecutive runs share 6 of their 7 days of data. The title used
+          # to be date-stamped ("Week of $(date)") while the dedupe check
+          # matched only on *today's* date, so the update branch could fire
+          # only if the job ran twice in one day. Every ordinary day fell
+          # through to create, and nothing ever closed the previous issue —
+          # which is how 15 open reports accumulated, the oldest 4.5 months
+          # old (#425).
+          #
+          # A fixed title makes the dedupe exact and the issue self-updating.
+          # The window dates belong in the body, which the report already
+          # includes; history lives in the issue's edit history and in the
+          # uploaded summary.json artifacts.
+          TITLE="CI Flakiness Report (rolling 7-day window)"
 
-          # Check if an issue with ci-health label already exists for this week
           EXISTING_ISSUE=$(gh issue list \
             --label "ci-health" \
             --state open \
             --json number,title \
-            --jq ".[] | select(.title | startswith(\"CI Flakiness Report - Week of $(date -u +\"%Y-%m-%d\")\")) | .number" \
+            --jq "[.[] | select(.title == \"$TITLE\") | .number] | first // empty" \
             2>/dev/null || echo "")
 
           if [ -n "$EXISTING_ISSUE" ]; then
             echo "Updating existing issue #$EXISTING_ISSUE"
-            gh issue edit "$EXISTING_ISSUE" --body-file "flakiness_report.md"
+            gh issue edit "$EXISTING_ISSUE" \
+              --title "$TITLE" \
+              --body-file "flakiness_report.md"
             echo "Updated issue: ${{ github.server_url }}/${{ github.repository }}/issues/$EXISTING_ISSUE"
           else
             echo "Creating new issue"
