@@ -92,7 +92,8 @@ reach the wire. What it buys is one build driving either harness revision.
 ## D-004 — Verify API surface from generated bindings first, prose docs last
 
 **Context.** Three sources describe the API and they disagree, consistently in
-one direction. Two features found in the 2.18.1 sweep — video `processing` (a
+one direction. Two features found in the 2026-08 sweep against SDK 2.17.0
+(`docs/INTERACTIONS_API_GAP.md`) — video `processing` (a
 ~127x token-cost lever) and a widened `speech_config` union — appear in
 *neither* `ai.google.dev` page. Conversely, the bindings describe a
 `speech_config` object arm the API rejects outright.
@@ -105,10 +106,12 @@ usable.
 
 **Consequences.** "Absent from the docs" is not evidence of absence, and
 "present in the bindings" is not evidence of support. `docs/INTERACTIONS_API_GAP.md`
-is a point-in-time snapshot, not a completeness guarantee, and says so in its
-header. The `api-surface-sweep` workflow files an issue when the SDK moves.
+is a point-in-time snapshot, not a completeness guarantee, and #438 adds
+both the staleness marker that says so in its header and a recurring sweep
+that files an issue when the SDK moves. Both are pending at the time of
+writing.
 
-Getting this ordering backwards is what let both 2.18.1 features sit unmodeled
+Getting this ordering backwards is what let both of those features sit unmodeled
 and produced a "surface fully covered" conclusion that was false (#421).
 
 ---
@@ -127,7 +130,9 @@ distinguishes them.
 | *"Unknown parameter 'x'"* | Absent from the schema entirely | **Remove** |
 
 Kept for parity: `safety_settings`, `labels`, `Tool::Retrieval`,
-`enable_bigquery_tool`. Removed: `response_mime_type`, `cached_content`.
+`enable_bigquery_tool`. Removed: `response_mime_type`; `cached_content`
+removal pending in #439, which is open at the time of writing — until it
+lands, the builder is still shipped.
 
 **Consequences.** Modeling a field the endpoint rejects is only justified when
 the field is real somewhere. `cached_content` shipped as a public builder
@@ -239,9 +244,10 @@ they must fail loudly rather than skip on error — a test that swallows a
 request failure and returns early "passes" without reaching the API, which is
 the same false confidence one layer down.
 
-Concretely: the video `processing` test asserts a >10x token-count difference
-between a clipped and unclipped window rather than asserting the field
-serializes, and panics rather than skips when the request fails.
+Concretely, #434 does this: its video `processing` test asserts a >10x
+token-count difference between a clipped and unclipped window rather than
+asserting the field serializes, and panics rather than skips when the
+request fails.
 
 *See also `docs/TESTING.md` on structural vs semantic assertions.*
 

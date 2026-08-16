@@ -49,9 +49,9 @@ sources disagree, consistently in one direction — see D-004 in
 3. **Prose docs** — `ai.google.dev` and this repo's own; both lag
 
 Changes to wire format need a live probe, not a spec reading. Two features
-shipped in 2.18.1 appear in neither published doc, and one field
-(`cached_content`) was modeled from the spec and rejected by the API for its
-entire shipped life.
+found in the 2026-08 SDK sweep appear in neither published doc, and one field
+(`cached_content`) was modeled from the spec and has been rejected by the API
+for its entire shipped life — its removal is pending in #439.
 
 ## Adding wire types
 

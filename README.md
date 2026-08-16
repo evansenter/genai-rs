@@ -330,6 +330,7 @@ agentic code-review application with subagents and a structured report.
 | [Enum Wire Formats](docs/ENUM_WIRE_FORMATS.md) | Verified wire formats, Unknown variants |
 | [API Gap Analysis](docs/INTERACTIONS_API_GAP.md) | Coverage tracker, Vertex-only findings |
 | [Testing Guide](docs/TESTING.md) | Test strategies, assertions |
+| [API Reference](https://docs.rs/genai-rs) | Generated API documentation |
 
 ### Project
 
@@ -338,7 +339,6 @@ agentic code-review application with subagents and a structured report.
 | [Decisions](DECISIONS.md) | Why the library is shaped the way it is |
 | [Contributing](CONTRIBUTING.md) | Setup, the quality gate, review checklist |
 | [Changelog](CHANGELOG.md) | Release history and migration notes |
-| [API Reference](https://docs.rs/genai-rs) | Generated API documentation |
 
 ### External Resources
 
