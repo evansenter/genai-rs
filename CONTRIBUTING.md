@@ -68,7 +68,7 @@ sources disagree, consistently in one direction — see D-004 in
    pip download --no-deps --no-binary :all: google-genai==2.18.1 -d /tmp/gg
    # --no-binary :all: is load-bearing: it is what yields the version-named
    # sdist directories the diff below refers to.
-   # unpack both, then:
+   cd /tmp/gg && tar xf google_genai-2.17.0.tar.gz && tar xf google_genai-2.18.1.tar.gz
    diff -ru google_genai-2.17.0/google/genai/_gaos/types/interactions \
             google_genai-2.18.1/google/genai/_gaos/types/interactions
    ```

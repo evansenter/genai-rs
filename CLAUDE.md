@@ -269,9 +269,13 @@ After merging version bump PR:
    before the tag exists rather than after):
    `RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo +nightly doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs`
    (matches the `[package.metadata.docs.rs]` feature set; `-D warnings` here
-   is deliberately stricter than docs.rs; it matches the CI gate flag for
-   flag, and differs by running on nightly where CI runs stable — warnings are an
-   early signal locally, but only hard errors fail the actual docs.rs build)
+   is deliberately stricter than docs.rs, though not stricter than the CI
+   gate — `rust.yml`'s docs.rs-feature-set step sets the same flags on
+   stable. What the local run buys is the toolchain: nightly, which is what
+   docs.rs builds on. `release.yml` does run nightly rustdoc, but without
+   `-D warnings` and only once the tag exists — which is the whole point of
+   doing it here first. Warnings are an early signal locally; only hard
+   errors fail the actual docs.rs build.)
 1. **Tag the release**: `git tag -a vX.Y.Z origin/main -m "Release vX.Y.Z"`
 2. **Push tag**: `git push origin vX.Y.Z`
 3. **Create GitHub release**: `gh release create vX.Y.Z --title "vX.Y.Z" --notes "..."` (copy from CHANGELOG)

@@ -43,14 +43,21 @@ unknowns rather than tolerate them.
 
 ---
 
-## D-002 — Response structs are `#[non_exhaustive]`; users cannot construct them (2026-08-16)
+## D-002 — Response structs are `#[non_exhaustive]`; no struct literals (2026-08-16)
 
 **Context.** Response types grow fields as the API does. If users can build
 them with struct literals, every added field is a breaking change.
 
-**Decision.** Response structs carry `#[non_exhaustive]`, so they cannot be
-constructed outside the crate. Stated as the rule; see the gap below for how
-far the tree currently follows it.
+**Decision.** Response structs carry `#[non_exhaustive]`, so outside the
+crate they cannot be built with a struct literal — including functional-update
+syntax — and, absent a public constructor such as a derived `Default`, cannot
+be built at all. That distinction is the whole of it: the attribute bars the
+struct *expression*, not construction, which is why the `Default` note below
+reads as elaboration rather than contradiction. The Consequences follow from
+the literal being blocked, so they hold either way.
+
+Stated as the rule; see the gap below for how far the tree currently follows
+it.
 
 **Consequences.** Users cannot hand-build a response to test against — which
 is the point:
@@ -252,10 +259,11 @@ Separately, docs.rs itself only fails on hard errors, not warnings.
 `cargo test --workspace --doc`. The local docs.rs verification uses
 `-D warnings`, deliberately stricter than docs.rs. Not stricter than the CI
 gate, though — `rust.yml`'s docs.rs-feature-set step already sets
-`RUSTDOCFLAGS: --cfg docsrs -D warnings`, flag for flag. What the local run
-buys is the *toolchain*: CI runs it on stable, and docs.rs builds on
-nightly, so nightly-only breakage is otherwise caught by `release.yml`'s
-validate job — after the tag exists.
+`RUSTDOCFLAGS: --cfg docsrs -D warnings`, flag for flag, on stable. What the
+local run buys is the *toolchain*: docs.rs builds on nightly.
+`release.yml`'s validate job does run nightly rustdoc, deliberately without
+`-D warnings` — but only once the tag exists, which is the half that
+motivates running it by hand first.
 
 **Consequences.** A doctest can break locally without being noticed until CI.
 Accepted: CI catches them, and the local loop stays fast. The `-D warnings`
