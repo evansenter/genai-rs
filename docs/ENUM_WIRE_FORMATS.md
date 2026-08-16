@@ -271,7 +271,7 @@ exceptions** where the wire tag differs from the variant name:
 | `code_execution_call` / `code_execution_result` | code execution variants | Call delta carries flattened `language`/`code` |
 | `url_context_call` / `url_context_result` | URL context variants | |
 | `google_search_call` / `google_search_result` | Google Search variants | |
-| `tool_call` | *(no delta variant)* | Step type only — arrives whole on `step.start`, which carries the full `Step`. A `step.delta` tagged `tool_call` has not been observed; it would land in `StepDelta::Unknown` and be skipped with a warning. |
+| `tool_call` | *(no delta variant)* | Step type only — arrives whole on `step.start`, which carries the full `Step`. A `step.delta` tagged `tool_call` has not been observed; it would land in `StepDelta::Unknown` and be skipped — logged at `debug`, so `RUST_LOG=genai_rs=debug` is what would surface it. |
 | `mcp_server_tool_call` / `mcp_server_tool_result` | MCP variants | Spec-only; see below |
 | `file_search_call` / `file_search_result` | file search variants | |
 | `google_maps_call` / `google_maps_result` | Google Maps variants | |
