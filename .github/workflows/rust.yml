@@ -391,6 +391,10 @@ jobs:
       # cache, so it reports in seconds instead of waiting behind a build.
       - name: 'Parse-check workflow run: blocks'
         run: python3 .github/scripts/check_workflow_shell.py
+      # Same job because it needs no toolchain either, and both are
+      # "a duplicated fact should fail the build" checks.
+      - name: Gap tracker matches the CI sweep baseline
+        run: .github/scripts/check_gap_tracker_baseline.sh
 
   clippy:
     name: Clippy

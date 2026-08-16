@@ -148,7 +148,8 @@ jobs:
             head -c 40000 full.diff
             if [ "$(wc -c < full.diff)" -gt 40000 ]; then
               echo
-              echo "... truncated; run this workflow locally for the full diff ..."
+              echo "... truncated; the untruncated diff is attached to this"
+              echo "workflow run as the \`sweep-diffs\` artifact ..."
             fi
             echo '~~~'
             echo
@@ -190,12 +191,29 @@ jobs:
               echo '</details>'
               echo
               echo "**Body truncated** to fit GitHub's issue size limit."
-              echo "Re-run this workflow and read the job log for the full diff."
+              echo "The untruncated diff is attached to this workflow run as the"
+              echo "\`sweep-diffs\` artifact."
             } >> sweep_report.trunc
             mv sweep_report.trunc sweep_report.md
           fi
 
           cat sweep_report.md
+
+      # The diffs are produced inline in the step above, not by a script
+      # anyone can run locally, and only the *truncated* report reaches the
+      # job log. Without this the truncation notices would point at a full
+      # diff no run actually exposes — and truncation fires exactly when a
+      # wholesale upstream restructure makes the untruncated diff most worth
+      # having.
+      - name: Upload the raw diffs
+        if: steps.diff.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sweep-diffs
+          path: |
+            full.diff
+            files.diff
+          retention-days: 30
 
       - name: Open or update the sweep issue
         if: steps.diff.outputs.changed == 'true'
@@ -211,6 +229,14 @@ jobs:
 
           TITLE="$SWEEP_ISSUE_TITLE"
 
+          # Both `--label` and the exact title are load-bearing keys, here
+          # and on the close path. Removing the label from the issue is a
+          # silent break: this lookup then finds nothing and files a
+          # duplicate under the same title every morning, while the close
+          # path leaves the staleness signal asserted forever. Retitling
+          # breaks both paths together and loudly, which is the safer of
+          # the two failure modes — the label is not decoration.
+          #
           # `--state all`, not open: if the issue is closed without bumping
           # `.github/last-swept-sdk-version`, an open-only search would find
           # nothing and file a fresh one with the same title every morning
@@ -221,7 +247,7 @@ jobs:
             --state all \
             --limit 100 \
             --json number,title \
-            --jq "[.[] | select(.title == \"$TITLE\") | .number] | first // empty")
+            --jq '[.[] | select(.title == $ENV.SWEEP_ISSUE_TITLE) | .number] | first // empty')
 
           if [ -n "$EXISTING" ]; then
             # Reopen is a no-op when already open.
@@ -283,7 +309,7 @@ jobs:
             --state open \
             --limit 100 \
             --json number,title \
-            --jq "[.[] | select(.title == \"$SWEEP_ISSUE_TITLE\") | .number] | first // empty")
+            --jq '[.[] | select(.title == $ENV.SWEEP_ISSUE_TITLE) | .number] | first // empty')
 
           if [ -z "$EXISTING" ]; then
             echo "No open sweep issue to close."
