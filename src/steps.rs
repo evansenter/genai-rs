@@ -1366,6 +1366,10 @@ pub enum StepDelta {
         signature: Option<String>,
     },
     /// MCP server tool call delta (`type: "mcp_server_tool_call"`).
+    ///
+    /// Not currently emitted by the API — see
+    /// [`Step::McpServerToolCall`] for the verified wire behaviour
+    /// and #433.
     McpServerToolCall {
         /// Tool name.
         name: String,
@@ -1375,6 +1379,10 @@ pub enum StepDelta {
         arguments: serde_json::Value,
     },
     /// MCP server tool result delta (`type: "mcp_server_tool_result"`).
+    ///
+    /// Not currently emitted by the API — see
+    /// [`Step::McpServerToolCall`] for the verified wire behaviour
+    /// and #433.
     McpServerToolResult {
         /// Tool name.
         name: Option<String>,
