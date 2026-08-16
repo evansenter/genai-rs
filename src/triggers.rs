@@ -309,6 +309,13 @@ pub struct Trigger {
     /// roundtrip asymmetry alongside the absent-`input` one above. (The
     /// same currently holds for [`Trigger`]'s own top-level unmodeled
     /// keys; a response-side `extra` is tracked as issue #406.)
+    ///
+    /// And a third: because this is an [`InteractionRequest`], its `input`
+    /// carries that type's request-side serializer, so a trigger created
+    /// outside this SDK with a bare `[Content]` input re-serializes as a
+    /// `user_input` step (#427). Semantically identical, and the step form
+    /// is the one wanted on the `TriggerUpdateParams` send path — but it is
+    /// a reshape of server data rather than a faithful echo.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

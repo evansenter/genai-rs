@@ -298,7 +298,10 @@ impl Serialize for InteractionInput {
 /// Scoped to this field rather than to `InteractionInput`'s own `Serialize`
 /// so that [`InteractionResponse::input`](crate::InteractionResponse), which
 /// echoes back what the server sent, keeps re-serializing in the shape it
-/// arrived in.
+/// arrived in. Not every response-side carrier is covered by that: because
+/// the wrap rides on this field, `Trigger::interaction` — itself an
+/// `InteractionRequest` — does reshape a bare `[Content]` input it read from
+/// the API. Recorded there alongside its other roundtrip asymmetries.
 fn serialize_request_input<S>(input: &InteractionInput, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,

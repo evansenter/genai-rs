@@ -154,6 +154,7 @@ way:
 | text + video (URI) | completed | completed |
 | text + video + `"processing": "static"` | **400** `Unknown parameter 'processing' at 'input[1]'` | completed |
 | follow-up turn via `previous_interaction_id` | completed | completed |
+| *empty* content | 400 `Missing input.` | 400 `Request has empty input.` |
 
 So the step form is accepted everywhere the bare form is, and in one place the
 bare form is not. It is also the canonical shape under this revision — the one
@@ -166,7 +167,18 @@ the Evergreen roundtrip principle. A request's `Content` input therefore
 deserializes back as `Steps(vec![Step::user_input(..)])` — the two are
 indistinguishable once serialized.
 
+The empty row matters because that is the shape whose wire form changed
+most — a bare `[]` before, a step with an empty content array now. Both are
+rejected, differing only in the message, so an accidental
+`with_content(vec![])` does not trade a clear 400 for a response to an empty
+prompt. (It still reaches the wire where the text path errors locally, which
+is a builder-validation gap rather than a wire one.)
+
 `processing` itself is not modeled by this crate yet (#419).
+
+This probe exercised exactly one step tag, `user_input`. The `Step` row
+above stays "pending live verification" because the other tags are still
+unexercised — it is not stale.
 
 ### Step (response `steps` / stateless history)
 
