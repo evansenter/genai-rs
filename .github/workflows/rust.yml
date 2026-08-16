@@ -589,7 +589,15 @@ jobs:
           # Several runs, not just the newest: a run whose artifact expired
           # or whose upload did not happen would otherwise mean no baseline
           # at all, even with an older successful run still carrying one.
-          RUN_IDS=$(gh run list --workflow Rust --branch main --status success \
+          # `completed`, not `success`: the status is the whole `Rust` run's,
+          # not this job's. `test-integration` runs five live-API matrix
+          # groups on main pushes and CLAUDE.md says they may flake, so one
+          # flake marks the run failed and skips a `size-baseline` artifact
+          # that `build-metrics` published perfectly well. The loop below
+          # already tolerates a run with no artifact — that is what the
+          # `2>/dev/null` is for — so the stricter filter bought nothing the
+          # loop did not already handle, and cost baselines.
+          RUN_IDS=$(gh run list --workflow Rust --branch main --status completed \
             --limit 10 --json databaseId --jq '.[].databaseId // empty' 2>/dev/null || echo "")
           for run_id in $RUN_IDS; do
             if gh run download "$run_id" --name size-baseline --dir baseline 2>/dev/null; then
