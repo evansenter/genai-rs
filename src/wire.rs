@@ -1420,20 +1420,25 @@ mod filter_tests {
     fn env_inspector_applies_the_filter_from_the_variable() {
         use super::env_inspector;
 
-        // SAFETY: nextest runs each test in its own process, so this
-        // mutation is not visible to any other test.
-        unsafe { std::env::set_var("LOUD_WIRE", "toolCall,summary") };
+        // The nextest-per-process claim that used to justify unguarded
+        // mutation here was false under `cargo test` — `Client::builder()`
+        // reads LOUD_WIRE at construction, so a client built concurrently
+        // with this window sees a stray printer (#418). Same guard as the
+        // client.rs mutator; it also restores the ambient value on drop.
+        let guard = crate::test_subscriber::LoudWireGuard::acquire();
+
+        guard.set("toolCall,summary");
         let printer = env_inspector().expect("LOUD_WIRE set should yield a printer");
         assert!(printer.filter.is_summary());
         assert!(printer.filter.allows(&ws(json!({"toolCall": {}}))));
         assert!(!printer.filter.allows(&request()));
 
         // The historical spelling still means everything.
-        unsafe { std::env::set_var("LOUD_WIRE", "1") };
+        guard.set("1");
         let printer = env_inspector().expect("printer");
         assert_eq!(printer.filter, WireFilter::all());
 
-        unsafe { std::env::remove_var("LOUD_WIRE") };
+        guard.unset();
         assert!(
             env_inspector().is_none(),
             "an unset LOUD_WIRE must install nothing"

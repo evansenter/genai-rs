@@ -1936,19 +1936,6 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    /// Serializes tests whose result depends on `LOUD_WIRE`.
-    ///
-    /// Env vars are process-global while `Client::builder().build()` reads
-    /// `LOUD_WIRE` at construction — so *every* test that builds a client
-    /// reads it, not just the one that sets it. Under nextest (process per
-    /// test) that never shows; under plain `cargo test` a client built
-    /// concurrently with the set/remove window picks up a stray
-    /// `LoudWirePrinter` and its inspector count is off by one.
-    ///
-    /// Observed as ~11 failures in 25 runs of `cargo test --lib
-    /// --test-threads=16`, and as the coverage job's flake in #418.
-    static LOUD_WIRE_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     #[test]
     fn test_add_wire_inspector_accumulates() {
         struct Noop;
@@ -1957,8 +1944,9 @@ mod tests {
         }
 
         // Held for the build: an unrelated LOUD_WIRE=1 window would add a
-        // third inspector to this client.
-        let _guard = LOUD_WIRE_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        // third inspector to this client. The guard is shared with the
+        // other LOUD_WIRE mutator in `src/wire.rs`.
+        let _guard = crate::test_subscriber::LoudWireGuard::acquire();
 
         let client = Client::builder("test_key".to_string())
             .add_wire_inspector(Arc::new(Noop))
@@ -1975,19 +1963,14 @@ mod tests {
 
     #[test]
     fn test_loud_wire_env_installs_printer() {
-        // Held across the whole set/build/remove/build sequence so no other
-        // test builds a client inside the LOUD_WIRE=1 window.
-        //
-        // `unwrap_or_else(|e| e.into_inner())` because a panic in either
-        // holder would otherwise poison the mutex and cascade into unrelated
-        // failures; there is no invariant to protect here beyond ordering.
-        let _guard = LOUD_WIRE_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        // Held across the whole set/build/unset/build sequence so no other
+        // test builds a client inside the LOUD_WIRE=1 window, and so the
+        // ambient value is restored on drop rather than cleared.
+        let guard = crate::test_subscriber::LoudWireGuard::acquire();
 
-        // SAFETY: test-only env mutation, serialized against every other
-        // client-building test by the guard above.
-        unsafe { std::env::set_var("LOUD_WIRE", "1") };
+        guard.set("1");
         let with_env = Client::builder("test_key".to_string()).build().unwrap();
-        unsafe { std::env::remove_var("LOUD_WIRE") };
+        guard.unset();
         let without_env = Client::builder("test_key".to_string()).build().unwrap();
 
         assert!(
