@@ -18,8 +18,11 @@ permissions:
 # accumulation this workflow was changed to stop, in miniature, established at
 # the exact moment the rolling invariant is supposed to be.
 #
-# `cancel-in-progress: false`: a cancelled run would skip its escalation step,
-# and losing a report is worse than waiting for one.
+# `cancel-in-progress: false` protects the *executing* run — a cancelled one
+# would skip its escalation step, and losing a report is worse than waiting
+# for one. It is not a promise that nothing is ever dropped: GitHub keeps at
+# most one pending run per group, so a third overlapping trigger cancels the
+# queued second. Not reachable with a daily cron plus the odd manual run.
 concurrency:
   group: ci-flakiness-report
   cancel-in-progress: false
@@ -199,6 +202,20 @@ jobs:
             --repo-url "${{ github.server_url }}/${{ github.repository }}" \
             > flakiness_report.md
 
+          # The rendered table is capped at the top 10 by failure count, so
+          # it cannot serve as the baseline for "what is newly flaky" — every
+          # test ranked 11+ would read as new on every run, forever. This
+          # marker carries the complete set, invisible in the rendered issue,
+          # and is what the diff below actually reads. Emitted even when
+          # empty, so "no failures this window" is distinguishable from "no
+          # baseline recorded".
+          {
+            echo
+            echo "<!-- flaky-baseline"
+            jq -r '.[].name' tests.json | sort -u
+            echo "-->"
+          } >> flakiness_report.md
+
           echo "=== Report Content ==="
           cat flakiness_report.md
           echo "======================"
@@ -276,13 +293,19 @@ jobs:
             # change worth interrupting someone for, so that case — and only
             # that case — posts a comment.
             #
-            # Names come from the previous body's table rather than a stored
-            # baseline, because the issue is the only state this job has. A
-            # first run has no previous body, and reports every current name
-            # as new; that is correct, since it is also the first time anyone
-            # is being told.
+            # The baseline is the `flaky-baseline` marker written above, not
+            # the rendered table: the table shows only the top 10 by failure
+            # count, so diffing against it would report every test ranked 11+
+            # as newly flaky on every single run.
+            #
+            # The issue body is the only state this job has, which is why the
+            # full set is smuggled into it. A first run — or an issue adopted
+            # from before this marker existed — has no baseline and reports
+            # everything as new; that is correct, since it is also the first
+            # time anyone is being told.
             PREVIOUS_NAMES=$(gh issue view "$EXISTING_ISSUE" --json body --jq .body \
-              | sed -n 's/^| `\([^`]*\)` |.*/\1/p' | sort -u)
+              | sed -n '/^<!-- flaky-baseline$/,/^-->$/p' \
+              | sed '1d;$d' | sort -u)
             CURRENT_NAMES=$(jq -r '.[].name' tests.json | sort -u)
             NEW_NAMES=$(comm -13 <(echo "$PREVIOUS_NAMES") <(echo "$CURRENT_NAMES") | sed '/^$/d')
 
