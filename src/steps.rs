@@ -32,6 +32,7 @@ use crate::content::{
 /// Mirrors the API's status shape: `{code, message, details}`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct StepError {
     /// Numeric error code, if provided.
     #[serde(skip_serializing_if = "Option::is_none")]

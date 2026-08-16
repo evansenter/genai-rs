@@ -1246,9 +1246,28 @@ Response structs (e.g., `AutoFunctionResult`) also use `#[non_exhaustive]` so we
 2. Mock at the HTTP layer, not the response type layer
 3. Test their own logic separately from API response handling
 
-Note: since revision 2026-05-20, `InteractionResponse` derives `Default` and
-uses `#[serde(default)]`, so test fixtures can be built with
-`InteractionResponse { status: InteractionStatus::Completed, steps: vec![...], ..Default::default() }`.
+**Which structs get it.** Deserializable public types the API *returns*, not
+types a caller constructs to *send*. `#[non_exhaustive]` on a request type
+would remove struct-literal construction (and, unlike an enum, leaves no
+`..Default::default()` escape for a downstream crate) while buying the crate
+nothing — it does not gain the freedom to add required fields to something the
+user assembles. So `GenerationConfig`, `FunctionDeclaration`, the tool configs
+and the create/update bodies stay open; `InteractionResponse`, `UsageMetadata`,
+the `*ListResponse` wrappers, the result-item types and the resource shapes
+(`Agent`, `Environment`, `Trigger`, `Webhook`, ...) carry it.
+
+**Enforced, not reviewed.** `tests/non_exhaustive_responses.rs` scans `src/`
+and fails on any deserializable public struct missing the attribute that is
+not listed in its `REQUEST_SIDE` exemption list. Review is a poor detector for
+an attribute being *absent* — that is how the five structs in #430 diverged —
+so adding a new response type without it now fails the build, and exempting
+one requires saying so in a list that explains why.
+
+**Constructing fixtures.** `InteractionResponse` derives `Default` and uses
+`#[serde(default)]`, so in-crate tests can still write
+`InteractionResponse { status: ..., ..Default::default() }`. Integration tests
+and downstream crates cannot; build them by deserializing a JSON fixture
+instead, as `tests/proptest_roundtrip_tests.rs` does.
 
 If a `test-support` feature for constructing mock instances becomes commonly requested, we'll consider adding it.
 

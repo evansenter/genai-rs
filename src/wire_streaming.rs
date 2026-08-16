@@ -599,6 +599,7 @@ impl<'de> Deserialize<'de> for StreamEvent {
 /// Optional metadata accompanying any streamed event.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct StreamMetadata {
     /// Cumulative token usage for the interaction so far.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -715,6 +716,7 @@ impl<'de> Deserialize<'de> for InteractionStreamEvent {
 ///
 /// Represents error information sent in "error" type SSE events.
 #[derive(Clone, Deserialize, Debug)]
+#[non_exhaustive]
 pub struct StreamError {
     /// Human-readable error message
     #[serde(default)]

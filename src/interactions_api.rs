@@ -178,11 +178,7 @@ pub fn google_search_result_step(
 /// use genai_rs::FileSearchResultItem;
 ///
 /// let results = file_search_result_step("call-123", vec![
-///     FileSearchResultItem {
-///         title: "Document".into(),
-///         text: "Content".into(),
-///         store: "store-1".into(),
-///     },
+///     FileSearchResultItem::new("Document", "Content", "store-1"),
 /// ]);
 /// ```
 pub fn file_search_result_step(

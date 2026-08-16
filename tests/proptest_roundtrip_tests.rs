@@ -131,7 +131,18 @@ fn arb_modality_tokens() -> impl Strategy<Value = ModalityTokens> {
         ],
         any::<u32>(),
     )
-        .prop_map(|(modality, tokens)| ModalityTokens { modality, tokens })
+        // Built through JSON rather than a struct literal: these response
+        // types are `#[non_exhaustive]`, so an integration test cannot use
+        // struct-expression syntax on them. Same approach the module doc
+        // describes for `AutoFunctionResult`. Unwrap is sound — the shape is
+        // fixed here and only the values vary.
+        .prop_map(|(modality, tokens)| {
+            serde_json::from_value(serde_json::json!({
+                "modality": modality,
+                "tokens": tokens,
+            }))
+            .expect("ModalityTokens shape is fixed by this strategy")
+        })
 }
 
 /// Strategy for generating an optional Vec of ModalityTokens.
@@ -169,19 +180,27 @@ fn arb_usage_metadata() -> impl Strategy<Value = UsageMetadata> {
                 cached_tokens_by_modality,
                 tool_use_tokens_by_modality,
             )| {
-                UsageMetadata {
-                    total_input_tokens,
-                    total_output_tokens,
-                    total_tokens,
-                    total_cached_tokens,
-                    total_thought_tokens,
-                    total_tool_use_tokens,
-                    input_tokens_by_modality,
-                    output_tokens_by_modality,
-                    cached_tokens_by_modality,
-                    tool_use_tokens_by_modality,
-                    grounding_tool_count: None,
+                // Via JSON — `UsageMetadata` is `#[non_exhaustive]`. Nulls
+                // are dropped so absent stays absent rather than becoming an
+                // explicit null, which the roundtrip would then disagree on.
+                let mut wire = serde_json::json!({
+                    "total_input_tokens": total_input_tokens,
+                    "total_output_tokens": total_output_tokens,
+                    "total_tokens": total_tokens,
+                    "total_cached_tokens": total_cached_tokens,
+                    "total_thought_tokens": total_thought_tokens,
+                    "total_tool_use_tokens": total_tool_use_tokens,
+                    "input_tokens_by_modality": input_tokens_by_modality,
+                    "output_tokens_by_modality": output_tokens_by_modality,
+                    "cached_tokens_by_modality": cached_tokens_by_modality,
+                    "tool_use_tokens_by_modality": tool_use_tokens_by_modality,
+                });
+                if let Some(map) = wire.as_object_mut() {
+                    map.retain(|_, v| !v.is_null());
                 }
+                let usage: UsageMetadata = serde_json::from_value(wire)
+                    .expect("UsageMetadata shape is fixed by this strategy");
+                usage
             },
         )
 }
@@ -292,19 +311,27 @@ fn arb_interaction_response() -> impl Strategy<Value = InteractionResponse> {
                 created,
                 updated,
             )| {
-                InteractionResponse {
-                    id,
-                    model,
-                    agent,
-                    steps,
-                    status,
-                    usage,
-                    previous_interaction_id,
-                    environment_id,
-                    created,
-                    updated,
-                    ..Default::default()
+                // Via JSON — `InteractionResponse` is `#[non_exhaustive]`,
+                // so neither a struct literal nor `..Default::default()` is
+                // available to an integration test.
+                let mut wire = serde_json::json!({
+                    "id": id,
+                    "model": model,
+                    "agent": agent,
+                    "steps": steps,
+                    "status": status,
+                    "usage": usage,
+                    "previous_interaction_id": previous_interaction_id,
+                    "environment_id": environment_id,
+                    "created": created,
+                    "updated": updated,
+                });
+                if let Some(map) = wire.as_object_mut() {
+                    map.retain(|_, v| !v.is_null());
                 }
+                let response: InteractionResponse = serde_json::from_value(wire)
+                    .expect("InteractionResponse shape is fixed by this strategy");
+                response
             },
         )
 }

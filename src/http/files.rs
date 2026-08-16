@@ -67,6 +67,7 @@ use tokio_util::io::ReaderStream;
 /// in interactions by their URI.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct FileMetadata {
     /// The resource name of the file (e.g., "files/abc123")
     pub name: String,
@@ -276,6 +277,7 @@ impl<'de> Deserialize<'de> for FileState {
 
 /// Error information for failed file operations.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct FileError {
     /// Error code
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -299,6 +301,7 @@ impl std::fmt::Display for FileError {
 /// Metadata for video files.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct VideoMetadata {
     /// Duration of the video
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -308,6 +311,7 @@ pub struct VideoMetadata {
 /// Response from listing files.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct ListFilesResponse {
     /// List of files. Deliberately *not* on the lenient-list helper
     /// (`serde_util::deserialize_lenient_vec`) the five Interactions
@@ -324,6 +328,7 @@ pub struct ListFilesResponse {
 
 /// Wrapper for file upload response.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct FileUploadResponse {
     /// The uploaded file metadata
     pub file: FileMetadata,

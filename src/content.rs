@@ -15,6 +15,7 @@ use std::fmt;
 /// A review snippet attached to a place citation.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct ReviewSnippet {
     /// Title of the review.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -488,6 +489,7 @@ impl<'de> Deserialize<'de> for Annotation {
 /// ```
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct GoogleSearchResultItem {
     /// Title of the search result (often the domain name).
     ///
@@ -539,6 +541,7 @@ impl GoogleSearchResultItem {
 /// via the `extra` field for Evergreen forward compatibility.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct Place {
     /// Name of the place
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -587,6 +590,7 @@ pub struct Place {
 /// interactive map widgets.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct GoogleMapsResultItem {
     /// Place data returned by the Maps tool
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -618,6 +622,7 @@ pub struct GoogleMapsResultItem {
 /// ```
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct UrlContextResultItem {
     /// The URL that was fetched
     pub url: String,
@@ -682,6 +687,7 @@ impl UrlContextResultItem {
 /// ```
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct FileSearchResultItem {
     /// Title of the matched document
     pub title: String,

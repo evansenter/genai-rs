@@ -226,6 +226,7 @@ impl<'de> Deserialize<'de> for InteractionStatus {
 /// }
 /// ```
 #[derive(Clone, Deserialize, Serialize, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct ModalityTokens {
     /// The modality type (e.g., "text", "image", "audio").
     ///
@@ -246,6 +247,7 @@ pub struct ModalityTokens {
 /// plain string for Evergreen forward compatibility.
 #[derive(Clone, Deserialize, Serialize, Debug, Default, PartialEq, Eq)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct GroundingToolCount {
     /// The grounding tool type (wire field: `type`).
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
@@ -261,6 +263,7 @@ pub struct GroundingToolCount {
 /// a negative value (which would be a bug), it's clamped to 0 with a warning log.
 #[derive(Clone, Deserialize, Serialize, Debug, Default, PartialEq)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct UsageMetadata {
     /// Total number of input tokens (prompt tokens sent to the model)
     #[serde(
@@ -681,6 +684,7 @@ impl FunctionCallInfo<'_> {
 /// - Trajectory/replay recording
 /// - Passing to async tasks or storing in collections
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct OwnedFunctionCallInfo {
     /// Unique identifier for this function call (used when sending results back)
     pub id: String,
@@ -779,6 +783,7 @@ pub struct GoogleMapsResultInfo<'a> {
 /// iterate [`InteractionResponse::steps`] directly.
 #[derive(Clone, Deserialize, Serialize, Debug, Default)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct InteractionResponse {
     /// Unique identifier for this interaction.
     ///
