@@ -68,10 +68,25 @@ expected='### Added
 - also ten'
 assert_eq "extracts the whole section, stopping at the next heading" "$expected" "$out"
 
-# The leading blank line after the heading and the trailing one before the
-# next heading are both trimmed — a release body should not open on blank.
+# The leading blank line after the heading is trimmed — a release body should
+# not open on blank. Command substitution leaves leading newlines intact, so
+# this check is real.
 [ "${out:0:1}" != $'\n' ] || fail "leading blank line was not trimmed"
-[ "${out: -1}" != $'\n' ] || fail "trailing blank line was not trimmed"
+
+# The trailing trim has to be checked against a file, not against `$out`:
+# command substitution strips every trailing newline itself, so an assertion
+# on the last character of `$out` passes no matter what the extractor emits.
+# The callers redirect straight to a file, which is where the difference is
+# observable.
+"$EXTRACT" "$work/CHANGELOG.md" 0.10.0 >"$work/body.md"
+trailing=$(od -c "$work/body.md" | tail -2 | head -1)
+case "$trailing" in
+    *'\n  \n'*) fail "trailing blank line reached the file: $trailing" ;;
+esac
+# And the file must still end in exactly one newline — a body with no final
+# newline is as wrong as one with three.
+[ "$(tail -c1 "$work/body.md" | od -An -c | tr -d ' ')" = '\n' ] \
+    || fail "the body does not end in a newline"
 
 # --- prefix collisions -------------------------------------------------------
 # The bug this guards: a substring match for "0.1.0" would find "[0.10.0]"

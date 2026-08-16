@@ -436,7 +436,13 @@ jobs:
       - name: Extract the current version's section from the real CHANGELOG
         run: |
           set -euo pipefail
-          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          # One awk pass rather than `grep | head -1 | sed`. This step turns on
+          # `pipefail`, which the byte-identical line in release.yml does not,
+          # and under it a `head` that closes the pipe before `grep` flushes
+          # makes the pipeline 141 and fails the step. Not reachable against
+          # this tree — one matching line, flushed at exit — but free to
+          # remove, and `exit` gives the `head -1` semantics for nothing.
+          VERSION=$(awk -F'"' '/^version = /{print $2; exit}' Cargo.toml)
           echo "Cargo.toml version: $VERSION"
           if .github/scripts/extract_changelog_section.sh CHANGELOG.md "$VERSION"; then
             echo "CHANGELOG.md has a [$VERSION] section"

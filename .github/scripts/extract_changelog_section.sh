@@ -6,8 +6,11 @@
 # `version` is bare (0.10.0), not tag-shaped (v0.10.0) — the caller strips
 # the prefix, because the tag and the heading do not have to agree on it.
 #
-# Exits 1 with a message on stderr when the section is absent, so a caller
-# can fall back rather than publish an empty release body.
+# Exits 1 with a plain message on stderr when the section is absent. No
+# `::error::` prefix: both callers treat absence as recoverable and annotate
+# it themselves, so the script would otherwise stamp a red annotation on a
+# run that succeeded by design. The script cannot know how its caller weighs
+# a missing section, so it does not pick the severity.
 set -euo pipefail
 
 if [ $# -ne 2 ]; then
@@ -19,7 +22,7 @@ changelog=$1
 version=$2
 
 if [ ! -f "$changelog" ]; then
-    echo "::error::changelog not found: $changelog" >&2
+    echo "changelog not found: $changelog" >&2
     exit 1
 fi
 
@@ -32,6 +35,11 @@ fi
 # `## [0.1]` is not a prefix of `## [0.10.0]`, because the character after
 # `0.1` is `0` and not `]`. A bare-version search would match, which is why
 # the delimiter is part of the compared string rather than stripped off.
+#
+# One awk pass, including the blank-line trimming, rather than piping through
+# `tac`: `tac` is GNU coreutils, absent on macOS and BSD, and this script has
+# a harness whose whole point is a fast local loop on the machine most likely
+# to run it.
 section=$(awk -v want="## [$version]" '
     # A heading ends the section we are in, whichever version it names —
     # including an identical one, which would mean a duplicated section.
@@ -45,15 +53,24 @@ section=$(awk -v want="## [$version]" '
             next
         }
     }
-    collecting { print }
+    collecting {
+        # Blank lines are held rather than printed: any still pending at EOF
+        # (or at the next heading) are the trailing run and are dropped, and
+        # none is ever flushed before the first non-blank line, which drops
+        # the leading run. A Keep a Changelog section always opens with one,
+        # and a release body should not.
+        if ($0 ~ /^[[:space:]]*$/) {
+            if (started) { pending = pending $0 "\n" }
+            next
+        }
+        if (pending != "") { printf "%s", pending; pending = "" }
+        print
+        started = 1
+    }
 ' "$changelog")
 
-# Trim leading and trailing blank lines; a Keep a Changelog section always
-# opens with one, and the release body should not.
-section=$(printf '%s\n' "$section" | sed -e '/./,$!d' | tac | sed -e '/./,$!d' | tac)
-
 if [ -z "$section" ]; then
-    echo "::error::no [$version] section in $changelog" >&2
+    echo "no [$version] section in $changelog" >&2
     exit 1
 fi
 
