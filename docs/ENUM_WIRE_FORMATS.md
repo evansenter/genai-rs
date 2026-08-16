@@ -88,7 +88,7 @@ Helper methods on each type:
 
 | Enum / Type | Wire Format | Example | Notes |
 |------|-------------|---------|-------|
-| `InteractionInput` | string OR `[Step]` OR `[Content]` OR `Content` | `"hi"` / `[{"type": "user_input", "content": [...]}]` | Requests always send the step form — see details. ✅ Verified live 2026-08-16 |
+| `InteractionInput` | string OR `[Step]` OR `[Content]` OR `Content` | `"hi"` / `[{"type": "user_input", "content": [...]}]` | Requests send *content* input as the step form; `Text` stays a bare string — see details. ✅ Verified live 2026-08-16 |
 | `Step` | tagged by `"type"`, snake_case | `"user_input"`, `"model_output"`, `"function_call"`, ... | Pending live verification (2026-05-20 revision) |
 | `StepDelta` | tagged by `"type"` | `"text"`, `"arguments_delta"`, `"text_annotation_delta"` | Two tags differ from variant names — see details. Pending live verification (2026-05-20 revision) |
 | `Annotation` | tagged by `"type"` | `"url_citation"`, `"file_citation"`, `"place_citation"` | Pending live verification (2026-05-20 revision) |
@@ -137,8 +137,10 @@ Helper methods on each type:
 ### InteractionInput (request/response `input`)
 
 The spec's input union is `str | [Step] | [Content] | Content`. All four
-deserialize; **requests always serialize the `[Step]` form**, wrapping
-`InteractionInput::Content` in a single `user_input` step (#427).
+deserialize. On requests, **the bare `[Content]` form is never sent**:
+`InteractionInput::Content` is wrapped in a single `user_input` step (#427).
+`Text` is unaffected and still goes out as a bare JSON string, and `Steps`
+is already the step form.
 
 Both array arms are accepted by the API, but they are not equivalent: video
 `processing` is rejected outside a step. Probed live 2026-08-16 against
