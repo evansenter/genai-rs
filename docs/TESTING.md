@@ -505,12 +505,28 @@ retry closure that needs the verdict as a `Result`) applies the same
 policy: the validator call is itself retried on transient errors, then
 the helper asserts on the verdict, panics on non-transient validator
 errors, and tolerates transients that survive the retries with a
-`SEMANTIC_VALIDATION_SKIPPED` marker. The CI integration step captures
-passing-test output via `--success-output=final` and counts the markers:
-a `::warning::` annotation when any appear, and a **failed step** past a
-per-run threshold (see the marker-counting blocks in `rust.yml` and
-`release.yml` for the current numbers) — the escape hatch stays available
-for transient blips without being able to quietly become the normal path.
+`SEMANTIC_VALIDATION_SKIPPED` marker.
+
+There are two such markers, and the distinction is why the second exists
+rather than reusing the first:
+
+| Marker | Means |
+|--------|-------|
+| `SEMANTIC_VALIDATION_SKIPPED` | The validator call itself failed transiently, so the verdict was never obtained. |
+| `LIVE_TOOL_EVIDENCE_SKIPPED` | The interaction succeeded, or failed in a way the test's triage guard did not recognise, but produced no evidence the tool actually ran. |
+
+Both are counted together. The CI integration step captures passing-test
+output via `--success-output=final` and greps for either: a `::warning::`
+annotation when any appear, and a **failed step** past a per-run threshold
+(see the marker-counting blocks in `rust.yml` and `release.yml` for the
+current numbers) — the escape hatch stays available for transient blips
+without being able to quietly become the normal path.
+
+A skip that is a stable property of the environment rather than an
+unverified assertion — no `GEMINI_API_KEY`, a key not allowlisted for
+computer use — is deliberately left unmarked. Marking those would
+annotate every run forever, which is noise; the marked cases are the ones
+where a green run might be hiding a real regression.
 
 ### Test Fixtures
 

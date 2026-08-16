@@ -337,7 +337,8 @@ jobs:
           for test in ${{ matrix.tests }}; do
             echo "::group::Running $test"
             # --success-output=final keeps passing-test output (notably the
-            # SEMANTIC_VALIDATION_SKIPPED marker) greppable in CI logs.
+            # SEMANTIC_VALIDATION_SKIPPED and LIVE_TOOL_EVIDENCE_SKIPPED
+            # markers) greppable in CI logs.
             # Capture the status instead of dying on it so the group is
             # closed and the skip warning still fires on a failing run —
             # the run where the skip count is most diagnostic.

@@ -778,7 +778,18 @@ mod mcp_server {
                 if about_mcp && rejected {
                     panic!("API rejected the MCP tool — this is a regression: {e:?}");
                 }
-                println!("Skipping: MCP server appears unreachable: {e:?}");
+                // Marked, like the no-evidence skip below. This branch is the
+                // catch-all `else` of an error arm: it fires on any error the
+                // `about_mcp && rejected` guard above did not recognise, so it
+                // cannot tell a third-party outage from a rejection phrased in
+                // words that guard misses. That ambiguity is the whole reason
+                // the marker exists — a permanently dead deepwiki and a
+                // silently unrecognised rejection both land here, and without
+                // the marker both leave a green run with nothing annotated.
+                //
+                // (The computer-use skip further down is deliberately not
+                // marked; see the comment there.)
+                println!("LIVE_TOOL_EVIDENCE_SKIPPED: MCP server appears unreachable: {e:?}");
                 return;
             }
         };
@@ -986,6 +997,16 @@ mod computer_use {
                 let about_computer_use =
                     msg.contains("computer_use") || msg.contains("computer use");
                 if about_computer_use && unavailable {
+                    // Deliberately unmarked, unlike the two MCP skips. Both
+                    // halves of this guard must match, so it fires only on an
+                    // error that names computer use *and* says it is not
+                    // available — a stable property of the key, in the same
+                    // family as the "no GEMINI_API_KEY" skip and not something
+                    // a passing run could be hiding. Everything else in this
+                    // arm panics. Marking it would annotate every single run
+                    // on an un-allowlisted key, which is noise rather than
+                    // signal; the MCP branches are marked because they are
+                    // catch-alls that cannot make that distinction.
                     println!("Skipping: computer use not enabled for this key: {e:?}");
                     return;
                 }
