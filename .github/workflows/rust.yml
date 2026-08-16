@@ -351,16 +351,21 @@ jobs:
             # what the ci-flakiness-report job is for.
             cargo nextest run --test $test --run-ignored all --retries 2 --success-output=final 2>&1 | tee "/tmp/$test.log" || rc=$?
             echo "::endgroup::"
-            skips=$(grep -c SEMANTIC_VALIDATION_SKIPPED "/tmp/$test.log" || true)
+            # Both markers, counted together. `LIVE_TOOL_EVIDENCE_SKIPPED`
+            # is emitted by a live tool test that completed without evidence
+            # the server was reached — one occurrence is model variability, a
+            # persistent one is a silently broken tool, which is the failure
+            # that would otherwise stay green and unremarked.
+            skips=$(grep -cE 'SEMANTIC_VALIDATION_SKIPPED|LIVE_TOOL_EVIDENCE_SKIPPED' "/tmp/$test.log" || true)
             if [ "${skips:-0}" -gt 3 ]; then
               # The tolerated-skip escape hatch is only meaningful while it
               # stays rare — past this threshold the run's green can't be
               # trusted, so fail instead of warn. Escalate only a passing
               # run: a real nextest failure keeps its own exit code.
-              echo "::error::$test: $skips semantic validations passed vacuously — too many to trust this run (grep SEMANTIC_VALIDATION_SKIPPED in the log for causes)"
+              echo "::error::$test: $skips assertion(s) passed vacuously — too many to trust this run (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)"
               if [ "$rc" -eq 0 ]; then rc=1; fi
             elif [ "${skips:-0}" -gt 0 ]; then
-              echo "::warning::$test: $skips semantic validation(s) passed vacuously (grep SEMANTIC_VALIDATION_SKIPPED in the log for causes)"
+              echo "::warning::$test: $skips assertion(s) passed vacuously (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)"
             fi
             [ "$rc" -eq 0 ] || exit "$rc"
           done

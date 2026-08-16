@@ -868,11 +868,19 @@ mod mcp_server {
         // So the loud failures stay the ones that are unambiguously ours:
         // the API rejecting the tool (the `Err` arm above) and a status
         // other than `Completed`.
+        // Marked, not just printed. `rust.yml` already counts
+        // `SEMANTIC_VALIDATION_SKIPPED` per test file — warn above zero, fail
+        // above three — on the reasoning that a suite which self-skips passes
+        // having verified nothing. This skip has the same property and needs
+        // the same treatment: one occurrence is model variability, a
+        // persistent one is the #265 shape above. A distinct marker rather
+        // than reusing that one, which means something narrower.
         println!(
-            "Skipping: the interaction completed but shows no evidence the MCP \
-             server was called (tool-use tokens 0, steps {step_types:?}). Most \
-             likely the server is down or the model answered without it; a silent \
-             MCP regression would look the same from here."
+            "LIVE_TOOL_EVIDENCE_SKIPPED: the interaction completed but shows no \
+             evidence the MCP server was called (tool-use tokens 0, steps \
+             {step_types:?}). Most likely the server is down or the model \
+             answered without it; a silent MCP regression would look the same \
+             from here."
         );
     }
 
