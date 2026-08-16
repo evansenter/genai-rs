@@ -92,6 +92,17 @@ fn response_structs_are_non_exhaustive() {
         root.display()
     );
 
+    let lib_rs = std::fs::read_to_string(root.join("lib.rs")).expect(
+        "src/lib.rs must be readable — a scan that cannot classify \
+                 test modules is not a clean scan",
+    );
+    let test_modules = cfg_test_modules(&lib_rs);
+    assert!(
+        !test_modules.is_empty(),
+        "no #[cfg(test)] mod declarations found in lib.rs — the pattern this \
+         parses has changed, and test-only files would be scanned as API"
+    );
+
     // First pass: collect hand-written Deserialize targets across the whole
     // crate, since nothing requires the impl to live beside its type.
     let mut manual = BTreeSet::new();
@@ -164,33 +175,42 @@ fn offenders_and_exemptions_in(
 
     let mut offenders = Vec::new();
     let mut matched = BTreeSet::new();
-    // `src/lib.rs` compiles several `*_tests.rs` files under `#[cfg(test)]`,
-    // whose `pub struct`s sit at column 0 and are indistinguishable from API
-    // surface here. Those types are not public API, so demanding
-    // `#[non_exhaustive]` on them would be wrong — and the only silencer
-    // would be `REQUEST_SIDE`, whose doc says entries are types a caller
-    // constructs to *send*. Putting a test fixture there quietly makes the
-    // list mean something else.
-    let test_only = lines
-        .iter()
-        .any(|l| l.trim_start().starts_with("#![cfg(test)]"));
-    if test_only {
-        return (Vec::new(), BTreeSet::new());
-    }
+    // Skip whatever a `#[cfg(test)]` attribute gates — it is not public
+    // API, so demanding `#[non_exhaustive]` on it would be wrong, and the
+    // only silencer would be `REQUEST_SIDE`, whose doc says entries are
+    // types a caller constructs to *send*.
+    //
+    // Two states, because the gated item may or may not have braces:
+    // `#[cfg(test)] mod tests { .. }` and `#[cfg(test)] resource_markers! {
+    // .. }` are brace-delimited, while `#[cfg(test)] pub(crate) mod
+    // test_subscriber;` ends at a semicolon. A single counter seeded on the
+    // attribute line cannot express that — it never returns to zero, so the
+    // scan stops at the first cfg-test item and silently skips the rest of
+    // the file.
+    let mut cfg_test_depth = 0i32;
+    let mut awaiting_gated_item = false;
 
-    let mut in_cfg_test = 0i32;
     for (index, line) in lines.iter().enumerate() {
         // Trimmed, so a declaration indented inside an inline `mod` counts.
         let trimmed = line.trim_start();
 
-        // Track an inline `#[cfg(test)] mod tests { ... }` by brace depth.
-        if in_cfg_test > 0 {
-            in_cfg_test += line.matches('{').count() as i32;
-            in_cfg_test -= line.matches('}').count() as i32;
+        if cfg_test_depth > 0 {
+            cfg_test_depth += line.matches('{').count() as i32;
+            cfg_test_depth -= line.matches('}').count() as i32;
+            continue;
+        }
+        if awaiting_gated_item {
+            let opens = line.matches('{').count() as i32;
+            if opens > 0 {
+                cfg_test_depth = opens - line.matches('}').count() as i32;
+                awaiting_gated_item = false;
+            } else if trimmed.ends_with(';') {
+                awaiting_gated_item = false;
+            }
             continue;
         }
         if trimmed.starts_with("#[cfg(test)]") {
-            in_cfg_test = 1;
+            awaiting_gated_item = true;
             continue;
         }
 
@@ -311,6 +331,19 @@ mod tests {
     #[derive(Deserialize)]
     pub struct TestOnlyFixture {}
 }
+
+// Below the cfg-test block: the position that catches a counter which never
+// unwinds. With one, the scan stops at the attribute and everything from
+// here to EOF is silently skipped.
+#[derive(Deserialize)]
+pub struct AfterTests {}
+
+// And a semicolon-terminated gated item, which has no braces to balance.
+#[cfg(test)]
+pub(crate) mod helper;
+
+#[derive(Deserialize)]
+pub struct AfterSemicolonGatedItem {}
 "#;
 
     // Supplied explicitly rather than derived from the fixture, so this
@@ -358,6 +391,15 @@ mod tests {
         "exempt at this path, must not be reported: {found:?}"
     );
     assert!(
+        names.contains(&"AfterTests"),
+        "scanning must resume after a cfg(test) block — a counter that never \
+         unwinds skips the rest of the file: {found:?}"
+    );
+    assert!(
+        names.contains(&"AfterSemicolonGatedItem"),
+        "and after a gated item with no braces to balance: {found:?}"
+    );
+    assert!(
         !names.contains(&"TestOnlyFixture"),
         "cfg(test) surface is not public API and must not be reported — the \
          only escape hatch would be REQUEST_SIDE, which means something else: \
@@ -391,6 +433,37 @@ mod tests {
         "and nothing is recorded as exempt at a path with no matching entry: \
          {none_here:?}"
     );
+}
+
+/// Module paths `lib.rs` declares under a `#[cfg(test)]` attribute.
+///
+/// Those files compile only under test, so their `pub struct`s are not API —
+/// but they sit at column 0 and are otherwise indistinguishable here. The
+/// gating lives on the `mod NAME;` line in `lib.rs`, *not* as an inner
+/// `#![cfg(test)]` in the file itself, so the file alone cannot be
+/// classified. Derived rather than hand-listed so a sixth test module is
+/// picked up automatically.
+fn cfg_test_modules(lib_rs: &str) -> BTreeSet<String> {
+    let lines: Vec<&str> = lib_rs.lines().collect();
+    let mut found = BTreeSet::new();
+    for (index, line) in lines.iter().enumerate() {
+        if !line.trim_start().starts_with("#[cfg(test)]") {
+            continue;
+        }
+        let Some(next) = lines.get(index + 1) else {
+            continue;
+        };
+        // `mod x;`, `pub mod x;`, `pub(crate) mod x;`
+        let Some(rest) = next.trim_start().split(" mod ").nth(1) else {
+            continue;
+        };
+        if let Some(name) = rest.split([';', ' ', '{']).next()
+            && !name.is_empty()
+        {
+            found.insert(name.to_string());
+        }
+    }
+    found
 }
 
 /// Names targeted by a hand-written `impl<'de> Deserialize<'de> for Foo`.
