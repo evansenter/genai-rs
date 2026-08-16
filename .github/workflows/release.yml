@@ -118,7 +118,7 @@ jobs:
       - name: Verify tag matches Cargo.toml version
         run: |
           TAG_VERSION=${GITHUB_REF#refs/tags/v}
-          CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          CARGO_VERSION=$(awk -F'"' '/^version = /{print $2; exit}' Cargo.toml)
           if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
             echo "::error::Tag version ($TAG_VERSION) does not match Cargo.toml version ($CARGO_VERSION)"
             exit 1
@@ -132,7 +132,7 @@ jobs:
       # Wait for crates.io to index the macros crate
       - name: Wait for crates.io indexing
         run: |
-          MACRO_VERSION=$(grep '^version = ' genai-rs-macros/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          MACRO_VERSION=$(awk -F'"' '/^version = /{print $2; exit}' genai-rs-macros/Cargo.toml)
           echo "Waiting for genai-rs-macros v${MACRO_VERSION} to be indexed..."
           for i in {1..30}; do
             if cargo search genai-rs-macros --limit 1 2>/dev/null | grep -q "${MACRO_VERSION}"; then

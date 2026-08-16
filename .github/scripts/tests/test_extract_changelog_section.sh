@@ -86,16 +86,22 @@ case "$last_line" in
     *) fail "trailing blank line was not trimmed; last line is [$last_line]" ;;
 esac
 
-# And the emitted file must end in exactly one newline — a body with no final
-# newline is as wrong as one with three. Checked against the file the callers
-# redirect into, with `tail -c2` rather than `od | tail | head`: this harness
-# runs under `pipefail`, where a `head` that closes the pipe early would abort
-# the whole run, and a two-byte tail cannot miss a doubled newline the way an
-# od line-boundary can.
+# The emitted file must end in exactly one newline. This is a guard on the
+# final `printf`, not on the trim: the extractor assigns `section` from a
+# command substitution, which strips every trailing newline before that
+# `printf` runs, so no change to the awk trim can break this. It is worth
+# pinning anyway — a later edit to that `printf` could — but the trim itself
+# is covered by the `$last_line` check above.
+#
+# `tail -c2` rather than `od | tail | head`: this harness runs under
+# `pipefail`, where a `head` that closes the pipe early would abort the whole
+# run, and two bytes cannot straddle an od line boundary the way a doubled
+# newline in a full dump can. Note `tr -s ' '` squeezes the padding od puts
+# between fields, so the doubled-newline pattern is `\n \n` with one space.
 "$EXTRACT" "$work/CHANGELOG.md" 0.10.0 >"$work/body.md"
 tail_bytes=$(tail -c2 "$work/body.md" | od -An -c | tr -s ' ')
 case "$tail_bytes" in
-    *'\n  \n'*) fail "the body ends in more than one newline:$tail_bytes" ;;
+    *'\n \n'*) fail "the body ends in more than one newline:$tail_bytes" ;;
     *'\n'*) ;;
     *) fail "the body does not end in a newline:$tail_bytes" ;;
 esac
@@ -144,6 +150,33 @@ cat >"$work/tail.md" <<'EOF'
 EOF
 assert_eq "the final section is extracted without a following heading" \
     "- only section" "$("$EXTRACT" "$work/tail.md" 0.1.0)"
+
+# --- a level-two heading inside a fence ---------------------------------------
+# Pins current (truncating) behaviour rather than asserting it is desirable:
+# `/^## /` does not track fence state, so a fenced line at column zero ends the
+# section. Documented in the script header. If this ever needs fixing, this
+# assertion is what changes.
+cat >"$work/fenced.md" <<'EOF'
+# Changelog
+
+## [0.4.0] - 2026-03-03
+
+- before the fence
+
+```markdown
+## [not a heading]
+```
+
+- after the fence
+
+## [0.3.0] - 2026-02-02
+
+- previous
+EOF
+assert_eq "a level-two heading inside a fence truncates the section (known limitation)" \
+    '- before the fence
+
+```markdown' "$("$EXTRACT" "$work/fenced.md" 0.4.0)"
 
 # --- empty section -----------------------------------------------------------
 # A heading with nothing under it must not be reported as success — the body

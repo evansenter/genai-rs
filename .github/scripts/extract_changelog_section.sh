@@ -6,6 +6,14 @@
 # `version` is bare (0.10.0), not tag-shaped (v0.10.0) — the caller strips
 # the prefix, because the tag and the heading do not have to agree on it.
 #
+# Known limitation: a line starting `## ` ends the section wherever it
+# appears, including inside a fenced code block. A future entry quoting
+# markdown, or a shell snippet with a comment at column zero, would truncate
+# the body silently — the extract still exits 0, so neither caller's fallback
+# fires. Pinned by a fixture in the harness so the behaviour is documented
+# rather than discovered. Not worth a fence state machine for a Keep a
+# Changelog file; if it ever bites, that is the fix.
+#
 # Exits 1 with a plain message on stderr when the section is absent. No
 # `::error::` prefix: both callers treat absence as recoverable and annotate
 # it themselves, so the script would otherwise stamp a red annotation on a

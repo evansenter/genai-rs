@@ -437,11 +437,14 @@ jobs:
         run: |
           set -euo pipefail
           # One awk pass rather than `grep | head -1 | sed`. This step turns on
-          # `pipefail`, which the byte-identical line in release.yml does not,
-          # and under it a `head` that closes the pipe before `grep` flushes
-          # makes the pipeline 141 and fails the step. Not reachable against
-          # this tree — one matching line, flushed at exit — but free to
-          # remove, and `exit` gives the `head -1` semantics for nothing.
+          # `pipefail`, which the equivalent steps in release.yml do not, and
+          # under it a `head` that closes the pipe before `grep` flushes makes
+          # the pipeline 141 and fails the step. Not reachable against this
+          # tree — one matching line, flushed at exit — but free to remove,
+          # and `exit` gives the `head -1` semantics for nothing. Both
+          # release.yml sites are swept to the same one-liner, so the three
+          # readers of this rule cannot drift apart — and the load-bearing one
+          # is release.yml's, which gates publishing.
           VERSION=$(awk -F'"' '/^version = /{print $2; exit}' Cargo.toml)
           echo "Cargo.toml version: $VERSION"
           if .github/scripts/extract_changelog_section.sh CHANGELOG.md "$VERSION"; then
