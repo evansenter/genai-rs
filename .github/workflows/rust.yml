@@ -533,9 +533,23 @@ jobs:
           echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Clean release build | ${duration}s |" >> $GITHUB_STEP_SUMMARY
       - name: Build examples
+        # `--features antigravity` because all seven `examples/antigravity/*`
+        # targets carry `required-features = ["antigravity"]`, which is not in
+        # `default`. A plain `cargo build --examples` silently skips a target
+        # whose required features are off, so those seven never reached
+        # `target/release/examples` — and so were absent from the summary
+        # table, the delta check and the sanity ceiling alike. That is the
+        # largest feature surface in the crate, which makes it the place a
+        # size regression was most likely to go unnoticed. They compile in CI
+        # already (`check` runs `--all-targets --all-features`), so this only
+        # changes what gets linked and measured.
+        #
+        # This also shifts every other example's size, since they now link an
+        # antigravity-enabled lib. Harmless: baseline and PR are measured by
+        # this same step, so both sides move together.
         run: |
           start=$(date +%s)
-          cargo build --release --examples
+          cargo build --release --examples --features antigravity
           end=$(date +%s)
           duration=$((end - start))
           echo "| Examples build | ${duration}s |" >> $GITHUB_STEP_SUMMARY
@@ -635,9 +649,30 @@ jobs:
           # workflow rather than the script so the script needs no `gh` and
           # stays runnable — and testable — outside Actions.
           SIZE_GROWTH_OK: ${{ contains(github.event.pull_request.labels.*.name, 'size-growth-ok') }}
+        # The delta table goes to the step summary as well as the log. The
+        # absolute-size table already surfaced there, which had the value
+        # ordering backwards — the deltas are the signal this job exists for,
+        # and on a green run nobody opens the raw log, so routine drift stayed
+        # invisible until it tripped the threshold.
         run: |
+          # `pipefail` because the pipeline's status would otherwise be tee's,
+          # and a failing compare would stop failing the step. The default
+          # shell is `bash -e` with no pipefail.
+          set -o pipefail
+          {
+            echo '### Example size deltas vs main'
+            echo ''
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY
+          rc=0
           .github/scripts/check_example_sizes.sh compare \
-            baseline-sizes.json current-sizes.json 15
+            baseline-sizes.json current-sizes.json 15 \
+            | tee -a $GITHUB_STEP_SUMMARY || rc=$?
+          # Fenced, so Markdown keeps the column alignment instead of
+          # collapsing the runs of spaces. Closed unconditionally — an
+          # unterminated fence would swallow whatever a later step appends.
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          exit "$rc"
 
       # Backstop only, deliberately far above any plausible size. The delta
       # check above is the real gate; this exists for the no-baseline case,
