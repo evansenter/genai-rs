@@ -492,8 +492,16 @@ jobs:
   build-metrics:
     name: Build Metrics
     runs-on: ubuntu-latest
-    # Only run on PRs that change code (not docs-only changes)
-    if: github.event_name == 'pull_request'
+    # PRs consume the size baseline; main pushes publish it. Previously this
+    # was PR-only, which is fine for an absolute ceiling but leaves a delta
+    # check with nothing to compare against — so main is now included, at the
+    # cost of running this job on merges as well. That is the price of
+    # absorbing toolchain drift automatically instead of bumping a ceiling by
+    # hand every few releases (#403).
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    permissions:
+      contents: read
+      actions: read # `gh run download` for the baseline artifact
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -534,18 +542,70 @@ jobs:
               echo "| $name | $size |" >> $GITHUB_STEP_SUMMARY
             fi
           done
-      - name: Check size limits
+      # Per-example delta against the last main build, not an absolute
+      # ceiling. The old 16MB ceiling had been raised three times (10 -> 12
+      # -> 16), each time only after going red on an unrelated PR: an
+      # absolute tripwire fires once drift accumulates past the margin, and
+      # the only remedy is widening the margin — so it caught toolchain
+      # drift loudly while a real per-PR regression under the ceiling passed
+      # silently. See #403.
+      #
+      # The baseline is an artifact refreshed on every main push rather than
+      # a committed file: sizes are toolchain- and linker-dependent, so a
+      # committed number would encode one machine's toolchain and drift
+      # against every other.
+      - name: Measure example sizes
         run: |
-          # Fail if any example exceeds 16MB (raised from 10MB for the
-          # 2026-05-20 revision surface + reqwest 0.13 at ~10.1MB, then past
-          # 12MB when stable-toolchain drift pushed auto_function_calling to
-          # ~13MB; 16MB keeps ~20% headroom over that so routine toolchain
-          # drift doesn't re-trip it. Guards runaway growth, not absolute size)
+          chmod +x .github/scripts/check_example_sizes.sh
+          .github/scripts/check_example_sizes.sh measure \
+            target/release/examples current-sizes.json
+          cat current-sizes.json
+
+      - name: Fetch the size baseline from main
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Best-effort: a missing baseline (first run after this lands, or
+          # an expired artifact) must not fail the job — the compare step
+          # skips and says so.
+          RUN_ID=$(gh run list --workflow Rust --branch main --status success \
+            --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null || echo "")
+          if [ -n "$RUN_ID" ]; then
+            gh run download "$RUN_ID" --name size-baseline --dir baseline 2>/dev/null \
+              || echo "No size-baseline artifact on run $RUN_ID"
+          fi
+          [ -f baseline/current-sizes.json ] || : > baseline-sizes.json
+          [ -f baseline/current-sizes.json ] && cp baseline/current-sizes.json baseline-sizes.json
+          true
+
+      - name: Check size deltas
+        if: github.event_name == 'pull_request'
+        run: |
+          .github/scripts/check_example_sizes.sh compare \
+            baseline-sizes.json current-sizes.json 15
+
+      # Refreshes the baseline for subsequent PRs. Routine toolchain drift is
+      # absorbed here instead of requiring a manual ceiling bump.
+      - name: Publish the size baseline
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: size-baseline
+          path: current-sizes.json
+          retention-days: 90
+
+      # Backstop only, deliberately far above any plausible size. The delta
+      # check above is the real gate; this exists for the no-baseline case,
+      # where a pathological binary would otherwise go unremarked.
+      - name: Sanity ceiling
+        run: |
           for f in target/release/examples/*; do
             if [ -f "$f" ] && [[ "$(basename "$f")" != *.d ]]; then
               size=$(stat -c%s "$f")
-              if [ "$size" -gt 16777216 ]; then
-                echo "::error::Binary $(basename $f) exceeds 16MB limit: $size bytes"
+              if [ "$size" -gt 67108864 ]; then
+                echo "::error::Binary $(basename $f) exceeds the 64MB sanity ceiling: $size bytes"
                 exit 1
               fi
             fi
