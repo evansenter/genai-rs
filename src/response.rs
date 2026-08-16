@@ -648,20 +648,6 @@ impl AudioInfo<'_> {
 ///     println!("Function: {} ({}) with args: {}", call.name, call.id, call.args);
 /// }
 /// ```
-/// A generic server-side tool call, borrowed from the response.
-///
-/// This is what an MCP invocation looks like — the API does not identify the
-/// server or the tool, so `id` and `signature` are all there is. See
-/// [`InteractionResponse::tool_calls`].
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[non_exhaustive]
-pub struct ToolCallInfo<'a> {
-    /// Unique identifier for this call.
-    pub id: &'a str,
-    /// Opaque signature; pass back unchanged when replaying statelessly.
-    pub signature: Option<&'a str>,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct FunctionCallInfo<'a> {
     /// Unique identifier for this function call (used when sending results back)
@@ -686,6 +672,20 @@ impl FunctionCallInfo<'_> {
             args: self.args.clone(),
         }
     }
+}
+
+/// A generic server-side tool call, borrowed from the response.
+///
+/// This is what an MCP invocation looks like — the API does not identify the
+/// server or the tool, so `id` and `signature` are all there is. See
+/// [`InteractionResponse::tool_calls`].
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[non_exhaustive]
+pub struct ToolCallInfo<'a> {
+    /// Unique identifier for this call.
+    pub id: &'a str,
+    /// Opaque signature; pass back unchanged when replaying statelessly.
+    pub signature: Option<&'a str>,
 }
 
 /// Owned version of [`FunctionCallInfo`] for storing beyond response lifetime.
