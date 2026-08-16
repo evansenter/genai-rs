@@ -8,6 +8,8 @@
 //! - **google_search**: Google Search grounding and annotations
 //! - **code_execution**: Python code execution tool
 //! - **url_context**: URL fetching and analysis
+//! - **mcp_server**: Remote Model Context Protocol servers
+//! - **computer_use**: Browser automation action loop
 //! - **structured_output**: JSON schema enforcement
 //! - **image_generation**: Image output modalities
 //! - **thinking**: Thinking level configuration
@@ -693,6 +695,197 @@ mod google_maps {
             summary.google_maps_result_count > 0,
             "Step summary should count Google Maps results"
         );
+    }
+}
+
+// =============================================================================
+// Built-in Tools: MCP Server
+// =============================================================================
+
+mod mcp_server {
+    use super::*;
+    use genai_rs::McpServerConfig;
+
+    /// A public MCP server, used so this exercises a real MCP round-trip
+    /// rather than a mock. If it goes away the test reports and skips rather
+    /// than failing — a third party's uptime is not this repo's regression.
+    const PUBLIC_MCP_SERVER: &str = "https://mcp.deepwiki.com/mcp";
+
+    /// Verifies remote MCP works on the current default model.
+    ///
+    /// This test exists because #265 recorded MCP as blocked: "Remote MCP
+    /// does not work with Gemini 3 models yet ... NOT supported:
+    /// gemini-3-flash-preview, gemini-3-pro-preview". That is no longer true,
+    /// and a live test is the only thing that would have noticed.
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_mcp_server_tool_round_trip() {
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        let result = stateful_builder(&client)
+            .with_text(
+                "Using the deepwiki tool, what is the repository structure of \
+                 evansenter/genai-rs? Answer in one sentence.",
+            )
+            .add_tool(McpServerConfig::new("deepwiki", PUBLIC_MCP_SERVER))
+            .create()
+            .await;
+
+        let response = match result {
+            Ok(response) => response,
+            Err(e) => {
+                // Distinguish "the API rejected MCP" (a real regression) from
+                // "the third-party server is down" (not our problem).
+                let msg = format!("{e:?}").to_lowercase();
+                if msg.contains("mcp") && (msg.contains("not supported") || msg.contains("invalid"))
+                {
+                    panic!("API rejected the MCP tool — this is a regression: {e:?}");
+                }
+                println!("Skipping: MCP server appears unreachable: {e:?}");
+                return;
+            }
+        };
+
+        println!("MCP status: {:?}", response.status);
+        let step_types: Vec<&str> = response
+            .steps
+            .iter()
+            .map(genai_rs::Step::step_type)
+            .collect();
+        println!("Steps: {step_types:?}");
+
+        assert_eq!(
+            response.status,
+            InteractionStatus::Completed,
+            "MCP interaction should complete; steps were {step_types:?}"
+        );
+
+        // The tool-use token count is the load-bearing signal: it is non-zero
+        // only if the server was actually called. Asserting on the answer text
+        // instead would pass on a model that ignored the tool and guessed.
+        //
+        // It is also the *only* usable signal today. The API emits generic
+        // `tool_call` steps for MCP, not the `mcp_server_tool_call` /
+        // `mcp_server_tool_result` types the crate models from the spec —
+        // verified on the wire 2026-08-16, where the steps carry only
+        // {id, signature, type}. Those steps therefore deserialize into
+        // `Step::Unknown` (Evergreen degrading as designed) and
+        // `step_summary().mcp_server_tool_call_count` reads 0 even on a
+        // successful call. Tracked in #433.
+        let tool_tokens = response
+            .usage
+            .as_ref()
+            .and_then(|u| u.total_tool_use_tokens)
+            .unwrap_or(0);
+        println!("Tool-use tokens: {tool_tokens}");
+        assert!(
+            tool_tokens > 0 || step_types.contains(&"mcp_server_tool_call"),
+            "expected evidence the MCP server was called (tool-use tokens or an \
+             mcp_server_tool_call step); got steps {step_types:?}"
+        );
+    }
+
+    /// Pins the wire shape the builder produces, with no network involved.
+    #[test]
+    fn test_mcp_server_config_wire_shape() {
+        let mut headers = std::collections::HashMap::new();
+        headers.insert("Authorization".to_string(), "Bearer token".to_string());
+
+        let tool: Tool = McpServerConfig::new("deepwiki", PUBLIC_MCP_SERVER)
+            .with_allowed_tools(vec!["read_wiki_structure".to_string()])
+            .with_headers(headers)
+            .into();
+
+        let value = serde_json::to_value(&tool).expect("should serialize");
+        assert_eq!(value["type"], "mcp_server");
+        assert_eq!(value["name"], "deepwiki");
+        assert_eq!(value["url"], PUBLIC_MCP_SERVER);
+        assert_eq!(value["allowed_tools"][0]["tools"][0], "read_wiki_structure");
+        assert_eq!(value["headers"]["Authorization"], "Bearer token");
+    }
+}
+
+// =============================================================================
+// Built-in Tools: Computer Use
+// =============================================================================
+
+mod computer_use {
+    use super::*;
+    use genai_rs::ComputerUseConfig;
+
+    /// Verifies the Computer Use tool is accepted and drives the model into
+    /// the action loop.
+    ///
+    /// #306 recorded this as blocked on availability. It is available now.
+    ///
+    /// `requires_action` is the success condition, not `completed`: the model
+    /// emits an action for the caller to execute and waits. A `completed`
+    /// response would mean the model answered without using the tool.
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_computer_use_reaches_requires_action() {
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        let result = stateful_builder(&client)
+            .with_text("Navigate to example.com and tell me the page heading.")
+            .add_tool(ComputerUseConfig::new())
+            .create()
+            .await;
+
+        let response = match result {
+            Ok(response) => response,
+            Err(e) => {
+                // Computer use is allowlisted on some accounts; a permission
+                // rejection is an account property, not a library regression.
+                let msg = format!("{e:?}").to_lowercase();
+                if msg.contains("permission") || msg.contains("not allowed") {
+                    println!("Skipping: computer use not enabled for this key: {e:?}");
+                    return;
+                }
+                panic!("Computer use request failed: {e:?}");
+            }
+        };
+
+        let step_types: Vec<&str> = response
+            .steps
+            .iter()
+            .map(genai_rs::Step::step_type)
+            .collect();
+        println!(
+            "Computer use status: {:?}, steps: {step_types:?}",
+            response.status
+        );
+
+        assert_eq!(
+            response.status,
+            InteractionStatus::RequiresAction,
+            "computer use should hand an action back to the caller rather than \
+             completing on its own; steps were {step_types:?}"
+        );
+    }
+
+    /// Pins the wire shape, including the snake_case field name that was a
+    /// spec-vs-implementation disagreement (`excluded_predefined_functions`,
+    /// once emitted as camelCase).
+    #[test]
+    fn test_computer_use_config_wire_shape() {
+        let tool: Tool = ComputerUseConfig::new()
+            .with_environment("browser")
+            .excluding(vec!["submit_form".to_string()])
+            .with_prompt_injection_detection(true)
+            .into();
+
+        let value = serde_json::to_value(&tool).expect("should serialize");
+        assert_eq!(value["type"], "computer_use");
+        assert_eq!(value["environment"], "browser");
+        assert_eq!(value["excluded_predefined_functions"][0], "submit_form");
+        assert_eq!(value["enable_prompt_injection_detection"], true);
     }
 }
 
