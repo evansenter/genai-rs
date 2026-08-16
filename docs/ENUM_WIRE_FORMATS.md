@@ -616,7 +616,7 @@ Mode selection and `fps` alone made no difference; only `start_offset` /
 content is inside a `user_input` step. The bare-content-array input form is
 rejected:
 
-```
+```text
 400 Unknown parameter 'processing' at 'input[1]'.
 ```
 
@@ -627,7 +627,7 @@ API-side asymmetry.
 Unknown enum values are rejected server-side by field path, confirming the
 field is validated rather than passed through:
 
-```
+```text
 400 Invalid enum value 'bogus_nonsense' at 'input[0].content[1].processing'.
 ```
 
