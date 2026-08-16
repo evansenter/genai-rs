@@ -161,13 +161,13 @@ async fn test_document_upload_and_indexing() {
 
             // Indexing is asynchronous — a fresh document is Pending, not Active.
             let active = client
-                .wait_for_document_active(&document.name, None)
+                .wait_for_document_active(&document.name, None, None)
                 .await
                 .expect("document never became active");
             assert_eq!(active.state, Some(DocumentState::Active));
 
             let listed = client
-                .list_documents(&store_name, None, None)
+                .list_file_search_documents(&store_name, None, None)
                 .await
                 .expect("list documents failed");
             assert!(
@@ -178,11 +178,14 @@ async fn test_document_upload_and_indexing() {
             // An indexed document needs force=true; without it the API rejects the
             // delete with "Cannot delete non-empty Document".
             assert!(
-                client.delete_document(&document.name, false).await.is_err(),
+                client
+                    .delete_file_search_document(&document.name, false)
+                    .await
+                    .is_err(),
                 "deleting an indexed document without force should fail"
             );
             client
-                .delete_document(&document.name, true)
+                .delete_file_search_document(&document.name, true)
                 .await
                 .expect("forced document delete failed");
         }
@@ -210,13 +213,22 @@ async fn test_file_search_retrieval_end_to_end() {
          relay is HALCYON-девять-42. It is reviewed every 90 days.\n",
             );
 
+            // Routed through the explicit-MIME variant so it has live
+            // coverage too — the inferring variant is exercised by the other
+            // tests in this file, and this file's temp docs are all `.txt`,
+            // so the two differ only in who supplies "text/plain".
             let document = client
-                .upload_to_file_search_store(&store_name, file.path(), Some("vega-reference"))
+                .upload_to_file_search_store_with_mime(
+                    &store_name,
+                    file.path(),
+                    Some("vega-reference"),
+                    "text/plain",
+                )
                 .await
                 .expect("upload failed");
 
             client
-                .wait_for_document_active(&document.name, None)
+                .wait_for_document_active(&document.name, None, None)
                 .await
                 .expect("document never became active");
 
@@ -279,7 +291,7 @@ async fn test_store_delete_without_force_rejects_non_empty() {
                 .await
                 .expect("upload failed");
             client
-                .wait_for_document_active(&document.name, None)
+                .wait_for_document_active(&document.name, None, None)
                 .await
                 .expect("document never became active");
 
@@ -322,7 +334,7 @@ async fn test_malformed_document_name_rejected_before_network() {
     let client = Client::new("invalid_key".to_string());
 
     let err = client
-        .get_document("fileSearchStores/abc123")
+        .get_file_search_document("fileSearchStores/abc123")
         .await
         .expect_err("a store name is not a document name");
     assert!(

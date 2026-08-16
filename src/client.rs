@@ -2005,7 +2005,7 @@ impl Client {
     /// let doc = client
     ///     .upload_to_file_search_store(&store.name, "handbook.pdf", Some("handbook"))
     ///     .await?;
-    /// client.wait_for_document_active(&doc.name, None).await?;
+    /// client.wait_for_document_active(&doc.name, None, None).await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -2063,7 +2063,7 @@ impl Client {
     ///
     /// Returns [`GenaiError::InvalidInput`] for a malformed store name, and
     /// an API or network error if the request fails.
-    pub async fn list_documents(
+    pub async fn list_file_search_documents(
         &self,
         store_name: &str,
         page_size: Option<u32>,
@@ -2086,7 +2086,7 @@ impl Client {
     ///
     /// Returns [`GenaiError::InvalidInput`] for a malformed name, and an API
     /// or network error if the request fails.
-    pub async fn get_document(
+    pub async fn get_file_search_document(
         &self,
         document_name: &str,
     ) -> Result<crate::FileSearchDocument, GenaiError> {
@@ -2106,7 +2106,7 @@ impl Client {
     ///
     /// Returns [`GenaiError::InvalidInput`] for a malformed name, and an API
     /// or network error if the request fails.
-    pub async fn delete_document(
+    pub async fn delete_file_search_document(
         &self,
         document_name: &str,
         force: bool,
@@ -2129,6 +2129,9 @@ impl Client {
     ///
     /// * `document_name` - Full resource name.
     /// * `timeout` - Maximum time to wait; defaults to 60s when `None`.
+    /// * `poll_interval` - Delay between polls; defaults to 500ms when `None`.
+    ///   Worth raising when uploading many documents at once, since the
+    ///   default issues a GET every half second per document.
     ///
     /// # Errors
     ///
@@ -2139,15 +2142,16 @@ impl Client {
         &self,
         document_name: &str,
         timeout: Option<std::time::Duration>,
+        poll_interval: Option<std::time::Duration>,
     ) -> Result<crate::FileSearchDocument, GenaiError> {
         use std::time::{Duration, Instant};
 
         let timeout = timeout.unwrap_or(Duration::from_secs(60));
-        let poll_interval = Duration::from_millis(500);
+        let poll_interval = poll_interval.unwrap_or(Duration::from_millis(500));
         let start = Instant::now();
 
         loop {
-            let current = self.get_document(document_name).await?;
+            let current = self.get_file_search_document(document_name).await?;
 
             match &current.state {
                 Some(crate::DocumentState::Active) => return Ok(current),

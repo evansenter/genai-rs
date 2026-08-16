@@ -80,7 +80,7 @@ async fn run_example(
     //    and File Search silently returns nothing for it until it is Active —
     //    so waiting here is not optional.
     let active = client
-        .wait_for_document_active(&document.name, None)
+        .wait_for_document_active(&document.name, None, None)
         .await?;
     println!("  indexed: {:?}\n", active.state);
 

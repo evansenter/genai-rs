@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   | `get_file_search_store` / `list_file_search_stores` | Read stores |
   | `delete_file_search_store` | Delete (with `force`) |
   | `upload_to_file_search_store` / `_with_mime` | Add a document |
-  | `get_document` / `list_documents` / `delete_document` | Manage documents |
+  | `get_file_search_document` / `list_file_search_documents` / `delete_file_search_document` | Manage documents |
   | `wait_for_document_active` | Block until a document is indexed |
 
   Plus the `FileSearchStore`, `FileSearchDocument`, and `DocumentState` types,
@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```rust
   let store = client.create_file_search_store(Some("my-docs")).await?;
   let doc = client.upload_to_file_search_store(&store.name, "handbook.pdf", None).await?;
-  client.wait_for_document_active(&doc.name, None).await?;
+  client.wait_for_document_active(&doc.name, None, None).await?;
   ```
 
   `wait_for_document_active` is not optional in practice: indexing is

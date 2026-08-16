@@ -31,7 +31,7 @@
 //!     .await?;
 //!
 //! // Documents are indexed asynchronously; wait before querying.
-//! client.wait_for_document_active(&document.name, None).await?;
+//! client.wait_for_document_active(&document.name, None, None).await?;
 //!
 //! // ... query it via Tool::FileSearch with store.name ...
 //!
@@ -477,5 +477,49 @@ mod tests {
             serde_json::to_value(&request).unwrap(),
             serde_json::json!({"displayName": "my-docs"})
         );
+    }
+
+    /// `extra` is the entire reason `create_file_search_store_with_request`
+    /// exists, and it rides `#[serde(flatten)]` — so what needs pinning is
+    /// that its keys land beside `displayName` rather than nested under an
+    /// `extra` object.
+    #[test]
+    fn create_request_flattens_extra_beside_modeled_fields() {
+        let mut extra = serde_json::Map::new();
+        extra.insert(
+            "customChunkingConfig".to_string(),
+            serde_json::json!({"maxTokensPerChunk": 200}),
+        );
+        let request = CreateFileSearchStoreRequest {
+            display_name: Some("my-docs".to_string()),
+            extra,
+        };
+
+        assert_eq!(
+            serde_json::to_value(&request).unwrap(),
+            serde_json::json!({
+                "displayName": "my-docs",
+                "customChunkingConfig": {"maxTokensPerChunk": 200}
+            })
+        );
+    }
+
+    /// The other half of the flatten contract: an unmodeled key on the way
+    /// in has to survive into `extra` rather than being dropped, or a
+    /// round-trip through this type would silently discard it.
+    #[test]
+    fn create_request_captures_unknown_fields_into_extra() {
+        let wire = serde_json::json!({
+            "displayName": "my-docs",
+            "somethingNewUpstream": "value"
+        });
+        let request: CreateFileSearchStoreRequest = serde_json::from_value(wire.clone()).unwrap();
+
+        assert_eq!(request.display_name.as_deref(), Some("my-docs"));
+        assert_eq!(
+            request.extra.get("somethingNewUpstream"),
+            Some(&serde_json::json!("value"))
+        );
+        assert_eq!(serde_json::to_value(&request).unwrap(), wire);
     }
 }
