@@ -1591,6 +1591,7 @@ impl InteractionResponse {
                 Step::GoogleSearchResult { .. } => summary.google_search_result_count += 1,
                 Step::UrlContextCall { .. } => summary.url_context_call_count += 1,
                 Step::UrlContextResult { .. } => summary.url_context_result_count += 1,
+                Step::ToolCall { .. } => summary.tool_call_count += 1,
                 Step::McpServerToolCall { .. } => summary.mcp_server_tool_call_count += 1,
                 Step::McpServerToolResult { .. } => summary.mcp_server_tool_result_count += 1,
                 Step::FileSearchCall { .. } => summary.file_search_call_count += 1,
@@ -1729,7 +1730,20 @@ pub struct StepSummary {
     pub url_context_call_count: usize,
     /// Number of `url_context_result` steps
     pub url_context_result_count: usize,
-    /// Number of `mcp_server_tool_call` steps
+    /// Number of generic `tool_call` steps — server-side tool invocations
+    /// the API does not further identify.
+    ///
+    /// **This is where MCP calls land.** The endpoint emits `tool_call`
+    /// rather than `mcp_server_tool_call` (verified live 2026-08-16), so
+    /// [`mcp_server_tool_call_count`](Self::mcp_server_tool_call_count)
+    /// reads 0 on a successful MCP interaction while this reads non-zero.
+    /// Check this one. See #433.
+    pub tool_call_count: usize,
+    /// Number of `mcp_server_tool_call` steps.
+    ///
+    /// **Expect 0.** The API emits generic `tool_call` steps for MCP; see
+    /// [`tool_call_count`](Self::tool_call_count). Retained because the
+    /// step type is spec-defined and may start arriving.
     pub mcp_server_tool_call_count: usize,
     /// Number of `mcp_server_tool_result` steps
     pub mcp_server_tool_result_count: usize,
@@ -1751,7 +1765,7 @@ impl fmt::Display for StepSummary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut parts = Vec::new();
 
-        let fields: [(&str, usize); 22] = [
+        let fields: [(&str, usize); 23] = [
             ("user_input", self.user_input_count),
             ("model_output", self.model_output_count),
             ("text", self.text_count),
@@ -1768,6 +1782,7 @@ impl fmt::Display for StepSummary {
             ("google_search_result", self.google_search_result_count),
             ("url_context_call", self.url_context_call_count),
             ("url_context_result", self.url_context_result_count),
+            ("tool_call", self.tool_call_count),
             ("mcp_server_tool_call", self.mcp_server_tool_call_count),
             ("mcp_server_tool_result", self.mcp_server_tool_result_count),
             ("file_search_call", self.file_search_call_count),

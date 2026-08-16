@@ -339,7 +339,30 @@ pub enum Step {
         /// Opaque signature; pass through unchanged.
         signature: Option<String>,
     },
+    /// A server-side tool call the API does not further identify
+    /// (`type: "tool_call"`).
+    ///
+    /// This is what an MCP tool invocation actually looks like on the wire:
+    /// only `{id, signature}`, with no server name, tool name, or arguments
+    /// (verified live 2026-08-16, `gemini-3.7-flash`, `mcp.deepwiki.com`).
+    /// Before it was modeled, these landed in [`Step::Unknown`], so a
+    /// successful MCP interaction reported zero tool calls.
+    ///
+    /// The call *happened* and its cost is real — `usage.total_tool_use_tokens`
+    /// is non-zero — but which server or tool ran is not recoverable from the
+    /// response. See #433.
+    ToolCall {
+        /// Unique ID for this call.
+        id: String,
+        /// Opaque signature; pass through unchanged.
+        signature: Option<String>,
+    },
     /// MCP server tool call (`type: "mcp_server_tool_call"`).
+    ///
+    /// **Spec-present, never observed.** The endpoint emits the generic
+    /// [`Step::ToolCall`] above instead. Modeled for parity, like
+    /// `Tool::Retrieval` — kept rather than removed because nothing
+    /// *rejects* it, so the API may begin emitting it. See #433.
     McpServerToolCall {
         /// Unique ID for this call.
         id: String,
@@ -351,6 +374,8 @@ pub enum Step {
         arguments: serde_json::Value,
     },
     /// MCP server tool result (`type: "mcp_server_tool_result"`).
+    ///
+    /// **Spec-present, never observed** — see [`Step::McpServerToolCall`].
     McpServerToolResult {
         /// The `id` of the corresponding call.
         call_id: String,
@@ -590,6 +615,7 @@ impl Step {
             Self::UrlContextResult { .. } => "url_context_result",
             Self::GoogleSearchCall { .. } => "google_search_call",
             Self::GoogleSearchResult { .. } => "google_search_result",
+            Self::ToolCall { .. } => "tool_call",
             Self::McpServerToolCall { .. } => "mcp_server_tool_call",
             Self::McpServerToolResult { .. } => "mcp_server_tool_result",
             Self::FileSearchCall { .. } => "file_search_call",
@@ -750,6 +776,13 @@ impl Serialize for Step {
                 if let Some(e) = is_error {
                     map.serialize_entry("is_error", e)?;
                 }
+                if let Some(s) = signature {
+                    map.serialize_entry("signature", s)?;
+                }
+            }
+            Self::ToolCall { id, signature } => {
+                map.serialize_entry("type", "tool_call")?;
+                map.serialize_entry("id", id)?;
                 if let Some(s) = signature {
                     map.serialize_entry("signature", s)?;
                 }
@@ -960,6 +993,11 @@ impl<'de> Deserialize<'de> for Step {
                 #[serde(default)]
                 signature: Option<String>,
             },
+            ToolCall {
+                id: String,
+                #[serde(default)]
+                signature: Option<String>,
+            },
             McpServerToolCall {
                 id: String,
                 name: String,
@@ -1111,6 +1149,7 @@ impl<'de> Deserialize<'de> for Step {
                     is_error,
                     signature,
                 },
+                KnownStep::ToolCall { id, signature } => Step::ToolCall { id, signature },
                 KnownStep::McpServerToolCall {
                     id,
                     name,
@@ -2514,6 +2553,49 @@ impl StepAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The exact `tool_call` payload observed live 2026-08-16
+    /// (`gemini-3.7-flash`, `mcp.deepwiki.com`): three keys, nothing else.
+    #[test]
+    fn tool_call_step_deserializes_the_observed_mcp_shape() {
+        let wire = serde_json::json!({
+            "type": "tool_call",
+            "id": "call_abc123",
+            "signature": "opaque"
+        });
+        let step: Step = serde_json::from_value(wire.clone()).unwrap();
+
+        match &step {
+            Step::ToolCall { id, signature } => {
+                assert_eq!(id, "call_abc123");
+                assert_eq!(signature.as_deref(), Some("opaque"));
+            }
+            other => panic!("expected Step::ToolCall, got {other:?}"),
+        }
+        assert!(
+            !step.is_unknown(),
+            "tool_call must not fall through to Unknown — that is what made a \
+             successful MCP call report zero tool calls"
+        );
+        assert_eq!(serde_json::to_value(&step).unwrap(), wire);
+    }
+
+    /// `signature` is optional; the API has been seen to send it, but the
+    /// spec does not require it.
+    #[test]
+    fn tool_call_step_allows_a_missing_signature() {
+        let wire = serde_json::json!({"type": "tool_call", "id": "call_1"});
+        let step: Step = serde_json::from_value(wire.clone()).unwrap();
+        assert!(matches!(
+            &step,
+            Step::ToolCall {
+                signature: None,
+                ..
+            }
+        ));
+        assert_eq!(serde_json::to_value(&step).unwrap(), wire);
+    }
+
     use serde_json::json;
 
     // =========================================================================
