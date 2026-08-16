@@ -911,7 +911,18 @@ mod computer_use {
                 // default model stops supporting computer use, the 400 will
                 // almost certainly say "not supported", and an unscoped
                 // predicate would call that regression a skip.
-                if msg.contains("computer_use") && unavailable {
+                // Both registers. `computer_use` is the wire token, but
+                // "computer use" is a natural-language form Google's error
+                // text is at least as likely to use — and the phrase set
+                // beside it is prose, so a message like "Computer use is not
+                // supported for this model" would clear `unavailable`, fail
+                // a token-only scope check, and panic for exactly the
+                // account property this skips on. The MCP guard above is not
+                // exposed the same way: nobody spells `mcp_server`
+                // differently.
+                let about_computer_use =
+                    msg.contains("computer_use") || msg.contains("computer use");
+                if about_computer_use && unavailable {
                     println!("Skipping: computer use not enabled for this key: {e:?}");
                     return;
                 }
