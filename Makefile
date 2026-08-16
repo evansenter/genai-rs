@@ -20,8 +20,16 @@ test:
 test-all:
 	cargo nextest run --run-ignored all
 
-# Fixture tests for the shell scripts in .github/scripts/. Needs only bash
-# and jq, so it runs in about a second — worth having at the edit rather than
+# Fixture tests for the shell scripts in .github/scripts/, plus shellcheck
+# when it is installed. The fixtures observe what the scripts *do* on the
+# inputs they supply; shellcheck covers the class they structurally cannot —
+# quoting slips, `set -e` interaction with command substitution, word
+# splitting — which matters here because a quoting slip that made a branch
+# unreachable would leave every existing assertion green. Skipped rather than
+# required when absent, so it does not become a second hard dependency for
+# contributors; ubuntu-latest ships it, so CI runs it with no workflow edit.
+#
+# Needs only bash and jq otherwise, so it runs in about a second — worth having at the edit rather than
 # only inside build-metrics, which starts with a `cargo clean`. Globbed, so a
 # new harness is picked up by dropping the file in — run through `bash`
 # rather than executed, so that claim holds without also needing chmod +x.
@@ -37,7 +45,14 @@ test-scripts:
 		echo "jq is required by these harnesses (brew install jq / apt install jq)" >&2; \
 		exit 1; \
 	}; \
-	found=0; rc=0; \
+	rc=0; \
+	if command -v shellcheck >/dev/null 2>&1; then \
+		echo "==> shellcheck"; \
+		shellcheck .github/scripts/*.sh .github/scripts/tests/*.sh || rc=1; \
+	else \
+		echo "==> shellcheck not installed, skipping lint"; \
+	fi; \
+	found=0; \
 	for t in .github/scripts/tests/*.sh; do \
 		[ -e "$$t" ] || continue; \
 		found=1; \

@@ -49,7 +49,31 @@ measure() {
             name=$(basename "$f")
             case "$name" in
                 *.d) continue ;;
-                *-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) continue ;;
+            esac
+            # Cargo's rebuild duplicates end in `-<hex>`, and the whole tail
+            # after the final hyphen is hex — so that is what is required
+            # here, rather than "starts with 8 hex characters" as a bare glob
+            # would. `foo-deadbeef_bar` is a plausible example name and used
+            # to be discarded as a duplicate.
+            #
+            # A false positive matters more than it looks: the example
+            # vanishes from *both* sides, so it shows up in neither the
+            # comparison table, nor `added`, nor `removed`. The only trace is
+            # the compared count — the one signal the removed/renamed notice
+            # below cannot reach.
+            case "$name" in
+                *-*)
+                    local suffix=${name##*-}
+                    case "$suffix" in
+                        # At least 8 characters and every one of them hex.
+                        [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*)
+                            case "$suffix" in
+                                *[!0-9a-f]*) ;;
+                                *) continue ;;
+                            esac
+                            ;;
+                    esac
+                    ;;
             esac
             [ -x "$f" ] || continue
 
@@ -263,7 +287,18 @@ entry (both are dropped by the same filter). The delta check is not running."
     fi
 
     echo
-    echo "All examples within +${max_growth}% of baseline (${compared} compared)."
+    # Both totals, not a bare compared count. The disjoint guard above catches
+    # a *total* key-set divergence, but a partial one reads identically to a
+    # clean run: rename 19 of 20 examples and this line says "1 compared" and
+    # goes green with 95% of the surface ungated. Nobody reading a passing
+    # summary notices that the 1 used to be 20 — the added/removed notices name
+    # the keys but read as routine churn. With both denominators the gradient
+    # is visible at a glance.
+    local n_current n_baseline
+    n_current=$(jq 'length' < "$current")
+    n_baseline=$(jq 'length' < "$baseline")
+    echo "All examples within +${max_growth}% of baseline \
+(${compared} compared of ${n_current} built / ${n_baseline} in baseline)."
 }
 
 # Renders the step-summary table from a size map.

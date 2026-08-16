@@ -51,7 +51,7 @@ expect_rc() {
     echo "ok   - $label (exit $rc)"
   else
     echo "FAIL - $label: expected exit $want, got $rc"
-    sed 's/^/         /' <<<"$out"
+    printf '%s\n' "${out//$'\n'/$'\n'         }"
     failures=$((failures + 1))
   fi
 }
@@ -62,7 +62,7 @@ expect_output() {
     echo "ok   - $label"
   else
     echo "FAIL - $label: expected to find '$needle'"
-    sed 's/^/         /' <<<"$out"
+    printf '%s\n' "${out//$'\n'/$'\n'         }"
     failures=$((failures + 1))
   fi
 }
@@ -71,7 +71,7 @@ refute_output() {
   local label="$1" needle="$2"
   if grep -q -- "$needle" <<<"$out"; then
     echo "FAIL - $label: found '$needle'"
-    sed 's/^/         /' <<<"$out"
+    printf '%s\n' "${out//$'\n'/$'\n'         }"
     failures=$((failures + 1))
   else
     echo "ok   - $label"
@@ -220,6 +220,36 @@ else
   echo "FAIL - measure: expected exactly {simple_interaction}, got $(jq -c 'keys' < "$WORK/bins.json")"
   failures=$((failures + 1))
 fi
+
+# --- The hash filter must require the *whole* tail after the final hyphen to
+#     be hex, not merely to start with 8 hex characters. A false positive here
+#     drops the example from both sides, so it appears in neither the table nor
+#     the added/removed notices — the compared count is its only trace.
+rm -rf "$WORK/hashbins" && mkdir -p "$WORK/hashbins"
+for n in plain_name real-deadbeef_suffix short-abc keep-0123456g \
+         drop-0123456789abcdef drop-0123456789; do
+  : > "$WORK/hashbins/$n"
+  chmod +x "$WORK/hashbins/$n"
+done
+bash "$SCRIPT" measure "$WORK/hashbins" "$WORK/hashbins.json" >/dev/null 2>&1
+kept=$(jq -r 'keys | sort | join(",")' < "$WORK/hashbins.json")
+expected="keep-0123456g,plain_name,real-deadbeef_suffix,short-abc"
+if [ "$kept" = "$expected" ]; then
+  echo "ok   - measure: drops only all-hex tails of 8+ characters"
+else
+  echo "FAIL - measure: hash filter kept [$kept], expected [$expected]"
+  failures=$((failures + 1))
+fi
+
+# --- The success line must carry both denominators. A *partial* key-set
+#     divergence is fatal to coverage but invisible in a bare compared count:
+#     rename 19 of 20 and "1 compared" still reads like a clean run.
+echo '{"alpha": 1000000, "beta": 2000000, "gamma": 3000000}' > "$WORK/three.json"
+echo '{"alpha": 1000000}' > "$WORK/one.json"
+run_compare "$WORK/three.json" "$WORK/one.json" 15
+expect_rc     "partial divergence: still passes (nothing regressed)" 0
+expect_output "partial divergence: reports how much was compared" "1 compared of 1 built"
+expect_output "partial divergence: reports the baseline size too" "3 in baseline"
 
 # --- A zero-byte baseline entry must not abort the filter. jq dies on a zero
 #     divisor, and `measure` records 0 for any executable-but-empty file —
