@@ -17,9 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```
 
   `cachedContent` and `cached_content_name` are rejected too, so it isn't a
-  spelling problem. The `/v1beta/cachedContents` resource works fine — a cache
-  creates and reports its token count — but nothing in the Interactions API
-  consumes one, so the builder method could only ever produce a 400.
+  spelling problem — and neither is it a placement one: `generation_config`
+  holds several fields that are not top-level (`transcription_config`,
+  `speech_config`), but both spellings are rejected there as well
+  (`Unknown parameter 'cached_content' at 'generation_config'`). The
+  `/v1beta/cachedContents` resource works fine — a cache creates and reports
+  its token count — but nothing in the Interactions API consumes one, so the
+  builder method could only ever produce a 400.
 
   It shipped because the field was modeled from the spec and never live-probed;
   its test asserted the field *serialized* correctly, which it did.

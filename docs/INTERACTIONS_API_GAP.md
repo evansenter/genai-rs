@@ -120,10 +120,14 @@ Completed in the revision-migration phase and the phase-2 surface expansion
 2. ~~`tool_choice` restructure: lowercase enums or
    `{allowed_tools: {mode, tools}}`; remove crate's top-level `allowed_tools`
    inside generation_config.~~ ✅ (`ToolChoice` / `AllowedTools`)
-3. ~~`cached_content` request field (explicit caching).~~ ❌ **REVERTED
-   2026-08-16** — the Interactions API rejects the field outright:
-   `400 Unknown parameter 'cached_content'` (also tried `cachedContent`
-   and `cached_content_name`; all rejected). The `/v1beta/cachedContents`
+3. `cached_content` request field (explicit caching). ❌ **REVERTED
+   2026-08-16** — not struck through, because unlike every other entry in
+   this list it did not land. The Interactions API rejects the field
+   outright: `400 Unknown parameter 'cached_content'` (also tried
+   `cachedContent` and `cached_content_name`, and both spellings nested
+   inside `generation_config`, which is where `transcription_config` and
+   `speech_config` live — all rejected, so it is neither a spelling nor a
+   placement problem). The `/v1beta/cachedContents`
    resource itself works — a cache creates fine and reports its token
    count — but nothing in the Interactions API consumes one.
 
@@ -203,6 +207,8 @@ Completed in the 2026-08 sweep against SDK 2.17.0 (the 0.9.0 release):
 - ~~`CodeExecutionLanguage` `"PYTHON"`~~ → `"python"`.
 - ~~`top_k` in GenerationConfig~~ → removed.
 - ~~`response_mime_type`~~ → removed (the API rejects it in all forms).
+- ~~`cached_content`~~ → removed (rejected at both the top level and inside
+  `generation_config`, in every spelling; verified live 2026-08-16).
 - ~~`Turn`-array input~~ → removed; history is steps.
 - ~~`system_instruction` typed as InteractionInput~~ → plain string.
 - ~~`total_reasoning_tokens` in usage~~ → removed.

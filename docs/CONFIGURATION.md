@@ -383,17 +383,19 @@ let response = client
 ## Cached Content
 
 **Explicit context caching is not available on the Interactions API.** The
-request field was removed in the unreleased version after live probing showed
-the API rejects it outright:
+request field was removed after live probing (2026-08-16) showed the API
+rejects it outright:
 
 ```text
 400 Unknown parameter 'cached_content'
 ```
 
-`cachedContent` and `cached_content_name` are rejected too. The
-`/v1beta/cachedContents` resource itself works — a cache creates and reports
-its token count — but nothing in the Interactions API consumes one, so there
-is no way to reference a cache from a request.
+`cachedContent` and `cached_content_name` are rejected too, and so are both
+spellings nested inside `generation_config` — the position several other
+config-shaped fields do live at. The `/v1beta/cachedContents` resource itself
+works: a cache creates and reports its token count. But nothing in the
+Interactions API consumes one, so there is no way to reference a cache from a
+request.
 
 **Implicit caching still applies** and needs no configuration. Check how much
 of a request hit cache via the response's `usage.total_cached_tokens`.
