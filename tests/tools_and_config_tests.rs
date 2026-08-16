@@ -766,7 +766,16 @@ mod mcp_server {
                 ]
                 .iter()
                 .any(|phrase| msg.contains(phrase));
-                if msg.contains("mcp_server") && rejected {
+                // Both registers, as with computer use below: `mcp_server` is
+                // what the SDK writes, but Google's error prose need not use
+                // the identifier. "MCP server tools are not supported for
+                // this model" clears `rejected` and fails a token-only check
+                // — the space breaks it — so it would print "unreachable"
+                // and stay green for exactly the regression this test exists
+                // to catch. The panic stays scoped either way, since
+                // `rejected` must still match.
+                let about_mcp = msg.contains("mcp_server") || msg.contains("mcp server");
+                if about_mcp && rejected {
                     panic!("API rejected the MCP tool — this is a regression: {e:?}");
                 }
                 println!("Skipping: MCP server appears unreachable: {e:?}");
@@ -814,11 +823,29 @@ mod mcp_server {
         // to exercise the surface a caller actually has.
         let tool_tokens = response.tool_use_tokens().unwrap_or(0);
         println!("Tool-use tokens: {tool_tokens}");
-        assert!(
-            tool_tokens > 0 || step_types.contains(&"mcp_server_tool_call"),
-            "expected evidence the MCP server was called (tool-use tokens or an \
-             mcp_server_tool_call step); got steps {step_types:?}"
-        );
+
+        // Report and skip rather than assert, because every reason this can
+        // be zero is outside this repo: deepwiki down (the interaction still
+        // completes, the model just has nothing back from the tool), or the
+        // model choosing not to call it. The `PUBLIC_MCP_SERVER` doc comment
+        // promises that tolerance and it previously existed only on the
+        // `Err` arm — a 200 whose tool call failed reddened the `tools`
+        // group for a third party's uptime.
+        //
+        // What still fails loudly is the thing that is ours: the API
+        // rejecting the tool, caught on the `Err` arm above, and a status
+        // other than `Completed`, asserted above. So this weakens to
+        // best-effort evidence of the round trip while keeping the
+        // library-facing regression a hard failure.
+        if tool_tokens == 0 && !step_types.contains(&"mcp_server_tool_call") {
+            println!(
+                "Skipping: the interaction completed but shows no evidence the MCP \
+                 server was called (tool-use tokens 0, steps {step_types:?}). Either \
+                 the server is down or the model answered without it — neither is a \
+                 library regression."
+            );
+            return;
+        }
     }
 
     /// Pins the wire shape the builder produces, with no network involved.
