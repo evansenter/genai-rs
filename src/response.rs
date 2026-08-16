@@ -2027,6 +2027,26 @@ mod tests {
     // =========================================================================
 
     #[test]
+    fn modality_tokens_new_sets_both_fields() {
+        // `ModalityTokens` is `#[non_exhaustive]` with no `Default`, so this
+        // constructor is the only non-serde route to a value — which makes
+        // its signature, not just its behavior, part of the public API.
+        let tokens = ModalityTokens::new("text", 42);
+        assert_eq!(tokens.modality, "text");
+        assert_eq!(tokens.tokens, 42);
+
+        // Accepts both `&str` and `String` via `impl Into<String>`.
+        let owned = ModalityTokens::new(String::from("image"), 7);
+        assert_eq!(owned.modality, "image");
+        assert_eq!(owned.tokens, 7);
+
+        // And round-trips through serde like a deserialized one.
+        let wire = serde_json::to_value(&tokens).unwrap();
+        let back: ModalityTokens = serde_json::from_value(wire).unwrap();
+        assert_eq!(back, tokens);
+    }
+
+    #[test]
     fn test_modality_tokens_serialization() {
         let tokens = ModalityTokens {
             modality: "text".to_string(),

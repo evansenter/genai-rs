@@ -1277,9 +1277,14 @@ let mut response = InteractionResponse::default();
 response.status = InteractionStatus::Completed;
 ```
 
-Only the types with neither `Default` nor a constructor need a JSON fixture —
-`FileMetadata`, `FileUploadResponse`, `StreamError`, `OwnedFunctionCallInfo`.
-`tests/proptest_roundtrip_tests.rs` shows both routes.
+Only the types with neither `Default` nor a constructor need a JSON fixture:
+`FileMetadata`, `FileError`, `VideoMetadata`, `ListFilesResponse`,
+`FileUploadResponse`, and `StreamError`. `tests/proptest_roundtrip_tests.rs`
+shows both routes.
+
+Not in that list, despite having no `Default`: `ModalityTokens` and
+`InteractionStreamEvent` each gained a `new()`, and `OwnedFunctionCallInfo` is
+produced by the public `FunctionCallInfo::to_owned()`.
 
 If a `test-support` feature for constructing mock instances becomes commonly requested, we'll consider adding it.
 

@@ -96,6 +96,7 @@ fn response_structs_are_non_exhaustive() {
     );
 
     let mut offenders = BTreeSet::new();
+    let mut matched_exemptions = BTreeSet::new();
     for file in &files {
         let rel = file
             .strip_prefix(env!("CARGO_MANIFEST_DIR"))
@@ -108,8 +109,28 @@ fn response_structs_are_non_exhaustive() {
         let Ok(text) = std::fs::read_to_string(file) else {
             panic!("could not read {rel} — refusing to report a clean scan");
         };
-        offenders.extend(offenders_in(&rel, &text));
+        let (found, exempted) = offenders_and_exemptions_in(&rel, &text);
+        offenders.extend(found);
+        matched_exemptions.extend(exempted);
     }
+
+    // An exemption that matches nothing is not harmless. The wrong-looking
+    // direction — a type moving to another file — at least surfaces, since
+    // it is then scanned unexempted. A *deleted* type leaves its key here
+    // forever, pre-authorizing whatever future type happens to land on that
+    // exact `path:Name`. Each entry carries a written justification, and a
+    // stale one justifies something that no longer exists.
+    let stale: Vec<&str> = REQUEST_SIDE
+        .iter()
+        .copied()
+        .filter(|key| !matched_exemptions.contains(*key))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "These REQUEST_SIDE exemptions no longer match any type:\n  {}\n\n\
+         Remove them, or update the path if the type moved.",
+        stale.join("\n  ")
+    );
 
     assert!(
         offenders.is_empty(),
@@ -127,6 +148,12 @@ fn response_structs_are_non_exhaustive() {
 /// `path` is repo-relative and only used for reporting and for matching
 /// `REQUEST_SIDE`.
 fn offenders_in(path: &str, text: &str) -> Vec<String> {
+    offenders_and_exemptions_in(path, text).0
+}
+
+/// As [`offenders_in`], plus the `path:Name` exemption keys it actually
+/// matched — so a key that no longer names anything can be reported.
+fn offenders_and_exemptions_in(path: &str, text: &str) -> (Vec<String>, BTreeSet<String>) {
     let lines: Vec<&str> = text.lines().collect();
 
     // A hand-written `impl<'de> Deserialize<'de> for Foo` carries no
@@ -146,6 +173,7 @@ fn offenders_in(path: &str, text: &str) -> Vec<String> {
         .collect();
 
     let mut offenders = Vec::new();
+    let mut matched = BTreeSet::new();
     for (index, line) in lines.iter().enumerate() {
         // Trimmed, so a declaration indented inside an inline `mod` counts.
         let trimmed = line.trim_start();
@@ -158,33 +186,50 @@ fn offenders_in(path: &str, text: &str) -> Vec<String> {
             .next()
             .unwrap_or("")
             .trim();
-        if name.is_empty() || REQUEST_SIDE.contains(&format!("{path}:{name}").as_str()) {
+        if name.is_empty() {
+            continue;
+        }
+        let key = format!("{path}:{name}");
+        if REQUEST_SIDE.contains(&key.as_str()) {
+            matched.insert(key);
             continue;
         }
 
-        // Walk back over the contiguous attribute/doc block. A multi-line
-        // `#[derive(` continues onto lines that start with neither `#[` nor
-        // `///`, so keep going while the block is unbalanced.
+        // Walk back over the contiguous attribute/doc block, collecting
+        // *only* attribute lines.
+        //
+        // Doc prose is deliberately excluded from both the collected text
+        // and the paren accounting. The crate writes
+        // "This enum is marked `#[non_exhaustive]` for forward
+        // compatibility." above ~25 items, so folding prose in would let a
+        // struct satisfy the attribute check by *mentioning* it — the
+        // silent pass this whole file argues against — and symmetrically
+        // would report a Serialize-only struct whose docs mention
+        // Deserialize. Counting parens in prose has the same shape of bug:
+        // one unmatched `(` leaves the depth non-zero and walks the scan
+        // into unrelated earlier source.
         let mut attrs = String::new();
         let mut cursor = index;
         let mut depth = 0i32;
         while cursor > 0 {
             let prev = lines[cursor - 1];
             let t = prev.trim_start();
-            // `)]` closes a multi-line `#[derive(...)]`; treat it as meta so
-            // the walk-back enters the block, then let `depth` carry it over
-            // the bare derive names inside, which start with none of these.
-            let is_meta = t.starts_with("#[")
-                || t.starts_with("///")
-                || t.starts_with("//")
-                || t.starts_with(')');
-            if !is_meta && depth == 0 {
+            let is_doc = t.starts_with("///") || t.starts_with("//");
+            // Inside an unclosed `#[derive(`, a line is a bare derive name.
+            // `)]` is how such a block *ends*, and the walk-back meets it
+            // first, so it has to be admitted before `depth` can carry the
+            // names above it.
+            let in_attr = depth != 0;
+            if !is_doc && !in_attr && !t.starts_with("#[") && !t.starts_with(')') {
                 break;
+            }
+            cursor -= 1;
+            if is_doc {
+                continue;
             }
             depth += prev.matches(')').count() as i32 - prev.matches('(').count() as i32;
             attrs.push_str(prev);
             attrs.push('\n');
-            cursor -= 1;
         }
 
         let deserializable = attrs.contains("Deserialize") || manual.contains(name);
@@ -192,7 +237,7 @@ fn offenders_in(path: &str, text: &str) -> Vec<String> {
             offenders.push(format!("{path}:{}: {name}", index + 1));
         }
     }
-    offenders
+    (offenders, matched)
 }
 
 /// Pins that the scan discriminates, rather than that it happens to return
