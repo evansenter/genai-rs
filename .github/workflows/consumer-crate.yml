@@ -56,8 +56,15 @@ jobs:
           #
           # Only the two `genai-rs*` lines are rewritten, to path deps: this
           # must fail on an unreleased codegen change, which is the point.
-          awk '/^```toml$/ { grab = 1; next } /^```$/ { if (grab) exit } grab' \
-            genai-rs/README.md > readme-deps.toml
+          # Anchored on the heading, not positional. Today the Installation
+          # snippet is the first toml block, but a future toml block added
+          # above it that happens to carry `[dependencies]` — an antigravity
+          # install example is the obvious candidate — would pass the guard
+          # below and silently redirect this whole job at the wrong snippet.
+          awk '/^## Installation$/ { sect = 1 }
+               sect && /^```toml$/ { grab = 1; next }
+               grab && /^```$/ { exit }
+               grab' genai-rs/README.md > readme-deps.toml
           if ! grep -q '^\[dependencies\]' readme-deps.toml; then
             echo "::error::Could not extract the Installation snippet from README.md."
             echo "This job would otherwise scaffold an empty dependency set and pass."
@@ -66,6 +73,24 @@ jobs:
           sed -e 's|^genai-rs = .*|genai-rs = { path = "../genai-rs" }|' \
               -e 's|^genai-rs-macros = .*|genai-rs-macros = { path = "../genai-rs/genai-rs-macros" }|' \
               readme-deps.toml > deps.toml
+          # The `[dependencies]` guard above catches an empty extraction; this
+          # catches the next step down. Both seds are silent no-ops on a
+          # non-match, so if the README line ever changes shape — a
+          # `[dependencies.genai-rs]` table, leading whitespace, a rename —
+          # `genai-rs = "0.10"` survives, cargo resolves it from crates.io,
+          # and the job compiles the *published* macro. It would then go
+          # green while the unreleased-codegen drift it exists to catch is
+          # invisible: the same fail-open direction, one step further down.
+          for dep in '../genai-rs' '../genai-rs/genai-rs-macros'; do
+            if ! grep -q "path = \"$dep\"" deps.toml; then
+              echo "::error::Failed to rewrite a README dependency to path = \"$dep\"."
+              echo "Without it this job would build against the published crate and"
+              echo "could not see unreleased codegen changes — its entire purpose."
+              cat deps.toml
+              exit 1
+            fi
+          done
+
           echo "--- dependency set, as documented ---"
           cat deps.toml
 
@@ -203,6 +228,11 @@ jobs:
       - name: Build
         id: build
         working-directory: minimal
+        env:
+          # Same cargo-config-discovery gap as the job above: the build runs
+          # in `minimal/`, so `genai-rs/.cargo/config.toml` is never on the
+          # walk-up path and the mold install would otherwise be inert.
+          RUSTFLAGS: -C link-arg=-fuse-ld=mold
         run: cargo build
 
       - name: Report status
