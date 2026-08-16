@@ -88,6 +88,7 @@ Helper methods on each type:
 
 | Enum / Type | Wire Format | Example | Notes |
 |------|-------------|---------|-------|
+| `InteractionInput` | string OR `[Step]` OR `[Content]` | `"hi"` / `[{"type": "user_input", "content": [...]}]` | Requests always send the step form — see details. ✅ Verified live 2026-08-16 |
 | `Step` | tagged by `"type"`, snake_case | `"user_input"`, `"model_output"`, `"function_call"`, ... | Pending live verification (2026-05-20 revision) |
 | `StepDelta` | tagged by `"type"` | `"text"`, `"arguments_delta"`, `"text_annotation_delta"` | Two tags differ from variant names — see details. Pending live verification (2026-05-20 revision) |
 | `Annotation` | tagged by `"type"` | `"url_citation"`, `"file_citation"`, `"place_citation"` | Pending live verification (2026-05-20 revision) |
@@ -132,6 +133,40 @@ Helper methods on each type:
 | `ImageSize` | size string | `"512"`, `"1K"`, `"2K"`, `"4K"` | Image resolution |
 
 ## Details
+
+### InteractionInput (request/response `input`)
+
+The spec's input union is `str | [Step] | [Content] | Content`. All four
+deserialize; **requests always serialize the `[Step]` form**, wrapping
+`InteractionInput::Content` in a single `user_input` step (#427).
+
+Both array arms are accepted by the API, but they are not equivalent: video
+`processing` is rejected outside a step. Probed live 2026-08-16 against
+`gemini-3.7-flash` at revision `2026-05-20`, sending identical content each
+way:
+
+| Input | bare `[Content]` | `[{"type": "user_input", "content": [...]}]` |
+|---|---|---|
+| text | completed | completed |
+| text + image (inline base64) | completed | completed |
+| text + audio (inline base64) | completed | completed |
+| text + document (inline base64 PDF) | completed | completed |
+| text + video (URI) | completed | completed |
+| text + video + `"processing": "static"` | **400** `Unknown parameter 'processing' at 'input[1]'` | completed |
+| follow-up turn via `previous_interaction_id` | completed | completed |
+
+So the step form is accepted everywhere the bare form is, and in one place the
+bare form is not. It is also the canonical shape under this revision — the one
+`Turn` was removed in favour of.
+
+The wrap is scoped to `InteractionRequest::input`, not to `InteractionInput`'s
+own `Serialize`: `InteractionResponse::input` echoes back what the server sent,
+and re-serializing that into a shape the server did not send would work against
+the Evergreen roundtrip principle. A request's `Content` input therefore
+deserializes back as `Steps(vec![Step::user_input(..)])` — the two are
+indistinguishable once serialized.
+
+`processing` itself is not modeled by this crate yet (#419).
 
 ### Step (response `steps` / stateless history)
 

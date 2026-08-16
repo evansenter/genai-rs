@@ -2587,43 +2587,54 @@ proptest! {
         prop_assert_eq!(usage, restored);
     }
 
-    /// Test that `Content` input round-trips as `Steps` (documented gotcha).
+    /// Test an empty content array deserializes as Steps (documented gotcha:
+    /// `InteractionInput::Content(vec![])` serializes to `[]`, which
+    /// canonically deserializes as `Steps(vec![])`).
     ///
-    /// `InteractionInput::Content(..)` serializes as a single `user_input`
-    /// step — see the variant docs and #427 — which is wire-identical to
-    /// `Steps(vec![Step::user_input(..)])` and so deserializes back as that.
-    /// The empty vector is not special-cased: the wrap is unconditional, so
-    /// the shape a caller gets never depends on how much content is in it.
+    /// This is the *type's own* serialization, which stays faithful to the
+    /// variant — the `user_input` wrap is scoped to
+    /// `InteractionRequest::input` (#427), so it does not apply here.
     #[test]
-    fn content_input_round_trips_as_a_user_input_step(_unused in Just(())) {
+    fn empty_input_array_deserializes_as_steps(_unused in Just(())) {
         let input = InteractionInput::Content(vec![]);
         let json = serde_json::to_value(&input).expect("Serialization should succeed");
-        prop_assert_eq!(
-            &json,
-            &serde_json::json!([{ "type": "user_input", "content": [] }])
-        );
+        prop_assert_eq!(&json, &serde_json::json!([]));
 
         let restored: InteractionInput =
             serde_json::from_value(json).expect("Deserialization should succeed");
-        prop_assert_eq!(restored, InteractionInput::Steps(vec![Step::user_input(vec![])]));
+        prop_assert_eq!(restored, InteractionInput::Steps(vec![]));
+    }
 
-        // And with content in it, the same shape.
-        let input = InteractionInput::Content(vec![Content::text("hi")]);
-        let json = serde_json::to_value(&input).expect("Serialization should succeed");
+    /// Test that a request wraps `Content` input, whatever the content is.
+    ///
+    /// The wrap is unconditional, so the wire shape never depends on how much
+    /// content the caller supplied — and it is wire-identical to a hand-built
+    /// `Step::user_input`, which is what lets it deserialize back cleanly.
+    #[test]
+    fn request_wraps_content_input(contents in prop::collection::vec(arb_content(), 0..3)) {
+        let request = crate::InteractionRequest {
+            model: Some("test-model".to_string()),
+            input: InteractionInput::Content(contents.clone()),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&request).expect("Serialization should succeed");
+        let input_json = &json["input"];
+
+        prop_assert!(input_json.is_array());
+        prop_assert_eq!(input_json.as_array().map(Vec::len), Some(1));
+        prop_assert_eq!(&input_json[0]["type"], &serde_json::json!("user_input"));
         prop_assert_eq!(
-            &json,
-            &serde_json::json!([{
-                "type": "user_input",
-                "content": [{ "type": "text", "text": "hi" }],
-            }])
+            input_json[0]["content"].as_array().map(Vec::len),
+            Some(contents.len())
         );
 
-        let restored: InteractionInput =
-            serde_json::from_value(json).expect("Deserialization should succeed");
-        prop_assert_eq!(
-            restored,
-            InteractionInput::Steps(vec![Step::user_input(vec![Content::text("hi")])])
-        );
+        let by_hand = crate::InteractionRequest {
+            model: Some("test-model".to_string()),
+            input: InteractionInput::Steps(vec![Step::user_input(contents)]),
+            ..Default::default()
+        };
+        let by_hand_json = serde_json::to_value(&by_hand).expect("Serialization should succeed");
+        prop_assert_eq!(input_json, &by_hand_json["input"]);
     }
 
     /// Test deeply nested JSON in function call arguments (3-4 levels).
