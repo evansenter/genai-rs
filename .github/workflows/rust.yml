@@ -378,6 +378,20 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+  workflow-shell:
+    name: Workflow Shell
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet pyyaml
+      # Deliberately not in `check`: this needs no Rust toolchain and no
+      # cache, so it reports in seconds instead of waiting behind a build.
+      - name: 'Parse-check workflow run: blocks'
+        run: python3 .github/scripts/check_workflow_shell.py
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
