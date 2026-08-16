@@ -769,7 +769,7 @@ list to `SpeakerConfig | List[SpeechConfig]`. **The Gemini API does not
 accept the object arm** (verified live 2026-08-16 against
 `gemini-2.5-pro-preview-tts`):
 
-```
+```text
 400 The value is invalid for 'generation_config.speech_config'.
     Expected an array, got object.
 ```
