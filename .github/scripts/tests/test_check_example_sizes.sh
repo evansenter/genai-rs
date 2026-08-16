@@ -107,6 +107,15 @@ expect_rc     "no baseline: does not fail the job" 0
 expect_output "no baseline: warns rather than notices" "::warning::"
 refute_output "no baseline: does not claim a pass" "within +15%"
 
+# --- A truncated download is non-empty and non-JSON. It must land in the
+#     did-not-run branch, not abort jq and exit non-zero on a parse error —
+#     which reads as a size regression.
+printf 'not json' > "$WORK/corrupt.json"
+run_compare "$WORK/corrupt.json" "$WORK/small.json" 15
+expect_rc     "corrupt baseline: does not fail the job" 0
+expect_output "corrupt baseline: warns rather than aborting" "::warning::"
+refute_output "corrupt baseline: does not claim a pass" "within +15%"
+
 # --- Disjoint key sets: the dangerous mode. Both files are non-empty and
 #     nothing is comparable, which previously printed "All examples within
 #     +15% of baseline" — a silently disabled gate reading as a passing one.
@@ -221,6 +230,32 @@ bash "$SCRIPT" measure "$WORK/seam-b" "$WORK/seam-b.json" >/dev/null
 run_compare "$WORK/seam-a.json" "$WORK/seam-b.json" 15
 expect_rc     "seam: compare reads what measure wrote" 0
 expect_output "seam: the entry is compared, not skipped" "1 compared"
+
+# --- The summary table. It was inline jq in the workflow, where no fixture
+#     could reach it — the last size logic in the job without a test, which
+#     undercut the point of consolidating the definitions.
+echo '{"big": 14050000, "round": 13631488, "tiny": 40000}' > "$WORK/render.json"
+rc=0
+out=$(bash "$SCRIPT" render "$WORK/render.json" 2>&1) || rc=$?
+expect_rc     "render: exits 0" 0
+# Order, not just presence: asserting the row exists passes whichever way
+# `sort_by` points, which is how the first version of this check went inert.
+if [ "$(grep -o '^| \(big\|round\|tiny\) ' <<<"$out" | tr -d '| ' | paste -sd,)" = "big,round,tiny" ]; then
+  echo "ok   - render: largest first"
+else
+  echo "FAIL - render: expected big,round,tiny; got $(grep -o '^| \(big\|round\|tiny\) ' <<<"$out" | tr -d '| ' | paste -sd,)"
+  failures=$((failures + 1))
+fi
+# One decimal always: 13.0 must not render as `13` beside a `13.4` neighbour.
+expect_output "render: keeps a trailing zero" "| round | 13.0 MB |"
+# ...and a small binary reads as small rather than as `0 MB`.
+expect_output "render: floors instead of rounding to zero" "| tiny | <0.1 MB |"
+if [ "$(grep -c '^| ' <<<"$out")" -eq 4 ]; then
+  echo "ok   - render: one header row and one row per example"
+else
+  echo "FAIL - render: expected 4 table rows, got $(grep -c '^| ' <<<"$out")"
+  failures=$((failures + 1))
+fi
 
 echo
 if [ "$failures" -gt 0 ]; then

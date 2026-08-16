@@ -23,6 +23,7 @@ set -euo pipefail
 usage() {
     echo "usage: $0 measure <dir> <out.json>" >&2
     echo "       $0 compare <baseline.json> <current.json> [max_growth_pct]" >&2
+    echo "       $0 render <sizes.json>" >&2
     exit 2
 }
 
@@ -80,14 +81,23 @@ measure() {
 compare() {
     local baseline="$1" current="$2" max_growth="${3:-15}"
 
-    if [ ! -s "$baseline" ]; then
+    # Parseability, not just emptiness. The `-s` test catches the empty file
+    # the fetch step writes when no baseline exists; a *truncated* one — `gh
+    # run download` interrupted mid-transfer — is non-empty and non-JSON, and
+    # jq would abort on it, taking the report assignment down under `set -e`
+    # and exiting the step non-zero on a raw parse error. That is a broken
+    # checker reading as a size regression, which is exactly the confusion
+    # the zero-divisor guard below exists to avoid.
+    if [ ! -s "$baseline" ] || ! jq empty "$baseline" 2>/dev/null; then
         # `warning`, not `notice`: a gate that is not running must not look
         # the same as a gate that ran clean. Main has had >90-day gaps in
         # this repo, which outlives artifact retention, so this path is
         # reachable without anyone doing anything wrong.
-        echo "::warning::No baseline available — the delta check did NOT run."
-        echo "A baseline is published on every push to main; the first PR after"
-        echo "this job lands has nothing to compare against."
+        echo "::warning::No usable baseline — the delta check did NOT run."
+        echo "Either none was published yet (the first PR after this job lands has"
+        echo "nothing to compare against; a baseline is published on every push to"
+        echo "main), or the downloaded one was not valid JSON — a truncated"
+        echo "artifact reads the same way here."
         return 0
     fi
 
@@ -216,8 +226,33 @@ entry (both are dropped by the same filter). The delta check is not running."
     echo "All examples within +${max_growth}% of baseline (${compared} compared)."
 }
 
+# Renders the step-summary table from a size map.
+#
+# A subcommand rather than inline jq in the workflow, so it sits behind the
+# same fixtures as `measure` and `compare` — it was the last size logic in
+# the job with no test, which undercut the point of consolidating the
+# definitions in the first place.
+#
+# One decimal always, so a 13.0MB binary does not render `13 MB` beside a
+# neighbour rendering `13.4 MB`, and a `<0.1 MB` floor so a small binary
+# reads as small rather than as `0 MB`.
+render() {
+    local sizes="$1"
+
+    echo ""
+    echo "### Example Binary Sizes"
+    echo ""
+    echo "| Example | Size |"
+    echo "|---------|------|"
+    jq -r 'to_entries | sort_by(-.value)[]
+        | (.value / 1048576) as $mb
+        | "| \(.key) | \(if $mb < 0.1 then "<0.1" else ($mb * 10 | round / 10 | tostring)
+            | (if (contains(".") | not) then . + ".0" else . end) end) MB |"' "$sizes"
+}
+
 case "${1:-}" in
     measure) shift; [ $# -eq 2 ] || usage; measure "$@" ;;
     compare) shift; [ $# -ge 2 ] || usage; compare "$@" ;;
+    render)  shift; [ $# -eq 1 ] || usage; render "$@" ;;
     *) usage ;;
 esac

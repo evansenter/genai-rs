@@ -555,15 +555,8 @@ jobs:
       # backstop.
       - name: Binary sizes
         run: |
-          {
-            echo ""
-            echo "### Example Binary Sizes"
-            echo ""
-            echo "| Example | Size |"
-            echo "|---------|------|"
-            jq -r 'to_entries | sort_by(-.value)[]
-              | "| \(.key) | \(.value / 1048576 * 10 | round / 10) MB |"' current-sizes.json
-          } >> $GITHUB_STEP_SUMMARY
+          .github/scripts/check_example_sizes.sh render current-sizes.json \
+            >> $GITHUB_STEP_SUMMARY
       # Per-example delta against the last main build, not an absolute
       # ceiling. The old 16MB ceiling had been raised three times (10 -> 12
       # -> 16), each time only after going red on an unrelated PR: an
@@ -635,16 +628,6 @@ jobs:
           .github/scripts/check_example_sizes.sh compare \
             baseline-sizes.json current-sizes.json 15
 
-      # Refreshes the baseline for subsequent PRs. Routine toolchain drift is
-      # absorbed here instead of requiring a manual ceiling bump.
-      - name: Publish the size baseline
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v4
-        with:
-          name: size-baseline
-          path: current-sizes.json
-          retention-days: 90
-
       # Backstop only, deliberately far above any plausible size. The delta
       # check above is the real gate; this exists for the no-baseline case,
       # where a pathological binary would otherwise go unremarked.
@@ -664,4 +647,23 @@ jobs:
             echo "$over"
             exit 1
           fi
+
+      # After the sanity ceiling, deliberately. Published first, a build
+      # carrying a pathological binary uploaded its sizes and *then* failed
+      # the job — the red run is visible, but the artifact is already the
+      # newest one the fetch loop finds, so every later PR measures against
+      # the inflated number: the PR restoring normal sizes reads as a large
+      # shrink and passes, and a re-regression back up to the bloated size
+      # also passes at 0% growth. The delta gate would end up calibrated to
+      # the build the backstop rejected. The ceiling reads only
+      # current-sizes.json, so it has no ordering dependency on the upload.
+      # Refreshes the baseline for subsequent PRs. Routine toolchain drift is
+      # absorbed here instead of requiring a manual ceiling bump.
+      - name: Publish the size baseline
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: size-baseline
+          path: current-sizes.json
+          retention-days: 90
 
