@@ -1668,6 +1668,8 @@ impl InteractionResponse {
     /// Tool use tokens represent overhead from function calling.
     /// Declaring a tool without using it does not count — measured
     /// 2026-08-16 — so a non-zero value means a tool was actually invoked.
+    /// It is a single aggregate across all tools, though, so it identifies
+    /// *which* tool only when one is declared.
     /// Returns `None` when usage metadata is absent, or when the API omitted
     /// the field — not when tools went unused, which yields `Some(0)`.
     #[must_use]
