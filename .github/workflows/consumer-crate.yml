@@ -1,0 +1,167 @@
+name: Fresh Consumer Crate
+
+# Compiles `#[tool]` from a throwaway crate outside this workspace.
+#
+# The consumer requirements the macro imposes (see #402) can ONLY fail from a
+# fresh crate: inside this workspace `async-trait` and `serde_json` are always
+# present and `CallableFunction` is always resolvable, so neither doctests nor
+# trybuild fixtures can reproduce it. The 0.8.0 breakage took manual
+# dogfooding of the published crate to find. This job is that dogfooding,
+# automated. See #404.
+#
+# Scheduled rather than per-PR: it is guarding against drift in
+# `codegen.rs`'s emitted paths, not against the average change, and a fresh
+# dependency resolve on every PR is a poor trade.
+
+on:
+  schedule:
+    - cron: '0 7 * * 1' # Weekly, Monday 07:00 UTC
+  workflow_dispatch:
+  # Also on changes to the macro's codegen or the README's documented
+  # requirements — the two inputs this job actually verifies.
+  pull_request:
+    paths:
+      - 'genai-rs-macros/src/**'
+      - 'README.md'
+      - '.github/workflows/consumer-crate.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  documented-requirements:
+    name: README requirements compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: genai-rs
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install mold linker
+        timeout-minutes: 5
+        run: sudo apt-get update || true; sudo apt-get install -y mold
+
+      - name: Scaffold a consumer crate outside the workspace
+        run: |
+          set -euo pipefail
+          mkdir -p consumer/src
+
+          # Path dependencies, not the published crate: this must fail on an
+          # unreleased codegen change, which is the whole point.
+          #
+          # The dependency set mirrors README.md's Installation snippet. If
+          # that snippet and this list drift apart, this job is testing
+          # something users are not doing.
+          cat > consumer/Cargo.toml <<'TOML'
+          [package]
+          name = "consumer"
+          version = "0.1.0"
+          edition = "2024"
+
+          [dependencies]
+          genai-rs = { path = "../genai-rs" }
+          genai-rs-macros = { path = "../genai-rs/genai-rs-macros" }
+          tokio = { version = "1.0", features = ["full"] }
+          async-trait = "0.1"
+          serde_json = "1.0"
+          TOML
+
+          # `use genai_rs::CallableFunction;` is required because the
+          # generated code calls the trait method `declaration()` unqualified
+          # (codegen.rs:241). README lines 99-104 document this; when #402
+          # lands, this import comes out and the minimal job below takes over.
+          cat > consumer/src/main.rs <<'RUST'
+          use genai_rs::CallableFunction;
+          use genai_rs_macros::tool;
+
+          /// Gets the current weather for a city.
+          #[tool]
+          fn get_weather(city: String, units: Option<String>) -> String {
+              format!("Sunny in {city} ({})", units.unwrap_or_else(|| "C".into()))
+          }
+
+          fn main() {
+              // Exercise both halves of what the macro emits: the free
+              // declaration function and the inventory-registered factory.
+              let declaration = get_weather_declaration();
+              assert_eq!(declaration.name(), "get_weather");
+              println!("ok: {}", declaration.name());
+          }
+          RUST
+
+      - name: Build and run
+        working-directory: consumer
+        run: |
+          set -euo pipefail
+          cargo run
+
+      - name: Explain a failure
+        if: failure()
+        run: |
+          echo "::error::A fresh consumer crate failed to compile a #[tool] function."
+          echo "This is the failure class that cannot reproduce inside the workspace."
+          echo "Check genai-rs-macros/src/codegen.rs emitted paths against README.md's"
+          echo "documented requirements (dependencies + 'use genai_rs::CallableFunction')."
+
+  minimal-requirements:
+    name: Minimal deps compile (tracks #402)
+    runs-on: ubuntu-latest
+    # Expected to fail until #402 lands. Not a gate — it reports whether the
+    # macro's consumer-side requirements have actually been removed, so the
+    # answer comes from a compiler rather than from reading codegen.rs.
+    # Reading codegen.rs is exactly how #402 got closed in error.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: genai-rs
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install mold linker
+        timeout-minutes: 5
+        run: sudo apt-get update || true; sudo apt-get install -y mold
+
+      - name: Scaffold a minimal consumer (no async-trait, no serde_json, no trait import)
+        run: |
+          set -euo pipefail
+          mkdir -p minimal/src
+
+          cat > minimal/Cargo.toml <<'TOML'
+          [package]
+          name = "minimal"
+          version = "0.1.0"
+          edition = "2024"
+
+          [dependencies]
+          genai-rs = { path = "../genai-rs" }
+          genai-rs-macros = { path = "../genai-rs/genai-rs-macros" }
+          TOML
+
+          cat > minimal/src/main.rs <<'RUST'
+          use genai_rs_macros::tool;
+
+          /// Gets the current weather for a city.
+          #[tool]
+          fn get_weather(city: String) -> String {
+              format!("Sunny in {city}")
+          }
+
+          fn main() {
+              println!("ok: {}", get_weather_declaration().name());
+          }
+          RUST
+
+      - name: Build
+        id: build
+        working-directory: minimal
+        run: cargo build
+
+      - name: Report status
+        if: always()
+        run: |
+          if [ "${{ steps.build.outcome }}" = "success" ]; then
+            echo "::notice::A minimal two-dependency consumer compiles — #402's requirements are gone. Drop this job's continue-on-error and make it a gate, and remove the README's dependency note."
+          else
+            echo "::notice::Minimal consumer still fails, as expected while #402 is open. The README job above is the binding check."
+          fi
