@@ -381,6 +381,12 @@ impl std::fmt::Debug for Webhook {
             )
             .field("create_time", &self.create_time)
             .field("update_time", &self.update_time)
+            // Enumerated by hand, so `extra` has to be listed or it is
+            // invisible — on the one shape where that matters most. The
+            // field exists because unmodeled keys are otherwise lost to the
+            // caller, and a `Debug` print is the first thing anyone reaches
+            // for when a response field seems to be missing.
+            .field("extra", &self.extra)
             .finish()
     }
 }

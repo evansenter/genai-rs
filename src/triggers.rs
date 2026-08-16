@@ -1458,6 +1458,18 @@ mod tests {
     }
 
     #[test]
+    fn trigger_execution_without_unknown_fields_has_empty_extra() {
+        let execution: TriggerExecution =
+            serde_json::from_value(serde_json::json!({"id": "exec_1"})).unwrap();
+        assert!(execution.extra.is_empty());
+        // An empty map must not add a key on serialize.
+        assert_eq!(
+            serde_json::to_value(&execution).unwrap(),
+            serde_json::json!({"id": "exec_1"})
+        );
+    }
+
+    #[test]
     fn trigger_extra_does_not_disturb_equality_for_identical_wire() {
         // PartialEq includes the map, so two triggers parsed from the same
         // wire stay equal — existing equality-based tests are unaffected.

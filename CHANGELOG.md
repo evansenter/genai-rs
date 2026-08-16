@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carry a flattened `extra` map, so a deserialize-then-serialize cycle no
   longer silently drops fields the crate hasn't modeled.
 
+  Scoped to those five resource shapes themselves. Types nested inside them
+  still drop unmodeled keys — `SigningSecret`, `EnvironmentSource`,
+  `NetworkConfig` — as do the list envelopes (`AgentListResponse` and its
+  siblings), so a new field alongside `next_page_token` is still lost.
+  Extending the passthrough down those trees is follow-up work.
+
   `Content` and `RemoteEnvironment` already did this; the request bodies
   gained it in 0.9.0. These five were the remaining hole, and `Trigger` /
   `TriggerExecution` are the sharpest cases — trigger creation is agent-gated,
