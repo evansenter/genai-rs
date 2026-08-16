@@ -69,12 +69,12 @@ jobs:
           # run can contribute only one — so 10 (~20%) keeps the two gates
           # equivalent in intent without moving.
           if [ "${skips:-0}" -gt 10 ]; then
-            echo "::error::$skips assertion(s) passed vacuously — too many to trust this run (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)"
+            echo "::error::$skips unverified assertion(s) or tolerated failure(s) — too many to trust this run (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)"
             # Escalate only a passing run — a real nextest failure keeps
             # its own exit code and stays the headline cause.
             if [ "$rc" -eq 0 ]; then rc=1; fi
           elif [ "${skips:-0}" -gt 0 ]; then
-            echo "::warning::$skips assertion(s) passed vacuously (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)"
+            echo "::warning::$skips unverified assertion(s) or tolerated failure(s) (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)"
           fi
           exit "$rc"
         env:

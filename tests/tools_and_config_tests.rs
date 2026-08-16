@@ -758,6 +758,16 @@ mod mcp_server {
                 // "mcp_server tool call failed: invalid response from <url>"
                 // satisfies both halves and would panic with "regression"
                 // for exactly the third-party outage this branch tolerates.
+                //
+                // "not available" is the closest call of the four kept, and
+                // is kept knowingly: it describes availability, but not
+                // necessarily *the tool's* — "mcp_server tool call failed:
+                // server not available" is about deepwiki's uptime and would
+                // panic here. Kept because the phrasing is speculative while
+                // the miss it guards against is not: an unrecognised
+                // rejection is a real regression reported as a skip, and this
+                // panic is loud and diagnosable when it misfires. Erring
+                // toward the false regression is the direction chosen.
                 let rejected = [
                     "not supported",
                     "unsupported",

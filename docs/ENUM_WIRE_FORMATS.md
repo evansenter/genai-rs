@@ -176,7 +176,7 @@ roundtrip tests.
 > variants exist for when the API starts emitting them; today a match on
 > `Step::McpServerToolCall` never fires and
 > `step_summary().mcp_server_tool_call_count` reads 0 on a successful call.
-> The usable signal is `usage.total_tool_use_tokens` — a single aggregate
+> The usable signal is `response.tool_use_tokens()` — a single aggregate
 > with no per-tool breakdown, so it isolates the MCP server only when MCP
 > is the sole declared tool (see the fuller note in
 > `docs/BUILT_IN_TOOLS.md` under MCP Servers). Tracked in

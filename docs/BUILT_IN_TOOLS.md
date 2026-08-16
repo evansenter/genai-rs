@@ -557,7 +557,7 @@ MCP activity is *modeled* in `response.steps` as `Step::McpServerToolCall { name
 > `step_summary().mcp_server_tool_call_count` reads 0 even on a successful
 > call.
 >
-> The usable signal is `usage.total_tool_use_tokens`, which is non-zero only
+> The usable signal is `response.tool_use_tokens()`, which is non-zero only
 > if a tool was actually invoked — it is a single aggregate with no per-tool
 > breakdown, so it isolates the MCP server only when MCP is the sole declared
 > tool. Combine it with another — see [Combining Tools](#combining-tools) —

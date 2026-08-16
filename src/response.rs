@@ -1743,9 +1743,9 @@ pub struct StepSummary {
     ///
     /// Not currently emitted by the API: MCP calls arrive as generic
     /// `tool_call` steps, so this reads 0 even on a successful call.
-    /// Use `usage.total_tool_use_tokens` instead — noting that it is a single
-    /// aggregate across all tools, so it isolates the MCP server only when MCP
-    /// is the sole declared tool. Tracked in #433.
+    /// Use [`InteractionResponse::tool_use_tokens`] instead — noting that it
+    /// is a single aggregate across all tools, so it isolates the MCP server
+    /// only when MCP is the sole declared tool. Tracked in #433.
     pub mcp_server_tool_call_count: usize,
     /// Number of `mcp_server_tool_result` steps
     ///
