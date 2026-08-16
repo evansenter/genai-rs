@@ -1,0 +1,26 @@
+# Fast linker configuration — opt-in.
+#
+# Copy this to `.cargo/config.toml` to use it:
+#
+#     ./scripts/setup-dev.sh          # checks mold is installed first
+#     # or, if you know you have mold:
+#     cp .cargo/config.toml.example .cargo/config.toml
+#
+# It is NOT checked in as `config.toml` because cargo has no way to say
+# "use mold if present". A checked-in version made every build on a machine
+# without mold fail before compiling anything, with an error that names the
+# wrong binary (#428):
+#
+#     error: linking with `cc` failed: exit status: 1
+#       = note: collect2: fatal error: cannot find 'ld'
+#
+# `ld`, `lld` and `gold` are all present in that state; the missing binary
+# is mold, which the message never mentions. That is a bad first experience
+# for a new contributor or a fresh container, and it is exactly where it
+# used to land — CI installs mold explicitly, so CI never saw it.
+#
+# See https://github.com/evansenter/genai-rs/issues/342 for why mold, and
+# #428 for why opt-in.
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
