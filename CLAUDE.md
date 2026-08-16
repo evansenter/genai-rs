@@ -129,6 +129,12 @@ RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo doc --workspace --no-deps --featur
 
 ## Core Design Philosophy: Evergreen Soft-Typing
 
+> **Why is it like this?** `DECISIONS.md` holds the reasoning behind the
+> durable design choices — Evergreen soft-typing, `#[non_exhaustive]` response
+> structs, model constants, the verify-from-bindings-first rule, and what to do
+> with fields the API rejects. This file holds the rules; that file holds the
+> arguments. `CONTRIBUTING.md` covers setup and the review checklist.
+
 This library follows the [Evergreen spec](https://github.com/google-deepmind/evergreen-spec) philosophy: **unknown data should be preserved, not rejected**.
 
 ### Key Principles
