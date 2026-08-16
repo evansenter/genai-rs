@@ -46,8 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `STATE_` prefix that `FileState` does not, deleting an indexed document or
   a non-empty store requires `force=true`, `file_search_result` steps carry
   no chunk contents (so `has_file_search_results()` can be `true` while
-  `file_search_results()` is empty), and `google_search` and `file_search`
-  cannot be combined in one request.
+  `file_search_results()` is empty), and `file_search` cannot be combined with
+  either `google_search` or `url_context` (`code_execution` is fine).
 
 ## [0.10.0] - 2026-08-16
 

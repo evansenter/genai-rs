@@ -553,6 +553,42 @@ mod tests {
         );
     }
 
+    /// The builders have to agree with the struct-literal form the tests
+    /// around them use. They exist for downstream crates, which cannot use
+    /// that form at all on a `#[non_exhaustive]` type, so nothing outside
+    /// the crate would notice them drifting.
+    ///
+    /// Doctests cover `with_extra`'s serialization, but doctests run only in
+    /// CI — not under `make test` / `make test-all` — so this is what the
+    /// repo's own default test commands exercise.
+    #[test]
+    fn builders_match_the_struct_literal_form() {
+        let mut extra = serde_json::Map::new();
+        extra.insert("someNewField".to_string(), serde_json::json!(7));
+        let literal = CreateFileSearchStoreRequest {
+            display_name: Some("my-docs".to_string()),
+            extra,
+        };
+
+        let built = CreateFileSearchStoreRequest::new()
+            .with_display_name("my-docs")
+            .with_extra("someNewField", 7);
+
+        assert_eq!(built, literal);
+        assert_eq!(
+            serde_json::to_value(&built).unwrap(),
+            serde_json::to_value(&literal).unwrap()
+        );
+    }
+
+    #[test]
+    fn new_matches_default() {
+        assert_eq!(
+            CreateFileSearchStoreRequest::new(),
+            CreateFileSearchStoreRequest::default()
+        );
+    }
+
     /// The other half of the flatten contract: an unmodeled key on the way
     /// in has to survive into `extra` rather than being dropped, or a
     /// round-trip through this type would silently discard it.

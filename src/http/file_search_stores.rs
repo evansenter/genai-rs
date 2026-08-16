@@ -349,11 +349,46 @@ pub async fn upload_to_file_search_store(
     // unique. Same reasoning as the unresolved-operation arm above: keep the
     // handle attached to the error.
     get_document(ctx, &document_name).await.map_err(|e| {
-        GenaiError::Internal(format!(
-            "Upload succeeded and created '{document_name}', but reading it back \
-             failed: {e}. The document exists — use that name to wait on or \
-             delete it."
-        ))
+        // Logged unconditionally, so the name survives even on the arms
+        // below that return the error untouched.
+        tracing::error!(
+            "Upload succeeded and created '{}', but reading it back failed: {}. \
+             The document exists — use that name to wait on or delete it.",
+            document_name,
+            e
+        );
+
+        let context = format!(
+            "Upload succeeded and created '{document_name}', but reading it \
+             back failed. The document exists — use that name to wait on or \
+             delete it. Cause: "
+        );
+
+        // Never collapse a retryable error into `Internal`. The two failures
+        // this arm exists for — a transient 5xx, and the document not being
+        // readable yet on this read-after-write — are exactly the ones
+        // `GenaiError::is_retryable()` reports true for, while `Internal`
+        // reports false. Wrapping them would tell a caller following
+        // `examples/retry_with_backoff.rs` to give up on a read-back that
+        // would have succeeded on the next attempt.
+        match e {
+            // Rebuildable, so it carries the name and stays classifiable.
+            GenaiError::Api {
+                status_code,
+                message,
+                request_id,
+                retry_after,
+            } => GenaiError::Api {
+                status_code,
+                message: format!("{context}{message}"),
+                request_id,
+                retry_after,
+            },
+            // Not rebuildable with added context. Retryability matters more
+            // than the name here, and the name is in the log above.
+            other if other.is_retryable() => other,
+            other => GenaiError::Internal(format!("{context}{other}")),
+        }
     })
 }
 

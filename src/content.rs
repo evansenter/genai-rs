@@ -666,14 +666,29 @@ impl UrlContextResultItem {
 
 /// A single result from a File Search.
 ///
-/// Contains the extracted text from a semantic search match, including the title,
-/// text content, and the source file search store.
+/// # The Gemini API never populates this
+///
+/// Verified live 2026-08-16 against a store with indexed, `STATE_ACTIVE`
+/// documents that demonstrably grounded the answer:
+/// [`has_file_search_results`](crate::InteractionResponse::has_file_search_results)
+/// is `true` while
+/// [`file_search_results`](crate::InteractionResponse::file_search_results)
+/// is empty. The `file_search_result` step arrives with no `result` payload —
+/// retrieved chunks are folded into the response text rather than surfaced
+/// separately.
+///
+/// This type is modeled from the spec for forward compatibility, so that a
+/// future API that does emit it deserializes without a crate release. Until
+/// then, read the answer via
+/// [`as_text`](crate::InteractionResponse::as_text). Tracked in
+/// [#429](https://github.com/evansenter/genai-rs/issues/429).
 ///
 /// # Example
 ///
 /// ```no_run
 /// # use genai_rs::{Step, FileSearchResultItem};
 /// # let step: Step = todo!();
+/// // Written defensively: on today's API this loop body never runs.
 /// if let Step::FileSearchResult { result, .. } = step {
 ///     for item in result {
 ///         println!("Match from '{}': {}", item.store, item.text);

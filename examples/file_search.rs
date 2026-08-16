@@ -146,14 +146,17 @@ async fn run_example(
         println!("Response: {preview}\n");
     }
 
-    // 6. File Search cannot be combined with Google Search. The API rejects
-    //    the pair outright (verified live 2026-08-16):
+    // 6. File Search cannot be combined with *either* web-retrieval tool.
+    //    The API rejects both pairs outright (verified live 2026-08-16):
     //
     //      400 'google_search' and 'file_search' cannot be combined in the
     //          same request. Please choose one to continue.
+    //      400 'url_context' and 'file_search' cannot be combined in the
+    //          same request. Please choose one to continue.
     //
-    //    To ground an answer against both, run two interactions and combine
-    //    the results yourself.
+    //    `code_execution` alongside `file_search` is accepted. To ground an
+    //    answer against both internal documents and the web, run two
+    //    interactions and combine the results yourself.
     println!("--- File Search + Google Search is rejected by the API ---");
     let combined = client
         .interaction()
@@ -193,8 +196,9 @@ async fn run_example(
     println!("• Deleting an indexed document or a non-empty store needs force=true");
     println!("• Use metadata_filter for targeted queries across large document sets");
     println!("• Set top_k to balance result quality vs. token usage");
-    println!("• file_search and google_search cannot be combined in one request —");
+    println!("• file_search cannot be combined with google_search OR url_context —");
     println!("  run two interactions and merge the results yourself");
+    println!("  (code_execution alongside file_search is accepted)");
     println!("• file_search_result steps carry no chunk contents today, so the");
     println!("  grounded material is visible only through the model's answer");
 

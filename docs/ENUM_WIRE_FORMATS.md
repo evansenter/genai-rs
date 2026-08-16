@@ -617,9 +617,11 @@ which uses bare `"PROCESSING"` / `"ACTIVE"` / `"FAILED"`.
   `call_id`, `signature`, and `type` — there is no `result` field, so
   `has_file_search_results()` is `true` while `file_search_results()` is
   empty. The retrieved content is visible only through the model's answer.
-- **`google_search` and `file_search` cannot be combined** in one request:
-  `400 'google_search' and 'file_search' cannot be combined in the same
-  request. Please choose one to continue.`
+- **`file_search` cannot be combined with either web-retrieval tool.** Both
+  `google_search` and `url_context` are rejected alongside it with a 400
+  naming the pair: `'<other>' and 'file_search' cannot be combined in the
+  same request. Please choose one to continue.` `code_execution` is
+  accepted. See the tool section below for the full table.
 
 **Verified**: 2026-08-16 - full lifecycle plus end-to-end retrieval in
 `tests/file_search_stores_tests.rs` and `examples/file_search.rs`.

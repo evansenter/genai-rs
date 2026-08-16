@@ -1899,10 +1899,13 @@ impl Client {
         &self,
         display_name: Option<&str>,
     ) -> Result<crate::FileSearchStore, GenaiError> {
-        let request = crate::CreateFileSearchStoreRequest {
-            display_name: display_name.map(ToString::to_string),
-            extra: serde_json::Map::new(),
-        };
+        // Through the builders rather than a struct literal, so the two
+        // construction paths cannot drift and the builders have an in-crate
+        // caller.
+        let mut request = crate::CreateFileSearchStoreRequest::new();
+        if let Some(name) = display_name {
+            request = request.with_display_name(name);
+        }
         crate::http::file_search_stores::create_file_search_store(&self.http, &request).await
     }
 
