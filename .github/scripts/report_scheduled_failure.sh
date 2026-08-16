@@ -140,17 +140,21 @@ streak_line() {
   local runs="consecutive scheduled runs"
   [ "$count" = "1" ] && runs="scheduled run"
 
-  # `gh issue view --json comments` returns one unpaginated page, so past
-  # ~100 comments the streak is computed over a window rather than the
-  # history — and a `Recovered` outside that window would make the count span
-  # a recovery that did happen. Cap the claim rather than the data: an
-  # under-stated floor stays true, a confident number does not. Roughly 100
-  # daily failures away, so this bounds where the figure stops being exact
-  # rather than fixing a defect in the range #431 is about.
+  # `gh issue view --json comments` fetches `comments(first: 100)` — one
+  # page, the *oldest* — so past 100 comments the newest are the invisible
+  # ones. That is why no number survives here, not even as a floor: a
+  # `Recovered` sitting outside the window makes `rindex` return null, the
+  # whole visible run counts as one episode, and "at least N" would overstate
+  # a streak that in fact restarted. The earlier hedge ("may be longer")
+  # pointed the wrong way in exactly that state.
+  #
+  # Roughly 100 consecutive daily failures away, so this marks where the
+  # figure stops being knowable rather than fixing anything in the range #431
+  # is about.
   if [ "$capped" = "true" ]; then
-    echo "- **Failing for at least $count $runs.**"
-    echo "  (Comment history truncated at one API page, so the real streak"
-    echo "  may be longer and may have started before $since.)"
+    echo "- **Still failing.** (The comment history is truncated at one API"
+    echo "  page, so the streak length cannot be determined from it — it may"
+    echo "  have restarted since the oldest comment shown.)"
     return 0
   fi
   echo "- **Failing since $since — $count $runs.**"
@@ -189,8 +193,14 @@ fi
   echo
   echo "- Most recent failing run: $RUN_URL"
   [ -n "$EXISTING" ] && streak_line "$EXISTING"
+  # Deliberately does not name a trigger. The two callers gate their resolve
+  # steps differently on purpose — `audit.yml` on `schedule` only, the
+  # flakiness report also on `workflow_dispatch` — so any specific wording is
+  # wrong for one of them. Round 11 narrowed this to "scheduled" to match the
+  # audit and thereby understated the other.
   echo "- This issue is opened by the workflow itself and **closes**"
-  echo "  automatically on the next successful *scheduled* run."
+  echo "  automatically once this workflow next succeeds on the trigger that"
+  echo "  opened it."
   echo
   echo "$CONTEXT"
   echo

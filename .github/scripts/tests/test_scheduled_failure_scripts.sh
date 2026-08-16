@@ -200,7 +200,7 @@ FIXTURE
 make_gh_stub "[{\"title\":\"$TITLE_FLAKY\",\"number\":77}]" "$(cat "$WORK/capped_recovery.json")"
 run_script "report_scheduled_failure.sh" "$SCRIPTS/report_scheduled_failure.sh" \
   "CI Flakiness Report" "https://example/run/1"
-check "streak: caps a full page that contains a recovery" "Failing for at least" "$out"
+check "streak: caps a full page that contains a recovery" "Still failing.**" "$out"
 
 # --- Annotations survive a body that has been through the web UI, which
 #     normalises to CRLF. That is the sequence the marker exists for: a human
@@ -228,12 +228,15 @@ PY
 make_gh_stub "[{\"title\":\"$TITLE_FLAKY\",\"number\":77}]" "$(cat "$WORK/capped.json")"
 run_script "report_scheduled_failure.sh" "$SCRIPTS/report_scheduled_failure.sh" \
   "CI Flakiness Report" "https://example/run/1"
-check "streak: caps the claim at the page boundary" "Failing for at least" "$out"
-if grep -q "Failing since 2026-05-01 —" <<<"$out"; then
-  echo "FAIL - streak: stated an exact streak it cannot support"
+check "streak: caps the claim at the page boundary" "Still failing.**" "$out"
+# No number at all past the boundary, not even a floor: the missing page is
+# the *newest* comments, so a recovery outside the window would make "at
+# least N" overstate a streak that in fact restarted.
+if grep -qE "Failing since|at least [0-9]" <<<"$out"; then
+  echo "FAIL - streak: stated a figure it cannot support past the page boundary"
   failures=$((failures + 1))
 else
-  echo "ok   - streak: does not state an exact figure past the page boundary"
+  echo "ok   - streak: states no figure past the page boundary"
 fi
 
 # --- The body edit overwrites, so anything a maintainer added must be
