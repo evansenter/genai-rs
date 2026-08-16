@@ -1458,6 +1458,28 @@ mod tests {
     }
 
     #[test]
+    fn trigger_extra_wins_on_collision() {
+        // The doc comment on all five new `extra` fields states this as a
+        // guarantee, and it is not intrinsic — it holds only because the
+        // flattened map is emitted last, which is a consequence of `extra`
+        // being declared after the modeled fields. Moving the declaration up
+        // is a plausible tidy-up that nothing else in these structs depends
+        // on, and it would silently flip the documented behaviour on all
+        // five while every other test still passed. Pinned on `Trigger` as
+        // the representative; the mechanism is identical across the five.
+        let mut trigger: Trigger =
+            serde_json::from_value(serde_json::json!({"id": "trig_123"})).unwrap();
+        trigger
+            .extra
+            .insert("id".into(), serde_json::json!("from_extra"));
+        let json = serde_json::to_value(&trigger).unwrap();
+        assert_eq!(
+            json["id"], "from_extra",
+            "a colliding key must win on serialize, as the field doc promises"
+        );
+    }
+
+    #[test]
     fn trigger_execution_without_unknown_fields_has_empty_extra() {
         let execution: TriggerExecution =
             serde_json::from_value(serde_json::json!({"id": "exec_1"})).unwrap();

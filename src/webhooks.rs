@@ -358,9 +358,10 @@ pub struct Webhook {
     ///
     /// **Also read on serialize into a request body.** `create_webhook` sends
     /// this whole struct, so `extra` is an *outbound* escape hatch too —
-    /// a way to send a field the crate has not modeled yet, exactly like the
-    /// request-side maps above. It also means a get-modify-create cycle echoes
-    /// unmodeled server fields back.
+    /// a way to send a field the crate has not modeled yet, exactly like
+    /// [`CreateEnvironmentRequest::extra`](crate::CreateEnvironmentRequest::extra).
+    /// It also means a get-modify-create cycle echoes unmodeled server
+    /// fields back.
     ///
     /// A key that collides with a modeled field **wins on serialize** via
     /// `serde_json::to_value`, matching the request-side escape hatches.
