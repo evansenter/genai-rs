@@ -356,6 +356,12 @@ pub struct Webhook {
     /// unrecoverable. The resource was live-verified 2026-07, but verification is a
     /// point-in-time snapshot, not a guarantee the shape stays fixed.
     ///
+    /// **Also read on serialize into a request body.** `create_webhook` sends
+    /// this whole struct, so `extra` is an *outbound* escape hatch too —
+    /// a way to send a field the crate has not modeled yet, exactly like the
+    /// request-side maps above. It also means a get-modify-create cycle echoes
+    /// unmodeled server fields back.
+    ///
     /// A key that collides with a modeled field **wins on serialize** via
     /// `serde_json::to_value`, matching the request-side escape hatches.
     /// (`to_string` on a flattened struct emits both keys rather than
@@ -386,6 +392,18 @@ impl std::fmt::Debug for Webhook {
             // field exists because unmodeled keys are otherwise lost to the
             // caller, and a `Debug` print is the first thing anyone reaches
             // for when a response field seems to be missing.
+            //
+            // The trade, stated so a later redaction audit reads it as
+            // intended rather than as an oversight: `new_signing_secret` is
+            // redacted two lines up, but `extra` prints verbatim, and by
+            // construction nothing can redact a key the crate does not
+            // model. If the API grows a secret-bearing field before this
+            // crate catches up, debug-formatting a webhook prints it in
+            // cleartext. Dropping `extra` from `Debug` would only trade that
+            // for the invisibility the field exists to fix; the four
+            // derive-`Debug` shapes here have the same property, and the
+            // user-content-at-debug-level-only rule in
+            // `docs/LOGGING_STRATEGY.md` is what bounds the blast radius.
             .field("extra", &self.extra)
             .finish()
     }

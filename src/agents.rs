@@ -66,6 +66,12 @@ pub struct Agent {
     /// unrecoverable. Agent creation is gated on a standard API key, so only the
     /// GET/LIST shapes have been observed.
     ///
+    /// **Also read on serialize into a request body.** `create_agent` sends
+    /// this whole struct, so `extra` is an *outbound* escape hatch too —
+    /// a way to send a field the crate has not modeled yet, exactly like the
+    /// request-side maps above. It also means a get-modify-create cycle echoes
+    /// unmodeled server fields back.
+    ///
     /// A key that collides with a modeled field **wins on serialize** via
     /// `serde_json::to_value`, matching the request-side escape hatches.
     /// (`to_string` on a flattened struct emits both keys rather than
