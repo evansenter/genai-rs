@@ -292,7 +292,14 @@ pub struct UsageMetadata {
         deserialize_with = "deserialize_optional_token_count"
     )]
     pub total_thought_tokens: Option<u32>,
-    /// Total number of tokens used for tool/function calling overhead
+    /// Total number of tokens used for tool/function calling overhead.
+    ///
+    /// Declaration alone is not counted: measured 2026-08-16, an interaction
+    /// declaring an MCP server but answering from the model's own knowledge
+    /// returns `Some(0)`, identical to the same prompt with no tool
+    /// declared. So a non-zero value means a tool was actually invoked,
+    /// which makes this the usable signal for server-side tools whose steps
+    /// the API does not yet report by type (see `docs/BUILT_IN_TOOLS.md`).
     #[serde(
         skip_serializing_if = "Option::is_none",
         deserialize_with = "deserialize_optional_token_count"
@@ -1659,6 +1666,8 @@ impl InteractionResponse {
     /// Get the number of tool use tokens consumed.
     ///
     /// Tool use tokens represent overhead from function calling.
+    /// Declaring a tool without using it does not count — measured
+    /// 2026-08-16 — so a non-zero value means a tool was actually invoked.
     /// Returns `None` if usage metadata is not available or tools weren't used.
     #[must_use]
     pub fn tool_use_tokens(&self) -> Option<u32> {

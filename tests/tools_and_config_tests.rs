@@ -758,8 +758,14 @@ mod mcp_server {
                     "not available",
                 ]
                 .iter()
-                .any(|phrase| msg.contains(phrase))
-                    || msg.contains("invalid");
+                .any(|phrase| msg.contains(phrase));
+                // No "invalid" in that set, deliberately. The four above
+                // describe availability of the tool itself; "invalid"
+                // describes anything, and the `mcp_server` scoping does not
+                // save it — an API-generated "mcp_server tool call failed:
+                // invalid response from <url>" satisfies both halves and
+                // would panic with "regression" for exactly the third-party
+                // outage this branch exists to tolerate.
                 if msg.contains("mcp_server") && rejected {
                     panic!("API rejected the MCP tool — this is a regression: {e:?}");
                 }

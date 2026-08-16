@@ -555,14 +555,17 @@ MCP activity appears in `response.steps` as `Step::McpServerToolCall { name, ser
 > `if let Step::McpServerToolCall { .. }` match will not fire — those steps
 > deserialize into `Step::Unknown` (Evergreen degrading as designed) and
 > `step_summary().mcp_server_tool_call_count` reads 0 even on a successful
-> call. The usable signal is `usage.total_tool_use_tokens`, which is non-zero
-> only if the server was actually reached. Measured 2026-08-16 rather than inferred from the field's own doc
-> ("tokens used for tool/function calling overhead", which would admit
-> declaration cost): declaring the MCP tool alongside a prompt the model
-> answers from its own knowledge returns `total_tool_use_tokens: Some(0)`,
-> identical to the same prompt with no tool declared. So declaration is not
-> counted and a non-zero value does mean the tool was used. The variants above are modeled
-> from the spec and kept for when the API starts emitting them. Tracked in
+> call.
+>
+> The usable signal is `usage.total_tool_use_tokens`, which is non-zero only
+> if the server was actually reached. That it excludes *declaration* overhead
+> is measured, not inferred from the field's own doc ("tokens used for
+> tool/function calling overhead", which would admit it): declaring the tool
+> alongside a prompt the model answers from its own knowledge returns
+> `Some(0)`, identical to the same prompt with no tool declared.
+>
+> The variants above are modeled from the spec and kept for when the API
+> starts emitting them. Tracked in
 > [#433](https://github.com/evansenter/genai-rs/issues/433).
 
 ## Combining Tools
