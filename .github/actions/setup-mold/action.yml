@@ -16,6 +16,14 @@ runs:
       # mirror and would have held the runner until GitHub's 6h default.
       # Normal is ~10-20s, so 300s only ever trips on a stall.
       #
+      # One budget covering both apt calls, matching the single
+      # `timeout-minutes: 5` this replaced — two independent 300s timers
+      # would have doubled the worst case to ~10 minutes.
+      #
+      # `sudo timeout`, not `timeout sudo`: the latter signals `sudo` and
+      # depends on it forwarding SIGTERM down to the process that is
+      # actually stalled. This puts the timer in the same process tree.
+      #
       # The `cp` is the half that matters after #428: `.cargo/config.toml` is
       # no longer checked in, so without it CI silently loses mold. This
       # composite exists so that pairing lives in one place — it was copied
@@ -23,6 +31,5 @@ runs:
       # ever renamed.
       run: |
         set -euo pipefail
-        timeout 300 sudo apt-get update || true
-        timeout 300 sudo apt-get install -y mold
+        sudo timeout 300 bash -c 'apt-get update || true; apt-get install -y mold'
         cp .cargo/config.toml.example .cargo/config.toml

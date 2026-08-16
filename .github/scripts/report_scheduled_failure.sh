@@ -13,6 +13,12 @@
 # `resolve_scheduled_failure.sh` on the next success. A monitoring job that
 # can fail without saying so is worth less than its green runs suggest.
 #
+#
+# Boundary worth naming: this runs inside the job it reports on and reads its
+# own script from the checkout, so a scheduled run that dies *before or
+# during* `actions/checkout` fails as silently as it did before #431. That is
+# the one sub-case an in-job mechanism cannot cover; the general
+# not-running-at-all case is the deferred liveness work.
 # Usage: report_scheduled_failure.sh <workflow-name> <run-url>
 # Requires: GH_TOKEN with issues:write.
 

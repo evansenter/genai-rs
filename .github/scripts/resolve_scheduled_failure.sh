@@ -5,6 +5,12 @@
 # stays open after the failure is fixed, and a signal that is always on is
 # no signal — the same argument as the API sweep's close step.
 #
+#
+# Boundary worth naming: this runs inside the job it reports on and reads its
+# own script from the checkout, so a scheduled run that dies *before or
+# during* `actions/checkout` fails as silently as it did before #431. That is
+# the one sub-case an in-job mechanism cannot cover; the general
+# not-running-at-all case is the deferred liveness work.
 # Usage: resolve_scheduled_failure.sh <workflow-name>
 # Requires: GH_TOKEN with issues:write.
 

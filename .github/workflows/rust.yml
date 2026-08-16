@@ -359,6 +359,18 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+  escalation-scripts:
+    name: Escalation Scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # No toolchain needed, so this reports in seconds. `bash -n` cannot
+      # catch what these scripts get wrong — the `$ENV.TITLE` ordering bug
+      # was valid syntax meaning the wrong thing — so the branches are
+      # exercised against a stubbed `gh` instead.
+      - name: Exercise the scheduled-failure scripts
+        run: .github/scripts/tests/test_scheduled_failure_scripts.sh
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
