@@ -98,8 +98,9 @@ futures-util = "0.3"     # For streaming
 `serde_json` dependency, and no trait import at the expansion site.
 
 Writing a **manual** `CallableFunction` impl instead (the `ToolService`
-path) does still need `async-trait = "0.1"` as a direct dependency, because
-the trait itself is declared with `#[async_trait]`.
+path) does still need `async-trait = "0.1"` and `serde_json = "1.0"` as
+direct dependencies: the trait is declared with `#[async_trait]`, and its
+`call` signature names `serde_json::Value`.
 
 **Requirements:** Rust 1.88+ (edition 2024), [Gemini API key](https://ai.dev/)
 

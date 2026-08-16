@@ -147,7 +147,7 @@ The `#[tool]` macro generates:
 2. A callable type (e.g., `GetWeatherCallable`)
 3. Registration in the global function registry
 4. A free function returning the declaration (e.g. `get_weather_declaration()`),
-   usable from other modules without importing `CallableFunction`
+   requiring no `CallableFunction` import
 
 ```rust,ignore
 use genai_rs::CallableFunction;
