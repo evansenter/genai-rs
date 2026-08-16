@@ -144,7 +144,7 @@ compare() {
     # preceding step and fails the job on an empty measurement, so it cannot
     # reach here in CI; this covers running `compare` by hand, or a future
     # caller that fetches the current side rather than measuring it.
-    if [ ! -s "$current" ] || ! jq -e 'type == "object"' "$current" >/dev/null 2>&1; then
+    if [ ! -s "$current" ] || ! jq -e 'type == "object" and all(.[]; type == "number")' "$current" >/dev/null 2>&1; then
         echo "::error::Current sizes file is missing, empty or not a JSON object: $current"
         echo "The build under test is unmeasurable, so the delta check cannot run."
         return 1
@@ -158,13 +158,18 @@ compare() {
     # checker reading as a size regression, which is exactly the confusion
     # the zero-divisor guard below exists to avoid.
     #
-    # And an object, not merely well-formed JSON: `jq empty` accepts an array,
-    # a bare string, `null`. The filters below index it with `$base[$k]`,
-    # which jq rejects on any of those — same abort, same raw-jq-error exit,
-    # same misreading. Not reachable while `measure` writes every baseline,
-    # so this is shape-drift insurance: a future artifact-format change, or a
-    # `size-baseline` artifact from some other producer, lands here instead.
-    if [ ! -s "$baseline" ] || ! jq -e 'type == "object"' "$baseline" >/dev/null 2>&1; then
+    # And an object of numbers, not merely well-formed JSON. `jq empty`
+    # accepts an array, a bare string, `null`; the filters below index the
+    # value with `$base[$k]`, which jq rejects on any of those — same abort,
+    # same raw-jq-error exit, same misreading. Checking the values matters
+    # for the same reason: jq orders numbers before strings, so a string size
+    # passes `> 0` and only fails later at `(.value - $was)` with "string and
+    # number cannot be subtracted", which is the identical broken-checker-
+    # reads-as-a-regression failure one filter further along. Not reachable
+    # while `measure` writes every file through `tonumber`; this is
+    # shape-drift insurance against a format change or a `size-baseline`
+    # artifact from some other producer.
+    if [ ! -s "$baseline" ] || ! jq -e 'type == "object" and all(.[]; type == "number")' "$baseline" >/dev/null 2>&1; then
         # `warning`, not `notice`: a gate that is not running must not look
         # the same as a gate that ran clean. Main has had >90-day gaps in
         # this repo, which outlives artifact retention, so this path is

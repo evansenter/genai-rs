@@ -128,17 +128,45 @@ expect_rc     "corrupt baseline: does not fail the job" 0
 expect_output "corrupt baseline: warns rather than aborting" "::warning::"
 refute_output "corrupt baseline: does not claim a pass" "within +15%"
 
-# --- Well-formed JSON that is not an object. The filters index the baseline
-#     with `$base[$k]`, which jq rejects on an array, a string or null — the
-#     same abort and the same misreading as a truncated file, so it belongs in
-#     the same branch. Not reachable while `measure` writes every baseline;
-#     this is insurance against a format change or a foreign artifact.
-for shape in '[]' '"a string"' 'null' '42'; do
+# --- Well-formed JSON the filters cannot use. An array, a string or null is
+#     rejected by `$base[$k]`; an object of *string* sizes gets further —
+#     jq orders numbers before strings, so it survives `> 0` — and then aborts
+#     at `(.value - $was)`. Both are the same abort, the same raw-jq-error
+#     exit and the same misreading as a truncated file, so both belong in the
+#     same branch. Not reachable while `measure` writes every baseline through
+#     `tonumber`; insurance against a format change or a foreign artifact.
+for shape in '[]' '"a string"' 'null' '42' '{"alpha": "1000000"}'; do
     printf '%s' "$shape" > "$WORK/nonobject.json"
     run_compare "$WORK/nonobject.json" "$WORK/small.json" 15
-    expect_rc     "non-object baseline ($shape): does not fail the job" 0
-    expect_output "non-object baseline ($shape): warns rather than aborting" "::warning::"
-    refute_output "non-object baseline ($shape): does not claim a pass" "within +15%"
+    expect_rc     "unusable baseline ($shape): does not fail the job" 0
+    expect_output "unusable baseline ($shape): warns rather than aborting" "::warning::"
+    refute_output "unusable baseline ($shape): does not claim a pass" "within +15%"
+done
+
+# --- Names that a hand-built JSON emitter gets wrong. This is the property
+#     the `jq -Rn` fold in `measure` was adopted for: `printf '"%s": %s'` on a
+#     name containing a quote or a backslash emits a malformed map, and
+#     `compare` then reports it as "the build under test is unmeasurable" — a
+#     confusing diagnosis for what is really a naming problem.
+rm -rf "$WORK/escbins" && mkdir -p "$WORK/escbins"
+esc_names=('has"quote' 'has\backslash' $'tab\tname' 'ünïcødé' 'plain')
+for n in "${esc_names[@]}"; do
+  : > "$WORK/escbins/$n"
+  chmod +x "$WORK/escbins/$n"
+done
+if bash "$SCRIPT" measure "$WORK/escbins" "$WORK/escbins.json" >/dev/null 2>&1; then
+  echo "ok   - measure: survives names needing JSON escaping (exit 0)"
+else
+  echo "FAIL - measure: exited non-zero on names needing JSON escaping"
+  failures=$((failures + 1))
+fi
+for n in "${esc_names[@]}"; do
+  if [ "$(jq --arg k "$n" 'has($k)' < "$WORK/escbins.json" 2>/dev/null)" = "true" ]; then
+    echo "ok   - measure: [$n] survives escaping intact"
+  else
+    echo "FAIL - measure: [$n] missing from the map: $(jq -c 'keys' < "$WORK/escbins.json" 2>&1)"
+    failures=$((failures + 1))
+  fi
 done
 
 # --- A non-numeric threshold. The quoted form is the dangerous one: jq binds
@@ -164,15 +192,16 @@ done
 run_compare "$WORK/base.json" "$WORK/small.json" 15
 expect_rc "valid threshold: still passes on the same pair" 0
 
-# --- A missing or malformed *current* file is a hard error, not the
-#     warn-and-skip a bad baseline gets: the build under test is unmeasurable,
-#     and skipping that is the vacuous pass the disjoint guard rejects.
-for shape in '[]' 'not json' ''; do
+# --- A missing, malformed or unusable *current* file is a hard error, not
+#     the warn-and-skip a bad baseline gets: the build under test is
+#     unmeasurable, and skipping that is the vacuous pass the disjoint guard
+#     rejects. Same value-type case as the baseline loop above.
+for shape in '[]' 'not json' '' '{"alpha": "1000000"}'; do
     printf '%s' "$shape" > "$WORK/badcurrent.json"
     run_compare "$WORK/base.json" "$WORK/badcurrent.json" 15
-    expect_rc     "bad current ([$shape]): fails rather than skipping" 1
-    expect_output "bad current ([$shape]): says the build is unmeasurable" "unmeasurable"
-    refute_output "bad current ([$shape]): does not claim a pass" "All examples within"
+    expect_rc     "unusable current ([$shape]): fails rather than skipping" 1
+    expect_output "unusable current ([$shape]): says the build is unmeasurable" "unmeasurable"
+    refute_output "unusable current ([$shape]): does not claim a pass" "All examples within"
 done
 
 # --- Disjoint key sets: the dangerous mode. Both files are non-empty and
@@ -303,11 +332,10 @@ expect_output "measure: says nothing was found" "Measured 0"
 # --- The `measure` -> `compare` seam. Every case above stops short of it:
 #     the compare cases use hand-written JSON, and the measure cases only
 #     assert on `jq keys`. Nothing pinned that the JSON `measure` emits is a
-#     shape `compare` can read — and `measure` builds it by hand with
-#     `printf` rather than through `jq`, so it is the half most likely to
-#     drift. The round-2 `stat -c%s` -> `wc -c` swap changed the emitted
-#     bytes (BSD `wc` pads its count with leading spaces) and nothing here
-#     would have noticed.
+#     shape `compare` can read. Two changes have moved those bytes since —
+#     `stat -c%s` -> `wc -c`, where BSD `wc` pads its count with leading
+#     spaces, and the switch from a hand-built `printf` map to the `jq -Rn`
+#     fold — and neither would have been caught by the cases above.
 mkdir -p "$WORK/seam-a" "$WORK/seam-b"
 # 1000 -> 1050 bytes, i.e. +5%, comfortably under the threshold: the point
 # here is that the two halves agree on a format, not that the delta trips.
