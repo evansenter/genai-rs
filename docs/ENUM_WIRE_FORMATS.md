@@ -53,6 +53,7 @@ All types below implement graceful handling of unrecognized values via an `Unkno
 | 35 | `EnvironmentStatus` | src/environments.rs | `status_type` | active/expired |
 | 36 | `TriggerStatus` | src/triggers.rs | `status_type` | active/paused/error (SDK-spec, pending live) |
 | 37 | `TriggerExecutionStatus` | src/triggers.rs | `status_type` | Execution outcomes (SDK-spec, pending live) |
+| 38 | `VideoProcessing` | src/content.rs | `processing_type` | Mode string OR `{type:"static", ...}` object (verified live 2026-08-16) |
 
 **Removed in revision 2026-05-20** (no longer exist in this library or on the wire):
 `UrlRetrievalStatus`, `GroundingMetadata`, `UrlContextMetadata`, `Turn`, and all tool-related
@@ -108,6 +109,7 @@ Helper methods on each type:
 | `ThinkingSummaries` | lowercase | `"auto"`, `"none"` | Send side. Was `THINKING_SUMMARIES_*` until the API reversed it (see below); both accepted on deserialize |
 | `ThinkingLevel` | lowercase | `"low"`, `"medium"`, `"high"` | Docs are correct |
 | `Resolution` | snake_case | `"low"`, `"medium"`, `"high"`, `"ultra_high"` | Image/video content |
+| `VideoProcessing` | string OR object | `"static"` / `"agentic"` / `{"type": "static", "start_offset": "5s", "fps": 1}` | Video content `processing`. Segment window is the cost lever (455 vs 57,775 tokens); only valid inside a `user_input` step. Verified live 2026-08-16 |
 | `Tool::FileSearch` | snake_case object | `{"type": "file_search", ...}` | Rust: `store_names`, Wire: `file_search_store_names` |
 | `Tool::GoogleSearch` | snake_case + optional array | `{"type": "google_search", "search_types": ["web_search"]}` | |
 | `Tool::GoogleMaps` | snake_case + optional fields | `{"type": "google_maps", "enable_widget": true, "latitude": ..., "longitude": ...}` | `latitude`/`longitude` pending live verification (2026-05-20 revision) |
@@ -565,6 +567,73 @@ Used in image and video content for quality vs. token cost trade-off.
 | `Resolution::UltraHigh` | `"ultra_high"` |
 
 **Verified**: 2026-01-05 - Tested with `LOUD_WIRE=1 cargo run --example multimodal_image`.
+
+### VideoProcessing (content `processing`)
+
+Controls how the model ingests a video. A union of a bare mode string and a
+`{"type": "static", ...}` object.
+
+```json
+{
+  "input": [{
+    "type": "user_input",
+    "content": [{
+      "type": "video",
+      "uri": "https://www.youtube.com/watch?v=...",
+      "processing": {"type": "static", "start_offset": "5s", "end_offset": "10s", "fps": 1}
+    }]
+  }]
+}
+```
+
+| Rust Enum | Wire Value |
+|-----------|------------|
+| `VideoProcessing::Static` | `"static"` |
+| `VideoProcessing::Agentic` | `"agentic"` |
+| `VideoProcessing::StaticSegment { .. }` | `{"type": "static", "start_offset": "10.5s", "end_offset": "30s", "fps": 1.0}` |
+| `VideoProcessing::Unknown { .. }` | original string or object, preserved verbatim |
+
+`Static` and `StaticSegment` are distinct variants so each wire form
+round-trips to the form it arrived in; a bare `"static"` is never normalized
+into an empty object, nor the reverse.
+
+**The segment window is the only cost lever.** Measured video input tokens,
+same source video, `gemini-3.7-flash`:
+
+| `processing` | Video input tokens |
+|--------------|--------------------|
+| *(omitted)* | 57,775 |
+| `"static"` | 57,775 |
+| `"agentic"` | 57,775 |
+| `{"type": "static"}` | 57,775 |
+| `{"type": "static", "fps": 1}` | 57,775 |
+| `{"type": "static", "start_offset": "5s", "end_offset": "10s", "fps": 1}` | **455** |
+
+Mode selection and `fps` alone made no difference; only `start_offset` /
+`end_offset` did.
+
+**Position constraint**: the API accepts `processing` only when the video
+content is inside a `user_input` step. The bare-content-array input form is
+rejected:
+
+```
+400 Unknown parameter 'processing' at 'input[1]'.
+```
+
+Use `InteractionInput::Steps`, not `InteractionInput::Content`, for video
+carrying `processing`. Both input forms are otherwise valid, so this is an
+API-side asymmetry.
+
+Unknown enum values are rejected server-side by field path, confirming the
+field is validated rather than passed through:
+
+```
+400 Invalid enum value 'bogus_nonsense' at 'input[0].content[1].processing'.
+```
+
+**Verified**: 2026-08-16 - live against `gemini-3.7-flash`, Api-Revision
+`2026-05-20`, and through the crate itself via
+`tests/multimodal_tests.rs::test_video_processing_segment_reduces_token_cost`.
 
 ### Tool::FileSearch (request)
 

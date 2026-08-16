@@ -138,6 +138,7 @@ pub mod content;
 pub use content::{
     Annotation, CodeExecutionLanguage, Content, FileSearchResultItem, GoogleMapsResultItem,
     GoogleSearchResultItem, Place, Resolution, ReviewSnippet, UrlContextResultItem,
+    VideoProcessing, VideoProcessingBuilder,
 };
 
 // Step types (revision 2026-05-20 response model)

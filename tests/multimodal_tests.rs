@@ -299,8 +299,10 @@ mod audio {
 }
 
 mod video {
-    use crate::common::{SAMPLE_VIDEO_URL, TINY_MP4_BASE64, get_client, stateful_builder};
-    use genai_rs::{Content, InteractionInput, InteractionStatus};
+    use crate::common::{
+        SAMPLE_VIDEO_URL, SAMPLE_YOUTUBE_VIDEO_URL, TINY_MP4_BASE64, get_client, stateful_builder,
+    };
+    use genai_rs::{Content, InteractionInput, InteractionStatus, Step};
 
     /// Tests video input from URI.
     /// Note: GCS URIs are not supported by the Interactions API.
@@ -374,6 +376,90 @@ mod video {
         assert_eq!(response.status, InteractionStatus::Completed);
         assert!(response.has_text(), "Should have text response");
         println!("Video response: {:?}", response.as_text());
+    }
+
+    /// Verifies a `processing` segment window reaches the wire and actually
+    /// reduces how much video the model ingests.
+    ///
+    /// Behavioral rather than structural, because cost control is the entire
+    /// point of the field. The two arms differ **only** in whether a segment
+    /// window is set — mode is held constant — since measurement showed the
+    /// window is the sole lever: on 2026-08-16 against `gemini-3.7-flash`,
+    /// omitting the field, `"static"`, `"agentic"`, `{"type":"static"}`, and
+    /// `{"type":"static","fps":1}` all produced 57,775 video tokens, while a
+    /// 5s-10s window produced 455.
+    ///
+    /// The 10x threshold leaves headroom against that ~127x spread while still
+    /// failing loudly if `processing` silently stops being sent.
+    ///
+    /// Note the `InteractionInput::Steps` wrapping: the API rejects
+    /// `processing` in the bare-content-array input form.
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_video_processing_segment_reduces_token_cost() {
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        async fn video_tokens(
+            client: &genai_rs::Client,
+            label: &str,
+            processing: genai_rs::VideoProcessing,
+        ) -> Option<u32> {
+            let video = Content::video_uri(SAMPLE_YOUTUBE_VIDEO_URL, "video/mp4")
+                .with_processing(processing);
+
+            // Must be a user_input step: `processing` is rejected when the
+            // content sits directly in the input array.
+            let input = InteractionInput::Steps(vec![Step::UserInput {
+                content: vec![Content::text("Describe this video briefly."), video],
+            }]);
+
+            // Deliberately not swallowing the error: if the API rejects our
+            // `processing` payload, that is the exact regression this test
+            // exists to catch, so it must fail rather than skip.
+            let response = stateful_builder(client)
+                .with_input(input)
+                .create()
+                .await
+                .unwrap_or_else(|e| panic!("request with processing={label} failed: {e:?}"));
+
+            response
+                .usage
+                .as_ref()?
+                .input_tokens_by_modality
+                .as_ref()?
+                .iter()
+                .find(|m| m.modality == "video")
+                .map(|m| m.tokens)
+        }
+
+        let clipped = video_tokens(
+            &client,
+            "static+window",
+            genai_rs::VideoProcessing::segment()
+                .start_offset("5s")
+                .end_offset("10s")
+                .fps(1.0)
+                .build(),
+        )
+        .await;
+
+        let unclipped = video_tokens(&client, "static", genai_rs::VideoProcessing::Static).await;
+
+        let (Some(clipped), Some(unclipped)) = (clipped, unclipped) else {
+            println!("Skipping assertion: could not read per-modality video token usage");
+            return;
+        };
+
+        println!("video tokens - clipped: {clipped}, unclipped: {unclipped}");
+        assert!(
+            unclipped > clipped * 10,
+            "an unclipped video ({unclipped} tokens) should ingest far more than a 5s \
+             window ({clipped} tokens); if these are close, the segment window is \
+             likely not reaching the wire"
+        );
     }
 }
 

@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Video `processing` — segment clipping, frame-rate sampling, and agentic
+  mode.** `Content::Video` gained a `processing` field, modeled as the new
+  `VideoProcessing` enum with a `with_processing()` setter and a
+  `VideoProcessing::segment()` builder.
+
+  A segment window is the difference between the model ingesting a five-second
+  clip and the entire video. Measured live against `gemini-3.7-flash` on one
+  source video: **455 video input tokens with a 5s-10s window, 57,775
+  without.** Notably, mode selection is *not* the lever — omitting the field,
+  `"static"`, `"agentic"`, `{"type": "static"}`, and `{"type": "static",
+  "fps": 1}` all produced the same 57,775; only `start_offset`/`end_offset`
+  changed it.
+
+  ```rust
+  let video = Content::video_uri("files/abc123", "video/mp4")
+      .with_processing(VideoProcessing::segment().start_offset("5s").end_offset("10s").build());
+  ```
+
+  One sharp edge, documented on the type: the API accepts `processing` only
+  when the video sits inside a `user_input` step. Sending the same content via
+  `InteractionInput::Content` returns `400 Unknown parameter 'processing'`, so
+  use `InteractionInput::Steps`.
+
+### Changed
+
+- **Breaking:** `Content::Video` has a new `processing` field. Code that
+  constructs or exhaustively destructures the variant with struct-literal
+  syntax needs `processing: None` (or `..`) added. The `Content::video_*()`
+  constructors are unaffected.
+
 ## [0.10.0] - 2026-08-16
 
 ### Added
