@@ -13,6 +13,15 @@
 //! emitting a deserializable public response type would pass this guard
 //! silently, and no amount of text matching fixes that. Stated so the
 //! coverage is not read as wider than it is.
+//!
+//! **Enums are not scanned at all**, and that is the larger gap of the two.
+//! `docs/ENUM_WIRE_FORMATS.md` catalogues ~25 of them, each repeating the
+//! same "marked `#[non_exhaustive]` for forward compatibility" sentence this
+//! guard now enforces for structs — so a new deserializable `pub enum`
+//! without the attribute drifts exactly the way the five structs in #430
+//! did. Not scoped in here because this crate hand-writes `Deserialize`
+//! across its Evergreen enum surface, so an enum check needs different
+//! plumbing than the derive-attribute walk-back below, not a wider regex.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -111,7 +120,13 @@ fn response_structs_are_non_exhaustive() {
             .unwrap_or(file)
             .to_string_lossy()
             .replace('\\', "/");
-        if rel.contains("antigravity") {
+        // `starts_with`, not `contains`: a substring match would silently
+        // drop any future file whose path merely mentions the feature —
+        // `src/antigravity_bridge.rs`, `src/http/antigravity_transport.rs`,
+        // or a response type parked in a file named after it. That is the
+        // under-scanning direction; over-scanning fails loudly, while a
+        // silently skipped file reads as a clean tree.
+        if rel.starts_with("src/antigravity/") {
             continue;
         }
         let text =
@@ -565,16 +580,25 @@ fn cfg_test_modules(rel: &str, source: &str) -> BTreeSet<String> {
 /// Matched as a *token* rather than a substring, because
 /// `#[cfg(feature = "latest")]` contains "test" and gates nothing.
 ///
-/// `not` disqualifies the whole attribute: `#[cfg(not(test))]` marks code
-/// that compiles only *outside* tests, i.e. real API. Treating it as gated
-/// would skip a file this guard exists to scan, so the conservative reading
-/// wins — over-scanning fails loudly, under-scanning does not.
+/// A leading `not(` disqualifies the attribute: `#[cfg(not(test))]` marks
+/// code that compiles only *outside* tests, i.e. real API. Treating it as
+/// gated would skip a file this guard exists to scan, so the conservative
+/// reading wins — over-scanning fails loudly, under-scanning does not.
 fn is_cfg_test_attr(trimmed: &str) -> bool {
     let Some(rest) = trimmed.strip_prefix("#[cfg(") else {
         return false;
     };
-    let tokens = || rest.split(|c: char| !(c.is_alphanumeric() || c == '_'));
-    tokens().any(|t| t == "test") && !tokens().any(|t| t == "not")
+    // The disqualifier is a *leading* `not(`, not a `not` anywhere in the
+    // attribute. `#[cfg(all(test, not(miri)))]` and
+    // `#[cfg(all(test, not(feature = "antigravity")))]` are test-only code
+    // with `test` still a live conjunct; treating them as ungated would
+    // report a test fixture as an offender that `#[non_exhaustive]` cannot
+    // correctly fix.
+    if rest.trim_start().starts_with("not(") {
+        return false;
+    }
+    rest.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .any(|t| t == "test")
 }
 
 /// Marks each line that is inside a `#[cfg(test)]`-gated item, attribute
@@ -788,6 +812,13 @@ fn the_cfg_test_gate_recognises_compound_forms_and_only_those() {
     // `not(test)` marks code compiled *outside* tests — real API. Reading it
     // as gated would silently drop a file this guard exists to scan.
     assert!(!is_cfg_test_attr("#[cfg(not(test))]"));
+    assert!(!is_cfg_test_attr("#[cfg( not(test) )]"));
+    // ...but `not` wrapping something *else* leaves `test` a live conjunct,
+    // so these are still test-only and must stay gated.
+    assert!(is_cfg_test_attr("#[cfg(all(test, not(miri)))]"));
+    assert!(is_cfg_test_attr(
+        "#[cfg(all(test, not(feature = \"antigravity\")))]"
+    ));
     assert!(!is_cfg_test_attr("#[derive(Debug)]"));
 
     // The mask covers the attribute and everything the item spans, and stops
