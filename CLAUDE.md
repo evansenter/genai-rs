@@ -26,9 +26,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Use the Makefile for common operations. Requires [cargo-nextest](https://nexte.st/).
 
 ```bash
-make check     # Pre-push gate: fmt + clippy + test
+make check     # Pre-push gate: fmt + clippy + test + test-scripts
 make test      # Unit tests only (excludes doctests for speed)
 make test-all  # Full suite including integration tests (requires GEMINI_API_KEY)
+make test-scripts # Fixture tests for .github/scripts/ (needs only bash + jq)
 make fmt       # Check formatting
 make clippy    # Lint with warnings as errors
 make docs      # Build docs with warnings as errors (all-features + docs.rs feature set)
@@ -62,7 +63,7 @@ cargo nextest run --test integration_file        # Single integration test file
 ### Quality Checks
 
 ```bash
-make check  # Run all quality gates (fmt + clippy + test)
+make check  # Run all quality gates (fmt + clippy + test + test-scripts)
 
 # Or individually:
 cargo fmt -- --check                                                 # Check format

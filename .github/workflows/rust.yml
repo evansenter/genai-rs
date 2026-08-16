@@ -633,7 +633,15 @@ jobs:
           # discarding it would send them looking for something the log had
           # already thrown away. `RUN_IDS` captures stdout only, so letting
           # stderr through cannot contaminate the id list.
-          if ! RUN_IDS=$(gh run list --workflow Rust --branch main --status completed \
+          # `rust.yml`, not `Rust`: `--workflow` accepts either the display
+          # `name:` or the filename, and the display name is the cosmetic one
+          # — the identifier most likely to be edited by someone with no
+          # reason to look at this job. The failure branch below keeps a
+          # rename from being silent (gh errors on an unknown workflow rather
+          # than returning empty), but until someone reads that annotation
+          # every PR sits on the weakest path, gated only by the 64MB
+          # backstop. Cheaper to name the stable identifier.
+          if ! RUN_IDS=$(gh run list --workflow rust.yml --branch main --status completed \
               --limit 10 --json databaseId --jq '.[].databaseId // empty'); then
             echo "::warning::Could not list main runs — the baseline lookup failed rather than finding nothing. See the gh error above; check the actions:read permission and rate limits."
             RUN_IDS=""
