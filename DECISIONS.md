@@ -77,11 +77,14 @@ type.
 `InteractionResponse` (`src/response.rs:782`) does not carry the attribute:
 it derives `Default` and every field is `pub`, so it is constructible from
 outside the crate today and adding a field to it *is* breaking. Of that
-file's fourteen public structs only four carry it — `UsageMetadata`,
-`ModalityTokens`, `GroundingToolCount`, `StepSummary` and the `*Info` borrow
-types at `:477`/`:562`/`:652`/`:684`/`:700` do not. Beyond that file, the
-five resource shapes tracked in #430 (`Trigger`, `TriggerExecution`,
-`Environment`, `Agent`, `Webhook`) are in the same position.
+file's fourteen public structs, the four that carry it are the
+code-execution, url-context and maps `*Info` types at `:719`-`:768`. The
+other ten do not: `ModalityTokens` (`:229`), `GroundingToolCount` (`:249`),
+`UsageMetadata` (`:264`), `StepSummary` (`:1699`), `InteractionResponse`
+itself, and the `*Info` types at `:477`/`:562`/`:652`/`:684`/`:700`. Beyond
+that file, the five resource shapes tracked in #430 (`Trigger`,
+`TriggerExecution`, `Environment`, `Agent`, `Webhook`) are in the same
+position.
 
 #430 asks for its own list to be treated as found-so-far rather than
 exhaustive, and its sweep checkbox is open — so this entry records the rule
