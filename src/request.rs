@@ -235,7 +235,14 @@ impl TurnContent {
 pub enum InteractionInput {
     /// Simple text input
     Text(String),
-    /// Array of content blocks (single-turn multimodal input)
+    /// Content blocks for a single user turn (multimodal input).
+    ///
+    /// Serialized as one `user_input` step wrapping the blocks, not as a
+    /// bare content array. Both are valid input shapes, but only the step
+    /// form accepts video `processing` (#427), and the steps array is the
+    /// canonical form under revision 2026-05-20. Deserializing that wire
+    /// shape back yields [`Self::Steps`], since the two are indistinguishable
+    /// on the wire.
     Content(Vec<Content>),
     /// Array of steps (multi-turn conversation history, function results,
     /// thought signatures, ...)
@@ -258,9 +265,54 @@ impl Serialize for InteractionInput {
     {
         match self {
             Self::Text(t) => serializer.serialize_str(t),
-            Self::Content(c) => c.serialize(serializer),
+            // Wrapped in a single `user_input` step rather than emitted as a
+            // bare content array. Both are valid arms of the spec's input
+            // union, but the API accepts video `processing` only inside a
+            // step — the identical content in a bare array is rejected with
+            // `Unknown parameter 'processing' at 'input[1]'` (#427). Since
+            // `Content::with_processing()` naturally pairs with this variant,
+            // the combination always 400'd, and the message pointed at the
+            // field rather than at the input shape.
+            //
+            // Verified live (2026-08-16, gemini-3.7-flash, revision
+            // 2026-05-20) that the step form is accepted everywhere the bare
+            // form is: text, inline image, inline audio, inline document,
+            // video by URI, and a stored follow-up turn via
+            // `previous_interaction_id` all complete under both shapes —
+            // and only the step form accepts `processing`. The steps array
+            // is also the canonical form under this revision, the one
+            // `Turn` was removed in favour of.
+            Self::Content(c) => {
+                use serde::ser::SerializeSeq;
+                let mut seq = serializer.serialize_seq(Some(1))?;
+                seq.serialize_element(&UserInputRef { content: c })?;
+                seq.end()
+            }
             Self::Steps(s) => s.serialize(serializer),
         }
+    }
+}
+
+/// A borrowed `user_input` step, for wrapping [`InteractionInput::Content`]
+/// on the way out.
+///
+/// Serializes byte-identically to [`Step::UserInput`]; it exists only so the
+/// wrap does not clone the content vector on every serialization.
+struct UserInputRef<'a> {
+    content: &'a Vec<Content>,
+}
+
+impl Serialize for UserInputRef<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeMap;
+
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("type", "user_input")?;
+        map.serialize_entry("content", self.content)?;
+        map.end()
     }
 }
 
@@ -2614,5 +2666,63 @@ mod tests {
             InteractionInput::Content(c) => assert_eq!(c.len(), 1),
             other => panic!("Expected Content, got {other:?}"),
         }
+    }
+
+    /// `Content` input goes out wrapped in a `user_input` step, not as a bare
+    /// content array — the shape the API accepts video `processing` in (#427).
+    #[test]
+    fn test_interaction_input_content_serializes_as_a_user_input_step() {
+        let input = InteractionInput::Content(vec![
+            Content::text("Describe briefly."),
+            Content::from_uri_and_mime("files/clip", "video/mp4"),
+        ]);
+        let json = serde_json::to_value(&input).unwrap();
+
+        assert!(json.is_array(), "input must still be an array: {json}");
+        assert_eq!(json.as_array().unwrap().len(), 1, "one wrapping step");
+        assert_eq!(json[0]["type"], "user_input");
+        assert_eq!(
+            json[0]["content"].as_array().map(Vec::len),
+            Some(2),
+            "both blocks are carried through unchanged: {json}"
+        );
+        assert_eq!(json[0]["content"][0]["type"], "text");
+        assert_eq!(json[0]["content"][1]["type"], "video");
+    }
+
+    /// The wrap is byte-identical to building the step by hand, which is what
+    /// lets the round-trip land on `Steps` rather than losing information.
+    #[test]
+    fn test_content_input_matches_a_hand_built_user_input_step() {
+        let content = vec![Content::text("hi")];
+        let wrapped = serde_json::to_value(InteractionInput::Content(content.clone())).unwrap();
+        let by_hand =
+            serde_json::to_value(InteractionInput::Steps(vec![Step::user_input(content)])).unwrap();
+        assert_eq!(wrapped, by_hand);
+    }
+
+    /// Unconditional: an empty content vector produces the same shape rather
+    /// than falling back to a bare `[]`, so the wire form never depends on
+    /// how much content the caller happened to supply.
+    #[test]
+    fn test_empty_content_input_is_wrapped_too() {
+        let json = serde_json::to_value(InteractionInput::Content(vec![])).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!([{"type": "user_input", "content": []}])
+        );
+    }
+
+    /// The other two variants are untouched by the wrap.
+    #[test]
+    fn test_wrap_does_not_touch_text_or_steps_input() {
+        assert_eq!(
+            serde_json::to_value(InteractionInput::Text("hi".into())).unwrap(),
+            serde_json::json!("hi")
+        );
+        let steps = InteractionInput::Steps(vec![Step::user_input(vec![Content::text("hi")])]);
+        let json = serde_json::to_value(&steps).unwrap();
+        assert_eq!(json.as_array().map(Vec::len), Some(1));
+        assert_eq!(json[0]["type"], "user_input");
     }
 }

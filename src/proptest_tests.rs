@@ -2587,18 +2587,43 @@ proptest! {
         prop_assert_eq!(usage, restored);
     }
 
-    /// Test an empty content array deserializes as Steps (documented gotcha:
-    /// `InteractionInput::Content(vec![])` serializes to `[]`, which
-    /// canonically deserializes as `Steps(vec![])`).
+    /// Test that `Content` input round-trips as `Steps` (documented gotcha).
+    ///
+    /// `InteractionInput::Content(..)` serializes as a single `user_input`
+    /// step — see the variant docs and #427 — which is wire-identical to
+    /// `Steps(vec![Step::user_input(..)])` and so deserializes back as that.
+    /// The empty vector is not special-cased: the wrap is unconditional, so
+    /// the shape a caller gets never depends on how much content is in it.
     #[test]
-    fn empty_input_array_deserializes_as_steps(_unused in Just(())) {
+    fn content_input_round_trips_as_a_user_input_step(_unused in Just(())) {
         let input = InteractionInput::Content(vec![]);
         let json = serde_json::to_value(&input).expect("Serialization should succeed");
-        prop_assert_eq!(&json, &serde_json::json!([]));
+        prop_assert_eq!(
+            &json,
+            &serde_json::json!([{ "type": "user_input", "content": [] }])
+        );
 
         let restored: InteractionInput =
             serde_json::from_value(json).expect("Deserialization should succeed");
-        prop_assert_eq!(restored, InteractionInput::Steps(vec![]));
+        prop_assert_eq!(restored, InteractionInput::Steps(vec![Step::user_input(vec![])]));
+
+        // And with content in it, the same shape.
+        let input = InteractionInput::Content(vec![Content::text("hi")]);
+        let json = serde_json::to_value(&input).expect("Serialization should succeed");
+        prop_assert_eq!(
+            &json,
+            &serde_json::json!([{
+                "type": "user_input",
+                "content": [{ "type": "text", "text": "hi" }],
+            }])
+        );
+
+        let restored: InteractionInput =
+            serde_json::from_value(json).expect("Deserialization should succeed");
+        prop_assert_eq!(
+            restored,
+            InteractionInput::Steps(vec![Step::user_input(vec![Content::text("hi")])])
+        );
     }
 
     /// Test deeply nested JSON in function call arguments (3-4 levels).

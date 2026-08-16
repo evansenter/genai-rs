@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **`InteractionInput::Content` is now sent as a single `user_input` step**
+  rather than as a bare content array. Both are valid arms of the API's input
+  union, but only the step form accepts video `processing` — the identical
+  content in a bare array is rejected with
+  `Unknown parameter 'processing' at 'input[1]'`, which names the field
+  rather than the input shape and so points at the wrong thing entirely.
+
+  Verified live (2026-08-16, `gemini-3.7-flash`, revision 2026-05-20) that
+  the step form is accepted everywhere the bare form is: text, inline image,
+  inline audio, inline document, video by URI, and a stored follow-up turn
+  via `previous_interaction_id` all complete under both shapes. The steps
+  array is also the canonical form under this revision — the one `Turn` was
+  removed in favour of.
+
+  Callers using `with_content()` need no change. The only visible difference
+  is on the wire, and in that `InteractionInput::Content(..)` now
+  deserializes back as `InteractionInput::Steps(vec![Step::user_input(..)])`,
+  since the two are indistinguishable once serialized. (#427)
+
 ## [0.10.0] - 2026-08-16
 
 ### Added
