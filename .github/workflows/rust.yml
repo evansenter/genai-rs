@@ -567,7 +567,6 @@ jobs:
       # against every other.
       - name: Measure example sizes
         run: |
-          chmod +x .github/scripts/check_example_sizes.sh
           .github/scripts/check_example_sizes.sh measure \
             target/release/examples current-sizes.json
           cat current-sizes.json
@@ -608,7 +607,7 @@ jobs:
           if [ -f baseline/current-sizes.json ]; then
             cp baseline/current-sizes.json baseline-sizes.json
           else
-            echo "No size-baseline artifact on any of the last 10 successful main runs"
+            echo "No size-baseline artifact on any of the last 10 completed main runs"
             : > baseline-sizes.json
           fi
 

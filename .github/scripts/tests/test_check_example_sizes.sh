@@ -151,6 +151,9 @@ echo '{"alpha": 0, "beta": 2000000}' > "$WORK/zerobase.json"
 run_compare "$WORK/zerobase.json" "$WORK/small.json" 15
 expect_rc     "zero baseline: does not abort the filter" 0
 expect_output "zero baseline: treated as uncomparable, like a new example" "1 compared"
+# ...and it must actually be *reported*, not silently dropped from every
+# list — which is what `select($base[.] == null)` did to it.
+expect_output "zero baseline: the entry is named, not silently dropped" "New examples.*alpha"
 
 # --- A removed example should be reported, not silently dropped.
 echo '{"alpha": 1000000}' > "$WORK/removed.json"
@@ -188,6 +191,26 @@ rc=0
 out=$(bash "$SCRIPT" measure "$WORK/nothing" "$WORK/measured.json" 2>&1) || rc=$?
 expect_rc     "measure: fails on an empty directory" 1
 expect_output "measure: says nothing was found" "Measured 0"
+
+# --- The `measure` -> `compare` seam. Every case above stops short of it:
+#     the compare cases use hand-written JSON, and the measure cases only
+#     assert on `jq keys`. Nothing pinned that the JSON `measure` emits is a
+#     shape `compare` can read — and `measure` builds it by hand with
+#     `printf` rather than through `jq`, so it is the half most likely to
+#     drift. The round-2 `stat -c%s` -> `wc -c` swap changed the emitted
+#     bytes (BSD `wc` pads its count with leading spaces) and nothing here
+#     would have noticed.
+mkdir -p "$WORK/seam-a" "$WORK/seam-b"
+# 1000 -> 1050 bytes, i.e. +5%, comfortably under the threshold: the point
+# here is that the two halves agree on a format, not that the delta trips.
+head -c 1000 /dev/zero > "$WORK/seam-a/demo"
+head -c 1050 /dev/zero > "$WORK/seam-b/demo"
+chmod +x "$WORK/seam-a/demo" "$WORK/seam-b/demo"
+bash "$SCRIPT" measure "$WORK/seam-a" "$WORK/seam-a.json" >/dev/null
+bash "$SCRIPT" measure "$WORK/seam-b" "$WORK/seam-b.json" >/dev/null
+run_compare "$WORK/seam-a.json" "$WORK/seam-b.json" 15
+expect_rc     "seam: compare reads what measure wrote" 0
+expect_output "seam: the entry is compared, not skipped" "1 compared"
 
 echo
 if [ "$failures" -gt 0 ]; then

@@ -135,8 +135,13 @@ compare() {
 
     # New examples: reported, never fatal.
     local added
+    # `<= 0`, matching the filter above: a key present in the baseline with a
+    # zero size is dropped from the comparison, and `== null` would drop it
+    # from here too — leaving it in neither the table, nor `added`, nor
+    # `removed`, with the `N compared` count its only trace. That is the
+    # shape the removed/renamed notice was added to close.
     added=$(jq -r '. as $cur | input as $base
-        | [$cur | keys[] | select($base[.] == null)] | join(", ")' "$current" "$baseline")
+        | [$cur | keys[] | select(($base[.] // 0) <= 0)] | join(", ")' "$current" "$baseline")
     if [ -n "$added" ]; then
         echo
         echo "::notice::New examples (no baseline, not checked): $added"
@@ -182,12 +187,22 @@ compare() {
     # this guards the symptom, whatever the cause.
     local compared
     compared=$(grep -c . <<< "$report" || true)
+    if [ "${compared:-0}" -eq 0 ] && [ "${SIZE_GROWTH_OK:-}" = "true" ]; then
+        echo
+        echo "::notice::Nothing was comparable, waved through by the \`size-growth-ok\` label."
+        return 0
+    fi
     if [ "${compared:-0}" -eq 0 ]; then
         echo
         echo "::error::No examples were comparable: the baseline has $(jq 'length' < "$baseline") \
 entries and the current build has $(jq 'length' < "$current"), but none of them could be \
 compared — either the key sets are disjoint, or every shared key has a zero-size baseline \
 entry (both are dropped by the same filter). The delta check is not running."
+        echo
+        echo "If the key set changed on purpose — an examples/ reorganisation or a"
+        echo "mass rename — this is self-clearing: the baseline refreshes on the next"
+        echo "push to main. To land the change before then, add the \`size-growth-ok\`"
+        echo "label and push a commit; it waives this guard as well as the threshold."
         return 1
     fi
 
