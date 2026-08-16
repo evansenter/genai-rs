@@ -267,10 +267,25 @@ After merging version bump PR:
    early signal locally, but only hard errors fail the actual docs.rs build)
 1. **Tag the release**: `git tag -a vX.Y.Z origin/main -m "Release vX.Y.Z"`
 2. **Push tag**: `git push origin vX.Y.Z`
-3. **Create GitHub release**: `gh release create vX.Y.Z --title "vX.Y.Z" --notes "..."` (copy from CHANGELOG)
-4. **Publish to crates.io**:
-   - `cargo publish -p genai-rs-macros` (wait 30s for index)
-   - `cargo publish -p genai-rs`
+3. **Watch the run.** The tag push is the trigger — `release.yml` runs on
+   `push: tags: ['v*']` and does the rest itself, in this order:
+
+   | Job | What it does |
+   |-----|--------------|
+   | `validate` | check, unit tests, doctests, the full integration suite, fmt, clippy, and the docs.rs build on both stable and nightly |
+   | `publish` | re-checks the tag against `Cargo.toml`, publishes `genai-rs-macros`, polls crates.io until it is indexed (up to 5 min), then publishes `genai-rs` |
+   | `github-release` | creates the GitHub release, body taken from the `## [X.Y.Z]` section of `CHANGELOG.md` |
+
+   Nothing here is a manual step. Running `cargo publish` or
+   `gh release create` by hand races the workflow: neither silently
+   double-publishes — `cargo publish` refuses an already-uploaded version —
+   but both fail confusingly, on a release that already succeeded.
+
+   `publish` verifies the tag against `Cargo.toml` before uploading
+   anything, so a tag that does not match the version bump fails before the
+   first crate is pushed. That is the one mistake that is still cheap to
+   make and cheap to recover from — delete the tag, fix the version, tag
+   again.
 
 ## Logging
 

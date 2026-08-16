@@ -163,24 +163,47 @@ jobs:
       - name: Generate release notes
         id: notes
         run: |
+          set -euo pipefail
           TAG=${GITHUB_REF#refs/tags/}
-          PREV_TAG=$(git describe --tags --abbrev=0 $TAG^ 2>/dev/null || echo "")
 
-          if [ -n "$PREV_TAG" ]; then
-            echo "Generating changelog from $PREV_TAG to $TAG"
-            COMMITS=$(git log --pretty=format:"- %s" $PREV_TAG..$TAG)
+          # The curated CHANGELOG entry, not a raw commit list. CLAUDE.md has
+          # always told the releaser that release notes come from
+          # CHANGELOG.md; the workflow never read it, so the published body
+          # was two overlapping auto-generated commit lists (the `git log`
+          # written here, plus `generate_release_notes`) and none of the prose
+          # that was written for exactly this purpose. See #432.
+          #
+          # `generate_release_notes: true` stays: it appends the PR-linked
+          # "What's Changed" list and the full-changelog compare link, which
+          # the CHANGELOG does not carry. Only the hand-rolled duplicate of it
+          # goes away.
+          if .github/scripts/extract_changelog_section.sh \
+              CHANGELOG.md "${TAG#v}" > /tmp/release-body.md; then
+            echo "Release body from the CHANGELOG.md [${TAG#v}] section"
           else
-            echo "First release, generating full changelog"
-            COMMITS=$(git log --pretty=format:"- %s")
+            # Falling back rather than failing: the tag already exists and the
+            # crates are already published by this point, so refusing to cut
+            # the GitHub release would leave the release half-done over a
+            # formatting problem. Loud enough to be fixed by hand after.
+            echo "::warning::No [${TAG#v}] section in CHANGELOG.md — falling back to the commit list. Edit the release body by hand."
+            PREV_TAG=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || echo "")
+            if [ -n "$PREV_TAG" ]; then
+              echo "Generating changelog from $PREV_TAG to $TAG"
+              git log --pretty=format:"- %s" "$PREV_TAG..$TAG" > /tmp/release-body.md
+            else
+              echo "First release, generating full changelog"
+              git log --pretty=format:"- %s" > /tmp/release-body.md
+            fi
           fi
 
-          # Write to file to preserve newlines
-          echo "$COMMITS" > /tmp/commits.txt
+          echo "=== Release body ==="
+          cat /tmp/release-body.md
+          echo "===================="
 
       - name: Create release
         uses: softprops/action-gh-release@v1
         with:
           generate_release_notes: true
-          body_path: /tmp/commits.txt
+          body_path: /tmp/release-body.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

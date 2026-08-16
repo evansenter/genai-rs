@@ -419,6 +419,36 @@ jobs:
         env:
           RUSTDOCFLAGS: --cfg docsrs -D warnings
 
+  release-scripts:
+    name: Release Scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # `release.yml` only runs on a tag push, which is the one moment its
+      # scripts cannot be debugged cheaply — the tag exists and the crates
+      # may already be published. So the pieces it depends on are tested
+      # here, on every PR, against fixtures rather than against a release.
+      - name: Test the changelog extractor
+        run: .github/scripts/tests/test_extract_changelog_section.sh
+      # The real CHANGELOG, not a fixture: this is what a release would
+      # actually read, and a heading that drifts off the `## [X.Y.Z]` shape
+      # would otherwise only surface at tag time as an empty release body.
+      - name: Extract the current version's section from the real CHANGELOG
+        run: |
+          set -euo pipefail
+          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "Cargo.toml version: $VERSION"
+          if .github/scripts/extract_changelog_section.sh CHANGELOG.md "$VERSION"; then
+            echo "CHANGELOG.md has a [$VERSION] section"
+          else
+            # A warning, not a failure. Between a version bump landing and its
+            # CHANGELOG entry being written, and on any PR that predates the
+            # bump, this is the normal state — failing here would redden
+            # unrelated PRs. release.yml warns and falls back for the same
+            # reason.
+            echo "::warning::CHANGELOG.md has no [$VERSION] section — a release tagged now would fall back to a raw commit list for its body."
+          fi
+
   msrv:
     name: MSRV Check
     runs-on: ubuntu-latest
