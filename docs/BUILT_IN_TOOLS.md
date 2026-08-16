@@ -30,7 +30,7 @@ Gemini provides several server-side tools that execute automatically without req
 
 **Key distinction**: These are *server-side* tools executed by Google's infrastructure, unlike *client-side* function calling where your code executes the functions.
 
-**Where tool activity appears**: Under API revision 2026-05-20, server-side tool activity is reported as dedicated step variants in `response.steps` (e.g., `Step::GoogleSearchCall`, `Step::GoogleSearchResult`, `Step::CodeExecutionCall`, `Step::UrlContextResult`, `Step::ToolCall` — which is what MCP invocations arrive as, see the MCP section, ...). The response helpers shown below (`google_search_results()`, `code_execution_calls()`, ...) iterate those steps for you. The old `grounding_metadata` and `url_context_metadata` response fields no longer exist — grounding information comes from the steps themselves plus inline `Annotation` citations, and `usage.grounding_tool_count` reports per-tool grounding counts.
+**Where tool activity appears**: Under API revision 2026-05-20, server-side tool activity is reported as dedicated step variants in `response.steps` (e.g., `Step::GoogleSearchCall`, `Step::GoogleSearchResult`, `Step::CodeExecutionCall`, `Step::UrlContextResult`, `Step::ToolCall`, ...). The response helpers shown below (`google_search_results()`, `code_execution_calls()`, ...) iterate those steps for you. The old `grounding_metadata` and `url_context_metadata` response fields no longer exist — grounding information comes from the steps themselves plus inline `Annotation` citations, and `usage.grounding_tool_count` reports per-tool grounding counts. MCP invocations arrive as `Step::ToolCall`, not `Step::McpServerToolCall`; see the [MCP Servers](#mcp-servers) section.
 
 ## Google Search
 

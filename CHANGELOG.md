@@ -18,9 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `{id, signature}`. Which server or tool ran is not recoverable from the
   response; `usage.total_tool_use_tokens` is what shows the call happened.
 
-- **`InteractionResponse::tool_calls()` / `has_tool_calls()`** — the
-  step-level accessors, returning whole steps so the `signature` stays
-  reachable for stateless replay.
+- **`InteractionResponse::tool_calls()` / `has_tool_calls()`** and the
+  `ToolCallInfo` borrowed view they return — `id` plus `signature`, which is
+  everything the API discloses about a server-side tool call.
 
 - **`StepSummary::tool_call_count`** — where MCP calls are counted.
   `mcp_server_tool_call_count` reads **0** on a successful MCP interaction,

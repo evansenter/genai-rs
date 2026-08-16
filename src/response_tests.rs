@@ -172,14 +172,10 @@ fn tool_call_steps_are_counted_and_not_attributed_to_mcp() {
     assert!(response.has_tool_calls());
     let calls = response.tool_calls();
     assert_eq!(calls.len(), 2, "the model_text step must not be included");
-    let ids: Vec<&str> = calls
-        .iter()
-        .filter_map(|s| match s {
-            Step::ToolCall { id, .. } => Some(id.as_str()),
-            _ => None,
-        })
-        .collect();
+    let ids: Vec<&str> = calls.iter().map(|c| c.id).collect();
     assert_eq!(ids, ["call_1", "call_2"], "returned in step order");
+    assert_eq!(calls[0].signature, Some("sig"));
+    assert_eq!(calls[1].signature, None);
 }
 
 #[test]

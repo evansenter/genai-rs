@@ -648,6 +648,20 @@ impl AudioInfo<'_> {
 ///     println!("Function: {} ({}) with args: {}", call.name, call.id, call.args);
 /// }
 /// ```
+/// A generic server-side tool call, borrowed from the response.
+///
+/// This is what an MCP invocation looks like — the API does not identify the
+/// server or the tool, so `id` and `signature` are all there is. See
+/// [`InteractionResponse::tool_calls`].
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[non_exhaustive]
+pub struct ToolCallInfo<'a> {
+    /// Unique identifier for this call.
+    pub id: &'a str,
+    /// Opaque signature; pass back unchanged when replaying statelessly.
+    pub signature: Option<&'a str>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct FunctionCallInfo<'a> {
     /// Unique identifier for this function call (used when sending results back)
@@ -1495,13 +1509,21 @@ impl InteractionResponse {
     /// or tool ran is not recoverable; `usage.total_tool_use_tokens` is what
     /// shows the call happened.
     ///
-    /// Returned as whole steps rather than extracted ids, since the
-    /// `signature` is what a caller needs for stateless replay. See #433.
+    /// Returns a borrowed view carrying both fields, matching
+    /// [`function_calls`](Self::function_calls) — the `signature` is what a
+    /// caller needs for stateless replay, so returning bare ids would not do.
+    /// See #433.
     #[must_use]
-    pub fn tool_calls(&self) -> Vec<&Step> {
+    pub fn tool_calls(&self) -> Vec<ToolCallInfo<'_>> {
         self.steps
             .iter()
-            .filter(|s| matches!(s, Step::ToolCall { .. }))
+            .filter_map(|step| match step {
+                Step::ToolCall { id, signature } => Some(ToolCallInfo {
+                    id: id.as_str(),
+                    signature: signature.as_deref(),
+                }),
+                _ => None,
+            })
             .collect()
     }
 
