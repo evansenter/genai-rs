@@ -2768,6 +2768,33 @@ mod tests {
         assert_eq!(json[0]["type"], "user_input");
     }
 
+    /// The documented round-trip, asserted end to end rather than implied by
+    /// chaining the serialize test with the steps-array parse test: a request
+    /// built from `Content` comes back as `Steps` holding one `UserInput`,
+    /// which is what the rustdoc and the CHANGELOG both claim.
+    #[test]
+    fn test_request_content_input_round_trips_as_a_user_input_step() {
+        let request = InteractionRequest {
+            model: Some("test-model".into()),
+            input: InteractionInput::Content(vec![Content::text("hi")]),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        let back: InteractionRequest = serde_json::from_str(&json).unwrap();
+
+        match &back.input {
+            InteractionInput::Steps(steps) => {
+                assert_eq!(steps.len(), 1, "one wrapping step, got {steps:?}");
+                assert_eq!(
+                    steps[0],
+                    Step::user_input(vec![Content::text("hi")]),
+                    "the step must carry the original content unchanged"
+                );
+            }
+            other => panic!("expected Steps after the round trip, got {other:?}"),
+        }
+    }
+
     /// The wrap is request-only. `InteractionInput`'s own `Serialize` stays
     /// faithful to the variant, so a `Content` array echoed back on
     /// `InteractionResponse::input` re-serializes in the shape the server
