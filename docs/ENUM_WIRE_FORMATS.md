@@ -1248,8 +1248,10 @@ Response structs (e.g., `AutoFunctionResult`) also use `#[non_exhaustive]` so we
 
 **Which structs get it.** Deserializable public types the API *returns*, not
 types a caller constructs to *send*. `#[non_exhaustive]` on a request type
-would remove struct-literal construction (and, unlike an enum, leaves no
-`..Default::default()` escape for a downstream crate) while buying the crate
+would remove struct-literal construction — including the `..Default::default()`
+functional-update form, though not `T::default()` followed by field
+assignment, which still works on the many of these that derive `Default`
+(see **Constructing fixtures** below) — while buying the crate
 nothing — it does not gain the freedom to add required fields to something the
 user assembles. So `GenerationConfig`, `FunctionDeclaration`, the tool configs
 and the create/update bodies stay open; `InteractionResponse`, `UsageMetadata`,
@@ -1286,6 +1288,7 @@ lives in `pub(crate) mod http` and is not re-exported, so no downstream
 caller can name it and the attribute is inert on it. That is the guard
 over-scanning a `pub struct` inside a private module — the loud direction it
 deliberately prefers.)
+
 `tests/proptest_roundtrip_tests.rs` shows both routes.
 
 Not in that list, despite having no `Default`: `ModalityTokens` gained a
