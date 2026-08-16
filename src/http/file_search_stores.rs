@@ -29,6 +29,9 @@ use crate::file_search_stores::{
 use crate::wire::WireEvent;
 use std::path::Path;
 
+/// Upload ceiling, matching the Files API's `MAX_FILE_SIZE` (2 GB).
+const MAX_UPLOAD_SIZE: u64 = 2_147_483_648;
+
 fn stores_url() -> String {
     format!("{BASE_URL_PREFIX}/{API_VERSION}/fileSearchStores")
 }
@@ -245,6 +248,26 @@ pub async fn upload_to_file_search_store(
         url = with_paging_and(url, None, None, &[("display_name", name)]);
     }
 
+    // Same two degenerate-size guards the Files API upload applies, so the
+    // failure surface matches the path this module mirrors: without them a
+    // zero-byte file becomes an opaque server-side error, and an oversized
+    // one is read fully into memory here before anything rejects it.
+    let metadata = tokio::fs::metadata(file_path).await.map_err(|e| {
+        GenaiError::InvalidInput(format!("Failed to stat {}: {e}", file_path.display()))
+    })?;
+    if metadata.len() == 0 {
+        return Err(GenaiError::InvalidInput(
+            "Cannot upload empty file".to_string(),
+        ));
+    }
+    if metadata.len() > MAX_UPLOAD_SIZE {
+        return Err(GenaiError::InvalidInput(format!(
+            "File size {} exceeds maximum {}",
+            metadata.len(),
+            MAX_UPLOAD_SIZE
+        )));
+    }
+
     let bytes = tokio::fs::read(file_path).await.map_err(|e| {
         GenaiError::InvalidInput(format!("Failed to read {}: {e}", file_path.display()))
     })?;
@@ -303,9 +326,16 @@ pub async fn upload_to_file_search_store(
         .and_then(|r| r.get("documentName"))
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| {
+            // Every upload observed (text and PDF, through ~1 MB, 2026-08-16)
+            // came back already resolved, with `response.documentName`
+            // present — no polling was needed. This arm therefore covers an
+            // unobserved shape, so it surfaces the whole raw response
+            // including `name`, which is the operation handle a caller would
+            // need to resolve it out-of-band.
             GenaiError::Internal(format!(
-                "Upload operation did not report a documentName; the upload may still be \
-                 in progress. Raw response: {text}"
+                "Upload operation did not report a documentName (never observed \
+                 through ~1 MB as of 2026-08-16; the operation may be unresolved). \
+                 Raw response: {text}"
             ))
         })?
         .to_string();

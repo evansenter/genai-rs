@@ -47,8 +47,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     println!("\n--- Cleanup ---");
     // `force` is required while the store still holds documents.
-    client.delete_file_search_store(&store.name, true).await?;
-    println!("Deleted store: {}", store.name);
+    //
+    // Logged rather than `?`: whatever killed the run (connectivity, quota,
+    // an expired key) is likely to kill the delete too, and the original
+    // cause is the more useful of the two errors to surface.
+    if let Err(e) = client.delete_file_search_store(&store.name, true).await {
+        eprintln!("cleanup failed for {}: {e}", store.name);
+    } else {
+        println!("Deleted store: {}", store.name);
+    }
 
     result
 }

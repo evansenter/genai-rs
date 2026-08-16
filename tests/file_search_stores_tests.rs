@@ -7,7 +7,12 @@
 //!
 //! Provisioning here is the point: before these endpoints existed, a file
 //! search test had to be handed a store created out-of-band, which is why
-//! #307 sat blocked. Every test below cleans up the stores it creates.
+//! #307 sat blocked.
+//!
+//! Every test runs its body through [`with_store`], which deletes the store
+//! even when the body panics. Without that, a single failed assertion leaks
+//! a `genai-rs-test-*` store and its indexed documents into the project, and
+//! those accumulate silently across runs.
 //!
 //! ```bash
 //! cargo test --test file_search_stores_tests -- --include-ignored --nocapture
@@ -16,7 +21,9 @@
 mod common;
 
 use common::{get_client, stateful_builder};
+use futures_util::FutureExt;
 use genai_rs::{Client, Content, DocumentState, InteractionInput, InteractionStatus, Tool};
+use std::panic::AssertUnwindSafe;
 
 /// Creates a uniquely-named store so concurrent runs don't collide.
 async fn create_test_store(client: &Client, label: &str) -> genai_rs::FileSearchStore {
@@ -31,6 +38,32 @@ async fn create_test_store(client: &Client, label: &str) -> genai_rs::FileSearch
         .create_file_search_store(Some(&format!("genai-rs-test-{label}-{unique}")))
         .await
         .expect("failed to create file search store")
+}
+
+/// Runs `body` against a freshly created store and deletes the store
+/// afterwards, **including when `body` panics**.
+///
+/// A plain `delete` at the end of a test body only runs on the happy path:
+/// every assertion above it is a potential early exit, so a single failure
+/// leaks the store. `catch_unwind` lets the cleanup run first and then
+/// re-raises, so a failing test still reports as a failing test.
+async fn with_store<F, Fut>(client: &Client, label: &str, body: F)
+where
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    let store = create_test_store(client, label).await;
+    let name = store.name.clone();
+
+    let outcome = AssertUnwindSafe(body(name.clone())).catch_unwind().await;
+
+    if let Err(e) = client.delete_file_search_store(&name, true).await {
+        eprintln!("cleanup failed for {name}: {e:?}");
+    }
+
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
 }
 
 /// Writes a temp file and returns its path, keeping the handle alive.
@@ -53,6 +86,9 @@ async fn test_store_lifecycle() {
         return;
     };
 
+    // Not via `with_store`: this test deletes the store itself as the
+    // subject of the assertion below, so a second delete in cleanup would
+    // be testing nothing.
     let store = create_test_store(&client, "lifecycle").await;
     println!("created store: {}", store.name);
 
@@ -102,55 +138,56 @@ async fn test_document_upload_and_indexing() {
         return;
     };
 
-    let store = create_test_store(&client, "docs").await;
-    let file = temp_doc("The quarterly budget for Project Aurora is 4.2 million dollars.\n");
+    with_store(&client, "docs", |store_name| {
+        let client = &client;
+        async move {
+            let file =
+                temp_doc("The quarterly budget for Project Aurora is 4.2 million dollars.\n");
 
-    let document = client
-        .upload_to_file_search_store(&store.name, file.path(), Some("budget-memo"))
-        .await
-        .expect("upload failed");
+            let document = client
+                .upload_to_file_search_store(&store_name, file.path(), Some("budget-memo"))
+                .await
+                .expect("upload failed");
 
-    println!("uploaded document: {}", document.name);
-    assert!(document.name.contains("/documents/"));
-    assert_eq!(document.display_name.as_deref(), Some("budget-memo"));
-    assert_eq!(document.mime_type.as_deref(), Some("text/plain"));
-    assert!(
-        document.size_bytes.is_some_and(|n| n > 0),
-        "sizeBytes arrives as a JSON string and must parse to a positive number, got {:?}",
-        document.size_bytes
-    );
+            println!("uploaded document: {}", document.name);
+            assert!(document.name.contains("/documents/"));
+            assert_eq!(document.display_name.as_deref(), Some("budget-memo"));
+            assert_eq!(document.mime_type.as_deref(), Some("text/plain"));
+            assert!(
+                document.size_bytes.is_some_and(|n| n > 0),
+                "sizeBytes arrives as a JSON string and must parse to a positive number, got {:?}",
+                document.size_bytes
+            );
 
-    // Indexing is asynchronous — a fresh document is Pending, not Active.
-    let active = client
-        .wait_for_document_active(&document.name, None)
-        .await
-        .expect("document never became active");
-    assert_eq!(active.state, Some(DocumentState::Active));
+            // Indexing is asynchronous — a fresh document is Pending, not Active.
+            let active = client
+                .wait_for_document_active(&document.name, None)
+                .await
+                .expect("document never became active");
+            assert_eq!(active.state, Some(DocumentState::Active));
 
-    let listed = client
-        .list_documents(&store.name, None, None)
-        .await
-        .expect("list documents failed");
-    assert!(
-        listed.documents.iter().any(|d| d.name == document.name),
-        "uploaded document should appear in the store listing"
-    );
+            let listed = client
+                .list_documents(&store_name, None, None)
+                .await
+                .expect("list documents failed");
+            assert!(
+                listed.documents.iter().any(|d| d.name == document.name),
+                "uploaded document should appear in the store listing"
+            );
 
-    // An indexed document needs force=true; without it the API rejects the
-    // delete with "Cannot delete non-empty Document".
-    assert!(
-        client.delete_document(&document.name, false).await.is_err(),
-        "deleting an indexed document without force should fail"
-    );
-    client
-        .delete_document(&document.name, true)
-        .await
-        .expect("forced document delete failed");
-
-    client
-        .delete_file_search_store(&store.name, true)
-        .await
-        .expect("delete store failed");
+            // An indexed document needs force=true; without it the API rejects the
+            // delete with "Cannot delete non-empty Document".
+            assert!(
+                client.delete_document(&document.name, false).await.is_err(),
+                "deleting an indexed document without force should fail"
+            );
+            client
+                .delete_document(&document.name, true)
+                .await
+                .expect("forced document delete failed");
+        }
+    })
+    .await;
 }
 
 /// The end-to-end case #307 was blocked on: provision a store, add a
@@ -163,66 +200,65 @@ async fn test_file_search_retrieval_end_to_end() {
         return;
     };
 
-    let store = create_test_store(&client, "retrieval").await;
-
-    // A distinctive fact the model cannot know without retrieving it, so a
-    // correct answer is evidence of retrieval rather than of pretraining.
-    let file = temp_doc(
-        "Internal reference: the maintenance codename for the Vega ground station \
+    with_store(&client, "retrieval", |store_name| {
+        let client = &client;
+        async move {
+            // A distinctive fact the model cannot know without retrieving it, so a
+            // correct answer is evidence of retrieval rather than of pretraining.
+            let file = temp_doc(
+                "Internal reference: the maintenance codename for the Vega ground station \
          relay is HALCYON-девять-42. It is reviewed every 90 days.\n",
-    );
+            );
 
-    let document = client
-        .upload_to_file_search_store(&store.name, file.path(), Some("vega-reference"))
-        .await
-        .expect("upload failed");
+            let document = client
+                .upload_to_file_search_store(&store_name, file.path(), Some("vega-reference"))
+                .await
+                .expect("upload failed");
 
-    client
-        .wait_for_document_active(&document.name, None)
-        .await
-        .expect("document never became active");
+            client
+                .wait_for_document_active(&document.name, None)
+                .await
+                .expect("document never became active");
 
-    let response = stateful_builder(&client)
-        .with_input(InteractionInput::Content(vec![Content::text(
-            "What is the maintenance codename for the Vega ground station relay? \
+            let response = stateful_builder(client)
+                .with_input(InteractionInput::Content(vec![Content::text(
+                    "What is the maintenance codename for the Vega ground station relay? \
              Search the files.",
-        )]))
-        .add_tool(Tool::FileSearch {
-            store_names: vec![store.name.clone()],
-            top_k: None,
-            metadata_filter: None,
-        })
-        .create()
-        .await
-        .expect("file search interaction failed");
+                )]))
+                .add_tool(Tool::FileSearch {
+                    store_names: vec![store_name.clone()],
+                    top_k: None,
+                    metadata_filter: None,
+                })
+                .create()
+                .await
+                .expect("file search interaction failed");
 
-    assert_eq!(response.status, InteractionStatus::Completed);
+            assert_eq!(response.status, InteractionStatus::Completed);
 
-    let step_types: Vec<&str> = response
-        .steps
-        .iter()
-        .map(genai_rs::Step::step_type)
-        .collect();
-    println!("steps: {step_types:?}");
-    assert!(
-        step_types.contains(&"file_search_call"),
-        "expected the model to issue a file_search_call, got {step_types:?}"
-    );
+            let step_types: Vec<&str> = response
+                .steps
+                .iter()
+                .map(genai_rs::Step::step_type)
+                .collect();
+            println!("steps: {step_types:?}");
+            assert!(
+                step_types.contains(&"file_search_call"),
+                "expected the model to issue a file_search_call, got {step_types:?}"
+            );
 
-    let text = response.as_text().expect("expected a text response");
-    println!("retrieval answer: {text}");
-    // Deterministic check: the codename is a literal string from the
-    // uploaded document, so this is an exact-value assertion rather than a
-    // brittle guess at the model's phrasing.
-    assert!(
-        text.contains("HALCYON"),
-        "answer should quote the retrieved codename, got: {text}"
-    );
-
-    client
-        .delete_file_search_store(&store.name, true)
-        .await
-        .expect("delete store failed");
+            let text = response.as_text().expect("expected a text response");
+            println!("retrieval answer: {text}");
+            // Deterministic check: the codename is a literal string from the
+            // uploaded document, so this is an exact-value assertion rather than a
+            // brittle guess at the model's phrasing.
+            assert!(
+                text.contains("HALCYON"),
+                "answer should quote the retrieved codename, got: {text}"
+            );
+        }
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -233,27 +269,34 @@ async fn test_store_delete_without_force_rejects_non_empty() {
         return;
     };
 
-    let store = create_test_store(&client, "force").await;
-    let file = temp_doc("Some indexed content.\n");
+    with_store(&client, "force", |store_name| {
+        let client = &client;
+        async move {
+            let file = temp_doc("Some indexed content.\n");
 
-    let document = client
-        .upload_to_file_search_store(&store.name, file.path(), Some("doc"))
-        .await
-        .expect("upload failed");
-    client
-        .wait_for_document_active(&document.name, None)
-        .await
-        .expect("document never became active");
+            let document = client
+                .upload_to_file_search_store(&store_name, file.path(), Some("doc"))
+                .await
+                .expect("upload failed");
+            client
+                .wait_for_document_active(&document.name, None)
+                .await
+                .expect("document never became active");
 
-    // Documented behavior: a store holding documents needs force.
-    let unforced = client.delete_file_search_store(&store.name, false).await;
-    println!("unforced delete of non-empty store: {unforced:?}");
-
-    // Either way, force must clean up so the test leaves nothing behind.
-    client
-        .delete_file_search_store(&store.name, true)
-        .await
-        .expect("forced delete should always succeed");
+            // The documented behavior, asserted rather than printed: without
+            // this the test passes identically whether the API rejects the
+            // delete or silently accepts it, while ENUM_WIRE_FORMATS.md and the
+            // CHANGELOG both state the requirement as live-verified.
+            let unforced = client.delete_file_search_store(&store_name, false).await;
+            println!("unforced delete of non-empty store: {unforced:?}");
+            assert!(
+                unforced.is_err(),
+                "deleting a store that still holds documents must be rejected \
+             without force=true; got Ok"
+            );
+        }
+    })
+    .await;
 }
 
 // --- Local validation (no API key needed) ---
