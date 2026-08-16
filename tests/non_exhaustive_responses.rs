@@ -56,9 +56,6 @@ const REQUEST_SIDE: &[&str] = &[
     "src/triggers.rs:TriggerUpdate",
     "src/webhooks.rs:WebhookUpdate",
     "src/webhooks.rs:WebhookConfig",
-    // Borrowed view over a response, built by the crate for callers to read;
-    // it holds references, so it is not a mock-construction hazard.
-    "src/response.rs:FunctionCallInfo",
 ];
 
 /// Fails if a deserializable public struct in the API surface lacks
@@ -190,10 +187,7 @@ fn offenders_and_exemptions_in(path: &str, text: &str) -> (Vec<String>, BTreeSet
             continue;
         }
         let key = format!("{path}:{name}");
-        if REQUEST_SIDE.contains(&key.as_str()) {
-            matched.insert(key);
-            continue;
-        }
+        let exempt = REQUEST_SIDE.contains(&key.as_str());
 
         // Walk back over the contiguous attribute/doc block, collecting
         // *only* attribute lines.
@@ -218,9 +212,12 @@ fn offenders_and_exemptions_in(path: &str, text: &str) -> (Vec<String>, BTreeSet
             // Inside an unclosed `#[derive(`, a line is a bare derive name.
             // `)]` is how such a block *ends*, and the walk-back meets it
             // first, so it has to be admitted before `depth` can carry the
-            // names above it.
+            // names above it. Matched exactly, not as a leading `)`: a bare
+            // close paren at depth 0 could be a macro invocation or a call
+            // above the declaration, and admitting it would push depth to 1
+            // and swallow arbitrary source back to the matching open paren.
             let in_attr = depth != 0;
-            if !is_doc && !in_attr && !t.starts_with("#[") && !t.starts_with(')') {
+            if !is_doc && !in_attr && !t.starts_with("#[") && !t.starts_with(")]") {
                 break;
             }
             cursor -= 1;
@@ -232,9 +229,19 @@ fn offenders_and_exemptions_in(path: &str, text: &str) -> (Vec<String>, BTreeSet
             attrs.push('\n');
         }
 
+        // An exemption counts as *used* only when it actually suppressed an
+        // offender. Recording it on sight would let an entry that never
+        // excused anything — because the type is Serialize-only, say —
+        // survive the staleness check forever, silently pre-authorizing the
+        // day `Deserialize` is added to it. Staleness has to mean "excuses
+        // nothing", not merely "names something".
         let deserializable = attrs.contains("Deserialize") || manual.contains(name);
         if deserializable && !attrs.contains("non_exhaustive") {
-            offenders.push(format!("{path}:{}: {name}", index + 1));
+            if exempt {
+                matched.insert(key);
+            } else {
+                offenders.push(format!("{path}:{}: {name}", index + 1));
+            }
         }
     }
     (offenders, matched)
@@ -313,6 +320,17 @@ mod inner {
         "exempt at this path, must not be reported: {found:?}"
     );
 
+    // The exemption set itself, which `offenders_in` discards — so the
+    // stale check has a fixture behind it rather than only ever being
+    // observed passing on a clean tree.
+    let (_, exempted) = offenders_and_exemptions_in("src/request.rs", fixture);
+    assert_eq!(
+        exempted,
+        BTreeSet::from(["src/request.rs:GenerationConfig".to_string()]),
+        "an exemption is recorded under its full path:Name when it suppresses \
+         an offender"
+    );
+
     // And the exemption is scoped: the same name elsewhere is not exempt.
     let elsewhere = offenders_in("src/response.rs", fixture);
     let elsewhere_names: Vec<&str> = elsewhere
@@ -322,6 +340,12 @@ mod inner {
     assert!(
         elsewhere_names.contains(&"GenerationConfig"),
         "exemptions must be path-scoped, not global: {elsewhere:?}"
+    );
+    let (_, none_here) = offenders_and_exemptions_in("src/response.rs", fixture);
+    assert!(
+        none_here.is_empty(),
+        "and nothing is recorded as exempt at a path with no matching entry: \
+         {none_here:?}"
     );
 }
 
