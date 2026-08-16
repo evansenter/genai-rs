@@ -21,6 +21,13 @@ failures=0
 # Runs `compare` and captures output *and* exit status. The status is the
 # product here — it is what turns a check red — so it is asserted, not
 # discarded by a trailing `|| true`.
+# The override is threaded as `SIZE_GROWTH_OK=... run_compare ...`, and an
+# assignment prefix on a *function* does not leak past the call in bash — I
+# checked. But whether it does is not something a reader of this harness
+# should have to resolve, and the cost of being wrong is a later case that
+# expects exit 1 passing vacuously, in a file whose whole subject is gates
+# that pass vacuously. So it is read from the environment here and reset
+# explicitly at the one call site that sets it.
 run_compare() {
   rc=0
   out=$(SIZE_GROWTH_OK="${SIZE_GROWTH_OK:-}" bash "$SCRIPT" compare "$@" 2>&1) || rc=$?
@@ -115,6 +122,7 @@ expect_rc "override off: still fails" 1
 SIZE_GROWTH_OK=true run_compare "$WORK/base.json" "$WORK/big.json" 15
 expect_rc     "override on: waves the growth through" 0
 expect_output "override on: says why" "size-growth-ok"
+unset SIZE_GROWTH_OK
 
 # --- The hash-suffix filter, which is the behaviour that matters most in
 #     `measure`: without it the key set changes every rebuild, every entry

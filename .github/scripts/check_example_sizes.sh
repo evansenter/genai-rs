@@ -165,10 +165,9 @@ compare() {
             echo "::error::$name grew $pct (${was} -> ${now} bytes), over the +${max_growth}% threshold"
         done <<< "$report"
         echo
-        echo "If this growth is intended: add the \`size-growth-ok\` label (create"
-        echo "it if the picker does not offer it — the workflow matches on name),"
-        echo "then"
-        echo "push a commit. (Re-running does not work — a re-run replays the"
+        echo "If this growth is intended: add the \`size-growth-ok\` label, then"
+        echo "push a commit. Create the label if the picker does not offer it —"
+        echo "the workflow matches on name. (Re-running does not work — a re-run replays the"
         echo "original event payload, so the new label is not in it, and this"
         echo "workflow does not trigger on \`labeled\`.) The baseline refreshes"
         echo "automatically once the change lands on main, so the override is"
@@ -186,8 +185,9 @@ compare() {
     if [ "${compared:-0}" -eq 0 ]; then
         echo
         echo "::error::No examples were comparable: the baseline has $(jq 'length' < "$baseline") \
-entries and the current build has $(jq 'length' < "$current"), but they share no keys. \
-The delta check is not running."
+entries and the current build has $(jq 'length' < "$current"), but none of them could be \
+compared — either the key sets are disjoint, or every shared key has a zero-size baseline \
+entry (both are dropped by the same filter). The delta check is not running."
         return 1
     fi
 
