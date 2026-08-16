@@ -145,12 +145,12 @@ impl LoudWireGuard {
     /// path cannot call [`LoudWireGuard::acquire`] a second time to get a
     /// guard to observe. It holds one real guard for its duration and builds
     /// the guards under test with this.
-    #[cfg(test)]
     fn nested() -> Self {
         Self::with_lock(None)
     }
 
-    /// Sets `LOUD_WIRE` for the lifetime of this guard.
+    /// Sets `LOUD_WIRE` until the next mutation on this guard, or until it
+    /// drops — whichever comes first.
     pub(crate) fn set(&self, value: &str) {
         // SAFETY: test-only env mutation, serialized against every other
         // LOUD_WIRE *mutator* by the lock this guard holds.
@@ -170,7 +170,8 @@ impl LoudWireGuard {
         unsafe { std::env::set_var("LOUD_WIRE", value) };
     }
 
-    /// Clears `LOUD_WIRE` for the lifetime of this guard.
+    /// Clears `LOUD_WIRE` until the next mutation on this guard, or until it
+    /// drops — whichever comes first.
     pub(crate) fn unset(&self) {
         // SAFETY: as above.
         unsafe { std::env::remove_var("LOUD_WIRE") };
