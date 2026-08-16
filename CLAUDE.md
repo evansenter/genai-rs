@@ -25,6 +25,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Use the Makefile for common operations. Requires [cargo-nextest](https://nexte.st/).
 
+**Optional, once per clone:** `./scripts/setup-dev.sh` enables the mold
+linker if you have it. `.cargo/config.toml` is *not* checked in — when it
+was, a machine without mold failed every build with `cannot find 'ld'`,
+naming a binary that is installed rather than the one that is not (#428).
+The script checks before enabling and is a no-op otherwise.
+
 ```bash
 make check     # Pre-push gate: fmt + clippy + test + test-scripts
 make test      # Unit tests only (excludes doctests for speed)

@@ -18,14 +18,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install mold linker
-        # Bounded because an unresponsive apt mirror hangs here rather than
-        # failing: one PR run sat 98 minutes on this step and would have held
-        # the runner until GitHub's 6h default. Normal is ~10-20s, so this
-        # ceiling only ever trips on a stall, and it trips fast enough to be
-        # worth re-running. The other mold installs below refer back here.
-        timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+      - uses: ./.github/actions/setup-mold
       - name: Check workspace
         run: cargo check --workspace --all-targets --all-features
 
@@ -37,10 +30,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-nextest
       - uses: Swatinem/rust-cache@v2
-      - name: Install mold linker
-        # Same stall ceiling as the other mold installs above.
-        timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+      - uses: ./.github/actions/setup-mold
       - name: Run unit tests
         run: cargo nextest run --workspace
       - name: Run doctests (default features)
@@ -56,10 +46,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-nextest
       - uses: Swatinem/rust-cache@v2
-      - name: Install mold linker
-        # Same stall ceiling as the other mold installs above.
-        timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+      - uses: ./.github/actions/setup-mold
       - name: Run unit tests with strict-unknown feature
         run: cargo nextest run --workspace --features strict-unknown
       - name: Run doctests with strict-unknown feature
@@ -73,10 +60,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-nextest
       - uses: Swatinem/rust-cache@v2
-      - name: Install mold linker
-        # Same stall ceiling as the other mold installs above.
-        timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+      - uses: ./.github/actions/setup-mold
       - name: Install pinned localharness wheel
         # Version must match SUPPORTED_HARNESS_VERSION in src/antigravity/.
         run: pip install google-antigravity==0.1.10
@@ -312,10 +296,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: integration-${{ matrix.group }}
-      - name: Install mold linker
-        # Same stall ceiling as the other mold installs above.
-        timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+      - uses: ./.github/actions/setup-mold
       - name: Run integration tests (${{ matrix.group }})
         run: |
           set -eo pipefail
@@ -378,6 +359,25 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+  escalation-scripts:
+    name: Escalation Scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # No toolchain needed, so this reports in seconds. `bash -n` cannot
+      # catch what these scripts get wrong — the `$ENV.TITLE` ordering bug
+      # was valid syntax meaning the wrong thing — so the branches are
+      # exercised against a stubbed `gh` instead.
+      - name: Exercise the scheduled-failure scripts
+        run: .github/scripts/tests/test_scheduled_failure_scripts.sh
+      # `setup-dev.sh` has the same property and had none of the coverage.
+      # The `linker` pin in particular is a *file format* claim — a bare
+      # appended line is correct only while the example ends inside
+      # `[target.x86_64-unknown-linux-gnu]` — so the assertion parses the
+      # result as TOML rather than grepping it.
+      - name: Exercise setup-dev.sh
+        run: .github/scripts/tests/test_setup_dev.sh
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
@@ -387,10 +387,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Install mold linker
-        # Same stall ceiling as the other mold installs above.
-        timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+      - uses: ./.github/actions/setup-mold
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
@@ -401,10 +398,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install mold linker
-        # Same stall ceiling as the other mold installs above.
-        timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+      - uses: ./.github/actions/setup-mold
       - name: Check documentation (all features)
         run: cargo doc --workspace --no-deps --all-features --document-private-items
         env:
@@ -426,10 +420,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.88.0
       - uses: Swatinem/rust-cache@v2
-      - name: Install mold linker
-        # Same stall ceiling as the other mold installs above.
-        timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+      - uses: ./.github/actions/setup-mold
       - name: Check workspace with MSRV
         run: cargo check --workspace
 
@@ -453,11 +444,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: ${{ matrix.os }}-${{ matrix.rust }}
-      - name: Install mold linker (Linux only)
-        if: runner.os == 'Linux'
-        # Same stall ceiling as the other mold installs above.
-        timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+      # No `if: runner.os == 'Linux'` — the composite guards itself, and
+      # says so on the other legs. Reintroducing the condition here would
+      # restore the per-call-site knowledge the composite removed.
+      - uses: ./.github/actions/setup-mold
       - name: Build
         run: cargo build --workspace --release
       - name: Run tests
@@ -476,10 +466,7 @@ jobs:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-llvm-cov
-      - name: Install mold linker
-        # Same stall ceiling as the other mold installs above.
-        timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+      - uses: ./.github/actions/setup-mold
       - name: Generate coverage
         run: cargo llvm-cov --workspace --lcov --output-path lcov.info
       - uses: codecov/codecov-action@v4
@@ -519,10 +506,7 @@ jobs:
         run: make test-scripts
 
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install mold linker
-        # Same stall ceiling as the other mold installs above.
-        timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+      - uses: ./.github/actions/setup-mold
       - name: Clean build time
         # Same feature set as `Build examples` below, for two reasons. The
         # reported number should describe the build everything downstream is
