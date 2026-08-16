@@ -15,11 +15,19 @@ use genai_rs_macros::tool;
 
 /// Adds two numbers.
 ///
+/// The `Option<String>` parameter is not decoration: required and optional
+/// arguments go through *different* extraction branches in codegen, and both
+/// were rewritten to route `serde_json` through the re-export. Without it,
+/// one of the two rewritten paths would never be compiled in a no-imports
+/// environment.
+///
 /// # Arguments
 /// * `a` - The first number
 /// * `b` - The second number
+/// * `label` - An optional label
 #[tool]
-async fn add(a: i64, b: i64) -> Result<i64, String> {
+async fn add(a: i64, b: i64, label: Option<String>) -> Result<i64, String> {
+    let _ = label;
     Ok(a + b)
 }
 

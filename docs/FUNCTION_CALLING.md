@@ -73,8 +73,9 @@ fn get_time(timezone: String) -> String {
 }
 
 // Compile-checked in CI as a doctest, so this snippet cannot silently
-// rot. (The async-trait / serde_json manifest requirement is only
-// observable from a fresh consumer crate — see the README note.)
+// rot. `#[tool]` needs no consumer-side `async-trait` / `serde_json`
+// dependency and no trait import; `tests/ui/pass_no_consumer_imports.rs`
+// pins that.
 let _declaration = GetWeatherCallable.declaration();
 ```
 
@@ -110,7 +111,6 @@ let result = client
 ### Multiple Parameters
 
 ```rust,ignore
-use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 #[tool(
@@ -125,7 +125,6 @@ fn get_weather_detailed(city: String, unit: String) -> String {
 ### Async Functions
 
 ```rust,ignore
-use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 #[tool(url(description = "URL to fetch"))]
