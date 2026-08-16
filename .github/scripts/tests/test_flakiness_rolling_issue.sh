@@ -174,7 +174,18 @@ expect_order "adoption: comments before committing the new baseline" \
 make_gh_stub '[{"title":"unrelated","number":2}]' '{"body":""}'
 run_step
 check  "create: files a new issue"          "issue create"
-check  "create: labels it ci-health"        "ci-health"
+# Anchored to the create call. Unanchored, this happens to pass today only
+# because the `gh label create "ci-health"` above it carries `2>/dev/null`,
+# and the stub logs to stderr — so that call's line never reaches the captured
+# output. That is an accident of the workflow's redirection, not a property of
+# the assertion: drop the `2>/dev/null` in a cleanup and the check silently
+# goes vacuous while still passing. The sibling harness hit the same trap for
+# the real reason (its label call is not redirected) and anchors for it.
+#
+# What is being pinned: an issue filed without the label is invisible to every
+# subsequent lookup, so the job files a fresh one daily — the accumulation
+# this PR exists to stop.
+check  "create: labels it ci-health"        "issue create.*ci-health"
 refute "create: does not edit"              "issue edit"
 
 # --- An unchanged set must not comment. This is the churn the PR removes;
