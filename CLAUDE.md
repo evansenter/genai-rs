@@ -289,11 +289,14 @@ After merging version bump PR:
    double-publishes — `cargo publish` refuses an already-uploaded version —
    but both fail confusingly, on a release that already succeeded.
 
-   `publish` verifies the tag against `Cargo.toml` before uploading
-   anything, so a tag that does not match the version bump fails before the
-   first crate is pushed. That is the one mistake that is still cheap to
-   make and cheap to recover from — delete the tag, fix the version, tag
-   again.
+   **If something fails, what you do next depends on how far it got:**
+
+   | Failure | Recovery |
+   |---------|----------|
+   | `validate` fails | Nothing published. Re-run the job first — this step runs the full live integration suite, which CLAUDE.md's own testing section warns may flake, and it hard-fails on an empty or whitespace `GEMINI_API_KEY`. Re-tag only for a real defect. |
+   | `publish` fails on the tag check | Nothing published — the tag-vs-`Cargo.toml` check runs before the first upload. Delete the tag, fix the version, tag again. |
+   | `publish` fails *between* the two crates | `genai-rs-macros` is already on crates.io and that version can never be re-uploaded, so re-tagging does **not** recover: the retry's first `cargo publish -p genai-rs-macros` fails and `genai-rs` never publishes. Bump to a new patch version and release that. |
+   | `github-release` fails | Both crates are published; only the GitHub release is missing. Re-run the job, or create the release by hand from the CHANGELOG. |
 
 ## Logging
 

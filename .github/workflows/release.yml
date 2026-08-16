@@ -177,9 +177,20 @@ jobs:
           # "What's Changed" list and the full-changelog compare link, which
           # the CHANGELOG does not carry. Only the hand-rolled duplicate of it
           # goes away.
-          if .github/scripts/extract_changelog_section.sh \
-              CHANGELOG.md "${TAG#v}" > /tmp/release-body.md; then
+          # `rc`, not a bare `if`: the script exits 2 for a usage error and 1
+          # for a missing section, and collapsing those would annotate a
+          # broken invocation as "no [X.Y.Z] section in CHANGELOG.md" — a
+          # wrong diagnosis pointing at a file that may be perfectly fine.
+          # This is the branch that ships a release body, so it is the one
+          # worth distinguishing.
+          rc=0
+          .github/scripts/extract_changelog_section.sh \
+              CHANGELOG.md "${TAG#v}" > /tmp/release-body.md || rc=$?
+          if [ "$rc" -eq 0 ]; then
             echo "Release body from the CHANGELOG.md [${TAG#v}] section"
+          elif [ "$rc" -ne 1 ]; then
+            echo "::error::extract_changelog_section.sh exited $rc — a usage error, not a missing section. The release body was not generated."
+            exit 1
           else
             # Falling back rather than failing: the tag already exists and the
             # crates are already published by this point, so refusing to cut
@@ -206,7 +217,10 @@ jobs:
           echo "===================="
 
       - name: Create release
-        uses: softprops/action-gh-release@v1
+        # v2, not v1: actionlint flags v1's runner as too old for GitHub
+        # Actions — i.e. this step was heading for a hard failure on the one
+        # workflow that only ever runs after a tag exists.
+        uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           body_path: /tmp/release-body.md
