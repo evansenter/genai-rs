@@ -135,6 +135,44 @@ else
   failures=$((failures + 1))
 fi
 
+# --- A zero-byte baseline entry must not abort the filter. jq dies on a zero
+#     divisor, and `measure` records 0 for any executable-but-empty file —
+#     which is exactly what these fixtures create, so piping `measure` into
+#     `compare` is one step away.
+echo '{"alpha": 0, "beta": 2000000}' > "$WORK/zerobase.json"
+run_compare "$WORK/zerobase.json" "$WORK/small.json" 15
+expect_rc     "zero baseline: does not abort the filter" 0
+expect_output "zero baseline: treated as uncomparable, like a new example" "1 compared"
+
+# --- A removed example should be reported, not silently dropped.
+echo '{"alpha": 1000000}' > "$WORK/removed.json"
+run_compare "$WORK/base.json" "$WORK/removed.json" 15
+expect_rc     "removed example: passes" 0
+expect_output "removed example: is reported" "not in this build: beta"
+
+# --- A missing directory is the case that fires if the workflow path to
+#     target/release/examples ever drifts.
+rc=0
+out=$(bash "$SCRIPT" measure "$WORK/no-such-dir" "$WORK/x.json" 2>&1) || rc=$?
+expect_rc     "measure: fails on a missing directory" 1
+expect_output "measure: names the missing directory" "directory not found"
+
+# --- Non-executable artifacts are excluded only by the exec-bit check; the
+#     `.d` filter above it does not cover them.
+mkdir -p "$WORK/mixed"
+: > "$WORK/mixed/real_example"
+chmod +x "$WORK/mixed/real_example"
+echo "not a binary" > "$WORK/mixed/leftover.txt"
+rc=0
+out=$(bash "$SCRIPT" measure "$WORK/mixed" "$WORK/mixed.json" 2>&1) || rc=$?
+expect_rc "measure: succeeds over a mixed directory" 0
+if [ "$(jq -r 'keys | join(",")' < "$WORK/mixed.json")" = "real_example" ]; then
+  echo "ok   - measure: skips non-executable artifacts"
+else
+  echo "FAIL - measure: expected {real_example}, got $(jq -c 'keys' < "$WORK/mixed.json")"
+  failures=$((failures + 1))
+fi
+
 # --- `measure` over an empty directory must not report success: a run that
 #     measured nothing feeds an empty map into the comparison above.
 mkdir -p "$WORK/nothing"

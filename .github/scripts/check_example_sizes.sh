@@ -101,7 +101,14 @@ compare() {
         | [ $cur | to_entries[]
             | .key as $k
             | ($base[$k] // null) as $was
-            | select($was != null)
+            # `> 0`, not just non-null: jq aborts the whole filter on a zero
+            # divisor, which exits non-zero and reads as a broken checker
+            # rather than a size regression. Not reachable from a linked
+            # binary, but `measure` records 0 for any executable-but-empty
+            # file — which the fixtures create — so the first test that pipes
+            # `measure` output into `compare` would trip it. A zero baseline
+            # entry now behaves like a new example: reported, not compared.
+            | select($was != null and $was > 0)
             | ((.value - $was) / $was * 100) as $pct
             | {
                 name: $k,
@@ -135,6 +142,16 @@ compare() {
         echo "::notice::New examples (no baseline, not checked): $added"
     fi
 
+    # Symmetric to the above. A removed or renamed example silently leaves
+    # the comparison, and the "N compared" count was its only trace — which
+    # is the same shape as the disjoint-key mode, just partial.
+    local removed
+    removed=$(jq -r '. as $cur | input as $base
+        | [$base | keys[] | select($cur[.] == null)] | join(", ")' "$current" "$baseline")
+    if [ -n "$removed" ]; then
+        echo "::notice::Examples in the baseline but not in this build: $removed"
+    fi
+
     failed=$(grep -c '^FAIL' <<< "$report" || true)
     if [ "${failed:-0}" -gt 0 ] && [ "${SIZE_GROWTH_OK:-}" = "true" ]; then
         echo
@@ -148,7 +165,9 @@ compare() {
             echo "::error::$name grew $pct (${was} -> ${now} bytes), over the +${max_growth}% threshold"
         done <<< "$report"
         echo
-        echo "If this growth is intended: add the \`size-growth-ok\` label, then"
+        echo "If this growth is intended: add the \`size-growth-ok\` label (create"
+        echo "it if the picker does not offer it — the workflow matches on name),"
+        echo "then"
         echo "push a commit. (Re-running does not work — a re-run replays the"
         echo "original event payload, so the new label is not in it, and this"
         echo "workflow does not trigger on \`labeled\`.) The baseline refreshes"
