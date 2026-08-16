@@ -81,14 +81,21 @@ measure() {
 compare() {
     local baseline="$1" current="$2" max_growth="${3:-15}"
 
-    # Parseability, not just emptiness. The `-s` test catches the empty file
+    # Shape, not just parseability or emptiness. The `-s` test catches the empty file
     # the fetch step writes when no baseline exists; a *truncated* one — `gh
     # run download` interrupted mid-transfer — is non-empty and non-JSON, and
     # jq would abort on it, taking the report assignment down under `set -e`
     # and exiting the step non-zero on a raw parse error. That is a broken
     # checker reading as a size regression, which is exactly the confusion
     # the zero-divisor guard below exists to avoid.
-    if [ ! -s "$baseline" ] || ! jq empty "$baseline" 2>/dev/null; then
+    #
+    # And an object, not merely well-formed JSON: `jq empty` accepts an array,
+    # a bare string, `null`. The filters below index it with `$base[$k]`,
+    # which jq rejects on any of those — same abort, same raw-jq-error exit,
+    # same misreading. Not reachable while `measure` writes every baseline,
+    # so this is shape-drift insurance: a future artifact-format change, or a
+    # `size-baseline` artifact from some other producer, lands here instead.
+    if [ ! -s "$baseline" ] || ! jq -e 'type == "object"' "$baseline" >/dev/null 2>&1; then
         # `warning`, not `notice`: a gate that is not running must not look
         # the same as a gate that ran clean. Main has had >90-day gaps in
         # this repo, which outlives artifact retention, so this path is

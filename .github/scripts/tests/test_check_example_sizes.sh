@@ -11,6 +11,18 @@
 
 set -euo pipefail
 
+# Preflight, because without jq the failures are not merely unhelpful, they
+# are wrong: `measure` dies at `jq length` with 127 and reports as
+# "expected exit 0, got 127", while `! jq ...` *succeeds* when jq is missing,
+# so every `compare` case falls into the no-usable-baseline branch and the
+# rc-1 cases report a confident wrong verdict. About a dozen red assertions,
+# none of them naming jq. The harness must not be able to do the thing it
+# exists to catch the script doing.
+command -v jq >/dev/null 2>&1 || {
+    echo "jq is required to run this harness (brew install jq / apt install jq)" >&2
+    exit 1
+}
+
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$(dirname "$HERE")/check_example_sizes.sh"
 WORK="$(mktemp -d)"
@@ -115,6 +127,19 @@ run_compare "$WORK/corrupt.json" "$WORK/small.json" 15
 expect_rc     "corrupt baseline: does not fail the job" 0
 expect_output "corrupt baseline: warns rather than aborting" "::warning::"
 refute_output "corrupt baseline: does not claim a pass" "within +15%"
+
+# --- Well-formed JSON that is not an object. The filters index the baseline
+#     with `$base[$k]`, which jq rejects on an array, a string or null — the
+#     same abort and the same misreading as a truncated file, so it belongs in
+#     the same branch. Not reachable while `measure` writes every baseline;
+#     this is insurance against a format change or a foreign artifact.
+for shape in '[]' '"a string"' 'null' '42'; do
+    printf '%s' "$shape" > "$WORK/nonobject.json"
+    run_compare "$WORK/nonobject.json" "$WORK/small.json" 15
+    expect_rc     "non-object baseline ($shape): does not fail the job" 0
+    expect_output "non-object baseline ($shape): warns rather than aborting" "::warning::"
+    refute_output "non-object baseline ($shape): does not claim a pass" "within +15%"
+done
 
 # --- Disjoint key sets: the dangerous mode. Both files are non-empty and
 #     nothing is comparable, which previously printed "All examples within

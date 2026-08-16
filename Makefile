@@ -33,17 +33,22 @@ test-all:
 # and every branch that has this target also has at least one harness — so
 # an empty match means the files went missing, not that the state is legal.
 test-scripts:
-	@found=0; \
+	@command -v jq >/dev/null 2>&1 || { \
+		echo "jq is required by these harnesses (brew install jq / apt install jq)" >&2; \
+		exit 1; \
+	}; \
+	found=0; rc=0; \
 	for t in .github/scripts/tests/*.sh; do \
 		[ -e "$$t" ] || continue; \
 		found=1; \
 		echo "==> $$t"; \
-		bash "$$t" || exit 1; \
+		bash "$$t" || rc=1; \
 	done; \
 	if [ "$$found" -eq 0 ]; then \
 		echo "no harnesses matched .github/scripts/tests/*.sh — expected at least one" >&2; \
 		exit 1; \
-	fi
+	fi; \
+	exit "$$rc"
 
 # Build documentation with warnings as errors (all features + the docs.rs
 # feature set, which differ on strict-unknown). The mirror build uses its

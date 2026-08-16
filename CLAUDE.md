@@ -202,6 +202,26 @@ See `docs/TESTING.md` for the full decision flowchart and examples.
 
 GitHub Actions runs: check, test, test-strict-unknown, test-integration (5 matrix groups), fmt, clippy, doc, msrv, cross-platform, coverage, build-metrics, ci-flakiness-report (daily). Security audits run in separate `audit.yml` workflow (on Cargo.toml/lock changes + weekly). Integration tests require same-repo origin (protects API key). Release validation includes full integration test suite.
 
+### Example size gate (`build-metrics`)
+
+Example binary sizes are checked as a **per-example delta against the last
+main build**, not against an absolute ceiling. The baseline is an artifact
+refreshed on every push to main, which is why `build-metrics` is the one job
+that also runs on merges and not only on PRs — sizes are toolchain- and
+linker-dependent, so a committed number would encode one machine's toolchain.
+
+| Situation | What happens |
+|-----------|--------------|
+| An example grows more than +15% vs main | The job fails, naming the example and both sizes |
+| No baseline (first run, expired artifact, lookup failed) | `::warning::`, the delta check does **not** run, and only the 64MB sanity ceiling applies |
+| Growth is intended | Add the **`size-growth-ok`** label to the PR, then **push a commit** |
+
+The push is not optional: a re-run replays the original event payload, so a
+label added afterwards is not in it, and this workflow does not trigger on
+`labeled`. The label waives both the threshold and the disjoint-key guard.
+The baseline refreshes automatically once the change lands on main, so the
+override is only ever needed for the PR that introduces the growth.
+
 ## Project Conventions
 
 - **Model name**: Never hardcode a model id — reference the constants in `src/lib.rs`, which are the single source of truth. `tests/model_literals.rs` fails the build on any hardcoded `"gemini-<digit>"` outside them.
