@@ -359,24 +359,27 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-  escalation-scripts:
-    name: Escalation Scripts
+  shell-scripts:
+    name: Shell Scripts
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # No toolchain needed, so this reports in seconds. `bash -n` cannot
-      # catch what these scripts get wrong — the `$ENV.TITLE` ordering bug
-      # was valid syntax meaning the wrong thing — so the branches are
-      # exercised against a stubbed `gh` instead.
-      - name: Exercise the scheduled-failure scripts
-        run: .github/scripts/tests/test_scheduled_failure_scripts.sh
-      # `setup-dev.sh` has the same property and had none of the coverage.
-      # The `linker` pin in particular is a *file format* claim — a bare
-      # appended line is correct only while the example ends inside
-      # `[target.x86_64-unknown-linux-gnu]` — so the assertion parses the
-      # result as TOML rather than grepping it.
-      - name: Exercise setup-dev.sh
-        run: .github/scripts/tests/test_setup_dev.sh
+      # One entry point for every harness under `.github/scripts/tests/`,
+      # via the same make target a contributor runs locally, so CI and
+      # `make check` cannot disagree about what is covered.
+      #
+      # No toolchain needed, so this reports in seconds — which is why the
+      # harnesses live here rather than in `build-metrics`, a job that opens
+      # with `cargo clean` and a full release build. A shell lint failure
+      # should not take ten minutes to surface.
+      #
+      # `bash -n` cannot catch what these scripts get wrong — the
+      # `$ENV.TITLE` ordering bug was valid syntax meaning the wrong thing —
+      # so the branches are exercised against a stubbed `gh`, and shellcheck
+      # covers the quoting and `set -e` classes the fixtures structurally
+      # cannot reach.
+      - name: Run the shell harnesses and shellcheck
+        run: make test-scripts
 
   clippy:
     name: Clippy
@@ -499,12 +502,6 @@ jobs:
       # behaviours are all comparisons it either makes or silently declines
       # to make — including the mode where it compares nothing and reports
       # "all examples within threshold". Fixtures, so that stays checked.
-      # Via the make target, so CI runs exactly what a contributor runs
-      # locally — and so a harness added later is picked up here by the glob
-      # rather than needing a second edit that is easy to forget.
-      - name: Test the CI shell scripts
-        run: make test-scripts
-
       - uses: dtolnay/rust-toolchain@stable
       - uses: ./.github/actions/setup-mold
       - name: Clean build time

@@ -36,10 +36,22 @@ test-all:
 # info/style tier is where most new checks land; everything indicating a real
 # defect is `warning` or above.
 #
-# Needs only bash and jq otherwise, so it runs in about a second — worth having at the edit rather than
-# only inside build-metrics, which starts with a `cargo clean`. Globbed, so a
-# new harness is picked up by dropping the file in — run through `bash`
-# rather than executed, so that claim holds without also needing chmod +x.
+# Dependencies are per-harness rather than a fixed set. jq and python3 are
+# preflighted here because a harness that dies on a missing interpreter
+# reports as a failing assertion instead of naming the tool — the exact
+# misdiagnosis these harnesses exist to catch elsewhere. Individual harnesses
+# may need more: `test_setup_dev.sh` resolves the real `cc` to probe
+# `-fuse-ld=mold`, which is why this target takes a few seconds rather than
+# one.
+#
+# One side effect is worth knowing before running the pre-push gate:
+# `test_setup_dev.sh` rewrites the checkout's real `.cargo/config.toml` and
+# restores it from a temp copy on an EXIT trap. That file is gitignored, so
+# git cannot bring it back if the harness is killed outright. Tracked in #455.
+#
+# Globbed, so a new harness is picked up by dropping the file in — run through
+# `bash` rather than executed, so that claim holds without also needing
+# chmod +x.
 # A harness missing its exec bit would otherwise fail with "Permission
 # denied", which reads as a failing test rather than a missing mode bit.
 #
@@ -48,10 +60,12 @@ test-all:
 # and every branch that has this target also has at least one harness — so
 # an empty match means the files went missing, not that the state is legal.
 test-scripts:
-	@command -v jq >/dev/null 2>&1 || { \
-		echo "jq is required by these harnesses (brew install jq / apt install jq)" >&2; \
-		exit 1; \
-	}; \
+	@for tool in jq python3; do \
+		command -v "$$tool" >/dev/null 2>&1 || { \
+			echo "$$tool is required by these harnesses (apt install $$tool / brew install $$tool)" >&2; \
+			exit 1; \
+		}; \
+	done; \
 	rc=0; \
 	if command -v shellcheck >/dev/null 2>&1; then \
 		echo "==> shellcheck"; \

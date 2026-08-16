@@ -210,8 +210,13 @@ compare() {
                 # fail with "grew +15% ... over the +15% threshold", which
                 # reads as a bug in the checker rather than a real
                 # regression.
-                pct: ($pct * 10 | round / 10),
-                over: (($pct * 10 | round / 10) > $max)
+                # `+ 0` normalises negative zero. `round` on a small
+                # negative yields -0, which is `>= 0` in jq, so the `+` prefix
+                # was applied and the value stringified as `-0` — rendering
+                # `+-0%`. A one-byte shrink on a 13MB binary lands there, so
+                # it is the routine case rather than an edge one.
+                pct: (($pct * 10 | round / 10) + 0),
+                over: ((($pct * 10 | round / 10) + 0) > $max)
               }
           ]
         | sort_by(-.pct)[]

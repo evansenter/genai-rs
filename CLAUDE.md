@@ -206,7 +206,9 @@ See `docs/TESTING.md` for the full decision flowchart and examples.
 
 ## CI/CD
 
-GitHub Actions runs: check, test, test-strict-unknown, test-integration (5 matrix groups), fmt, clippy, doc, msrv, cross-platform, coverage, build-metrics, ci-flakiness-report (daily). Security audits run in separate `audit.yml` workflow (on Cargo.toml/lock changes + weekly). Integration tests require same-repo origin (protects API key). Release validation includes full integration test suite.
+GitHub Actions runs: check, test, test-strict-unknown, test-integration (5 matrix groups), fmt, clippy, doc, msrv, cross-platform, coverage, build-metrics, shell-scripts (harnesses +
+shellcheck for `.github/scripts/`, via `make test-scripts`),
+ci-flakiness-report (daily). Security audits run in separate `audit.yml` workflow (on Cargo.toml/lock changes + weekly). Integration tests require same-repo origin (protects API key). Release validation includes full integration test suite.
 
 ### Example size gate (`build-metrics`)
 
