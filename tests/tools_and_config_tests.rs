@@ -740,8 +740,27 @@ mod mcp_server {
                 // Distinguish "the API rejected MCP" (a real regression) from
                 // "the third-party server is down" (not our problem).
                 let msg = format!("{e:?}").to_lowercase();
-                if msg.contains("mcp") && (msg.contains("not supported") || msg.contains("invalid"))
-                {
+                // `mcp_server`, not a bare `mcp`: the configured URL is
+                // `mcp.deepwiki.com/mcp`, so any error echoing it back —
+                // "failed to fetch from https://mcp.deepwiki.com/mcp:
+                // invalid response" — would satisfy both halves and panic
+                // with "regression" for exactly the third-party outage this
+                // branch exists to tolerate.
+                //
+                // The rejection set is wider than "not supported"/"invalid"
+                // for the mirror case: "mcp_server tool is not enabled for
+                // this project" is a real rejection that would otherwise
+                // print "unreachable" and leave the run green.
+                let rejected = [
+                    "not supported",
+                    "unsupported",
+                    "not enabled",
+                    "not available",
+                ]
+                .iter()
+                .any(|phrase| msg.contains(phrase))
+                    || msg.contains("invalid");
+                if msg.contains("mcp_server") && rejected {
                     panic!("API rejected the MCP tool — this is a regression: {e:?}");
                 }
                 println!("Skipping: MCP server appears unreachable: {e:?}");
@@ -775,11 +794,10 @@ mod mcp_server {
         // `Step::Unknown` (Evergreen degrading as designed) and
         // `step_summary().mcp_server_tool_call_count` reads 0 even on a
         // successful call. Tracked in #433.
-        let tool_tokens = response
-            .usage
-            .as_ref()
-            .and_then(|u| u.total_tool_use_tokens)
-            .unwrap_or(0);
+        // Through the public accessor rather than reaching into `usage`:
+        // it is the same chain, and an integration test is the right place
+        // to exercise the surface a caller actually has.
+        let tool_tokens = response.tool_use_tokens().unwrap_or(0);
         println!("Tool-use tokens: {tool_tokens}");
         assert!(
             tool_tokens > 0 || step_types.contains(&"mcp_server_tool_call"),
@@ -833,7 +851,16 @@ mod computer_use {
         };
 
         let result = stateful_builder(&client)
-            .with_text("Navigate to example.com and tell me the page heading.")
+            // Deliberately not example.com: its heading is "Example Domain",
+            // one of the most memorized strings on the web, so the model can
+            // satisfy that prompt without touching the tool — which by the
+            // doc comment above is an assertion failure, not a skip. Asking
+            // for live state the model cannot know a priori leaves
+            // `requires_action` as the only plausible outcome.
+            .with_text(
+                "Open https://news.ycombinator.com and tell me the exact title \
+                 of the current top story.",
+            )
             .add_tool(ComputerUseConfig::new())
             .create()
             .await;
@@ -844,7 +871,25 @@ mod computer_use {
                 // Computer use is allowlisted on some accounts; a permission
                 // rejection is an account property, not a library regression.
                 let msg = format!("{e:?}").to_lowercase();
-                if msg.contains("permission") || msg.contains("not allowed") {
+                // Same phrase set `examples/computer_use.rs` treats as "not
+                // available for this model or account". Narrower than that,
+                // a key without access getting back "Computer use is not
+                // supported for this model" would match neither `permission`
+                // nor `not allowed`, fall through to the panic, and redden
+                // the `tools` group for the exact account property this
+                // branch exists to skip on. The 4xx wording Google returns
+                // for a non-allowlisted key is not pinned down, which is why
+                // this matches a set of phrasings rather than one.
+                let unavailable = [
+                    "permission",
+                    "not allowed",
+                    "not supported",
+                    "not available",
+                    "not enabled",
+                ]
+                .iter()
+                .any(|phrase| msg.contains(phrase));
+                if unavailable {
                     println!("Skipping: computer use not enabled for this key: {e:?}");
                     return;
                 }
