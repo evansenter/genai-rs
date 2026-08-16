@@ -57,10 +57,12 @@ jobs:
           # Only the two `genai-rs*` lines are rewritten, to path deps: this
           # must fail on an unreleased codegen change, which is the point.
           # Anchored on the heading, not positional. Today the Installation
-          # snippet is the first toml block, but a future toml block added
-          # above it that happens to carry `[dependencies]` — an antigravity
-          # install example is the obvious candidate — would pass the guard
-          # below and silently redirect this whole job at the wrong snippet.
+          # snippet is the first toml block, so a positional scan would work
+          # — but a future toml block added above it carrying
+          # `[dependencies]` (an antigravity install example being the
+          # obvious candidate) *would otherwise* pass the guard below and
+          # silently redirect this whole job at the wrong snippet. `grab`
+          # only arms once `sect` is set, so that cannot happen here.
           awk '/^## Installation$/ { sect = 1 }
                sect && /^```toml$/ { grab = 1; next }
                grab && /^```$/ { exit }
@@ -178,6 +180,15 @@ jobs:
     # macro's consumer-side requirements have actually been removed, so the
     # answer comes from a compiler rather than from reading codegen.rs.
     # Reading codegen.rs is exactly how #402 got closed in error.
+    #
+    # Off PRs, though. `continue-on-error` keeps the *run* green but not this
+    # job's own check run, so every PR touching the macro or this file would
+    # carry a red X meaning "working as intended" — which is how reviewers
+    # learn to skim past red Xs that do not mean that. The weekly schedule
+    # and `workflow_dispatch` deliver the signal without spending that. Once
+    # #402 lands and this goes green, it should come back on PRs as a real
+    # gate, with `continue-on-error` dropped.
+    if: github.event_name != 'pull_request'
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -225,6 +236,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: minimal -> target
+          # This job's build is expected to fail while #402 is open, and
+          # rust-cache does not save on failure by default — so without this
+          # the workspaces fix above is inert here: nothing is ever saved, so
+          # nothing is ever restored.
+          cache-on-failure: true
       - name: Build
         id: build
         working-directory: minimal
@@ -238,8 +254,21 @@ jobs:
       - name: Report status
         if: always()
         run: |
-          if [ "${{ steps.build.outcome }}" = "success" ]; then
-            echo "::notice::A minimal two-dependency consumer compiles — #402's requirements are gone. Drop this job's continue-on-error and make it a gate, and remove the README's dependency note."
-          else
-            echo "::notice::Minimal consumer still fails, as expected while #402 is open. The README job above is the binding check."
-          fi
+          # Three states, not two. `outcome` is also `skipped` when an
+          # earlier step failed — the mold install is the plausible one,
+          # since its `apt-get update` is deliberately non-fatal and the
+          # install can then fail on stale lists. Reporting that as "still
+          # fails, as expected" asserts something about a compiler that was
+          # never asked, which is the same misleading-annotation class as the
+          # `if: failure()` finding fixed in the sibling job.
+          case "${{ steps.build.outcome }}" in
+            success)
+              echo "::notice::A minimal two-dependency consumer compiles — #402's requirements are gone. Drop this job's continue-on-error and its PR exclusion, make it a gate, and remove the README's dependency note."
+              ;;
+            failure)
+              echo "::notice::Minimal consumer still fails, as expected while #402 is open. The README job above is the binding check."
+              ;;
+            *)
+              echo "::warning::The minimal build did not run (outcome: ${{ steps.build.outcome }}), so this run says nothing about #402."
+              ;;
+          esac
