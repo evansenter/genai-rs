@@ -80,6 +80,21 @@ MSG
 fi
 
 cp "$EXAMPLE" "$CONFIG"
+
+# The example sets rustflags only, no `linker` key, so cargo links through
+# plain `cc` regardless of what `CC` held when the probe ran. On the default
+# path they are the same driver and this is a no-op. They diverge on exactly
+# the path the failure message recommends: an Ubuntu 22.04 reader told to
+# re-run as `CC=gcc-12` gets a passing probe under gcc 12, a written config,
+# and a next build that invokes gcc 11 through `cc` and dies — the #428
+# shape, reached by following this script's own advice. So pin what cargo
+# invokes to what was actually tested.
+if [ "$CC" != "cc" ]; then
+  printf 'linker = "%s"\n' "$CC" >> "$CONFIG"
+  echo "Pinned linker = \"$CC\" in $CONFIG — the driver the probe passed with."
+  echo "(The example sets rustflags only, so cargo would otherwise use plain cc.)"
+fi
+
 echo "Enabled the mold linker via $CONFIG (git-ignored)."
 echo "Delete that file to go back to the default linker."
 
