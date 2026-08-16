@@ -446,6 +446,18 @@ jobs:
           # readers of this rule cannot drift apart — and the load-bearing one
           # is release.yml's, which gates publishing.
           VERSION=$(awk -F'"' '/^version = /{print $2; exit}' Cargo.toml)
+          # An empty read makes this step vacuous rather than loud: the
+          # extractor would be called with two arguments, pass the arity
+          # check, search for `## []`, find nothing, and land in the benign
+          # `elif` — a green step that verified nothing about the real
+          # CHANGELOG, which is the only thing it exists to do. `set -u` does
+          # not catch it, because the variable is set and merely empty.
+          # Reachable by restructuring Cargo.toml: an indented
+          # `[workspace.package]` version, or `version.workspace = true`.
+          if [ -z "$VERSION" ]; then
+            echo "::error::No anchored 'version = ' line in Cargo.toml — the version could not be read, so this check verified nothing."
+            exit 1
+          fi
           echo "Cargo.toml version: $VERSION"
           rc=0
           .github/scripts/extract_changelog_section.sh CHANGELOG.md "$VERSION" || rc=$?

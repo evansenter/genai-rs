@@ -133,9 +133,22 @@ jobs:
       - name: Wait for crates.io indexing
         run: |
           MACRO_VERSION=$(awk -F'"' '/^version = /{print $2; exit}' genai-rs-macros/Cargo.toml)
+          # Guarded because an empty read is worse here than anywhere else:
+          # `grep -q ""` matches any output, so the poll below would report
+          # "indexed successfully" on its first attempt without the crate
+          # being indexed at all, and `genai-rs` would then publish against a
+          # dependency crates.io cannot yet resolve. The tag check above
+          # fails safe on an empty read (empty never equals the tag); this one
+          # passes safe, which is the wrong direction.
+          if [ -z "$MACRO_VERSION" ]; then
+            echo "::error::No anchored 'version = ' line in genai-rs-macros/Cargo.toml — cannot verify indexing."
+            exit 1
+          fi
           echo "Waiting for genai-rs-macros v${MACRO_VERSION} to be indexed..."
           for i in {1..30}; do
-            if cargo search genai-rs-macros --limit 1 2>/dev/null | grep -q "${MACRO_VERSION}"; then
+            # `-F --`: the version is data, not a pattern. A literal match
+            # also means a future pre-release suffix cannot be read as a regex.
+            if cargo search genai-rs-macros --limit 1 2>/dev/null | grep -qF -- "${MACRO_VERSION}"; then
               echo "Crate indexed successfully after $((i * 10)) seconds"
               exit 0
             fi
@@ -188,15 +201,29 @@ jobs:
               CHANGELOG.md "${TAG#v}" > /tmp/release-body.md || rc=$?
           if [ "$rc" -eq 0 ]; then
             echo "Release body from the CHANGELOG.md [${TAG#v}] section"
-          elif [ "$rc" -ne 1 ]; then
-            echo "::error::extract_changelog_section.sh exited $rc — a usage error, not a missing section. The release body was not generated."
-            exit 1
-          else
-            # Falling back rather than failing: the tag already exists and the
-            # crates are already published by this point, so refusing to cut
-            # the GitHub release would leave the release half-done over a
-            # formatting problem. Loud enough to be fixed by hand after.
+          elif [ "$rc" -eq 1 ]; then
+            # The recoverable case: the file is fine, the section is not
+            # there. Falling back rather than failing, because the tag exists
+            # and the crates are already published by this point — refusing to
+            # cut the release over a formatting problem would leave it
+            # half-done. Loud enough to be fixed by hand after.
             echo "::warning::No [${TAG#v}] section in CHANGELOG.md — falling back to the commit list. Edit the release body by hand."
+          else
+            # Annotated but NOT fatal, unlike the identical dispatch in
+            # rust.yml. This job is `needs: publish`, so by the time it runs
+            # both crates are immutable on crates.io — exiting here would
+            # leave the release genuinely half-done (versions published, tag
+            # pushed, no GitHub release), which is the outcome the fallback
+            # below exists to avoid. A red annotation on a completed release
+            # beats a completed publish with no release. The recovery table in
+            # CLAUDE.md covers the residue either way.
+            echo "::error::extract_changelog_section.sh exited $rc — a usage or environment error, not a missing section. Falling back to the commit list; the body needs replacing by hand."
+          fi
+          if [ "$rc" -ne 0 ]; then
+            # Both non-zero paths land here — each has already annotated
+            # itself at the right severity above, so this block is only the
+            # body generation.
+            #
             # `tformat`, not `format`: `format` omits the terminating
             # newline, so this branch would write a body that does not end in
             # one while the CHANGELOG branch above does. The file gets
