@@ -38,17 +38,30 @@ trap restore EXIT
 
 failures=0
 
-# A stand-in for a compiler that can drive mold: rewrites the flag to lld,
-# which this box does have. Exercises the success branch without needing mold.
+# A stand-in for a compiler that can drive mold: it *drops* the flag and
+# links with the default linker.
+#
+# Not "rewrite it to -fuse-ld=lld", which is what the first version did — lld
+# is no more installed by default than mold is, so this harness passed on a
+# box that happened to have it and failed on the CI runner with
+# `cannot find 'ld'`, exercising the probe-fails branch twice and the success
+# branch never. The stub stands in for a driver that *accepts* the flag; it
+# is not here to exercise a linker.
+#
+# The real compiler is resolved *now* and baked in as an absolute path. The
+# stub gets installed as `cc` further down to test the default-CC path, and a
+# stub named `cc` that execs `cc` finds itself — an infinite loop, which is
+# how the first version of that case hung rather than failed.
 mkdir -p "$WORK/bin"
-cat > "$WORK/bin/mold-capable-cc" <<'STUB'
+REAL_CC="$(command -v cc)"
+cat > "$WORK/bin/mold-capable-cc" <<STUB
 #!/usr/bin/env bash
 args=()
-for a in "$@"; do
-  [ "$a" = "-fuse-ld=mold" ] && a=-fuse-ld=lld
-  args+=("$a")
+for a in "\$@"; do
+  [ "\$a" = "-fuse-ld=mold" ] && continue
+  args+=("\$a")
 done
-exec cc "${args[@]}"
+exec "$REAL_CC" "\${args[@]}"
 STUB
 chmod +x "$WORK/bin/mold-capable-cc"
 
@@ -145,12 +158,23 @@ fi
 
 # --- The default path must not pin anything: with CC unset the probe uses the
 #     same `cc` cargo will, so a `linker` key would be noise at best.
+#
+#     Shimmed as `cc` rather than just unsetting CC, so the probe actually
+#     succeeds and the no-pin assertion means something. Without the shim
+#     this reduces to "no config was written, therefore no pin" on any box
+#     without mold — true, and vacuous.
+cp "$WORK/bin/mold-capable-cc" "$WORK/bin/cc"
 rm -f "$CONFIG"
-run env "PATH=$WORK/bin:$PATH"
-if [ -f "$CONFIG" ] && grep -q "^linker" "$CONFIG"; then
+# `-u CC` because a dev box may well export it, which would silently turn
+# this into a second copy of the case above.
+run env -u CC "PATH=$WORK/bin:$PATH"
+expect_rc "default CC: exits 0" 0
+if [ ! -f "$CONFIG" ]; then
+  fail "default CC: probe should have passed through the cc shim, but no config was written"
+elif grep -q "^linker" "$CONFIG"; then
   fail "default CC: pinned a linker it did not need to"
 else
-  pass "default CC: no linker pin (probe used the driver cargo will)"
+  pass "default CC: config written, no linker pin (probe used the driver cargo will)"
 fi
 
 echo
