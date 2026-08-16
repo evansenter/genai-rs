@@ -1,0 +1,26 @@
+name: Set up mold
+description: >-
+  Installs the mold linker and enables the repo's opt-in cargo config that
+  uses it.
+
+runs:
+  using: composite
+  steps:
+    - name: Install mold and enable the linker config
+      shell: bash
+      # Bounded because an unresponsive apt mirror hangs here rather than
+      # failing: one PR run sat 98 minutes on this step and would have held
+      # the runner until GitHub's 6h default. Normal is ~10-20s, so this
+      # ceiling only ever trips on a stall, and it trips fast enough to be
+      # worth re-running.
+      #
+      # The `cp` is the half that matters after #428: `.cargo/config.toml`
+      # is no longer checked in, so without it CI silently loses mold. This
+      # composite exists so that the pairing lives in one place — it was
+      # copied across 13 steps, and the copy is exactly what goes stale if
+      # the example file is ever renamed.
+      timeout-minutes: 5
+      run: |
+        sudo apt-get update || true
+        sudo apt-get install -y mold
+        cp .cargo/config.toml.example .cargo/config.toml

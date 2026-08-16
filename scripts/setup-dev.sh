@@ -37,10 +37,10 @@ That is fine — builds work without it, just slower. If you want it:
   Debian/Ubuntu   sudo apt install mold
   Fedora          sudo dnf install mold
   Arch            sudo pacman -S mold
-  macOS           brew install mold
   Nix             nix profile install nixpkgs#mold
 
-then re-run this script.
+then re-run this script. (No macOS entry: mold's macOS port, sold, was
+discontinued upstream, and the config below is x86_64-linux-only regardless.)
 MSG
   exit 0
 fi
@@ -48,3 +48,14 @@ fi
 cp "$EXAMPLE" "$CONFIG"
 echo "Enabled the mold linker via $CONFIG (git-ignored)."
 echo "Delete that file to go back to the default linker."
+
+# The config only sets [target.x86_64-unknown-linux-gnu], so on any other
+# host it is inert. Saying "enabled" without this would be a claim the
+# config cannot back: someone on aarch64 installs mold, gets congratulated,
+# and sees no change with nothing to explain why.
+HOST=$(rustc -vV 2>/dev/null | sed -n 's/^host: //p')
+if [ -n "$HOST" ] && [ "$HOST" != "x86_64-unknown-linux-gnu" ]; then
+  echo
+  echo "Note: your host is $HOST, and the config only covers"
+  echo "x86_64-unknown-linux-gnu — so builds will not actually use mold."
+fi

@@ -16,9 +16,14 @@ WORKFLOW="${1:?usage: resolve_scheduled_failure.sh <workflow-name>}"
 # the `gh` child process. See the longer note in the reporting script.
 export TITLE="Scheduled workflow failing: $WORKFLOW"
 
+# The same dedicated label the reporting script files under — see the long
+# note there. If these two lookups drift apart, updates land on one issue
+# while closes target another.
+ESCALATION_LABEL="ci-health-escalation"
+
 # Open only: a closed one is already resolved.
 EXISTING=$(gh issue list \
-  --label "ci-health" \
+  --label "$ESCALATION_LABEL" \
   --state open \
   --limit 100 \
   --json number,title \

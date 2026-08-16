@@ -28,6 +28,25 @@ RUN_URL="${2:?usage: report_scheduled_failure.sh <workflow-name> <run-url>}"
 # would file a fresh duplicate while the update path below never ran.
 export TITLE="Scheduled workflow failing: $WORKFLOW"
 
+# Looked up by a dedicated label, not by `ci-health`.
+#
+# `ci-health` is shared with the flakiness report, which currently files a
+# *new* issue every day (#425 fixes that, but this must not depend on it).
+# `gh issue list` is newest-first and capped, and this rolling issue is
+# created once and thereafter only edited — edits do not bump created_at, so
+# it sinks steadily. At roughly 100 newer issues it falls off the page, the
+# lookup returns empty, and every failure files a duplicate: exactly the
+# flood this script exists to avoid.
+#
+# A label only these two scripts apply keeps the population at one per
+# watched workflow. `ci-health` is applied as well, so the issues still show
+# up in the existing view.
+ESCALATION_LABEL="ci-health-escalation"
+
+gh label create "$ESCALATION_LABEL" \
+  --description "A scheduled workflow is failing (opened by the workflow itself)" \
+  --color "b60205" \
+  2>/dev/null || true
 gh label create "ci-health" \
   --description "CI health and flakiness tracking" \
   --color "fbca04" \
@@ -37,7 +56,7 @@ gh label create "ci-health" \
 # without the underlying failure being fixed would otherwise get a fresh
 # duplicate filed every morning.
 EXISTING=$(gh issue list \
-  --label "ci-health" \
+  --label "$ESCALATION_LABEL" \
   --state all \
   --limit 100 \
   --json number,title \
@@ -78,5 +97,6 @@ else
   gh issue create \
     --title "$TITLE" \
     --body-file "$BODY" \
+    --label "$ESCALATION_LABEL" \
     --label "ci-health"
 fi
