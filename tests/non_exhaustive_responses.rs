@@ -124,8 +124,7 @@ fn response_structs_are_non_exhaustive() {
     // `src/http/mod.rs` gates `src/http/x.rs`.
     let mut test_modules = BTreeSet::new();
     for (rel, text) in &raw {
-        let dir = rel.rsplit_once('/').map_or("", |(d, _)| d);
-        test_modules.extend(cfg_test_modules(dir, text));
+        test_modules.extend(cfg_test_modules(rel, text));
     }
 
     // Named explicitly rather than merely non-empty: a parser that matched
@@ -134,9 +133,19 @@ fn response_structs_are_non_exhaustive() {
     // of this parser failed — it split on " mod ", which misses a line
     // starting with `mod `, i.e. every declaration in lib.rs's test block.
     //
-    // All six, not a sample. `test_subscriber` is the only one declared
+    // All of them, not a sample. `test_subscriber` is the only one declared
     // `pub(crate) mod`, so it is the sole case exercising the " mod " split
     // branch.
+    //
+    // `src/request_builder/tests` is the one entry that does not come from
+    // `lib.rs` (`src/request_builder/mod.rs` gates `src/request_builder/
+    // tests.rs`), and it is here deliberately: without it, reverting the
+    // collection to a `lib.rs`-only read — or breaking the module-root
+    // derivation for non-`lib.rs` files — would leave this loop green, and
+    // the main test green too, since none of these files declares a
+    // `pub struct`. Only the synthetic fixture below would notice, and a
+    // guard pinned solely to a fixture is the inertness this file argues
+    // against everywhere else.
     for expected in [
         "src/content_tests",
         "src/proptest_tests",
@@ -144,6 +153,7 @@ fn response_structs_are_non_exhaustive() {
         "src/response_tests",
         "src/streaming_tests",
         "src/test_subscriber",
+        "src/request_builder/tests",
     ] {
         assert!(
             test_modules.contains(expected),
@@ -497,12 +507,30 @@ fn is_test_only_path(rel: &str, test_modules: &BTreeSet<String>) -> bool {
 /// gating lives on the `mod NAME;` line in the *parent*, not as an inner
 /// `#![cfg(test)]` in the file itself, so a file alone cannot be classified.
 ///
-/// `dir` is the declaring file's directory relative to the crate root
-/// (`"src"` for `lib.rs`, `"src/http"` for `src/http/mod.rs`), because
+/// `rel` is the declaring file's path relative to the crate root, because
 /// nothing requires a gated module to be declared at the crate root — and a
 /// classification derived from one file while the scan walks the whole tree
 /// is the shape of gap this guard keeps finding in itself.
-fn cfg_test_modules(dir: &str, source: &str) -> BTreeSet<String> {
+///
+/// The declaring file's *directory* is the module root only for `mod.rs` and
+/// `lib.rs`. A leaf file owns a directory named after itself: `mod x;` in
+/// `src/response.rs` gates `src/response/x.rs`, not `src/x.rs`. Keying on the
+/// directory would miss the real file and reserve a name that does not
+/// exist. Inert on today's tree — every directory module here uses `mod.rs`
+/// — but live the moment anything adopts the `foo.rs`-beside-`foo/` layout,
+/// where `mod helpers;` in `src/http.rs` would key to `src/helpers` and
+/// `src/http/helpers.rs` would go back to being scanned as public API.
+fn cfg_test_modules(rel: &str, source: &str) -> BTreeSet<String> {
+    let (dir, stem) = match rel.rsplit_once('/') {
+        Some((dir, file)) => (dir, file.strip_suffix(".rs").unwrap_or(file)),
+        None => ("", rel.strip_suffix(".rs").unwrap_or(rel)),
+    };
+    let root = match (dir, stem) {
+        (_, "mod" | "lib") => dir.to_string(),
+        ("", stem) => stem.to_string(),
+        (dir, stem) => format!("{dir}/{stem}"),
+    };
+
     let lines: Vec<&str> = source.lines().collect();
     let mut found = BTreeSet::new();
     for (index, line) in lines.iter().enumerate() {
@@ -522,11 +550,27 @@ fn cfg_test_modules(dir: &str, source: &str) -> BTreeSet<String> {
         } else {
             continue;
         };
-        if let Some(name) = rest.split([';', ' ', '{']).next()
-            && !name.is_empty()
-        {
-            found.insert(format!("{dir}/{name}"));
+        // Only `mod NAME;` names a file. An inline `mod tests { .. }` is
+        // already handled by the `cfg_test_depth` machine in
+        // `offenders_and_exemptions_in`, so collecting it here adds no
+        // coverage — it only reserves a path name that a real file could
+        // later land on and be skipped silently. On this tree that reserved
+        // `src/tests`, `src/filter_tests`, `src/http/tests` and
+        // `src/http/proptest_tests`; the last is not a contrived collision,
+        // since `src/proptest_tests.rs` already exists as a real file module
+        // under a different parent.
+        let Some((name, _)) = rest.split_once(';') else {
+            continue;
+        };
+        let name = name.trim();
+        if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            continue;
         }
+        found.insert(if root.is_empty() {
+            name.to_string()
+        } else {
+            format!("{root}/{name}")
+        });
     }
     found
 }
@@ -571,15 +615,21 @@ pub mod client;
 mod response_tests;
 
 mod not_gated;
+
+#[cfg(test)]
+mod inline {
+    pub struct NotAFile;
+}
 ";
-    let modules = cfg_test_modules("src", lib_rs);
+    let modules = cfg_test_modules("src/lib.rs", lib_rs);
     assert_eq!(
         modules,
         BTreeSet::from([
             "src/test_subscriber".to_string(),
             "src/response_tests".to_string(),
         ]),
-        "both declaration forms parse, and an ungated `mod` is not collected"
+        "both declaration forms parse; an ungated `mod` is not collected, and \
+         neither is an inline `mod .. {{ }}`, which names no file"
     );
 
     // Skipped: the declared file, and anything under a directory of that name.
@@ -599,12 +649,40 @@ mod not_gated;
     // A gated module declared in a *submodule*, which a lib.rs-only
     // collection could not see. `mod helpers;` in `src/http/mod.rs` gates
     // `src/http/helpers.rs`, not `src/helpers.rs`.
-    let nested = cfg_test_modules("src/http", "#[cfg(test)]\nmod helpers;\n");
+    let nested = cfg_test_modules("src/http/mod.rs", "#[cfg(test)]\nmod helpers;\n");
     assert_eq!(nested, BTreeSet::from(["src/http/helpers".to_string()]));
     assert!(is_test_only_path("src/http/helpers.rs", &nested));
     assert!(
         !is_test_only_path("src/helpers.rs", &nested),
         "a submodule declaration must not gate a same-named file at the root"
+    );
+
+    // A *leaf* file owns a directory named after itself, so the declaring
+    // file's directory is the wrong key: `mod helpers;` in `src/http.rs`
+    // gates `src/http/helpers.rs`, and keying on `src` would both miss it
+    // and reserve `src/helpers` — a name a real file could hold.
+    let leaf = cfg_test_modules("src/http.rs", "#[cfg(test)]\nmod helpers;\n");
+    assert_eq!(
+        leaf,
+        BTreeSet::from(["src/http/helpers".to_string()]),
+        "a leaf module declares into its own directory, not its parent's"
+    );
+    assert!(is_test_only_path("src/http/helpers.rs", &leaf));
+    assert!(
+        !is_test_only_path("src/helpers.rs", &leaf),
+        "keying on the declaring file's directory would gate the wrong file"
+    );
+
+    // Inline blocks name no file. Collecting them reserves paths that do not
+    // exist — `src/http/proptest_tests` was one, and `src/proptest_tests.rs`
+    // shows that name is already in use as a real file module elsewhere.
+    let inline = cfg_test_modules(
+        "src/http/files.rs",
+        "#[cfg(test)]\nmod proptest_tests {\n    pub struct X;\n}\n",
+    );
+    assert!(
+        inline.is_empty(),
+        "an inline `mod .. {{ }}` names no file and must not reserve a path: {inline:?}"
     );
 }
 
