@@ -111,6 +111,25 @@ check() {
   fi
 }
 
+# Asserts one call precedes another. "Both happen" is not the property the
+# workflow argues for: the edit commits the new baseline, so editing first
+# means a failed comment silently advances it past tests nobody was told
+# about. Swapping the two back leaves every other check in this file green —
+# and that swap is exactly the edit that produced the round-6 regression.
+expect_order() {
+  local label="$1" first="$2" second="$3"
+  local a b
+  a=$(grep -n -- "$first" <<<"$out" | head -1 | cut -d: -f1)
+  b=$(grep -n -- "$second" <<<"$out" | head -1 | cut -d: -f1)
+  if [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]; then
+    echo "ok   - $label"
+  else
+    echo "FAIL - $label: '$first' at ${a:-none}, '$second' at ${b:-none}"
+    sed 's/^/         /' <<<"$out"
+    failures=$((failures + 1))
+  fi
+}
+
 refute() {
   local label="$1" unexpected="$2"
   if grep -q -- "$unexpected" <<<"$out"; then
@@ -147,6 +166,8 @@ make_gh_stub "[{\"title\":\"$LEGACY\",\"number\":417}]" '{"body":"no marker here
 run_step
 check "adoption: edits the legacy issue"    "issue edit 417"
 check "adoption: announces the full set"    "Newly flaky"
+expect_order "adoption: comments before committing the new baseline" \
+  "issue comment 417" "issue edit 417"
 
 # --- Nothing matching means a fresh issue, and it must carry the label the
 #     lookup filters on.
@@ -162,6 +183,16 @@ make_gh_stub "[{\"title\":\"$TITLE\",\"number\":77}]" \
   '{"body":"old\n<!-- flaky-baseline\nt01\nt02\n-->"}'
 run_step
 refute "steady state: posts no comment when nothing is new" "issue comment"
+
+# --- A body that has been through the web UI comes back CRLF-normalized.
+#     Every other fixture here is LF, so the carriage-return strip added in
+#     round 5 was never exercised — removing it would have left all of them
+#     green while a maintainer's typo fix silently re-announced the full set.
+make_gh_stub "[{\"title\":\"$TITLE\",\"number\":77}]" \
+  '{"body":"old\r\n<!-- flaky-baseline\r\nt01\r\nt02\r\n-->\r\n"}'
+echo '[{"name":"t01"},{"name":"t02"}]' > "$WORK/tests.json"
+run_step
+refute "CRLF body: still recognises the baseline, posts no comment" "issue comment"
 
 # --- A genuinely new test does comment, and names only that one.
 echo '[{"name":"t01"},{"name":"t02"},{"name":"t03_new"}]' > "$WORK/tests.json"
