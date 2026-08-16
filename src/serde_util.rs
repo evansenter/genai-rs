@@ -40,6 +40,7 @@ resource_markers! {
     ForEnvironment => "Environment",
     ForWebhook => "Webhook",
     ForSigningSecret => "SigningSecret",
+    ForFileSearchDocument => "FileSearchDocument",
 }
 
 #[cfg(test)]

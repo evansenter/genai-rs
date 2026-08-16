@@ -177,6 +177,14 @@ pub use environments::{
     CreateEnvironmentRequest, Environment, EnvironmentListResponse, EnvironmentStatus,
 };
 
+// File Search Stores resource (/v1beta/fileSearchStores) — the documents
+// `Tool::FileSearch` retrieves over
+pub mod file_search_stores;
+pub use file_search_stores::{
+    CreateFileSearchStoreRequest, DocumentListResponse, DocumentState, FileSearchDocument,
+    FileSearchStore, FileSearchStoreListResponse,
+};
+
 // Safety settings (request safety_settings field)
 pub mod safety;
 pub use safety::{HarmCategory, SafetyMethod, SafetySetting, SafetyThreshold};
