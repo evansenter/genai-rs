@@ -1472,7 +1472,7 @@ impl InteractionResponse {
     }
 
     // =========================================================================
-    // File Search Step Helpers
+    // Generic Tool Call Step Helpers
     // =========================================================================
 
     /// Whether the response contains generic `tool_call` steps.
@@ -1504,6 +1504,10 @@ impl InteractionResponse {
             .filter(|s| matches!(s, Step::ToolCall { .. }))
             .collect()
     }
+
+    // =========================================================================
+    // File Search Step Helpers
+    // =========================================================================
 
     /// Check if response contains file search results
     #[must_use]

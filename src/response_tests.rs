@@ -166,6 +166,20 @@ fn tool_call_steps_are_counted_and_not_attributed_to_mcp() {
          field whose 0 reads as 'MCP did not run'"
     );
     assert_eq!(summary.unknown_count, 0);
+
+    // The step-level accessors over the same response. Ordering is the part
+    // the doc comment promises and nothing else checks.
+    assert!(response.has_tool_calls());
+    let calls = response.tool_calls();
+    assert_eq!(calls.len(), 2, "the model_text step must not be included");
+    let ids: Vec<&str> = calls
+        .iter()
+        .filter_map(|s| match s {
+            Step::ToolCall { id, .. } => Some(id.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ids, ["call_1", "call_2"], "returned in step order");
 }
 
 #[test]
