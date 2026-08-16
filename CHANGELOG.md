@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   # serde_json = "1.0"
   ```
 
+  Scoped to `#[tool]`: a **manual** `CallableFunction` impl still needs
+  `async-trait` as a direct dependency, since the trait is declared with
+  `#[async_trait]`.
+
   **Version coupling:** the generated code now references
   `genai_rs::__private`, so `genai-rs-macros` requires a `genai-rs` from this
   release or later. `genai-rs-macros` is a proc-macro crate and declares no
