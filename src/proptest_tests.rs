@@ -830,6 +830,11 @@ fn arb_known_step() -> impl Strategy<Value = Step> {
         // file_search_call
         (arb_identifier(), proptest::option::of(arb_text()))
             .prop_map(|(id, signature)| { Step::FileSearchCall { id, signature } }),
+        // tool_call — the generic server-side call the API emits for MCP.
+        // `prop_oneof!` is not exhaustiveness-checked, so a new variant is
+        // silently absent from the roundtrip proptest unless added here.
+        (arb_identifier(), proptest::option::of(arb_text()))
+            .prop_map(|(id, signature)| { Step::ToolCall { id, signature } }),
         // file_search_result (empty result skips the field; default is empty)
         (
             arb_identifier(),

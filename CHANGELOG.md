@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`Step::ToolCall`** — the generic `tool_call` step the API actually emits
+  for server-side tool invocations, including MCP (#433).
+
+  Before this it landed in `Step::Unknown`, so a successful MCP interaction
+  reported no tool calls at all. Verified live (2026-08-16,
+  `gemini-3.7-flash`, a real MCP server): the step carries only
+  `{id, signature}`. Which server or tool ran is not recoverable from the
+  response; `usage.total_tool_use_tokens` is what shows the call happened.
+
+- **`StepSummary::tool_call_count`** — where MCP calls are counted.
+  `mcp_server_tool_call_count` reads **0** on a successful MCP interaction,
+  which is worse than absent: a caller checking it concludes MCP did not run.
+  Both fields now cross-reference each other.
+
+  Note that `StepSummary` is **not** `#[non_exhaustive]`, so adding this
+  field is source-breaking for anyone constructing it with an exhaustive
+  struct literal or destructuring it without a `..` rest pattern.
+
+  `Step::McpServerToolCall` / `McpServerToolResult` are retained and now
+  documented as spec-present but never observed — the same status as
+  `Tool::Retrieval`, and unlike `cached_content` (D-005) nothing rejects
+  them.
+
 ## [0.10.0] - 2026-08-16
 
 ### Added

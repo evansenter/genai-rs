@@ -595,7 +595,8 @@ impl Step {
             | Self::FileSearchCall { signature, .. }
             | Self::FileSearchResult { signature, .. }
             | Self::GoogleMapsCall { signature, .. }
-            | Self::GoogleMapsResult { signature, .. } => signature.as_deref(),
+            | Self::GoogleMapsResult { signature, .. }
+            | Self::ToolCall { signature, .. } => signature.as_deref(),
             _ => None,
         }
     }
@@ -2576,6 +2577,13 @@ mod tests {
             !step.is_unknown(),
             "tool_call must not fall through to Unknown — that is what made a \
              successful MCP call report zero tool calls"
+        );
+        assert_eq!(
+            step.signature(),
+            Some("opaque"),
+            "signature() must report it — the API sends one on every observed \
+             tool_call step, and a caller collecting signatures for stateless \
+             replay would silently drop it"
         );
         assert_eq!(serde_json::to_value(&step).unwrap(), wire);
     }
