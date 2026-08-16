@@ -128,6 +128,46 @@ fn test_usage_metadata_grounding_tool_count() {
 
 // --- Response Helper Tests ---
 
+/// The counting arm is the user-visible bug #433 reports: a successful MCP
+/// interaction reporting zero tool calls.
+///
+/// Worth pinning explicitly because it is not self-enforcing. `Display`
+/// indexes a fixed-size array, so *adding a field* without extending that
+/// array is a compile error — but adding a `Step` variant and forgetting to
+/// count it is not, and yields a permanent 0. That is exactly the failure
+/// this change fixes, one variant over.
+#[test]
+fn tool_call_steps_are_counted_and_not_attributed_to_mcp() {
+    let response = InteractionResponse {
+        status: InteractionStatus::Completed,
+        steps: vec![
+            Step::ToolCall {
+                id: "call_1".to_string(),
+                signature: Some("sig".to_string()),
+            },
+            Step::ToolCall {
+                id: "call_2".to_string(),
+                signature: None,
+            },
+            Step::model_text("the answer"),
+        ],
+        ..Default::default()
+    };
+
+    let summary = response.step_summary();
+    assert_eq!(
+        summary.tool_call_count, 2,
+        "generic tool_call steps must be counted — landing in Unknown is what \
+         made a successful MCP call report none"
+    );
+    assert_eq!(
+        summary.mcp_server_tool_call_count, 0,
+        "and must not be attributed to the MCP-specific counter, which is the \
+         field whose 0 reads as 'MCP did not run'"
+    );
+    assert_eq!(summary.unknown_count, 0);
+}
+
 #[test]
 fn test_interaction_response_text() {
     let response = InteractionResponse {

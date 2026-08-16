@@ -169,6 +169,13 @@ roundtrip tests.
 | `google_maps_result` | `Step::GoogleMapsResult` | `{"call_id": "...", "result": [GoogleMapsResultItem], "signature"?: "..."}` |
 | (anything else) | `Step::Unknown { step_type, data }` | Full JSON preserved for roundtrip |
 
+Note the asymmetry: `function_call` and `mcp_server_tool_call` keep their
+arguments at the **top level**, while the built-in tool calls
+(`code_execution_call`, `url_context_call`, `google_search_call`,
+`google_maps_call`) nest theirs inside an `arguments` object. The library
+flattens the nested forms into ergonomic fields (`urls: Vec<String>`,
+`queries: Vec<String>`, `language` + `code`).
+
 #### MCP tool calls arrive as generic `tool_call` steps
 
 Verified live 2026-08-16 (`gemini-3.7-flash`, a real MCP server at
@@ -196,13 +203,6 @@ begin emitting them. Tracked in #433.
 For callers: check `step_summary().tool_call_count`, not
 `.mcp_server_tool_call_count`. The latter reads 0 on a successful MCP
 interaction.
-
-Note the asymmetry: `function_call` and `mcp_server_tool_call` keep their
-arguments at the **top level**, while the built-in tool calls
-(`code_execution_call`, `url_context_call`, `google_search_call`,
-`google_maps_call`) nest theirs inside an `arguments` object. The library
-flattens the nested forms into ergonomic fields (`urls: Vec<String>`,
-`queries: Vec<String>`, `language` + `code`).
 
 ```rust
 use genai_rs::Step;

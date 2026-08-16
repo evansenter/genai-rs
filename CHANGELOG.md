@@ -23,14 +23,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which is worse than absent: a caller checking it concludes MCP did not run.
   Both fields now cross-reference each other.
 
-  Note that `StepSummary` is **not** `#[non_exhaustive]`, so adding this
-  field is source-breaking for anyone constructing it with an exhaustive
-  struct literal or destructuring it without a `..` rest pattern.
-
   `Step::McpServerToolCall` / `McpServerToolResult` are retained and now
   documented as spec-present but never observed — the same status as
   `Tool::Retrieval`, and unlike `cached_content` (D-005) nothing rejects
   them.
+
+### Changed (breaking)
+
+- **`StepSummary` gains a `tool_call_count` field.** `StepSummary` is not
+  `#[non_exhaustive]`, so exhaustive struct literals and destructuring
+  without a `..` rest pattern will fail to compile.
 
 ## [0.10.0] - 2026-08-16
 
