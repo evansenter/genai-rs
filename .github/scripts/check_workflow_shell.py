@@ -16,8 +16,11 @@ not know what the commands mean, and it will not catch an unset variable,
 a wrong flag, or a command that fails at runtime. It catches exactly the
 class of defect above, which is the class that survives review.
 
-Two further limits worth stating, so a green check is not read as broader
-coverage than it is:
+It also parse-checks the standalone scripts under `.github/scripts/`,
+which are invoked only from schedule-only jobs and carry the same latency.
+
+Limits worth stating, so a green check is not read as broader coverage than
+it is:
 
 - GitHub substitutes `${{ }}` expressions into the `run:` body textually,
   *before* bash parses it. This checks the template, not the script that
@@ -29,6 +32,13 @@ coverage than it is:
   (`[[ ]]`, process substitution, arrays) that dash rejects at runtime.
   Nothing in this repo sets `shell: sh` today, so it is not reachable —
   but a pass on such a step is weaker than it looks.
+- Only `.github/workflows/*.y*ml` and `.github/scripts/*.sh` are scanned.
+  A shell script living anywhere else is not covered.
+- A step with no explicit `shell:` in a job whose matrix includes Windows
+  runs under pwsh on the Windows leg and bash elsewhere. Such steps are
+  still parsed as bash — all of them are plain `cargo ...` invocations
+  today — and the summary line counts them, so the assumption is stated
+  rather than hidden.
 
 Exit status: 0 when every block parses, 1 otherwise.
 """
@@ -53,32 +63,78 @@ import yaml
 SHELLS = {"bash", "sh"}
 
 
+def _explicit_default_shell(document: dict, job: dict) -> str | None:
+    """A `defaults.run.shell` from the job, else the workflow, else None.
+
+    Both scopes matter: a workflow-level `defaults:` block sets the shell
+    for every job, and reading only the job level would miss it.
+    """
+    for scope in (job, document):
+        shell = ((scope.get("defaults") or {}).get("run") or {}).get("shell")
+        if shell:
+            return str(shell)
+    return None
+
+
+def _may_run_on_windows(job: dict) -> bool:
+    """Whether any leg of this job lands on a Windows image.
+
+    GitHub's implicit `run:` shell is `pwsh` on Windows and `bash`
+    elsewhere, so a step with no explicit `shell:` in such a job is not
+    bash on every leg. The matrix has to be consulted, not just `runs-on` —
+    the cross-platform job is `runs-on: ${{ matrix.os }}`, which says
+    nothing on its own while its matrix includes `windows-latest`.
+    """
+    haystack = [str(job.get("runs-on", ""))]
+    matrix = (job.get("strategy") or {}).get("matrix") or {}
+    haystack.append(str(matrix))
+    return any("windows" in part.lower() for part in haystack)
+
+
 def iter_run_steps(path: str):
-    """Yield (job, index, name, run) for each shell `run:` block."""
+    """Yield (job, index, name, run, assumed_bash) per shell `run:` block.
+
+    `assumed_bash` marks a step whose shell is implicit in a job that can
+    land on Windows — bash on some legs, pwsh on others. Those are still
+    parsed as bash rather than skipped: every one of them today is a plain
+    `cargo ...` invocation, and dropping them would trade real coverage for
+    a hypothetical. The flag exists so `check` can say so out loud, and so
+    that a genuinely PowerShell-only step added there fails with an
+    explanation of what to add (`shell: pwsh`) rather than a bare parse
+    error.
+    """
     with open(path, encoding="utf-8") as handle:
         document = yaml.safe_load(handle)
 
     for job_name, job in (document.get("jobs") or {}).items():
         # Reusable-workflow calls (`uses:` at job level) have no steps.
-        default_shell = (
-            (job.get("defaults") or {}).get("run") or {}
-        ).get("shell") or "bash"
+        explicit_default = _explicit_default_shell(document, job)
+        windows = explicit_default is None and _may_run_on_windows(job)
+
         for index, step in enumerate(job.get("steps") or []):
             run = step.get("run")
             if not run:
                 continue
-            shell = str(step.get("shell", default_shell)).split(maxsplit=1)[0]
-            if shell not in SHELLS:
+
+            shell = step.get("shell", explicit_default)
+            assumed_bash = shell is None and windows
+            if shell is None:
+                shell = "bash"
+
+            if str(shell).split(maxsplit=1)[0] not in SHELLS:
                 continue
-            yield job_name, index, step.get("name", "(unnamed)"), run
+            yield job_name, index, step.get("name", "(unnamed)"), run, assumed_bash
 
 
-def check(path: str) -> tuple[int, int]:
-    """Returns (blocks checked, failures)."""
+def check(path: str) -> tuple[int, int, int]:
+    """Returns (blocks checked, blocks assumed bash, failures)."""
     checked = 0
+    assumed = 0
     failures = 0
-    for job_name, index, step_name, run in iter_run_steps(path):
+    for job_name, index, step_name, run, assumed_bash in iter_run_steps(path):
         checked += 1
+        if assumed_bash:
+            assumed += 1
         handle = tempfile.NamedTemporaryFile(
             "w", suffix=".sh", delete=False, encoding="utf-8"
         )
@@ -102,7 +158,29 @@ def check(path: str) -> tuple[int, int]:
             print(f"FAIL {path} :: {job_name} :: steps[{index}] {step_name}")
             for line in result.stderr.strip().splitlines():
                 print(f"     {line}")
-    return checked, failures
+            if assumed_bash:
+                print(
+                    "     NOTE: this step has no explicit `shell:` and its job "
+                    "can run on Windows, where the implicit shell is pwsh. If "
+                    "this body is PowerShell, add `shell: pwsh` to the step."
+                )
+    return checked, assumed, failures
+
+
+def check_script(path: str) -> int:
+    """Parse-checks a standalone shell script. Returns the failure count."""
+    result = subprocess.run(
+        ["bash", "-n", path], capture_output=True, text=True, check=False
+    )
+    if result.returncode == 0:
+        return 0
+
+    detail = result.stderr.strip().replace("\n", " ")
+    print(f"::error file={path}::{detail}")
+    print(f"FAIL {path}")
+    for line in result.stderr.strip().splitlines():
+        print(f"     {line}")
+    return 1
 
 
 def main() -> int:
@@ -114,14 +192,26 @@ def main() -> int:
         return 1
 
     checked = 0
+    assumed = 0
     failures = 0
     for path in paths:
-        path_checked, path_failures = check(path)
+        path_checked, path_assumed, path_failures = check(path)
         checked += path_checked
+        assumed += path_assumed
         failures += path_failures
 
+    # The scripts a `run:` block invokes have the same discovery latency as
+    # the block itself — `.github/scripts/*.sh` are called only from the
+    # daily flakiness report, so a quoting bug in one arrives as a failed
+    # cron email. To the loop above they are a one-line command that parses
+    # fine, which would make a green check read as broader than it is.
+    scripts = sorted(glob.glob(".github/scripts/*.sh"))
+    for script in scripts:
+        checked += 1
+        failures += check_script(script)
+
     if failures:
-        print(f"\n{failures} of {checked} run: block(s) failed to parse.")
+        print(f"\n{failures} of {checked} shell block(s) failed to parse.")
         return 1
 
     # Report blocks, not files, and fail on zero. This gate exists for a
@@ -130,10 +220,18 @@ def main() -> int:
     # shape, a refactor of iter_run_steps that drops blocks — must not look
     # identical to it passing.
     if checked == 0:
-        print("::error::No run: blocks were checked — the gate is inert.")
+        print("::error::No shell blocks were checked — the gate is inert.")
         return 1
 
-    print(f"All {checked} run: blocks parse across {len(paths)} workflow file(s).")
+    summary = (
+        f"All {checked} shell blocks parse "
+        f"({len(paths)} workflow file(s), {len(scripts)} script(s))"
+    )
+    print(
+        f"{summary}; {assumed} assumed bash on a Windows-capable job."
+        if assumed
+        else f"{summary}."
+    )
     return 0
 
 
