@@ -232,40 +232,14 @@ fn offenders_and_exemptions_in(
     // API, so demanding `#[non_exhaustive]` on it would be wrong, and the
     // only silencer would be `REQUEST_SIDE`, whose doc says entries are
     // types a caller constructs to *send*.
-    //
-    // Two states, because the gated item may or may not have braces:
-    // `#[cfg(test)] mod tests { .. }` and `#[cfg(test)] resource_markers! {
-    // .. }` are brace-delimited, while `#[cfg(test)] pub(crate) mod
-    // test_subscriber;` ends at a semicolon. A single counter seeded on the
-    // attribute line cannot express that — it never returns to zero, so the
-    // scan stops at the first cfg-test item and silently skips the rest of
-    // the file.
-    let mut cfg_test_depth = 0i32;
-    let mut awaiting_gated_item = false;
+    let gated = cfg_test_mask(&lines);
 
     for (index, line) in lines.iter().enumerate() {
+        if gated[index] {
+            continue;
+        }
         // Trimmed, so a declaration indented inside an inline `mod` counts.
         let trimmed = line.trim_start();
-
-        if cfg_test_depth > 0 {
-            cfg_test_depth += line.matches('{').count() as i32;
-            cfg_test_depth -= line.matches('}').count() as i32;
-            continue;
-        }
-        if awaiting_gated_item {
-            let opens = line.matches('{').count() as i32;
-            if opens > 0 {
-                cfg_test_depth = opens - line.matches('}').count() as i32;
-                awaiting_gated_item = false;
-            } else if trimmed.ends_with(';') {
-                awaiting_gated_item = false;
-            }
-            continue;
-        }
-        if trimmed.starts_with("#[cfg(test)]") {
-            awaiting_gated_item = true;
-            continue;
-        }
 
         let Some(rest) = trimmed.strip_prefix("pub struct ") else {
             continue;
@@ -534,15 +508,25 @@ fn cfg_test_modules(rel: &str, source: &str) -> BTreeSet<String> {
     let lines: Vec<&str> = source.lines().collect();
     let mut found = BTreeSet::new();
     for (index, line) in lines.iter().enumerate() {
-        if !line.trim_start().starts_with("#[cfg(test)]") {
+        if !is_cfg_test_attr(line.trim_start()) {
             continue;
         }
-        let Some(next) = lines.get(index + 1) else {
+        // Scan forward to the declaration rather than assuming it is the
+        // very next line. `#[cfg(test)]` / `#[allow(dead_code)]` / `mod x;`
+        // is legal, as is a comment in between, and pairing only with
+        // `index + 1` would miss the module — leaving a test-only file to be
+        // scanned as public API and reported as an offender with no correct
+        // fix. `cfg_test_mask` already tolerates exactly this shape, so the
+        // two parsers agreeing is the point.
+        let Some(decl) = lines[index + 1..]
+            .iter()
+            .map(|l| l.trim_start())
+            .find(|l| !l.is_empty() && !l.starts_with("//") && !l.starts_with("#["))
+        else {
             continue;
         };
         // `mod x;` starts the line, while `pub mod x;` / `pub(crate) mod x;`
         // do not — so match the keyword itself rather than a leading space.
-        let decl = next.trim_start();
         let rest = if let Some(rest) = decl.strip_prefix("mod ") {
             rest
         } else if let Some(rest) = decl.split(" mod ").nth(1) {
@@ -575,6 +559,77 @@ fn cfg_test_modules(rel: &str, source: &str) -> BTreeSet<String> {
     found
 }
 
+/// True for `#[cfg(test)]` and for any compound gate naming `test` —
+/// `#[cfg(all(test, feature = "antigravity"))]`, `#[cfg(any(test, ...))]`.
+///
+/// Matched as a *token* rather than a substring, because
+/// `#[cfg(feature = "latest")]` contains "test" and gates nothing.
+///
+/// `not` disqualifies the whole attribute: `#[cfg(not(test))]` marks code
+/// that compiles only *outside* tests, i.e. real API. Treating it as gated
+/// would skip a file this guard exists to scan, so the conservative reading
+/// wins — over-scanning fails loudly, under-scanning does not.
+fn is_cfg_test_attr(trimmed: &str) -> bool {
+    let Some(rest) = trimmed.strip_prefix("#[cfg(") else {
+        return false;
+    };
+    let tokens = || rest.split(|c: char| !(c.is_alphanumeric() || c == '_'));
+    tokens().any(|t| t == "test") && !tokens().any(|t| t == "not")
+}
+
+/// Marks each line that is inside a `#[cfg(test)]`-gated item, attribute
+/// included.
+///
+/// Two states, because the gated item may or may not have braces:
+/// `#[cfg(test)] mod tests { .. }` and `#[cfg(test)] resource_markers! { .. }`
+/// are brace-delimited, while `#[cfg(test)] pub(crate) mod test_subscriber;`
+/// ends at a semicolon. A single counter seeded on the attribute line cannot
+/// express that — it never returns to zero, so the scan stops at the first
+/// cfg-test item and silently skips the rest of the file.
+///
+/// Shared by every parser in this file that needs the distinction. They each
+/// grew their own version, and each version was wrong in a different way:
+/// the declaration scan missed inline blocks, and the manual-`Deserialize`
+/// union did not exclude them at all, so a test-only impl for a fixture
+/// named `Config` marked the bare name `Config` deserializable crate-wide.
+fn cfg_test_mask(lines: &[&str]) -> Vec<bool> {
+    let mut mask = vec![false; lines.len()];
+    let mut depth = 0i32;
+    let mut awaiting_gated_item = false;
+
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+
+        if depth > 0 {
+            mask[index] = true;
+            depth += line.matches('{').count() as i32;
+            depth -= line.matches('}').count() as i32;
+            continue;
+        }
+        if awaiting_gated_item {
+            mask[index] = true;
+            // Comments and further attributes sit between the gate and the
+            // item it gates; neither ends the wait.
+            if trimmed.starts_with("//") || trimmed.starts_with("#[") {
+                continue;
+            }
+            let opens = line.matches('{').count() as i32;
+            if opens > 0 {
+                depth = opens - line.matches('}').count() as i32;
+                awaiting_gated_item = false;
+            } else if trimmed.ends_with(';') {
+                awaiting_gated_item = false;
+            }
+            continue;
+        }
+        if is_cfg_test_attr(trimmed) {
+            mask[index] = true;
+            awaiting_gated_item = true;
+        }
+    }
+    mask
+}
+
 /// Names targeted by a hand-written `impl<'de> Deserialize<'de> for Foo`.
 ///
 /// Such a struct carries no `Deserialize` token in its own attribute block,
@@ -584,8 +639,21 @@ fn cfg_test_modules(rel: &str, source: &str) -> BTreeSet<String> {
 /// impl to live beside its type; a split across modules would otherwise be
 /// invisible, which is the same silent-absence mode this guard exists for.
 fn manual_deserialize_targets(text: &str) -> BTreeSet<String> {
-    text.lines()
-        .filter_map(|line| {
+    let lines: Vec<&str> = text.lines().collect();
+    // Filtered, because this set is keyed on the *bare* type name — the one
+    // lookup in this file not keyed `path:Name`. A test-only hand-written
+    // `Deserialize` for a fixture called `Config`, inside an inline
+    // `#[cfg(test)] mod tests { .. }`, would otherwise mark `Config`
+    // deserializable crate-wide, and a Serialize-only `pub struct Config`
+    // elsewhere would be reported as an offender with no correct fix:
+    // `REQUEST_SIDE` means something else, and `#[non_exhaustive]` would be
+    // answering a phantom.
+    let gated = cfg_test_mask(&lines);
+    lines
+        .iter()
+        .zip(&gated)
+        .filter(|(_, gated)| !**gated)
+        .filter_map(|(line, _)| {
             let trimmed = line.trim_start();
             if !trimmed.starts_with("impl") || !trimmed.contains("Deserialize") {
                 return None;
@@ -683,6 +751,80 @@ mod inline {
     assert!(
         inline.is_empty(),
         "an inline `mod .. {{ }}` names no file and must not reserve a path: {inline:?}"
+    );
+
+    // Lines may sit between the gate and the item it gates. Pairing only
+    // with the next line would miss the module and scan a test-only file as
+    // public API.
+    let spaced = cfg_test_modules(
+        "src/lib.rs",
+        "#[cfg(test)]\n// a note about why\n#[allow(dead_code)]\nmod helpers;\n",
+    );
+    assert_eq!(
+        spaced,
+        BTreeSet::from(["src/helpers".to_string()]),
+        "comments and further attributes between the gate and the item must not break the pairing"
+    );
+}
+
+/// Pins the cfg-test attribute matcher and the line mask both parsers share.
+#[test]
+fn the_cfg_test_gate_recognises_compound_forms_and_only_those() {
+    // Compound gates are the plausible future shape here: the crate carries
+    // an `antigravity` feature, so `all(test, feature = "antigravity")` is a
+    // form this tree could grow. Matching the bare `#[cfg(test)]` literal
+    // would leave such a module scanned as public API.
+    for gate in [
+        "#[cfg(test)]",
+        "#[cfg(all(test, feature = \"antigravity\"))]",
+        "#[cfg(any(test, feature = \"strict-unknown\"))]",
+    ] {
+        assert!(is_cfg_test_attr(gate), "{gate} gates test-only code");
+    }
+
+    // Matched as a token, not a substring: this one gates nothing, and
+    // treating it as a gate would skip real API.
+    assert!(!is_cfg_test_attr("#[cfg(feature = \"latest\")]"));
+    // `not(test)` marks code compiled *outside* tests — real API. Reading it
+    // as gated would silently drop a file this guard exists to scan.
+    assert!(!is_cfg_test_attr("#[cfg(not(test))]"));
+    assert!(!is_cfg_test_attr("#[derive(Debug)]"));
+
+    // The mask covers the attribute and everything the item spans, and stops
+    // at the closing brace rather than swallowing the rest of the file.
+    let lines: Vec<&str> = "pub struct Before;\n\
+         #[cfg(all(test, feature = \"antigravity\"))]\n\
+         mod tests {\n\
+         pub struct Inside;\n\
+         }\n\
+         pub struct After;"
+        .lines()
+        .collect();
+    assert_eq!(
+        cfg_test_mask(&lines),
+        vec![false, true, true, true, true, false],
+        "the mask must close with the item, not run to end of file"
+    );
+}
+
+/// The manual-`Deserialize` union is the one lookup keyed on a bare name, so
+/// a test-only impl leaking into it mislabels a same-named type anywhere in
+/// the crate.
+#[test]
+fn manual_deserialize_targets_ignores_test_only_impls() {
+    let source = "\
+impl<'de> Deserialize<'de> for RealThing {}
+
+#[cfg(test)]
+mod tests {
+    impl<'de> Deserialize<'de> for Fixture {}
+}
+";
+    let targets = manual_deserialize_targets(source);
+    assert!(targets.contains("RealThing"));
+    assert!(
+        !targets.contains("Fixture"),
+        "a test-only impl must not mark its bare name deserializable crate-wide: {targets:?}"
     );
 }
 
