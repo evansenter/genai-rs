@@ -276,6 +276,13 @@ After merging version bump PR:
    | `publish` | re-checks the tag against `Cargo.toml`, publishes `genai-rs-macros`, polls crates.io until it is indexed (up to 5 min), then publishes `genai-rs` |
    | `github-release` | creates the GitHub release, body taken from the `## [X.Y.Z]` section of `CHANGELOG.md` |
 
+   If that section is missing — the `## [Unreleased]` → `## [X.Y.Z]` rename
+   in the Version Bump Checklist above is what creates it — the job does not
+   fail. It emits a `::warning::No [X.Y.Z] section in CHANGELOG.md` and falls
+   back to a raw commit list, which is then worth replacing by hand. The
+   fallback leaves no trace in the release itself, so a release body that
+   looks like a bare commit list means that warning fired.
+
    Nothing here is a manual step. Running `cargo publish` or
    `gh release create` by hand races the workflow: neither silently
    double-publishes — `cargo publish` refuses an already-uploaded version —

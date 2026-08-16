@@ -47,7 +47,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - also ten
-
+  
 ## [0.2.0] — 2026-07-01
 
 - em dash date
@@ -73,20 +73,32 @@ assert_eq "extracts the whole section, stopping at the next heading" "$expected"
 # this check is real.
 [ "${out:0:1}" != $'\n' ] || fail "leading blank line was not trimmed"
 
-# The trailing trim has to be checked against a file, not against `$out`:
-# command substitution strips every trailing newline itself, so an assertion
-# on the last character of `$out` passes no matter what the extractor emits.
-# The callers redirect straight to a file, which is where the difference is
-# observable.
-"$EXTRACT" "$work/CHANGELOG.md" 0.10.0 >"$work/body.md"
-trailing=$(od -c "$work/body.md" | tail -2 | head -1)
-case "$trailing" in
-    *'\n  \n'*) fail "trailing blank line reached the file: $trailing" ;;
+# The trailing trim needs a fixture whose trailing blank line carries
+# whitespace — note the two spaces on the blank line before `## [0.2.0]`
+# above. Without them this cannot be tested at all from outside: the
+# extractor assigns `section` from a command substitution, which strips every
+# trailing newline before the final `printf` ever runs, so the output ends in
+# exactly one newline whatever the awk trim does. Trailing *spaces* survive
+# that stripping, so a dropped trim shows up as a whitespace-only last line.
+last_line=${out##*$'\n'}
+case "$last_line" in
+    *[![:space:]]*) ;;
+    *) fail "trailing blank line was not trimmed; last line is [$last_line]" ;;
 esac
-# And the file must still end in exactly one newline — a body with no final
-# newline is as wrong as one with three.
-[ "$(tail -c1 "$work/body.md" | od -An -c | tr -d ' ')" = '\n' ] \
-    || fail "the body does not end in a newline"
+
+# And the emitted file must end in exactly one newline — a body with no final
+# newline is as wrong as one with three. Checked against the file the callers
+# redirect into, with `tail -c2` rather than `od | tail | head`: this harness
+# runs under `pipefail`, where a `head` that closes the pipe early would abort
+# the whole run, and a two-byte tail cannot miss a doubled newline the way an
+# od line-boundary can.
+"$EXTRACT" "$work/CHANGELOG.md" 0.10.0 >"$work/body.md"
+tail_bytes=$(tail -c2 "$work/body.md" | od -An -c | tr -s ' ')
+case "$tail_bytes" in
+    *'\n  \n'*) fail "the body ends in more than one newline:$tail_bytes" ;;
+    *'\n'*) ;;
+    *) fail "the body does not end in a newline:$tail_bytes" ;;
+esac
 
 # --- prefix collisions -------------------------------------------------------
 # The bug this guards: a substring match for "0.1.0" would find "[0.10.0]"
