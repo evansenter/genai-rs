@@ -186,13 +186,18 @@ jobs:
             # the GitHub release would leave the release half-done over a
             # formatting problem. Loud enough to be fixed by hand after.
             echo "::warning::No [${TAG#v}] section in CHANGELOG.md — falling back to the commit list. Edit the release body by hand."
+            # `tformat`, not `format`: `format` omits the terminating
+            # newline, so this branch would write a body that does not end in
+            # one while the CHANGELOG branch above does. The file gets
+            # concatenated with the auto-generated change list, and this is
+            # the branch nobody exercises before a real tag.
             PREV_TAG=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || echo "")
             if [ -n "$PREV_TAG" ]; then
               echo "Generating changelog from $PREV_TAG to $TAG"
-              git log --pretty=format:"- %s" "$PREV_TAG..$TAG" > /tmp/release-body.md
+              git log --pretty=tformat:"- %s" "$PREV_TAG..$TAG" > /tmp/release-body.md
             else
               echo "First release, generating full changelog"
-              git log --pretty=format:"- %s" > /tmp/release-body.md
+              git log --pretty=tformat:"- %s" > /tmp/release-body.md
             fi
           fi
 

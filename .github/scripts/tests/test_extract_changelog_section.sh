@@ -57,6 +57,16 @@ All notable changes to this project will be documented in this file.
 - no date at all
 EOF
 
+# The trailing-trim check further down only works because the blank line
+# before the `## [0.2.0]` heading in the heredoc above carries two literal
+# spaces — trailing spaces survive command substitution where trailing
+# newlines do not. That is invisible in a diff and one strip-trailing-
+# whitespace-on-save away from silently reverting the check to the vacuous
+# form it had in earlier rounds. Pinned here, so losing it is a FAIL line
+# rather than a check that quietly stops testing anything.
+grep -q '^  $' "$work/CHANGELOG.md" ||
+    fail "fixture lost its whitespace-only blank line; the trailing-trim check below is now vacuous"
+
 # --- the ordinary case -------------------------------------------------------
 out=$("$EXTRACT" "$work/CHANGELOG.md" 0.10.0)
 expected='### Added
