@@ -363,6 +363,17 @@ jobs:
               # stays rare — past this threshold the run's green can't be
               # trusted, so fail instead of warn. Escalate only a passing
               # run: a real nextest failure keeps its own exit code.
+              #
+              # 3 is unchanged now that both marker classes share the budget,
+              # and that is deliberate rather than an oversight. It does mean
+              # a permanently unreachable MCP server costs
+              # `tools_and_config_tests` one of its three slots — but a run
+              # that is both missing live tool evidence *and* burning
+              # validator transients is precisely the run whose green is
+              # least worth trusting, so spending them from one pool is the
+              # behaviour wanted. release.yml re-derived its own number
+              # because it counts a whole workspace run against a much larger
+              # denominator, where one extra marker really is noise.
               echo "::error::$test: $skips assertion(s) passed vacuously — too many to trust this run (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)"
               if [ "$rc" -eq 0 ]; then rc=1; fi
             elif [ "${skips:-0}" -gt 0 ]; then

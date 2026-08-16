@@ -789,7 +789,10 @@ mod mcp_server {
                 //
                 // (The computer-use skip further down is deliberately not
                 // marked; see the comment there.)
-                println!("LIVE_TOOL_EVIDENCE_SKIPPED: MCP server appears unreachable: {e:?}");
+                println!(
+                    "LIVE_TOOL_EVIDENCE_SKIPPED: MCP call failed for an unrecognised \
+                     reason (server down, or a rejection this guard did not match): {e:?}"
+                );
                 return;
             }
         };

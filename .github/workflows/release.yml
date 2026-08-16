@@ -63,9 +63,11 @@ jobs:
           skips=$(grep -cE 'SEMANTIC_VALIDATION_SKIPPED|LIVE_TOOL_EVIDENCE_SKIPPED' /tmp/integration.log || true)
           # Threshold scaled to this run's denominator: rust.yml applies 3
           # per test binary (largest group ~13 markers, ~23% tolerated); this
-          # single workspace run has ~48 semantic validations plus the two
-          # tool-evidence sites, so 10 (~20%) keeps the two gates equivalent
-          # in intent.
+          # single workspace run has ~48 semantic validations plus at most one
+          # tool-evidence skip — both of those sites are in
+          # `test_mcp_server_tool_round_trip` and are mutually exclusive, so a
+          # run can contribute only one — so 10 (~20%) keeps the two gates
+          # equivalent in intent without moving.
           if [ "${skips:-0}" -gt 10 ]; then
             echo "::error::$skips assertion(s) passed vacuously — too many to trust this run (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)"
             # Escalate only a passing run — a real nextest failure keeps
