@@ -1779,7 +1779,12 @@ pub struct StepSummary {
     /// [`tool_call_count`](Self::tool_call_count). Retained because the
     /// step type is spec-defined and may start arriving.
     pub mcp_server_tool_call_count: usize,
-    /// Number of `mcp_server_tool_result` steps
+    /// Number of `mcp_server_tool_result` steps.
+    ///
+    /// **Expect 0**, for the same reason as
+    /// [`mcp_server_tool_call_count`](Self::mcp_server_tool_call_count) —
+    /// and with the same consequence, since 0 here reads as "the MCP call
+    /// returned nothing" rather than "we do not model what came back".
     pub mcp_server_tool_result_count: usize,
     /// Number of `file_search_call` steps
     pub file_search_call_count: usize,
