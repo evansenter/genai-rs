@@ -218,13 +218,30 @@ jobs:
           # includes; history lives in the issue's edit history and in the
           # uploaded summary.json artifacts.
           TITLE="CI Flakiness Report (rolling 7-day window)"
+          # Legacy date-stamped title, matched so the first run after this
+          # lands *adopts* the most recent existing report instead of filing
+          # a 16th alongside it. An equality-only selector could never match
+          # one (they are all titled "... - Week of <date>"), which would
+          # have reproduced the accumulation this change exists to stop, and
+          # would have made the `--title` retitle below permanently
+          # unreachable. `gh issue list` returns newest-first, so `first`
+          # picks the most recent.
+          LEGACY_PREFIX="CI Flakiness Report - Week of"
 
+          # No `2>/dev/null || echo ""`: a rate-limited or failing lookup
+          # would be indistinguishable from "no issue exists" and fall
+          # through to the create branch, forking the rolling issue. `set -e`
+          # is on, so a lookup error now fails the job instead.
+          #
+          # --limit 100 because the default is 30 and `ci-health` is shared
+          # with hand-filed issues; a backlog that size would otherwise push
+          # the rolling report out of the result set.
           EXISTING_ISSUE=$(gh issue list \
             --label "ci-health" \
             --state open \
+            --limit 100 \
             --json number,title \
-            --jq "[.[] | select(.title == \"$TITLE\") | .number] | first // empty" \
-            2>/dev/null || echo "")
+            --jq "[.[] | select(.title == \"$TITLE\" or (.title | startswith(\"$LEGACY_PREFIX\"))) | .number] | first // empty")
 
           if [ -n "$EXISTING_ISSUE" ]; then
             echo "Updating existing issue #$EXISTING_ISSUE"
