@@ -106,23 +106,36 @@ static LOUD_WIRE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// is a real invocation: a test that unconditionally removed the variable
 /// would leave the rest of the process running without it, changing what
 /// unrelated tests observe.
+#[must_use = "the guard releases the lock and restores LOUD_WIRE when dropped, \
+              so discarding it leaves the code that follows unserialized"]
 pub(crate) struct LoudWireGuard {
     _lock: Option<std::sync::MutexGuard<'static, ()>>,
     prior: Option<String>,
 }
 
 impl LoudWireGuard {
+    /// The one place the ambient value is read.
+    ///
+    /// Both constructors go through here so the restore-path test exercises
+    /// the same capture every production caller gets — two independent
+    /// `env::var` reads would let `acquire()` drift (capture after a
+    /// mutation, or not at all) with the test still green.
+    fn with_lock(lock: Option<std::sync::MutexGuard<'static, ()>>) -> Self {
+        Self {
+            _lock: lock,
+            prior: std::env::var("LOUD_WIRE").ok(),
+        }
+    }
+
     /// Takes the lock and records the ambient value.
     ///
     /// Poisoning is ignored deliberately: the lock orders access, it does not
     /// protect an invariant, so a panic in one holder should not cascade into
     /// unrelated failures.
     pub(crate) fn acquire() -> Self {
-        let lock = LOUD_WIRE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        Self {
-            _lock: Some(lock),
-            prior: std::env::var("LOUD_WIRE").ok(),
-        }
+        Self::with_lock(Some(
+            LOUD_WIRE_LOCK.lock().unwrap_or_else(|e| e.into_inner()),
+        ))
     }
 
     /// Same save/restore behavior, but without taking the lock — for a caller
@@ -134,16 +147,26 @@ impl LoudWireGuard {
     /// the guards under test with this.
     #[cfg(test)]
     fn nested() -> Self {
-        Self {
-            _lock: None,
-            prior: std::env::var("LOUD_WIRE").ok(),
-        }
+        Self::with_lock(None)
     }
 
     /// Sets `LOUD_WIRE` for the lifetime of this guard.
     pub(crate) fn set(&self, value: &str) {
         // SAFETY: test-only env mutation, serialized against every other
-        // LOUD_WIRE-sensitive test by the lock this guard holds.
+        // LOUD_WIRE *mutator* by the lock this guard holds.
+        //
+        // What the lock cannot exclude is a concurrent env *reader*. Building
+        // a `Client` also constructs a `reqwest::Client`, which reads
+        // `HTTP_PROXY`/`NO_PROXY` via `std::env::var`, and any test in the
+        // binary can be inside that call while this `setenv` runs — glibc may
+        // free the `environ` entry a concurrent `getenv` is still reading,
+        // which is the UB that made `set_var` unsafe in Rust 2024. No
+        // LOUD_WIRE-scoped lock can order that.
+        //
+        // Left as a note rather than fixed: these tests mutated the
+        // environment before this change and it strictly narrows the window,
+        // and nextest's process-per-test confines the hazard to plain
+        // `cargo test`.
         unsafe { std::env::set_var("LOUD_WIRE", value) };
     }
 
