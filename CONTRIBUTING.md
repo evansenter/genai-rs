@@ -9,8 +9,11 @@ cargo install cargo-nextest --locked
 ```
 
 **Linker**: `.cargo/config.toml` selects [mold](https://github.com/rui314/mold)
-for faster builds. Without it installed, every build fails before compiling
-anything, with a message that names the wrong tool:
+for faster builds. It scopes that to `[target.x86_64-unknown-linux-gnu]`, so
+on that target — and only that one — every build fails without mold
+installed, before compiling anything, with a message that names the wrong
+tool. On macOS or aarch64 Linux the config is inert, and the override below
+will not clear an unrelated linker error there:
 
 ```text
 error: linking with `cc` failed: exit status: 1
@@ -59,7 +62,12 @@ sources disagree, consistently in one direction — see D-004 in
    the tree that leads there; fetch two releases and diff them:
 
    ```bash
-   pip download --no-deps --no-binary :all: google-genai==2.17.0 google-genai==2.18.1
+   # One version per invocation — pip resolves a single version per package,
+   # so two pins in one command is a conflict rather than two downloads.
+   pip download --no-deps --no-binary :all: google-genai==2.17.0 -d /tmp/gg
+   pip download --no-deps --no-binary :all: google-genai==2.18.1 -d /tmp/gg
+   # --no-binary :all: is load-bearing: it is what yields the version-named
+   # sdist directories the diff below refers to.
    # unpack both, then:
    diff -ru google_genai-2.17.0/google/genai/_gaos/types/interactions \
             google_genai-2.18.1/google/genai/_gaos/types/interactions

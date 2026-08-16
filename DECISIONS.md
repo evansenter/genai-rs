@@ -49,7 +49,8 @@ unknowns rather than tolerate them.
 them with struct literals, every added field is a breaking change.
 
 **Decision.** Response structs carry `#[non_exhaustive]`, so they cannot be
-constructed outside the crate.
+constructed outside the crate. Stated as the rule; see the gap below for how
+far the tree currently follows it.
 
 **Consequences.** Users cannot hand-build a response to test against — which
 is the point:
@@ -62,12 +63,25 @@ For testing, users should use integration tests against the real API, or mock
 at the HTTP layer rather than the response-type layer.
 
 Since revision 2026-05-20, `InteractionResponse` derives `Default` and uses
-`#[serde(default)]`, so in-crate fixtures can be built with
-`..Default::default()`.
+`#[serde(default)]`, so fixtures can be built with `..Default::default()`.
+Note that `#[non_exhaustive]` does not block that form for a type that also
+derives `Default` — it blocks struct-literal and FRU syntax, not
+`T::default()` followed by public-field assignment. So this is not an
+in-crate privilege, and on the types below it is not restricted at all.
 
-**Known gap**: five response structs — `Trigger`, `TriggerExecution`,
-`Environment`, `Agent`, `Webhook` — do not carry the attribute, so adding a
-field to them *is* breaking. Tracked in #430.
+**Known gap**, wider than the rule suggests and including the flagship type.
+`InteractionResponse` (`src/response.rs:782`) does not carry the attribute:
+it derives `Default` and every field is `pub`, so it is constructible from
+outside the crate today and adding a field to it *is* breaking. Of that
+file's fourteen public structs only four carry it — `UsageMetadata`,
+`ModalityTokens`, `GroundingToolCount`, `StepSummary` and the `*Info` borrow
+types at `:477`/`:562`/`:652`/`:684`/`:700` do not. Beyond that file, the
+five resource shapes tracked in #430 (`Trigger`, `TriggerExecution`,
+`Environment`, `Agent`, `Webhook`) are in the same position.
+
+#430 asks for its own list to be treated as found-so-far rather than
+exhaustive, and its sweep checkbox is open — so this entry records the rule
+together with a backlog, not a rule the tree already satisfies.
 
 *Also stated as a rule in `docs/ENUM_WIRE_FORMATS.md` ("Structs and `#[non_exhaustive]`"), which does not mention the #430 gap named above.*
 
