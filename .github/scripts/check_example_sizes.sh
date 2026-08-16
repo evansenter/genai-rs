@@ -40,9 +40,7 @@ measure() {
         exit 1
     fi
 
-    local first=1
     {
-        echo "{"
         for f in "$dir"/*; do
             [ -f "$f" ] || continue
             local name
@@ -82,13 +80,27 @@ measure() {
             # one subcommand that would then not run on a macOS checkout — against
             # the whole reason this was extracted into a script.
             size=$(wc -c < "$f")
-            [ $first -eq 1 ] || echo ","
-            first=0
-            printf '  "%s": %s' "$name" "$size"
+            # Name and size as two raw lines, folded into an object by jq
+            # below. The previous version built the JSON by hand with
+            # `printf`, which did no escaping — a name containing a quote or a
+            # backslash emitted a malformed map, and `compare` then reported
+            # it as "the build under test is unmeasurable", a confusing
+            # diagnosis for what is really a naming problem. Not reachable
+            # from `examples/*.rs` stems, but this script already carries the
+            # same class of insurance for the threshold and both input shapes.
+            #
+            # `%d` rather than `%s` for the size: BSD `wc -c` pads with
+            # leading spaces, which `tonumber` would reject.
+            #
+            # The one assumption left is that a name contains no newline,
+            # which would desynchronise the pairing. Cargo target names cannot.
+            printf '%s\n%d\n' "$name" "$size"
         done
-        [ $first -eq 1 ] || echo
-        echo "}"
-    } > "$out"
+    } | jq -Rn '
+        [inputs] as $lines
+        | reduce range(0; ($lines | length); 2) as $i
+            ({}; .[$lines[$i]] = ($lines[$i + 1] | tonumber))
+    ' > "$out"
 
     local count
     count=$(jq 'length' < "$out")

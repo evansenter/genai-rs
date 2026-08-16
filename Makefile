@@ -29,6 +29,13 @@ test-all:
 # required when absent, so it does not become a second hard dependency for
 # contributors; ubuntu-latest ships it, so CI runs it with no workflow edit.
 #
+# `-S warning` because the runner's shellcheck is unpinned: new releases add
+# checks and promote optional ones, so at the default severity a runner image
+# bump could redden this job on a PR that touched no shell at all — the same
+# fires-on-toolchain-drift shape the size ceiling this PR replaces had. The
+# info/style tier is where most new checks land; everything indicating a real
+# defect is `warning` or above.
+#
 # Needs only bash and jq otherwise, so it runs in about a second — worth having at the edit rather than
 # only inside build-metrics, which starts with a `cargo clean`. Globbed, so a
 # new harness is picked up by dropping the file in — run through `bash`
@@ -48,7 +55,7 @@ test-scripts:
 	rc=0; \
 	if command -v shellcheck >/dev/null 2>&1; then \
 		echo "==> shellcheck"; \
-		shellcheck .github/scripts/*.sh .github/scripts/tests/*.sh || rc=1; \
+		shellcheck -S warning .github/scripts/*.sh .github/scripts/tests/*.sh || rc=1; \
 	else \
 		echo "==> shellcheck not installed, skipping lint"; \
 	fi; \
