@@ -162,7 +162,7 @@ roundtrip tests.
 | `google_search_result` | `Step::GoogleSearchResult` | `{"call_id": "...", "result": [GoogleSearchResultItem], "is_error"?: bool, "signature"?: "..."}` |
 | `mcp_server_tool_call` | `Step::McpServerToolCall` | **Modeled from spec, not observed** — see below. `{"id": "...", "name": "...", "server_name": "...", "arguments": {...}}` |
 | `mcp_server_tool_result` | `Step::McpServerToolResult` | **Modeled from spec, not observed** — see below. `{"call_id": "...", "name"?: "...", "server_name"?: "...", "result": <payload>}` |
-| `tool_call` | `Step::Unknown { step_type: "tool_call", .. }` | `{"id": "...", "signature"?: "..."}` — what MCP actually sends today (verified live 2026-08-16); unmodeled, so it lands in the fallback |
+| `tool_call` | `Step::Unknown { step_type: "tool_call", .. }` | `{"id": "...", "signature": "..."}` — observed for MCP interactions (verified live 2026-08-16, `signature` present); the generic tag, not MCP-specific, and unmodeled, so it lands in the fallback |
 | `file_search_call` | `Step::FileSearchCall` | `{"id": "...", "signature"?: "..."}` |
 | `file_search_result` | `Step::FileSearchResult` | `{"call_id": "...", "result": [FileSearchResultItem], "signature"?: "..."}` |
 | `google_maps_call` | `Step::GoogleMapsCall` | `{"id": "...", "arguments": {"queries": [...]}, "signature"?: "..."}` |

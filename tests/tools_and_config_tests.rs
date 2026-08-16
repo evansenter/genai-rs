@@ -837,15 +837,43 @@ mod mcp_server {
         // other than `Completed`, asserted above. So this weakens to
         // best-effort evidence of the round trip while keeping the
         // library-facing regression a hard failure.
-        if tool_tokens == 0 && !step_types.contains(&"mcp_server_tool_call") {
-            println!(
-                "Skipping: the interaction completed but shows no evidence the MCP \
-                 server was called (tool-use tokens 0, steps {step_types:?}). Either \
-                 the server is down or the model answered without it — neither is a \
-                 library regression."
-            );
+        // Evidence of a round trip, in both wire shapes: `tool_call` is what
+        // the API sends today, `mcp_server_tool_call` is what it is modeled
+        // to send once #433 lands. The second arm alone was dead by this
+        // PR's own measurement — checking only for a type documented three
+        // files over as never emitted.
+        let called = tool_tokens > 0
+            || step_types.contains(&"tool_call")
+            || step_types.contains(&"mcp_server_tool_call");
+
+        if called {
+            println!("MCP round trip confirmed: {tool_tokens} tool-use tokens, {step_types:?}");
             return;
         }
+
+        // The cost of this skip, stated rather than left to be rediscovered:
+        // an interaction that completes with no tool call is also what a
+        // silent MCP regression looks like (#265 becoming true again — the
+        // API accepts the tool, returns 200, and nothing gets through), and
+        // this reports it as a skip.
+        //
+        // It is not distinguishable from the response alone. A model that
+        // simply chose not to call the tool produces the identical shape,
+        // and that is ordinary LLM variability rather than a defect. The
+        // separating signal is whether `PUBLIC_MCP_SERVER` is reachable,
+        // which is a property of a third party rather than of this response
+        // — and probing it would mean pulling an HTTP client into
+        // dev-dependencies for one branch of one test.
+        //
+        // So the loud failures stay the ones that are unambiguously ours:
+        // the API rejecting the tool (the `Err` arm above) and a status
+        // other than `Completed`.
+        println!(
+            "Skipping: the interaction completed but shows no evidence the MCP \
+             server was called (tool-use tokens 0, steps {step_types:?}). Most \
+             likely the server is down or the model answered without it; a silent \
+             MCP regression would look the same from here."
+        );
     }
 
     /// Pins the wire shape the builder produces, with no network involved.
