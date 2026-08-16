@@ -97,11 +97,19 @@ fn response_structs_are_non_exhaustive() {
                  test modules is not a clean scan",
     );
     let test_modules = cfg_test_modules(&lib_rs);
-    assert!(
-        !test_modules.is_empty(),
-        "no #[cfg(test)] mod declarations found in lib.rs — the pattern this \
-         parses has changed, and test-only files would be scanned as API"
-    );
+    // Named explicitly rather than merely non-empty: a parser that matched
+    // some declarations and missed others would pass an is-empty check while
+    // scanning those files as public API. This is how the first version of
+    // this parser failed — it split on " mod ", which misses a line starting
+    // with `mod `, i.e. every declaration in this block.
+    for expected in ["content_tests", "proptest_tests", "response_tests"] {
+        assert!(
+            test_modules.contains(expected),
+            "lib.rs declares `#[cfg(test)] mod {expected};` but the parser did \
+             not find it — test-only files would be scanned as public API. \
+             Found: {test_modules:?}"
+        );
+    }
 
     // First pass: collect hand-written Deserialize targets across the whole
     // crate, since nothing requires the impl to live beside its type.
@@ -114,6 +122,13 @@ fn response_structs_are_non_exhaustive() {
             .to_string_lossy()
             .replace('\\', "/");
         if rel.contains("antigravity") {
+            continue;
+        }
+        // `src/NAME.rs`, or anything under `src/NAME/`, for a cfg-test NAME.
+        let stem = file.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let under_test_module = test_modules.contains(stem)
+            || test_modules.iter().any(|m| rel.contains(&format!("/{m}/")));
+        if under_test_module {
             continue;
         }
         let text =
@@ -351,7 +366,7 @@ pub struct AfterSemicolonGatedItem {}
     // impl living in a *different* file from its struct.
     let manual = BTreeSet::from(["ManualImpl".to_string(), "ImplInAnotherFile".to_string()]);
 
-    let (found, _) = offenders_and_exemptions_in("src/request.rs", fixture, &manual);
+    let (found, exempted) = offenders_and_exemptions_in("src/request.rs", fixture, &manual);
     let names: Vec<&str> = found
         .iter()
         .map(|f| f.rsplit(": ").next().unwrap())
@@ -406,10 +421,9 @@ pub struct AfterSemicolonGatedItem {}
          {found:?}"
     );
 
-    // The exemption set itself, which `offenders_in` discards — so the
-    // stale check has a fixture behind it rather than only ever being
+    // The exemption set, destructured from the same scan as `found` above —
+    // so the stale check has a fixture behind it rather than only ever being
     // observed passing on a clean tree.
-    let (_, exempted) = offenders_and_exemptions_in("src/request.rs", fixture, &manual);
     assert_eq!(
         exempted,
         BTreeSet::from(["src/request.rs:GenerationConfig".to_string()]),
@@ -418,7 +432,7 @@ pub struct AfterSemicolonGatedItem {}
     );
 
     // And the exemption is scoped: the same name elsewhere is not exempt.
-    let (elsewhere, _) = offenders_and_exemptions_in("src/response.rs", fixture, &manual);
+    let (elsewhere, none_here) = offenders_and_exemptions_in("src/response.rs", fixture, &manual);
     let elsewhere_names: Vec<&str> = elsewhere
         .iter()
         .map(|f| f.rsplit(": ").next().unwrap())
@@ -427,7 +441,6 @@ pub struct AfterSemicolonGatedItem {}
         elsewhere_names.contains(&"GenerationConfig"),
         "exemptions must be path-scoped, not global: {elsewhere:?}"
     );
-    let (_, none_here) = offenders_and_exemptions_in("src/response.rs", fixture, &manual);
     assert!(
         none_here.is_empty(),
         "and nothing is recorded as exempt at a path with no matching entry: \
@@ -453,8 +466,14 @@ fn cfg_test_modules(lib_rs: &str) -> BTreeSet<String> {
         let Some(next) = lines.get(index + 1) else {
             continue;
         };
-        // `mod x;`, `pub mod x;`, `pub(crate) mod x;`
-        let Some(rest) = next.trim_start().split(" mod ").nth(1) else {
+        // `mod x;` starts the line, while `pub mod x;` / `pub(crate) mod x;`
+        // do not — so match the keyword itself rather than a leading space.
+        let decl = next.trim_start();
+        let rest = if let Some(rest) = decl.strip_prefix("mod ") {
+            rest
+        } else if let Some(rest) = decl.split(" mod ").nth(1) {
+            rest
+        } else {
             continue;
         };
         if let Some(name) = rest.split([';', ' ', '{']).next()
