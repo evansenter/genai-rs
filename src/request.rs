@@ -525,7 +525,10 @@ pub struct GenerationConfig {
     /// TTS, multiple entries (each with a distinct `speaker` name matching
     /// the prompt) for multi-speaker TTS.
     ///
-    /// A legacy single-object wire form is still accepted on deserialize.
+    /// Three forms are accepted on deserialize, all normalizing to the list:
+    /// the list itself, a bare single object (legacy), and a
+    /// `{"speakers": [...]}` wrapper (the spec's `SpeakerConfig`). Only the
+    /// list is ever sent.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

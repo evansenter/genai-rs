@@ -760,7 +760,7 @@ accepted verbatim and returned a single combined `audio/l16` content block
 `include_input=true` GET parameter was observed to be a no-op — so the echo
 shape (list vs. single object) is unobservable.
 
-**Verified**: 2026-01-10 (flat single-object form) - Tested both formats in `test_speech_config_nested_format_fails_flat_succeeds`. Nested format fails with `no such field: 'voiceConfig'`. The **list** form is from the 2026-05-20 spec and is pending live verification; the legacy single-object form is still accepted on deserialize.
+**Verified**: 2026-01-10 (flat single-object form) - Tested both formats in `test_speech_config_nested_format_fails_flat_succeeds`. Nested format fails with `no such field: 'voiceConfig'`. The **list** form was verified live 2026-07 (multi-speaker TTS) and re-probed 2026-08-16 as the only form the API accepts on requests; the legacy single-object form and the `{"speakers": [...]}` wrapper are accepted on deserialize only.
 
 #### speech_config wire forms
 
