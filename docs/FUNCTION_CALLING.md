@@ -56,7 +56,6 @@ The simplest approach - define functions with the `#[tool]` attribute.
 ### Basic Usage
 
 ```rust,no_run
-use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 /// Gets the current weather for a city
@@ -72,11 +71,16 @@ fn get_time(timezone: String) -> String {
     format!(r#"{{"timezone": "{}", "time": "14:30"}}"#, timezone)
 }
 
-// Compile-checked in CI as a doctest, so this snippet cannot silently
-// rot. `#[tool]` needs no consumer-side `async-trait` / `serde_json`
-// dependency and no trait import; `tests/ui/pass_no_consumer_imports.rs`
-// pins that.
-let _declaration = GetWeatherCallable.declaration();
+// Note what is *not* imported: `#[tool]` needs no `async-trait` or
+// `serde_json` dependency and no `CallableFunction` in scope. This snippet
+// is compiled as a doctest, so it is the in-repo proof of that, alongside
+// `tests/ui/pass_no_consumer_imports.rs`.
+//
+// The generated free function avoids the trait import too. Calling
+// `GetWeatherCallable.declaration()` in method position also works, but
+// then `use genai_rs::CallableFunction;` is required — for that call, not
+// for the macro.
+let _declaration = get_weather_declaration();
 ```
 
 ### Auto-Discovery and Execution
