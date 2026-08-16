@@ -348,6 +348,20 @@ pub struct Webhook {
         deserialize_with = "crate::serde_util::deserialize_lenient_timestamp::<_, crate::serde_util::ForWebhook>"
     )]
     pub update_time: Option<DateTime<Utc>>,
+    /// Fields the API returned that this struct does not model, preserved
+    /// for roundtrip (Evergreen).
+    ///
+    /// Without this, a deserialize-then-serialize cycle silently drops any
+    /// field the crate has not modeled yet — invisible to the caller, and
+    /// unrecoverable. The resource was live-verified 2026-07, but verification is a
+    /// point-in-time snapshot, not a guarantee the shape stays fixed.
+    ///
+    /// A key that collides with a modeled field **wins on serialize** via
+    /// `serde_json::to_value`, matching the request-side escape hatches.
+    /// (`to_string` on a flattened struct emits both keys rather than
+    /// deduplicating; don't hand-serialize colliding keys.)
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 // Custom Debug that redacts the one-time signing secret (mirrors the
@@ -910,5 +924,40 @@ mod tests {
             data: json!("x.y"),
         };
         assert_eq!(unknown.to_string(), "x.y");
+    }
+
+    // --- Evergreen `extra` passthrough on response shapes (#406) ---
+
+    #[test]
+    fn webhook_preserves_unknown_response_fields() {
+        // `uri` and `subscribed_events` are non-optional and always
+        // serialize, so an exact-roundtrip fixture has to include them.
+        let wire = json!({
+            "uri": "https://example.com/hook",
+            "subscribed_events": ["interaction.completed"],
+            "id": "wh_1",
+            "future_field": {"retries": 3}
+        });
+
+        let webhook: Webhook = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(
+            webhook.extra.get("future_field"),
+            Some(&json!({"retries": 3}))
+        );
+        assert_eq!(serde_json::to_value(&webhook).unwrap(), wire);
+    }
+
+    #[test]
+    fn webhook_without_unknown_fields_has_empty_extra() {
+        let wire = json!({
+            "uri": "https://example.com/hook",
+            "subscribed_events": [],
+            "id": "wh_1"
+        });
+
+        let webhook: Webhook = serde_json::from_value(wire.clone()).unwrap();
+        assert!(webhook.extra.is_empty());
+        // An empty map must not add a key on serialize.
+        assert_eq!(serde_json::to_value(&webhook).unwrap(), wire);
     }
 }

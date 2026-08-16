@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Evergreen `extra` passthrough on response-side resource shapes.**
+  `Trigger`, `TriggerExecution`, `Environment`, `Agent`, and `Webhook` now
+  carry a flattened `extra` map, so a deserialize-then-serialize cycle no
+  longer silently drops fields the crate hasn't modeled.
+
+  `Content` and `RemoteEnvironment` already did this; the request bodies
+  gained it in 0.9.0. These five were the remaining hole, and `Trigger` /
+  `TriggerExecution` are the sharpest cases — trigger creation is agent-gated,
+  so their response shapes have never been live-verified and a field the API
+  returns today would be both invisible and unrecoverable.
+
+  As on the request side, a key colliding with a modeled field wins on
+  serialize via `serde_json::to_value`.
+
+### Changed
+
+- **Breaking:** the five structs above have a new `extra` field. All derive
+  `Default`, so exhaustive struct literals can add `..Default::default()`.
+  (These types are not `#[non_exhaustive]`, unlike the convention
+  `docs/ENUM_WIRE_FORMATS.md` documents for response structs — tracked
+  separately.)
+
 ## [0.10.0] - 2026-08-16
 
 ### Added

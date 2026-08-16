@@ -58,6 +58,20 @@ pub struct Agent {
     /// or a typed remote environment.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_environment: Option<EnvironmentSpec>,
+    /// Fields the API returned that this struct does not model, preserved
+    /// for roundtrip (Evergreen).
+    ///
+    /// Without this, a deserialize-then-serialize cycle silently drops any
+    /// field the crate has not modeled yet — invisible to the caller, and
+    /// unrecoverable. Agent creation is gated on a standard API key, so only the
+    /// GET/LIST shapes have been observed.
+    ///
+    /// A key that collides with a modeled field **wins on serialize** via
+    /// `serde_json::to_value`, matching the request-side escape hatches.
+    /// (`to_string` on a flattened struct emits both keys rather than
+    /// deduplicating; don't hand-serialize colliding keys.)
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Agent {
@@ -238,5 +252,47 @@ mod tests {
         assert_eq!(partial.agents.len(), 2);
         assert_eq!(partial.agents[0].id.as_deref(), Some("a1"));
         assert_eq!(partial.agents[1].id.as_deref(), Some("a2"));
+    }
+
+    // --- Evergreen `extra` passthrough on response shapes (#406) ---
+
+    #[test]
+    fn agent_preserves_unknown_response_fields() {
+        // Agent creation is API-key gated, so only GET/LIST shapes have been
+        // observed — an unmodeled field is entirely plausible here.
+        let wire = serde_json::json!({
+            "id": "agent_1",
+            "description": "test",
+            "future_capability": ["a", "b"]
+        });
+
+        let agent: Agent = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(
+            agent.extra.get("future_capability"),
+            Some(&serde_json::json!(["a", "b"]))
+        );
+        assert_eq!(serde_json::to_value(&agent).unwrap(), wire);
+    }
+
+    #[test]
+    fn agent_without_unknown_fields_has_empty_extra() {
+        let agent: Agent = serde_json::from_value(serde_json::json!({"id": "agent_1"})).unwrap();
+        assert!(agent.extra.is_empty());
+        assert_eq!(
+            serde_json::to_value(&agent).unwrap(),
+            serde_json::json!({"id": "agent_1"})
+        );
+    }
+
+    #[test]
+    fn agent_extra_survives_a_list_response() {
+        // The flatten must work through the list envelope too, not just on a
+        // directly-deserialized agent.
+        let wire = serde_json::json!({"agents": [{"id": "a1", "future": 1}]});
+        let list: AgentListResponse = serde_json::from_value(wire).unwrap();
+        assert_eq!(
+            list.agents[0].extra.get("future"),
+            Some(&serde_json::json!(1))
+        );
     }
 }
