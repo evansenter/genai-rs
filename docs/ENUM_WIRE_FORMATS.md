@@ -176,6 +176,32 @@ arguments at the **top level**, while the built-in tool calls
 flattens the nested forms into ergonomic fields (`urls: Vec<String>`,
 `queries: Vec<String>`, `language` + `code`).
 
+```rust
+use genai_rs::Step;
+use serde_json::json;
+
+// function_call: id/name/arguments at top level
+let step = Step::function_call("call_1", "get_weather", json!({"city": "Paris"}));
+let wire = serde_json::to_value(&step).unwrap();
+assert_eq!(wire["type"], "function_call");
+assert_eq!(wire["id"], "call_1");
+assert_eq!(wire["arguments"]["city"], "Paris");
+```
+
+Example `code_execution_call` wire format (nested `arguments`):
+
+```json
+{
+  "type": "code_execution_call",
+  "id": "exec_123",
+  "arguments": { "language": "python", "code": "print('Hello')" },
+  "signature": "ErIE..."
+}
+```
+
+`Step::Unknown` serializes back with the original `type` and all sibling
+fields intact (lossless roundtrip).
+
 #### MCP tool calls arrive as generic `tool_call` steps
 
 Verified live 2026-08-16 (`gemini-3.7-flash`, a real MCP server at
@@ -203,32 +229,6 @@ begin emitting them. Tracked in #433.
 For callers: check `step_summary().tool_call_count`, not
 `.mcp_server_tool_call_count`. The latter reads 0 on a successful MCP
 interaction.
-
-```rust
-use genai_rs::Step;
-use serde_json::json;
-
-// function_call: id/name/arguments at top level
-let step = Step::function_call("call_1", "get_weather", json!({"city": "Paris"}));
-let wire = serde_json::to_value(&step).unwrap();
-assert_eq!(wire["type"], "function_call");
-assert_eq!(wire["id"], "call_1");
-assert_eq!(wire["arguments"]["city"], "Paris");
-```
-
-Example `code_execution_call` wire format (nested `arguments`):
-
-```json
-{
-  "type": "code_execution_call",
-  "id": "exec_123",
-  "arguments": { "language": "python", "code": "print('Hello')" },
-  "signature": "ErIE..."
-}
-```
-
-`Step::Unknown` serializes back with the original `type` and all sibling
-fields intact (lossless roundtrip).
 
 ### Thought (step)
 

@@ -1475,6 +1475,36 @@ impl InteractionResponse {
     // File Search Step Helpers
     // =========================================================================
 
+    /// Whether the response contains generic `tool_call` steps.
+    ///
+    /// This is the one to check for MCP — see
+    /// [`tool_calls`](Self::tool_calls).
+    #[must_use]
+    pub fn has_tool_calls(&self) -> bool {
+        self.steps
+            .iter()
+            .any(|s| matches!(s, Step::ToolCall { .. }))
+    }
+
+    /// The generic `tool_call` steps, in order.
+    ///
+    /// These are server-side tool invocations the API does not further
+    /// identify, and they are what an MCP call arrives as — the endpoint
+    /// does not emit `mcp_server_tool_call` (verified live 2026-08-16). The
+    /// steps carry only an `id` and an optional `signature`, so which server
+    /// or tool ran is not recoverable; `usage.total_tool_use_tokens` is what
+    /// shows the call happened.
+    ///
+    /// Returned as whole steps rather than extracted ids, since the
+    /// `signature` is what a caller needs for stateless replay. See #433.
+    #[must_use]
+    pub fn tool_calls(&self) -> Vec<&Step> {
+        self.steps
+            .iter()
+            .filter(|s| matches!(s, Step::ToolCall { .. }))
+            .collect()
+    }
+
     /// Check if response contains file search results
     #[must_use]
     pub fn has_file_search_results(&self) -> bool {

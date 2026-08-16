@@ -366,7 +366,7 @@ pub enum Step {
     /// load-bearing here than elsewhere: this variant's premise is that its
     /// full shape is unproven, and this is the mechanism by which the missing
     /// identity would *stay* missing even once the API began sending it.
-    /// The #421 sweep is the intended detector.
+    /// The scheduled `api-surface-sweep` workflow is the intended detector.
     ToolCall {
         /// Unique ID for this call.
         id: String,
