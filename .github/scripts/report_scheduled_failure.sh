@@ -190,7 +190,7 @@ fi
   echo "- Most recent failing run: $RUN_URL"
   [ -n "$EXISTING" ] && streak_line "$EXISTING"
   echo "- This issue is opened by the workflow itself and **closes**"
-  echo "  automatically on the next successful run."
+  echo "  automatically on the next successful *scheduled* run."
   echo
   echo "$CONTEXT"
   echo

@@ -65,8 +65,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # From context, not a literal: this string is the join key
+          # between reporter and resolver (the issue title embeds it),
+          # and it was hand-copied across two files and four call sites
+          # with nothing checking they agreed. Edit one and updates land
+          # on one issue while closes target another.
+          SELF_WORKFLOW_NAME: ${{ github.workflow }}
         run: |
-          .github/scripts/report_scheduled_failure.sh "Security Audit" "$RUN_URL" \
+          .github/scripts/report_scheduled_failure.sh "$SELF_WORKFLOW_NAME" "$RUN_URL" \
             "**This is probably not an advisory.** On a scheduled run \`audit-check\`
           reports findings by opening one issue per advisory and leaves the run
           green, so a red run means the audit itself could not complete — a
@@ -75,20 +81,22 @@ jobs:
           look for the per-advisory issues instead; this issue tracks the
           monitoring, not the finding."
 
-      # Not gated on `schedule`, unlike the escalate step above. This
-      # workflow's cron is weekly, so with that gate the only thing that
-      # could close the issue was the next Sunday run: a push touching
-      # `Cargo.lock` on Monday could prove the audit works again and be
-      # ignored for six days, while the generated body promised it "closes
-      # automatically on the next successful run". A successful run is
-      # evidence of recovery whatever triggered it, and the resolver is
-      # already a clean no-op when nothing is open.
+      # Back to `schedule`, and this is the reasoning rather than the
+      # default. I widened it to any non-PR run so a Monday `Cargo.lock`
+      # push could clear an issue rather than leaving it open until Sunday —
+      # but a push cannot vouch for what failed. `audit-check` branches on
+      # the event: `schedule` takes `reportIssues`, everything else takes
+      # `reportCheck`. So the failure most specific to this workflow lives
+      # in a branch only a scheduled run executes, and a green push closing
+      # the issue would produce a weekly flap — green six days out of seven
+      # on exactly the mode the wider gate cannot observe.
       #
-      # `!= 'pull_request'` rather than unconditional: a fork PR gets a
-      # read-only GITHUB_TOKEN, so `gh issue close` would fail the job for a
-      # contributor who did nothing wrong.
+      # The rule, stated once for both workflows: a run may close the issue
+      # only if it exercises the same path as the run that opened it. The
+      # generated body says "scheduled run" to match.
       - name: Clear the failure issue once the run recovers
-        if: success() && github.event_name != 'pull_request'
+        if: success() && github.event_name == 'schedule'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: .github/scripts/resolve_scheduled_failure.sh "Security Audit"
+          SELF_WORKFLOW_NAME: ${{ github.workflow }}
+        run: .github/scripts/resolve_scheduled_failure.sh "$SELF_WORKFLOW_NAME"

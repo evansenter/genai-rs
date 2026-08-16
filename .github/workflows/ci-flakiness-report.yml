@@ -247,10 +247,29 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: .github/scripts/report_scheduled_failure.sh "CI Flakiness Report" "$RUN_URL"
+          # From context rather than a literal — see the note in
+          # `audit.yml`: this is the join key between reporter and
+          # resolver, and it was hand-copied with nothing checking it.
+          #
+          # `SELF_` because the collect step above has its own
+          # `WORKFLOW_NAME="Rust"`, meaning the workflow being *analyzed*.
+          # Different steps, so different shells and no real collision — but
+          # the same name for two opposite things is a trap for the reader.
+          SELF_WORKFLOW_NAME: ${{ github.workflow }}
+        run: .github/scripts/report_scheduled_failure.sh "$SELF_WORKFLOW_NAME" "$RUN_URL"
 
+      # `workflow_dispatch` too, unlike `audit.yml`'s resolve step — and the
+      # asymmetry is deliberate, not an oversight. The rule both files follow
+      # is that a run may close the issue only if it exercises the same path
+      # as the run that opened it. `audit-check` branches on the event, so a
+      # push cannot vouch for the scheduled path there. This job has no
+      # event-dependent branching, so a manual dispatch runs exactly what the
+      # cron runs — and a maintainer who fixes the report and dispatches it
+      # to confirm should not then watch the issue insist it is still failing
+      # until 09:00 the next day.
       - name: Clear the failure issue once the run recovers
-        if: success() && github.event_name == 'schedule'
+        if: success() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: .github/scripts/resolve_scheduled_failure.sh "CI Flakiness Report"
+          SELF_WORKFLOW_NAME: ${{ github.workflow }}
+        run: .github/scripts/resolve_scheduled_failure.sh "$SELF_WORKFLOW_NAME"
