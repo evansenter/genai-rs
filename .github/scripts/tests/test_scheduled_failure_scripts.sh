@@ -38,7 +38,21 @@ if [ "\$1 \$2" = "issue list" ]; then
   exit 0
 fi
 if [ "\$1 \$2" = "issue view" ]; then
-  echo '$view_json'
+  # Honour --jq here too: the script reads \`--json body --jq .body\`, and a
+  # stub that ignored the filter would hand back raw JSON, making the
+  # annotation assertions fail for a reason that has nothing to do with the
+  # script.
+  prev=""
+  filter=""
+  for a in "\$@"; do
+    [ "\$prev" = "--jq" ] && filter="\$a"
+    prev="\$a"
+  done
+  if [ -n "\$filter" ]; then
+    echo '$view_json' | jq -r "\$filter"
+  else
+    echo '$view_json'
+  fi
   exit 0
 fi
 echo "GH-CALL: \$*" >&2
@@ -150,6 +164,51 @@ run_script "report_scheduled_failure.sh" "$SCRIPTS/report_scheduled_failure.sh" 
   "CI Flakiness Report" "https://example/run/1"
 check "streak: a recovery resets the count" \
   "Failing since 2026-06-10 — 2 consecutive scheduled runs" "$out"
+
+# --- Streak: past the API's one-page comment limit the count is computed
+#     over a window, not the history, so the claim is capped rather than
+#     stated as fact. A confident wrong number is the failure this line was
+#     added to avoid.
+python3 - > "$WORK/capped.json" <<'PY'
+import json
+print(json.dumps({
+    "createdAt": "2026-05-01T00:00:00Z",
+    "comments": [{"body": "Still failing: x", "createdAt": "2026-05-02T00:00:00Z"}] * 100,
+}))
+PY
+make_gh_stub "[{\"title\":\"$TITLE_FLAKY\",\"number\":77}]" "$(cat "$WORK/capped.json")"
+run_script "report_scheduled_failure.sh" "$SCRIPTS/report_scheduled_failure.sh" \
+  "CI Flakiness Report" "https://example/run/1"
+check "streak: caps the claim at the page boundary" "Failing for at least" "$out"
+if grep -q "Failing since 2026-05-01 —" <<<"$out"; then
+  echo "FAIL - streak: stated an exact streak it cannot support"
+  failures=$((failures + 1))
+else
+  echo "ok   - streak: does not state an exact figure past the page boundary"
+fi
+
+# --- The body edit overwrites, so anything a maintainer added must be
+#     carried across. Losing it silently is worse than not offering the
+#     affordance at all.
+make_gh_stub "[{\"title\":\"$TITLE_FLAKY\",\"number\":77}]" \
+  '{"createdAt":"2026-05-01T00:00:00Z","comments":[],
+    "body":"old generated text\n<!-- Generated above; anything you add below this line is preserved. -->\nRoot cause is the retention change, tracked in #500."}'
+run_script "report_scheduled_failure.sh" "$SCRIPTS/report_scheduled_failure.sh" \
+  "CI Flakiness Report" "https://example/run/1"
+check "annotations: carried across the body rewrite" "tracked in #500" "$out"
+if grep -q "old generated text" <<<"$out"; then
+  echo "FAIL - annotations: kept stale generated text from above the marker"
+  failures=$((failures + 1))
+else
+  echo "ok   - annotations: text above the marker is regenerated, not preserved"
+fi
+
+# --- The marker must exist on a fresh issue too, or the first annotator has
+#     nowhere to write that survives.
+make_gh_stub '[]'
+run_script "report_scheduled_failure.sh" "$SCRIPTS/report_scheduled_failure.sh" \
+  "CI Flakiness Report" "https://example/run/1"
+check "annotations: a new issue ships the marker" "anything you add below this line is preserved" "$out"
 
 # --- The third argument replaces the default body paragraph. `audit.yml`
 #     relies on this to avoid pointing a reader at CI health.
