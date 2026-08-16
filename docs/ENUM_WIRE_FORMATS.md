@@ -762,6 +762,42 @@ shape (list vs. single object) is unobservable.
 
 **Verified**: 2026-01-10 (flat single-object form) - Tested both formats in `test_speech_config_nested_format_fails_flat_succeeds`. Nested format fails with `no such field: 'voiceConfig'`. The **list** form is from the 2026-05-20 spec and is pending live verification; the legacy single-object form is still accepted on deserialize.
 
+#### speech_config wire forms
+
+`google-genai` 2.18.x widened `generation_config.speech_config` from a plain
+list to `SpeakerConfig | List[SpeechConfig]`. **The Gemini API does not
+accept the object arm** (verified live 2026-08-16 against
+`gemini-2.5-pro-preview-tts`):
+
+```
+400 The value is invalid for 'generation_config.speech_config'.
+    Expected an array, got object.
+```
+
+Both `{"speakers": [...]}` and the legacy `{voice, language, speaker}` single
+object are rejected on send — same class as `Tool::Retrieval` and
+`safety_settings`, where the generated bindings describe a broader surface
+than this endpoint implements.
+
+The crate therefore **always sends the list**, and accepts all three forms on
+deserialize:
+
+| Wire | Normalized to |
+|------|---------------|
+| `[{voice, ...}, ...]` | itself |
+| `{"speakers": [...]}` | the inner list |
+| `{voice, language, speaker}` | a one-element list |
+
+Deserialize leniency is not academic: a `GenerationConfig` also arrives
+nested inside a `Trigger`'s stored interaction, which may have been created
+by another SDK using an object form.
+
+**Ordering caveat for maintainers**: `SpeechConfig`'s fields are all optional
+and serde ignores unknown keys, so `{"speakers": [...]}` matches an untagged
+single-`SpeechConfig` arm perfectly well — producing an all-`None` config and
+silently discarding the speakers. The `Speakers` arm must be tried before
+`Single`, and its field must stay required.
+
 ### Audio Response (TTS output)
 
 TTS responses return audio content (inside a `model_output` step) with a

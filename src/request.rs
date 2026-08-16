@@ -672,8 +672,29 @@ impl TranscriptionConfig {
     }
 }
 
-/// Deserializes `speech_config` from either the spec list form or the legacy
-/// single-object form.
+/// Deserializes `speech_config` from any of its three observed wire forms,
+/// normalizing all of them to the list the crate models.
+///
+/// | Wire | Source |
+/// |------|--------|
+/// | `[{voice, language, speaker}, ...]` | the spec list form; the only one the Gemini API accepts |
+/// | `{"speakers": [...]}` | `SpeakerConfig`, added to the union in `google-genai` 2.18.x |
+/// | `{voice, language, speaker}` | legacy single-object form |
+///
+/// The Gemini API rejects both object forms on **send** — `400 The value is
+/// invalid for 'generation_config.speech_config'. Expected an array, got
+/// object.` (verified live 2026-08-16) — so this leniency is deserialize-only
+/// and the crate keeps emitting the list. It still matters: a
+/// `GenerationConfig` also arrives nested inside a `Trigger`'s stored
+/// interaction, which may have been created by another SDK using the object
+/// form.
+///
+/// Variant order is load-bearing. `SpeechConfig`'s fields are all optional
+/// and serde ignores unknown keys, so `{"speakers": [...]}` matches the
+/// `Single` arm perfectly well — yielding an all-`None` config and
+/// **silently discarding the speakers**. `Speakers` must therefore be tried
+/// first, and its field must stay required so a genuine single object still
+/// falls through to `Single`.
 fn deserialize_speech_configs<'de, D>(
     deserializer: D,
 ) -> Result<Option<Vec<SpeechConfig>>, D::Error>
@@ -682,15 +703,17 @@ where
 {
     #[derive(Deserialize)]
     #[serde(untagged)]
-    enum ListOrSingle {
+    enum SpeechConfigWire {
         List(Vec<SpeechConfig>),
+        // Must precede `Single` — see the doc comment above.
+        Speakers { speakers: Vec<SpeechConfig> },
         Single(SpeechConfig),
     }
 
     Ok(
-        Option::<ListOrSingle>::deserialize(deserializer)?.map(|value| match value {
-            ListOrSingle::List(list) => list,
-            ListOrSingle::Single(single) => vec![single],
+        Option::<SpeechConfigWire>::deserialize(deserializer)?.map(|value| match value {
+            SpeechConfigWire::List(list) | SpeechConfigWire::Speakers { speakers: list } => list,
+            SpeechConfigWire::Single(single) => vec![single],
         }),
     )
 }

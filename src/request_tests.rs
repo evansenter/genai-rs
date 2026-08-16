@@ -939,3 +939,82 @@ fn test_request_with_webhook_config_and_environment_wire_shape() {
     assert!(back.webhook_config.is_some());
     assert!(back.environment.is_some());
 }
+
+// --- speech_config wire forms (#420) ---
+//
+// The Gemini API accepts only the list form on send (verified live
+// 2026-08-16: both object forms return "Expected an array, got object").
+// These cover the deserialize side, which must absorb all three because a
+// GenerationConfig also arrives nested inside a stored Trigger interaction.
+
+#[test]
+fn speech_config_accepts_list_form() {
+    let json = serde_json::json!({
+        "speech_config": [{"voice": "Kore", "speaker": "Narrator"}]
+    });
+    let config: GenerationConfig = serde_json::from_value(json).unwrap();
+
+    let configs = config.speech_config.expect("speech_config should parse");
+    assert_eq!(configs.len(), 1);
+    assert_eq!(configs[0].voice.as_deref(), Some("Kore"));
+    assert_eq!(configs[0].speaker.as_deref(), Some("Narrator"));
+}
+
+#[test]
+fn speech_config_accepts_speakers_object_form() {
+    // `SpeakerConfig` from google-genai 2.18.x. Before this was handled, the
+    // untagged `Single` arm matched it and produced an all-None config,
+    // silently discarding every speaker.
+    let json = serde_json::json!({
+        "speech_config": {"speakers": [
+            {"voice": "Kore", "speaker": "Alice"},
+            {"voice": "Puck", "speaker": "Bob"}
+        ]}
+    });
+    let config: GenerationConfig = serde_json::from_value(json).unwrap();
+
+    let configs = config.speech_config.expect("speech_config should parse");
+    assert_eq!(configs.len(), 2, "both speakers must survive");
+    assert_eq!(configs[0].voice.as_deref(), Some("Kore"));
+    assert_eq!(configs[1].speaker.as_deref(), Some("Bob"));
+}
+
+#[test]
+fn speech_config_accepts_legacy_single_object_form() {
+    // Must still fall through to `Single` rather than being caught by the
+    // `Speakers` arm added above.
+    let json = serde_json::json!({"speech_config": {"voice": "Charon"}});
+    let config: GenerationConfig = serde_json::from_value(json).unwrap();
+
+    let configs = config.speech_config.expect("speech_config should parse");
+    assert_eq!(configs.len(), 1);
+    assert_eq!(configs[0].voice.as_deref(), Some("Charon"));
+}
+
+#[test]
+fn speech_config_object_forms_normalize_to_the_list_on_serialize() {
+    // Whatever form came in, the crate emits the list — the only form the
+    // Gemini API accepts.
+    let json = serde_json::json!({"speech_config": {"speakers": [{"voice": "Kore"}]}});
+    let config: GenerationConfig = serde_json::from_value(json).unwrap();
+
+    let out = serde_json::to_value(&config).unwrap();
+    assert!(
+        out["speech_config"].is_array(),
+        "speech_config must serialize as an array, got {}",
+        out["speech_config"]
+    );
+    assert_eq!(out["speech_config"][0]["voice"], "Kore");
+}
+
+#[test]
+fn speech_config_empty_speakers_object_yields_empty_list_not_a_null_config() {
+    let json = serde_json::json!({"speech_config": {"speakers": []}});
+    let config: GenerationConfig = serde_json::from_value(json).unwrap();
+
+    let configs = config.speech_config.expect("speech_config should parse");
+    assert!(
+        configs.is_empty(),
+        "an empty speakers list should stay empty, not become one blank config"
+    );
+}
