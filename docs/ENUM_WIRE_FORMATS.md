@@ -598,13 +598,19 @@ Used in image and video content for quality vs. token cost trade-off.
 ```json
 {
   "input": [{
-    "type": "image",
-    "data": "base64...",
-    "mime_type": "image/png",
-    "resolution": "low"
+    "type": "user_input",
+    "content": [{
+      "type": "image",
+      "data": "base64...",
+      "mime_type": "image/png",
+      "resolution": "low"
+    }]
   }]
 }
 ```
+
+(`resolution` sits on the content block; the surrounding `user_input` step
+is the shape requests send — see [InteractionInput](#interactioninput-requestresponse-input).)
 
 | Rust Enum | Wire Value |
 |-----------|------------|

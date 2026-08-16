@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **`InteractionInput::Content` is now sent as a single `user_input` step**
+- **BREAKING**: **`InteractionInput::Content` is now sent as a single
+  `user_input` step**
   rather than as a bare content array. Both are valid arms of the API's input
   union, but only the step form accepts video `processing` — the identical
   content in a bare array is rejected with
@@ -33,7 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   server sent — still re-serializes in the shape it arrived in. A request's
   `Content` input does now deserialize back as
   `InteractionInput::Steps(vec![Step::user_input(..)])`, since the two are
-  indistinguishable once serialized. (#427)
+  indistinguishable once serialized. Marked breaking for that reason rather
+  than for a signature change — there is none — since anyone who persists a
+  built `InteractionRequest` and matches on `input` after reloading it now
+  takes a different branch. (#427)
 
 ## [0.10.0] - 2026-08-16
 

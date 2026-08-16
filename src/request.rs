@@ -306,6 +306,12 @@ fn serialize_request_input<S>(input: &InteractionInput, serializer: S) -> Result
 where
     S: Serializer,
 {
+    // Exhaustive rather than a catch-all `other =>`, even though
+    // `InteractionInput` is `#[non_exhaustive]`: within the defining crate the
+    // exhaustive match still compiles, so adding an arm to that enum breaks
+    // the build *here* and forces a wrap-or-not decision. A catch-all would
+    // silently default every future arm to the type's own serialization —
+    // probably the right answer most of the time, but arrived at by omission.
     match input {
         InteractionInput::Content(c) => {
             use serde::ser::SerializeSeq;
@@ -313,7 +319,7 @@ where
             seq.serialize_element(&UserInputRef { content: c })?;
             seq.end()
         }
-        other => other.serialize(serializer),
+        InteractionInput::Text(_) | InteractionInput::Steps(_) => input.serialize(serializer),
     }
 }
 
