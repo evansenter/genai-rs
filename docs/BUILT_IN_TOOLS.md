@@ -547,7 +547,7 @@ let config = McpServerConfig::new("filesystem", "https://mcp.example.com/fs")
     ]);
 ```
 
-MCP activity appears in `response.steps` as `Step::McpServerToolCall { name, server_name, arguments, .. }` and `Step::McpServerToolResult { .. }`.
+MCP activity is *modeled* in `response.steps` as `Step::McpServerToolCall { name, server_name, arguments, .. }` and `Step::McpServerToolResult { .. }` — but see the note below: that is not what the API sends today.
 
 > **Not what the API sends today.** Verified live on 2026-08-16: MCP calls
 > arrive as generic `tool_call` steps carrying only `{id, signature, type}`,

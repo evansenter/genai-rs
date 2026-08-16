@@ -1668,7 +1668,8 @@ impl InteractionResponse {
     /// Tool use tokens represent overhead from function calling.
     /// Declaring a tool without using it does not count — measured
     /// 2026-08-16 — so a non-zero value means a tool was actually invoked.
-    /// Returns `None` if usage metadata is not available or tools weren't used.
+    /// Returns `None` when usage metadata is absent, or when the API omitted
+    /// the field — not when tools went unused, which yields `Some(0)`.
     #[must_use]
     pub fn tool_use_tokens(&self) -> Option<u32> {
         self.usage.as_ref().and_then(|u| u.total_tool_use_tokens)
@@ -1739,11 +1740,16 @@ pub struct StepSummary {
     /// Number of `url_context_result` steps
     pub url_context_result_count: usize,
     /// Number of `mcp_server_tool_call` steps
+    ///
     /// Not currently emitted by the API: MCP calls arrive as generic
     /// `tool_call` steps, so this reads 0 even on a successful call.
     /// Use `usage.total_tool_use_tokens` instead. Tracked in #433.
     pub mcp_server_tool_call_count: usize,
     /// Number of `mcp_server_tool_result` steps
+    ///
+    /// Reads 0 for the same reason as
+    /// [`Self::mcp_server_tool_call_count`] — the API emits neither of the
+    /// pair today.
     pub mcp_server_tool_result_count: usize,
     /// Number of `file_search_call` steps
     pub file_search_call_count: usize,
