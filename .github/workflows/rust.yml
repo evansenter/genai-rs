@@ -554,8 +554,16 @@ jobs:
         # changes what gets linked and measured.
         #
         # This also shifts every other example's size, since they now link an
-        # antigravity-enabled lib. Harmless: baseline and PR are measured by
-        # this same step, so both sides move together.
+        # antigravity-enabled lib. Harmless in the steady state — baseline and
+        # PR are measured by this same step, so both sides move together — but
+        # not across the edit that changes this line. The baseline artifact
+        # was measured at whatever feature set this step had on the last main
+        # push, so the PR that adds or drops a feature here compares new-set
+        # sizes against old-set ones, and a change of this size shifts every
+        # example at once: expect the whole table to trip, not one target, and
+        # nothing in it to hint that the feature flag is the cause. Waive that
+        # one PR with `size-growth-ok` and push a commit; the next main push
+        # republishes at the new feature set and it self-clears.
         run: |
           start=$(date +%s)
           cargo build --release --examples --features antigravity

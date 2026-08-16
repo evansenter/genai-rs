@@ -113,7 +113,11 @@ ARTIFACT_ZIP="/tmp/artifact_$$.zip"
 # now (SC2064). No behavioural difference today — all three are set above and
 # never reassigned — but a later edit that reassigns one would otherwise leave
 # the original temp file behind.
-# shellcheck disable=SC2317  # the trap body is reachable, just not statically
+# Insurance for a bare `shellcheck` run, not for this repo's gate: SC2317 is
+# info-severity and `make test-scripts` runs `-S warning`, so it is filtered
+# out before this directive is consulted. Kept so a contributor linting this
+# file directly does not see a false positive on the trap body.
+# shellcheck disable=SC2317
 trap 'rm -f "$PREV_24H_FILE" "$PREV_7D_FILE" "$ARTIFACT_ZIP"' EXIT
 
 HAS_24H=false
