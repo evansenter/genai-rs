@@ -536,13 +536,19 @@ halves too, so a regression of that kind would land in the unmarked
 branch. Leaving it unmarked is a recorded call, not an oversight — the
 alternative annotates every run on an un-allowlisted key indefinitely.
 
-A skip reached from a catch-all branch is marked, however stable its
-cause may turn out to be. The MCP `Err`-arm skip is the example: it fires
-on any error its triage guard did not recognise, so it cannot tell a
-third-party outage from a rejection phrased in words the guard misses. A
-permanently unreachable server is every bit as stable as an un-allowlisted
-key — what separates them is that one of the two branches could be hiding
-a real regression.
+A skip that cannot tell a benign cause from a regression is marked,
+however stable its cause may turn out to be. The two MCP skips are the
+examples, and they get there differently. The `Err`-arm one is a
+catch-all: it fires on any error the triage guard did not recognise, so it
+cannot separate a third-party outage from a rejection phrased in words the
+guard misses. The Ok-path one fires on a fully-recognised condition — the
+interaction completed with no tool evidence — but a model that simply
+chose not to call the tool and a silently broken tool produce the
+identical response, so it cannot separate those either.
+
+A permanently unreachable server is every bit as stable as an
+un-allowlisted key. What separates them is not stability but whether the
+branch could be hiding a real regression.
 
 ### Test Fixtures
 

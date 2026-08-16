@@ -1037,6 +1037,16 @@ mod computer_use {
             response.status
         );
 
+        // Asserted, not tolerated — unlike the MCP test, where a model that
+        // simply declined to use the declared tool is treated as ordinary
+        // variability and reported as a marked skip. The difference is the
+        // prompt: this one asks about live page state the model cannot know
+        // a priori (see the comment on it above), so answering without the
+        // tool is not a plausible alternative the way "explain this repo" is
+        // for deepwiki. If this ever does flake on variability, the fix is a
+        // more unanswerable prompt rather than widening the tolerance —
+        // relaxing it would leave the test unable to fail on the #306 shape
+        // it exists for.
         assert_eq!(
             response.status,
             InteractionStatus::RequiresAction,
