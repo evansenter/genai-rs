@@ -37,7 +37,6 @@ jobs:
         with:
           path: genai-rs
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - name: Install mold linker
         timeout-minutes: 5
         run: sudo apt-get update || true; sudo apt-get install -y mold
@@ -47,30 +46,45 @@ jobs:
           set -euo pipefail
           mkdir -p consumer/src
 
-          # Path dependencies, not the published crate: this must fail on an
-          # unreleased codegen change, which is the whole point.
+          # The dependency list is *extracted from README.md*, not copied
+          # from it. A hand-copied duplicate makes this job blind in the one
+          # direction that matters: someone edits the Installation snippet to
+          # drop `async-trait` — believing #402 is fixed, the exact mistake
+          # this job exists to catch — the `README.md` path filter fires, the
+          # job rebuilds its own hardcoded list, and it goes green while the
+          # README documents a set that does not compile.
           #
-          # The dependency set mirrors README.md's Installation snippet. If
-          # that snippet and this list drift apart, this job is testing
-          # something users are not doing.
-          cat > consumer/Cargo.toml <<'TOML'
-          [package]
-          name = "consumer"
-          version = "0.1.0"
-          edition = "2024"
+          # Only the two `genai-rs*` lines are rewritten, to path deps: this
+          # must fail on an unreleased codegen change, which is the point.
+          awk '/^```toml$/ { grab = 1; next } /^```$/ { if (grab) exit } grab' \
+            genai-rs/README.md > readme-deps.toml
+          if ! grep -q '^\[dependencies\]' readme-deps.toml; then
+            echo "::error::Could not extract the Installation snippet from README.md."
+            echo "This job would otherwise scaffold an empty dependency set and pass."
+            exit 1
+          fi
+          sed -e 's|^genai-rs = .*|genai-rs = { path = "../genai-rs" }|' \
+              -e 's|^genai-rs-macros = .*|genai-rs-macros = { path = "../genai-rs/genai-rs-macros" }|' \
+              readme-deps.toml > deps.toml
+          echo "--- dependency set, as documented ---"
+          cat deps.toml
 
-          [dependencies]
-          genai-rs = { path = "../genai-rs" }
-          genai-rs-macros = { path = "../genai-rs/genai-rs-macros" }
-          tokio = { version = "1.0", features = ["full"] }
-          async-trait = "0.1"
-          serde_json = "1.0"
-          TOML
+          {
+            echo '[package]'
+            echo 'name = "consumer"'
+            echo 'version = "0.1.0"'
+            echo 'edition = "2024"'
+            echo
+            cat deps.toml
+          } > consumer/Cargo.toml
 
           # `use genai_rs::CallableFunction;` is required because the
           # generated code calls the trait method `declaration()` unqualified
-          # (codegen.rs:241). README lines 99-104 document this; when #402
-          # lands, this import comes out and the minimal job below takes over.
+          # — see the `#callable_struct_name::new().declaration()` call in
+          # `generate_declaration_function`. The `> **Note**:` block under
+          # README Installation documents it. Anchors rather than line
+          # numbers, which go stale silently. When #402 lands this import
+          # comes out and the minimal job below takes over.
           cat > consumer/src/main.rs <<'RUST'
           use genai_rs::CallableFunction;
           use genai_rs_macros::tool;
@@ -82,22 +96,50 @@ jobs:
           }
 
           fn main() {
-              // Exercise both halves of what the macro emits: the free
-              // declaration function and the inventory-registered factory.
+              // Both halves of what the macro emits, actually called. The
+              // factory was previously compiled and never invoked, so a
+              // codegen change that compiled but registered nothing would
+              // still have passed.
               let declaration = get_weather_declaration();
               assert_eq!(declaration.name(), "get_weather");
+
+              // Exercises the `Box<dyn CallableFunction>` construction and
+              // the trait-object dispatch the registry itself uses.
+              // `get_global_function_registry()` is `pub(crate)`, so this is
+              // as close as a consumer can get to asserting registration.
+              let factory = get_weather_callable_factory();
+              assert_eq!(factory.declaration().name(), "get_weather");
+
               println!("ok: {}", declaration.name());
           }
           RUST
 
+      # After scaffolding, and pointed at where the artifacts actually
+      # land: the default `. -> target` resolves to $GITHUB_WORKSPACE/target,
+      # which never exists here, so every run recompiled genai-rs and its
+      # whole tree from source.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: consumer -> target
       - name: Build and run
+        id: build
         working-directory: consumer
+        env:
+          # The mold install above is otherwise inert here: cargo config
+          # discovery walks up from the build directory, and the checkout is
+          # at `genai-rs/` while the build runs in `consumer/`, so
+          # `genai-rs/.cargo/config.toml` is never on that path.
+          RUSTFLAGS: -C link-arg=-fuse-ld=mold
         run: |
           set -euo pipefail
           cargo run
 
+      # Scoped to the build. A bare `failure()` also matches `checkout` and
+      # the apt install, so a transient mirror flake would emit the most
+      # misleading annotation available on a job whose whole value is that
+      # its red means one specific thing.
       - name: Explain a failure
-        if: failure()
+        if: failure() && steps.build.conclusion == 'failure'
         run: |
           echo "::error::A fresh consumer crate failed to compile a #[tool] function."
           echo "This is the failure class that cannot reproduce inside the workspace."
@@ -117,7 +159,6 @@ jobs:
         with:
           path: genai-rs
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - name: Install mold linker
         timeout-minutes: 5
         run: sudo apt-get update || true; sudo apt-get install -y mold
@@ -152,6 +193,13 @@ jobs:
           }
           RUST
 
+      # After scaffolding, and pointed at where the artifacts actually
+      # land: the default `. -> target` resolves to $GITHUB_WORKSPACE/target,
+      # which never exists here, so every run recompiled genai-rs and its
+      # whole tree from source.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: minimal -> target
       - name: Build
         id: build
         working-directory: minimal
