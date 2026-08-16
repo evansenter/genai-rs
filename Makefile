@@ -1,7 +1,7 @@
-.PHONY: check fmt clippy test test-all docs clean
+.PHONY: check fmt clippy test test-all test-scripts docs clean
 
-# Pre-push gate: format check + lint + unit tests
-check: fmt clippy test
+# Pre-push gate: format check + lint + unit tests + the CI script harnesses
+check: fmt clippy test test-scripts
 
 # Check formatting
 fmt:
@@ -19,6 +19,20 @@ test:
 # Doctests excluded locally - they add compile overhead and CI catches them
 test-all:
 	cargo nextest run --run-ignored all
+
+# Fixture tests for the shell scripts in .github/scripts/. Needs only bash
+# and jq, so it runs in about a second — worth having at the edit rather than
+# only inside build-metrics, which starts with a `cargo clean`. Globbed, so a
+# new harness is picked up by dropping the file in.
+test-scripts:
+	@found=0; \
+	for t in .github/scripts/tests/*.sh; do \
+		[ -e "$$t" ] || continue; \
+		found=1; \
+		echo "==> $$t"; \
+		"$$t" || exit 1; \
+	done; \
+	[ "$$found" -eq 1 ] || echo "no script harnesses in .github/scripts/tests/"
 
 # Build documentation with warnings as errors (all features + the docs.rs
 # feature set, which differ on strict-unknown). The mirror build uses its

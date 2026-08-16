@@ -512,8 +512,11 @@ jobs:
       # behaviours are all comparisons it either makes or silently declines
       # to make — including the mode where it compares nothing and reports
       # "all examples within threshold". Fixtures, so that stays checked.
-      - name: Test the size-check script
-        run: .github/scripts/tests/test_check_example_sizes.sh
+      # Via the make target, so CI runs exactly what a contributor runs
+      # locally — and so a harness added later is picked up here by the glob
+      # rather than needing a second edit that is easy to forget.
+      - name: Test the CI shell scripts
+        run: make test-scripts
 
       - uses: dtolnay/rust-toolchain@stable
       - name: Install mold linker
@@ -521,12 +524,18 @@ jobs:
         timeout-minutes: 5
         run: sudo apt-get update || true; sudo apt-get install -y mold
       - name: Clean build time
+        # Same feature set as `Build examples` below, for two reasons. The
+        # reported number should describe the build everything downstream is
+        # measured at — otherwise this row is a plain-default build while the
+        # sizes come from an antigravity one. And a different feature set is a
+        # different metadata hash, so without this the lib would be compiled
+        # twice per run: once here, once again for the examples.
         run: |
           echo "## Build Metrics" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           cargo clean
           start=$(date +%s)
-          cargo build --release
+          cargo build --release --features antigravity
           end=$(date +%s)
           duration=$((end - start))
           echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
@@ -616,9 +625,17 @@ jobs:
           # artifact self-clears on the next main push; a dropped
           # `actions: read` or a rate-limited token does not, and would look
           # like the benign first-PR case every time.
+          #
+          # stderr is deliberately not suppressed here (it still is on the
+          # download below, where a missing artifact is the expected case).
+          # The warning tells the reader to check permissions and rate limits;
+          # gh's own message is what actually distinguishes those, so
+          # discarding it would send them looking for something the log had
+          # already thrown away. `RUN_IDS` captures stdout only, so letting
+          # stderr through cannot contaminate the id list.
           if ! RUN_IDS=$(gh run list --workflow Rust --branch main --status completed \
-              --limit 10 --json databaseId --jq '.[].databaseId // empty' 2>/dev/null); then
-            echo "::warning::Could not list main runs — the baseline lookup failed rather than finding nothing. Check the actions:read permission and rate limits."
+              --limit 10 --json databaseId --jq '.[].databaseId // empty'); then
+            echo "::warning::Could not list main runs — the baseline lookup failed rather than finding nothing. See the gh error above; check the actions:read permission and rate limits."
             RUN_IDS=""
           fi
           for run_id in $RUN_IDS; do
