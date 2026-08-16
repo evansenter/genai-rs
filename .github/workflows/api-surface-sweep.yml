@@ -57,15 +57,37 @@ jobs:
             exit 0
           fi
 
-          # Wheels only (--no-deps): we want the generated bindings, not a
-          # working install.
-          pip download "google-genai==$BASELINE" --no-deps -q -d base
-          pip download "google-genai==$LATEST"   --no-deps -q -d new
+          # `--only-binary=:all:` is what actually enforces wheels — `--no-deps`
+          # only skips dependency resolution. Without it an sdist-only release
+          # lands a .tar.gz, the *.whl glob below does not expand, and the job
+          # fails on an unzip error rather than on anything legible.
+          pip download "google-genai==$BASELINE" --no-deps --only-binary=:all: -q -d base
+          pip download "google-genai==$LATEST"   --no-deps --only-binary=:all: -q -d new
           (cd base && unzip -q ./*.whl -d x)
           (cd new  && unzip -q ./*.whl -d x)
 
           BASE_DIR=base/x/google/genai/_gaos/types/interactions
           NEW_DIR=new/x/google/genai/_gaos/types/interactions
+
+          # Assert the paths exist before diffing. `diff -r` exits 2 and writes
+          # to stderr when a directory is missing, and `|| true` would swallow
+          # that — leaving full.diff empty, which the check below reads as
+          # "bindings unchanged". A vanished path would then be indistinguishable
+          # from a genuine no-op, and since the baseline is never bumped in that
+          # state the job would re-report "unchanged" every morning with no
+          # failure signal: the detector silently inert.
+          #
+          # `_gaos/types/interactions` is a private, underscore-prefixed module,
+          # so upstream restructuring it without notice is a realistic event
+          # rather than a hypothetical.
+          for dir in "$BASE_DIR" "$NEW_DIR"; do
+            if [ ! -d "$dir" ]; then
+              echo "::error::Interactions bindings path not found: $dir"
+              echo "google-genai has likely restructured its generated bindings."
+              echo "This job cannot detect new API surface until the path below is updated."
+              exit 1
+            fi
+          done
 
           # Two signals, because they catch different things: a new *file* is
           # a new type (e.g. staticmediaprocessing.py), while a changed field
@@ -103,14 +125,17 @@ jobs:
             echo
             echo '<details><summary>Expand</summary>'
             echo
-            echo '```diff'
+            # Tilde fence, not backticks: the body is upstream Python source,
+            # and any triple backtick in a docstring would close a backtick
+            # fence early and swallow the </details> into the code block.
+            echo '~~~diff'
             # Cap the body so a large diff can't exceed GitHub's issue limit.
             head -c 40000 full.diff
             if [ "$(wc -c < full.diff)" -gt 40000 ]; then
               echo
               echo "... truncated; run this workflow locally for the full diff ..."
             fi
-            echo '```'
+            echo '~~~'
             echo
             echo '</details>'
             echo
@@ -141,14 +166,21 @@ jobs:
           # updates in place instead of filing a duplicate every morning.
           TITLE="API surface sweep: google-genai has new Interactions bindings"
 
+          # `--state all`, not open: if the issue is closed without bumping
+          # `.github/last-swept-sdk-version`, an open-only search would find
+          # nothing and file a fresh one with the same title every morning
+          # until the baseline moves — the duplicate accumulation the fixed
+          # title exists to prevent, just gated on a close instead of a date.
           EXISTING=$(gh issue list \
             --label "api-sweep" \
-            --state open \
+            --state all \
+            --limit 100 \
             --json number,title \
-            --jq "[.[] | select(.title == \"$TITLE\") | .number] | first // empty" \
-            2>/dev/null || echo "")
+            --jq "[.[] | select(.title == \"$TITLE\") | .number] | first // empty")
 
           if [ -n "$EXISTING" ]; then
+            # Reopen is a no-op when already open.
+            gh issue reopen "$EXISTING" 2>/dev/null || true
             gh issue edit "$EXISTING" --body-file sweep_report.md
             echo "Updated issue #$EXISTING"
           else

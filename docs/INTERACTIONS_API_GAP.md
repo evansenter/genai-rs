@@ -42,9 +42,10 @@ live-probed before it is modeled as usable.
 Status: implementation tracker — items are removed/checked off as they land.
 Source: Google's `google-genai` generated API bindings, originally 2.10.0
 cross-checked against SDK 1.65/1.74/2.0 for protocol history; re-swept
-2026-08 against 2.17.0 (items 18-20) and 2026-08-16 against 2.18.1
-(items 21-22), with every new parameter live-probed first. All behaviors
-should be re-verified live with `LOUD_WIRE=1` before release.
+2026-08 against 2.17.0 (items 18-20, landed) and 2026-08-16 against 2.18.1
+(items 21-22, **found but not yet modeled**), with every new parameter
+live-probed first. All behaviors should be re-verified live with
+`LOUD_WIRE=1` before release.
 
 ## Headline: wire revision migration — ✅ DONE (2026-07)
 
@@ -217,11 +218,17 @@ Completed in the 2026-08 sweep against SDK 2.17.0 (the 0.9.0 release):
     `SafetySetting` in `src/safety.rs`, `with_labels()`/`add_label()`,
     `AntigravityConfig`)
 
-Completed in the 2026-08-16 sweep against SDK 2.18.1:
+## Found in the 2026-08-16 sweep against SDK 2.18.1 — NOT yet modeled
 
-21. ~~`Content::Video.processing` — segment clipping (`start_offset` /
-    `end_offset`), `fps`, and the `static | agentic` mode enum.~~ ✅
-    (`VideoProcessing`, `Content::with_processing()`; #419)
+⚠️ **These are open gaps, not completed items.** Both were found by diffing
+the bindings and confirmed by live probe; neither is in the crate yet.
+Deliberately listed separately from the completed items above, because a
+struck-through line reads as shipped and that is precisely the confusion
+this file's header now warns about.
+
+21. `Content::Video.processing` — segment clipping (`start_offset` /
+    `end_offset`), `fps`, and the `static | agentic` mode enum.
+    **Tracked in #419.**
 
     New in 2.18.x and **absent from `ai.google.dev`** — found only by
     diffing the bindings. Live-probed: the segment window is a ~127x
@@ -229,13 +236,14 @@ Completed in the 2026-08-16 sweep against SDK 2.18.1:
     video), while the mode and `fps` alone change nothing. Also
     position-sensitive — accepted only inside a `user_input` step (#427).
 
-22. ~~`generation_config.speech_config` widened to
-    `SpeakerConfig | List[SpeechConfig]`.~~ ✅ (deserialize-only; #420)
+22. `generation_config.speech_config` widened to
+    `SpeakerConfig | List[SpeechConfig]`. **Tracked in #420.**
 
     Live-probed: the Gemini API **rejects both object forms** on send
-    (`400 ... Expected an array, got object`), so the crate keeps emitting
-    the list. Handled on deserialize because the object form was silently
-    matching an all-optional `SpeechConfig` and discarding every speaker.
+    (`400 ... Expected an array, got object`), so the crate should keep
+    emitting the list; the gap is on deserialize, where the object form
+    currently matches an all-optional `SpeechConfig` and silently discards
+    every speaker.
 
 ## Spec-vs-implementation disagreements — ✅ ALL FIXED
 
