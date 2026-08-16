@@ -740,17 +740,24 @@ mod mcp_server {
                 // Distinguish "the API rejected MCP" (a real regression) from
                 // "the third-party server is down" (not our problem).
                 let msg = format!("{e:?}").to_lowercase();
-                // `mcp_server`, not a bare `mcp`: the configured URL is
-                // `mcp.deepwiki.com/mcp`, so any error echoing it back —
-                // "failed to fetch from https://mcp.deepwiki.com/mcp:
-                // invalid response" — would satisfy both halves and panic
-                // with "regression" for exactly the third-party outage this
-                // branch exists to tolerate.
+                // The guard is a tool-type token AND an availability phrase,
+                // and each half is narrow for its own reason.
                 //
-                // The rejection set is wider than "not supported"/"invalid"
-                // for the mirror case: "mcp_server tool is not enabled for
-                // this project" is a real rejection that would otherwise
-                // print "unreachable" and leave the run green.
+                // `mcp_server`, not a bare `mcp`: the configured URL is
+                // `mcp.deepwiki.com/mcp`, so a bare match would fire on any
+                // error that merely echoes the URL back.
+                //
+                // Four availability phrases, not two: "mcp_server tool is
+                // not enabled for this project" is a real rejection that
+                // "not supported"/"unsupported" alone would miss, leaving it
+                // to print "unreachable" and the run to stay green.
+                //
+                // And no "invalid": those four describe availability of the
+                // tool itself, while "invalid" describes anything. The
+                // `mcp_server` scoping does not save it — an API-generated
+                // "mcp_server tool call failed: invalid response from <url>"
+                // satisfies both halves and would panic with "regression"
+                // for exactly the third-party outage this branch tolerates.
                 let rejected = [
                     "not supported",
                     "unsupported",
@@ -759,13 +766,6 @@ mod mcp_server {
                 ]
                 .iter()
                 .any(|phrase| msg.contains(phrase));
-                // No "invalid" in that set, deliberately. The four above
-                // describe availability of the tool itself; "invalid"
-                // describes anything, and the `mcp_server` scoping does not
-                // save it — an API-generated "mcp_server tool call failed:
-                // invalid response from <url>" satisfies both halves and
-                // would panic with "regression" for exactly the third-party
-                // outage this branch exists to tolerate.
                 if msg.contains("mcp_server") && rejected {
                     panic!("API rejected the MCP tool — this is a regression: {e:?}");
                 }

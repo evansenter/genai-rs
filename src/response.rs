@@ -1739,6 +1739,9 @@ pub struct StepSummary {
     /// Number of `url_context_result` steps
     pub url_context_result_count: usize,
     /// Number of `mcp_server_tool_call` steps
+    /// Not currently emitted by the API: MCP calls arrive as generic
+    /// `tool_call` steps, so this reads 0 even on a successful call.
+    /// Use `usage.total_tool_use_tokens` instead. Tracked in #433.
     pub mcp_server_tool_call_count: usize,
     /// Number of `mcp_server_tool_result` steps
     pub mcp_server_tool_result_count: usize,
