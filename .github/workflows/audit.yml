@@ -93,7 +93,8 @@ jobs:
       #
       # The rule, stated once for both workflows: a run may close the issue
       # only if it exercises the same path as the run that opened it. The
-      # generated body says "scheduled run" to match.
+      # generated body deliberately names no trigger, so it stays accurate
+      # under this gate and under the wider one in `ci-flakiness-report.yml`.
       - name: Clear the failure issue once the run recovers
         if: success() && github.event_name == 'schedule'
         env:

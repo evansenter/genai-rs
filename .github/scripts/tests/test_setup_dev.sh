@@ -53,7 +53,13 @@ failures=0
 # stub named `cc` that execs `cc` finds itself — an infinite loop, which is
 # how the first version of that case hung rather than failed.
 mkdir -p "$WORK/bin"
-REAL_CC="$(command -v cc)"
+# `|| true`, then a named skip. A bare assignment under `set -euo pipefail`
+# exits here with no output at all on a box without `cc` — no FAIL, no
+# summary, just status 1, which reads as the harness being broken rather than
+# as a missing tool. And the first case below (probe fails, no config written)
+# is the assertion closest to #428 itself and needs no compiler, so it should
+# not be lost to a dependency it does not use.
+REAL_CC="$(command -v cc || true)"
 cat > "$WORK/bin/mold-capable-cc" <<STUB
 #!/usr/bin/env bash
 args=()
@@ -106,6 +112,14 @@ if [ -f "$CONFIG" ]; then
   fail "probe fails: wrote a config anyway — this is the #428 shape"
 else
   pass "probe fails: writes no config"
+fi
+
+if [ -z "$REAL_CC" ]; then
+  echo "skip - no cc on PATH; the stub-driven cases below need a compiler"
+  echo
+  [ "$failures" -gt 0 ] && { echo "$failures check(s) failed."; exit 1; }
+  echo "All checks passed (compiler-dependent cases skipped)."
+  exit 0
 fi
 
 # --- A compiler that can drive mold: config written, and `linker` pinned to
