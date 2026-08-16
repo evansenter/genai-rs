@@ -16,9 +16,10 @@
 > **Before relying on this file, check whether a newer `google-genai` has
 > shipped.** The scheduled `api-surface-sweep` workflow does this daily and
 > opens an issue when the SDK moves; if that issue is open, this file is
-> behind by at least that much. The workflow closes that issue itself once
-> `.github/last-swept-sdk-version` catches up, so an open issue always
-> means genuinely-unswept surface rather than a close someone forgot.
+> behind by at least that much. The workflow closes that issue itself on the
+> next run that finds no bindings diff against the recorded baseline, so an
+> open issue always means genuinely-unswept surface rather than a close
+> someone forgot.
 
 ## How to verify API surface (read this before trusting any source)
 
