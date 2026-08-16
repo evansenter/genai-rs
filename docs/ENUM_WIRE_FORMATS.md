@@ -162,7 +162,7 @@ roundtrip tests.
 | `google_search_result` | `Step::GoogleSearchResult` | `{"call_id": "...", "result": [GoogleSearchResultItem], "is_error"?: bool, "signature"?: "..."}` |
 | `tool_call` | `Step::ToolCall` | `{"id": "...", "signature"?: "..."}` — **what MCP calls actually look like** (live 2026-08-16). `signature` was present on every observed step but is spec-optional, so it is modeled `Option<String>` |
 | `mcp_server_tool_call` | `Step::McpServerToolCall` | `{"id": "...", "name": "...", "server_name": "...", "arguments": {...}}` — spec-present, never observed |
-| `mcp_server_tool_result` | `Step::McpServerToolResult` | `{"call_id": "...", "name"?: "...", "server_name"?: "...", "result": <payload>}` |
+| `mcp_server_tool_result` | `Step::McpServerToolResult` | `{"call_id": "...", "name"?: "...", "server_name"?: "...", "result": <payload>}` — spec-present, never observed |
 | `file_search_call` | `Step::FileSearchCall` | `{"id": "...", "signature"?: "..."}` |
 | `file_search_result` | `Step::FileSearchResult` | `{"call_id": "...", "result": [FileSearchResultItem], "signature"?: "..."}` |
 | `google_maps_call` | `Step::GoogleMapsCall` | `{"id": "...", "arguments": {"queries": [...]}, "signature"?: "..."}` |

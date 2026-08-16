@@ -2571,11 +2571,13 @@ impl StepAccumulator {
 mod tests {
     use super::*;
 
+    use serde_json::json;
+
     /// The exact `tool_call` payload observed live 2026-08-16
     /// (`gemini-3.7-flash`, `mcp.deepwiki.com`): three keys, nothing else.
     #[test]
     fn tool_call_step_deserializes_the_observed_mcp_shape() {
-        let wire = serde_json::json!({
+        let wire = json!({
             "type": "tool_call",
             "id": "call_abc123",
             "signature": "opaque"
@@ -2608,7 +2610,7 @@ mod tests {
     /// spec does not require it.
     #[test]
     fn tool_call_step_allows_a_missing_signature() {
-        let wire = serde_json::json!({"type": "tool_call", "id": "call_1"});
+        let wire = json!({"type": "tool_call", "id": "call_1"});
         let step: Step = serde_json::from_value(wire.clone()).unwrap();
         assert!(matches!(
             &step,
@@ -2619,8 +2621,6 @@ mod tests {
         ));
         assert_eq!(serde_json::to_value(&step).unwrap(), wire);
     }
-
-    use serde_json::json;
 
     // =========================================================================
     // Step wire fixtures (shapes derived from google-genai 2.10 generated
