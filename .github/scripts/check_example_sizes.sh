@@ -92,8 +92,13 @@ measure() {
             # `%d` rather than `%s` for the size: BSD `wc -c` pads with
             # leading spaces, which `tonumber` would reject.
             #
-            # The one assumption left is that a name contains no newline,
-            # which would desynchronise the pairing. Cargo target names cannot.
+            # Two residual naming assumptions, and they belong to different
+            # halves of the script. Here: no newline, which would
+            # desynchronise the name/size pairing. Downstream in `compare`:
+            # no tab either, because the report line it builds is
+            # tab-delimited and the read loop would split such a name across
+            # `name` and `was`, shifting every column. Cargo target names can
+            # carry neither.
             printf '%s\n%d\n' "$name" "$size"
         done
     } | jq -Rn '
@@ -349,7 +354,10 @@ render() {
 
 case "${1:-}" in
     measure) shift; [ $# -eq 2 ] || usage; measure "$@" ;;
-    compare) shift; [ $# -ge 2 ] || usage; compare "$@" ;;
+    # Two or three, not `-ge 2`: the threshold is optional, but `-ge` also
+    # swallowed a fourth argument silently, so a mistyped flag ran as if it
+    # had never been passed instead of reaching `usage`.
+    compare) shift; { [ $# -eq 2 ] || [ $# -eq 3 ]; } || usage; compare "$@" ;;
     render)  shift; [ $# -eq 1 ] || usage; render "$@" ;;
     *) usage ;;
 esac

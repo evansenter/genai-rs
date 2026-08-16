@@ -148,6 +148,12 @@ done
 #     name containing a quote or a backslash emits a malformed map, and
 #     `compare` then reports it as "the build under test is unmeasurable" — a
 #     confusing diagnosis for what is really a naming problem.
+#
+#     Scoped to `measure` deliberately. The tab-bearing name is here because
+#     JSON escaping is what is under test, but `compare` could not carry it
+#     across the seam — its report line is tab-delimited, so such a name would
+#     shift every column. Neither shape is reachable from a cargo target name;
+#     see the assumptions comment in `measure`.
 rm -rf "$WORK/escbins" && mkdir -p "$WORK/escbins"
 esc_names=('has"quote' 'has\backslash' $'tab\tname' 'ünïcødé' 'plain')
 for n in "${esc_names[@]}"; do
