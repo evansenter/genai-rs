@@ -95,8 +95,10 @@ pub(crate) fn capture_targets(f: impl FnOnce()) -> Vec<String> {
 /// set/remove window picks up a stray `LoudWirePrinter` and its inspector
 /// count is off by one.
 ///
-/// Observed as ~11 failures in 25 runs of `cargo test --lib --test-threads=16`,
-/// and as the coverage job's flake in #418.
+/// Measured: 30 runs of `cargo test --lib --test-threads=16` produced 19
+/// failures, 11 of them `test_add_wire_inspector_accumulates` specifically.
+/// The same stress after this guard: 0 in 30. Also the coverage job's flake
+/// in #418.
 static LOUD_WIRE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Exclusive access to the `LOUD_WIRE` environment variable, restoring
@@ -224,6 +226,11 @@ mod loud_wire_guard_tests {
         {
             let guard = LoudWireGuard::nested();
             guard.set("temporary");
+            assert_eq!(
+                std::env::var("LOUD_WIRE").as_deref(),
+                Ok("temporary"),
+                "set() should take effect while the guard is held"
+            );
         }
         assert!(
             std::env::var("LOUD_WIRE").is_err(),
