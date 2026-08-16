@@ -81,6 +81,39 @@ measure() {
 compare() {
     local baseline="$1" current="$2" max_growth="${3:-15}"
 
+    # `max_growth` reaches jq through `--argjson`, where the two ways it can
+    # be wrong differ in exactly the way this script cares about. A malformed
+    # value (`15%`, empty) makes jq refuse the argument and exit 2, taking the
+    # `report=` assignment down under `set -e` — a raw jq error reading as a
+    # size regression. A well-formed non-number is worse: `"15"` binds a
+    # string, jq orders every number before every string, so `> $max` is false
+    # for every example and the job prints "All examples within +"15"% of
+    # baseline" and goes green. That is a gate reporting a clean run while
+    # comparing nothing — the disjoint-key failure arriving through a
+    # different door. Not reachable from the workflow, which passes a literal
+    # 15; drift insurance, like the object check below.
+    case "$max_growth" in
+        '' | *[!0-9]*)
+            echo "::error::threshold must be a non-negative integer, got: $max_growth" >&2
+            return 1
+            ;;
+    esac
+
+    # The current file is deliberately NOT given the warn-and-skip treatment
+    # the baseline gets below, and the asymmetry is the point: a bad baseline
+    # is benign — there is nothing to compare against, so skipping is honest —
+    # while a bad current file means the build under test is unmeasurable, and
+    # skipping that is the vacuous pass the disjoint guard exists to reject.
+    # So this is a hard error. `measure` writes `current-sizes.json` in the
+    # preceding step and fails the job on an empty measurement, so it cannot
+    # reach here in CI; this covers running `compare` by hand, or a future
+    # caller that fetches the current side rather than measuring it.
+    if [ ! -s "$current" ] || ! jq -e 'type == "object"' "$current" >/dev/null 2>&1; then
+        echo "::error::Current sizes file is missing, empty or not a JSON object: $current"
+        echo "The build under test is unmeasurable, so the delta check cannot run."
+        return 1
+    fi
+
     # Shape, not just parseability or emptiness. The `-s` test catches the empty file
     # the fetch step writes when no baseline exists; a *truncated* one — `gh
     # run download` interrupted mid-transfer — is non-empty and non-JSON, and

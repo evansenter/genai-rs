@@ -141,6 +141,40 @@ for shape in '[]' '"a string"' 'null' '42'; do
     refute_output "non-object baseline ($shape): does not claim a pass" "within +15%"
 done
 
+# --- A non-numeric threshold. The quoted form is the dangerous one: jq binds
+#     a string, orders every number before every string, and so reports every
+#     example as within threshold — a green gate that compared nothing.
+#
+#     Deliberately compared against the *under*-threshold fixture: with a
+#     valid threshold this pair exits 0, so a non-zero exit can only be the
+#     guard firing. Using the over-threshold pair would pass for the wrong
+#     reason, since it fails on size regardless of what the threshold says.
+#
+#     An empty third argument is not in the list: `${3:-15}` defaults it, so
+#     it is a legitimate call, not a malformed one.
+for bad in '"15"' '15%' '-5' 'abc' '1.5'; do
+    run_compare "$WORK/base.json" "$WORK/small.json" "$bad"
+    expect_rc     "bad threshold ([$bad]): rejected rather than silently applied" 1
+    expect_output "bad threshold ([$bad]): says what it wanted" "non-negative integer"
+    refute_output "bad threshold ([$bad]): does not claim a pass" "All examples within"
+done
+
+# --- And a valid threshold on the same pair still passes, so the guard above
+#     is rejecting the argument rather than the comparison.
+run_compare "$WORK/base.json" "$WORK/small.json" 15
+expect_rc "valid threshold: still passes on the same pair" 0
+
+# --- A missing or malformed *current* file is a hard error, not the
+#     warn-and-skip a bad baseline gets: the build under test is unmeasurable,
+#     and skipping that is the vacuous pass the disjoint guard rejects.
+for shape in '[]' 'not json' ''; do
+    printf '%s' "$shape" > "$WORK/badcurrent.json"
+    run_compare "$WORK/base.json" "$WORK/badcurrent.json" 15
+    expect_rc     "bad current ([$shape]): fails rather than skipping" 1
+    expect_output "bad current ([$shape]): says the build is unmeasurable" "unmeasurable"
+    refute_output "bad current ([$shape]): does not claim a pass" "All examples within"
+done
+
 # --- Disjoint key sets: the dangerous mode. Both files are non-empty and
 #     nothing is comparable, which previously printed "All examples within
 #     +15% of baseline" — a silently disabled gate reading as a passing one.
