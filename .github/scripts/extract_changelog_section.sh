@@ -14,11 +14,24 @@
 # rather than discovered. Not worth a fence state machine for a Keep a
 # Changelog file; if it ever bites, that is the fix.
 #
-# Exits 1 with a plain message on stderr when the section is absent. No
-# `::error::` prefix: both callers treat absence as recoverable and annotate
-# it themselves, so the script would otherwise stamp a red annotation on a
-# run that succeeded by design. The script cannot know how its caller weighs
-# a missing section, so it does not pick the severity.
+# Exit codes:
+#
+#   0  the section was found and printed
+#   1  the file exists but has no such section — a recoverable case
+#   2  a caller or environment error: wrong arguments, or no such file
+#
+# 1 is reserved strictly for "the file is fine, the section is not there",
+# because that is the only case a caller should fall back on. A missing file
+# is the same class of problem as a bad argument list, so it shares exit 2 —
+# otherwise `release.yml` would annotate a vanished CHANGELOG as
+# "no [X.Y.Z] section in CHANGELOG.md", naming a section in a file that does
+# not exist and shipping a commit-list body over it.
+#
+# No `::error::` prefix on any of them: both callers treat the recoverable
+# case as recoverable and annotate it themselves, so the script would
+# otherwise stamp a red annotation on a run that succeeded by design. The
+# script cannot know how its caller weighs a missing section, so it does not
+# pick the severity.
 set -euo pipefail
 
 if [ $# -ne 2 ]; then
@@ -31,7 +44,7 @@ version=$2
 
 if [ ! -f "$changelog" ]; then
     echo "changelog not found: $changelog" >&2
-    exit 1
+    exit 2
 fi
 
 # Compared against the heading up to and including the closing bracket, so

@@ -447,15 +447,23 @@ jobs:
           # is release.yml's, which gates publishing.
           VERSION=$(awk -F'"' '/^version = /{print $2; exit}' Cargo.toml)
           echo "Cargo.toml version: $VERSION"
-          if .github/scripts/extract_changelog_section.sh CHANGELOG.md "$VERSION"; then
+          rc=0
+          .github/scripts/extract_changelog_section.sh CHANGELOG.md "$VERSION" || rc=$?
+          if [ "$rc" -eq 0 ]; then
             echo "CHANGELOG.md has a [$VERSION] section"
-          else
+          elif [ "$rc" -eq 1 ]; then
             # A warning, not a failure. Between a version bump landing and its
             # CHANGELOG entry being written, and on any PR that predates the
             # bump, this is the normal state — failing here would redden
             # unrelated PRs. release.yml warns and falls back for the same
             # reason.
             echo "::warning::CHANGELOG.md has no [$VERSION] section — a release tagged now would fall back to a raw commit list for its body."
+          else
+            # Exit 2 is a caller or environment error — bad arguments, or no
+            # CHANGELOG.md at all. Not the benign case above, and not
+            # something a PR should be allowed to introduce quietly.
+            echo "::error::extract_changelog_section.sh exited $rc — a usage or environment error, not a missing section."
+            exit 1
           fi
 
   msrv:

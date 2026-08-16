@@ -276,9 +276,10 @@ After merging version bump PR:
    | `publish` | re-checks the tag against `Cargo.toml`, publishes `genai-rs-macros`, polls crates.io until it is indexed (up to 5 min), then publishes `genai-rs` |
    | `github-release` | creates the GitHub release; body is the `## [X.Y.Z]` section of `CHANGELOG.md`, followed by the auto-generated PR list and compare link |
 
-   If that section is missing — the `## [Unreleased]` → `## [X.Y.Z]` rename
-   in the Version Bump Checklist above is what creates it — the job does not
-   fail. It emits a `::warning::No [X.Y.Z] section in CHANGELOG.md` and falls
+   If that section is missing — the Version Bump Checklist above is what
+   creates it: rename `## [Unreleased]` if the file has one, otherwise add a
+   `## [X.Y.Z] - YYYY-MM-DD` heading above the previous release — the job
+   does not fail. It emits a `::warning::No [X.Y.Z] section in CHANGELOG.md` and falls
    back to a raw commit list, which is then worth replacing by hand. The
    fallback leaves no trace in the release itself — and since the
    auto-generated list is appended either way, the signal is the *absence of

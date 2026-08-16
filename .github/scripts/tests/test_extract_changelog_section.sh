@@ -144,9 +144,21 @@ fi
 grep -q '9.9.9' "$work/err" || fail "the missing-version message does not name the version"
 
 # --- missing file ------------------------------------------------------------
-if "$EXTRACT" "$work/nope.md" 0.10.0 >/dev/null 2>&1; then
-    fail "a missing changelog exited 0"
-fi
+# Exit 2, not 1: a caller distinguishes "the file is fine but the section is
+# absent" (fall back) from "there is no file" (something is wrong with the
+# checkout), and collapsing them makes the release annotate a vanished
+# CHANGELOG as a missing section.
+rc=0
+"$EXTRACT" "$work/nope.md" 0.10.0 >/dev/null 2>&1 || rc=$?
+assert_eq "a missing changelog exits 2, not the recoverable 1" 2 "$rc"
+
+rc=0
+"$EXTRACT" >/dev/null 2>&1 || rc=$?
+assert_eq "a usage error exits 2" 2 "$rc"
+
+rc=0
+"$EXTRACT" "$work/CHANGELOG.md" 9.9.9 >/dev/null 2>&1 || rc=$?
+assert_eq "an absent section exits 1, the recoverable code" 1 "$rc"
 
 # --- last section in the file ------------------------------------------------
 # No trailing `## ` heading to stop on, so this exercises the fall-off-the-end
