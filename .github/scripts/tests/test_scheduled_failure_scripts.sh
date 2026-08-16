@@ -163,7 +163,7 @@ check "streak: counts the run that opened the issue" \
 make_gh_stub "[{\"title\":\"$TITLE_FLAKY\",\"number\":77}]" \
   '{"createdAt":"2026-05-01T00:00:00Z","comments":[
       {"body":"Still failing: x","createdAt":"2026-05-02T00:00:00Z"},
-      {"body":"Recovered — the scheduled run succeeded. Closing.","createdAt":"2026-05-03T00:00:00Z"},
+      {"body":"Recovered — the workflow succeeded. Closing.","createdAt":"2026-05-03T00:00:00Z"},
       {"body":"Still failing: x","createdAt":"2026-06-10T00:00:00Z"}]}'
 run_script "report_scheduled_failure.sh" "$SCRIPTS/report_scheduled_failure.sh" \
   "CI Flakiness Report" "https://example/run/1"
@@ -179,7 +179,7 @@ check "streak: a recovery resets the count" \
 make_gh_stub "[{\"title\":\"$TITLE_FLAKY\",\"number\":77}]" \
   '{"createdAt":"2026-05-01T00:00:00Z","comments":[
       {"body":"Still failing: x","createdAt":"2026-05-02T00:00:00Z"},
-      {"body":"Recovered — the scheduled run succeeded. Closing.","createdAt":"2026-05-03T00:00:00Z"}]}'
+      {"body":"Recovered — the workflow succeeded. Closing.","createdAt":"2026-05-03T00:00:00Z"}]}'
 run_script "report_scheduled_failure.sh" "$SCRIPTS/report_scheduled_failure.sh" \
   "CI Flakiness Report" "https://example/run/1"
 check "streak: a re-failure right after recovery dates itself today" \
@@ -192,7 +192,7 @@ check "streak: a re-failure right after recovery dates itself today" \
 #     history it could not see.
 python3 - > "$WORK/capped_recovery.json" <<'FIXTURE'
 import json
-comments = [{"body": "Recovered — the scheduled run succeeded. Closing.",
+comments = [{"body": "Recovered — the workflow succeeded. Closing.",
              "createdAt": "2026-05-02T00:00:00Z"}]
 comments += [{"body": "Still failing: x", "createdAt": "2026-05-03T00:00:00Z"}] * 99
 print(json.dumps({"createdAt": "2026-05-01T00:00:00Z", "comments": comments}))
