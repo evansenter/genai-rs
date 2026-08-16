@@ -786,6 +786,15 @@ mod mcp_server {
         // only if the server was actually called. Asserting on the answer text
         // instead would pass on a model that ignored the tool and guessed.
         //
+        // That the count excludes *declaration* overhead is measured, not
+        // assumed — the field's own doc says "tool/function calling
+        // overhead", which would admit it. Declaring this MCP tool alongside
+        // a prompt the model answers from its own knowledge returned
+        // `Some(0)`, identical to the same prompt with no tool declared
+        // (2026-08-16). Had it counted declaration, this assertion would
+        // pass on a model that ignored the tool — the exact failure it was
+        // chosen to avoid.
+        //
         // It is also the *only* usable signal today. The API emits generic
         // `tool_call` steps for MCP, not the `mcp_server_tool_call` /
         // `mcp_server_tool_result` types the crate models from the spec —
@@ -889,7 +898,14 @@ mod computer_use {
                 ]
                 .iter()
                 .any(|phrase| msg.contains(phrase));
-                if unavailable {
+                // Scoped to the tool, as the MCP branch above is. Unscoped,
+                // any 4xx phrased with one of those words — about the model,
+                // the schema, an unrelated field — reports a skip. The case
+                // that matters is the one this test exists for: if the
+                // default model stops supporting computer use, the 400 will
+                // almost certainly say "not supported", and an unscoped
+                // predicate would call that regression a skip.
+                if msg.contains("computer_use") && unavailable {
                     println!("Skipping: computer use not enabled for this key: {e:?}");
                     return;
                 }
@@ -913,6 +929,14 @@ mod computer_use {
             "computer use should hand an action back to the caller rather than \
              completing on its own; steps were {step_types:?}"
         );
+        // Status alone does not cover the doc comment above: `RequiresAction`
+        // is the generic "the caller must do something" state, so a future
+        // shape that requires an action for an unrelated reason would satisfy
+        // it. The action itself is the `function_call` step.
+        assert!(
+            step_types.contains(&"function_call"),
+            "expected an action handed back as a function_call step; got {step_types:?}"
+        );
     }
 
     /// Pins the wire shape, including the snake_case field name that was a
@@ -934,6 +958,7 @@ mod computer_use {
     }
 }
 
+// =============================================================================
 // Response Formats: Structured Output
 // =============================================================================
 
