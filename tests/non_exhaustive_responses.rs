@@ -22,6 +22,28 @@
 //! did. Not scoped in here because this crate hand-writes `Deserialize`
 //! across its Evergreen enum surface, so an enum check needs different
 //! plumbing than the derive-attribute walk-back below, not a wider regex.
+//!
+//! Two parsing assumptions, both currently true of `src/` and neither
+//! enforced:
+//!
+//! - **Braces are counted textually, so string literals move the cfg-test
+//!   depth.** `src/steps.rs` is already net +2 inside its gated `mod tests`
+//!   (JSON fixtures at `:2833`, `:2835`, `:3106`, `:3112` carry unbalanced
+//!   braces inside string literals). That is harmless *only* because every
+//!   inline gated module in `src/` runs to EOF — a mask that stays engaged
+//!   past the end costs nothing when there is no end. Both directions go
+//!   live the moment one does not: net-positive skips the rest of the file
+//!   (the round-5 failure mode), net-negative un-gates test code and reports
+//!   a fixture as an offender. Not coded around because every cheap fix —
+//!   stop counting on odd quote parity, skip lines containing quotes —
+//!   loses more precision than it buys.
+//! - **An `impl .. Deserialize .. for T` header must fit on one line.** A
+//!   rustfmt-wrapped header contributes nothing to the manual set, so the
+//!   type reads as non-deserializable and passes unscanned. Nothing in
+//!   `src/` wraps today, and the trigger is a type name long enough to push
+//!   past 100 columns rather than a style choice — so it would arrive by
+//!   accident, at a point where the only symptom is a struct quietly
+//!   dropping out.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -580,25 +602,68 @@ fn cfg_test_modules(rel: &str, source: &str) -> BTreeSet<String> {
 /// Matched as a *token* rather than a substring, because
 /// `#[cfg(feature = "latest")]` contains "test" and gates nothing.
 ///
-/// A leading `not(` disqualifies the attribute: `#[cfg(not(test))]` marks
-/// code that compiles only *outside* tests, i.e. real API. Treating it as
-/// gated would skip a file this guard exists to scan, so the conservative
-/// reading wins — over-scanning fails loudly, under-scanning does not.
+/// `not(..)` groups are stripped before the token is looked for, so `test`
+/// counts only where the gate actually requires it. `#[cfg(not(test))]` and
+/// `#[cfg(all(not(test), unix))]` mark code that compiles only *outside*
+/// tests, i.e. real API; reading either as gated would skip a file this
+/// guard exists to scan, which is the direction that fails silently.
 fn is_cfg_test_attr(trimmed: &str) -> bool {
     let Some(rest) = trimmed.strip_prefix("#[cfg(") else {
         return false;
     };
-    // The disqualifier is a *leading* `not(`, not a `not` anywhere in the
-    // attribute. `#[cfg(all(test, not(miri)))]` and
-    // `#[cfg(all(test, not(feature = "antigravity")))]` are test-only code
-    // with `test` still a live conjunct; treating them as ungated would
-    // report a test fixture as an offender that `#[non_exhaustive]` cannot
-    // correctly fix.
-    if rest.trim_start().starts_with("not(") {
-        return false;
-    }
-    rest.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+    // Decided by whether `test` survives with its `not(..)` groups removed,
+    // not by where `not(` appears in the string. Both neighbours matter and
+    // they fail in opposite directions: `#[cfg(all(test, not(miri)))]` is
+    // test-only and must stay gated, while `#[cfg(all(not(test), unix))]` is
+    // real API and must not — and neither is decided by a leading-`not(`
+    // test or by a `not`-token-anywhere test.
+    strip_not_groups(rest)
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
         .any(|t| t == "test")
+}
+
+/// Removes every `not(..)` group, so a `test` token left standing is one the
+/// gate actually requires.
+///
+/// Balanced-paren, because the operand can nest:
+/// `not(any(test, miri))`. The `not` must start an identifier — `cannot(` is
+/// not an operator.
+fn strip_not_groups(source: &str) -> String {
+    let mut out = String::new();
+    let mut rest = source;
+    while let Some(index) = rest.find("not(") {
+        let boundary = index == 0
+            || !rest[..index]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_');
+        if !boundary {
+            let (head, tail) = rest.split_at(index + 4);
+            out.push_str(head);
+            rest = tail;
+            continue;
+        }
+        out.push_str(&rest[..index]);
+        let after = &rest[index + 4..];
+        let mut depth = 1usize;
+        let mut end = after.len();
+        for (offset, ch) in after.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = offset;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        rest = after.get(end + 1..).unwrap_or("");
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Marks each line that is inside a `#[cfg(test)]`-gated item, attribute
@@ -813,6 +878,11 @@ fn the_cfg_test_gate_recognises_compound_forms_and_only_those() {
     // as gated would silently drop a file this guard exists to scan.
     assert!(!is_cfg_test_attr("#[cfg(not(test))]"));
     assert!(!is_cfg_test_attr("#[cfg( not(test) )]"));
+    // ...and a `not(test)` that is not leading is the same thing said
+    // differently. Decided by where `test` sits, not by where `not(` does.
+    assert!(!is_cfg_test_attr("#[cfg(all(not(test), unix))]"));
+    assert!(!is_cfg_test_attr("#[cfg(any(not(test), feature = \"x\"))]"));
+    assert!(!is_cfg_test_attr("#[cfg(not(any(test, miri)))]"));
     // ...but `not` wrapping something *else* leaves `test` a live conjunct,
     // so these are still test-only and must stay gated.
     assert!(is_cfg_test_attr("#[cfg(all(test, not(miri)))]"));
