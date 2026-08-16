@@ -93,8 +93,14 @@ jobs:
           # a new type (e.g. staticmediaprocessing.py), while a changed field
           # line is a widened or added field on an existing type (e.g.
           # speech_config becoming a union).
-          diff <(cd "$BASE_DIR" && ls) <(cd "$NEW_DIR" && ls) > files.diff || true
-          diff -r "$BASE_DIR" "$NEW_DIR" > full.diff || true
+          # `|| [ $? -eq 1 ]`, not `|| true`: diff exits 1 for "differences
+          # found" and 2 for trouble (unreadable file, I/O error). Folding 2
+          # into success leaves full.diff empty, which the check below reads
+          # as "bindings unchanged" — the directory assertion above covers the
+          # likeliest cause, this covers the rest. Under `set -e` an exit 2
+          # now fails the job.
+          diff <(cd "$BASE_DIR" && ls) <(cd "$NEW_DIR" && ls) > files.diff || [ $? -eq 1 ]
+          diff -r "$BASE_DIR" "$NEW_DIR" > full.diff || [ $? -eq 1 ]
 
           if [ ! -s full.diff ]; then
             echo "SDK moved $BASELINE -> $LATEST but Interactions bindings are unchanged."
@@ -146,8 +152,11 @@ jobs:
             echo "   \`speech_config\`'s object arm and \`Tool::Retrieval\` are both"
             echo "   spec-present and API-rejected."
             echo "2. Model what survives probing; file issues for the rest."
-            echo "3. Update \`docs/INTERACTIONS_API_GAP.md\` (header dates + a new"
-            echo "   completed-items entry)."
+            echo "3. Update \`docs/INTERACTIONS_API_GAP.md\`: header dates, plus a"
+            echo "   \"found, NOT yet modeled\" entry for anything not landed in the"
+            echo "   same change. Do **not** add a completed-items entry for something"
+            echo "   still open — a struck-through line reads as shipped, which is the"
+            echo "   confusion that file'"'"'s header exists to prevent."
             echo "4. Bump \`.github/last-swept-sdk-version\` to \`$LATEST\` — that is"
             echo "   what closes this loop and stops this issue reopening."
           } > sweep_report.md
