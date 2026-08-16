@@ -594,8 +594,19 @@ jobs:
           # already tolerates a run with no artifact — that is what the
           # `2>/dev/null` is for — so the stricter filter bought nothing the
           # loop did not already handle, and cost baselines.
-          RUN_IDS=$(gh run list --workflow Rust --branch main --status completed \
-            --limit 10 --json databaseId --jq '.[].databaseId // empty' 2>/dev/null || echo "")
+          # "The lookup broke" and "there is nothing to look up" must not
+          # read identically. Both end in the same `::warning::No usable
+          # baseline` branch — honest, since the check genuinely did not run —
+          # but the effective gate for that PR is then only the 64MB backstop,
+          # four times looser than the ceiling this replaces. An expired
+          # artifact self-clears on the next main push; a dropped
+          # `actions: read` or a rate-limited token does not, and would look
+          # like the benign first-PR case every time.
+          if ! RUN_IDS=$(gh run list --workflow Rust --branch main --status completed \
+              --limit 10 --json databaseId --jq '.[].databaseId // empty' 2>/dev/null); then
+            echo "::warning::Could not list main runs — the baseline lookup failed rather than finding nothing. Check the actions:read permission and rate limits."
+            RUN_IDS=""
+          fi
           for run_id in $RUN_IDS; do
             if gh run download "$run_id" --name size-baseline --dir baseline 2>/dev/null; then
               echo "Baseline from run $run_id"
