@@ -234,6 +234,14 @@ jobs:
       # Scheduled runs fail quietly (#431): the only built-in signal is an
       # email to whoever last committed this file. Gated on `schedule`
       # because a push/PR failure is already visible as a red check.
+      #
+      # Boundary: `failure()` covers a step exiting non-zero, but not a
+      # cancelled job or one that exceeds its execution limit — in both the
+      # runner stops and this step never runs. The 98-minute apt stall noted
+      # in `.github/actions/setup-mold` is that shape. Catching it needs a
+      # `workflow_run`-triggered watcher keyed on conclusion != success,
+      # which would also cover the die-before-checkout case the escalation
+      # script's header names; both belong with the deferred liveness work.
       - name: Escalate a failing scheduled run
         if: failure() && github.event_name == 'schedule'
         env:

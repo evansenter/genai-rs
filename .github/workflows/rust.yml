@@ -437,11 +437,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: ${{ matrix.os }}-${{ matrix.rust }}
-      # Linux only: the config the composite enables targets
-      # x86_64-unknown-linux-gnu, so the other matrix legs use the default
-      # linker either way.
+      # No `if: runner.os == 'Linux'` — the composite guards itself, and
+      # says so on the other legs. Reintroducing the condition here would
+      # restore the per-call-site knowledge the composite removed.
       - uses: ./.github/actions/setup-mold
-        if: runner.os == 'Linux'
       - name: Build
         run: cargo build --workspace --release
       - name: Run tests
