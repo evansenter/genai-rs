@@ -88,7 +88,7 @@ Helper methods on each type:
 
 | Enum / Type | Wire Format | Example | Notes |
 |------|-------------|---------|-------|
-| `InteractionInput` | string OR `[Step]` OR `[Content]` | `"hi"` / `[{"type": "user_input", "content": [...]}]` | Requests always send the step form — see details. ✅ Verified live 2026-08-16 |
+| `InteractionInput` | string OR `[Step]` OR `[Content]` OR `Content` | `"hi"` / `[{"type": "user_input", "content": [...]}]` | Requests always send the step form — see details. ✅ Verified live 2026-08-16 |
 | `Step` | tagged by `"type"`, snake_case | `"user_input"`, `"model_output"`, `"function_call"`, ... | Pending live verification (2026-05-20 revision) |
 | `StepDelta` | tagged by `"type"` | `"text"`, `"arguments_delta"`, `"text_annotation_delta"` | Two tags differ from variant names — see details. Pending live verification (2026-05-20 revision) |
 | `Annotation` | tagged by `"type"` | `"url_citation"`, `"file_citation"`, `"place_citation"` | Pending live verification (2026-05-20 revision) |
