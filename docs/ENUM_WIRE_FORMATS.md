@@ -762,7 +762,14 @@ shape (list vs. single object) is unobservable.
 
 **Verified**: 2026-01-10 (nested vs. flat voice fields, both sent as a list) - `test_speech_config_nested_format_fails_flat_succeeds` shows the nested form failing with `no such field: 'voiceConfig'`. Note that its "flat" case builds `Some(vec![SpeechConfig::…])`, which serializes as a one-element **list** — that test varies where the voice fields sit, not object-vs-list, and never sent a bare object.
 
-The **list** form was verified live 2026-07 (multi-speaker TTS) and re-probed 2026-08-16 as the only form the API accepts on requests; a bare object is rejected with `Expected an array, got object`. The single-object form and the `{"speakers": [...]}` wrapper are accepted on **deserialize only** — neither was ever verified as accepted on send.
+The **list** form was verified live 2026-07 (multi-speaker TTS) and re-probed 2026-08-16 as the only form the API accepts on requests. Both object forms are **rejected on send**, with the same error:
+
+```text
+The value is invalid for 'generation_config.speech_config'.
+Expected an array, got object.
+```
+
+That covers the bare single object *and* the `{"speakers": [...]}` wrapper — the wrapper is an object as far as this validator is concerned, so the spec's `SpeakerConfig` arm is not sendable either. The same request with a list gets past `speech_config` validation entirely (it then fails on an unrelated field), which is what isolates the rejection to the object shape. Both are therefore accepted on **deserialize only**.
 
 #### speech_config wire forms
 
