@@ -1,0 +1,164 @@
+name: API Surface Sweep
+
+# Detects new Interactions API surface before it becomes an invisible gap.
+#
+# `docs/INTERACTIONS_API_GAP.md` is a point-in-time snapshot: every item
+# checked off means "nothing missing as of the sweep date", not "complete".
+# Between sweeps the SDK ships new surface and the file cannot know. That is
+# exactly what happened between 2.17.0 and 2.18.1 — `Content::Video.processing`
+# (a ~127x token-cost lever) and a widened `speech_config` union both landed
+# unnoticed, and neither was documented on ai.google.dev, so only a bindings
+# diff could have caught them. See #421.
+#
+# This job diffs the latest google-genai release against the version recorded
+# in .github/last-swept-sdk-version and opens/updates an issue when the
+# Interactions type bindings change.
+
+on:
+  schedule:
+    - cron: '0 8 * * *' # Daily at 8am UTC, an hour before the flakiness report
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sweep:
+    name: Diff google-genai Interactions bindings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compare latest SDK against the recorded baseline
+        id: diff
+        run: |
+          set -euo pipefail
+
+          BASELINE=$(tr -d '[:space:]' < .github/last-swept-sdk-version)
+          echo "baseline=$BASELINE" >> "$GITHUB_OUTPUT"
+          echo "Baseline (last swept): $BASELINE"
+
+          LATEST=$(python -c "
+          import json, urllib.request
+          with urllib.request.urlopen('https://pypi.org/pypi/google-genai/json') as r:
+              print(json.load(r)['info']['version'])
+          ")
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "Latest on PyPI: $LATEST"
+
+          if [ "$BASELINE" = "$LATEST" ]; then
+            echo "Up to date — nothing to diff."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Wheels only (--no-deps): we want the generated bindings, not a
+          # working install.
+          pip download "google-genai==$BASELINE" --no-deps -q -d base
+          pip download "google-genai==$LATEST"   --no-deps -q -d new
+          (cd base && unzip -q ./*.whl -d x)
+          (cd new  && unzip -q ./*.whl -d x)
+
+          BASE_DIR=base/x/google/genai/_gaos/types/interactions
+          NEW_DIR=new/x/google/genai/_gaos/types/interactions
+
+          # Two signals, because they catch different things: a new *file* is
+          # a new type (e.g. staticmediaprocessing.py), while a changed field
+          # line is a widened or added field on an existing type (e.g.
+          # speech_config becoming a union).
+          diff <(cd "$BASE_DIR" && ls) <(cd "$NEW_DIR" && ls) > files.diff || true
+          diff -r "$BASE_DIR" "$NEW_DIR" > full.diff || true
+
+          if [ ! -s full.diff ]; then
+            echo "SDK moved $BASELINE -> $LATEST but Interactions bindings are unchanged."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## New Interactions API surface detected"
+            echo
+            echo "\`google-genai\` moved **$BASELINE → $LATEST** and the generated"
+            echo "Interactions bindings changed."
+            echo
+            echo "Generated bindings ship *ahead* of prose docs, so treat this as the"
+            echo "leading indicator: anything here may be absent from ai.google.dev."
+            echo
+            if [ -s files.diff ]; then
+              echo "### Added/removed type files"
+              echo
+              echo '```diff'
+              cat files.diff
+              echo '```'
+              echo
+            fi
+            echo "### Full bindings diff"
+            echo
+            echo '<details><summary>Expand</summary>'
+            echo
+            echo '```diff'
+            # Cap the body so a large diff can't exceed GitHub's issue limit.
+            head -c 40000 full.diff
+            if [ "$(wc -c < full.diff)" -gt 40000 ]; then
+              echo
+              echo "... truncated; run this workflow locally for the full diff ..."
+            fi
+            echo '```'
+            echo
+            echo '</details>'
+            echo
+            echo "### Next steps"
+            echo
+            echo "1. **Live-probe** anything new before modeling it. The bindings"
+            echo "   describe a broader surface than the Gemini endpoint implements —"
+            echo "   \`speech_config\`'s object arm and \`Tool::Retrieval\` are both"
+            echo "   spec-present and API-rejected."
+            echo "2. Model what survives probing; file issues for the rest."
+            echo "3. Update \`docs/INTERACTIONS_API_GAP.md\` (header dates + a new"
+            echo "   completed-items entry)."
+            echo "4. Bump \`.github/last-swept-sdk-version\` to \`$LATEST\` — that is"
+            echo "   what closes this loop and stops this issue reopening."
+          } > sweep_report.md
+
+          cat sweep_report.md
+
+      - name: Open or update the sweep issue
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # One rolling issue, same reasoning as the flakiness report (#425):
+          # a fixed title makes the dedupe exact, so a sweep that runs daily
+          # updates in place instead of filing a duplicate every morning.
+          TITLE="API surface sweep: google-genai has new Interactions bindings"
+
+          EXISTING=$(gh issue list \
+            --label "api-sweep" \
+            --state open \
+            --json number,title \
+            --jq "[.[] | select(.title == \"$TITLE\") | .number] | first // empty" \
+            2>/dev/null || echo "")
+
+          if [ -n "$EXISTING" ]; then
+            gh issue edit "$EXISTING" --body-file sweep_report.md
+            echo "Updated issue #$EXISTING"
+          else
+            gh label create "api-sweep" \
+              --description "New upstream API surface detected" \
+              --color "1d76db" \
+              2>/dev/null || true
+
+            gh issue create \
+              --title "$TITLE" \
+              --body-file sweep_report.md \
+              --label "api-sweep"
+          fi

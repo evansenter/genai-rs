@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## External Gemini API Documentation
 
-**Important**: When working on API integration or troubleshooting, consult these authoritative sources:
+**Important**: When working on API integration or troubleshooting, consult these sources:
 
 | Document | URL |
 |----------|-----|
@@ -12,6 +12,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Interactions API Guide | https://ai.google.dev/static/api/interactions-api.md.txt |
 | Function Calling Guide | https://ai.google.dev/gemini-api/docs/function-calling.md.txt |
 | Thought Signatures | https://ai.google.dev/gemini-api/docs/thought-signatures.md.txt |
+
+**These docs lag the API — absence from them is not evidence of absence.**
+When asking "does the API support X?", use this order:
+
+1. **Generated bindings** (`google-genai`'s `_gaos/types/interactions/*.py`) — ships ahead of prose; diff two releases to spot new surface
+2. **Live probe** against `generativelanguage.googleapis.com` — ground truth, and often narrower than the spec
+3. **Prose docs** (the table above, and `docs/INTERACTIONS_API_GAP.md`) — lag both
+
+Two features found in the 2.18.1 sweep — video `processing` (a ~127x
+token-cost lever) and a widened `speech_config` — appear in neither doc
+above. Conversely, the bindings describe a `speech_config` object arm the
+API rejects outright. Rank 1 tells you what to look at; rank 2 tells you
+what actually works.
+
+`docs/INTERACTIONS_API_GAP.md` is a point-in-time snapshot, not a
+completeness guarantee — check its header for what it was last swept
+against. The `api-surface-sweep` workflow files an issue when the SDK moves.
 
 ## Project Overview
 
