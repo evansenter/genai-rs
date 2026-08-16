@@ -92,8 +92,10 @@ fn response_structs_are_non_exhaustive() {
         root.display()
     );
 
-    let mut offenders = BTreeSet::new();
-    let mut matched_exemptions = BTreeSet::new();
+    // First pass: collect hand-written Deserialize targets across the whole
+    // crate, since nothing requires the impl to live beside its type.
+    let mut manual = BTreeSet::new();
+    let mut sources = Vec::new();
     for file in &files {
         let rel = file
             .strip_prefix(env!("CARGO_MANIFEST_DIR"))
@@ -103,10 +105,16 @@ fn response_structs_are_non_exhaustive() {
         if rel.contains("antigravity") {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(file) else {
-            panic!("could not read {rel} — refusing to report a clean scan");
-        };
-        let (found, exempted) = offenders_and_exemptions_in(&rel, &text);
+        let text =
+            std::fs::read_to_string(file).unwrap_or_else(|e| panic!("could not read {rel}: {e}"));
+        manual.extend(manual_deserialize_targets(&text));
+        sources.push((rel, text));
+    }
+
+    let mut offenders = BTreeSet::new();
+    let mut matched_exemptions = BTreeSet::new();
+    for (rel, text) in &sources {
+        let (found, exempted) = offenders_and_exemptions_in(rel, text, &manual);
         offenders.extend(found);
         matched_exemptions.extend(exempted);
     }
@@ -144,36 +152,48 @@ fn response_structs_are_non_exhaustive() {
 ///
 /// `path` is repo-relative and only used for reporting and for matching
 /// `REQUEST_SIDE`.
-fn offenders_in(path: &str, text: &str) -> Vec<String> {
-    offenders_and_exemptions_in(path, text).0
-}
-
-/// As [`offenders_in`], plus the `path:Name` exemption keys it actually
-/// matched — so a key that no longer names anything can be reported.
-fn offenders_and_exemptions_in(path: &str, text: &str) -> (Vec<String>, BTreeSet<String>) {
+/// Returns the offenders in one file, plus the `path:Name` exemption keys it
+/// actually matched — so a key that no longer excuses anything can be
+/// reported.
+fn offenders_and_exemptions_in(
+    path: &str,
+    text: &str,
+    manual: &BTreeSet<String>,
+) -> (Vec<String>, BTreeSet<String>) {
     let lines: Vec<&str> = text.lines().collect();
-
-    // A hand-written `impl<'de> Deserialize<'de> for Foo` carries no
-    // `Deserialize` token in Foo's attribute block, so the derive check
-    // below cannot see it. This crate hand-writes Deserialize for much of
-    // its Evergreen surface, so collect those target names first.
-    let manual: BTreeSet<&str> = lines
-        .iter()
-        .filter_map(|line| {
-            let trimmed = line.trim_start();
-            if !trimmed.starts_with("impl") || !trimmed.contains("Deserialize") {
-                return None;
-            }
-            let after = trimmed.split(" for ").nth(1)?;
-            Some(after.split(['<', ' ', '{']).next()?.trim())
-        })
-        .collect();
 
     let mut offenders = Vec::new();
     let mut matched = BTreeSet::new();
+    // `src/lib.rs` compiles several `*_tests.rs` files under `#[cfg(test)]`,
+    // whose `pub struct`s sit at column 0 and are indistinguishable from API
+    // surface here. Those types are not public API, so demanding
+    // `#[non_exhaustive]` on them would be wrong — and the only silencer
+    // would be `REQUEST_SIDE`, whose doc says entries are types a caller
+    // constructs to *send*. Putting a test fixture there quietly makes the
+    // list mean something else.
+    let test_only = lines
+        .iter()
+        .any(|l| l.trim_start().starts_with("#![cfg(test)]"));
+    if test_only {
+        return (Vec::new(), BTreeSet::new());
+    }
+
+    let mut in_cfg_test = 0i32;
     for (index, line) in lines.iter().enumerate() {
         // Trimmed, so a declaration indented inside an inline `mod` counts.
         let trimmed = line.trim_start();
+
+        // Track an inline `#[cfg(test)] mod tests { ... }` by brace depth.
+        if in_cfg_test > 0 {
+            in_cfg_test += line.matches('{').count() as i32;
+            in_cfg_test -= line.matches('}').count() as i32;
+            continue;
+        }
+        if trimmed.starts_with("#[cfg(test)]") {
+            in_cfg_test = 1;
+            continue;
+        }
+
         let Some(rest) = trimmed.strip_prefix("pub struct ") else {
             continue;
         };
@@ -282,9 +302,23 @@ mod inner {
     #[derive(Deserialize)]
     pub struct Indented {}
 }
+
+// Deserialize impl lives in another file; only the crate-wide union sees it.
+pub struct ImplInAnotherFile {}
+
+#[cfg(test)]
+mod tests {
+    #[derive(Deserialize)]
+    pub struct TestOnlyFixture {}
+}
 "#;
 
-    let found = offenders_in("src/request.rs", fixture);
+    // Supplied explicitly rather than derived from the fixture, so this
+    // also covers the case the crate-wide union exists for: a hand-written
+    // impl living in a *different* file from its struct.
+    let manual = BTreeSet::from(["ManualImpl".to_string(), "ImplInAnotherFile".to_string()]);
+
+    let (found, _) = offenders_and_exemptions_in("src/request.rs", fixture, &manual);
     let names: Vec<&str> = found
         .iter()
         .map(|f| f.rsplit(": ").next().unwrap())
@@ -306,6 +340,10 @@ mod inner {
         names.contains(&"Indented"),
         "declaration inside an inline mod: {found:?}"
     );
+    assert!(
+        names.contains(&"ImplInAnotherFile"),
+        "manual impl in a different file, via the crate-wide union: {found:?}"
+    );
 
     assert!(
         !names.contains(&"Annotated"),
@@ -319,11 +357,17 @@ mod inner {
         !names.contains(&"GenerationConfig"),
         "exempt at this path, must not be reported: {found:?}"
     );
+    assert!(
+        !names.contains(&"TestOnlyFixture"),
+        "cfg(test) surface is not public API and must not be reported — the \
+         only escape hatch would be REQUEST_SIDE, which means something else: \
+         {found:?}"
+    );
 
     // The exemption set itself, which `offenders_in` discards — so the
     // stale check has a fixture behind it rather than only ever being
     // observed passing on a clean tree.
-    let (_, exempted) = offenders_and_exemptions_in("src/request.rs", fixture);
+    let (_, exempted) = offenders_and_exemptions_in("src/request.rs", fixture, &manual);
     assert_eq!(
         exempted,
         BTreeSet::from(["src/request.rs:GenerationConfig".to_string()]),
@@ -332,7 +376,7 @@ mod inner {
     );
 
     // And the exemption is scoped: the same name elsewhere is not exempt.
-    let elsewhere = offenders_in("src/response.rs", fixture);
+    let (elsewhere, _) = offenders_and_exemptions_in("src/response.rs", fixture, &manual);
     let elsewhere_names: Vec<&str> = elsewhere
         .iter()
         .map(|f| f.rsplit(": ").next().unwrap())
@@ -341,12 +385,33 @@ mod inner {
         elsewhere_names.contains(&"GenerationConfig"),
         "exemptions must be path-scoped, not global: {elsewhere:?}"
     );
-    let (_, none_here) = offenders_and_exemptions_in("src/response.rs", fixture);
+    let (_, none_here) = offenders_and_exemptions_in("src/response.rs", fixture, &manual);
     assert!(
         none_here.is_empty(),
         "and nothing is recorded as exempt at a path with no matching entry: \
          {none_here:?}"
     );
+}
+
+/// Names targeted by a hand-written `impl<'de> Deserialize<'de> for Foo`.
+///
+/// Such a struct carries no `Deserialize` token in its own attribute block,
+/// so the derive check cannot see it — and this crate hand-writes
+/// Deserialize across its Evergreen surface. Unioned across every file by
+/// the caller rather than computed per file, because nothing requires the
+/// impl to live beside its type; a split across modules would otherwise be
+/// invisible, which is the same silent-absence mode this guard exists for.
+fn manual_deserialize_targets(text: &str) -> BTreeSet<String> {
+    text.lines()
+        .filter_map(|line| {
+            let trimmed = line.trim_start();
+            if !trimmed.starts_with("impl") || !trimmed.contains("Deserialize") {
+                return None;
+            }
+            let after = trimmed.split(" for ").nth(1)?;
+            Some(after.split(['<', ' ', '{']).next()?.trim().to_string())
+        })
+        .collect()
 }
 
 /// Recursively collects `.rs` files under `dir`.
