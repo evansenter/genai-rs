@@ -119,11 +119,18 @@ streak_line() {
        else {opened: null,       rest: ((.comments // [])[($r + 1):])}
        end)
     | (.rest | map(select(.body | startswith($failing)))) as $sf
-    | "\(($sf | length) + (if .opened == null then 1 else 2 end))\t\(.opened // $sf[0].createdAt // "")\t\(((.rest | length) + ($r // 0)) >= 100)"
+    | "\(($sf | length) + (if .opened == null then 1 else 2 end))|\(.opened // $sf[0].createdAt // "")|\(((.rest | length) + ($r // 0)) >= 100)"
   ' <<<"$view" 2>/dev/null) || return 0
 
+  # `|`, not a tab. Tab is an IFS *whitespace* character, so bash collapses a
+  # run of them into one delimiter and an empty middle field disappears:
+  # `1<TAB><TAB>false` reads as two fields, putting "false" in `since`. That
+  # field is empty exactly when a recovery exists and no failure comment
+  # follows it yet — the first failure of a new episode — which the
+  # `--state all` lookup reaches routinely, and the body would then read
+  # "Failing since false". A non-whitespace delimiter keeps empty fields.
   local count since capped
-  IFS=$'\t' read -r count since capped <<<"$parsed"
+  IFS='|' read -r count since capped <<<"$parsed"
   [ -n "$count" ] || return 0
   # No timestamp means this run is itself the start of the streak.
   since=${since:0:10}
@@ -170,7 +177,10 @@ EDIT_MARKER="<!-- Generated above; anything you add below this line is preserved
 PRESERVED=""
 if [ -n "$EXISTING" ]; then
   PRESERVED=$(gh issue view "$EXISTING" --json body --jq .body 2>/dev/null \
-    | awk -v marker="$EDIT_MARKER" 'found { print } $0 == marker { found = 1 }') || PRESERVED=""
+    | awk -v marker="$EDIT_MARKER" '
+        { line = $0; sub(/\r$/, "", line) }
+        found { print }
+        line == marker { found = 1 }') || PRESERVED=""
 fi
 
 {

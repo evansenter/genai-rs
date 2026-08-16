@@ -165,6 +165,33 @@ run_script "report_scheduled_failure.sh" "$SCRIPTS/report_scheduled_failure.sh" 
 check "streak: a recovery resets the count" \
   "Failing since 2026-06-10 — 2 consecutive scheduled runs" "$out"
 
+# --- Streak: the first failure of a new episode, where the comment list
+#     *ends* at the Recovered. Both fixtures above leave a failure comment
+#     after the reset, so `$sf` is non-empty in each and the empty-timestamp
+#     branch — the one that falls back to today's date — went unexercised.
+#     That is the hole an IFS-collapse bug went through, rendering
+#     "Failing since false" while the harness stayed green.
+make_gh_stub "[{\"title\":\"$TITLE_FLAKY\",\"number\":77}]" \
+  '{"createdAt":"2026-05-01T00:00:00Z","comments":[
+      {"body":"Still failing: x","createdAt":"2026-05-02T00:00:00Z"},
+      {"body":"Recovered — the scheduled run succeeded. Closing.","createdAt":"2026-05-03T00:00:00Z"}]}'
+run_script "report_scheduled_failure.sh" "$SCRIPTS/report_scheduled_failure.sh" \
+  "CI Flakiness Report" "https://example/run/1"
+check "streak: a re-failure right after recovery dates itself today" \
+  "Failing since $(date -u +%Y-%m-%d) — 1 scheduled run" "$out"
+
+# --- Annotations survive a body that has been through the web UI, which
+#     normalises to CRLF. That is the sequence the marker exists for: a human
+#     opens the issue and types a note. An exact-equality match against an
+#     LF marker would drop it, and a discarded annotation is indistinguishable
+#     from one nobody wrote.
+make_gh_stub "[{\"title\":\"$TITLE_FLAKY\",\"number\":77}]" \
+  '{"createdAt":"2026-05-01T00:00:00Z","comments":[],
+    "body":"old text\r\n<!-- Generated above; anything you add below this line is preserved. -->\r\nTyped in the browser, tracked in #500.\r\n"}'
+run_script "report_scheduled_failure.sh" "$SCRIPTS/report_scheduled_failure.sh" \
+  "CI Flakiness Report" "https://example/run/1"
+check "annotations: survive a CRLF body from the web UI" "tracked in #500" "$out"
+
 # --- Streak: past the API's one-page comment limit the count is computed
 #     over a window, not the history, so the claim is capped rather than
 #     stated as fact. A confident wrong number is the failure this line was
