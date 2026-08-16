@@ -353,10 +353,12 @@ jobs:
             cargo nextest run --test $test --run-ignored all --retries 2 --success-output=final 2>&1 | tee "/tmp/$test.log" || rc=$?
             echo "::endgroup::"
             # Both markers, counted together. `LIVE_TOOL_EVIDENCE_SKIPPED`
-            # is emitted by a live tool test that completed without evidence
-            # the server was reached — one occurrence is model variability, a
-            # persistent one is a silently broken tool, which is the failure
-            # that would otherwise stay green and unremarked.
+            # is emitted by a live tool test whose interaction succeeded, or
+            # failed in a way the test's triage guard did not recognise,
+            # without evidence the server was reached — one occurrence is
+            # model variability or a third-party blip, a persistent one is a
+            # silently broken tool, which is the failure that would otherwise
+            # stay green and unremarked.
             skips=$(grep -cE 'SEMANTIC_VALIDATION_SKIPPED|LIVE_TOOL_EVIDENCE_SKIPPED' "/tmp/$test.log" || true)
             if [ "${skips:-0}" -gt 3 ]; then
               # The tolerated-skip escape hatch is only meaningful while it

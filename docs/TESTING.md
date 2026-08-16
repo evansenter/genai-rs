@@ -523,11 +523,18 @@ current numbers) — the escape hatch stays available for transient blips
 without being able to quietly become the normal path.
 
 The rule for whether a skip gets a marker is **distinguishability, not
-stability**. A skip whose guard is narrow enough that it cannot be a
-disguised regression is left unmarked: no `GEMINI_API_KEY`, or a key not
-allowlisted for computer use — that guard matches on the tool name *and*
-an unavailability phrase, so nothing else can reach it. Marking those
-would annotate every run forever, which is noise.
+stability**. A skip whose guard names the specific thing
+being skipped is left unmarked: no `GEMINI_API_KEY`, or a key not
+allowlisted for computer use — that guard requires the tool name *and* an
+unavailability phrase, so only a rejection about computer use reaches it,
+not an unrelated 4xx. Marking those would annotate every run forever,
+which is noise.
+
+That scoping is deliberately not airtight, and the test says so: a
+model-level "computer use is not supported for this model" satisfies both
+halves too, so a regression of that kind would land in the unmarked
+branch. Leaving it unmarked is a recorded call, not an oversight — the
+alternative annotates every run on an un-allowlisted key indefinitely.
 
 A skip reached from a catch-all branch is marked, however stable its
 cause may turn out to be. The MCP `Err`-arm skip is the example: it fires
