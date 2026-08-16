@@ -351,6 +351,22 @@ pub enum Step {
     /// The call *happened* and its cost is real — `usage.total_tool_use_tokens`
     /// is non-zero — but which server or tool ran is not recoverable from the
     /// response. See #433.
+    ///
+    /// # Roundtrip cost of modeling this
+    ///
+    /// [`Step::Unknown`] preserved the whole JSON object; this variant
+    /// captures exactly `id` and `signature`, and the deserialize shadow enum
+    /// does not deny unknown fields. So if the endpoint starts attaching
+    /// sibling keys — `name`, `server_name`, `arguments`, the very fields the
+    /// spec puts on `mcp_server_tool_call` — they are dropped on a
+    /// deserialize/re-serialize roundtrip, where before they survived.
+    ///
+    /// That is the crate-wide convention (no `Step` variant flattens an
+    /// extras map) and the probe showed exactly three keys, but it is more
+    /// load-bearing here than elsewhere: this variant's premise is that its
+    /// full shape is unproven, and this is the mechanism by which the missing
+    /// identity would *stay* missing even once the API began sending it.
+    /// The #421 sweep is the intended detector.
     ToolCall {
         /// Unique ID for this call.
         id: String,

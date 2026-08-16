@@ -272,7 +272,8 @@ pub enum AutoFunctionStreamChunk {
 | `CodeExecutionCall` / `CodeExecutionResult` | `code_execution_*` | Server-side code execution |
 | `UrlContextCall` / `UrlContextResult` | `url_context_*` | URL context tool |
 | `GoogleSearchCall` / `GoogleSearchResult` | `google_search_*` | Google Search tool |
-| `McpServerToolCall` / `McpServerToolResult` | `mcp_server_tool_*` | MCP server tools |
+| `ToolCall { id, signature }` | `tool_call` | Generic server-side tool call — **this is what MCP invocations arrive as** |
+| `McpServerToolCall` / `McpServerToolResult` | `mcp_server_tool_*` | Spec-defined, never observed; see the row above |
 | `FileSearchCall` / `FileSearchResult` | `file_search_*` | File search tool |
 | `GoogleMapsCall` / `GoogleMapsResult` | `google_maps_*` | Google Maps tool |
 | `Unknown { delta_type, data }` | anything else | Preserved for forward compatibility |

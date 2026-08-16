@@ -30,7 +30,7 @@ Gemini provides several server-side tools that execute automatically without req
 
 **Key distinction**: These are *server-side* tools executed by Google's infrastructure, unlike *client-side* function calling where your code executes the functions.
 
-**Where tool activity appears**: Under API revision 2026-05-20, server-side tool activity is reported as dedicated step variants in `response.steps` (e.g., `Step::GoogleSearchCall`, `Step::GoogleSearchResult`, `Step::CodeExecutionCall`, `Step::UrlContextResult`, `Step::McpServerToolCall`, ...). The response helpers shown below (`google_search_results()`, `code_execution_calls()`, ...) iterate those steps for you. The old `grounding_metadata` and `url_context_metadata` response fields no longer exist — grounding information comes from the steps themselves plus inline `Annotation` citations, and `usage.grounding_tool_count` reports per-tool grounding counts.
+**Where tool activity appears**: Under API revision 2026-05-20, server-side tool activity is reported as dedicated step variants in `response.steps` (e.g., `Step::GoogleSearchCall`, `Step::GoogleSearchResult`, `Step::CodeExecutionCall`, `Step::UrlContextResult`, `Step::ToolCall` — which is what MCP invocations arrive as, see the MCP section, ...). The response helpers shown below (`google_search_results()`, `code_execution_calls()`, ...) iterate those steps for you. The old `grounding_metadata` and `url_context_metadata` response fields no longer exist — grounding information comes from the steps themselves plus inline `Annotation` citations, and `usage.grounding_tool_count` reports per-tool grounding counts.
 
 ## Google Search
 
@@ -547,7 +547,9 @@ let config = McpServerConfig::new("filesystem", "https://mcp.example.com/fs")
     ]);
 ```
 
-MCP activity appears in `response.steps` as `Step::McpServerToolCall { name, server_name, arguments, .. }` and `Step::McpServerToolResult { .. }`.
+**MCP activity appears as generic `Step::ToolCall { id, signature }` steps** — *not* as `Step::McpServerToolCall`. Verified live 2026-08-16 against a real MCP server: the endpoint emits `tool_call` with only those two fields, so a matcher on `Step::McpServerToolCall` never fires, and `step_summary().mcp_server_tool_call_count` reads 0 on a successful call. Check `step_summary().tool_call_count` instead.
+
+Which server or tool ran is not recoverable from the response; `usage.total_tool_use_tokens` is what shows the call happened. `Step::McpServerToolCall` / `McpServerToolResult` remain modeled for spec parity. See #433.
 
 ## Combining Tools
 
