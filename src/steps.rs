@@ -340,6 +340,11 @@ pub enum Step {
         signature: Option<String>,
     },
     /// MCP server tool call (`type: "mcp_server_tool_call"`).
+    ///
+    /// Not currently emitted by the API: MCP activity arrives as generic
+    /// `tool_call` steps (verified live 2026-08-16), so a match on this
+    /// variant never fires today. Modeled from the spec for when it does.
+    /// Tracked in #433.
     McpServerToolCall {
         /// Unique ID for this call.
         id: String,
@@ -351,6 +356,11 @@ pub enum Step {
         arguments: serde_json::Value,
     },
     /// MCP server tool result (`type: "mcp_server_tool_result"`).
+    ///
+    /// Not currently emitted by the API: MCP activity arrives as generic
+    /// `tool_call` steps (verified live 2026-08-16), so a match on this
+    /// variant never fires today. Modeled from the spec for when it does.
+    /// Tracked in #433.
     McpServerToolResult {
         /// The `id` of the corresponding call.
         call_id: String,
@@ -1356,6 +1366,10 @@ pub enum StepDelta {
         signature: Option<String>,
     },
     /// MCP server tool call delta (`type: "mcp_server_tool_call"`).
+    ///
+    /// Not currently emitted by the API — see
+    /// [`Step::McpServerToolCall`] for the verified wire behaviour
+    /// and #433.
     McpServerToolCall {
         /// Tool name.
         name: String,
@@ -1365,6 +1379,10 @@ pub enum StepDelta {
         arguments: serde_json::Value,
     },
     /// MCP server tool result delta (`type: "mcp_server_tool_result"`).
+    ///
+    /// Not currently emitted by the API — see
+    /// [`Step::McpServerToolCall`] for the verified wire behaviour
+    /// and #433.
     McpServerToolResult {
         /// Tool name.
         name: Option<String>,
