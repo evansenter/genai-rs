@@ -42,15 +42,29 @@ against. The `api-surface-sweep` workflow files an issue when the SDK moves.
 
 Use the Makefile for common operations. Requires [cargo-nextest](https://nexte.st/).
 
+**Optional, once per clone:** `./scripts/setup-dev.sh` enables the mold
+linker if you have it. `.cargo/config.toml` is *not* checked in — when it
+was, a machine without mold failed every build with `cannot find 'ld'`,
+naming a binary that is installed rather than the one that is not (#428).
+The script checks before enabling and is a no-op otherwise.
+
 ```bash
-make check     # Pre-push gate: fmt + clippy + test
+make check     # Pre-push gate: fmt + clippy + test + test-scripts
 make test      # Unit tests only (excludes doctests for speed)
 make test-all  # Full suite including integration tests (requires GEMINI_API_KEY)
+make test-scripts # Fixture tests for the repo's shell scripts (needs bash, jq, python3)
 make fmt       # Check formatting
 make clippy    # Lint with warnings as errors
 make docs      # Build docs with warnings as errors (all-features + docs.rs feature set)
 make clean     # Clean build artifacts
 ```
+
+`make test-scripts` hard-fails if `jq` or `python3` is missing rather than
+skipping, and it is a prerequisite of `make check` — so the pre-push gate
+needs both. One side effect worth knowing before running it: `test_setup_dev.sh`
+rewrites the checkout's real `.cargo/config.toml` and restores it from a temp
+copy on an EXIT trap. That file is gitignored, so git cannot bring it back if
+the harness is killed outright. Tracked in #455.
 
 ### Testing
 
@@ -79,7 +93,7 @@ cargo nextest run --test integration_file        # Single integration test file
 ### Quality Checks
 
 ```bash
-make check  # Run all quality gates (fmt + clippy + test)
+make check  # Run all quality gates (fmt + clippy + test + test-scripts)
 
 # Or individually:
 cargo fmt -- --check                                                 # Check format
@@ -216,7 +230,27 @@ See `docs/TESTING.md` for the full decision flowchart and examples.
 
 ## CI/CD
 
-GitHub Actions runs: check, test, test-strict-unknown, test-integration (5 matrix groups), fmt, clippy, doc, msrv, cross-platform, coverage, build-metrics, ci-flakiness-report (daily). Security audits run in separate `audit.yml` workflow (on Cargo.toml/lock changes + weekly). Integration tests require same-repo origin (protects API key). Release validation includes full integration test suite.
+GitHub Actions runs: check, test, test-strict-unknown, test-integration (5 matrix groups), fmt, clippy, doc, msrv, cross-platform, coverage, build-metrics, shell-scripts (harnesses + shellcheck over `.github/scripts/` and `scripts/` via `make test-scripts`, plus the workflow `run:` parse-check and the gap-tracker baseline check — one home for everything needing no Rust toolchain), ci-flakiness-report (daily). Security audits run in separate `audit.yml` workflow (on Cargo.toml/lock changes + weekly). Integration tests require same-repo origin (protects API key). Release validation includes full integration test suite.
+
+### Example size gate (`build-metrics`)
+
+Example binary sizes are checked as a **per-example delta against the last
+main build**, not against an absolute ceiling. The baseline is an artifact
+refreshed on every push to main, which is why `build-metrics` is the one job
+that also runs on merges and not only on PRs — sizes are toolchain- and
+linker-dependent, so a committed number would encode one machine's toolchain.
+
+| Situation | What happens |
+|-----------|--------------|
+| An example grows more than +15% vs main | The job fails, naming the example and both sizes |
+| No baseline (first run, expired artifact, lookup failed) | `::warning::`, the delta check does **not** run, and only the 64MB sanity ceiling applies |
+| Growth is intended | Add the **`size-growth-ok`** label to the PR, then **push a commit** |
+
+The push is not optional: a re-run replays the original event payload, so a
+label added afterwards is not in it, and this workflow does not trigger on
+`labeled`. The label waives both the threshold and the disjoint-key guard.
+The baseline refreshes automatically once the change lands on main, so the
+override is only ever needed for the PR that introduces the growth.
 
 ## Project Conventions
 

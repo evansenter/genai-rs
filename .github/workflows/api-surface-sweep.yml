@@ -261,10 +261,18 @@ jobs:
             # would arrive with no "there is something to look at" event. A
             # comment restores that without reintroducing the duplicate
             # issues the fixed title exists to prevent.
-            # Heredoc + env vars rather than an inline --body carrying
-            # `${{ }}`: expressions are substituted into this script before
-            # bash parses it, so a value containing a quote would break the
-            # block itself rather than just the message.
+            # Heredoc + env vars rather than an inline --body carrying a
+            # GitHub expression: those are substituted into this script
+            # before bash parses it, so a value containing a quote would
+            # break the block itself rather than just the message.
+            #
+            # Note this comment deliberately does not spell the expression
+            # out. A `run:` block is a YAML block scalar, so `#` here is
+            # literal string content, not a YAML comment — the substitution
+            # above applies to it too, and an empty expression is a workflow
+            # parse error rather than a harmless note. The `env:` comment
+            # further up can spell it, because that one is a real YAML
+            # comment and never reaches Actions.
             {
               echo "Updated: \`google-genai\` **$LATEST** also moves the"
               echo "Interactions bindings. The issue body above now reflects"
