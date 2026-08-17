@@ -470,8 +470,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: ./.github/actions/setup-mold
+      # nextest, because `Generate coverage` runs under it rather than under
+      # plain `cargo test` — see the comment on that step.
+      - uses: taiki-e/install-action@cargo-nextest
       - name: Generate coverage
-        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+        # `nextest` (process per test), not plain `cargo test` (threads in one
+        # process). Several unit tests assume process isolation — a scoped
+        # thread-local tracing subscriber vs tracing's process-wide interest
+        # cache, and LOUD_WIRE env mutation vs concurrently-built clients — so
+        # under `cargo test` they flake, and only this job ran that way. See
+        # #418.
+        run: cargo llvm-cov nextest --workspace --lcov --output-path lcov.info
       - uses: codecov/codecov-action@v4
         with:
           files: lcov.info
