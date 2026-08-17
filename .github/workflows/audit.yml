@@ -15,6 +15,16 @@ on:
 permissions:
   contents: read
   checks: write  # Required for rustsec/audit-check to post results
+  # Two consumers, not one. The escalation step below needs it (#431), but so
+  # does `audit-check` itself: on a `schedule` event it takes its
+  # `reportIssues` branch (`src/main.ts:85` at v1.4.1) and files one issue per
+  # advisory. Without this line that call 403s, the rejection reaches the
+  # action's top-level `catch`, and `core.setFailed` turns a real advisory
+  # into an opaque red run. So granting it for #431 also switches on
+  # per-advisory reporting that has been inert since this workflow was added
+  # — the behaviour change arrives through this line, and is worth knowing
+  # about when reading the escalation step's wording.
+  issues: write
 
 jobs:
   security:
@@ -26,3 +36,68 @@ jobs:
         uses: rustsec/audit-check@v1.4.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Scheduled runs fail quietly (#431): the only built-in signal is an
+      # email to whoever last committed this file. Gated on `schedule`
+      # because a push/PR failure is already visible as a red check.
+      #
+      # Boundary: `failure()` covers a step exiting non-zero, but not a
+      # cancelled job or one that exceeds its execution limit — in both the
+      # runner stops and this step never runs, so nothing escalates. The
+      # 98-minute apt stall noted in `.github/actions/setup-mold` is that
+      # shape: had it hit a ceiling on a scheduled run rather than
+      # eventually failing, this gate would have stayed shut on exactly the
+      # kind of incident #431 is about. Catching those needs a
+      # `workflow_run`-triggered watcher keyed on conclusion != success,
+      # which belongs with the deferred liveness work.
+      #
+      # The third argument replaces the default body paragraph, which is
+      # written for a monitoring workflow and would read wrong here. What it
+      # says instead is checked against the action's source, not guessed:
+      # on `schedule`, `audit-check` v1.4.1 takes the `reportIssues` branch
+      # (`src/main.ts:85`) and files one issue per advisory without calling
+      # `setFailed`, so a genuine RUSTSEC finding does *not* turn this job
+      # red. A red scheduled run therefore really is the audit itself
+      # breaking — but a reader arriving from a security-shaped issue title
+      # should be told where the advisories actually live.
+      - name: Escalate a failing scheduled run
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # From context, not a literal: this string is the join key
+          # between reporter and resolver (the issue title embeds it),
+          # and it was hand-copied across two files and four call sites
+          # with nothing checking they agreed. Edit one and updates land
+          # on one issue while closes target another.
+          SELF_WORKFLOW_NAME: ${{ github.workflow }}
+        run: |
+          .github/scripts/report_scheduled_failure.sh "$SELF_WORKFLOW_NAME" "$RUN_URL" \
+            "**This is probably not an advisory.** On a scheduled run \`audit-check\`
+          reports findings by opening one issue per advisory and leaves the run
+          green, so a red run means the audit itself could not complete — a
+          network failure, a \`cargo audit\` or action regression, or a malformed
+          \`Cargo.lock\`. Check the run log. If you are here about a vulnerability,
+          look for the per-advisory issues instead; this issue tracks the
+          monitoring, not the finding."
+
+      # Back to `schedule`, and this is the reasoning rather than the
+      # default. I widened it to any non-PR run so a Monday `Cargo.lock`
+      # push could clear an issue rather than leaving it open until Sunday —
+      # but a push cannot vouch for what failed. `audit-check` branches on
+      # the event: `schedule` takes `reportIssues`, everything else takes
+      # `reportCheck`. So the failure most specific to this workflow lives
+      # in a branch only a scheduled run executes, and a green push closing
+      # the issue would produce a weekly flap — green six days out of seven
+      # on exactly the mode the wider gate cannot observe.
+      #
+      # The rule, stated once for both workflows: a run may close the issue
+      # only if it exercises the same path as the run that opened it. The
+      # generated body deliberately names no trigger, so it stays accurate
+      # under this gate and under the wider one in `ci-flakiness-report.yml`.
+      - name: Clear the failure issue once the run recovers
+        if: success() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SELF_WORKFLOW_NAME: ${{ github.workflow }}
+        run: .github/scripts/resolve_scheduled_failure.sh "$SELF_WORKFLOW_NAME"

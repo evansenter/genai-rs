@@ -1943,6 +1943,19 @@ mod tests {
             fn on_event(&self, _event: &crate::wire::WireEvent) {}
         }
 
+        // Held for the build: an unrelated LOUD_WIRE=1 window would add a
+        // third inspector to this client. The guard is shared with the
+        // other LOUD_WIRE mutator in `src/wire.rs`.
+        //
+        // `unset()` because the guard blocks *concurrent* mutators but does
+        // not neutralize an *ambient* one: under `LOUD_WIRE=1 cargo test`,
+        // `build()` would append a printer on top of the two Noops and this
+        // would see 3. Previously that depended on whether the sibling
+        // test's unconditional `remove_var` had already landed; now that the
+        // sibling restores instead of clearing, it would be deterministic.
+        let mut guard = crate::test_subscriber::LoudWireGuard::acquire();
+        guard.unset();
+
         let client = Client::builder("test_key".to_string())
             .add_wire_inspector(Arc::new(Noop))
             .add_wire_inspector(Arc::new(Noop))
@@ -1958,12 +1971,14 @@ mod tests {
 
     #[test]
     fn test_loud_wire_env_installs_printer() {
-        // SAFETY: test-only env mutation. No other test reads LOUD_WIRE, and
-        // an extra printer on an unrelated concurrently-built client is
-        // harmless (nothing sends requests in unit tests).
-        unsafe { std::env::set_var("LOUD_WIRE", "1") };
+        // Held across the whole set/build/unset/build sequence so no other
+        // test builds a client inside the LOUD_WIRE=1 window, and so the
+        // ambient value is restored on drop rather than cleared.
+        let mut guard = crate::test_subscriber::LoudWireGuard::acquire();
+
+        guard.set("1");
         let with_env = Client::builder("test_key".to_string()).build().unwrap();
-        unsafe { std::env::remove_var("LOUD_WIRE") };
+        guard.unset();
         let without_env = Client::builder("test_key".to_string()).build().unwrap();
 
         assert!(
