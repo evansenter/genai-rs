@@ -387,6 +387,10 @@ examples/           # Runnable examples
 
 ## Contributing
 
+**First clone?** `./scripts/setup-dev.sh` enables the mold linker if you have
+it installed, and is a no-op otherwise. Optional — it only affects build
+speed — but it is the one setup step that is not `cargo`.
+
 Contributions welcome! Please read:
 
 - [CLAUDE.md](CLAUDE.md) - Development guidelines and architecture

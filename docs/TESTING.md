@@ -505,12 +505,50 @@ retry closure that needs the verdict as a `Result`) applies the same
 policy: the validator call is itself retried on transient errors, then
 the helper asserts on the verdict, panics on non-transient validator
 errors, and tolerates transients that survive the retries with a
-`SEMANTIC_VALIDATION_SKIPPED` marker. The CI integration step captures
-passing-test output via `--success-output=final` and counts the markers:
-a `::warning::` annotation when any appear, and a **failed step** past a
-per-run threshold (see the marker-counting blocks in `rust.yml` and
-`release.yml` for the current numbers) — the escape hatch stays available
-for transient blips without being able to quietly become the normal path.
+`SEMANTIC_VALIDATION_SKIPPED` marker.
+
+There are two such markers, and the distinction is why the second exists
+rather than reusing the first:
+
+| Marker | Means |
+|--------|-------|
+| `SEMANTIC_VALIDATION_SKIPPED` | The validator call itself failed transiently, so the verdict was never obtained. |
+| `LIVE_TOOL_EVIDENCE_SKIPPED` | The interaction succeeded, or failed in a way the test's triage guard did not recognise, but produced no evidence the tool actually ran. |
+
+Both are counted together. The CI integration step captures passing-test
+output via `--success-output=final` and greps for either: a `::warning::`
+annotation when any appear, and a **failed step** past a per-run threshold
+(see the marker-counting blocks in `rust.yml` and `release.yml` for the
+current numbers) — the escape hatch stays available for transient blips
+without being able to quietly become the normal path.
+
+The rule for whether a skip gets a marker is **distinguishability, not
+stability**. A skip whose guard names the specific thing
+being skipped is left unmarked: no `GEMINI_API_KEY`, or a key not
+allowlisted for computer use — that guard requires the tool name *and* an
+unavailability phrase, so only a rejection about computer use reaches it,
+not an unrelated 4xx. Marking those would annotate every run forever,
+which is noise.
+
+That scoping is deliberately not airtight, and the test says so: a
+model-level "computer use is not supported for this model" satisfies both
+halves too, so a regression of that kind would land in the unmarked
+branch. Leaving it unmarked is a recorded call, not an oversight — the
+alternative annotates every run on an un-allowlisted key indefinitely.
+
+A skip that cannot tell a benign cause from a regression is marked,
+however stable its cause may turn out to be. The two MCP skips are the
+examples, and they get there differently. The `Err`-arm one is a
+catch-all: it fires on any error the triage guard did not recognise, so it
+cannot separate a third-party outage from a rejection phrased in words the
+guard misses. The Ok-path one fires on a fully-recognised condition — the
+interaction completed with no tool evidence — but a model that simply
+chose not to call the tool and a silently broken tool produce the
+identical response, so it cannot separate those either.
+
+A permanently unreachable server is every bit as stable as an
+un-allowlisted key. What separates them is not stability but whether the
+branch could be hiding a real regression.
 
 ### Test Fixtures
 
