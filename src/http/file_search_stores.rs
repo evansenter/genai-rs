@@ -29,7 +29,18 @@ use crate::file_search_stores::{
 use crate::wire::WireEvent;
 use std::path::Path;
 
-/// Upload ceiling, matching the Files API's `MAX_FILE_SIZE` (2 GB).
+/// Upload ceiling, borrowed from the Files API's `MAX_FILE_SIZE` (2 GB) and
+/// **not verified for this resource** — no probe here established what a
+/// fileSearchStores document may actually weigh.
+///
+/// Two things follow, and both argue for replacing this with a measured
+/// number if one turns up. If the real limit is lower, the guard is inert
+/// for everything between it and 2 GB — and the raw upload protocol needs
+/// the whole body at once, so `tokio::fs::read` buffers the entire file
+/// before issuing a request that would reject it. The Files API pairs its
+/// 2 GB ceiling with resumable uploads for exactly that reason; there is no
+/// such escape hatch here. It is also a second copy of a private constant,
+/// kept in step only by this comment.
 const MAX_UPLOAD_SIZE: u64 = 2_147_483_648;
 
 fn stores_url() -> String {

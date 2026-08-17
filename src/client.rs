@@ -2159,12 +2159,21 @@ impl Client {
             match &current.state {
                 Some(crate::DocumentState::Active) => return Ok(current),
                 Some(crate::DocumentState::Failed) => {
-                    return Err(GenaiError::Api {
-                        status_code: 500,
-                        message: format!("Document '{document_name}' failed to index"),
-                        request_id: None,
-                        retry_after: None,
-                    });
+                    // `Internal`, not `Api { status_code: 500 }`. `Failed` is
+                    // terminal, but `is_retryable()` reports true for any
+                    // `Api` with a 5xx — so the 500 spelling tells a caller
+                    // following `examples/retry_with_backoff.rs` to keep
+                    // re-polling a document that will never index, burning
+                    // the whole retry budget and re-issuing the GET loop each
+                    // time. The status was invented here rather than observed:
+                    // unlike `wait_for_file_ready`, which carries the API's
+                    // own `error_code`, `DocumentState::Failed` is a state
+                    // value with no HTTP error behind it. The timeout arm
+                    // below already uses `Internal` for the same reason.
+                    return Err(GenaiError::Internal(format!(
+                        "Document '{document_name}' failed to index. This is \
+                         terminal — re-uploading is the only recovery."
+                    )));
                 }
                 Some(state) if state.is_unknown() => {
                     tracing::warn!(
