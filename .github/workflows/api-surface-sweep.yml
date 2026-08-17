@@ -282,13 +282,13 @@ jobs:
             # which `$LATEST` this issue was last updated for, and that is
             # what decides whether the comment below is new information.
             # Fetched in one `gh issue view`, and assigned rather than
-            # inlined into the
-            # `if` below. A command substitution *inside* an `if` condition
-            # is exempt from `set -e`, so a transient 5xx there would yield
-            # an empty string, skip the reopen, and let the edit and comment
-            # land on a still-closed issue — the same silent state described
-            # below, moved one call earlier rather than removed. In a simple
-            # assignment the failure does trip `set -e`.
+            # inlined into the `if` below. A command substitution *inside*
+            # an `if` condition is exempt from `set -e`, so a transient 5xx
+            # there would yield an empty string, skip the reopen, and let
+            # the edit and comment land on a still-closed issue — the same
+            # silent state described below, moved one call earlier rather
+            # than removed. In a simple assignment the failure does trip
+            # `set -e`.
             PREV=$(gh issue view "$EXISTING" --json state,body)
             PREV_STATE=$(printf '%s' "$PREV" | jq -r .state)
             PREV_BODY=$(printf '%s' "$PREV" | jq -r .body)
