@@ -318,7 +318,8 @@ jobs:
           for test in ${{ matrix.tests }}; do
             echo "::group::Running $test"
             # --success-output=final keeps passing-test output (notably the
-            # SEMANTIC_VALIDATION_SKIPPED marker) greppable in CI logs.
+            # SEMANTIC_VALIDATION_SKIPPED and LIVE_TOOL_EVIDENCE_SKIPPED
+            # markers) greppable in CI logs.
             # Capture the status instead of dying on it so the group is
             # closed and the skip warning still fires on a failing run —
             # the run where the skip count is most diagnostic.
@@ -332,16 +333,34 @@ jobs:
             # what the ci-flakiness-report job is for.
             cargo nextest run --test $test --run-ignored all --retries 2 --success-output=final 2>&1 | tee "/tmp/$test.log" || rc=$?
             echo "::endgroup::"
-            skips=$(grep -c SEMANTIC_VALIDATION_SKIPPED "/tmp/$test.log" || true)
+            # Both markers, counted together. `LIVE_TOOL_EVIDENCE_SKIPPED`
+            # is emitted by a live tool test whose interaction succeeded, or
+            # failed in a way the test's triage guard did not recognise,
+            # without evidence the server was reached — one occurrence is
+            # model variability or a third-party blip, a persistent one is a
+            # silently broken tool, which is the failure that would otherwise
+            # stay green and unremarked.
+            skips=$(grep -cE 'SEMANTIC_VALIDATION_SKIPPED|LIVE_TOOL_EVIDENCE_SKIPPED' "/tmp/$test.log" || true)
             if [ "${skips:-0}" -gt 3 ]; then
               # The tolerated-skip escape hatch is only meaningful while it
               # stays rare — past this threshold the run's green can't be
               # trusted, so fail instead of warn. Escalate only a passing
               # run: a real nextest failure keeps its own exit code.
-              echo "::error::$test: $skips semantic validations passed vacuously — too many to trust this run (grep SEMANTIC_VALIDATION_SKIPPED in the log for causes)"
+              #
+              # 3 is unchanged now that both marker classes share the budget,
+              # and that is deliberate rather than an oversight. It does mean
+              # a permanently unreachable MCP server costs
+              # `tools_and_config_tests` one of its three slots — but a run
+              # that is both missing live tool evidence *and* burning
+              # validator transients is precisely the run whose green is
+              # least worth trusting, so spending them from one pool is the
+              # behaviour wanted. release.yml re-derived its own number
+              # because it counts a whole workspace run against a much larger
+              # denominator, where one extra marker really is noise.
+              echo "::error::$test: $skips unverified assertion(s) or tolerated failure(s) — too many to trust this run (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)"
               if [ "$rc" -eq 0 ]; then rc=1; fi
             elif [ "${skips:-0}" -gt 0 ]; then
-              echo "::warning::$test: $skips semantic validation(s) passed vacuously (grep SEMANTIC_VALIDATION_SKIPPED in the log for causes)"
+              echo "::warning::$test: $skips unverified assertion(s) or tolerated failure(s) (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)"
             fi
             [ "$rc" -eq 0 ] || exit "$rc"
           done
