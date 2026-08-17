@@ -375,6 +375,24 @@ for bad in 'has\tname' 'has\nname'; do
   fi
 done
 
+# --- The name check and the measuring loop must filter the same set. They ran
+#     off separate inline filters once, and disagreed: validation rejected on
+#     any regular file while measuring dropped depfiles and non-executables.
+#     A stray file with a bad name that was never going to reach the report —
+#     a leftover `.txt`, a depfile — reddened the job over it. Both now go
+#     through `is_example_binary`, and this pins that they agree.
+rm -rf "$WORK/straybin" && mkdir -p "$WORK/straybin"
+: > "$WORK/straybin/real"
+chmod +x "$WORK/straybin/real"
+: > "$WORK/straybin/real.d"
+# Tab-bearing, but not executable — so it is not an example binary, and its
+# name is therefore none of the checker's business.
+: > "$WORK/straybin/notes$(printf '\t')file.txt"
+rc=0
+out=$(bash "$SCRIPT" measure "$WORK/straybin" "$WORK/straybin.json" 2>&1) || rc=$?
+expect_rc     "stray file: a bad name on a non-binary does not fail the run" 0
+expect_output "stray file: measures only the real binary" "Measured 1"
+
 # --- Negative zero. `round` on a small negative yields -0, which is `>= 0`
 #     in jq, so the `+` prefix was applied and the value stringified as `-0`,
 #     rendering `+-0%`. A one-byte shrink on a 13MB binary lands here, so it

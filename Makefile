@@ -69,7 +69,7 @@ test-scripts:
 	rc=0; \
 	if command -v shellcheck >/dev/null 2>&1; then \
 		echo "==> shellcheck"; \
-		shellcheck -S warning .github/scripts/*.sh .github/scripts/tests/*.sh || rc=1; \
+		shellcheck -S warning .github/scripts/*.sh .github/scripts/tests/*.sh scripts/*.sh || rc=1; \
 	else \
 		echo "==> shellcheck not installed, skipping lint"; \
 	fi; \

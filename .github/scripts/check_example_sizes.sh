@@ -28,11 +28,52 @@ usage() {
     exit 2
 }
 
-# Records `{"example": size_bytes, ...}` for every example binary in <dir>.
+# True for a path the size report will carry: a regular executable that is
+# neither a `.d` depfile nor one of the hash-suffixed duplicates cargo leaves
+# alongside the stable names (`simple_interaction` and
+# `simple_interaction-a1b2c3`). Without that last filter a rebuild changes the
+# key set and every entry reads as new.
 #
-# Skips `.d` depfiles and the hash-suffixed duplicates cargo leaves alongside
-# the stable names (`simple_interaction` and `simple_interaction-a1b2c3`);
-# without that, a rebuild changes the key set and every entry reads as new.
+# One predicate rather than the same filters inlined in both of `measure`'s
+# loops, so the two cannot drift apart. When they were separate, the name
+# validation rejected on *any* regular file while the measuring loop dropped
+# depfiles and non-executables — so a stray `.txt` reddened the job over a
+# name that was never going to reach the report.
+is_example_binary() {
+    local f="$1" name suffix
+    [ -f "$f" ] || return 1
+    [ -x "$f" ] || return 1
+    name=$(basename "$f")
+    case "$name" in
+        *.d) return 1 ;;
+    esac
+    # Cargo's rebuild duplicates end in `-<hex>`, and the whole tail after the
+    # final hyphen is hex — so that is what is required here, rather than
+    # "starts with 8 hex characters" as a bare glob would. `foo-deadbeef_bar`
+    # is a plausible example name and used to be discarded as a duplicate.
+    #
+    # A false positive matters more than it looks: the example vanishes from
+    # *both* sides, so it shows up in neither the comparison table, nor
+    # `added`, nor `removed`. The only trace is the compared count — the one
+    # signal the removed/renamed notice cannot reach.
+    case "$name" in
+        *-*)
+            suffix=${name##*-}
+            case "$suffix" in
+                # At least 8 characters and every one of them hex.
+                [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*)
+                    case "$suffix" in
+                        *[!0-9a-f]*) ;;
+                        *) return 1 ;;
+                    esac
+                    ;;
+            esac
+            ;;
+    esac
+    return 0
+}
+
+# Records `{"example": size_bytes, ...}` for every example binary in <dir>.
 measure() {
     local dir="$1" out="$2"
 
@@ -55,6 +96,10 @@ measure() {
     # the compared count. Out here, `return 1` returns from `measure` and
     # `$out` is never written at all.
     #
+    # Scoped to the files that actually reach the report, via the same
+    # predicate the measuring loop uses — a name only matters here if
+    # something downstream is going to carry it.
+    #
     # Both rejected characters are ones `measure` itself would carry fine;
     # they break downstream. A tab splits across `name` and `was` in
     # `compare`'s tab-delimited report line and shifts every column, so the
@@ -72,7 +117,7 @@ measure() {
     # failure on its first run.
     local f name
     for f in "$dir"/*; do
-        [ -f "$f" ] || continue
+        is_example_binary "$f" || continue
         name=$(basename "$f")
         case "$name" in
             *$'\t'*)
@@ -88,37 +133,8 @@ measure() {
 
     {
         for f in "$dir"/*; do
-            [ -f "$f" ] || continue
+            is_example_binary "$f" || continue
             name=$(basename "$f")
-            case "$name" in
-                *.d) continue ;;
-            esac
-            # Cargo's rebuild duplicates end in `-<hex>`, and the whole tail
-            # after the final hyphen is hex — so that is what is required
-            # here, rather than "starts with 8 hex characters" as a bare glob
-            # would. `foo-deadbeef_bar` is a plausible example name and used
-            # to be discarded as a duplicate.
-            #
-            # A false positive matters more than it looks: the example
-            # vanishes from *both* sides, so it shows up in neither the
-            # comparison table, nor `added`, nor `removed`. The only trace is
-            # the compared count — the one signal the removed/renamed notice
-            # below cannot reach.
-            case "$name" in
-                *-*)
-                    local suffix=${name##*-}
-                    case "$suffix" in
-                        # At least 8 characters and every one of them hex.
-                        [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*)
-                            case "$suffix" in
-                                *[!0-9a-f]*) ;;
-                                *) continue ;;
-                            esac
-                            ;;
-                    esac
-                    ;;
-            esac
-            [ -x "$f" ] || continue
 
             local size
             # `wc -c`, not `stat -c%s`: the latter is GNU-only, and `measure` is the

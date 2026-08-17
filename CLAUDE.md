@@ -35,12 +35,19 @@ The script checks before enabling and is a no-op otherwise.
 make check     # Pre-push gate: fmt + clippy + test + test-scripts
 make test      # Unit tests only (excludes doctests for speed)
 make test-all  # Full suite including integration tests (requires GEMINI_API_KEY)
-make test-scripts # Fixture tests for .github/scripts/ (needs only bash + jq)
+make test-scripts # Fixture tests for the repo's shell scripts (needs bash, jq, python3)
 make fmt       # Check formatting
 make clippy    # Lint with warnings as errors
 make docs      # Build docs with warnings as errors (all-features + docs.rs feature set)
 make clean     # Clean build artifacts
 ```
+
+`make test-scripts` hard-fails if `jq` or `python3` is missing rather than
+skipping, and it is a prerequisite of `make check` — so the pre-push gate
+needs both. One side effect worth knowing before running it: `test_setup_dev.sh`
+rewrites the checkout's real `.cargo/config.toml` and restores it from a temp
+copy on an EXIT trap. That file is gitignored, so git cannot bring it back if
+the harness is killed outright. Tracked in #455.
 
 ### Testing
 
@@ -206,9 +213,7 @@ See `docs/TESTING.md` for the full decision flowchart and examples.
 
 ## CI/CD
 
-GitHub Actions runs: check, test, test-strict-unknown, test-integration (5 matrix groups), fmt, clippy, doc, msrv, cross-platform, coverage, build-metrics, shell-scripts (harnesses +
-shellcheck for `.github/scripts/`, via `make test-scripts`),
-ci-flakiness-report (daily). Security audits run in separate `audit.yml` workflow (on Cargo.toml/lock changes + weekly). Integration tests require same-repo origin (protects API key). Release validation includes full integration test suite.
+GitHub Actions runs: check, test, test-strict-unknown, test-integration (5 matrix groups), fmt, clippy, doc, msrv, cross-platform, coverage, build-metrics, shell-scripts (harnesses + shellcheck over `.github/scripts/` and `scripts/`, via `make test-scripts`), ci-flakiness-report (daily). Security audits run in separate `audit.yml` workflow (on Cargo.toml/lock changes + weekly). Integration tests require same-repo origin (protects API key). Release validation includes full integration test suite.
 
 ### Example size gate (`build-metrics`)
 
