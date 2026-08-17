@@ -1251,7 +1251,8 @@ This ensures forward compatibility when Google adds new enum values.
 
 Response structs (e.g., `AutoFunctionResult`) also use `#[non_exhaustive]` so we can add fields without breaking user code. This has a trade-off:
 
-**Users cannot construct these types directly** (no struct literal syntax outside the crate). This is intentional:
+**No struct-literal or `..Default::default()` syntax outside the crate** — see
+**Constructing fixtures** below for what remains available. This is intentional:
 - Response types represent API responses, not user-constructed data
 - Mocking them in unit tests would give false confidence
 - We can add fields (like `executions` was added to `AutoFunctionResult`) without breaking changes
