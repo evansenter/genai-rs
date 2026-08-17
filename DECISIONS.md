@@ -82,17 +82,23 @@ the #430 sweep lands and someone reaches for a fixture on a newly annotated
 type.
 
 **Known gap**, wider than the rule suggests and including the flagship type.
-`InteractionResponse` (`src/response.rs:782`) does not carry the attribute:
-it derives `Default` and every field is `pub`, so it is constructible from
+`InteractionResponse` (`src/response.rs`) does not carry the attribute: it
+derives `Default` and every field is `pub`, so it is constructible from
 outside the crate today and adding a field to it *is* breaking. Of that
-file's fourteen public structs, the four that carry it are the
-code-execution, url-context and maps `*Info` types at `:719`-`:768`. The
-other ten do not: `ModalityTokens` (`:229`), `GroundingToolCount` (`:249`),
-`UsageMetadata` (`:264`), `StepSummary` (`:1699`), `InteractionResponse`
-itself, and the `*Info` types at `:477`/`:562`/`:652`/`:684`/`:700`. Beyond
-that file, the five resource shapes tracked in #430 (`Trigger`,
-`TriggerExecution`, `Environment`, `Agent`, `Webhook`) are in the same
-position.
+file's fourteen public structs, four carry it — `CodeExecutionCallInfo`,
+`CodeExecutionResultInfo`, `UrlContextResultInfo` and
+`GoogleMapsResultInfo`. The other ten do not: `ModalityTokens`,
+`GroundingToolCount`, `UsageMetadata`, `ImageInfo`, `AudioInfo`,
+`FunctionCallInfo`, `OwnedFunctionCallInfo`, `FunctionResultInfo`,
+`InteractionResponse` and `StepSummary`. Beyond that file, the five
+resource shapes tracked in #430 (`Trigger`, `TriggerExecution`,
+`Environment`, `Agent`, `Webhook`) are in the same position.
+
+Cited by type name rather than by line number deliberately. An earlier
+draft carried the lines, and an unrelated merge moved most of them by +11
+— leaving citations that were correct on the branch and wrong on the file
+they pointed into, which is the exact failure D-011 below is about. Names
+are greppable and survive the next reshuffle.
 
 #430 asks for its own list to be treated as found-so-far rather than
 exhaustive, and its sweep checkbox is open — so this entry records the rule
