@@ -77,7 +77,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `InteractionInput::Content` returns `400 Unknown parameter 'processing'`, so
   use `InteractionInput::Steps`.
 
-### Changed
+### Changed (breaking)
 
 - **Breaking:** `Content::Video` has a new `processing` field. Code that
   constructs or exhaustively destructures the variant with struct-literal
