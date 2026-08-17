@@ -27,6 +27,13 @@ jobs:
   sweep:
     name: Diff google-genai Interactions bindings
     runs-on: ubuntu-latest
+    # Bounds every network call in the job, not just the one that carries an
+    # explicit `timeout=`. The two `pip download`s and the `gh` calls would
+    # otherwise inherit the 360-minute Actions default, and a stalled
+    # download produces exactly the six-hour-late cron failure the per-call
+    # timeout was added to avoid. 15 minutes is generous: a normal run is
+    # under two.
+    timeout-minutes: 15
     env:
       # One rolling issue, same reasoning as the flakiness report (#425):
       # a fixed title makes the dedupe exact, so a sweep that runs daily
@@ -179,12 +186,6 @@ jobs:
             echo "   what closes this loop: the next run sees baseline == latest"
             echo "   and closes this issue itself, which is what clears the"
             echo "   staleness signal the tracker header points readers at."
-            echo
-            # Machine-readable, invisible in the rendered issue. The update
-            # comment below greps the *existing* body for this exact line
-            # before posting, so it fires once per new `$LATEST` rather than
-            # every morning until a maintainer bumps the baseline.
-            echo "<!-- sweep-latest: $LATEST -->"
           } > sweep_report.md
 
           # GitHub rejects an issue body over 65,536 characters with a 422.
@@ -210,6 +211,19 @@ jobs:
             } >> sweep_report.trunc
             mv sweep_report.trunc sweep_report.md
           fi
+
+          # Machine-readable, invisible in the rendered issue. The update
+          # comment below greps the *existing* body for this exact line
+          # before posting, so it fires once per new `$LATEST` rather than
+          # every morning until a maintainer bumps the baseline.
+          #
+          # Appended *after* the cap, not inside the block above. As the last
+          # line of a body that then gets `head -c 60000`'d, it was the first
+          # thing truncation dropped — so on exactly the wholesale-restructure
+          # path the cap exists for, the posted body carried no marker, the
+          # next morning's grep missed, and the daily comment came back.
+          echo >> sweep_report.md
+          echo "<!-- sweep-latest: $LATEST -->" >> sweep_report.md
 
           cat sweep_report.md
 
@@ -267,6 +281,14 @@ jobs:
             # Read the body before overwriting it: the marker in it records
             # which `$LATEST` this issue was last updated for, and that is
             # what decides whether the comment below is new information.
+            # One call for both, and assigned rather than inlined into the
+            # `if` below. A command substitution *inside* an `if` condition
+            # is exempt from `set -e`, so a transient 5xx there would yield
+            # an empty string, skip the reopen, and let the edit and comment
+            # land on a still-closed issue — the same silent state described
+            # below, moved one call earlier rather than removed. In a simple
+            # assignment the failure does trip `set -e`.
+            PREV_STATE=$(gh issue view "$EXISTING" --json state --jq .state)
             PREV_BODY=$(gh issue view "$EXISTING" --json body --jq .body)
 
             # Reopen only when actually closed, rather than reopening
@@ -280,7 +302,7 @@ jobs:
             # issue means nothing is unswept, while unswept surface sits on a
             # closed, freshly-updated issue. The two failure modes are
             # asymmetric and this one is the silent half.
-            if [ "$(gh issue view "$EXISTING" --json state --jq .state)" = "CLOSED" ]; then
+            if [ "$PREV_STATE" = "CLOSED" ]; then
               gh issue reopen "$EXISTING"
             fi
 
