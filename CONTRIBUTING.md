@@ -58,10 +58,11 @@ rm -f .cargo/config.toml && ./scripts/setup-dev.sh
 
 Re-running the script on its own is not enough. It exits early with
 `already exists; leaving it alone` whenever the file is present, and a
-killed harness usually leaves one behind rather than removing it — one
-written under the harness's stub compiler, pinning `linker` to a path
-inside a temp directory that no longer exists. Builds then fail at link
-time while the file looks present and the script reports nothing to do.
+killed harness usually leaves one behind rather than removing it — written
+under the harness's stub compiler, so depending on where the run died it
+either pins `linker` to a name that no longer resolves, or sets mold
+rustflags with no pin at all. Either way builds fail at link time while
+the file looks present and the script reports nothing to do.
 
 ## Verifying API behavior
 
