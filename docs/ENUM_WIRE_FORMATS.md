@@ -1297,7 +1297,15 @@ response.status = InteractionStatus::Completed;
 
 Only the types with neither `Default` nor a constructor need a JSON fixture:
 `FileMetadata`, `FileError`, `VideoMetadata`, `ListFilesResponse`,
-`StreamError`, and `InteractionStreamEvent`.
+`StreamError`, `InteractionStreamEvent`, and `AutoFunctionResult`.
+
+`AutoFunctionResult` is on that list rather than off it despite predating
+this sweep, because it is the type the section above opens with — so a
+reader who follows the pointer from that example arrives here asking about
+exactly it. It derives `Clone, Debug, Serialize, Deserialize` and no
+`Default`, and its inherent methods are `all_executions_succeeded()` and
+`failed_executions()`; the nearby `new()` belongs to
+`AutoFunctionResultAccumulator`.
 
 (`FileUploadResponse` carries the attribute too, but is not in that list: it
 lives in `pub(crate) mod http` and is not re-exported, so no downstream
