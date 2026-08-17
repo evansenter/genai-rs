@@ -8,6 +8,8 @@
 //! - **google_search**: Google Search grounding and annotations
 //! - **code_execution**: Python code execution tool
 //! - **url_context**: URL fetching and analysis
+//! - **mcp_server**: Remote Model Context Protocol servers
+//! - **computer_use**: Browser automation action loop
 //! - **structured_output**: JSON schema enforcement
 //! - **image_generation**: Image output modalities
 //! - **thinking**: Thinking level configuration
@@ -696,6 +698,391 @@ mod google_maps {
     }
 }
 
+// =============================================================================
+// Built-in Tools: MCP Server
+// =============================================================================
+
+mod mcp_server {
+    use super::*;
+    use genai_rs::McpServerConfig;
+
+    /// A public MCP server, used so this exercises a real MCP round-trip
+    /// rather than a mock. If it goes away the test reports and skips rather
+    /// than failing — a third party's uptime is not this repo's regression.
+    const PUBLIC_MCP_SERVER: &str = "https://mcp.deepwiki.com/mcp";
+
+    /// Verifies remote MCP works on the current default model.
+    ///
+    /// This test exists because #265 recorded MCP as blocked: "Remote MCP
+    /// does not work with Gemini 3 models yet ... NOT supported:
+    /// gemini-3-flash-preview, gemini-3-pro-preview". That is no longer true,
+    /// and a live test is the only thing that would have noticed.
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_mcp_server_tool_round_trip() {
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        let result = stateful_builder(&client)
+            .with_text(
+                "Using the deepwiki tool, what is the repository structure of \
+                 evansenter/genai-rs? Answer in one sentence.",
+            )
+            .add_tool(McpServerConfig::new("deepwiki", PUBLIC_MCP_SERVER))
+            .create()
+            .await;
+
+        let response = match result {
+            Ok(response) => response,
+            Err(e) => {
+                // Distinguish "the API rejected MCP" (a real regression) from
+                // "the third-party server is down" (not our problem).
+                let msg = format!("{e:?}").to_lowercase();
+                // The guard is a tool-type token AND an availability phrase,
+                // and each half is narrow for its own reason.
+                //
+                // `mcp_server`, not a bare `mcp`: the configured URL is
+                // `mcp.deepwiki.com/mcp`, so a bare match would fire on any
+                // error that merely echoes the URL back.
+                //
+                // Four availability phrases, not two: "mcp_server tool is
+                // not enabled for this project" is a real rejection that
+                // "not supported"/"unsupported" alone would miss, leaving it
+                // to print "unreachable" and the run to stay green.
+                //
+                // And no "invalid": those four describe availability of the
+                // tool itself, while "invalid" describes anything. The
+                // `mcp_server` scoping does not save it — an API-generated
+                // "mcp_server tool call failed: invalid response from <url>"
+                // satisfies both halves and would panic with "regression"
+                // for exactly the third-party outage this branch tolerates.
+                //
+                // "not available" is the closest call of the four kept, and
+                // is kept knowingly: it describes availability, but not
+                // necessarily *the tool's* — "mcp_server tool call failed:
+                // server not available" is about deepwiki's uptime and would
+                // panic here. Kept because the phrasing is speculative while
+                // the miss it guards against is not: an unrecognised
+                // rejection is a real regression reported as a skip, and this
+                // panic is loud and diagnosable when it misfires. Erring
+                // toward the false regression is the direction chosen.
+                let rejected = [
+                    "not supported",
+                    "unsupported",
+                    "not enabled",
+                    "not available",
+                ]
+                .iter()
+                .any(|phrase| msg.contains(phrase));
+                // Both registers, as with computer use below: `mcp_server` is
+                // what the SDK writes, but Google's error prose need not use
+                // the identifier. "MCP server tools are not supported for
+                // this model" clears `rejected` and fails a token-only check
+                // — the space breaks it — so it would print "unreachable"
+                // and stay green for exactly the regression this test exists
+                // to catch. The panic stays scoped either way, since
+                // `rejected` must still match.
+                let about_mcp = msg.contains("mcp_server") || msg.contains("mcp server");
+                if about_mcp && rejected {
+                    panic!("API rejected the MCP tool — this is a regression: {e:?}");
+                }
+                // Marked, like the no-evidence skip below. This branch is the
+                // catch-all `else` of an error arm: it fires on any error the
+                // `about_mcp && rejected` guard above did not recognise, so it
+                // cannot tell a third-party outage from a rejection phrased in
+                // words that guard misses. That ambiguity is the whole reason
+                // the marker exists — a permanently dead deepwiki and a
+                // silently unrecognised rejection both land here, and without
+                // the marker both leave a green run with nothing annotated.
+                //
+                // (The computer-use skip further down is deliberately not
+                // marked; see the comment there.)
+                println!(
+                    "LIVE_TOOL_EVIDENCE_SKIPPED: MCP call failed for an unrecognised \
+                     reason (server down, or a rejection this guard did not match): {e:?}"
+                );
+                return;
+            }
+        };
+
+        println!("MCP status: {:?}", response.status);
+        let step_types: Vec<&str> = response
+            .steps
+            .iter()
+            .map(genai_rs::Step::step_type)
+            .collect();
+        println!("Steps: {step_types:?}");
+
+        assert_eq!(
+            response.status,
+            InteractionStatus::Completed,
+            "MCP interaction should complete; steps were {step_types:?}"
+        );
+
+        // The tool-use token count is the load-bearing signal: it is non-zero
+        // only if the server was actually called. Asserting on the answer text
+        // instead would pass on a model that ignored the tool and guessed.
+        //
+        // That the count excludes *declaration* overhead is measured, not
+        // assumed — the field's own doc says "tool/function calling
+        // overhead", which would admit it. Declaring this MCP tool alongside
+        // a prompt the model answers from its own knowledge returned
+        // `Some(0)`, identical to the same prompt with no tool declared
+        // (2026-08-16). Had it counted declaration, this assertion would
+        // pass on a model that ignored the tool — the exact failure it was
+        // chosen to avoid.
+        //
+        // It is also the *only* usable signal today. The API emits generic
+        // `tool_call` steps for MCP, not the `mcp_server_tool_call` /
+        // `mcp_server_tool_result` types the crate models from the spec —
+        // verified on the wire 2026-08-16, where the steps carry only
+        // {id, signature, type}. Those steps therefore deserialize into
+        // `Step::Unknown` (Evergreen degrading as designed) and
+        // `step_summary().mcp_server_tool_call_count` reads 0 even on a
+        // successful call. Tracked in #433.
+        // Through the public accessor rather than reaching into `usage`:
+        // it is the same chain, and an integration test is the right place
+        // to exercise the surface a caller actually has.
+        let tool_tokens = response.tool_use_tokens().unwrap_or(0);
+        println!("Tool-use tokens: {tool_tokens}");
+
+        // Report and skip rather than assert, because every reason this can
+        // be zero is outside this repo: deepwiki down (the interaction still
+        // completes, the model just has nothing back from the tool), or the
+        // model choosing not to call it. The `PUBLIC_MCP_SERVER` doc comment
+        // promises that tolerance and it previously existed only on the
+        // `Err` arm — a 200 whose tool call failed reddened the `tools`
+        // group for a third party's uptime.
+        //
+        // What still fails loudly is the thing that is ours: the API
+        // rejecting the tool, caught on the `Err` arm above, and a status
+        // other than `Completed`, asserted above. So this weakens to
+        // best-effort evidence of the round trip while keeping the
+        // library-facing regression a hard failure.
+        // Evidence of a round trip, in both wire shapes: `tool_call` is what
+        // the API sends today, `mcp_server_tool_call` is what it is modeled
+        // to send once #433 lands. The second arm alone was dead by this
+        // PR's own measurement — checking only for a type documented three
+        // files over as never emitted.
+        let called = tool_tokens > 0
+            || step_types.contains(&"tool_call")
+            || step_types.contains(&"mcp_server_tool_call");
+
+        if called {
+            println!("MCP round trip confirmed: {tool_tokens} tool-use tokens, {step_types:?}");
+            return;
+        }
+
+        // The cost of this skip, stated rather than left to be rediscovered:
+        // an interaction that completes with no tool call is also what a
+        // silent MCP regression looks like (#265 becoming true again — the
+        // API accepts the tool, returns 200, and nothing gets through), and
+        // this reports it as a skip.
+        //
+        // It is not distinguishable from the response alone. A model that
+        // simply chose not to call the tool produces the identical shape,
+        // and that is ordinary LLM variability rather than a defect. The
+        // separating signal is whether `PUBLIC_MCP_SERVER` is reachable,
+        // which is a property of a third party rather than of this response
+        // — and probing it would mean pulling an HTTP client into
+        // dev-dependencies for one branch of one test.
+        //
+        // So the loud failures stay the ones that are unambiguously ours:
+        // the API rejecting the tool (the `Err` arm above) and a status
+        // other than `Completed`.
+        // Marked, not just printed. `rust.yml` already counts
+        // `SEMANTIC_VALIDATION_SKIPPED` per test file — warn above zero, fail
+        // above three — on the reasoning that a suite which self-skips passes
+        // having verified nothing. This skip has the same property and needs
+        // the same treatment: one occurrence is model variability, a
+        // persistent one is the #265 shape above. A distinct marker rather
+        // than reusing that one, which means something narrower.
+        println!(
+            "LIVE_TOOL_EVIDENCE_SKIPPED: the interaction completed but shows no \
+             evidence the MCP server was called (tool-use tokens 0, steps \
+             {step_types:?}). Most likely the server is down or the model \
+             answered without it; a silent MCP regression would look the same \
+             from here."
+        );
+    }
+
+    /// Pins the wire shape the builder produces, with no network involved.
+    #[test]
+    fn test_mcp_server_config_wire_shape() {
+        let mut headers = std::collections::HashMap::new();
+        headers.insert("Authorization".to_string(), "Bearer token".to_string());
+
+        let tool: Tool = McpServerConfig::new("deepwiki", PUBLIC_MCP_SERVER)
+            .with_allowed_tools(vec!["read_wiki_structure".to_string()])
+            .with_headers(headers)
+            .into();
+
+        let value = serde_json::to_value(&tool).expect("should serialize");
+        assert_eq!(value["type"], "mcp_server");
+        assert_eq!(value["name"], "deepwiki");
+        assert_eq!(value["url"], PUBLIC_MCP_SERVER);
+        assert_eq!(value["allowed_tools"][0]["tools"][0], "read_wiki_structure");
+        assert_eq!(value["headers"]["Authorization"], "Bearer token");
+    }
+}
+
+// =============================================================================
+// Built-in Tools: Computer Use
+// =============================================================================
+
+mod computer_use {
+    use super::*;
+    use genai_rs::ComputerUseConfig;
+
+    /// Verifies the Computer Use tool is accepted and drives the model into
+    /// the action loop.
+    ///
+    /// #306 recorded this as blocked on availability. It is available now.
+    ///
+    /// `requires_action` is the success condition, not `completed`: the model
+    /// emits an action for the caller to execute and waits. A `completed`
+    /// response would mean the model answered without using the tool.
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_computer_use_reaches_requires_action() {
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        let result = stateful_builder(&client)
+            // Deliberately not example.com: its heading is "Example Domain",
+            // one of the most memorized strings on the web, so the model can
+            // satisfy that prompt without touching the tool — which by the
+            // doc comment above is an assertion failure, not a skip. Asking
+            // for live state the model cannot know a priori leaves
+            // `requires_action` as the only plausible outcome.
+            .with_text(
+                "Open https://news.ycombinator.com and tell me the exact title \
+                 of the current top story.",
+            )
+            .add_tool(ComputerUseConfig::new())
+            .create()
+            .await;
+
+        let response = match result {
+            Ok(response) => response,
+            Err(e) => {
+                // Computer use is allowlisted on some accounts; a permission
+                // rejection is an account property, not a library regression.
+                let msg = format!("{e:?}").to_lowercase();
+                // Same phrase set `examples/computer_use.rs` treats as "not
+                // available for this model or account". Narrower than that,
+                // a key without access getting back "Computer use is not
+                // supported for this model" would match neither `permission`
+                // nor `not allowed`, fall through to the panic, and redden
+                // the `tools` group for the exact account property this
+                // branch exists to skip on. The 4xx wording Google returns
+                // for a non-allowlisted key is not pinned down, which is why
+                // this matches a set of phrasings rather than one.
+                let unavailable = [
+                    "permission",
+                    "not allowed",
+                    "not supported",
+                    "not available",
+                    "not enabled",
+                ]
+                .iter()
+                .any(|phrase| msg.contains(phrase));
+                // Scoped to the tool, as the MCP branch above is. Unscoped,
+                // any 4xx phrased with one of those words — about the model,
+                // the schema, an unrelated field — reports a skip. The case
+                // that matters is the one this test exists for: if the
+                // default model stops supporting computer use, the 400 will
+                // almost certainly say "not supported", and an unscoped
+                // predicate would call that regression a skip.
+                // Both registers. `computer_use` is the wire token, but
+                // "computer use" is a natural-language form Google's error
+                // text is at least as likely to use — and the phrase set
+                // beside it is prose, so a message like "Computer use is not
+                // supported for this model" would clear `unavailable`, fail
+                // a token-only scope check, and panic for exactly the
+                // account property this skips on. The MCP guard above is not
+                // exposed the same way: nobody spells `mcp_server`
+                // differently.
+                let about_computer_use =
+                    msg.contains("computer_use") || msg.contains("computer use");
+                if about_computer_use && unavailable {
+                    // Deliberately unmarked, unlike the two MCP skips. Both
+                    // halves of this guard must match, so it fires only on an
+                    // error that names computer use *and* says it is not
+                    // available — a stable property of the key, in the same
+                    // family as the "no GEMINI_API_KEY" skip and not something
+                    // a passing run could be hiding. Everything else in this
+                    // arm panics. Marking it would annotate every single run
+                    // on an un-allowlisted key, which is noise rather than
+                    // signal; the MCP branches are marked because they are
+                    // catch-alls that cannot make that distinction.
+                    println!("Skipping: computer use not enabled for this key: {e:?}");
+                    return;
+                }
+                panic!("Computer use request failed: {e:?}");
+            }
+        };
+
+        let step_types: Vec<&str> = response
+            .steps
+            .iter()
+            .map(genai_rs::Step::step_type)
+            .collect();
+        println!(
+            "Computer use status: {:?}, steps: {step_types:?}",
+            response.status
+        );
+
+        // Asserted, not tolerated — unlike the MCP test, where a model that
+        // simply declined to use the declared tool is treated as ordinary
+        // variability and reported as a marked skip. The difference is the
+        // prompt: this one asks about live page state the model cannot know
+        // a priori (see the comment on it above), so answering without the
+        // tool is not a plausible alternative the way "explain this repo" is
+        // for deepwiki. If this ever does flake on variability, the fix is a
+        // more unanswerable prompt rather than widening the tolerance —
+        // relaxing it would leave the test unable to fail on the #306 shape
+        // it exists for.
+        assert_eq!(
+            response.status,
+            InteractionStatus::RequiresAction,
+            "computer use should hand an action back to the caller rather than \
+             completing on its own; steps were {step_types:?}"
+        );
+        // Status alone does not cover the doc comment above: `RequiresAction`
+        // is the generic "the caller must do something" state, so a future
+        // shape that requires an action for an unrelated reason would satisfy
+        // it. The action itself is the `function_call` step.
+        assert!(
+            step_types.contains(&"function_call"),
+            "expected an action handed back as a function_call step; got {step_types:?}"
+        );
+    }
+
+    /// Pins the wire shape, including the snake_case field name that was a
+    /// spec-vs-implementation disagreement (`excluded_predefined_functions`,
+    /// once emitted as camelCase).
+    #[test]
+    fn test_computer_use_config_wire_shape() {
+        let tool: Tool = ComputerUseConfig::new()
+            .with_environment("browser")
+            .excluding(vec!["submit_form".to_string()])
+            .with_prompt_injection_detection(true)
+            .into();
+
+        let value = serde_json::to_value(&tool).expect("should serialize");
+        assert_eq!(value["type"], "computer_use");
+        assert_eq!(value["environment"], "browser");
+        assert_eq!(value["excluded_predefined_functions"][0], "submit_form");
+        assert_eq!(value["enable_prompt_injection_detection"], true);
+    }
+}
+
+// =============================================================================
 // Response Formats: Structured Output
 // =============================================================================
 

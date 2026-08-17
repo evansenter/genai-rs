@@ -1,6 +1,0 @@
-# Fast linker configuration for faster builds
-# See: https://github.com/evansenter/genai-rs/issues/342
-# Install mold: sudo apt install mold (or equivalent for your distro)
-
-[target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-fuse-ld=mold"]
