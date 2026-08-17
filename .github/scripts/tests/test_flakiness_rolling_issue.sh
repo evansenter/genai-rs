@@ -163,7 +163,16 @@ make_gh_stub "[{\"title\":\"$TITLE\",\"number\":77}]" \
   '{"body":"old\n<!-- flaky-baseline\nt01\nt02\n-->"}'
 run_step
 check  "update: edits the issue"            "issue edit 77"
-check  "update: retitles it"                "\-\-title"
+# Anchored to the edit call for the same reason the create case below is:
+# `--title` appears in `gh issue create` too, so unanchored this would still
+# pass if the update branch regressed into creating instead of editing. The
+# `refute` on the next line catches that particular regression today, but it
+# is a different assertion carrying the weight, and a future case that legally
+# expects a create would remove it. The stub logs the whole call on one line
+# (`GH-CALL: issue edit 77 --title ... --body-file ...`), so anchoring costs
+# nothing — and dropping the backslashes drops a dependency on GNU grep
+# treating `\-` as a literal in BRE, which POSIX leaves undefined.
+check  "update: retitles it"                "issue edit 77.*--title"
 check  "update: writes the new body"        "flakiness_report.md"
 refute "update: files no duplicate"         "issue create"
 
@@ -216,6 +225,16 @@ refute "CRLF body: still recognises the baseline, posts no comment" "issue comme
 echo '[{"name":"t01"},{"name":"t02"},{"name":"t03_new"}]' > "$WORK/tests.json"
 run_step
 check "new test: comments" "t03_new"
+# The ordering property pinned on the rolling path, not only on adoption. Both
+# branches comment before editing, and the argument for it is the same in both
+# — the edit commits the new baseline, so editing first means a failed comment
+# silently advances past tests nobody was told about. But adoption is
+# single-use scaffolding that fires once and is inert forever after, and by
+# the workflow's own removal note the `LEGACY_PREFIX` block is meant to be
+# deleted. If the ordering were pinned only there, it would be unpinned the
+# day that block goes, on the branch that actually runs every day.
+expect_order "new test: comments before committing the new baseline" \
+  "issue comment 77" "issue edit 77"
 
 echo
 if [ "$failures" -gt 0 ]; then
