@@ -384,7 +384,20 @@ jobs:
       # The real CHANGELOG, not a fixture: this is what a release would
       # actually read, and a heading that drifts off the `## [X.Y.Z]` shape
       # would otherwise only surface at tag time as an empty release body.
+      # Independent of the step above, and kept that way. Folding this into
+      # `shell-scripts` put it downstream of `make test-scripts`, and Actions
+      # stops a job at the first failing step — so without this guard, a red
+      # harness anywhere under `.github/scripts/tests/` (including the four
+      # this PR does not own) would skip the one check that catches a
+      # CHANGELOG heading drifting off the `## [X.Y.Z]` shape, whose absence
+      # otherwise only resurfaces at tag time. `make test-scripts` itself
+      # collects `rc=1` and keeps going for exactly this reason; this step
+      # sits outside that loop and has to say so.
+      #
+      # `!cancelled()` rather than `always()`: both restore independence, but
+      # `always()` also runs the step after someone cancels the job.
       - name: Extract the current version's section from the real CHANGELOG
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           # One awk pass rather than `grep | head -1 | sed`. This step turns on
