@@ -8,43 +8,36 @@ Requires Rust 1.88+ (edition 2024) and [cargo-nextest](https://nexte.st/).
 cargo install cargo-nextest --locked
 ```
 
-**Linker**: `.cargo/config.toml` selects [mold](https://github.com/rui314/mold)
-for faster builds. It scopes that to `[target.x86_64-unknown-linux-gnu]`, so
-on that target — and only that one — every build fails without mold
-installed, before compiling anything, with a message that names the wrong
-tool. On macOS or aarch64 Linux the config is inert, and the override below
-will not clear an unrelated linker error there:
+Also `jq` and `python3`. They are not optional extras: `make check` runs
+`make test-scripts`, which hard-fails when either is missing rather than
+skipping, so the pre-push gate needs both.
+
+**Linker (optional)**: run `./scripts/setup-dev.sh` once per clone to enable
+[mold](https://github.com/rui314/mold) for faster builds. It probes whether
+your compiler can actually link with mold rather than just checking that the
+binary exists, and is a no-op when it cannot — so it is safe to run either
+way.
+
+`.cargo/config.toml` is deliberately *not* checked in. When it was, it set
+`-fuse-ld=mold` unconditionally for `x86_64-unknown-linux-gnu`, so a clone on
+a machine without mold failed every build before compiling anything, with a
+message naming the wrong tool (#428):
 
 ```text
 error: linking with `cc` failed: exit status: 1
   = note: collect2: fatal error: cannot find 'ld'
 ```
 
-`ld` is present; `mold` is not. The zero-install way out is to drop the flag
-entirely — the env var overrides `target.x86_64-unknown-linux-gnu.rustflags`
-from `.cargo/config.toml`, falling back to the system linker:
-
-```bash
-export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS=""
-```
-
-Slower, but always present. For the fast path install a linker first —
-`sudo apt install mold`, or `lld` and:
-
-```bash
-export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-arg=-fuse-ld=lld"
-```
-
-Note that `lld` is no more installed by default than `mold` is: reaching for
-that line without installing it reproduces the same failure under a
-different name.
-
-(Tracked as #428 — the config hard-requires a non-default tool.)
+`ld` is present in that state; mold is not, and the message never says so.
+The file is now gitignored and ships as `.cargo/config.toml.example`. If you
+have an old checkout still carrying the generated config and hit the error
+above, delete `.cargo/config.toml` — that is the fix, rather than overriding
+rustflags around it.
 
 ## The gate
 
 ```bash
-make check      # fmt + clippy + test — run before pushing
+make check      # fmt + clippy + test + test-scripts — run before pushing
 make test-all   # full suite including integration tests (needs GEMINI_API_KEY)
 ```
 
