@@ -48,8 +48,20 @@ One side effect worth knowing, since it touches the file Setup just told you
 to generate: `make test-scripts` exercises `setup-dev.sh` against the
 checkout's *real* `.cargo/config.toml`, restoring it from a temp copy on an
 EXIT trap. That file is gitignored, so if you kill the run outright rather
-than letting it finish, git cannot bring it back — re-run
-`./scripts/setup-dev.sh` to regenerate it (#455).
+than letting it finish, git cannot bring it back (#455).
+
+Recover by **deleting it first**:
+
+```bash
+rm -f .cargo/config.toml && ./scripts/setup-dev.sh
+```
+
+Re-running the script on its own is not enough. It exits early with
+`already exists; leaving it alone` whenever the file is present, and a
+killed harness usually leaves one behind rather than removing it — one
+written under the harness's stub compiler, pinning `linker` to a path
+inside a temp directory that no longer exists. Builds then fail at link
+time while the file looks present and the script reports nothing to do.
 
 ## Verifying API behavior
 
