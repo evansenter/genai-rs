@@ -364,6 +364,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        id: checkout
       # One entry point for every harness under `.github/scripts/tests/`,
       # via the same make target a contributor runs locally, so CI and
       # `make check` cannot disagree about what is covered.
@@ -396,8 +397,15 @@ jobs:
       #
       # `!cancelled()` rather than `always()`: both restore independence, but
       # `always()` also runs the step after someone cancels the job.
+      #
+      # Gated on the checkout too, not just on `!cancelled()`. Independence
+      # from `make test-scripts` is the point; independence from the
+      # checkout is not something to want — without it this step would run
+      # on a failed checkout and die on `awk: can't open file Cargo.toml`,
+      # a bare red step carrying none of the diagnostics the block below
+      # takes care to emit, underneath a clearer failure.
       - name: Extract the current version's section from the real CHANGELOG
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.checkout.conclusion == 'success' }}
         run: |
           set -euo pipefail
           # One awk pass rather than `grep | head -1 | sed`. This step turns on

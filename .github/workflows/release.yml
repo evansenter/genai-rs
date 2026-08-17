@@ -160,7 +160,6 @@ jobs:
           fetch-depth: 0
 
       - name: Generate release notes
-        id: notes
         run: |
           set -euo pipefail
           TAG=${GITHUB_REF#refs/tags/}
