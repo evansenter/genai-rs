@@ -1,0 +1,274 @@
+name: Fresh Consumer Crate
+
+# Compiles `#[tool]` from a throwaway crate outside this workspace.
+#
+# The consumer requirements the macro imposes (see #402) can ONLY fail from a
+# fresh crate: inside this workspace `async-trait` and `serde_json` are always
+# present and `CallableFunction` is always resolvable, so neither doctests nor
+# trybuild fixtures can reproduce it. The 0.8.0 breakage took manual
+# dogfooding of the published crate to find. This job is that dogfooding,
+# automated. See #404.
+#
+# Scheduled rather than per-PR: it is guarding against drift in
+# `codegen.rs`'s emitted paths, not against the average change, and a fresh
+# dependency resolve on every PR is a poor trade.
+
+on:
+  schedule:
+    - cron: '0 7 * * 1' # Weekly, Monday 07:00 UTC
+  workflow_dispatch:
+  # Also on changes to the macro's codegen or the README's documented
+  # requirements — the two inputs this job actually verifies.
+  pull_request:
+    paths:
+      - 'genai-rs-macros/src/**'
+      - 'README.md'
+      - '.github/workflows/consumer-crate.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  documented-requirements:
+    name: README requirements compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: genai-rs
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install mold linker
+        timeout-minutes: 5
+        run: sudo apt-get update || true; sudo apt-get install -y mold
+
+      - name: Scaffold a consumer crate outside the workspace
+        run: |
+          set -euo pipefail
+          mkdir -p consumer/src
+
+          # The dependency list is *extracted from README.md*, not copied
+          # from it. A hand-copied duplicate makes this job blind in the one
+          # direction that matters: someone edits the Installation snippet to
+          # drop `async-trait` — believing #402 is fixed, the exact mistake
+          # this job exists to catch — the `README.md` path filter fires, the
+          # job rebuilds its own hardcoded list, and it goes green while the
+          # README documents a set that does not compile.
+          #
+          # Only the two `genai-rs*` lines are rewritten, to path deps: this
+          # must fail on an unreleased codegen change, which is the point.
+          # Anchored on the heading, not positional. Today the Installation
+          # snippet is the first toml block, so a positional scan would work
+          # — but a future toml block added above it carrying
+          # `[dependencies]` (an antigravity install example being the
+          # obvious candidate) *would otherwise* pass the guard below and
+          # silently redirect this whole job at the wrong snippet. `grab`
+          # only arms once `sect` is set, so that cannot happen here.
+          awk '/^## Installation$/ { sect = 1 }
+               sect && /^```toml$/ { grab = 1; next }
+               grab && /^```$/ { exit }
+               grab' genai-rs/README.md > readme-deps.toml
+          if ! grep -q '^\[dependencies\]' readme-deps.toml; then
+            echo "::error::Could not extract the Installation snippet from README.md."
+            echo "This job would otherwise scaffold an empty dependency set and pass."
+            exit 1
+          fi
+          sed -e 's|^genai-rs = .*|genai-rs = { path = "../genai-rs" }|' \
+              -e 's|^genai-rs-macros = .*|genai-rs-macros = { path = "../genai-rs/genai-rs-macros" }|' \
+              readme-deps.toml > deps.toml
+          # The `[dependencies]` guard above catches an empty extraction; this
+          # catches the next step down. Both seds are silent no-ops on a
+          # non-match, so if the README line ever changes shape — a
+          # `[dependencies.genai-rs]` table, leading whitespace, a rename —
+          # `genai-rs = "0.10"` survives, cargo resolves it from crates.io,
+          # and the job compiles the *published* macro. It would then go
+          # green while the unreleased-codegen drift it exists to catch is
+          # invisible: the same fail-open direction, one step further down.
+          for dep in '../genai-rs' '../genai-rs/genai-rs-macros'; do
+            if ! grep -q "path = \"$dep\"" deps.toml; then
+              echo "::error::Failed to rewrite a README dependency to path = \"$dep\"."
+              echo "Without it this job would build against the published crate and"
+              echo "could not see unreleased codegen changes — its entire purpose."
+              cat deps.toml
+              exit 1
+            fi
+          done
+
+          echo "--- dependency set, as documented ---"
+          cat deps.toml
+
+          {
+            echo '[package]'
+            echo 'name = "consumer"'
+            echo 'version = "0.1.0"'
+            echo 'edition = "2024"'
+            echo
+            cat deps.toml
+          } > consumer/Cargo.toml
+
+          # `use genai_rs::CallableFunction;` is required because the
+          # generated code calls the trait method `declaration()` unqualified
+          # — see the `#callable_struct_name::new().declaration()` call in
+          # `generate_declaration_function`. The `> **Note**:` block under
+          # README Installation documents it. Anchors rather than line
+          # numbers, which go stale silently. When #402 lands this import
+          # comes out and the minimal job below takes over.
+          cat > consumer/src/main.rs <<'RUST'
+          use genai_rs::CallableFunction;
+          use genai_rs_macros::tool;
+
+          /// Gets the current weather for a city.
+          #[tool]
+          fn get_weather(city: String, units: Option<String>) -> String {
+              format!("Sunny in {city} ({})", units.unwrap_or_else(|| "C".into()))
+          }
+
+          fn main() {
+              // Both halves of what the macro emits, actually called. The
+              // factory was previously compiled and never invoked, so a
+              // codegen change that compiled but registered nothing would
+              // still have passed.
+              let declaration = get_weather_declaration();
+              assert_eq!(declaration.name(), "get_weather");
+
+              // Exercises the `Box<dyn CallableFunction>` construction and
+              // the trait-object dispatch the registry itself uses.
+              // `get_global_function_registry()` is `pub(crate)`, so this is
+              // as close as a consumer can get to asserting registration.
+              let factory = get_weather_callable_factory();
+              assert_eq!(factory.declaration().name(), "get_weather");
+
+              println!("ok: {}", declaration.name());
+          }
+          RUST
+
+      # After scaffolding, and pointed at where the artifacts actually
+      # land: the default `. -> target` resolves to $GITHUB_WORKSPACE/target,
+      # which never exists here, so every run recompiled genai-rs and its
+      # whole tree from source.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: consumer -> target
+      - name: Build and run
+        id: build
+        working-directory: consumer
+        env:
+          # The mold install above is otherwise inert here: cargo config
+          # discovery walks up from the build directory, and the checkout is
+          # at `genai-rs/` while the build runs in `consumer/`, so
+          # `genai-rs/.cargo/config.toml` is never on that path.
+          RUSTFLAGS: -C link-arg=-fuse-ld=mold
+        run: |
+          set -euo pipefail
+          cargo run
+
+      # Scoped to the build. A bare `failure()` also matches `checkout` and
+      # the apt install, so a transient mirror flake would emit the most
+      # misleading annotation available on a job whose whole value is that
+      # its red means one specific thing.
+      - name: Explain a failure
+        if: failure() && steps.build.conclusion == 'failure'
+        run: |
+          echo "::error::A fresh consumer crate failed to compile a #[tool] function."
+          echo "This is the failure class that cannot reproduce inside the workspace."
+          echo "Check genai-rs-macros/src/codegen.rs emitted paths against README.md's"
+          echo "documented requirements (dependencies + 'use genai_rs::CallableFunction')."
+
+  minimal-requirements:
+    name: Minimal deps compile (tracks #402)
+    runs-on: ubuntu-latest
+    # Expected to fail until #402 lands. Not a gate — it reports whether the
+    # macro's consumer-side requirements have actually been removed, so the
+    # answer comes from a compiler rather than from reading codegen.rs.
+    # Reading codegen.rs is exactly how #402 got closed in error.
+    #
+    # Off PRs, though. `continue-on-error` keeps the *run* green but not this
+    # job's own check run, so every PR touching the macro or this file would
+    # carry a red X meaning "working as intended" — which is how reviewers
+    # learn to skim past red Xs that do not mean that. The weekly schedule
+    # and `workflow_dispatch` deliver the signal without spending that. Once
+    # #402 lands and this goes green, it should come back on PRs as a real
+    # gate, with `continue-on-error` dropped.
+    if: github.event_name != 'pull_request'
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: genai-rs
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install mold linker
+        timeout-minutes: 5
+        run: sudo apt-get update || true; sudo apt-get install -y mold
+
+      - name: Scaffold a minimal consumer (no async-trait, no serde_json, no trait import)
+        run: |
+          set -euo pipefail
+          mkdir -p minimal/src
+
+          cat > minimal/Cargo.toml <<'TOML'
+          [package]
+          name = "minimal"
+          version = "0.1.0"
+          edition = "2024"
+
+          [dependencies]
+          genai-rs = { path = "../genai-rs" }
+          genai-rs-macros = { path = "../genai-rs/genai-rs-macros" }
+          TOML
+
+          cat > minimal/src/main.rs <<'RUST'
+          use genai_rs_macros::tool;
+
+          /// Gets the current weather for a city.
+          #[tool]
+          fn get_weather(city: String) -> String {
+              format!("Sunny in {city}")
+          }
+
+          fn main() {
+              println!("ok: {}", get_weather_declaration().name());
+          }
+          RUST
+
+      # After scaffolding, and pointed at where the artifacts actually
+      # land: the default `. -> target` resolves to $GITHUB_WORKSPACE/target,
+      # which never exists here, so every run recompiled genai-rs and its
+      # whole tree from source.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: minimal -> target
+          # This job's build is expected to fail while #402 is open, and
+          # rust-cache does not save on failure by default — so without this
+          # the workspaces fix above is inert here: nothing is ever saved, so
+          # nothing is ever restored.
+          cache-on-failure: true
+      - name: Build
+        id: build
+        working-directory: minimal
+        env:
+          # Same cargo-config-discovery gap as the job above: the build runs
+          # in `minimal/`, so `genai-rs/.cargo/config.toml` is never on the
+          # walk-up path and the mold install would otherwise be inert.
+          RUSTFLAGS: -C link-arg=-fuse-ld=mold
+        run: cargo build
+
+      - name: Report status
+        if: always()
+        run: |
+          # Three states, not two. `outcome` is also `skipped` when an
+          # earlier step failed — the mold install is the plausible one,
+          # since its `apt-get update` is deliberately non-fatal and the
+          # install can then fail on stale lists. Reporting that as "still
+          # fails, as expected" asserts something about a compiler that was
+          # never asked, which is the same misleading-annotation class as the
+          # `if: failure()` finding fixed in the sibling job.
+          case "${{ steps.build.outcome }}" in
+            success)
+              echo "::notice::A minimal two-dependency consumer compiles — #402's requirements are gone. Drop this job's continue-on-error and its PR exclusion, make it a gate, and remove the README's dependency note."
+              ;;
+            failure)
+              echo "::notice::Minimal consumer still fails, as expected while #402 is open. The README job above is the binding check."
+              ;;
+            *)
+              echo "::warning::The minimal build did not run (outcome: ${{ steps.build.outcome }}), so this run says nothing about #402."
+              ;;
+          esac
