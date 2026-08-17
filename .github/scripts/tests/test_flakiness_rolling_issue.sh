@@ -173,7 +173,10 @@ check  "update: edits the issue"            "issue edit 77"
 # nothing — and dropping the backslashes drops a dependency on GNU grep
 # treating `\-` as a literal in BRE, which POSIX leaves undefined.
 check  "update: retitles it"                "issue edit 77.*--title"
-check  "update: writes the new body"        "flakiness_report.md"
+# Anchored for the same reason, and this was the last unanchored assertion in
+# the block: `--body-file flakiness_report.md` is passed by `gh issue create`
+# too, so unanchored it survives the same regression `--title` did.
+check  "update: writes the new body"        "issue edit 77.*flakiness_report.md"
 refute "update: files no duplicate"         "issue create"
 
 # --- A legacy date-stamped issue is adopted and retitled in place. This is
