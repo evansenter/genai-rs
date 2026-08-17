@@ -375,8 +375,9 @@ pub enum Step {
     },
     /// MCP server tool call (`type: "mcp_server_tool_call"`).
     ///
-    /// **Spec-present, never observed.** The endpoint emits the generic
-    /// [`Step::ToolCall`] above instead. Modeled for parity, like
+    /// **Spec-present, never observed.** MCP activity arrives as the generic
+    /// [`Step::ToolCall`] above instead (verified live 2026-08-16), so a
+    /// match on this variant never fires today. Modeled for parity, like
     /// `Tool::Retrieval` — kept rather than removed because nothing
     /// *rejects* it, so the API may begin emitting it. See #433.
     McpServerToolCall {
@@ -1412,6 +1413,10 @@ pub enum StepDelta {
         signature: Option<String>,
     },
     /// MCP server tool call delta (`type: "mcp_server_tool_call"`).
+    ///
+    /// Not currently emitted by the API — see
+    /// [`Step::McpServerToolCall`] for the verified wire behaviour
+    /// and #433.
     McpServerToolCall {
         /// Tool name.
         name: String,
@@ -1421,6 +1426,10 @@ pub enum StepDelta {
         arguments: serde_json::Value,
     },
     /// MCP server tool result delta (`type: "mcp_server_tool_result"`).
+    ///
+    /// Not currently emitted by the API — see
+    /// [`Step::McpServerToolCall`] for the verified wire behaviour
+    /// and #433.
     McpServerToolResult {
         /// Tool name.
         name: Option<String>,

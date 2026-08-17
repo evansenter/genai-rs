@@ -292,7 +292,18 @@ pub struct UsageMetadata {
         deserialize_with = "deserialize_optional_token_count"
     )]
     pub total_thought_tokens: Option<u32>,
-    /// Total number of tokens used for tool/function calling overhead
+    /// Total number of tokens used for tool/function calling overhead.
+    ///
+    /// Declaration alone is not counted: measured 2026-08-16, an interaction
+    /// declaring an MCP server but answering from the model's own knowledge
+    /// returns `Some(0)`, identical to the same prompt with no tool
+    /// declared. So a non-zero value means a tool was actually invoked,
+    /// which makes this the usable signal for server-side tools whose steps
+    /// the API does not yet report by type (see `docs/BUILT_IN_TOOLS.md`).
+    /// It is a single aggregate across all tools, though, so it identifies
+    /// *which* tool only when one is declared —
+    /// [`InteractionResponse::tool_use_tokens`] is the caller-facing
+    /// accessor and carries the fuller story.
     #[serde(
         skip_serializing_if = "Option::is_none",
         deserialize_with = "deserialize_optional_token_count"
@@ -1716,7 +1727,12 @@ impl InteractionResponse {
     /// Get the number of tool use tokens consumed.
     ///
     /// Tool use tokens represent overhead from function calling.
-    /// Returns `None` if usage metadata is not available or tools weren't used.
+    /// Declaring a tool without using it does not count — measured
+    /// 2026-08-16 — so a non-zero value means a tool was actually invoked.
+    /// It is a single aggregate across all tools, though, so it identifies
+    /// *which* tool only when one is declared.
+    /// Returns `None` when usage metadata is absent, or when the API omitted
+    /// the field — not when tools went unused, which yields `Some(0)`.
     #[must_use]
     pub fn tool_use_tokens(&self) -> Option<u32> {
         self.usage.as_ref().and_then(|u| u.total_tool_use_tokens)
@@ -1800,13 +1816,19 @@ pub struct StepSummary {
     /// **Expect 0.** The API emits generic `tool_call` steps for MCP; see
     /// [`tool_call_count`](Self::tool_call_count). Retained because the
     /// step type is spec-defined and may start arriving.
+    ///
+    /// [`InteractionResponse::tool_use_tokens`] is the other signal that
+    /// MCP ran, with the caveat that it is a single aggregate across all
+    /// tools — so it isolates the MCP server only when MCP is the sole
+    /// declared tool.
     pub mcp_server_tool_call_count: usize,
     /// Number of `mcp_server_tool_result` steps.
     ///
     /// **Expect 0**, for the same reason as
     /// [`mcp_server_tool_call_count`](Self::mcp_server_tool_call_count) —
-    /// and with the same consequence, since 0 here reads as "the MCP call
-    /// returned nothing" rather than "we do not model what came back".
+    /// the API emits neither of the pair today — and with the same
+    /// consequence, since 0 here reads as "the MCP call returned nothing"
+    /// rather than "we do not model what came back".
     pub mcp_server_tool_result_count: usize,
     /// Number of `file_search_call` steps
     pub file_search_call_count: usize,

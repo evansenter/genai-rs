@@ -169,8 +169,22 @@ roundtrip tests.
 | `google_maps_result` | `Step::GoogleMapsResult` | `{"call_id": "...", "result": [GoogleMapsResultItem], "signature"?: "..."}` |
 | (anything else) | `Step::Unknown { step_type, data }` | Full JSON preserved for roundtrip |
 
+> **MCP is not on the wire in that shape.** Verified live 2026-08-16: an MCP
+> interaction returns generic `tool_call` steps carrying only
+> `{id, signature, type}` — never `mcp_server_tool_call` /
+> `mcp_server_tool_result`. Those two rows describe the spec, and the
+> variants exist for when the API starts emitting them; today a match on
+> `Step::McpServerToolCall` never fires and
+> `step_summary().mcp_server_tool_call_count` reads 0 on a successful call.
+> The usable signal is `response.tool_use_tokens()` — a single aggregate
+> with no per-tool breakdown, so it isolates the MCP server only when MCP
+> is the sole declared tool (see the fuller note in
+> `docs/BUILT_IN_TOOLS.md` under MCP Servers). Tracked in
+> [#433](https://github.com/evansenter/genai-rs/issues/433).
+
 Note the asymmetry: `function_call` and `mcp_server_tool_call` keep their
-arguments at the **top level**, while the built-in tool calls
+arguments at the **top level** (the latter per spec, unobserved), while the
+built-in tool calls
 (`code_execution_call`, `url_context_call`, `google_search_call`,
 `google_maps_call`) nest theirs inside an `arguments` object. The library
 flattens the nested forms into ergonomic fields (`urls: Vec<String>`,
