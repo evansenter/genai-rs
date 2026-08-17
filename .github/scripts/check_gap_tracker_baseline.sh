@@ -33,7 +33,17 @@ fi
 # The row is `| **Last swept against** | \`google-genai\` **2.18.1** |`.
 # Anchored on the label so reflowing the table does not silently stop
 # matching — an empty capture below is a failure, not a pass.
-HEADER=$(sed -n 's/.*\*\*Last swept against\*\*.*\*\*\([0-9][0-9.]*\)\*\*.*/\1/p' "$TRACKER" | head -1)
+# The capture allows letters, `+` and `-`, not just digits and dots. PyPI
+# reports whatever `info.version` says, pre-releases included, and step 4 of
+# the sweep's next-steps tells a maintainer to bump the baseline to exactly
+# that string. With a digits-and-dots-only capture, a `2.19.0rc1` baseline
+# and a correctly-filled header row would yield an empty `$HEADER` and trip
+# the branch below — whose message says the row "has moved or changed shape"
+# and sends the reader to fix this script's parsing. The row would be
+# exactly where it has always been. The label text is what anchors the
+# match; the version pattern only has to be permissive enough to let the
+# `!=` comparison below produce the accurate error instead.
+HEADER=$(sed -n 's/.*\*\*Last swept against\*\*.*\*\*\([0-9][0-9A-Za-z.+-]*\)\*\*.*/\1/p' "$TRACKER" | head -1)
 
 if [ -z "$HEADER" ]; then
   echo "::error file=$TRACKER::Could not find the 'Last swept against' version."
