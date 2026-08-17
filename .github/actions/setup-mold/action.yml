@@ -1,0 +1,55 @@
+name: Set up mold
+description: >-
+  Installs the mold linker and enables the repo's opt-in cargo config that
+  uses it. Linux/apt only; a no-op on every other runner, so it is safe to
+  invoke unconditionally.
+
+runs:
+  using: composite
+  steps:
+    - name: Install mold and enable the linker config
+      shell: bash
+      # Bounded with `timeout` rather than `timeout-minutes:`, which
+      # composite-action steps do not support — setting it here fails the
+      # whole workflow with "Failed to load action.yml" before anything runs.
+      #
+      # The bound matters: one PR run sat 98 minutes on an unresponsive apt
+      # mirror and would have held the runner until GitHub's 6h default.
+      # Normal is ~10-20s, so 300s only ever trips on a stall.
+      #
+      # 60 + 240 rather than one shared 300 or two independent 300s. Two
+      # independent full budgets would double the worst case to ~10 minutes,
+      # against the single `timeout-minutes: 5` this replaced. But one
+      # shared budget collapses the `|| true` on `update`: an `update` that
+      # ate the whole 300s would take `install` down with it and fail every
+      # job using this composite, where today it is swallowed and `install`
+      # proceeds from cached package lists. Splitting keeps the total under
+      # the old ceiling *and* keeps that fallback meaningful.
+      #
+      # `sudo timeout`, not `timeout sudo`: the latter signals `sudo` and
+      # depends on it forwarding SIGTERM down to the process that is
+      # actually stalled. This puts the timer in the same process tree.
+      #
+      # The `cp` is the half that matters after #428: `.cargo/config.toml` is
+      # no longer checked in, so without it CI silently loses mold. This
+      # composite exists so that pairing lives in one place — it was copied
+      # across 13 steps, and a copy is what goes stale if the example file is
+      # ever renamed.
+      run: |
+        set -euo pipefail
+
+        # Self-guarding rather than leaving `if: runner.os == 'Linux'` to
+        # each caller: a per-call condition is the N-copies arrangement this
+        # composite exists to remove. Without it the next job to add a bare
+        # `uses:` line breaks the macOS and Windows legs, and nothing in the
+        # action's name would have warned them.
+        if [ "${RUNNER_OS:-}" != "Linux" ]; then
+          echo "Not Linux (RUNNER_OS=${RUNNER_OS:-unset}) — skipping mold."
+          echo "The cargo config this enables targets x86_64-unknown-linux-gnu"
+          echo "only, so other runners use the default linker regardless."
+          exit 0
+        fi
+
+        sudo timeout 60 apt-get update || true
+        sudo timeout 240 apt-get install -y mold
+        cp .cargo/config.toml.example .cargo/config.toml
