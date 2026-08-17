@@ -205,6 +205,15 @@ def main() -> int:
     # daily flakiness report, so a quoting bug in one arrives as a failed
     # cron email. To the loop above they are a one-line command that parses
     # fine, which would make a green check read as broader than it is.
+    #
+    # This pass is no longer *unique* coverage for those paths. Since this
+    # check moved into the `shell-scripts` job, `make test-scripts` runs
+    # `shellcheck -S warning` over the same glob in the same job, and
+    # shellcheck reports syntax errors too. Kept anyway: it keeps this
+    # script meaningful when run on its own, and it keeps the reported
+    # block count honest about what was examined. It is redundancy now
+    # rather than the only line of defence, and worth knowing as such
+    # before treating a green run here as covering these files alone.
     scripts = sorted(glob.glob(".github/scripts/*.sh"))
     for script in scripts:
         checked += 1
