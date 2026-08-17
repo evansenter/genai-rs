@@ -335,17 +335,45 @@ out=$(bash "$SCRIPT" measure "$WORK/nothing" "$WORK/measured.json" 2>&1) || rc=$
 expect_rc     "measure: fails on an empty directory" 1
 expect_output "measure: says nothing was found" "Measured 0"
 
-# --- A tab in a name is refused where the name is still in hand, rather than
-#     silently shifting every column of the report downstream. The failure it
-#     prevents is a misdiagnosis rather than a wrong verdict, which is why it
-#     is worth naming at the source.
-rm -rf "$WORK/tabbin" && mkdir -p "$WORK/tabbin"
-: > "$WORK/tabbin/$(printf 'has\tname')"
-chmod +x "$WORK/tabbin/$(printf 'has\tname')"
-rc=0
-out=$(bash "$SCRIPT" measure "$WORK/tabbin" "$WORK/tabbin.json" 2>&1) || rc=$?
-expect_rc     "tab in a name: refused rather than silently mangled" 1
-expect_output "tab in a name: says what is wrong" "contains a tab"
+# --- A tab or a newline in a name is refused where the name is still in hand,
+#     rather than shifting every column of the report (tab) or desynchronising
+#     the name/size fold into a jq parse error that names no file (newline).
+#     Both failures are misdiagnoses rather than wrong verdicts, which is why
+#     they are worth naming at the source.
+#
+#     Both fixtures put the bad name *last* in glob order, and that is the
+#     load-bearing part. The rejection used to live inside the measuring
+#     pipeline, where `return` sets only the subshell's status and `pipefail`
+#     is what promoted it. A bad name sorting first hid that entirely: the
+#     pipeline emitted nothing, so the "Measured 0" guard failed the run
+#     anyway and the case passed for the wrong reason. Sorting it last is
+#     what distinguishes them — with the old form and `pipefail` off, this
+#     directory measured 2 binaries and exited 0.
+for bad in 'has\tname' 'has\nname'; do
+  case "$bad" in *'\t'*) what="a tab" ;; *) what="a newline" ;; esac
+  rm -rf "$WORK/badbin" && mkdir -p "$WORK/badbin"
+  for good in aaa bbb; do
+    : > "$WORK/badbin/$good"
+    chmod +x "$WORK/badbin/$good"
+  done
+  # `zzz` prefix so it sorts after the two well-named binaries.
+  : > "$WORK/badbin/$(printf "zzz$bad")"
+  chmod +x "$WORK/badbin/$(printf "zzz$bad")"
+  rm -f "$WORK/badbin.json"
+  rc=0
+  out=$(bash "$SCRIPT" measure "$WORK/badbin" "$WORK/badbin.json" 2>&1) || rc=$?
+  expect_rc     "$what in a name: refused rather than silently mangled" 1
+  expect_output "$what in a name: says what is wrong" "contains $what"
+  # The output file is the thing a later step would consume. Rejecting the
+  # run but leaving a truncated baseline behind is the half-done state the
+  # separate validation pass exists to make unreachable.
+  if [ -e "$WORK/badbin.json" ]; then
+    echo "FAIL - $what in a name: left a partial output file behind"
+    failures=$((failures + 1))
+  else
+    echo "ok   - $what in a name: writes no output file"
+  fi
+done
 
 # --- Negative zero. `round` on a small negative yields -0, which is `>= 0`
 #     in jq, so the `+` prefix was applied and the value stringified as `-0`,

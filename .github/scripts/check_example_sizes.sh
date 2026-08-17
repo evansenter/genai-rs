@@ -13,6 +13,7 @@
 # Usage:
 #   check_example_sizes.sh measure <dir> <out.json>
 #   check_example_sizes.sh compare <baseline.json> <current.json> [max_growth_pct]
+#   check_example_sizes.sh render <sizes.json>
 #
 # Sizes are toolchain- and linker-dependent, so the baseline is carried as a
 # CI artifact refreshed on every main push rather than committed — a committed
@@ -40,26 +41,57 @@ measure() {
         exit 1
     fi
 
+    # Names are validated in their own pass, ahead of the measuring pipeline
+    # below, for a reason worth stating: inside that pipeline the brace group
+    # is the left half, so it runs in a subshell and a `return` there sets
+    # only the subshell's status. `set -o pipefail` promotes it, `set -e`
+    # exits on it, and the result is correct — but a guard whose effect
+    # depends on two options declared a hundred lines away is not a guard you
+    # want to inherit. Measured what that costs: with `pipefail` off, a
+    # tab-bearing name that sorts *after* other entries leaves `measure`
+    # exiting 0 having printed "Measured 2 example binaries", with every
+    # example past the tab silently dropped from the baseline — and a dropped
+    # example appears in neither `added` nor `removed`, so the only trace is
+    # the compared count. Out here, `return 1` returns from `measure` and
+    # `$out` is never written at all.
+    #
+    # Both rejected characters are ones `measure` itself would carry fine;
+    # they break downstream. A tab splits across `name` and `was` in
+    # `compare`'s tab-delimited report line and shifts every column, so the
+    # table row and the `::error::` both name the wrong thing. A newline
+    # desynchronises the name/size fold below, landing the tail of a name in
+    # a value slot so `tonumber` aborts jq mid-reduce — a raw parse error
+    # that never names the file. Both are the same failure: the reader debugs
+    # the checker instead of the size. Cargo target names can carry neither;
+    # this is the same drift insurance as the threshold and value-shape
+    # checks.
+    #
+    # `$'\t'`/`$'\n'` rather than `$(printf ...)`: command substitution strips
+    # trailing newlines, so `*"$(printf '\n')"*` collapses to `**` and
+    # rejects every name in the directory — turning `measure` into a total
+    # failure on its first run.
+    local f name
+    for f in "$dir"/*; do
+        [ -f "$f" ] || continue
+        name=$(basename "$f")
+        case "$name" in
+            *$'\t'*)
+                echo "::error::Example name contains a tab, which the size report cannot carry: $name" >&2
+                return 1
+                ;;
+            *$'\n'*)
+                echo "::error::Example name contains a newline, which the size report cannot carry: $name" >&2
+                return 1
+                ;;
+        esac
+    done
+
     {
         for f in "$dir"/*; do
             [ -f "$f" ] || continue
-            local name
             name=$(basename "$f")
             case "$name" in
                 *.d) continue ;;
-                # A tab in a name is guarded, not merely documented, because
-                # the consequence is a misdiagnosis rather than a wrong
-                # verdict: it survives `measure` correctly, then splits across
-                # `name` and `was` in `compare`'s tab-delimited report line
-                # and shifts every column, so the table row and the
-                # `::error::` both name the wrong thing and the reader debugs
-                # the checker instead of the size. Named here, where the name
-                # is still in hand. Same drift insurance as the threshold and
-                # value-shape checks; a cargo target name cannot contain one.
-                *"$(printf '\t')"*)
-                    echo "::error::Example name contains a tab, which the size report cannot carry: $name" >&2
-                    return 1
-                    ;;
             esac
             # Cargo's rebuild duplicates end in `-<hex>`, and the whole tail
             # after the final hyphen is hex — so that is what is required
@@ -105,13 +137,10 @@ measure() {
             # `%d` rather than `%s` for the size: BSD `wc -c` pads with
             # leading spaces, which `tonumber` would reject.
             #
-            # Two residual naming assumptions, and they belong to different
-            # halves of the script. Here: no newline, which would
-            # desynchronise the name/size pairing. Downstream in `compare`:
-            # no tab either, because the report line it builds is
-            # tab-delimited and the read loop would split such a name across
-            # `name` and `was`, shifting every column. Cargo target names can
-            # carry neither.
+            # This pairing assumes one line per field, which is why the
+            # validation pass above rejects a newline in a name rather than
+            # documenting it — the two constraints it enforces are exactly
+            # the two this `printf` and `compare`'s report line depend on.
             printf '%s\n%d\n' "$name" "$size"
         done
     } | jq -Rn '
