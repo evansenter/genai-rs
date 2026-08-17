@@ -381,52 +381,6 @@ jobs:
       - name: Run the shell harnesses and shellcheck
         run: make test-scripts
 
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - uses: ./.github/actions/setup-mold
-      - name: Run clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-
-  doc:
-    name: Documentation
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: ./.github/actions/setup-mold
-      - name: Check documentation (all features)
-        run: cargo doc --workspace --no-deps --all-features --document-private-items
-        env:
-          RUSTDOCFLAGS: -D warnings
-      - name: Check documentation (docs.rs feature set)
-        # Mirrors [package.metadata.docs.rs] (features AND the docsrs
-        # rustdoc-arg) on stable: gates warnings specific to the published
-        # feature set. Nightly-only breakage (docs.rs builds on nightly) is
-        # covered by the nightly step in release.yml's validate job (and by
-        # release checklist step 0 in CLAUDE.md), not this job.
-        run: cargo doc --workspace --no-deps --features antigravity
-        env:
-          RUSTDOCFLAGS: --cfg docsrs -D warnings
-
-  release-scripts:
-    name: Release Scripts
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      # `release.yml` only runs on a tag push, which is the one moment its
-      # scripts cannot be debugged cheaply — the tag exists and the crates
-      # may already be published. So the pieces it depends on are tested
-      # here, on every PR, against fixtures rather than against a release.
-      - name: Test the changelog extractor
-        run: .github/scripts/tests/test_extract_changelog_section.sh
       # The real CHANGELOG, not a fixture: this is what a release would
       # actually read, and a heading that drifts off the `## [X.Y.Z]` shape
       # would otherwise only surface at tag time as an empty release body.
@@ -474,6 +428,41 @@ jobs:
             echo "::error::extract_changelog_section.sh exited $rc — a usage or environment error, not a missing section."
             exit 1
           fi
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/setup-mold
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  doc:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/setup-mold
+      - name: Check documentation (all features)
+        run: cargo doc --workspace --no-deps --all-features --document-private-items
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - name: Check documentation (docs.rs feature set)
+        # Mirrors [package.metadata.docs.rs] (features AND the docsrs
+        # rustdoc-arg) on stable: gates warnings specific to the published
+        # feature set. Nightly-only breakage (docs.rs builds on nightly) is
+        # covered by the nightly step in release.yml's validate job (and by
+        # release checklist step 0 in CLAUDE.md), not this job.
+        run: cargo doc --workspace --no-deps --features antigravity
+        env:
+          RUSTDOCFLAGS: --cfg docsrs -D warnings
 
   msrv:
     name: MSRV Check
