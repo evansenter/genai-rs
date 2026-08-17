@@ -359,24 +359,27 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-  escalation-scripts:
-    name: Escalation Scripts
+  shell-scripts:
+    name: Shell Scripts
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # No toolchain needed, so this reports in seconds. `bash -n` cannot
-      # catch what these scripts get wrong — the `$ENV.TITLE` ordering bug
-      # was valid syntax meaning the wrong thing — so the branches are
-      # exercised against a stubbed `gh` instead.
-      - name: Exercise the scheduled-failure scripts
-        run: .github/scripts/tests/test_scheduled_failure_scripts.sh
-      # `setup-dev.sh` has the same property and had none of the coverage.
-      # The `linker` pin in particular is a *file format* claim — a bare
-      # appended line is correct only while the example ends inside
-      # `[target.x86_64-unknown-linux-gnu]` — so the assertion parses the
-      # result as TOML rather than grepping it.
-      - name: Exercise setup-dev.sh
-        run: .github/scripts/tests/test_setup_dev.sh
+      # One entry point for every harness under `.github/scripts/tests/`,
+      # via the same make target a contributor runs locally, so CI and
+      # `make check` cannot disagree about what is covered.
+      #
+      # No toolchain needed, so this reports in seconds — which is why the
+      # harnesses live here rather than in `build-metrics`, a job that opens
+      # with `cargo clean` and a full release build. A shell lint failure
+      # should not take ten minutes to surface.
+      #
+      # `bash -n` cannot catch what these scripts get wrong — the
+      # `$ENV.TITLE` ordering bug was valid syntax meaning the wrong thing —
+      # so the branches are exercised against a stubbed `gh`, and shellcheck
+      # covers the quoting and `set -e` classes the fixtures structurally
+      # cannot reach.
+      - name: Run the shell harnesses and shellcheck
+        run: make test-scripts
 
   clippy:
     name: Clippy
@@ -479,59 +482,248 @@ jobs:
   build-metrics:
     name: Build Metrics
     runs-on: ubuntu-latest
-    # Only run on PRs that change code (not docs-only changes)
-    if: github.event_name == 'pull_request'
+    # PRs consume the size baseline; main pushes publish it. Previously this
+    # was PR-only, which is fine for an absolute ceiling but leaves a delta
+    # check with nothing to compare against — so main is now included, at the
+    # cost of running this job on merges as well. That is the price of
+    # absorbing toolchain drift automatically instead of bumping a ceiling by
+    # hand every few releases (#403).
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    permissions:
+      contents: read
+      actions: read # `gh run download` for the baseline artifact
     steps:
       - uses: actions/checkout@v4
+      # First, before the clean release build: this depends only on bash and
+      # jq, does not read `target/`, and fails in seconds. Late, a broken
+      # assertion surfaced minutes in with the expensive work already sunk.
+      #
+      # The size check decides whether a PR goes red, and its interesting
+      # behaviours are all comparisons it either makes or silently declines
+      # to make — including the mode where it compares nothing and reports
+      # "all examples within threshold". Fixtures, so that stays checked.
       - uses: dtolnay/rust-toolchain@stable
       - uses: ./.github/actions/setup-mold
       - name: Clean build time
+        # Same feature set as `Build examples` below, for two reasons. The
+        # reported number should describe the build everything downstream is
+        # measured at — otherwise this row is a plain-default build while the
+        # sizes come from an antigravity one. And a different feature set is a
+        # different metadata hash, so without this the lib would be compiled
+        # twice per run: once here, once again for the examples.
         run: |
           echo "## Build Metrics" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           cargo clean
           start=$(date +%s)
-          cargo build --release
+          cargo build --release --features antigravity
           end=$(date +%s)
           duration=$((end - start))
           echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Clean release build | ${duration}s |" >> $GITHUB_STEP_SUMMARY
       - name: Build examples
+        # `--features antigravity` because all seven `examples/antigravity/*`
+        # targets carry `required-features = ["antigravity"]`, which is not in
+        # `default`. A plain `cargo build --examples` silently skips a target
+        # whose required features are off, so those seven never reached
+        # `target/release/examples` — and so were absent from the summary
+        # table, the delta check and the sanity ceiling alike. That is the
+        # largest feature surface in the crate, which makes it the place a
+        # size regression was most likely to go unnoticed. They compile in CI
+        # already (`check` runs `--all-targets --all-features`), so this only
+        # changes what gets linked and measured.
+        #
+        # This also shifts every other example's size, since they now link an
+        # antigravity-enabled lib. Harmless in the steady state — baseline and
+        # PR are measured by this same step, so both sides move together — but
+        # not across the edit that changes this line. The baseline artifact
+        # was measured at whatever feature set this step had on the last main
+        # push, so the PR that adds or drops a feature here compares new-set
+        # sizes against old-set ones, and a change of this size shifts every
+        # example at once: expect the whole table to trip, not one target, and
+        # nothing in it to hint that the feature flag is the cause. Waive that
+        # one PR with `size-growth-ok` and push a commit; the next main push
+        # republishes at the new feature set and it self-clears.
         run: |
           start=$(date +%s)
-          cargo build --release --examples
+          cargo build --release --examples --features antigravity
           end=$(date +%s)
           duration=$((end - start))
           echo "| Examples build | ${duration}s |" >> $GITHUB_STEP_SUMMARY
+      - name: Measure example sizes
+        run: |
+          .github/scripts/check_example_sizes.sh measure \
+            target/release/examples current-sizes.json
+          cat current-sizes.json
+
+      # Rendered from current-sizes.json, not re-derived. This was the last
+      # step in the job with its own size-measuring implementation (`ls -lh`
+      # through `awk`), so the job carried two — and it sampled a hardcoded
+      # three examples, silently omitting every other one, including the
+      # antigravity targets and `multi_turn_agent_manual_stateless` that are
+      # among the likeliest to move. One definition of "an example binary and
+      # its size", now shared by the summary, the delta check and the
+      # backstop.
       - name: Binary sizes
         run: |
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Example Binary Sizes" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Example | Size |" >> $GITHUB_STEP_SUMMARY
-          echo "|---------|------|" >> $GITHUB_STEP_SUMMARY
-          for f in target/release/examples/simple_interaction target/release/examples/auto_function_calling target/release/examples/streaming; do
-            if [ -f "$f" ]; then
-              size=$(ls -lh "$f" | awk '{print $5}')
-              name=$(basename "$f")
-              echo "| $name | $size |" >> $GITHUB_STEP_SUMMARY
-            fi
-          done
-      - name: Check size limits
+          .github/scripts/check_example_sizes.sh render current-sizes.json \
+            >> $GITHUB_STEP_SUMMARY
+      # Per-example delta against the last main build, not an absolute
+      # ceiling. The old 16MB ceiling had been raised three times (10 -> 12
+      # -> 16), each time only after going red on an unrelated PR: an
+      # absolute tripwire fires once drift accumulates past the margin, and
+      # the only remedy is widening the margin — so it caught toolchain
+      # drift loudly while a real per-PR regression under the ceiling passed
+      # silently. See #403.
+      #
+      # The baseline is an artifact refreshed on every main push rather than
+      # a committed file: sizes are toolchain- and linker-dependent, so a
+      # committed number would encode one machine's toolchain and drift
+      # against every other.
+      - name: Fetch the size baseline from main
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Fail if any example exceeds 16MB (raised from 10MB for the
-          # 2026-05-20 revision surface + reqwest 0.13 at ~10.1MB, then past
-          # 12MB when stable-toolchain drift pushed auto_function_calling to
-          # ~13MB; 16MB keeps ~20% headroom over that so routine toolchain
-          # drift doesn't re-trip it. Guards runaway growth, not absolute size)
-          for f in target/release/examples/*; do
-            if [ -f "$f" ] && [[ "$(basename "$f")" != *.d ]]; then
-              size=$(stat -c%s "$f")
-              if [ "$size" -gt 16777216 ]; then
-                echo "::error::Binary $(basename $f) exceeds 16MB limit: $size bytes"
-                exit 1
-              fi
+          set -euo pipefail
+          # Best-effort: a missing baseline (first run after this lands, or
+          # an expired artifact) must not fail the job — the compare step
+          # skips and warns.
+          #
+          # `// empty`, not a bare `.[0].databaseId`: on an empty result set
+          # jq prints the literal string "null", which passes `[ -n ]` and
+          # sends the download after run "null".
+          #
+          # Several runs, not just the newest: a run whose artifact expired
+          # or whose upload did not happen would otherwise mean no baseline
+          # at all, even with an older successful run still carrying one.
+          # `completed`, not `success`: the status is the whole `Rust` run's,
+          # not this job's. `test-integration` runs five live-API matrix
+          # groups on main pushes and CLAUDE.md says they may flake, so one
+          # flake marks the run failed and skips a `size-baseline` artifact
+          # that `build-metrics` published perfectly well. The loop below
+          # already tolerates a run with no artifact — that is what the
+          # `2>/dev/null` is for — so the stricter filter bought nothing the
+          # loop did not already handle, and cost baselines.
+          # "The lookup broke" and "there is nothing to look up" must not
+          # read identically. Both end in the same `::warning::No usable
+          # baseline` branch — honest, since the check genuinely did not run —
+          # but the effective gate for that PR is then only the 64MB backstop,
+          # four times looser than the ceiling this replaces. An expired
+          # artifact self-clears on the next main push; a dropped
+          # `actions: read` or a rate-limited token does not, and would look
+          # like the benign first-PR case every time.
+          #
+          # stderr is deliberately not suppressed here (it still is on the
+          # download below, where a missing artifact is the expected case).
+          # The warning tells the reader to check permissions and rate limits;
+          # gh's own message is what actually distinguishes those, so
+          # discarding it would send them looking for something the log had
+          # already thrown away. `RUN_IDS` captures stdout only, so letting
+          # stderr through cannot contaminate the id list.
+          # `rust.yml`, not `Rust`: `--workflow` accepts either the display
+          # `name:` or the filename, and the display name is the cosmetic one
+          # — the identifier most likely to be edited by someone with no
+          # reason to look at this job. The failure branch below keeps a
+          # rename from being silent (gh errors on an unknown workflow rather
+          # than returning empty), but until someone reads that annotation
+          # every PR sits on the weakest path, gated only by the 64MB
+          # backstop. Cheaper to name the stable identifier.
+          if ! RUN_IDS=$(gh run list --workflow rust.yml --branch main --status completed \
+              --limit 10 --json databaseId --jq '.[].databaseId // empty'); then
+            echo "::warning::Could not list main runs — the baseline lookup failed rather than finding nothing. See the gh error above; check the actions:read permission and rate limits."
+            RUN_IDS=""
+          fi
+          for run_id in $RUN_IDS; do
+            if gh run download "$run_id" --name size-baseline --dir baseline 2>/dev/null; then
+              echo "Baseline from run $run_id"
+              break
             fi
           done
+          if [ -f baseline/current-sizes.json ]; then
+            cp baseline/current-sizes.json baseline-sizes.json
+          else
+            echo "No size-baseline artifact on any of the last 10 completed main runs"
+            : > baseline-sizes.json
+          fi
+
+      # PR-only, both here and on the fetch above, and that is a deliberate
+      # trust boundary rather than leftover scoping: a direct push to main has
+      # no PR to fail and no label to waive with, and the same run then
+      # publishes its sizes as the new baseline — so growth arriving that way
+      # is absorbed rather than flagged. Safe while branch protection requires
+      # PRs into main; if that ever changes, the fix is to run `compare`
+      # advisory-only on main pushes (fetch, compare, swallow the status) so
+      # drift lands in the step summary before the baseline is overwritten.
+      - name: Check size deltas
+        if: github.event_name == 'pull_request'
+        env:
+          # The escape hatch the failure message promises. Kept in the
+          # workflow rather than the script so the script needs no `gh` and
+          # stays runnable — and testable — outside Actions.
+          SIZE_GROWTH_OK: ${{ contains(github.event.pull_request.labels.*.name, 'size-growth-ok') }}
+        # The delta table goes to the step summary as well as the log. The
+        # absolute-size table already surfaced there, which had the value
+        # ordering backwards — the deltas are the signal this job exists for,
+        # and on a green run nobody opens the raw log, so routine drift stayed
+        # invisible until it tripped the threshold.
+        run: |
+          # `pipefail` because the pipeline's status would otherwise be tee's,
+          # and a failing compare would stop failing the step. The default
+          # shell is `bash -e` with no pipefail.
+          set -o pipefail
+          {
+            echo '### Example size deltas vs main'
+            echo ''
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY
+          rc=0
+          .github/scripts/check_example_sizes.sh compare \
+            baseline-sizes.json current-sizes.json 15 \
+            | tee -a $GITHUB_STEP_SUMMARY || rc=$?
+          # Fenced, so Markdown keeps the column alignment instead of
+          # collapsing the runs of spaces. Closed unconditionally — an
+          # unterminated fence would swallow whatever a later step appends.
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          exit "$rc"
+
+      # Backstop only, deliberately far above any plausible size. The delta
+      # check above is the real gate; this exists for the no-baseline case,
+      # where a pathological binary would otherwise go unremarked.
+      - name: Sanity ceiling
+        run: |
+          # Reads current-sizes.json rather than re-deriving with GNU-only
+          # `stat -c%s`. `measure` already wrote every size portably — round 2
+          # swapped it off `stat` precisely so the script runs on a macOS
+          # checkout — and this loop re-implemented the `.d` filter while
+          # still walking the hash-suffixed duplicates. One definition of "an
+          # example binary and its size", shared by the backstop and the
+          # delta check.
+          over=$(jq -r 'to_entries[] | select(.value > 67108864)
+            | "::error::Binary \(.key) exceeds the 64MB sanity ceiling: \(.value) bytes"' \
+            current-sizes.json)
+          if [ -n "$over" ]; then
+            echo "$over"
+            exit 1
+          fi
+
+      # After the sanity ceiling, deliberately. Published first, a build
+      # carrying a pathological binary uploaded its sizes and *then* failed
+      # the job — the red run is visible, but the artifact is already the
+      # newest one the fetch loop finds, so every later PR measures against
+      # the inflated number: the PR restoring normal sizes reads as a large
+      # shrink and passes, and a re-regression back up to the bloated size
+      # also passes at 0% growth. The delta gate would end up calibrated to
+      # the build the backstop rejected. The ceiling reads only
+      # current-sizes.json, so it has no ordering dependency on the upload.
+      # Refreshes the baseline for subsequent PRs. Routine toolchain drift is
+      # absorbed here instead of requiring a manual ceiling bump.
+      - name: Publish the size baseline
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: size-baseline
+          path: current-sizes.json
+          retention-days: 90
 
