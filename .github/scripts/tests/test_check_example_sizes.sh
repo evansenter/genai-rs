@@ -149,13 +149,13 @@ done
 #     `compare` then reports it as "the build under test is unmeasurable" — a
 #     confusing diagnosis for what is really a naming problem.
 #
-#     Scoped to `measure` deliberately. The tab-bearing name is here because
-#     JSON escaping is what is under test, but `compare` could not carry it
-#     across the seam — its report line is tab-delimited, so such a name would
-#     shift every column. Neither shape is reachable from a cargo target name;
-#     see the assumptions comment in `measure`.
+#     A tab-bearing name is deliberately *not* in this set: `measure` escapes
+#     it correctly, but `compare` cannot carry it across the seam — its report
+#     line is tab-delimited, so the name would shift every column. Rather than
+#     pin a guarantee only half the script honours, `measure` rejects it by
+#     name; the case just below asserts that instead.
 rm -rf "$WORK/escbins" && mkdir -p "$WORK/escbins"
-esc_names=('has"quote' 'has\backslash' $'tab\tname' 'ünïcødé' 'plain')
+esc_names=('has"quote' 'has\backslash' 'ünïcødé' 'plain')
 for n in "${esc_names[@]}"; do
   : > "$WORK/escbins/$n"
   chmod +x "$WORK/escbins/$n"
@@ -334,6 +334,35 @@ rc=0
 out=$(bash "$SCRIPT" measure "$WORK/nothing" "$WORK/measured.json" 2>&1) || rc=$?
 expect_rc     "measure: fails on an empty directory" 1
 expect_output "measure: says nothing was found" "Measured 0"
+
+# --- A tab in a name is refused where the name is still in hand, rather than
+#     silently shifting every column of the report downstream. The failure it
+#     prevents is a misdiagnosis rather than a wrong verdict, which is why it
+#     is worth naming at the source.
+rm -rf "$WORK/tabbin" && mkdir -p "$WORK/tabbin"
+: > "$WORK/tabbin/$(printf 'has\tname')"
+chmod +x "$WORK/tabbin/$(printf 'has\tname')"
+rc=0
+out=$(bash "$SCRIPT" measure "$WORK/tabbin" "$WORK/tabbin.json" 2>&1) || rc=$?
+expect_rc     "tab in a name: refused rather than silently mangled" 1
+expect_output "tab in a name: says what is wrong" "contains a tab"
+
+# --- Negative zero. `round` on a small negative yields -0, which is `>= 0`
+#     in jq, so the `+` prefix was applied and the value stringified as `-0`,
+#     rendering `+-0%`. A one-byte shrink on a 13MB binary lands here, so it
+#     is the routine outcome of ordinary link-order noise, not an edge case.
+echo '{"tiny": 13000000}' > "$WORK/nz-base.json"
+echo '{"tiny": 12999999}' > "$WORK/nz-cur.json"
+run_compare "$WORK/nz-base.json" "$WORK/nz-cur.json" 15
+expect_rc     "negative zero: a sub-0.05% shrink passes" 0
+refute_output "negative zero: does not render +-0%" '+-0%'
+expect_output "negative zero: renders +0%" '+0%'
+
+# --- Arity. The threshold is optional, so two or three arguments are legal —
+#     but a fourth used to be discarded silently, so a mistyped flag ran as
+#     though it had never been passed.
+run_compare "$WORK/base.json" "$WORK/small.json" 15 --strict
+expect_rc "arity: a fourth argument reaches usage rather than being dropped" 2
 
 # --- The `measure` -> `compare` seam. Every case above stops short of it:
 #     the compare cases use hand-written JSON, and the measure cases only

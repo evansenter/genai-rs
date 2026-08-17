@@ -47,6 +47,19 @@ measure() {
             name=$(basename "$f")
             case "$name" in
                 *.d) continue ;;
+                # A tab in a name is guarded, not merely documented, because
+                # the consequence is a misdiagnosis rather than a wrong
+                # verdict: it survives `measure` correctly, then splits across
+                # `name` and `was` in `compare`'s tab-delimited report line
+                # and shifts every column, so the table row and the
+                # `::error::` both name the wrong thing and the reader debugs
+                # the checker instead of the size. Named here, where the name
+                # is still in hand. Same drift insurance as the threshold and
+                # value-shape checks; a cargo target name cannot contain one.
+                *"$(printf '\t')"*)
+                    echo "::error::Example name contains a tab, which the size report cannot carry: $name" >&2
+                    return 1
+                    ;;
             esac
             # Cargo's rebuild duplicates end in `-<hex>`, and the whole tail
             # after the final hyphen is hex — so that is what is required
