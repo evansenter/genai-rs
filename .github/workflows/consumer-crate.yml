@@ -137,6 +137,17 @@ jobs:
               let factory = get_weather_callable_factory();
               assert_eq!(factory.declaration().name(), "get_weather");
 
+              // The documented migration for #430's `#[non_exhaustive]`
+              // response structs, asserted from where the attribute
+              // actually applies. `#[non_exhaustive]` only bites outside
+              // the defining crate, so no in-workspace test can catch a
+              // regression here — and `docs/ENUM_WIRE_FORMATS.md` tells
+              // users this exact route still works. It was verified once
+              // by hand; this keeps it verified by a compiler.
+              let mut response = genai_rs::InteractionResponse::default();
+              response.id = Some("x".into());
+              assert_eq!(response.id.as_deref(), Some("x"));
+
               println!("ok: {}", declaration.name());
           }
           RUST
