@@ -30,7 +30,7 @@ Gemini provides several server-side tools that execute automatically without req
 
 **Key distinction**: These are *server-side* tools executed by Google's infrastructure, unlike *client-side* function calling where your code executes the functions.
 
-**Where tool activity appears**: Under API revision 2026-05-20, server-side tool activity is reported as dedicated step variants in `response.steps` (e.g., `Step::GoogleSearchCall`, `Step::GoogleSearchResult`, `Step::CodeExecutionCall`, `Step::UrlContextResult`, `Step::McpServerToolCall`, ...). The response helpers shown below (`google_search_results()`, `code_execution_calls()`, ...) iterate those steps for you. The old `grounding_metadata` and `url_context_metadata` response fields no longer exist — grounding information comes from the steps themselves plus inline `Annotation` citations, and `usage.grounding_tool_count` reports per-tool grounding counts.
+**Where tool activity appears**: Under API revision 2026-05-20, server-side tool activity is reported as dedicated step variants in `response.steps` (e.g., `Step::GoogleSearchCall`, `Step::GoogleSearchResult`, `Step::CodeExecutionCall`, `Step::UrlContextResult`, `Step::McpServerToolCall`, ...). One exception, measured rather than assumed: MCP does **not** currently arrive as its dedicated variants — see the note under [MCP Servers](#mcp-servers). The response helpers shown below (`google_search_results()`, `code_execution_calls()`, ...) iterate those steps for you. The old `grounding_metadata` and `url_context_metadata` response fields no longer exist — grounding information comes from the steps themselves plus inline `Annotation` citations, and `usage.grounding_tool_count` reports per-tool grounding counts.
 
 ## Google Search
 
@@ -565,7 +565,30 @@ let config = McpServerConfig::new("filesystem", "https://mcp.example.com/fs")
     ]);
 ```
 
-MCP activity appears in `response.steps` as `Step::McpServerToolCall { name, server_name, arguments, .. }` and `Step::McpServerToolResult { .. }`.
+MCP activity is *modeled* in `response.steps` as `Step::McpServerToolCall { name, server_name, arguments, .. }` and `Step::McpServerToolResult { .. }` — but see the note below: that is not what the API sends today.
+
+> **Not what the API sends today.** Verified live on 2026-08-16: MCP calls
+> arrive as generic `tool_call` steps carrying only `{id, signature, type}`,
+> never `mcp_server_tool_call` / `mcp_server_tool_result`. So a
+> `if let Step::McpServerToolCall { .. }` match will not fire — those steps
+> deserialize into `Step::Unknown` (Evergreen degrading as designed) and
+> `step_summary().mcp_server_tool_call_count` reads 0 even on a successful
+> call.
+>
+> The usable signal is `response.tool_use_tokens()`, which is non-zero only
+> if a tool was actually invoked — it is a single aggregate with no per-tool
+> breakdown, so it isolates the MCP server only when MCP is the sole declared
+> tool. Combine it with another — see [Combining Tools](#combining-tools) —
+> and a search the model runs instead of the MCP call makes it non-zero too.
+> That it excludes *declaration* overhead is measured, not inferred from the
+> field's own doc ("tokens used for tool/function calling overhead", which
+> would admit it): declaring the tool alongside a prompt the model answers
+> from its own knowledge returns `Some(0)`, identical to the same prompt
+> with no tool declared.
+>
+> The variants above are modeled from the spec and kept for when the API
+> starts emitting them. Tracked in
+> [#433](https://github.com/evansenter/genai-rs/issues/433).
 
 ## Combining Tools
 

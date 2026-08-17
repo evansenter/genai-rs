@@ -161,16 +161,31 @@ roundtrip tests.
 | `url_context_result` | `Step::UrlContextResult` | `{"call_id": "...", "result": [UrlContextResultItem], "is_error"?: bool, "signature"?: "..."}` |
 | `google_search_call` | `Step::GoogleSearchCall` | `{"id": "...", "arguments": {"queries": [...]}, "search_type"?: "...", "signature"?: "..."}` |
 | `google_search_result` | `Step::GoogleSearchResult` | `{"call_id": "...", "result": [GoogleSearchResultItem], "is_error"?: bool, "signature"?: "..."}` |
-| `mcp_server_tool_call` | `Step::McpServerToolCall` | `{"id": "...", "name": "...", "server_name": "...", "arguments": {...}}` |
-| `mcp_server_tool_result` | `Step::McpServerToolResult` | `{"call_id": "...", "name"?: "...", "server_name"?: "...", "result": <payload>}` |
+| `mcp_server_tool_call` | `Step::McpServerToolCall` | **Modeled from spec, not observed** — see below. `{"id": "...", "name": "...", "server_name": "...", "arguments": {...}}` |
+| `mcp_server_tool_result` | `Step::McpServerToolResult` | **Modeled from spec, not observed** — see below. `{"call_id": "...", "name"?: "...", "server_name"?: "...", "result": <payload>}` |
+| `tool_call` | `Step::Unknown { step_type: "tool_call", .. }` | `{"id": "...", "signature": "..."}` — observed for MCP interactions (verified live 2026-08-16, `signature` present); the generic tag, not MCP-specific, and unmodeled, so it lands in the fallback |
 | `file_search_call` | `Step::FileSearchCall` | `{"id": "...", "signature"?: "..."}` |
 | `file_search_result` | `Step::FileSearchResult` | `{"call_id": "...", "result": [FileSearchResultItem], "signature"?: "..."}` |
 | `google_maps_call` | `Step::GoogleMapsCall` | `{"id": "...", "arguments": {"queries": [...]}, "signature"?: "..."}` |
 | `google_maps_result` | `Step::GoogleMapsResult` | `{"call_id": "...", "result": [GoogleMapsResultItem], "signature"?: "..."}` |
 | (anything else) | `Step::Unknown { step_type, data }` | Full JSON preserved for roundtrip |
 
+> **MCP is not on the wire in that shape.** Verified live 2026-08-16: an MCP
+> interaction returns generic `tool_call` steps carrying only
+> `{id, signature, type}` — never `mcp_server_tool_call` /
+> `mcp_server_tool_result`. Those two rows describe the spec, and the
+> variants exist for when the API starts emitting them; today a match on
+> `Step::McpServerToolCall` never fires and
+> `step_summary().mcp_server_tool_call_count` reads 0 on a successful call.
+> The usable signal is `response.tool_use_tokens()` — a single aggregate
+> with no per-tool breakdown, so it isolates the MCP server only when MCP
+> is the sole declared tool (see the fuller note in
+> `docs/BUILT_IN_TOOLS.md` under MCP Servers). Tracked in
+> [#433](https://github.com/evansenter/genai-rs/issues/433).
+
 Note the asymmetry: `function_call` and `mcp_server_tool_call` keep their
-arguments at the **top level**, while the built-in tool calls
+arguments at the **top level** (the latter per spec, unobserved), while the
+built-in tool calls
 (`code_execution_call`, `url_context_call`, `google_search_call`,
 `google_maps_call`) nest theirs inside an `arguments` object. The library
 flattens the nested forms into ergonomic fields (`urls: Vec<String>`,
@@ -243,7 +258,7 @@ exceptions** where the wire tag differs from the variant name:
 | `code_execution_call` / `code_execution_result` | code execution variants | Call delta carries flattened `language`/`code` |
 | `url_context_call` / `url_context_result` | URL context variants | |
 | `google_search_call` / `google_search_result` | Google Search variants | |
-| `mcp_server_tool_call` / `mcp_server_tool_result` | MCP variants | |
+| `mcp_server_tool_call` / `mcp_server_tool_result` | MCP variants | Modeled from spec, not observed — see the step table note (#433) |
 | `file_search_call` / `file_search_result` | file search variants | |
 | `google_maps_call` / `google_maps_result` | Google Maps variants | |
 | (anything else) | `StepDelta::Unknown { delta_type, data }` | Preserved |
