@@ -281,15 +281,17 @@ jobs:
             # Read the body before overwriting it: the marker in it records
             # which `$LATEST` this issue was last updated for, and that is
             # what decides whether the comment below is new information.
-            # One call for both, and assigned rather than inlined into the
+            # Fetched in one `gh issue view`, and assigned rather than
+            # inlined into the
             # `if` below. A command substitution *inside* an `if` condition
             # is exempt from `set -e`, so a transient 5xx there would yield
             # an empty string, skip the reopen, and let the edit and comment
             # land on a still-closed issue — the same silent state described
             # below, moved one call earlier rather than removed. In a simple
             # assignment the failure does trip `set -e`.
-            PREV_STATE=$(gh issue view "$EXISTING" --json state --jq .state)
-            PREV_BODY=$(gh issue view "$EXISTING" --json body --jq .body)
+            PREV=$(gh issue view "$EXISTING" --json state,body)
+            PREV_STATE=$(printf '%s' "$PREV" | jq -r .state)
+            PREV_BODY=$(printf '%s' "$PREV" | jq -r .body)
 
             # Reopen only when actually closed, rather than reopening
             # unconditionally and discarding the outcome. `2>/dev/null ||

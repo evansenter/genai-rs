@@ -214,13 +214,25 @@ def main() -> int:
     # block count honest about what was examined. It is redundancy now
     # rather than the only line of defence, and worth knowing as such
     # before treating a green run here as covering these files alone.
+    # Counted separately from the workflow blocks above, deliberately. The
+    # inertness guard below asks whether the `run:` extraction still yields
+    # anything, and there are eight scripts here — so folding both into one
+    # total means that if `iter_run_steps` yielded nothing at all (an
+    # unexpected YAML shape, a `shell:` value that stops matching SHELLS, a
+    # refactor), the count would still be 8, `== 0` would be false, and the
+    # summary would report "All 8 shell blocks parse" with the half of the
+    # gate the workflows depend on silently off. Two populations, two
+    # counters, and the guard applies to the one it is about.
     scripts = sorted(glob.glob(".github/scripts/*.sh"))
+    script_checked = 0
     for script in scripts:
-        checked += 1
+        script_checked += 1
         failures += check_script(script)
 
+    total = checked + script_checked
+
     if failures:
-        print(f"\n{failures} of {checked} shell block(s) failed to parse.")
+        print(f"\n{failures} of {total} shell block(s) failed to parse.")
         return 1
 
     # Report blocks, not files, and fail on zero. This gate exists for a
@@ -229,12 +241,16 @@ def main() -> int:
     # shape, a refactor of iter_run_steps that drops blocks — must not look
     # identical to it passing.
     if checked == 0:
-        print("::error::No shell blocks were checked — the gate is inert.")
+        print("::error::No workflow `run:` blocks were checked — the gate is inert.")
+        return 1
+    if script_checked == 0:
+        print("::error::No scripts were checked — the glob matched nothing.")
         return 1
 
     summary = (
-        f"All {checked} shell blocks parse "
-        f"({len(paths)} workflow file(s), {len(scripts)} script(s))"
+        f"All {total} shell blocks parse "
+        f"({checked} workflow `run:` block(s) across {len(paths)} file(s), "
+        f"{script_checked} script(s))"
     )
     print(
         f"{summary}; {assumed} assumed bash on a Windows-capable job."
