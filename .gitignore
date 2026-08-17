@@ -8,3 +8,6 @@
 *.pcm
 *.wav
 output_*.pcm
+
+# Opt-in local linker config; see .cargo/config.toml.example (#428).
+.cargo/config.toml

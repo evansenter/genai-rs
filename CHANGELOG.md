@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The mold linker is now opt-in** (#428). `.cargo/config.toml` was checked
+  in and set `-fuse-ld=mold` unconditionally, so a clone on a machine without
+  mold failed every build before compiling anything:
+
+  ```text
+  error: linking with `cc` failed: exit status: 1
+    = note: collect2: fatal error: cannot find 'ld'
+  ```
+
+  `ld`, `lld` and `gold` are all present in that state — the missing binary
+  is mold, which the message never names. CI installs mold explicitly, so
+  this only ever hit new contributors and fresh containers.
+
+  The config now ships as `.cargo/config.toml.example`; run
+  `./scripts/setup-dev.sh` to enable it. The script asks the compiler the
+  question cargo will ask it — link a trivial program with
+  `cc -fuse-ld=mold` — rather than checking whether mold is on `PATH`.
+  `-fuse-ld=mold` is a compiler-driver option that GCC only accepts from
+  12.1 (clang 12+), so on Ubuntu 22.04, whose default gcc is 11, `apt
+  install mold` satisfies a `PATH` check while leaving every build broken in
+  exactly the way above. The probe covers both conditions at once and needs
+  no version table; when it fails the script explains and exits 0, since
+  building without mold is fine, just slower. CI enables the config
+  alongside its existing mold install, so build times there are unchanged.
+
+- **Scheduled workflows escalate their own failures** (#431). The flakiness
+  report failed 22 days running, then stopped firing for ~10 weeks, and none
+  of the three transitions produced a signal anyone acted on. `CI Flakiness
+  Report` and `Security Audit` now open a rolling `ci-health` issue on a
+  failing scheduled run, comment on each subsequent failure, and close it on
+  recovery. The issue body carries streak length — "failing since 2026-05-01,
+  22 consecutive scheduled runs" — because "it failed again" is what the
+  email channel already provided 22 times, and what nobody acted on.
+
+  Bounded honestly: this runs inside the job it reports on, so a run that is
+  cancelled, hits its execution limit, or dies before `actions/checkout`
+  still fails silently. Catching those needs a `workflow_run` watcher, which
+  is deferred with the rest of the liveness work.
+
+  `Security Audit` additionally gains `issues: write`, which the escalation
+  needs — and which also switches on `audit-check`'s own per-advisory issue
+  reporting, inert until now for want of the permission.
+
 - **BREAKING**: **`InteractionInput::Content` is now sent as a single
   `user_input` step**
   rather than as a bare content array. Both are valid arms of the API's input
