@@ -44,6 +44,13 @@ make test-all   # full suite including integration tests (needs GEMINI_API_KEY)
 Integration tests take 2-5 minutes and some flake on LLM variability. Doctests
 run in CI only, not in `make test` (see D-009).
 
+One side effect worth knowing, since it touches the file Setup just told you
+to generate: `make test-scripts` exercises `setup-dev.sh` against the
+checkout's *real* `.cargo/config.toml`, restoring it from a temp copy on an
+EXIT trap. That file is gitignored, so if you kill the run outright rather
+than letting it finish, git cannot bring it back — re-run
+`./scripts/setup-dev.sh` to regenerate it (#455).
+
 ## Verifying API behavior
 
 **Do not conclude the API supports something from documentation alone.** The
