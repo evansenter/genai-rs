@@ -661,7 +661,15 @@ fn cfg_test_modules(rel: &str, source: &str) -> BTreeSet<String> {
         // the silent direction this file exists to close. `cfg_test_mask`
         // was hardened for the same same-line shape; leaving its twin open
         // would mean the two parsers disagree about what a gate applies to.
-        let same_line = attr_remainder(line.trim_start());
+        // Filtered so the short-circuit is a pure widening rather than a
+        // trade. `#[cfg(test)] #[allow(dead_code)]` with `mod helper;` on the
+        // next line has a same-line remainder that is itself an attribute —
+        // taking it authoritatively would skip the forward scan and never
+        // collect `helper`. That is the loud direction (the file gets scanned
+        // and a struct there is reported), but it is a shape the forward scan
+        // already handled, and the point of these two parsers is that they
+        // agree.
+        let same_line = attr_remainder(line.trim_start()).filter(|r| !r.starts_with("#["));
         // Otherwise scan forward rather than assuming the very next line.
         // `#[cfg(test)]` / `#[allow(dead_code)]` / `mod x;` is legal, as is a
         // comment in between, and pairing only with `index + 1` would miss the
@@ -720,6 +728,21 @@ fn cfg_test_modules(rel: &str, source: &str) -> BTreeSet<String> {
 /// `#[cfg(all(not(test), unix))]` mark code that compiles only *outside*
 /// tests, i.e. real API; reading either as gated would skip a file this
 /// guard exists to scan, which is the direction that fails silently.
+fn is_cfg_test_attr(trimmed: &str) -> bool {
+    let Some(rest) = trimmed.strip_prefix("#[cfg(") else {
+        return false;
+    };
+    // Decided by whether `test` survives with its `not(..)` groups removed,
+    // not by where `not(` appears in the string. Both neighbours matter and
+    // they fail in opposite directions: `#[cfg(all(test, not(miri)))]` is
+    // test-only and must stay gated, while `#[cfg(all(not(test), unix))]` is
+    // real API and must not — and neither is decided by a leading-`not(`
+    // test or by a `not`-token-anywhere test.
+    strip_not_groups(rest)
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .any(|t| t == "test")
+}
+
 /// What follows a leading attribute on the same line, if anything.
 ///
 /// Bracket depth rather than `rfind("]")`: `#[cfg(all(test, not(miri)))]` ends
@@ -745,21 +768,6 @@ fn attr_remainder(trimmed: &str) -> Option<&str> {
         }
     }
     None
-}
-
-fn is_cfg_test_attr(trimmed: &str) -> bool {
-    let Some(rest) = trimmed.strip_prefix("#[cfg(") else {
-        return false;
-    };
-    // Decided by whether `test` survives with its `not(..)` groups removed,
-    // not by where `not(` appears in the string. Both neighbours matter and
-    // they fail in opposite directions: `#[cfg(all(test, not(miri)))]` is
-    // test-only and must stay gated, while `#[cfg(all(not(test), unix))]` is
-    // real API and must not — and neither is decided by a leading-`not(`
-    // test or by a `not`-token-anywhere test.
-    strip_not_groups(rest)
-        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .any(|t| t == "test")
 }
 
 /// Removes every `not(..)` group, so a `test` token left standing is one the
@@ -916,6 +924,34 @@ fn manual_deserialize_targets(text: &str) -> BTreeSet<String> {
 /// every file under `src/`. That is the silent inertness this file argues
 /// against everywhere else — and the round-5 cfg-test bug is what it looks
 /// like when it bites.
+/// The bracket-depth reasoning in `attr_remainder`'s doc, exercised directly.
+///
+/// The fixture above reaches it only through `cfg_test_modules`, where a wrong
+/// slice happens to fail the `mod ` match and look like "nothing here". These
+/// pin the slice itself.
+#[test]
+fn attr_remainder_finds_the_attribute_s_own_close() {
+    // Nothing after the attribute.
+    assert_eq!(attr_remainder("#[cfg(test)]"), None);
+    // The ordinary case.
+    assert_eq!(attr_remainder("#[cfg(test)] mod x;"), Some("mod x;"));
+    // A compound gate ends in a run of brackets; the *first* return to depth
+    // zero is the attribute's own close, not the first `]` and not the last.
+    assert_eq!(
+        attr_remainder("#[cfg(all(test, not(miri)))] mod x;"),
+        Some("mod x;")
+    );
+    // A remainder carrying brackets of its own — `rfind(\"]\")` would cut here.
+    assert_eq!(
+        attr_remainder("#[cfg(test)] type T = Vec<[u8; 4]>;"),
+        Some("type T = Vec<[u8; 4]>;")
+    );
+    // A trailing comment is not a declaration.
+    assert_eq!(attr_remainder("#[cfg(test)] // why"), None);
+    // Not an attribute at all.
+    assert_eq!(attr_remainder("mod x;"), None);
+}
+
 #[test]
 fn the_test_module_skip_is_scoped_to_the_declared_paths() {
     let lib_rs = "\
@@ -937,6 +973,11 @@ mod inline {
 #[cfg(test)] use std::sync::Once;
 
 pub mod not_test_only;
+
+#[cfg(test)] mod same_line_helper;
+
+#[cfg(test)] #[allow(dead_code)]
+mod attr_then_newline_helper;
 ";
     let modules = cfg_test_modules("src/lib.rs", lib_rs);
     assert_eq!(
@@ -944,9 +985,15 @@ pub mod not_test_only;
         BTreeSet::from([
             "src/test_subscriber".to_string(),
             "src/response_tests".to_string(),
+            "src/same_line_helper".to_string(),
+            "src/attr_then_newline_helper".to_string(),
         ]),
         "both declaration forms parse; an ungated `mod` is not collected, and \
-         neither is an inline `mod .. {{ }}`, which names no file"
+         neither is an inline `mod .. {{ }}`, which names no file. A same-line \
+         gate pairs with its own item (`same_line_helper`) and does not leak \
+         onto the next declaration (`not_test_only` must be absent); a \
+         same-line remainder that is itself an attribute falls through to the \
+         forward scan (`attr_then_newline_helper`)"
     );
 
     // Skipped: the declared file, and anything under a directory of that name.
