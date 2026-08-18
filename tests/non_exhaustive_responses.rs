@@ -469,6 +469,24 @@ pub struct BlankLineButAnnotated {}
 pub struct NeighbourAbove {}
 
 pub struct NotDeserializable {}
+
+// The gate sharing a line with the item it gates. Without counting braces on
+// the attribute line, depth seeds from `fn helper` below and the mask closes
+// on its brace, exposing everything after it.
+#[cfg(test)] mod inline_gated {
+    fn helper() {}
+    #[derive(Deserialize)]
+    pub struct HiddenByInlineGate {}
+}
+
+#[derive(Deserialize)]
+pub struct AfterInlineGate {}
+
+// The semicolon form on one line, which opens no block at all.
+#[cfg(test)] pub(crate) mod inline_semicolon_helper;
+
+#[derive(Deserialize)]
+pub struct AfterInlineSemicolonGate {}
 "#;
 
     // Supplied explicitly rather than derived from the fixture, so this
@@ -505,6 +523,18 @@ pub struct NotDeserializable {}
     assert!(
         names.contains(&"BlankLineBeforeDecl"),
         "blank line between the attribute block and the declaration: {found:?}"
+    );
+    assert!(
+        !names.contains(&"HiddenByInlineGate"),
+        "a same-line `#[cfg(test)] mod x {{` still gates its body: {found:?}"
+    );
+    assert!(
+        names.contains(&"AfterInlineGate"),
+        "the mask must close at the inline-gated module's end: {found:?}"
+    );
+    assert!(
+        names.contains(&"AfterInlineSemicolonGate"),
+        "a same-line semicolon-terminated gated item opens no block: {found:?}"
     );
     assert!(
         !names.contains(&"BlankLineButAnnotated"),
@@ -787,7 +817,23 @@ fn cfg_test_mask(lines: &[&str]) -> Vec<bool> {
         }
         if is_cfg_test_attr(trimmed) {
             mask[index] = true;
-            awaiting_gated_item = true;
+            // Braces on the attribute line count. `#[cfg(test)] mod tests {`
+            // puts the gate and the item it gates on one line; without this,
+            // that `{` is never seen, `depth` seeds from the *next*
+            // brace-opening line — the first `fn` inside the module — and the
+            // mask closes on that function's brace, leaving the rest of the
+            // module scanned as public API. A `pub struct` there would be
+            // reported as an offender with no correct fix, which is the state
+            // the REQUEST_SIDE doc says the exemption list must not be used
+            // for. Latent today, since rustfmt puts attributes on their own
+            // line, and cheaper to close than to write down.
+            let opens = line.matches('{').count() as i32;
+            if opens > 0 {
+                depth = opens - line.matches('}').count() as i32;
+            } else if !trimmed.ends_with(';') {
+                // Not `#[cfg(test)] mod helper;`, which is complete already.
+                awaiting_gated_item = true;
+            }
         }
     }
     mask

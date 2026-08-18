@@ -1532,21 +1532,29 @@ Response structs (e.g., `AutoFunctionResult`) also use `#[non_exhaustive]` so we
 2. Mock at the HTTP layer, not the response type layer
 3. Test their own logic separately from API response handling
 
-**Which structs get it.** Deserializable public types the API *returns*, not
-types a caller constructs to *send*. `#[non_exhaustive]` on a request type
-would remove struct-literal construction — including the `..Default::default()`
-functional-update form, though not `T::default()` followed by field
-assignment, which still works on the many of these that derive `Default`
-(see **Constructing fixtures** below) — while buying the crate
-nothing — it does not gain the freedom to add required fields to something the
-user assembles. So `GenerationConfig`, `FunctionDeclaration`, the tool configs
-and the create/update bodies stay open — except where one ships builders, which
-is the construction path closing it would otherwise take away
-(`CreateFileSearchStoreRequest` carries the attribute for exactly that reason,
-and `new()` / `with_display_name()` / `with_extra()` are why it can).
-`InteractionResponse`, `UsageMetadata`,
-the `*ListResponse` wrappers, the result-item types and the resource shapes
-(`Agent`, `Environment`, `Trigger`, `Webhook`, ...) carry it.
+**Which structs get it.** The test is not "does the API return it" but *does
+closing it take away the caller's only way to build it*. `#[non_exhaustive]`
+removes struct-literal construction — including the `..Default::default()`
+functional-update form, though not `T::default()` followed by field assignment,
+which still works on the many of these that derive `Default` (see
+**Constructing fixtures** below). On a type the user assembles and the API
+never returns, that costs construction syntax and buys the crate nothing: it
+gains no freedom to add required fields to something only the user builds. So
+`GenerationConfig`, `FunctionDeclaration` and the tool configs stay open.
+
+Everything else carries it, and the two cases that look like exceptions are
+not. A **read-write resource** — one the API both returns and accepts — is
+closed, because the returning half is what the attribute is for and a
+constructor covers the sending half: `Agent`, `Environment`, `Trigger` and
+`Webhook` are all closed, and `Agent::new(id)` and
+`Webhook::new(uri, events)` are why that costs nothing. A **create body that
+ships builders** is closed for the same reason:
+`CreateFileSearchStoreRequest` carries the attribute because `new()` /
+`with_display_name()` / `with_extra()` already are the construction path.
+
+So: `InteractionResponse`, `UsageMetadata`, the `*ListResponse` wrappers, the
+result-item types and the resource shapes carry it; a request type stays open
+only while it has no constructor of its own.
 
 **Enforced, not reviewed.** `tests/non_exhaustive_responses.rs` scans `src/`
 and fails on any deserializable public struct missing the attribute that is
