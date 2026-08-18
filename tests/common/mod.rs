@@ -792,6 +792,14 @@ pub const SAMPLE_AUDIO_URL: &str = "gs://cloud-samples-data/generative-ai/audio/
 #[allow(dead_code)]
 pub const SAMPLE_VIDEO_URL: &str = "gs://cloud-samples-data/video/animals.mp4";
 
+/// Public YouTube video URI accepted by the Interactions API.
+///
+/// Unlike [`SAMPLE_VIDEO_URL`], this form is accepted directly (verified live
+/// 2026-08-16), which makes it usable for tests that need the model to
+/// actually ingest video rather than just exercise the request shape.
+#[allow(dead_code)]
+pub const SAMPLE_YOUTUBE_VIDEO_URL: &str = "https://www.youtube.com/watch?v=aqz-KE-bpKQ";
+
 /// Small 1x1 red PNG image encoded as base64
 /// This is a minimal valid PNG for testing base64 image input
 #[allow(dead_code)]
