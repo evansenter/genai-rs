@@ -7,9 +7,9 @@
 //! Delete it from `StepSummary` and that file stays green.
 //!
 //! Functional update from `Default` is the form the migration note replaces,
-//! and it is deliberately the only one here. An exhaustive struct literal is
+//! and it is deliberately the only one here. A field-by-field literal is
 //! rejected by the same `E0639`, but with the attribute gone it fails anew on
-//! `E0063` for the 21 fields it omits — so a fixture carrying one would go red
+//! `E0063` for every field it omits — so a fixture carrying one would go red
 //! on a *stderr mismatch*, leaving the signal riding on rustc's diagnostic
 //! wording. This form compiles outright once the attribute goes, which
 //! trybuild reports directly: a `fail_` fixture that builds is a failed test.

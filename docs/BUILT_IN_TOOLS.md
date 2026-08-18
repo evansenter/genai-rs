@@ -651,6 +651,8 @@ let response = client
 | `file_search_results()` | File Search | `Vec<&FileSearchResultItem>` |
 | `has_google_maps_results()` | Google Maps | `bool` |
 | `google_maps_results()` | Google Maps | `Vec<GoogleMapsResultInfo>` |
+| `has_tool_calls()` | MCP / generic | `bool` |
+| `tool_calls()` | MCP / generic | `Vec<ToolCallInfo>` |
 | `has_annotations()` | Any grounded | `bool` |
 | `all_annotations()` | Any grounded | `Iterator<Item = &Annotation>` |
 | `step_summary()` | All | `StepSummary` (per-step-type counts) |

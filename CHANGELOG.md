@@ -52,6 +52,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   needs — and which also switches on `audit-check`'s own per-advisory issue
   reporting, inert until now for want of the permission.
 
+### Changed (breaking)
+
+- **BREAKING**: **`InteractionInput::Content` is now sent as a single
+  `user_input` step**
+  rather than as a bare content array. Both are valid arms of the API's input
+  union, but only the step form accepts video `processing` — the identical
+  content in a bare array is rejected with
+  `Unknown parameter 'processing' at 'input[1]'`, which names the field
+  rather than the input shape and so points at the wrong thing entirely.
+
+  That field is not modeled by this crate yet (#419), so today the change is
+  alignment with the canonical form rather than a fix for a pairing a caller
+  can express; it means #419 can land without a second wire-shape decision.
+
+  Verified live (2026-08-16, `gemini-3.7-flash`, revision 2026-05-20) that
+  the step form is accepted everywhere the bare form is: text, inline image,
+  inline audio, inline document, video by URI, and a stored follow-up turn
+  via `previous_interaction_id` all complete under both shapes. The steps
+  array is also the canonical form under this revision — the one `Turn` was
+  removed in favour of.
+
+  Callers using `with_content()` need no change. The wrap is scoped to
+  `InteractionRequest::input` rather than to `InteractionInput`'s own
+  `Serialize`, so `InteractionResponse::input` — which echoes back what the
+  server sent — still re-serializes in the shape it arrived in. A request's
+  `Content` input does now deserialize back as
+  `InteractionInput::Steps(vec![Step::user_input(..)])`, since the two are
+  indistinguishable once serialized. Marked breaking for that reason rather
+  than for a signature change — there is none — since anyone who persists a
+  built `InteractionRequest` and matches on `input` after reloading it now
+  takes a different branch. (#427)
+
+- **Breaking:** `Content::Video` has a new `processing` field. Code that
+  constructs or exhaustively destructures the variant with struct-literal
+  syntax needs `processing: None` (or `..`) added. The `Content::video_*()`
+  constructors are unaffected.
+
+- **Evergreen `extra` passthrough on response-side resource shapes.**
+  `Trigger`, `TriggerExecution`, `Environment`, `Agent`, and `Webhook` now
+  carry a flattened `extra` map, so a deserialize-then-serialize cycle no
+  longer silently drops fields the crate hasn't modeled.
+
+  Scoped to those five resource shapes themselves. Types nested inside them
+  still drop unmodeled keys — `SigningSecret`, `EnvironmentSource`,
+  `NetworkConfig` — as do the list envelopes (`AgentListResponse` and its
+  siblings), so a new field alongside `next_page_token` is still lost.
+  Extending the passthrough down those trees is follow-up work.
+
+  `Content` and `RemoteEnvironment` already did this; the request bodies
+  gained it in 0.9.0. These five were the remaining hole, and `Trigger` /
+  `TriggerExecution` are the sharpest cases — trigger creation is agent-gated,
+  so their response shapes have never been live-verified and a field the API
+  returns today would be both invisible and unrecoverable.
+
+  As on the request side, a key colliding with a modeled field wins on
+  serialize via `serde_json::to_value`.
+
+- **Breaking:** the five structs above have a new `extra` field. All derive
+  `Default`, so exhaustive struct literals can add `..Default::default()`.
+  (These types are not `#[non_exhaustive]`, unlike the convention
+  `docs/ENUM_WIRE_FORMATS.md` documents for response structs — tracked
+  separately.)
+
+- **`StepSummary` gains a `tool_call_count` field, and is now
+  `#[non_exhaustive]`.** Exhaustive struct literals and destructuring without
+  a `..` rest pattern will fail to compile — both because of the new field and
+  because the struct is now closed.
+
+  Closed in the same change that takes the break, deliberately. The field
+  addition is source-breaking *only* because the struct was open, and the API
+  is expected to grow step types — `mcp_server_tool_call` may start arriving,
+  and the #438 sweep exists to catch new ones — so every future counter would
+  repeat this break for a purely mechanical reason. Doing it now costs
+  consumers nothing extra: they are already recompiling for the new field.
+
+  `Default` is derived, so the migration is `StepSummary::default()` then
+  assign — pinned by `tests/ui/pass_step_summary_migration.rs`, a trybuild
+  fixture compiled as its own crate. Its counterpart
+  `tests/ui/fail_step_summary_struct_literal.rs` pins the attribute itself:
+  the migration path compiles the same with or without it, so only a
+  `compile_fail` fixture goes red if it is removed.
+
 ### Fixed
 
 - **`#[tool]` no longer requires consumer-side dependencies or imports**
@@ -83,6 +165,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   together, as the release checklist already does.
 
   `tests/ui/pass_no_consumer_imports.rs` pins the no-imports behavior.
+
+- **`speech_config` in the `{"speakers": [...]}` form no longer silently
+  discards every speaker.** `google-genai` 2.18.x widened the field to
+  `SpeakerConfig | List[SpeechConfig]`. Because `SpeechConfig`'s fields are
+  all optional and serde ignores unknown keys, the object form matched the
+  deserializer's single-object arm and produced one all-`None` config — the
+  speakers vanished with no error.
+
+  All three wire forms now normalize to the list: the spec list, the
+  `{"speakers": [...]}` object, and the legacy single object.
+
+  Note the Gemini API **rejects both object forms on send** (`400 ... Expected
+  an array, got object`, verified live 2026-08-16), so the crate continues to
+  emit the list. The leniency is deserialize-only, and it matters because a
+  `GenerationConfig` also arrives nested inside a stored `Trigger`
+  interaction that another SDK may have created.
+
+  No public type changed — `speech_config` is still `Option<Vec<SpeechConfig>>`.
 
 ### Added
 
@@ -141,32 +241,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   documented as spec-present but never observed — the same status as
   `Tool::Retrieval`, and unlike `cached_content` (D-005) nothing rejects
   them.
-
-### Changed (breaking)
-
-- **Breaking:** `Content::Video` has a new `processing` field. Code that
-  constructs or exhaustively destructures the variant with struct-literal
-  syntax needs `processing: None` (or `..`) added. The `Content::video_*()`
-  constructors are unaffected.
-
-- **`StepSummary` gains a `tool_call_count` field, and is now
-  `#[non_exhaustive]`.** Exhaustive struct literals and destructuring without
-  a `..` rest pattern will fail to compile — both because of the new field and
-  because the struct is now closed.
-
-  Closed in the same change that takes the break, deliberately. The field
-  addition is source-breaking *only* because the struct was open, and the API
-  is expected to grow step types — `mcp_server_tool_call` may start arriving,
-  and the #438 sweep exists to catch new ones — so every future counter would
-  repeat this break for a purely mechanical reason. Doing it now costs
-  consumers nothing extra: they are already recompiling for the new field.
-
-  `Default` is derived, so the migration is `StepSummary::default()` then
-  assign — pinned by `tests/ui/pass_step_summary_migration.rs`, a trybuild
-  fixture compiled as its own crate. Its counterpart
-  `tests/ui/fail_step_summary_struct_literal.rs` pins the attribute itself:
-  the migration path compiles the same with or without it, so only a
-  `compile_fail` fixture goes red if it is removed.
 
 ## [0.10.0] - 2026-08-16
 

@@ -85,12 +85,12 @@ type.
 `InteractionResponse` (`src/response.rs`) does not carry the attribute: it
 derives `Default` and every field is `pub`, so it is constructible from
 outside the crate today and adding a field to it *is* breaking. Of that
-file's fourteen public structs, four carry it — `CodeExecutionCallInfo`,
-`CodeExecutionResultInfo`, `UrlContextResultInfo` and
-`GoogleMapsResultInfo`. The other ten do not: `ModalityTokens`,
+file's fourteen public structs, five carry it — `CodeExecutionCallInfo`,
+`CodeExecutionResultInfo`, `UrlContextResultInfo`, `GoogleMapsResultInfo`
+and `StepSummary`. The other nine do not: `ModalityTokens`,
 `GroundingToolCount`, `UsageMetadata`, `ImageInfo`, `AudioInfo`,
-`FunctionCallInfo`, `OwnedFunctionCallInfo`, `FunctionResultInfo`,
-`InteractionResponse` and `StepSummary`. Beyond that file, the five
+`FunctionCallInfo`, `OwnedFunctionCallInfo`, `FunctionResultInfo` and
+`InteractionResponse`. Beyond that file, the five
 resource shapes tracked in #430 (`Trigger`, `TriggerExecution`,
 `Environment`, `Agent`, `Webhook`) are in the same position.
 

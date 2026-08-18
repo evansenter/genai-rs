@@ -2637,6 +2637,10 @@ proptest! {
     /// Test an empty content array deserializes as Steps (documented gotcha:
     /// `InteractionInput::Content(vec![])` serializes to `[]`, which
     /// canonically deserializes as `Steps(vec![])`).
+    ///
+    /// This is the *type's own* serialization, which stays faithful to the
+    /// variant — the `user_input` wrap is scoped to
+    /// `InteractionRequest::input` (#427), so it does not apply here.
     #[test]
     fn empty_input_array_deserializes_as_steps(_unused in Just(())) {
         let input = InteractionInput::Content(vec![]);
@@ -2646,6 +2650,38 @@ proptest! {
         let restored: InteractionInput =
             serde_json::from_value(json).expect("Deserialization should succeed");
         prop_assert_eq!(restored, InteractionInput::Steps(vec![]));
+    }
+
+    /// Test that a request wraps `Content` input, whatever the content is.
+    ///
+    /// The wrap is unconditional, so the wire shape never depends on how much
+    /// content the caller supplied — and it is wire-identical to a hand-built
+    /// `Step::user_input`, which is what lets it deserialize back cleanly.
+    #[test]
+    fn request_wraps_content_input(contents in prop::collection::vec(arb_content(), 0..3)) {
+        let request = crate::InteractionRequest {
+            model: Some("test-model".to_string()),
+            input: InteractionInput::Content(contents.clone()),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&request).expect("Serialization should succeed");
+        let input_json = &json["input"];
+
+        prop_assert!(input_json.is_array());
+        prop_assert_eq!(input_json.as_array().map(Vec::len), Some(1));
+        prop_assert_eq!(&input_json[0]["type"], &serde_json::json!("user_input"));
+        prop_assert_eq!(
+            input_json[0]["content"].as_array().map(Vec::len),
+            Some(contents.len())
+        );
+
+        let by_hand = crate::InteractionRequest {
+            model: Some("test-model".to_string()),
+            input: InteractionInput::Steps(vec![Step::user_input(contents)]),
+            ..Default::default()
+        };
+        let by_hand_json = serde_json::to_value(&by_hand).expect("Serialization should succeed");
+        prop_assert_eq!(input_json, &by_hand_json["input"]);
     }
 
     /// Test deeply nested JSON in function call arguments (3-4 levels).
