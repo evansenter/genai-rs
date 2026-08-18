@@ -332,6 +332,14 @@ agentic code-review application with subagents and a structured report.
 | [Testing Guide](docs/TESTING.md) | Test strategies, assertions |
 | [API Reference](https://docs.rs/genai-rs) | Generated API documentation |
 
+### Project
+
+| Document | Description |
+|----------|-------------|
+| [Decisions](DECISIONS.md) | Why the library is shaped the way it is |
+| [Contributing](CONTRIBUTING.md) | Setup, the quality gate, review checklist |
+| [Changelog](CHANGELOG.md) | Release history and migration notes |
+
 ### External Resources
 
 | Resource | Description |
