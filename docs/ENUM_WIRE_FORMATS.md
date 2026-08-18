@@ -89,6 +89,7 @@ Helper methods on each type:
 
 | Enum / Type | Wire Format | Example | Notes |
 |------|-------------|---------|-------|
+| `InteractionInput` | string OR `[Step]` OR `[Content]` OR `Content` | `"hi"` / `[{"type": "user_input", "content": [...]}]` | Requests send *content* input as the step form; `Text` stays a bare string — see details. ✅ Verified live 2026-08-16 |
 | `Step` | tagged by `"type"`, snake_case | `"user_input"`, `"model_output"`, `"function_call"`, ... | Pending live verification (2026-05-20 revision) |
 | `StepDelta` | tagged by `"type"` | `"text"`, `"arguments_delta"`, `"text_annotation_delta"` | Two tags differ from variant names — see details. Pending live verification (2026-05-20 revision) |
 | `Annotation` | tagged by `"type"` | `"url_citation"`, `"file_citation"`, `"place_citation"` | Pending live verification (2026-05-20 revision) |
@@ -114,7 +115,7 @@ Helper methods on each type:
 | `Tool::GoogleSearch` | snake_case + optional array | `{"type": "google_search", "search_types": ["web_search"]}` | |
 | `Tool::GoogleMaps` | snake_case + optional fields | `{"type": "google_maps", "enable_widget": true, "latitude": ..., "longitude": ...}` | `latitude`/`longitude` pending live verification (2026-05-20 revision) |
 | `Tool::ComputerUse` | snake_case | `{"type": "computer_use", "environment": "browser", ...}` | **Changed**: fields now snake_case. Pending live verification (2026-05-20 revision) |
-| `SpeechConfig` | **list** of flat objects | `[{"voice": "Kore", "language": "en-US", "speaker": "Alice"}]` | **Changed** in 2026-05-20: `speech_config` is a list (multi-speaker TTS); legacy single object accepted on deserialize. ✅ Verified live 2026-07 (two-speaker list accepted; single combined `audio/l16` stream returned; the API does not echo `speech_config` on reads — `include_input` observed as a no-op) |
+| `SpeechConfig` | **list** of flat objects | `[{"voice": "Kore", "language": "en-US", "speaker": "Alice"}]` | **Changed** in 2026-05-20: `speech_config` is a list (multi-speaker TTS). Three forms accepted on deserialize — the list, a bare single object, and the spec's `{"speakers": [...]}` wrapper — but **only the list is sendable**; both object forms 400 with `Expected an array, got object` (live 2026-08-16). ✅ Verified live 2026-07 (two-speaker list accepted; single combined `audio/l16` stream returned; the API does not echo `speech_config` on reads — `include_input` observed as a no-op) |
 | `Tool::Retrieval` | snake_case object | `{"type": "retrieval", "retrieval_types": [...], "vertex_ai_search_config": {...}}` | New. ⚠️ Live 2026-07: the Gemini API rejects `type: "retrieval"` (Vertex-only — "allowed on the Gemini Enterprise Agent Platform"); Gemini tool types are `google_maps`, `mcp_server`, `function`, `google_search`, `file_search`, `computer_use`, `code_execution`, `url_context` |
 | `RetrievalType` | snake_case string | `"vertex_ai_search"`, `"rag_store"`, `"exa_ai_search"`, `"parallel_ai_search"` | Not verifiable live on the Gemini API (the retrieval tool itself is rejected as Vertex-only, 2026-07) |
 | `WebhookEvent` | dotted lowercase | `"batch.succeeded"`, `"interaction.completed"`, `"video.generated"` | ✅ Verified live 2026-07: the API's own validation error lists exactly our 7 values |
@@ -134,6 +135,54 @@ Helper methods on each type:
 | `ImageSize` | size string | `"512"`, `"1K"`, `"2K"`, `"4K"` | Image resolution |
 
 ## Details
+
+### InteractionInput (request/response `input`)
+
+The spec's input union is `str | [Step] | [Content] | Content`. All four
+deserialize. On requests, **the bare `[Content]` form is never sent**:
+`InteractionInput::Content` is wrapped in a single `user_input` step (#427).
+`Text` is unaffected and still goes out as a bare JSON string, and `Steps`
+is already the step form.
+
+Both array arms are accepted by the API, but they are not equivalent: video
+`processing` is rejected outside a step. Probed live 2026-08-16 against
+`gemini-3.7-flash` at revision `2026-05-20`, sending identical content each
+way:
+
+| Input | bare `[Content]` | `[{"type": "user_input", "content": [...]}]` |
+|---|---|---|
+| text | completed | completed |
+| text + image (inline base64) | completed | completed |
+| text + audio (inline base64) | completed | completed |
+| text + document (inline base64 PDF) | completed | completed |
+| text + video (URI) | completed | completed |
+| text + video + `"processing": "static"` | **400** `Unknown parameter 'processing' at 'input[1]'` | completed |
+| follow-up turn via `previous_interaction_id` | completed | completed |
+| *empty* content | 400 `Missing input.` | 400 `Request has empty input.` |
+
+So the step form is accepted everywhere the bare form is, and in one place the
+bare form is not. It is also the canonical shape under this revision — the one
+`Turn` was removed in favour of.
+
+The wrap is scoped to `InteractionRequest::input`, not to `InteractionInput`'s
+own `Serialize`: `InteractionResponse::input` echoes back what the server sent,
+and re-serializing that into a shape the server did not send would work against
+the Evergreen roundtrip principle. A request's `Content` input therefore
+deserializes back as `Steps(vec![Step::user_input(..)])` — the two are
+indistinguishable once serialized.
+
+The empty row matters because that is the shape whose wire form changed
+most — a bare `[]` before, a step with an empty content array now. Both are
+rejected, differing only in the message, so an accidental
+`with_content(vec![])` does not trade a clear 400 for a response to an empty
+prompt. (It still reaches the wire where the text path errors locally, which
+is a builder-validation gap rather than a wire one.)
+
+`processing` itself is not modeled by this crate yet (#419).
+
+This probe exercised exactly one step tag, `user_input`. The `Step` row
+above stays "pending live verification" because the other tags are still
+unexercised — it is not stale.
 
 ### Step (response `steps` / stateless history)
 
@@ -566,13 +615,19 @@ Used in image and video content for quality vs. token cost trade-off.
 ```json
 {
   "input": [{
-    "type": "image",
-    "data": "base64...",
-    "mime_type": "image/png",
-    "resolution": "low"
+    "type": "user_input",
+    "content": [{
+      "type": "image",
+      "data": "base64...",
+      "mime_type": "image/png",
+      "resolution": "low"
+    }]
   }]
 }
 ```
+
+(`resolution` sits on the content block; the surrounding `user_input` step
+is the shape requests send — see [InteractionInput](#interactioninput-requestresponse-input).)
 
 | Rust Enum | Wire Value |
 |-----------|------------|
@@ -853,7 +908,45 @@ accepted verbatim and returned a single combined `audio/l16` content block
 `include_input=true` GET parameter was observed to be a no-op — so the echo
 shape (list vs. single object) is unobservable.
 
-**Verified**: 2026-01-10 (flat single-object form) - Tested both formats in `test_speech_config_nested_format_fails_flat_succeeds`. Nested format fails with `no such field: 'voiceConfig'`. The **list** form is from the 2026-05-20 spec and is pending live verification; the legacy single-object form is still accepted on deserialize.
+**Verified**: 2026-01-10 (nested vs. flat voice fields, both sent as a list) - `test_speech_config_nested_format_fails_flat_succeeds` shows the nested form failing with `no such field: 'voiceConfig'`. Note that its "flat" case builds `Some(vec![SpeechConfig::…])`, which serializes as a one-element **list** — that test varies where the voice fields sit, not object-vs-list, and never sent a bare object.
+
+The **list** form was verified live 2026-07 (multi-speaker TTS) and re-probed 2026-08-16 as the only form the API accepts on requests; both object forms are rejected on send, and are accepted on **deserialize only**. See [speech_config wire forms](#speech_config-wire-forms) just below for the error and the full form table — kept in one place so a later verification stamp has a single site to update.
+
+#### speech_config wire forms
+
+`google-genai` 2.18.x widened `generation_config.speech_config` from a plain
+list to `SpeakerConfig | List[SpeechConfig]`. **The Gemini API does not
+accept the object arm** (verified live 2026-08-16 against
+`gemini-2.5-pro-preview-tts`):
+
+```text
+400 The value is invalid for 'generation_config.speech_config'.
+    Expected an array, got object.
+```
+
+Both `{"speakers": [...]}` and the legacy `{voice, language, speaker}` single
+object are rejected on send — same class as `Tool::Retrieval` and
+`safety_settings`, where the generated bindings describe a broader surface
+than this endpoint implements.
+
+The crate therefore **always sends the list**, and accepts all three forms on
+deserialize:
+
+| Wire | Normalized to |
+|------|---------------|
+| `[{voice, ...}, ...]` | itself |
+| `{"speakers": [...]}` | the inner list |
+| `{voice, language, speaker}` | a one-element list |
+
+Deserialize leniency is not academic: a `GenerationConfig` also arrives
+nested inside a `Trigger`'s stored interaction, which may have been created
+by another SDK using an object form.
+
+**Ordering caveat for maintainers**: `SpeechConfig`'s fields are all optional
+and serde ignores unknown keys, so `{"speakers": [...]}` matches an untagged
+single-`SpeechConfig` arm perfectly well — producing an all-`None` config and
+silently discarding the speakers. The `Speakers` arm must be tried before
+`Single`, and its field must stay required.
 
 ### Audio Response (TTS output)
 

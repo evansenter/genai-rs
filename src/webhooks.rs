@@ -348,6 +348,27 @@ pub struct Webhook {
         deserialize_with = "crate::serde_util::deserialize_lenient_timestamp::<_, crate::serde_util::ForWebhook>"
     )]
     pub update_time: Option<DateTime<Utc>>,
+    /// Fields the API returned that this struct does not model, preserved
+    /// for roundtrip (Evergreen).
+    ///
+    /// Without this, a deserialize-then-serialize cycle silently drops any
+    /// field the crate has not modeled yet — invisible to the caller, and
+    /// unrecoverable. The resource was live-verified 2026-07, but verification is a
+    /// point-in-time snapshot, not a guarantee the shape stays fixed.
+    ///
+    /// **Also read on serialize into a request body.** `create_webhook` sends
+    /// this whole struct, so `extra` is an *outbound* escape hatch too —
+    /// a way to send a field the crate has not modeled yet, exactly like
+    /// [`CreateEnvironmentRequest::extra`](crate::CreateEnvironmentRequest::extra).
+    /// It also means a get-modify-create cycle echoes unmodeled server
+    /// fields back.
+    ///
+    /// A key that collides with a modeled field **wins on serialize** via
+    /// `serde_json::to_value`, matching the request-side escape hatches.
+    /// (`to_string` on a flattened struct emits both keys rather than
+    /// deduplicating; don't hand-serialize colliding keys.)
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 // Custom Debug that redacts the one-time signing secret (mirrors the
@@ -367,6 +388,24 @@ impl std::fmt::Debug for Webhook {
             )
             .field("create_time", &self.create_time)
             .field("update_time", &self.update_time)
+            // Enumerated by hand, so `extra` has to be listed or it is
+            // invisible — on the one shape where that matters most. The
+            // field exists because unmodeled keys are otherwise lost to the
+            // caller, and a `Debug` print is the first thing anyone reaches
+            // for when a response field seems to be missing.
+            //
+            // The trade, stated so a later redaction audit reads it as
+            // intended rather than as an oversight: `new_signing_secret` is
+            // redacted two lines up, but `extra` prints verbatim, and by
+            // construction nothing can redact a key the crate does not
+            // model. If the API grows a secret-bearing field before this
+            // crate catches up, debug-formatting a webhook prints it in
+            // cleartext. Dropping `extra` from `Debug` would only trade that
+            // for the invisibility the field exists to fix; the four
+            // derive-`Debug` shapes here have the same property, and the
+            // user-content-at-debug-level-only rule in
+            // `docs/LOGGING_STRATEGY.md` is what bounds the blast radius.
+            .field("extra", &self.extra)
             .finish()
     }
 }
@@ -910,5 +949,40 @@ mod tests {
             data: json!("x.y"),
         };
         assert_eq!(unknown.to_string(), "x.y");
+    }
+
+    // --- Evergreen `extra` passthrough on response shapes (#406) ---
+
+    #[test]
+    fn webhook_preserves_unknown_response_fields() {
+        // `uri` and `subscribed_events` are non-optional and always
+        // serialize, so an exact-roundtrip fixture has to include them.
+        let wire = json!({
+            "uri": "https://example.com/hook",
+            "subscribed_events": ["interaction.completed"],
+            "id": "wh_1",
+            "future_field": {"retries": 3}
+        });
+
+        let webhook: Webhook = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(
+            webhook.extra.get("future_field"),
+            Some(&json!({"retries": 3}))
+        );
+        assert_eq!(serde_json::to_value(&webhook).unwrap(), wire);
+    }
+
+    #[test]
+    fn webhook_without_unknown_fields_has_empty_extra() {
+        let wire = json!({
+            "uri": "https://example.com/hook",
+            "subscribed_events": [],
+            "id": "wh_1"
+        });
+
+        let webhook: Webhook = serde_json::from_value(wire.clone()).unwrap();
+        assert!(webhook.extra.is_empty());
+        // An empty map must not add a key on serialize.
+        assert_eq!(serde_json::to_value(&webhook).unwrap(), wire);
     }
 }
