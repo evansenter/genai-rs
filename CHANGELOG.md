@@ -60,12 +60,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `VideoProcessing::segment()` builder.
 
   A segment window is the difference between the model ingesting a five-second
-  clip and the entire video. Measured live against `gemini-3.7-flash` on one
-  source video: **455 video input tokens with a 5s-10s window, 57,775
-  without.** Notably, mode selection is *not* the lever — omitting the field,
-  `"static"`, `"agentic"`, `{"type": "static"}`, and `{"type": "static",
-  "fps": 1}` all produced the same 57,775; only `start_offset`/`end_offset`
-  changed it.
+  clip and the entire video. Re-measured live 2026-08-18 against
+  `gemini-3.7-flash` on one source video: **16,198 video input tokens with a
+  5s-10s window, 57,778 without.** Among the `static` forms the window is the
+  lever — omitting the field, `"static"`, `{"type": "static"}` and
+  `{"type": "static", "fps": 1}` all produced the same 57,778, and `fps`
+  alone moved nothing.
+
+  Two caveats, both service-side and both worth knowing before relying on
+  the figures. When first measured on 2026-08-16 the same window produced
+  455 tokens against 57,775 — a ~127x saving rather than today's ~3.6x — so
+  the clipped accounting has been revised while the unclipped side held.
+  And `"agentic"` no longer reports video tokens at all: it bills as `image`,
+  2,112 and 4,158 on two consecutive runs, which makes it the cheapest mode
+  rather than one equivalent to `static`. The shape has held across both
+  measurements; the magnitudes have not.
 
   ```rust
   let video = Content::video_uri("files/abc123", "video/mp4")

@@ -2784,7 +2784,8 @@ fn test_video_processing_bare_modes_deserialize() {
 
 #[test]
 fn test_video_processing_segment_serializes_to_object() {
-    // The exact payload accepted live (455 video input tokens).
+    // The exact payload accepted live (16,198 video input tokens as of
+    // 2026-08-18; 455 when first measured 2026-08-16 — see `VideoProcessing`).
     let processing = VideoProcessing::segment()
         .start_offset("5s")
         .end_offset("10s")

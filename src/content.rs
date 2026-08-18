@@ -1006,22 +1006,34 @@ impl fmt::Display for Resolution {
 ///
 /// # What actually reduces token cost
 ///
-/// **The segment window is the cost lever — not the mode.** Measured live
-/// 2026-08-16 against `gemini-3.7-flash`, same source video, video input
-/// tokens:
+/// **The segment window is the cost lever among the `static` forms.**
+/// Re-measured 2026-08-18 against `gemini-3.7-flash`, same source video:
 ///
 /// | `processing` | Video input tokens |
 /// |--------------|--------------------|
-/// | *(field omitted)* | 57,775 |
-/// | `"static"` | 57,775 |
-/// | `"agentic"` | 57,775 |
-/// | `{"type": "static"}` | 57,775 |
-/// | `{"type": "static", "fps": 1}` | 57,775 |
-/// | `{"type": "static", "start_offset": "5s", "end_offset": "10s", "fps": 1}` | **455** |
+/// | *(field omitted)* | 57,778 |
+/// | `"static"` | 57,778 |
+/// | `{"type": "static"}` | 57,778 |
+/// | `{"type": "static", "fps": 1}` | 57,778 |
+/// | `{"type": "static", "start_offset": "5s", "end_offset": "10s", "fps": 1}` | **16,198** |
+/// | `"agentic"` | *no video modality* — billed as `image`: 2,112 and 4,158 on two runs |
 ///
-/// Only `start_offset`/`end_offset` changed the count. Selecting a mode, or
-/// setting `fps` on its own, did not — so reach for
-/// [`VideoProcessing::segment()`] with an explicit window when cost matters.
+/// So a window is what moves the count among the `static` forms; `fps` on
+/// its own did not. Reach for [`VideoProcessing::segment()`] with an
+/// explicit window when cost matters.
+///
+/// Both numbers moved since the 2026-08-16 measurement, and the difference
+/// is worth recording because it bounds how much these figures are worth.
+/// The window's saving was ~127x then (455 vs 57,775) and is ~3.6x now, on
+/// the same video and model — the unclipped side barely moved, so it is the
+/// clipped accounting the service revised. And `"agentic"` no longer
+/// ingests video at all: it reports `image` tokens, in a quantity that
+/// varies run to run, which makes it the cheapest mode rather than one
+/// equivalent to `static` as previously recorded.
+///
+/// Treat the table as a dated observation, not a contract. The shape of the
+/// finding — a window reduces ingestion, mode selection alone does not —
+/// has held across both measurements; the magnitudes have not.
 ///
 /// # Wire forms
 ///

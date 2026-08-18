@@ -109,7 +109,7 @@ Helper methods on each type:
 | `ThinkingSummaries` | lowercase | `"auto"`, `"none"` | Send side. Was `THINKING_SUMMARIES_*` until the API reversed it (see below); both accepted on deserialize |
 | `ThinkingLevel` | lowercase | `"low"`, `"medium"`, `"high"` | Docs are correct |
 | `Resolution` | snake_case | `"low"`, `"medium"`, `"high"`, `"ultra_high"` | Image/video content |
-| `VideoProcessing` | string OR object | `"static"` / `"agentic"` / `{"type": "static", "start_offset": "5s", "fps": 1}` | Video content `processing`. Segment window is the cost lever (455 vs 57,775 tokens); only valid inside a `user_input` step. Verified live 2026-08-16 |
+| `VideoProcessing` | string OR object | `"static"` / `"agentic"` / `{"type": "static", "start_offset": "5s", "fps": 1}` | Video content `processing`. Segment window is the cost lever among the `static` forms (16,198 vs 57,778 tokens; `"agentic"` bills as `image`, not video). Only valid inside a `user_input` step. Re-measured live 2026-08-18 |
 | `Tool::FileSearch` | snake_case object | `{"type": "file_search", ...}` | Rust: `store_names`, Wire: `file_search_store_names` |
 | `Tool::GoogleSearch` | snake_case + optional array | `{"type": "google_search", "search_types": ["web_search"]}` | |
 | `Tool::GoogleMaps` | snake_case + optional fields | `{"type": "google_maps", "enable_widget": true, "latitude": ..., "longitude": ...}` | `latitude`/`longitude` pending live verification (2026-05-20 revision) |
@@ -617,12 +617,22 @@ same source video, `gemini-3.7-flash`:
 
 | `processing` | Video input tokens |
 |--------------|--------------------|
-| *(omitted)* | 57,775 |
-| `"static"` | 57,775 |
-| `"agentic"` | 57,775 |
-| `{"type": "static"}` | 57,775 |
-| `{"type": "static", "fps": 1}` | 57,775 |
-| `{"type": "static", "start_offset": "5s", "end_offset": "10s", "fps": 1}` | **455** |
+| *(omitted)* | 57,778 |
+| `"static"` | 57,778 |
+| `{"type": "static"}` | 57,778 |
+| `{"type": "static", "fps": 1}` | 57,778 |
+| `{"type": "static", "start_offset": "5s", "end_offset": "10s", "fps": 1}` | **16,198** |
+| `"agentic"` | *no video modality* — billed as `image`: 2,112 and 4,158 on two runs |
+
+Re-measured 2026-08-18 on the same video and model. Both figures moved from
+the 2026-08-16 reading: the window's saving was ~127x (455 vs 57,775) and is
+~3.6x now, with the unclipped side essentially unchanged — so the service
+revised the clipped accounting. `"agentic"` also stopped reporting video
+tokens entirely, billing `image` instead in a run-to-run varying quantity,
+which makes it the cheapest mode rather than one equivalent to `static`.
+
+The shape has held across both measurements — a window reduces ingestion,
+mode selection alone does not — but the magnitudes are a dated observation.
 
 Mode selection and `fps` alone made no difference; only `start_offset` /
 `end_offset` did.

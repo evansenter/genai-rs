@@ -383,14 +383,23 @@ mod video {
     ///
     /// Behavioral rather than structural, because cost control is the entire
     /// point of the field. The two arms differ **only** in whether a segment
-    /// window is set — mode is held constant — since measurement showed the
-    /// window is the sole lever: on 2026-08-16 against `gemini-3.7-flash`,
-    /// omitting the field, `"static"`, `"agentic"`, `{"type":"static"}`, and
-    /// `{"type":"static","fps":1}` all produced 57,775 video tokens, while a
-    /// 5s-10s window produced 455.
+    /// window is set — mode is held constant — since the window is the lever
+    /// among the `static` forms: re-measured 2026-08-18 against
+    /// `gemini-3.7-flash`, omitting the field, `"static"`,
+    /// `{"type":"static"}` and `{"type":"static","fps":1}` all produced
+    /// 57,778 video tokens, while a 5s-10s window produced 16,198. `fps`
+    /// alone moved nothing.
     ///
-    /// The 10x threshold leaves headroom against that ~127x spread while still
-    /// failing loudly if `processing` silently stops being sent.
+    /// **The threshold is deliberately far below the measured ratio.** That
+    /// ratio was ~127x when this test was written (455 vs 57,775) and is
+    /// ~3.6x now, on the same source video and model — the clipped side
+    /// moved while the unclipped side did not. Nothing about this crate
+    /// changed; the API's segment accounting did. A threshold tuned to the
+    /// observed spread therefore measures the API rather than our
+    /// serialization, and goes red on a service-side change that breaks
+    /// nothing here. 2x keeps the property this test is actually for — the
+    /// window reaches the wire and does something — without re-encoding a
+    /// number only the service controls.
     ///
     /// Note the `InteractionInput::Steps` wrapping: the API rejects
     /// `processing` in the bare-content-array input form.
@@ -455,10 +464,10 @@ mod video {
 
         println!("video tokens - clipped: {clipped}, unclipped: {unclipped}");
         assert!(
-            unclipped > clipped * 10,
-            "an unclipped video ({unclipped} tokens) should ingest far more than a 5s \
-             window ({clipped} tokens); if these are close, the segment window is \
-             likely not reaching the wire"
+            unclipped > clipped * 2,
+            "an unclipped video ({unclipped} tokens) should ingest substantially more \
+             than a 5s window ({clipped} tokens); if these are close, the segment \
+             window is likely not reaching the wire"
         );
     }
 }
