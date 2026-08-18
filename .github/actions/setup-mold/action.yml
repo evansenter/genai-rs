@@ -86,9 +86,26 @@ runs:
         # loudly — that is the rename protection this composite exists for.
         # Opting out is a caller assertion that there is nothing to enable, not
         # a tolerance for the file having gone missing.
-        if [ "$ENABLE_CONFIG" = "true" ]; then
-          cp .cargo/config.toml.example .cargo/config.toml
-        fi
+        # Three arms, not an if/else. `[ "$x" = "true" ]` sends every value
+        # that is not exactly `true` down the opt-out path — `"ture"`,
+        # `"True"`, a future unquoted `1` — with no signal, and the symptom is
+        # the #428 shape this composite exists to prevent: a green job quietly
+        # building without the linker config, because the callers gate
+        # RUSTFLAGS on `have-mold` rather than on the config having landed.
+        # A caller that asked for something and did not get it should fail
+        # loudly, which is the same argument the `cp` itself is strict on.
+        case "$ENABLE_CONFIG" in
+          true)
+            cp .cargo/config.toml.example .cargo/config.toml
+            ;;
+          false)
+            echo "enable-config=false — skipping the cargo config copy."
+            ;;
+          *)
+            echo "::error::enable-config must be true or false, got '$ENABLE_CONFIG'"
+            exit 1
+            ;;
+        esac
 
         # Last, so it is never written on a partial success: `set -e` aborts
         # above it if either the install or the `cp` fails, leaving the output

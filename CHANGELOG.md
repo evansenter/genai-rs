@@ -85,7 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   takes a different branch. (#427)
 
 - **Breaking: response structs are now `#[non_exhaustive]`.** The convention
-  was already documented in `docs/ENUM_WIRE_FORMATS.md`, but 31 deserializable
+  was already documented in `docs/ENUM_WIRE_FORMATS.md`, but 32 deserializable
   response types had drifted from it — including the five (`Trigger`,
   `TriggerExecution`, `Environment`, `Agent`, `Webhook`) that adding an `extra`
   field had just turned into a breaking change. Under the convention that
