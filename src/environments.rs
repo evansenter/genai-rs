@@ -187,6 +187,20 @@ pub struct Environment {
         deserialize_with = "deserialize_string_i64::<_, ForEnvironment>"
     )]
     pub size_bytes: Option<i64>,
+    /// Fields the API returned that this struct does not model, preserved
+    /// for roundtrip (Evergreen).
+    ///
+    /// Without this, a deserialize-then-serialize cycle silently drops any
+    /// field the crate has not modeled yet — invisible to the caller, and
+    /// unrecoverable. The resource was live-verified 2026-08-08, but verification is a
+    /// point-in-time snapshot, not a guarantee the shape stays fixed.
+    ///
+    /// A key that collides with a modeled field **wins on serialize** via
+    /// `serde_json::to_value`, matching the request-side escape hatches.
+    /// (`to_string` on a flattened struct emits both keys rather than
+    /// deduplicating; don't hand-serialize colliding keys.)
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Request body for creating an environment explicitly.
@@ -423,5 +437,33 @@ mod tests {
         let list: EnvironmentListResponse =
             serde_json::from_value(serde_json::json!({"environments": 7})).unwrap();
         assert!(list.environments.is_empty());
+    }
+
+    // --- Evergreen `extra` passthrough on response shapes (#406) ---
+
+    #[test]
+    fn environment_preserves_unknown_response_fields() {
+        let wire = serde_json::json!({
+            "id": "env_123",
+            "future_field": "value"
+        });
+
+        let environment: Environment = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(
+            environment.extra.get("future_field"),
+            Some(&serde_json::json!("value"))
+        );
+        assert_eq!(serde_json::to_value(&environment).unwrap(), wire);
+    }
+
+    #[test]
+    fn environment_without_unknown_fields_has_empty_extra() {
+        let environment: Environment =
+            serde_json::from_value(serde_json::json!({"id": "env_123"})).unwrap();
+        assert!(environment.extra.is_empty());
+        assert_eq!(
+            serde_json::to_value(&environment).unwrap(),
+            serde_json::json!({"id": "env_123"})
+        );
     }
 }

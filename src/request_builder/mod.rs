@@ -2223,8 +2223,16 @@ impl<'a> InteractionBuilder<'a> {
         // Runtime validation for storage-related constraints
         self.validate()?;
 
-        // Validate that content input is not combined with history
-        // Content input is fundamentally incompatible with multi-turn history
+        // Validate that content input is not combined with history.
+        //
+        // A builder policy, not a wire constraint — and it stopped being the
+        // latter when `InteractionRequest::input` began emitting `Content` as
+        // a `user_input` step (#427). Composing the two would now serialize
+        // cleanly as history steps followed by that step, which is exactly
+        // the arrangement the error message below tells the caller to build
+        // by hand. Left in place deliberately: relaxing it is an API-surface
+        // decision about what `with_content()` means alongside history, not a
+        // consequence of the wire shape. Tracked in #454.
         if self.content_input.is_some() && !self.history.is_empty() {
             return Err(GenaiError::InvalidInput(
                 "Content input (with_content()) cannot be combined with with_history(). \

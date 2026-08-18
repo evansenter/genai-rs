@@ -210,7 +210,8 @@ impl TurnContent {
 /// # Variants
 ///
 /// - `Text`: Simple text input for single-turn conversations
-/// - `Content`: Array of content blocks for multimodal input
+/// - `Content`: Array of content blocks for multimodal input — sent as a
+///   single `user_input` step, not as a bare array (#427)
 /// - `Steps`: Array of [`Step`]s — the canonical multi-turn/history form
 ///   under API revision 2026-05-20 (replaces the deprecated `Turn` array)
 ///
@@ -235,7 +236,14 @@ impl TurnContent {
 pub enum InteractionInput {
     /// Simple text input
     Text(String),
-    /// Array of content blocks (single-turn multimodal input)
+    /// Content blocks for a single user turn (multimodal input).
+    ///
+    /// Serialized as one `user_input` step wrapping the blocks, not as a
+    /// bare content array. Both are valid input shapes, but only the step
+    /// form accepts video `processing` (#427), and the steps array is the
+    /// canonical form under revision 2026-05-20. Deserializing that wire
+    /// shape back yields [`Self::Steps`], since the two are indistinguishable
+    /// on the wire.
     Content(Vec<Content>),
     /// Array of steps (multi-turn conversation history, function results,
     /// thought signatures, ...)
@@ -256,11 +264,86 @@ impl Serialize for InteractionInput {
     where
         S: Serializer,
     {
+        // Faithful to the variant, including the bare content array. The
+        // request-side wrap lives on [`InteractionRequest::input`] instead —
+        // see [`serialize_request_input`] — because it is a decision about
+        // authoring a request, not a property of the type. `InteractionInput`
+        // is also what [`InteractionResponse::input`] echoes back, and
+        // re-serializing server data into a shape the server did not send
+        // would work against the Evergreen roundtrip principle.
         match self {
             Self::Text(t) => serializer.serialize_str(t),
             Self::Content(c) => c.serialize(serializer),
             Self::Steps(s) => s.serialize(serializer),
         }
+    }
+}
+
+/// Serializer for [`InteractionRequest::input`]: emits
+/// [`InteractionInput::Content`] as a single `user_input` step rather than as
+/// a bare content array.
+///
+/// Both are valid arms of the spec's input union, but the API accepts video
+/// `processing` only inside a step — the identical content in a bare array is
+/// rejected with `Unknown parameter 'processing' at 'input[1]'` (#427). That
+/// field is not modeled by this crate yet (#419), so today the wrap is
+/// alignment with the canonical form rather than a fix for a pairing a caller
+/// can express; it means #419 can land without a second wire-shape decision.
+///
+/// Verified live (2026-08-16, `gemini-3.7-flash`, revision 2026-05-20) that
+/// the step form is accepted everywhere the bare form is: text, inline image,
+/// inline audio, inline document, video by URI, and a stored follow-up turn
+/// via `previous_interaction_id` all complete under both shapes — and only
+/// the step form accepts `processing`. See `docs/ENUM_WIRE_FORMATS.md`.
+///
+/// Scoped to this field rather than to `InteractionInput`'s own `Serialize`
+/// so that [`InteractionResponse::input`](crate::InteractionResponse), which
+/// echoes back what the server sent, keeps re-serializing in the shape it
+/// arrived in. Not every response-side carrier is covered by that: because
+/// the wrap rides on this field, `Trigger::interaction` — itself an
+/// `InteractionRequest` — does reshape a bare `[Content]` input it read from
+/// the API. Recorded there alongside its other roundtrip asymmetries.
+fn serialize_request_input<S>(input: &InteractionInput, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    // Exhaustive rather than a catch-all `other =>`, even though
+    // `InteractionInput` is `#[non_exhaustive]`: within the defining crate the
+    // exhaustive match still compiles, so adding an arm to that enum breaks
+    // the build *here* and forces a wrap-or-not decision. A catch-all would
+    // silently default every future arm to the type's own serialization —
+    // probably the right answer most of the time, but arrived at by omission.
+    match input {
+        InteractionInput::Content(c) => {
+            use serde::ser::SerializeSeq;
+            let mut seq = serializer.serialize_seq(Some(1))?;
+            seq.serialize_element(&UserInputRef { content: c })?;
+            seq.end()
+        }
+        InteractionInput::Text(_) | InteractionInput::Steps(_) => input.serialize(serializer),
+    }
+}
+
+/// A borrowed `user_input` step, for wrapping [`InteractionInput::Content`]
+/// on the way out.
+///
+/// Serializes byte-identically to [`Step::UserInput`]; it exists only so the
+/// wrap does not clone the content vector on every serialization.
+struct UserInputRef<'a> {
+    content: &'a [Content],
+}
+
+impl Serialize for UserInputRef<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeMap;
+
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("type", "user_input")?;
+        map.serialize_entry("content", self.content)?;
+        map.end()
     }
 }
 
@@ -525,7 +608,10 @@ pub struct GenerationConfig {
     /// TTS, multiple entries (each with a distinct `speaker` name matching
     /// the prompt) for multi-speaker TTS.
     ///
-    /// A legacy single-object wire form is still accepted on deserialize.
+    /// Three forms are accepted on deserialize, all normalizing to the list:
+    /// the list itself, a bare single object (legacy), and a
+    /// `{"speakers": [...]}` wrapper (the spec's `SpeakerConfig`). Only the
+    /// list is ever sent.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -672,8 +758,29 @@ impl TranscriptionConfig {
     }
 }
 
-/// Deserializes `speech_config` from either the spec list form or the legacy
-/// single-object form.
+/// Deserializes `speech_config` from any of its three observed wire forms,
+/// normalizing all of them to the list the crate models.
+///
+/// | Wire | Source |
+/// |------|--------|
+/// | `[{voice, language, speaker}, ...]` | the spec list form; the only one the Gemini API accepts |
+/// | `{"speakers": [...]}` | `SpeakerConfig`, added to the union in `google-genai` 2.18.x |
+/// | `{voice, language, speaker}` | legacy single-object form |
+///
+/// The Gemini API rejects both object forms on **send** — `400 The value is
+/// invalid for 'generation_config.speech_config'. Expected an array, got
+/// object.` (verified live 2026-08-16) — so this leniency is deserialize-only
+/// and the crate keeps emitting the list. It still matters: a
+/// `GenerationConfig` also arrives nested inside a `Trigger`'s stored
+/// interaction, which may have been created by another SDK using the object
+/// form.
+///
+/// Variant order is load-bearing. `SpeechConfig`'s fields are all optional
+/// and serde ignores unknown keys, so `{"speakers": [...]}` matches the
+/// `Single` arm perfectly well — yielding an all-`None` config and
+/// **silently discarding the speakers**. `Speakers` must therefore be tried
+/// first, and its field must stay required so a genuine single object still
+/// falls through to `Single`.
 fn deserialize_speech_configs<'de, D>(
     deserializer: D,
 ) -> Result<Option<Vec<SpeechConfig>>, D::Error>
@@ -682,15 +789,17 @@ where
 {
     #[derive(Deserialize)]
     #[serde(untagged)]
-    enum ListOrSingle {
+    enum SpeechConfigWire {
         List(Vec<SpeechConfig>),
+        // Must precede `Single` — see the doc comment above.
+        Speakers { speakers: Vec<SpeechConfig> },
         Single(SpeechConfig),
     }
 
     Ok(
-        Option::<ListOrSingle>::deserialize(deserializer)?.map(|value| match value {
-            ListOrSingle::List(list) => list,
-            ListOrSingle::Single(single) => vec![single],
+        Option::<SpeechConfigWire>::deserialize(deserializer)?.map(|value| match value {
+            SpeechConfigWire::List(list) | SpeechConfigWire::Speakers { speakers: list } => list,
+            SpeechConfigWire::Single(single) => vec![single],
         }),
     )
 }
@@ -1297,6 +1406,16 @@ pub struct InteractionRequest {
     /// re-serializes as a *present* `input` key — the one spot in the
     /// Evergreen surface where a sparse projection gains a field instead
     /// of preserving absence.)
+    ///
+    /// On the way out, [`InteractionInput::Content`] is wrapped in a single
+    /// `user_input` step: the API accepts video `processing` only inside a
+    /// step, and the step form is the canonical shape under revision
+    /// 2026-05-20 (#427). Scoped to this field rather than to
+    /// `InteractionInput`'s own `Serialize`, so
+    /// [`InteractionResponse::input`](crate::InteractionResponse) still
+    /// re-serializes server data in the shape it arrived in. See
+    /// `docs/ENUM_WIRE_FORMATS.md` for the live verification.
+    #[serde(serialize_with = "serialize_request_input")]
     pub input: InteractionInput,
 
     /// Reference to a previous interaction for stateful conversations
@@ -2614,5 +2733,112 @@ mod tests {
             InteractionInput::Content(c) => assert_eq!(c.len(), 1),
             other => panic!("Expected Content, got {other:?}"),
         }
+    }
+
+    /// Serialize just the `input` field the way a request would.
+    fn request_input_json(input: InteractionInput) -> serde_json::Value {
+        let request = InteractionRequest {
+            model: Some("test-model".into()),
+            input,
+            ..Default::default()
+        };
+        serde_json::to_value(&request).unwrap()["input"].clone()
+    }
+
+    /// `Content` input goes out wrapped in a `user_input` step, not as a bare
+    /// content array — the shape the API accepts video `processing` in (#427).
+    #[test]
+    fn test_request_content_input_serializes_as_a_user_input_step() {
+        let json = request_input_json(InteractionInput::Content(vec![
+            Content::text("Describe briefly."),
+            Content::from_uri_and_mime("files/clip", "video/mp4"),
+        ]));
+
+        assert!(json.is_array(), "input must still be an array: {json}");
+        assert_eq!(json.as_array().unwrap().len(), 1, "one wrapping step");
+        assert_eq!(json[0]["type"], "user_input");
+        assert_eq!(
+            json[0]["content"].as_array().map(Vec::len),
+            Some(2),
+            "both blocks are carried through unchanged: {json}"
+        );
+        assert_eq!(json[0]["content"][0]["type"], "text");
+        assert_eq!(json[0]["content"][1]["type"], "video");
+    }
+
+    /// The wrap is byte-identical to building the step by hand, which is what
+    /// lets the round-trip land on `Steps` rather than losing information.
+    #[test]
+    fn test_request_content_input_matches_a_hand_built_user_input_step() {
+        let content = vec![Content::text("hi")];
+        let wrapped = request_input_json(InteractionInput::Content(content.clone()));
+        let by_hand = request_input_json(InteractionInput::Steps(vec![Step::user_input(content)]));
+        assert_eq!(wrapped, by_hand);
+    }
+
+    /// Unconditional: an empty content vector produces the same shape rather
+    /// than falling back to a bare `[]`, so the wire form never depends on
+    /// how much content the caller happened to supply.
+    #[test]
+    fn test_empty_request_content_input_is_wrapped_too() {
+        assert_eq!(
+            request_input_json(InteractionInput::Content(vec![])),
+            serde_json::json!([{"type": "user_input", "content": []}])
+        );
+    }
+
+    /// The other two variants are untouched by the wrap.
+    #[test]
+    fn test_wrap_does_not_touch_text_or_steps_input() {
+        assert_eq!(
+            request_input_json(InteractionInput::Text("hi".into())),
+            serde_json::json!("hi")
+        );
+        let json = request_input_json(InteractionInput::Steps(vec![Step::user_input(vec![
+            Content::text("hi"),
+        ])]));
+        assert_eq!(json.as_array().map(Vec::len), Some(1));
+        assert_eq!(json[0]["type"], "user_input");
+    }
+
+    /// The documented round-trip, asserted end to end rather than implied by
+    /// chaining the serialize test with the steps-array parse test: a request
+    /// built from `Content` comes back as `Steps` holding one `UserInput`,
+    /// which is what the rustdoc and the CHANGELOG both claim.
+    #[test]
+    fn test_request_content_input_round_trips_as_a_user_input_step() {
+        let request = InteractionRequest {
+            model: Some("test-model".into()),
+            input: InteractionInput::Content(vec![Content::text("hi")]),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        let back: InteractionRequest = serde_json::from_str(&json).unwrap();
+
+        match &back.input {
+            InteractionInput::Steps(steps) => {
+                assert_eq!(steps.len(), 1, "one wrapping step, got {steps:?}");
+                assert_eq!(
+                    steps[0],
+                    Step::user_input(vec![Content::text("hi")]),
+                    "the step must carry the original content unchanged"
+                );
+            }
+            other => panic!("expected Steps after the round trip, got {other:?}"),
+        }
+    }
+
+    /// The wrap is request-only. `InteractionInput`'s own `Serialize` stays
+    /// faithful to the variant, so a `Content` array echoed back on
+    /// `InteractionResponse::input` re-serializes in the shape the server
+    /// sent rather than being rewritten into a step.
+    #[test]
+    fn test_bare_input_serialization_is_unwrapped() {
+        let input = InteractionInput::Content(vec![Content::text("hi")]);
+        assert_eq!(
+            serde_json::to_value(&input).unwrap(),
+            serde_json::json!([{"type": "text", "text": "hi"}]),
+            "the type's own Serialize must not wrap"
+        );
     }
 }

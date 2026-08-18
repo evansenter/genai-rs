@@ -72,8 +72,11 @@ async fn main() -> Result<(), genai_rs::GenaiError> {
 
 ### API coverage and Vertex-gated features
 
-The crate models the full 2026-05-20 Interactions API surface, with wire
-shapes verified live against the Gemini API. A few knobs are **modeled but
+The crate models the 2026-05-20 Interactions API surface as of the last
+sweep, with wire shapes verified live against the Gemini API. That is a
+point-in-time claim, not a completeness guarantee — see
+[the gap analysis](docs/INTERACTIONS_API_GAP.md) for what the most recent
+sweep found and what is still open. A few knobs are **modeled but
 gated to Vertex AI** and rejected by the Gemini API today: the Retrieval
 tool, `DeepResearchConfig::with_bigquery_tool()`, `safety_settings`,
 request `labels`, and video `gcs_uri` delivery. Details and per-feature
