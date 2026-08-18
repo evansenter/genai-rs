@@ -37,29 +37,26 @@ jobs:
         with:
           path: genai-rs
       - uses: dtolnay/rust-toolchain@stable
-      # Best effort, and deliberately not a gate. Neither job here exists to
-      # test a linker — mold is a link-speed optimization — but this step has
-      # failed the consumer job twice by hanging: `apt-get update` retries an
-      # unreachable azure mirror until the step timeout fires, so the install
-      # never runs. The `|| true` guarded a non-zero exit, not the hang.
+      # Via the shared composite rather than a local install. This workflow
+      # was the one place that hand-rolled it, which is how it ended up with a
+      # 5-minute step timeout the composite had already replaced with bounded
+      # `timeout`s after a run sat 98 minutes on a stalled mirror. It has since
+      # failed these jobs three times.
       #
-      # Install against the image's existing index first, since the runner
-      # already indexes `mold` and `update` is the part that hangs; fall back
-      # to a *bounded* update only if that misses. `continue-on-error` then
-      # keeps a mirror outage from reddening a job whose red is supposed to
-      # mean one specific thing — the argument the failure annotation further
-      # down already makes, applied to the outcome rather than the message.
-      - name: Install mold linker (best effort)
+      # `continue-on-error` because neither job here tests a linker — the
+      # consumer job's whole value is that its red means one specific thing, a
+      # fresh consumer crate failing to compile a `#[tool]` function — and mold
+      # only affects link speed. `RUSTFLAGS` below is gated on the output so a
+      # skipped install cannot turn into #428's `cannot find 'ld'`.
+      - uses: ./.github/actions/setup-mold
         id: mold
         continue-on-error: true
-        timeout-minutes: 3
-        run: |
-          set -euo pipefail
-          if ! sudo apt-get install -y mold; then
-            timeout 60 sudo apt-get update || true
-            sudo apt-get install -y mold
-          fi
-          echo "have_mold=1" >> "$GITHUB_OUTPUT"
+        with:
+          # Nothing to enable here: the checkout is at `genai-rs/`, so there is
+          # no `.cargo/config.toml.example` at the workspace root — and cargo
+          # would not discover the config anyway, since the build runs in
+          # `consumer/` (or `minimal/`) and never walks up to it.
+          enable-config: "false"
 
       - name: Scaffold a consumer crate outside the workspace
         run: |
@@ -193,7 +190,7 @@ jobs:
           # find 'ld'`, reported against a binary that *is* present rather
           # than the one that is not — and it would fire on every mirror
           # outage now that the install no longer gates the job.
-          RUSTFLAGS: ${{ steps.mold.outputs.have_mold == '1' && '-C link-arg=-fuse-ld=mold' || '' }}
+          RUSTFLAGS: ${{ steps.mold.outputs.have-mold == '1' && '-C link-arg=-fuse-ld=mold' || '' }}
         run: |
           set -euo pipefail
           cargo run
@@ -232,29 +229,26 @@ jobs:
         with:
           path: genai-rs
       - uses: dtolnay/rust-toolchain@stable
-      # Best effort, and deliberately not a gate. Neither job here exists to
-      # test a linker — mold is a link-speed optimization — but this step has
-      # failed the consumer job twice by hanging: `apt-get update` retries an
-      # unreachable azure mirror until the step timeout fires, so the install
-      # never runs. The `|| true` guarded a non-zero exit, not the hang.
+      # Via the shared composite rather than a local install. This workflow
+      # was the one place that hand-rolled it, which is how it ended up with a
+      # 5-minute step timeout the composite had already replaced with bounded
+      # `timeout`s after a run sat 98 minutes on a stalled mirror. It has since
+      # failed these jobs three times.
       #
-      # Install against the image's existing index first, since the runner
-      # already indexes `mold` and `update` is the part that hangs; fall back
-      # to a *bounded* update only if that misses. `continue-on-error` then
-      # keeps a mirror outage from reddening a job whose red is supposed to
-      # mean one specific thing — the argument the failure annotation further
-      # down already makes, applied to the outcome rather than the message.
-      - name: Install mold linker (best effort)
+      # `continue-on-error` because neither job here tests a linker — the
+      # consumer job's whole value is that its red means one specific thing, a
+      # fresh consumer crate failing to compile a `#[tool]` function — and mold
+      # only affects link speed. `RUSTFLAGS` below is gated on the output so a
+      # skipped install cannot turn into #428's `cannot find 'ld'`.
+      - uses: ./.github/actions/setup-mold
         id: mold
         continue-on-error: true
-        timeout-minutes: 3
-        run: |
-          set -euo pipefail
-          if ! sudo apt-get install -y mold; then
-            timeout 60 sudo apt-get update || true
-            sudo apt-get install -y mold
-          fi
-          echo "have_mold=1" >> "$GITHUB_OUTPUT"
+        with:
+          # Nothing to enable here: the checkout is at `genai-rs/`, so there is
+          # no `.cargo/config.toml.example` at the workspace root — and cargo
+          # would not discover the config anyway, since the build runs in
+          # `consumer/` (or `minimal/`) and never walks up to it.
+          enable-config: "false"
 
       - name: Scaffold a minimal consumer (no async-trait, no serde_json, no trait import)
         run: |
@@ -311,19 +305,20 @@ jobs:
           # find 'ld'`, reported against a binary that *is* present rather
           # than the one that is not — and it would fire on every mirror
           # outage now that the install no longer gates the job.
-          RUSTFLAGS: ${{ steps.mold.outputs.have_mold == '1' && '-C link-arg=-fuse-ld=mold' || '' }}
+          RUSTFLAGS: ${{ steps.mold.outputs.have-mold == '1' && '-C link-arg=-fuse-ld=mold' || '' }}
         run: cargo build
 
       - name: Report status
         if: always()
         run: |
           # Three states, not two. `outcome` is also `skipped` when an
-          # earlier step failed — the mold install is the plausible one,
-          # since its `apt-get update` is deliberately non-fatal and the
-          # install can then fail on stale lists. Reporting that as "still
-          # fails, as expected" asserts something about a compiler that was
-          # never asked, which is the same misleading-annotation class as the
-          # `if: failure()` finding fixed in the sibling job.
+          # earlier step fails hard, and when the run is cancelled. The mold
+          # install is no longer among those causes — it is
+          # `continue-on-error` now, so it is absorbed rather than skipping
+          # this — but the scaffold steps above still are. Reporting a skip as
+          # "still fails, as expected" asserts something about a compiler that
+          # was never asked, which is the same misleading-annotation class as
+          # the `if: failure()` finding fixed in the sibling job.
           case "${{ steps.build.outcome }}" in
             success)
               echo "::notice::A minimal two-dependency consumer compiles — #402's requirements are gone. Drop this job's continue-on-error and its PR exclusion, make it a gate, and remove the README's dependency note."

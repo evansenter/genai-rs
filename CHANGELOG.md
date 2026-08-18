@@ -119,6 +119,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   `tests/non_exhaustive_responses.rs` now fails the build on a new response
   struct without the attribute, so the backlog cannot re-accumulate.
+
 - **Breaking:** `Content::Video` has a new `processing` field. Code that
   constructs or exhaustively destructures the variant with struct-literal
   syntax needs `processing: None` (or `..`) added. The `Content::video_*()`

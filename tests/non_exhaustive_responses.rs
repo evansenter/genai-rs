@@ -347,6 +347,19 @@ fn offenders_and_exemptions_in(
             // above the declaration, and admitting it would push depth to 1
             // and swallow arbitrary source back to the matching open paren.
             let in_attr = depth != 0;
+            // A blank line is stepped over rather than ending the walk.
+            // `#[derive(Deserialize)]`, blank, `pub struct Foo;` is valid Rust
+            // and the derive still applies, but breaking here left `attrs`
+            // empty, so the struct read as non-deserializable and passed
+            // unscanned — the silent direction this file is careful about
+            // everywhere else. Stepping over cannot over-scan: the *next*
+            // non-blank line still gates, so a blank separating two
+            // declarations stops the walk at the earlier one exactly as before,
+            // and a blank line contributes no attribute text either way.
+            if t.is_empty() {
+                cursor -= 1;
+                continue;
+            }
             if !is_doc && !in_attr && !t.starts_with("#[") && !t.starts_with(")]") {
                 break;
             }
@@ -434,6 +447,28 @@ pub(crate) mod helper;
 
 #[derive(Deserialize)]
 pub struct AfterSemicolonGatedItem {}
+
+// A blank line between the attribute block and the declaration. Valid Rust,
+// the derive still applies, and before the walk-back stepped over blanks this
+// read as non-deserializable and passed unscanned.
+#[derive(Deserialize)]
+
+pub struct BlankLineBeforeDecl {}
+
+// The same shape, annotated. Pins that stepping over the blank does not
+// over-scan into reporting something that is in fact covered.
+#[derive(Deserialize)]
+#[non_exhaustive]
+
+pub struct BlankLineButAnnotated {}
+
+// A blank line separating two declarations must still stop the walk, or the
+// struct below would inherit the derive above and be reported on it.
+#[derive(Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct NeighbourAbove {}
+
+pub struct NotDeserializable {}
 "#;
 
     // Supplied explicitly rather than derived from the fixture, so this
@@ -466,6 +501,19 @@ pub struct AfterSemicolonGatedItem {}
     assert!(
         names.contains(&"ImplInAnotherFile"),
         "manual impl in a different file, via the crate-wide union: {found:?}"
+    );
+    assert!(
+        names.contains(&"BlankLineBeforeDecl"),
+        "blank line between the attribute block and the declaration: {found:?}"
+    );
+    assert!(
+        !names.contains(&"BlankLineButAnnotated"),
+        "annotated across a blank line is covered, not an offender: {found:?}"
+    );
+    assert!(
+        !names.contains(&"NotDeserializable"),
+        "a blank line between two declarations must not carry the derive down \
+         to the next one: {found:?}"
     );
 
     assert!(
