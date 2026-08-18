@@ -127,7 +127,6 @@ Three ways to declare functions, each suited to different needs:
 ### 1. `#[tool]` Macro (Compile-time, Stateless)
 
 ```rust,ignore
-use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 /// Look up customer information by ID or email

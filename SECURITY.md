@@ -80,7 +80,6 @@ println!("{:?}", client);
 When implementing callable functions, validate all arguments:
 
 ```rust,ignore
-use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 #[tool(city(description = "The city name"))]
