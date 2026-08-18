@@ -84,6 +84,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   `tests/ui/pass_no_consumer_imports.rs` pins the no-imports behavior.
 
+### Added
+
+- **Video `processing` — segment clipping, frame-rate sampling, and agentic
+  mode.** `Content::Video` gained a `processing` field, modeled as the new
+  `VideoProcessing` enum with a `with_processing()` setter and a
+  `VideoProcessing::segment()` builder.
+
+  A segment window is the difference between the model ingesting a five-second
+  clip and the entire video. Re-measured live 2026-08-18 against
+  `gemini-3.7-flash` on one source video: **16,198 video input tokens with a
+  5s-10s window, 57,778 without.** Among the `static` forms the window is the
+  lever — omitting the field, `"static"`, `{"type": "static"}` and
+  `{"type": "static", "fps": 1}` all produced the same 57,778, and `fps`
+  alone moved nothing.
+
+  Two caveats, both service-side and both worth knowing before relying on
+  the figures. When first measured on 2026-08-16 the same window produced
+  455 tokens against 57,775 — a ~127x saving rather than today's ~3.6x — so
+  the clipped accounting has been revised while the unclipped side held.
+  And `"agentic"` no longer reports video tokens at all: it bills as `image`,
+  2,112 and 4,158 on two consecutive runs, which makes it the cheapest mode
+  rather than one equivalent to `static` — so mode selection *is* a lever
+  now, contrary to what the 2026-08-16 reading showed. What held across both
+  is that a window reduces ingestion among the `static` forms.
+
+  ```rust
+  let video = Content::video_uri("files/abc123", "video/mp4")
+      .with_processing(VideoProcessing::segment().start_offset("5s").end_offset("10s").build());
+  ```
+
+  One sharp edge, documented on the type: the API accepts `processing` only
+  when the video sits inside a `user_input` step. Sending the same content via
+  `InteractionInput::Content` returns `400 Unknown parameter 'processing'`, so
+  use `InteractionInput::Steps`.
+
+### Changed (breaking)
+
+- **Breaking:** `Content::Video` has a new `processing` field. Code that
+  constructs or exhaustively destructures the variant with struct-literal
+  syntax needs `processing: None` (or `..`) added. The `Content::video_*()`
+  constructors are unaffected.
+
 ### Removed
 
 - **Breaking: `with_cached_content()` and `InteractionRequest.cached_content`.**
