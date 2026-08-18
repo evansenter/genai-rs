@@ -34,10 +34,12 @@
 //! Adding a field to either is a source break for any downstream struct
 //! literal or exhaustive destructure, and this guard will not say so.
 //!
-//! The sibling views are split rather than uniform: of the six `Serialize`-only
-//! views in that file, four carry the attribute by hand
-//! (`CodeExecutionCallInfo`, `CodeExecutionResultInfo`, `UrlContextResultInfo`,
-//! `GoogleMapsResultInfo`) and those two do not. Unlike the enum gap this
+//! The sibling views are split rather than uniform: `CodeExecutionCallInfo`,
+//! `CodeExecutionResultInfo`, `UrlContextResultInfo` and `GoogleMapsResultInfo`
+//! carry the attribute by hand, and those two do not. Named rather than
+//! counted, deliberately — a tally here drifts the moment a view is added or
+//! annotated, and the actionable half is *which* types are uncovered, not how
+//! many. Unlike the enum gap this
 //! needs no new plumbing, only a widened condition — but widening it is a
 //! scoping decision, not an oversight to be quietly fixed. Stated here, with
 //! the count, so a clean run is not read as covering them and so a reader who
