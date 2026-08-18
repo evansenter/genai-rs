@@ -52,6 +52,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   needs — and which also switches on `audit-check`'s own per-advisory issue
   reporting, inert until now for want of the permission.
 
+### Changed (breaking)
+
+- **BREAKING**: **`InteractionInput::Content` is now sent as a single
+  `user_input` step**
+  rather than as a bare content array. Both are valid arms of the API's input
+  union, but only the step form accepts video `processing` — the identical
+  content in a bare array is rejected with
+  `Unknown parameter 'processing' at 'input[1]'`, which names the field
+  rather than the input shape and so points at the wrong thing entirely.
+
+  That field is not modeled by this crate yet (#419), so today the change is
+  alignment with the canonical form rather than a fix for a pairing a caller
+  can express; it means #419 can land without a second wire-shape decision.
+
+  Verified live (2026-08-16, `gemini-3.7-flash`, revision 2026-05-20) that
+  the step form is accepted everywhere the bare form is: text, inline image,
+  inline audio, inline document, video by URI, and a stored follow-up turn
+  via `previous_interaction_id` all complete under both shapes. The steps
+  array is also the canonical form under this revision — the one `Turn` was
+  removed in favour of.
+
+  Callers using `with_content()` need no change. The wrap is scoped to
+  `InteractionRequest::input` rather than to `InteractionInput`'s own
+  `Serialize`, so `InteractionResponse::input` — which echoes back what the
+  server sent — still re-serializes in the shape it arrived in. A request's
+  `Content` input does now deserialize back as
+  `InteractionInput::Steps(vec![Step::user_input(..)])`, since the two are
+  indistinguishable once serialized. Marked breaking for that reason rather
+  than for a signature change — there is none — since anyone who persists a
+  built `InteractionRequest` and matches on `input` after reloading it now
+  takes a different branch. (#427)
+
 ### Fixed
 
 - **`#[tool]` no longer requires consumer-side dependencies or imports**

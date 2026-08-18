@@ -89,6 +89,7 @@ Helper methods on each type:
 
 | Enum / Type | Wire Format | Example | Notes |
 |------|-------------|---------|-------|
+| `InteractionInput` | string OR `[Step]` OR `[Content]` OR `Content` | `"hi"` / `[{"type": "user_input", "content": [...]}]` | Requests send *content* input as the step form; `Text` stays a bare string — see details. ✅ Verified live 2026-08-16 |
 | `Step` | tagged by `"type"`, snake_case | `"user_input"`, `"model_output"`, `"function_call"`, ... | Pending live verification (2026-05-20 revision) |
 | `StepDelta` | tagged by `"type"` | `"text"`, `"arguments_delta"`, `"text_annotation_delta"` | Two tags differ from variant names — see details. Pending live verification (2026-05-20 revision) |
 | `Annotation` | tagged by `"type"` | `"url_citation"`, `"file_citation"`, `"place_citation"` | Pending live verification (2026-05-20 revision) |
@@ -134,6 +135,54 @@ Helper methods on each type:
 | `ImageSize` | size string | `"512"`, `"1K"`, `"2K"`, `"4K"` | Image resolution |
 
 ## Details
+
+### InteractionInput (request/response `input`)
+
+The spec's input union is `str | [Step] | [Content] | Content`. All four
+deserialize. On requests, **the bare `[Content]` form is never sent**:
+`InteractionInput::Content` is wrapped in a single `user_input` step (#427).
+`Text` is unaffected and still goes out as a bare JSON string, and `Steps`
+is already the step form.
+
+Both array arms are accepted by the API, but they are not equivalent: video
+`processing` is rejected outside a step. Probed live 2026-08-16 against
+`gemini-3.7-flash` at revision `2026-05-20`, sending identical content each
+way:
+
+| Input | bare `[Content]` | `[{"type": "user_input", "content": [...]}]` |
+|---|---|---|
+| text | completed | completed |
+| text + image (inline base64) | completed | completed |
+| text + audio (inline base64) | completed | completed |
+| text + document (inline base64 PDF) | completed | completed |
+| text + video (URI) | completed | completed |
+| text + video + `"processing": "static"` | **400** `Unknown parameter 'processing' at 'input[1]'` | completed |
+| follow-up turn via `previous_interaction_id` | completed | completed |
+| *empty* content | 400 `Missing input.` | 400 `Request has empty input.` |
+
+So the step form is accepted everywhere the bare form is, and in one place the
+bare form is not. It is also the canonical shape under this revision — the one
+`Turn` was removed in favour of.
+
+The wrap is scoped to `InteractionRequest::input`, not to `InteractionInput`'s
+own `Serialize`: `InteractionResponse::input` echoes back what the server sent,
+and re-serializing that into a shape the server did not send would work against
+the Evergreen roundtrip principle. A request's `Content` input therefore
+deserializes back as `Steps(vec![Step::user_input(..)])` — the two are
+indistinguishable once serialized.
+
+The empty row matters because that is the shape whose wire form changed
+most — a bare `[]` before, a step with an empty content array now. Both are
+rejected, differing only in the message, so an accidental
+`with_content(vec![])` does not trade a clear 400 for a response to an empty
+prompt. (It still reaches the wire where the text path errors locally, which
+is a builder-validation gap rather than a wire one.)
+
+`processing` itself is not modeled by this crate yet (#419).
+
+This probe exercised exactly one step tag, `user_input`. The `Step` row
+above stays "pending live verification" because the other tags are still
+unexercised — it is not stale.
 
 ### Step (response `steps` / stateless history)
 
@@ -566,13 +615,19 @@ Used in image and video content for quality vs. token cost trade-off.
 ```json
 {
   "input": [{
-    "type": "image",
-    "data": "base64...",
-    "mime_type": "image/png",
-    "resolution": "low"
+    "type": "user_input",
+    "content": [{
+      "type": "image",
+      "data": "base64...",
+      "mime_type": "image/png",
+      "resolution": "low"
+    }]
   }]
 }
 ```
+
+(`resolution` sits on the content block; the surrounding `user_input` step
+is the shape requests send — see [InteractionInput](#interactioninput-requestresponse-input).)
 
 | Rust Enum | Wire Value |
 |-----------|------------|

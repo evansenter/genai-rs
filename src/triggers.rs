@@ -309,6 +309,13 @@ pub struct Trigger {
     /// roundtrip asymmetry alongside the absent-`input` one above. (The
     /// same currently holds for [`Trigger`]'s own top-level unmodeled
     /// keys; a response-side `extra` is tracked as issue #406.)
+    ///
+    /// And a third: because this is an [`InteractionRequest`], its `input`
+    /// carries that type's request-side serializer, so a trigger created
+    /// outside this SDK with a bare `[Content]` input re-serializes as a
+    /// `user_input` step (#427). Semantically identical, and the step form
+    /// is the one wanted on the `TriggerUpdateParams` send path — but it is
+    /// a reshape of server data rather than a faithful echo.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -1160,6 +1167,47 @@ mod tests {
         assert!(
             !messages.iter().any(|m| m.contains("empty prompt")),
             "real input must not warn; got: {messages:?}"
+        );
+    }
+
+    /// Pins the third roundtrip asymmetry documented on
+    /// [`Trigger::interaction`]: because that field is an
+    /// [`InteractionRequest`], a trigger read back with a bare `[Content]`
+    /// input re-serializes as a `user_input` step (#427).
+    ///
+    /// Asserted rather than left to prose so that moving the wrap back onto
+    /// `InteractionInput`'s own `Serialize` — or removing it — cannot make
+    /// that doc comment stale in silence.
+    #[test]
+    fn trigger_interaction_reshapes_a_bare_content_input() {
+        let trigger: Trigger = serde_json::from_value(serde_json::json!({
+            "name": "triggers/abc",
+            "interaction": {
+                "model": "test-model",
+                "input": [{"type": "text", "text": "hi"}],
+            },
+        }))
+        .expect("a trigger with a bare content-array input should deserialize");
+
+        // Read back as `Content` — the shape the server sent.
+        assert!(
+            matches!(
+                trigger.interaction.as_ref().map(|i| &i.input),
+                Some(InteractionInput::Content(c)) if c.len() == 1
+            ),
+            "expected a Content input, got {:?}",
+            trigger.interaction.as_ref().map(|i| &i.input)
+        );
+
+        // Re-serialized as a step — the reshape the doc comment describes.
+        let json = serde_json::to_value(&trigger).unwrap();
+        assert_eq!(
+            json["interaction"]["input"],
+            serde_json::json!([{
+                "type": "user_input",
+                "content": [{"type": "text", "text": "hi"}],
+            }]),
+            "a bare content array must come back out as a user_input step"
         );
     }
 
