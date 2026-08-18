@@ -272,7 +272,7 @@ pub enum AutoFunctionStreamChunk {
 | `CodeExecutionCall` / `CodeExecutionResult` | `code_execution_*` | Server-side code execution |
 | `UrlContextCall` / `UrlContextResult` | `url_context_*` | URL context tool |
 | `GoogleSearchCall` / `GoogleSearchResult` | `google_search_*` | Google Search tool |
-| *(no delta variant)* | `tool_call` | Step type only — the generic server-side tool call **MCP invocations arrive as**. It comes whole on `step.start`, which carries the full [`Step`]. A `step.delta` tagged `tool_call` has not been observed; it would land in `StepDelta::Unknown` and be skipped, logged at `debug`. |
+| *(no delta variant)* | `tool_call` | Step type only — the generic server-side tool call **MCP invocations arrive as**. It comes whole on `step.start`, which carries the full `Step`. A `step.delta` tagged `tool_call` has not been observed; it would land in `StepDelta::Unknown` and be skipped, logged at `debug`. |
 | `McpServerToolCall` / `McpServerToolResult` | `mcp_server_tool_*` | Spec-defined, never observed; see the row above |
 | `FileSearchCall` / `FileSearchResult` | `file_search_*` | File search tool |
 | `GoogleMapsCall` / `GoogleMapsResult` | `google_maps_*` | Google Maps tool |
