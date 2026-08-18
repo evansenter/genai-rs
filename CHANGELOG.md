@@ -84,6 +84,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   built `InteractionRequest` and matches on `input` after reloading it now
   takes a different branch. (#427)
 
+- **Breaking:** `Content::Video` has a new `processing` field. Code that
+  constructs or exhaustively destructures the variant with struct-literal
+  syntax needs `processing: None` (or `..`) added. The `Content::video_*()`
+  constructors are unaffected.
+
+- **Evergreen `extra` passthrough on response-side resource shapes.**
+  `Trigger`, `TriggerExecution`, `Environment`, `Agent`, and `Webhook` now
+  carry a flattened `extra` map, so a deserialize-then-serialize cycle no
+  longer silently drops fields the crate hasn't modeled.
+
+  Scoped to those five resource shapes themselves. Types nested inside them
+  still drop unmodeled keys — `SigningSecret`, `EnvironmentSource`,
+  `NetworkConfig` — as do the list envelopes (`AgentListResponse` and its
+  siblings), so a new field alongside `next_page_token` is still lost.
+  Extending the passthrough down those trees is follow-up work.
+
+  `Content` and `RemoteEnvironment` already did this; the request bodies
+  gained it in 0.9.0. These five were the remaining hole, and `Trigger` /
+  `TriggerExecution` are the sharpest cases — trigger creation is agent-gated,
+  so their response shapes have never been live-verified and a field the API
+  returns today would be both invisible and unrecoverable.
+
+  As on the request side, a key colliding with a modeled field wins on
+  serialize via `serde_json::to_value`.
+
+- **Breaking:** the five structs above have a new `extra` field. All derive
+  `Default`, so exhaustive struct literals can add `..Default::default()`.
+  (These types are not `#[non_exhaustive]`, unlike the convention
+  `docs/ENUM_WIRE_FORMATS.md` documents for response structs — tracked
+  separately.)
+
 ### Fixed
 
 - **`#[tool]` no longer requires consumer-side dependencies or imports**
@@ -169,38 +200,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `InteractionInput::Content` returns `400 Unknown parameter 'processing'`, so
   use `InteractionInput::Steps`.
 
-### Changed (breaking)
+### Removed
 
-- **Breaking:** `Content::Video` has a new `processing` field. Code that
-  constructs or exhaustively destructures the variant with struct-literal
-  syntax needs `processing: None` (or `..`) added. The `Content::video_*()`
-  constructors are unaffected.
+- **Breaking: `with_cached_content()` and `InteractionRequest.cached_content`.**
+  The Interactions API rejects the field outright:
 
-- **Evergreen `extra` passthrough on response-side resource shapes.**
-  `Trigger`, `TriggerExecution`, `Environment`, `Agent`, and `Webhook` now
-  carry a flattened `extra` map, so a deserialize-then-serialize cycle no
-  longer silently drops fields the crate hasn't modeled.
+  ```
+  400 Unknown parameter 'cached_content'
+  ```
 
-  Scoped to those five resource shapes themselves. Types nested inside them
-  still drop unmodeled keys — `SigningSecret`, `EnvironmentSource`,
-  `NetworkConfig` — as do the list envelopes (`AgentListResponse` and its
-  siblings), so a new field alongside `next_page_token` is still lost.
-  Extending the passthrough down those trees is follow-up work.
+  `cachedContent` and `cached_content_name` are rejected too, so it isn't a
+  spelling problem — and neither is it a placement one: `generation_config`
+  holds several fields that are not top-level (`transcription_config`,
+  `speech_config`), but both spellings are rejected there as well
+  (`Unknown parameter 'cached_content' at 'generation_config'`). The
+  `/v1beta/cachedContents` resource works fine — a cache creates and reports
+  its token count — but nothing in the Interactions API consumes one, so the
+  builder method could only ever produce a 400.
 
-  `Content` and `RemoteEnvironment` already did this; the request bodies
-  gained it in 0.9.0. These five were the remaining hole, and `Trigger` /
-  `TriggerExecution` are the sharpest cases — trigger creation is agent-gated,
-  so their response shapes have never been live-verified and a field the API
-  returns today would be both invisible and unrecoverable.
+  It shipped because the field was modeled from the spec and never live-probed;
+  its test asserted the field *serialized* correctly, which it did.
 
-  As on the request side, a key colliding with a modeled field wins on
-  serialize via `serde_json::to_value`.
+  This follows the `response_mime_type` precedent — rejected outright, so
+  removed — rather than the `safety_settings` / `Tool::Retrieval` one, where
+  the API explicitly names the feature as Vertex-only and the surface is kept
+  for spec parity.
 
-- **Breaking:** the five structs above have a new `extra` field. All derive
-  `Default`, so exhaustive struct literals can add `..Default::default()`.
-  (These types are not `#[non_exhaustive]`, unlike the convention
-  `docs/ENUM_WIRE_FORMATS.md` documents for response structs — tracked
-  separately.)
+  Implicit caching is unaffected and still reported via
+  `usage.total_cached_tokens`.
 
 ## [0.10.0] - 2026-08-16
 

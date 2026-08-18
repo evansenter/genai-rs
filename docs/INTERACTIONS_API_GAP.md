@@ -162,8 +162,28 @@ Completed in the revision-migration phase and the phase-2 surface expansion
 2. ~~`tool_choice` restructure: lowercase enums or
    `{allowed_tools: {mode, tools}}`; remove crate's top-level `allowed_tools`
    inside generation_config.~~ ✅ (`ToolChoice` / `AllowedTools`)
-3. ~~`cached_content` request field (explicit caching).~~ ✅
-   (`with_cached_content()`)
+3. `cached_content` request field (explicit caching). ❌ **REVERTED
+   2026-08-16** — not struck through, because unlike every other entry in
+   this list it did not land. The Interactions API rejects the field
+   outright: `400 Unknown parameter 'cached_content'` (also tried
+   `cachedContent` and `cached_content_name`, and both spellings nested
+   inside `generation_config`, which is where `transcription_config` and
+   `speech_config` live — all rejected, so it is neither a spelling nor a
+   placement problem). The `/v1beta/cachedContents`
+   resource itself works — a cache creates fine and reports its token
+   count — but nothing in the Interactions API consumes one.
+
+   This item was marked done on spec-reading alone and never live-probed,
+   so `with_cached_content()` shipped as a public method that could only
+   ever produce a 400. Its test asserted the field *serialized* correctly,
+   which it did. Field and builder method both removed, matching the
+   `response_mime_type` precedent below (rejected outright → removed,
+   as opposed to `safety_settings`/`Tool::Retrieval`, which are kept for
+   spec parity because the API names them as Vertex-only rather than
+   unknown).
+
+   Implicit caching still works and is reported via
+   `usage.total_cached_tokens`.
 4. ~~`service_tier`: `flex | standard | priority`.~~ ✅ (`ServiceTier`,
    `with_service_tier()`)
 5. ~~Webhooks: `webhook_config {uris, user_metadata}` on requests + full
@@ -256,6 +276,8 @@ this file's header now warns about.
 - ~~`CodeExecutionLanguage` `"PYTHON"`~~ → `"python"`.
 - ~~`top_k` in GenerationConfig~~ → removed.
 - ~~`response_mime_type`~~ → removed (the API rejects it in all forms).
+- ~~`cached_content`~~ → removed (rejected at both the top level and inside
+  `generation_config`, in every spelling; verified live 2026-08-16).
 - ~~`Turn`-array input~~ → removed; history is steps.
 - ~~`system_instruction` typed as InteractionInput~~ → plain string.
 - ~~`total_reasoning_tokens` in usage~~ → removed.

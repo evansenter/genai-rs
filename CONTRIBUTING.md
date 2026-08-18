@@ -98,8 +98,8 @@ sources disagree, consistently in one direction — see D-004 in
 Changes to wire format need a live probe, not a spec reading. Video
 `processing` (#419) appears in the 2.18.1 bindings and in neither published
 doc, and one field
-(`cached_content`) was modeled from the spec and has been rejected by the API
-for its entire shipped life — its removal is pending in #439.
+(`cached_content`) was modeled from the spec and was rejected by the API for
+its entire shipped life — removed in #439.
 
 ## Adding wire types
 
