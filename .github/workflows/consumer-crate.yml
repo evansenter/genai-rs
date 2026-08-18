@@ -48,7 +48,13 @@ jobs:
       # fresh consumer crate failing to compile a `#[tool]` function — and mold
       # only affects link speed. `RUSTFLAGS` below is gated on the output so a
       # skipped install cannot turn into #428's `cannot find 'ld'`.
-      - uses: ./.github/actions/setup-mold
+      # `./genai-rs/...`, not `./...`: a local `uses:` resolves against
+      # $GITHUB_WORKSPACE, and the checkout above lands the repo in
+      # `genai-rs/`, so `.github/` is not at the workspace root. Getting this
+      # wrong is silent under `continue-on-error` — the action fails to
+      # resolve, the step still reports success, `have-mold` is unset, and the
+      # linker is simply never installed.
+      - uses: ./genai-rs/.github/actions/setup-mold
         id: mold
         continue-on-error: true
         with:
@@ -57,6 +63,20 @@ jobs:
           # would not discover the config anyway, since the build runs in
           # `consumer/` (or `minimal/`) and never walks up to it.
           enable-config: "false"
+
+      # `have-mold` is empty for three different reasons — not Linux, the
+      # install failed, or the action never resolved — and at the point
+      # RUSTFLAGS reads it they are indistinguishable. Say so in the log, so a
+      # misconfiguration is visible rather than inferred from link times. The
+      # condition lives in `if:`, not in the body: a `run:` block is a YAML
+      # block scalar that Actions substitutes before bash parses it.
+      - name: Note when mold is not in use
+        if: ${{ !cancelled() && steps.mold.outputs.have-mold == '' }}
+        run: |
+          echo "::notice::mold was not enabled — building with the default"
+          echo "linker. Link times are longer; nothing else about this job"
+          echo "changes. Check the setup-mold step above for which of the"
+          echo "three causes applied."
 
       - name: Scaffold a consumer crate outside the workspace
         run: |
@@ -240,7 +260,13 @@ jobs:
       # fresh consumer crate failing to compile a `#[tool]` function — and mold
       # only affects link speed. `RUSTFLAGS` below is gated on the output so a
       # skipped install cannot turn into #428's `cannot find 'ld'`.
-      - uses: ./.github/actions/setup-mold
+      # `./genai-rs/...`, not `./...`: a local `uses:` resolves against
+      # $GITHUB_WORKSPACE, and the checkout above lands the repo in
+      # `genai-rs/`, so `.github/` is not at the workspace root. Getting this
+      # wrong is silent under `continue-on-error` — the action fails to
+      # resolve, the step still reports success, `have-mold` is unset, and the
+      # linker is simply never installed.
+      - uses: ./genai-rs/.github/actions/setup-mold
         id: mold
         continue-on-error: true
         with:
@@ -249,6 +275,20 @@ jobs:
           # would not discover the config anyway, since the build runs in
           # `consumer/` (or `minimal/`) and never walks up to it.
           enable-config: "false"
+
+      # `have-mold` is empty for three different reasons — not Linux, the
+      # install failed, or the action never resolved — and at the point
+      # RUSTFLAGS reads it they are indistinguishable. Say so in the log, so a
+      # misconfiguration is visible rather than inferred from link times. The
+      # condition lives in `if:`, not in the body: a `run:` block is a YAML
+      # block scalar that Actions substitutes before bash parses it.
+      - name: Note when mold is not in use
+        if: ${{ !cancelled() && steps.mold.outputs.have-mold == '' }}
+        run: |
+          echo "::notice::mold was not enabled — building with the default"
+          echo "linker. Link times are longer; nothing else about this job"
+          echo "changes. Check the setup-mold step above for which of the"
+          echo "three causes applied."
 
       - name: Scaffold a minimal consumer (no async-trait, no serde_json, no trait import)
         run: |
