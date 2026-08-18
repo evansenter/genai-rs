@@ -96,10 +96,15 @@ jobs:
           # which would strand the explanation in the step log this is telling
           # you to go read, and getting it into the summary is the whole reason
           # this is a warning rather than a notice.
-          echo "::warning::setup-mold failed, so this job built with the default linker (slower; nothing else changes). Two causes look identical from here: apt could not reach a mirror, or the action path did not resolve. See the log lines below."
-          echo "A local 'uses:' resolves against \$GITHUB_WORKSPACE, and this"
-          echo "job checks out to genai-rs/ — so the path needs that prefix."
-          echo "Check the setup-mold step log to tell the two apart."
+          echo "::warning::setup-mold failed, so this job built with the default linker (slower; nothing else changes). Three causes look identical from here: enable-config was neither true nor false, the action path did not resolve, or apt could not reach a mirror. See the log lines below."
+          echo "Listed in order of how cheap they are to fix:"
+          echo " 1. A bad 'enable-config' value — the composite logs an"
+          echo "    ::error:: naming it. A typo in this file; fix and re-run."
+          echo " 2. An unresolvable path — a local 'uses:' resolves against"
+          echo "    \$GITHUB_WORKSPACE, and this job checks out to genai-rs/,"
+          echo "    so the path needs that prefix."
+          echo " 3. An apt mirror outage — transient, and the only one of the"
+          echo "    three that is not a mistake in this repo."
       - name: Note when mold is deliberately skipped
         if: ${{ !cancelled() && steps.mold.outcome == 'success' && steps.mold.outputs.have-mold == '' }}
         run: |
@@ -327,10 +332,15 @@ jobs:
           # which would strand the explanation in the step log this is telling
           # you to go read, and getting it into the summary is the whole reason
           # this is a warning rather than a notice.
-          echo "::warning::setup-mold failed, so this job built with the default linker (slower; nothing else changes). Two causes look identical from here: apt could not reach a mirror, or the action path did not resolve. See the log lines below."
-          echo "A local 'uses:' resolves against \$GITHUB_WORKSPACE, and this"
-          echo "job checks out to genai-rs/ — so the path needs that prefix."
-          echo "Check the setup-mold step log to tell the two apart."
+          echo "::warning::setup-mold failed, so this job built with the default linker (slower; nothing else changes). Three causes look identical from here: enable-config was neither true nor false, the action path did not resolve, or apt could not reach a mirror. See the log lines below."
+          echo "Listed in order of how cheap they are to fix:"
+          echo " 1. A bad 'enable-config' value — the composite logs an"
+          echo "    ::error:: naming it. A typo in this file; fix and re-run."
+          echo " 2. An unresolvable path — a local 'uses:' resolves against"
+          echo "    \$GITHUB_WORKSPACE, and this job checks out to genai-rs/,"
+          echo "    so the path needs that prefix."
+          echo " 3. An apt mirror outage — transient, and the only one of the"
+          echo "    three that is not a mistake in this repo."
       - name: Note when mold is deliberately skipped
         if: ${{ !cancelled() && steps.mold.outcome == 'success' && steps.mold.outputs.have-mold == '' }}
         run: |
