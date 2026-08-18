@@ -256,7 +256,6 @@ let result = client
 
 **Diagnose:**
 ```rust,ignore
-use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 #[tool(city(description = "City name"))]
@@ -270,7 +269,6 @@ fn get_weather(city: String) -> String {
 
 1. **Better parameter descriptions:**
 ```rust,ignore
-use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 #[tool(city(description = "The city name, e.g., 'Tokyo', 'New York City'"))]
