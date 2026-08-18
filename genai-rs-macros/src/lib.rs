@@ -1,3 +1,14 @@
+//! Procedural macros for `genai-rs`.
+//!
+//! # Version coupling with `genai-rs`
+//!
+//! The code `#[tool]` generates references `genai_rs::__private`, so this
+//! crate requires a matching-or-newer `genai-rs`. Being a proc-macro crate it
+//! declares no dependency on `genai-rs`, so Cargo cannot enforce that —
+//! pinning the two independently with this crate ahead of the library fails
+//! at every `#[tool]` site with `could not find __private in genai_rs`.
+//! Bump them together.
+
 #![cfg_attr(test, allow(dead_code))]
 
 use proc_macro::TokenStream;

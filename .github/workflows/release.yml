@@ -113,7 +113,7 @@ jobs:
       - name: Verify tag matches Cargo.toml version
         run: |
           TAG_VERSION=${GITHUB_REF#refs/tags/v}
-          CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          CARGO_VERSION=$(awk -F'"' '/^version = /{print $2; exit}' Cargo.toml)
           if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
             echo "::error::Tag version ($TAG_VERSION) does not match Cargo.toml version ($CARGO_VERSION)"
             exit 1
@@ -127,10 +127,23 @@ jobs:
       # Wait for crates.io to index the macros crate
       - name: Wait for crates.io indexing
         run: |
-          MACRO_VERSION=$(grep '^version = ' genai-rs-macros/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          MACRO_VERSION=$(awk -F'"' '/^version = /{print $2; exit}' genai-rs-macros/Cargo.toml)
+          # Guarded because an empty read is worse here than anywhere else:
+          # `grep -q ""` matches any output, so the poll below would report
+          # "indexed successfully" on its first attempt without the crate
+          # being indexed at all, and `genai-rs` would then publish against a
+          # dependency crates.io cannot yet resolve. The tag check above
+          # fails safe on an empty read (empty never equals the tag); this one
+          # passes safe, which is the wrong direction.
+          if [ -z "$MACRO_VERSION" ]; then
+            echo "::error::No anchored 'version = ' line in genai-rs-macros/Cargo.toml — cannot verify indexing."
+            exit 1
+          fi
           echo "Waiting for genai-rs-macros v${MACRO_VERSION} to be indexed..."
           for i in {1..30}; do
-            if cargo search genai-rs-macros --limit 1 2>/dev/null | grep -q "${MACRO_VERSION}"; then
+            # `-F --`: the version is data, not a pattern. A literal match
+            # also means a future pre-release suffix cannot be read as a regex.
+            if cargo search genai-rs-macros --limit 1 2>/dev/null | grep -qF -- "${MACRO_VERSION}"; then
               echo "Crate indexed successfully after $((i * 10)) seconds"
               exit 0
             fi
@@ -156,26 +169,81 @@ jobs:
           fetch-depth: 0
 
       - name: Generate release notes
-        id: notes
         run: |
+          set -euo pipefail
           TAG=${GITHUB_REF#refs/tags/}
-          PREV_TAG=$(git describe --tags --abbrev=0 $TAG^ 2>/dev/null || echo "")
 
-          if [ -n "$PREV_TAG" ]; then
-            echo "Generating changelog from $PREV_TAG to $TAG"
-            COMMITS=$(git log --pretty=format:"- %s" $PREV_TAG..$TAG)
+          # The curated CHANGELOG entry, not a raw commit list. CLAUDE.md has
+          # always told the releaser that release notes come from
+          # CHANGELOG.md; the workflow never read it, so the published body
+          # was two overlapping auto-generated commit lists (the `git log`
+          # written here, plus `generate_release_notes`) and none of the prose
+          # that was written for exactly this purpose. See #432.
+          #
+          # `generate_release_notes: true` stays: it appends the PR-linked
+          # "What's Changed" list and the full-changelog compare link, which
+          # the CHANGELOG does not carry. Only the hand-rolled duplicate of it
+          # goes away.
+          # `rc`, not a bare `if`: the script exits 2 for a usage error and 1
+          # for a missing section, and collapsing those would annotate a
+          # broken invocation as "no [X.Y.Z] section in CHANGELOG.md" — a
+          # wrong diagnosis pointing at a file that may be perfectly fine.
+          # This is the branch that ships a release body, so it is the one
+          # worth distinguishing.
+          rc=0
+          .github/scripts/extract_changelog_section.sh \
+              CHANGELOG.md "${TAG#v}" > /tmp/release-body.md || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "Release body from the CHANGELOG.md [${TAG#v}] section"
+          elif [ "$rc" -eq 1 ]; then
+            # The recoverable case: the file is fine, the section is not
+            # there. Falling back rather than failing, because the tag exists
+            # and the crates are already published by this point — refusing to
+            # cut the release over a formatting problem would leave it
+            # half-done. Loud enough to be fixed by hand after.
+            echo "::warning::No [${TAG#v}] section in CHANGELOG.md — falling back to the commit list. Edit the release body by hand."
           else
-            echo "First release, generating full changelog"
-            COMMITS=$(git log --pretty=format:"- %s")
+            # Annotated but NOT fatal, unlike the identical dispatch in
+            # rust.yml. This job is `needs: publish`, so by the time it runs
+            # both crates are immutable on crates.io — exiting here would
+            # leave the release genuinely half-done (versions published, tag
+            # pushed, no GitHub release), which is the outcome the fallback
+            # below exists to avoid. A red annotation on a completed release
+            # beats a completed publish with no release. The recovery table in
+            # CLAUDE.md covers the residue either way.
+            echo "::error::extract_changelog_section.sh exited $rc — a usage or environment error, not a missing section. Falling back to the commit list; the body needs replacing by hand."
+          fi
+          if [ "$rc" -ne 0 ]; then
+            # Both non-zero paths land here — each has already annotated
+            # itself at the right severity above, so this block is only the
+            # body generation.
+            #
+            # `tformat`, not `format`: `format` omits the terminating
+            # newline, so this branch would write a body that does not end in
+            # one while the CHANGELOG branch above does. The file gets
+            # concatenated with the auto-generated change list, and this is
+            # the branch nobody exercises before a real tag.
+            PREV_TAG=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || echo "")
+            if [ -n "$PREV_TAG" ]; then
+              echo "Generating changelog from $PREV_TAG to $TAG"
+              git log --pretty=tformat:"- %s" "$PREV_TAG..$TAG" > /tmp/release-body.md
+            else
+              echo "First release, generating full changelog"
+              git log --pretty=tformat:"- %s" > /tmp/release-body.md
+            fi
           fi
 
-          # Write to file to preserve newlines
-          echo "$COMMITS" > /tmp/commits.txt
+          echo "=== Release body ==="
+          cat /tmp/release-body.md
+          echo "===================="
 
       - name: Create release
-        uses: softprops/action-gh-release@v1
+        # v2, not v1: actionlint flags v1's runner as too old for GitHub
+        # Actions — i.e. this step was heading for a hard failure on the one
+        # workflow that only ever runs after a tag exists.
+        uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          body_path: /tmp/commits.txt
+          body_path: /tmp/release-body.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
