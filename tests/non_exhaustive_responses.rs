@@ -23,6 +23,22 @@
 //! across its Evergreen enum surface, so an enum check needs different
 //! plumbing than the derive-attribute walk-back below, not a wider regex.
 //!
+//! **A `Serialize`-only response type is invisible to it.** The scan keys on
+//! *deserializable* as its proxy for *response-side*, and the borrowed views
+//! returned by accessors are not deserializable — they are built from the
+//! response, not parsed into. `FunctionCallInfo` (`src/response.rs`) is the
+//! live example: a `pub struct` with public fields, returned by
+//! `InteractionResponse::function_calls()`, whose own doc says it is not
+//! meant to be constructed directly — which argues *for* the attribute, not
+//! against it. Adding a field to it is a source break for any downstream
+//! struct literal or exhaustive destructure, and this guard will not say so.
+//!
+//! Unlike the enum gap this needs no new plumbing, only a widened condition —
+//! but widening it is a scoping decision, not an oversight to be quietly
+//! fixed, and the sibling views (`ToolCallInfo`, `CodeExecutionCallInfo` and
+//! the rest) already carry the attribute by hand. Stated here so a clean run
+//! is not read as covering them.
+//!
 //! Two parsing assumptions, both currently true of `src/` and neither
 //! enforced:
 //!

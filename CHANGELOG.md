@@ -145,11 +145,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   serialize via `serde_json::to_value`.
 
 - **Breaking:** the five structs above have a new `extra` field. All derive
-  `Default`, so exhaustive struct literals can add `..Default::default()`.
-  (These types are not `#[non_exhaustive]`, unlike the convention
-  `docs/ENUM_WIRE_FORMATS.md` documents for response structs — tracked
-  separately.)
-
   `Default`; see the `#[non_exhaustive]` entry above for how to construct
   them from outside the crate — `..Default::default()` is functional-update
   syntax, which that attribute now blocks, so the route is `T::default()`
