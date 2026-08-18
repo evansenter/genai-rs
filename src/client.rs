@@ -2005,6 +2005,10 @@ impl Client {
     /// The 2 GB ceiling is borrowed from the Files API and has not been
     /// verified for this resource, so treat it as a local guard rather than
     /// the API's limit — the API may reject a smaller file with its own.
+    /// Note also that the raw upload protocol sends the file as a single
+    /// body with no resumable path, so it is read fully into memory before
+    /// the request is issued: a 1.5 GB upload costs 1.5 GB of resident
+    /// memory.
     ///
     /// # Example
     ///
@@ -2058,7 +2062,8 @@ impl Client {
     /// As with
     /// [`upload_to_file_search_store`](Self::upload_to_file_search_store), the
     /// 2 GB ceiling is borrowed from the Files API and unverified for this
-    /// resource.
+    /// resource, and the file is read fully into memory before the request is
+    /// issued.
     ///
     /// MIME *syntax* is not checked here: `nonsense` or `text/` are valid
     /// header values, so they reach the API and come back as an API error
