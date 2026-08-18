@@ -2138,9 +2138,11 @@ impl Client {
     ///
     /// # Errors
     ///
-    /// Returns [`GenaiError::Api`] if the document reaches
-    /// [`Failed`](crate::DocumentState::Failed), [`GenaiError::Internal`] on
-    /// timeout, and [`GenaiError::InvalidInput`] for a malformed name.
+    /// Returns [`GenaiError::Internal`] if the document reaches
+    /// [`Failed`](crate::DocumentState::Failed) or if the wait times out —
+    /// neither is retryable, and the two are distinguished by their message —
+    /// and [`GenaiError::InvalidInput`] for a malformed name. Errors from the
+    /// underlying polling GET propagate as they are.
     pub async fn wait_for_document_active(
         &self,
         document_name: &str,
