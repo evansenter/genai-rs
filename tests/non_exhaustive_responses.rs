@@ -26,18 +26,23 @@
 //! **A `Serialize`-only response type is invisible to it.** The scan keys on
 //! *deserializable* as its proxy for *response-side*, and the borrowed views
 //! returned by accessors are not deserializable — they are built from the
-//! response, not parsed into. `FunctionCallInfo` (`src/response.rs`) is the
-//! live example: a `pub struct` with public fields, returned by
-//! `InteractionResponse::function_calls()`, whose own doc says it is not
-//! meant to be constructed directly — which argues *for* the attribute, not
-//! against it. Adding a field to it is a source break for any downstream
-//! struct literal or exhaustive destructure, and this guard will not say so.
+//! response, not parsed into. `FunctionCallInfo` and `FunctionResultInfo`
+//! (`src/response.rs`) are the live examples: `pub struct`s with public
+//! fields, returned by `InteractionResponse::function_calls()` and
+//! `function_results()`, whose own docs say they are not meant to be
+//! constructed directly — which argues *for* the attribute, not against it.
+//! Adding a field to either is a source break for any downstream struct
+//! literal or exhaustive destructure, and this guard will not say so.
 //!
-//! Unlike the enum gap this needs no new plumbing, only a widened condition —
-//! but widening it is a scoping decision, not an oversight to be quietly
-//! fixed, and the sibling views (`ToolCallInfo`, `CodeExecutionCallInfo` and
-//! the rest) already carry the attribute by hand. Stated here so a clean run
-//! is not read as covering them.
+//! The sibling views are split rather than uniform: of the six `Serialize`-only
+//! views in that file, four carry the attribute by hand
+//! (`CodeExecutionCallInfo`, `CodeExecutionResultInfo`, `UrlContextResultInfo`,
+//! `GoogleMapsResultInfo`) and those two do not. Unlike the enum gap this
+//! needs no new plumbing, only a widened condition — but widening it is a
+//! scoping decision, not an oversight to be quietly fixed. Stated here, with
+//! the count, so a clean run is not read as covering them and so a reader who
+//! greps for one named type does not conclude the boundary is one struct
+//! wide.
 //!
 //! Two parsing assumptions, both currently true of `src/` and neither
 //! enforced:
