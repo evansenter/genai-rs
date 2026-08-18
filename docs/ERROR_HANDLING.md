@@ -319,7 +319,6 @@ Function not found in registry or tool service: function='...'
 ### Execution Errors
 
 ```rust,ignore
-use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 /// Fetch data from API
@@ -355,7 +354,6 @@ Err(FunctionError::ArgumentMismatch(message)) => {
 3. **Don't panic** - Return errors so the conversation can continue
 
 ```rust,ignore
-use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 /// Get user by ID

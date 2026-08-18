@@ -56,7 +56,6 @@ The simplest approach - define functions with the `#[tool]` attribute.
 ### Basic Usage
 
 ```rust,no_run
-use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 /// Gets the current weather for a city
@@ -72,10 +71,16 @@ fn get_time(timezone: String) -> String {
     format!(r#"{{"timezone": "{}", "time": "14:30"}}"#, timezone)
 }
 
-// Compile-checked in CI as a doctest, so this snippet cannot silently
-// rot. (The async-trait / serde_json manifest requirement is only
-// observable from a fresh consumer crate — see the README note.)
-let _declaration = GetWeatherCallable.declaration();
+// Note what is *not* imported: `#[tool]` needs no `async-trait` or
+// `serde_json` dependency and no `CallableFunction` in scope. This snippet
+// is compiled as a doctest, so it is the in-repo proof of that, alongside
+// `tests/ui/pass_no_consumer_imports.rs`.
+//
+// The generated free function avoids the trait import too. Calling
+// `GetWeatherCallable.declaration()` in method position also works, but
+// then `use genai_rs::CallableFunction;` is required — for that call, not
+// for the macro.
+let _declaration = get_weather_declaration();
 ```
 
 ### Auto-Discovery and Execution
@@ -110,7 +115,6 @@ let result = client
 ### Multiple Parameters
 
 ```rust,ignore
-use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 #[tool(
@@ -125,7 +129,6 @@ fn get_weather_detailed(city: String, unit: String) -> String {
 ### Async Functions
 
 ```rust,ignore
-use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 #[tool(url(description = "URL to fetch"))]
@@ -144,7 +147,7 @@ The `#[tool]` macro generates:
 2. A callable type (e.g., `GetWeatherCallable`)
 3. Registration in the global function registry
 4. A free function returning the declaration (e.g. `get_weather_declaration()`),
-   usable from other modules without importing `CallableFunction`
+   requiring no `CallableFunction` import
 
 ```rust,ignore
 use genai_rs::CallableFunction;
@@ -566,7 +569,6 @@ This happens automatically across multiple loop iterations.
 ### 1. Return JSON from Functions
 
 ```rust,ignore
-use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 #[tool(city(description = "City name"))]
@@ -579,7 +581,6 @@ fn get_weather(city: String) -> String {
 ### 2. Handle Errors Gracefully
 
 ```rust,ignore
-use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 #[tool(id(description = "User ID"))]
@@ -598,7 +599,6 @@ fn get_user(id: i32) -> String {
 ### 3. Validate Inputs
 
 ```rust,ignore
-use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 #[tool(query(description = "Search query"))]
