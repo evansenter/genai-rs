@@ -271,6 +271,7 @@ impl<'de> Deserialize<'de> for TriggerExecutionStatus {
 /// rather than failing the whole list response.
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct Trigger {
     /// Output only. The ID of the trigger — the value the ID-taking
     /// client methods (`get_trigger`, `delete_trigger`, ...) expect.
@@ -795,6 +796,7 @@ impl TriggerUpdate {
 /// for the rationale.
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct TriggerExecution {
     /// Output only. The ID of the execution.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -862,6 +864,7 @@ pub struct TriggerExecution {
 /// so both fields default.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct TriggerListResponse {
     /// The triggers in this page. A null or malformed list degrades to
     /// empty; malformed elements drop individually.
@@ -875,6 +878,7 @@ pub struct TriggerListResponse {
 /// Response from listing a trigger's executions.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct TriggerExecutionListResponse {
     /// The executions in this page. A null or malformed list degrades to
     /// empty; malformed elements drop individually. The envelope key is

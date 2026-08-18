@@ -4,11 +4,39 @@ description: >-
   uses it. Linux/apt only; a no-op on every other runner, so it is safe to
   invoke unconditionally.
 
+inputs:
+  enable-config:
+    description: >-
+      Copy `.cargo/config.toml.example` into place. Leave true for a job whose
+      checkout is at the workspace root. Set false from a job that checks the
+      repo out to a subdirectory: there is no example file at the root to copy,
+      and cargo would not discover the config from that build directory anyway.
+    required: false
+    default: "true"
+
+outputs:
+  have-mold:
+    description: >-
+      "1" when mold installed successfully, empty otherwise. Only meaningful to
+      a caller that pairs this with `continue-on-error: true`; without that a
+      failed install fails the job and nothing reads this. Gate the
+      `-fuse-ld=mold` flag on it — naming a linker that is not installed is the
+      #428 failure, which reports `cannot find 'ld'` against a binary that *is*
+      present rather than the one that is not.
+    value: ${{ steps.install.outputs.have-mold }}
+
 runs:
   using: composite
   steps:
     - name: Install mold and enable the linker config
+      id: install
       shell: bash
+      env:
+        # Read through `env:` rather than interpolating `${{ }}` into the
+        # `run:` body. A `run:` block is a YAML block scalar that Actions
+        # substitutes textually before bash parses it, so an expression there
+        # is a substitution hazard rather than a shell variable.
+        ENABLE_CONFIG: ${{ inputs.enable-config }}
       # Bounded with `timeout` rather than `timeout-minutes:`, which
       # composite-action steps do not support — setting it here fails the
       # whole workflow with "Failed to load action.yml" before anything runs.
@@ -38,6 +66,20 @@ runs:
       run: |
         set -euo pipefail
 
+        # Input contract first, before the OS check and before paying for the
+        # install. Validating after the `RUNNER_OS` early exit would enforce it
+        # only on Linux: a caller that typos `enable-config: "ture"` in a
+        # macOS- or Windows-only job would get a green run forever, and the
+        # mistake would surface the day someone adds a Linux leg — the same
+        # delayed signal the three-arm form was written to avoid.
+        case "$ENABLE_CONFIG" in
+          true | false) ;;
+          *)
+            echo "::error::enable-config must be true or false, got '$ENABLE_CONFIG'"
+            exit 1
+            ;;
+        esac
+
         # Self-guarding rather than leaving `if: runner.os == 'Linux'` to
         # each caller: a per-call condition is the N-copies arrangement this
         # composite exists to remove. Without it the next job to add a bare
@@ -52,4 +94,20 @@ runs:
 
         sudo timeout 60 apt-get update || true
         sudo timeout 240 apt-get install -y mold
-        cp .cargo/config.toml.example .cargo/config.toml
+
+        # Still strict when it runs. The `cp` is the half that matters after
+        # #428, and a caller that asked for it and does not get it should fail
+        # loudly — that is the rename protection this composite exists for.
+        # Opting out is a caller assertion that there is nothing to enable, not
+        # a tolerance for the file having gone missing, which is why the value
+        # is validated above rather than defaulted here.
+        if [ "$ENABLE_CONFIG" = "true" ]; then
+          cp .cargo/config.toml.example .cargo/config.toml
+        else
+          echo "enable-config=false — skipping the cargo config copy."
+        fi
+
+        # Last, so it is never written on a partial success: `set -e` aborts
+        # above it if either the install or the `cp` fails, leaving the output
+        # empty. The gate fails closed.
+        echo "have-mold=1" >> "$GITHUB_OUTPUT"

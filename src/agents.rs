@@ -37,6 +37,7 @@ use crate::tools::Tool;
 /// ```
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct Agent {
     /// The unique identifier for the agent.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -133,6 +134,7 @@ impl Agent {
 /// Response for `GET /v1beta/agents` (list).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct AgentListResponse {
     /// The agents on this page. A null or malformed list degrades to
     /// empty; malformed elements drop individually.

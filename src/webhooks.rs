@@ -276,6 +276,7 @@ impl<'de> Deserialize<'de> for WebhookState {
 /// A signing secret used to verify webhook payloads (output only).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct SigningSecret {
     /// Truncated version of the signing secret (for identification).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -309,6 +310,7 @@ pub struct SigningSecret {
 /// ```
 #[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct Webhook {
     /// The URI to which webhook events will be sent (required).
     pub uri: String,
@@ -594,6 +596,7 @@ impl<'de> Deserialize<'de> for RevocationBehavior {
 /// Response for `GET /v1beta/webhooks` (list).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct WebhookListResponse {
     /// The webhooks on this page. A null or malformed list degrades to
     /// empty; malformed elements drop individually.
@@ -607,6 +610,7 @@ pub struct WebhookListResponse {
 /// Response for `POST /v1beta/webhooks/{id}:rotateSigningSecret`.
 #[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct RotateSigningSecretResponse {
     /// The newly generated signing secret. Store it securely — it is not
     /// returned again.

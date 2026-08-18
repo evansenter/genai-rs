@@ -24,6 +24,15 @@ on:
       - 'genai-rs-macros/src/**'
       - 'README.md'
       - '.github/workflows/consumer-crate.yml'
+      # The composite this workflow depends on. Listed because these are the
+      # only jobs that resolve it from a *subdirectory* checkout — everything
+      # in `rust.yml` checks out at the workspace root, so a `./`-relative
+      # path works there and breaks here. That asymmetry already shipped once:
+      # `uses: ./.github/actions/setup-mold` resolved fine everywhere else and
+      # not at all here, and `continue-on-error` reported it as success.
+      # Without this line an edit to the composite alone never runs the one
+      # workflow that would catch it.
+      - '.github/actions/setup-mold/action.yml'
 
 env:
   CARGO_TERM_COLOR: always
@@ -37,9 +46,70 @@ jobs:
         with:
           path: genai-rs
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install mold linker
-        timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+      # Via the shared composite rather than a local install. This workflow
+      # was the one place that hand-rolled it, which is how it ended up with a
+      # 5-minute step timeout the composite had already replaced with bounded
+      # `timeout`s after a run sat 98 minutes on a stalled mirror. It has since
+      # failed these jobs three times.
+      #
+      # `continue-on-error` because neither job here tests a linker — the
+      # consumer job's whole value is that its red means one specific thing, a
+      # fresh consumer crate failing to compile a `#[tool]` function — and mold
+      # only affects link speed. `RUSTFLAGS` below is gated on the output so a
+      # skipped install cannot turn into #428's `cannot find 'ld'`.
+      # `./genai-rs/...`, not `./...`: a local `uses:` resolves against
+      # $GITHUB_WORKSPACE, and the checkout above lands the repo in
+      # `genai-rs/`, so `.github/` is not at the workspace root. Getting this
+      # wrong is silent under `continue-on-error` — the action fails to
+      # resolve, the step still reports success, `have-mold` is unset, and the
+      # linker is simply never installed.
+      - uses: ./genai-rs/.github/actions/setup-mold
+        id: mold
+        continue-on-error: true
+        with:
+          # Nothing to enable here: the checkout is at `genai-rs/`, so there is
+          # no `.cargo/config.toml.example` at the workspace root — and cargo
+          # would not discover the config anyway, since the build runs in
+          # `consumer/` (or `minimal/`) and never walks up to it.
+          enable-config: "false"
+
+      # Split by `outcome`, not merged into one "no mold" message. An empty
+      # `have-mold` means either "nothing to do" (not Linux — the composite
+      # exits 0) or "something went wrong", and `continue-on-error` erases the
+      # difference from the step's own conclusion. Reporting them together is
+      # what let an unresolvable `uses:` path ship green: the step said
+      # success, the output was empty, and empty looked ordinary.
+      #
+      # `warning` rather than `notice` for the failure arm so it reaches the
+      # run summary. Neither arm fails the job — mold is a link-speed
+      # optimization, and gating these jobs on it is the thing this whole
+      # arrangement exists to avoid.
+      #
+      # Conditions live in `if:`, never in the body: a `run:` block is a YAML
+      # block scalar that Actions substitutes before bash parses it.
+      - name: Warn when the mold step failed
+        if: ${{ !cancelled() && steps.mold.outcome == 'failure' }}
+        run: |
+          # One `echo` for the annotation. `::warning::` is consumed by the
+          # workflow-command parser on the line it appears on, so a multi-line
+          # message reaches the run summary truncated at the first newline —
+          # which would strand the explanation in the step log this is telling
+          # you to go read, and getting it into the summary is the whole reason
+          # this is a warning rather than a notice.
+          echo "::warning::setup-mold failed, so this job built with the default linker (slower; nothing else changes). Three causes look identical from here: enable-config was neither true nor false, the action path did not resolve, or apt could not reach a mirror. See the log lines below."
+          echo "Listed in order of how cheap they are to fix:"
+          echo " 1. A bad 'enable-config' value — the composite logs an"
+          echo "    ::error:: naming it. A typo in this file; fix and re-run."
+          echo " 2. An unresolvable path — a local 'uses:' resolves against"
+          echo "    \$GITHUB_WORKSPACE, and this job checks out to genai-rs/,"
+          echo "    so the path needs that prefix."
+          echo " 3. An apt mirror outage — transient, and the only one of the"
+          echo "    three that is not a mistake in this repo."
+      - name: Note when mold is deliberately skipped
+        if: ${{ !cancelled() && steps.mold.outcome == 'success' && steps.mold.outputs.have-mold == '' }}
+        run: |
+          # Single line, same reason as the warning above.
+          echo "::notice::mold is not applicable on this runner, so this job built with the default linker. Expected off Linux; nothing is wrong."
 
       - name: Scaffold a consumer crate outside the workspace
         run: |
@@ -137,6 +207,32 @@ jobs:
               let factory = get_weather_callable_factory();
               assert_eq!(factory.declaration().name(), "get_weather");
 
+              // The documented migration for #430's `#[non_exhaustive]`
+              // response structs, asserted from where the attribute
+              // actually applies. `#[non_exhaustive]` only bites outside
+              // the defining crate, so no in-workspace test can catch a
+              // regression here — and `docs/ENUM_WIRE_FORMATS.md` tells
+              // users this exact route still works. It was verified once
+              // by hand; this keeps it verified by a compiler.
+              let mut response = genai_rs::InteractionResponse::default();
+              response.id = Some("x".into());
+              assert_eq!(response.id.as_deref(), Some("x"));
+
+              // `ModalityTokens::new()` exists *only* because closing the
+              // type left serde as the only way for a downstream crate to
+              // build one — that is the reason given in its own doc and in
+              // `docs/ENUM_WIRE_FORMATS.md`. Its unit test cannot check that
+              // claim, because the attribute is inert inside the defining
+              // crate, so this is the only place the constructor's reason for
+              // existing is verified rather than asserted.
+              let modality = genai_rs::ModalityTokens::new("text", 1);
+              assert_eq!(modality.tokens, 1);
+
+              // Same for the read-write resources: `ENUM_WIRE_FORMATS.md`
+              // says closing them costs nothing *because* these exist.
+              let agent = genai_rs::Agent::new("agents/x");
+              assert_eq!(agent.id.as_deref(), Some("agents/x"));
+
               println!("ok: {}", declaration.name());
           }
           RUST
@@ -156,7 +252,13 @@ jobs:
           # discovery walks up from the build directory, and the checkout is
           # at `genai-rs/` while the build runs in `consumer/`, so
           # `genai-rs/.cargo/config.toml` is never on that path.
-          RUSTFLAGS: -C link-arg=-fuse-ld=mold
+          #
+          # Conditional on the install having succeeded. Naming a linker
+          # that is not installed is exactly the #428 failure — `cannot
+          # find 'ld'`, reported against a binary that *is* present rather
+          # than the one that is not — and it would fire on every mirror
+          # outage now that the install no longer gates the job.
+          RUSTFLAGS: ${{ steps.mold.outputs.have-mold == '1' && '-C link-arg=-fuse-ld=mold' || '' }}
         run: |
           set -euo pipefail
           cargo run
@@ -195,9 +297,70 @@ jobs:
         with:
           path: genai-rs
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install mold linker
-        timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+      # Via the shared composite rather than a local install. This workflow
+      # was the one place that hand-rolled it, which is how it ended up with a
+      # 5-minute step timeout the composite had already replaced with bounded
+      # `timeout`s after a run sat 98 minutes on a stalled mirror. It has since
+      # failed these jobs three times.
+      #
+      # `continue-on-error` because neither job here tests a linker — the
+      # consumer job's whole value is that its red means one specific thing, a
+      # fresh consumer crate failing to compile a `#[tool]` function — and mold
+      # only affects link speed. `RUSTFLAGS` below is gated on the output so a
+      # skipped install cannot turn into #428's `cannot find 'ld'`.
+      # `./genai-rs/...`, not `./...`: a local `uses:` resolves against
+      # $GITHUB_WORKSPACE, and the checkout above lands the repo in
+      # `genai-rs/`, so `.github/` is not at the workspace root. Getting this
+      # wrong is silent under `continue-on-error` — the action fails to
+      # resolve, the step still reports success, `have-mold` is unset, and the
+      # linker is simply never installed.
+      - uses: ./genai-rs/.github/actions/setup-mold
+        id: mold
+        continue-on-error: true
+        with:
+          # Nothing to enable here: the checkout is at `genai-rs/`, so there is
+          # no `.cargo/config.toml.example` at the workspace root — and cargo
+          # would not discover the config anyway, since the build runs in
+          # `consumer/` (or `minimal/`) and never walks up to it.
+          enable-config: "false"
+
+      # Split by `outcome`, not merged into one "no mold" message. An empty
+      # `have-mold` means either "nothing to do" (not Linux — the composite
+      # exits 0) or "something went wrong", and `continue-on-error` erases the
+      # difference from the step's own conclusion. Reporting them together is
+      # what let an unresolvable `uses:` path ship green: the step said
+      # success, the output was empty, and empty looked ordinary.
+      #
+      # `warning` rather than `notice` for the failure arm so it reaches the
+      # run summary. Neither arm fails the job — mold is a link-speed
+      # optimization, and gating these jobs on it is the thing this whole
+      # arrangement exists to avoid.
+      #
+      # Conditions live in `if:`, never in the body: a `run:` block is a YAML
+      # block scalar that Actions substitutes before bash parses it.
+      - name: Warn when the mold step failed
+        if: ${{ !cancelled() && steps.mold.outcome == 'failure' }}
+        run: |
+          # One `echo` for the annotation. `::warning::` is consumed by the
+          # workflow-command parser on the line it appears on, so a multi-line
+          # message reaches the run summary truncated at the first newline —
+          # which would strand the explanation in the step log this is telling
+          # you to go read, and getting it into the summary is the whole reason
+          # this is a warning rather than a notice.
+          echo "::warning::setup-mold failed, so this job built with the default linker (slower; nothing else changes). Three causes look identical from here: enable-config was neither true nor false, the action path did not resolve, or apt could not reach a mirror. See the log lines below."
+          echo "Listed in order of how cheap they are to fix:"
+          echo " 1. A bad 'enable-config' value — the composite logs an"
+          echo "    ::error:: naming it. A typo in this file; fix and re-run."
+          echo " 2. An unresolvable path — a local 'uses:' resolves against"
+          echo "    \$GITHUB_WORKSPACE, and this job checks out to genai-rs/,"
+          echo "    so the path needs that prefix."
+          echo " 3. An apt mirror outage — transient, and the only one of the"
+          echo "    three that is not a mistake in this repo."
+      - name: Note when mold is deliberately skipped
+        if: ${{ !cancelled() && steps.mold.outcome == 'success' && steps.mold.outputs.have-mold == '' }}
+        run: |
+          # Single line, same reason as the warning above.
+          echo "::notice::mold is not applicable on this runner, so this job built with the default linker. Expected off Linux; nothing is wrong."
 
       - name: Scaffold a minimal consumer (no async-trait, no serde_json, no trait import)
         run: |
@@ -248,19 +411,26 @@ jobs:
           # Same cargo-config-discovery gap as the job above: the build runs
           # in `minimal/`, so `genai-rs/.cargo/config.toml` is never on the
           # walk-up path and the mold install would otherwise be inert.
-          RUSTFLAGS: -C link-arg=-fuse-ld=mold
+          #
+          # Conditional on the install having succeeded. Naming a linker
+          # that is not installed is exactly the #428 failure — `cannot
+          # find 'ld'`, reported against a binary that *is* present rather
+          # than the one that is not — and it would fire on every mirror
+          # outage now that the install no longer gates the job.
+          RUSTFLAGS: ${{ steps.mold.outputs.have-mold == '1' && '-C link-arg=-fuse-ld=mold' || '' }}
         run: cargo build
 
       - name: Report status
         if: always()
         run: |
           # Three states, not two. `outcome` is also `skipped` when an
-          # earlier step failed — the mold install is the plausible one,
-          # since its `apt-get update` is deliberately non-fatal and the
-          # install can then fail on stale lists. Reporting that as "still
-          # fails, as expected" asserts something about a compiler that was
-          # never asked, which is the same misleading-annotation class as the
-          # `if: failure()` finding fixed in the sibling job.
+          # earlier step fails hard, and when the run is cancelled. The mold
+          # install is no longer among those causes — it is
+          # `continue-on-error` now, so it is absorbed rather than skipping
+          # this — but the scaffold steps above still are. Reporting a skip as
+          # "still fails, as expected" asserts something about a compiler that
+          # was never asked, which is the same misleading-annotation class as
+          # the `if: failure()` finding fixed in the sibling job.
           case "${{ steps.build.outcome }}" in
             success)
               echo "::notice::A minimal two-dependency consumer compiles — #402's requirements are gone. Drop this job's continue-on-error and its PR exclusion, make it a gate, and remove the README's dependency note."

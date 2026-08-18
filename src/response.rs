@@ -226,6 +226,7 @@ impl<'de> Deserialize<'de> for InteractionStatus {
 /// }
 /// ```
 #[derive(Clone, Deserialize, Serialize, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct ModalityTokens {
     /// The modality type (e.g., "text", "image", "audio").
     ///
@@ -239,6 +240,21 @@ pub struct ModalityTokens {
     pub tokens: u32,
 }
 
+impl ModalityTokens {
+    /// Creates a modality token count.
+    ///
+    /// This type is `#[non_exhaustive]` and derives neither `Default` nor
+    /// anything else that would let a downstream crate build one, so without
+    /// this constructor `serde` would be the only route to a value.
+    #[must_use]
+    pub fn new(modality: impl Into<String>, tokens: u32) -> Self {
+        Self {
+            modality: modality.into(),
+            tokens,
+        }
+    }
+}
+
 /// Per-tool grounding invocation count.
 ///
 /// Reported in [`UsageMetadata::grounding_tool_count`]. Known `tool_type`
@@ -246,6 +262,7 @@ pub struct ModalityTokens {
 /// plain string for Evergreen forward compatibility.
 #[derive(Clone, Deserialize, Serialize, Debug, Default, PartialEq, Eq)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct GroundingToolCount {
     /// The grounding tool type (wire field: `type`).
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
@@ -261,6 +278,7 @@ pub struct GroundingToolCount {
 /// a negative value (which would be a bug), it's clamped to 0 with a warning log.
 #[derive(Clone, Deserialize, Serialize, Debug, Default, PartialEq)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct UsageMetadata {
     /// Total number of input tokens (prompt tokens sent to the model)
     #[serde(
@@ -719,6 +737,7 @@ pub struct ToolCallInfo<'a> {
 /// - Trajectory/replay recording
 /// - Passing to async tasks or storing in collections
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct OwnedFunctionCallInfo {
     /// Unique identifier for this function call (used when sending results back)
     pub id: String,
@@ -817,6 +836,7 @@ pub struct GoogleMapsResultInfo<'a> {
 /// iterate [`InteractionResponse::steps`] directly.
 #[derive(Clone, Deserialize, Serialize, Debug, Default)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct InteractionResponse {
     /// Unique identifier for this interaction.
     ///
@@ -2153,6 +2173,26 @@ mod tests {
     // =========================================================================
     // ModalityTokens / GroundingToolCount
     // =========================================================================
+
+    #[test]
+    fn modality_tokens_new_sets_both_fields() {
+        // `ModalityTokens` is `#[non_exhaustive]` with no `Default`, so this
+        // constructor is the only non-serde route to a value — which makes
+        // its signature, not just its behavior, part of the public API.
+        let tokens = ModalityTokens::new("text", 42);
+        assert_eq!(tokens.modality, "text");
+        assert_eq!(tokens.tokens, 42);
+
+        // Accepts both `&str` and `String` via `impl Into<String>`.
+        let owned = ModalityTokens::new(String::from("image"), 7);
+        assert_eq!(owned.modality, "image");
+        assert_eq!(owned.tokens, 7);
+
+        // And round-trips through serde like a deserialized one.
+        let wire = serde_json::to_value(&tokens).unwrap();
+        let back: ModalityTokens = serde_json::from_value(wire).unwrap();
+        assert_eq!(back, tokens);
+    }
 
     #[test]
     fn test_modality_tokens_serialization() {

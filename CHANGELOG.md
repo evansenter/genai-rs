@@ -84,6 +84,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   built `InteractionRequest` and matches on `input` after reloading it now
   takes a different branch. (#427)
 
+- **Breaking: response structs are now `#[non_exhaustive]`.** The convention
+  was already documented in `docs/ENUM_WIRE_FORMATS.md`, but 32 deserializable
+  response types had drifted from it — including the five (`Trigger`,
+  `TriggerExecution`, `Environment`, `Agent`, `Webhook`) that adding an `extra`
+  field had just turned into a breaking change. Under the convention that
+  would have been a non-event.
+
+  **What breaks:** struct-literal construction of these types from another
+  crate, and `..Default::default()` functional-update syntax. Exhaustive
+  `match` on them needs a `..` arm.
+
+  **What still works:** `T::default()` followed by field assignment, on every
+  one of these types that derives `Default` — which is most of them, including
+  `InteractionResponse`, `UsageMetadata`, `Agent`, `Trigger`, `Environment`,
+  `Webhook` and the `*ListResponse` wrappers. That is the migration for most
+  call sites:
+
+  ```rust
+  // before
+  let response = InteractionResponse { id: Some("x".into()), ..Default::default() };
+  // after
+  let mut response = InteractionResponse::default();
+  response.id = Some("x".into());
+  ```
+
+  For the few with neither `Default` nor a constructor, deserialize a JSON
+  fixture. `ModalityTokens` gains a `new()` in this release for that reason.
+
+  Request-side types are deliberately untouched: `GenerationConfig`,
+  `FunctionDeclaration`, the tool configs and the create/update bodies are
+  yours to build, and closing them would cost construction syntax while
+  gaining the crate nothing. The exception is a body that ships builders —
+  `CreateFileSearchStoreRequest` is `#[non_exhaustive]` because `new()` /
+  `with_display_name()` / `with_extra()` already give callers a construction
+  path, so closing it takes nothing away.
+
+  `tests/non_exhaustive_responses.rs` now fails the build on a new response
+  struct without the attribute, so the backlog cannot re-accumulate.
+
 - **Breaking:** `Content::Video` has a new `processing` field. Code that
   constructs or exhaustively destructures the variant with struct-literal
   syntax needs `processing: None` (or `..`) added. The `Content::video_*()`
@@ -110,10 +149,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   serialize via `serde_json::to_value`.
 
 - **Breaking:** the five structs above have a new `extra` field. All derive
-  `Default`, so exhaustive struct literals can add `..Default::default()`.
-  (These types are not `#[non_exhaustive]`, unlike the convention
-  `docs/ENUM_WIRE_FORMATS.md` documents for response structs — tracked
-  separately.)
+  `Default`; see the `#[non_exhaustive]` entry above for how to construct
+  them from outside the crate — `..Default::default()` is functional-update
+  syntax, which that attribute now blocks, so the route is `T::default()`
+  followed by field assignment.
 
 - **`StepSummary` gains a `tool_call_count` field, and is now
   `#[non_exhaustive]`.** Exhaustive struct literals and destructuring without
@@ -285,6 +324,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no chunk contents (so `has_file_search_results()` can be `true` while
   `file_search_results()` is empty), and `file_search` cannot be combined with
   either `google_search` or `url_context` (`code_execution` is fine).
+
+- **`ModalityTokens::new()`** — the type had no `Default` and no constructor,
+  so closing it above would otherwise have left `serde` as the only way to
+  produce one.
 
 ### Removed
 

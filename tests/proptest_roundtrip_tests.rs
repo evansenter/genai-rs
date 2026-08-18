@@ -131,7 +131,10 @@ fn arb_modality_tokens() -> impl Strategy<Value = ModalityTokens> {
         ],
         any::<u32>(),
     )
-        .prop_map(|(modality, tokens)| ModalityTokens { modality, tokens })
+        // `ModalityTokens` is `#[non_exhaustive]` and derives no `Default`,
+        // so unlike the strategies below it needs the constructor rather
+        // than default-then-assign.
+        .prop_map(|(modality, tokens)| ModalityTokens::new(modality, tokens))
 }
 
 /// Strategy for generating an optional Vec of ModalityTokens.
@@ -169,19 +172,23 @@ fn arb_usage_metadata() -> impl Strategy<Value = UsageMetadata> {
                 cached_tokens_by_modality,
                 tool_use_tokens_by_modality,
             )| {
-                UsageMetadata {
-                    total_input_tokens,
-                    total_output_tokens,
-                    total_tokens,
-                    total_cached_tokens,
-                    total_thought_tokens,
-                    total_tool_use_tokens,
-                    input_tokens_by_modality,
-                    output_tokens_by_modality,
-                    cached_tokens_by_modality,
-                    tool_use_tokens_by_modality,
-                    grounding_tool_count: None,
-                }
+                // `#[non_exhaustive]` blocks the struct literal from an
+                // integration test, but not default-then-assign. Preferred
+                // over a JSON detour: exact, and it does not push every
+                // generated value through Serialize/Deserialize before the
+                // roundtrip assertion sees it.
+                let mut usage = UsageMetadata::default();
+                usage.total_input_tokens = total_input_tokens;
+                usage.total_output_tokens = total_output_tokens;
+                usage.total_tokens = total_tokens;
+                usage.total_cached_tokens = total_cached_tokens;
+                usage.total_thought_tokens = total_thought_tokens;
+                usage.total_tool_use_tokens = total_tool_use_tokens;
+                usage.input_tokens_by_modality = input_tokens_by_modality;
+                usage.output_tokens_by_modality = output_tokens_by_modality;
+                usage.cached_tokens_by_modality = cached_tokens_by_modality;
+                usage.tool_use_tokens_by_modality = tool_use_tokens_by_modality;
+                usage
             },
         )
 }
@@ -292,19 +299,20 @@ fn arb_interaction_response() -> impl Strategy<Value = InteractionResponse> {
                 created,
                 updated,
             )| {
-                InteractionResponse {
-                    id,
-                    model,
-                    agent,
-                    steps,
-                    status,
-                    usage,
-                    previous_interaction_id,
-                    environment_id,
-                    created,
-                    updated,
-                    ..Default::default()
-                }
+                // Default-then-assign: `#[non_exhaustive]` blocks the struct
+                // literal and `..Default::default()` here, but not this.
+                let mut response = InteractionResponse::default();
+                response.id = id;
+                response.model = model;
+                response.agent = agent;
+                response.steps = steps;
+                response.status = status;
+                response.usage = usage;
+                response.previous_interaction_id = previous_interaction_id;
+                response.environment_id = environment_id;
+                response.created = created;
+                response.updated = updated;
+                response
             },
         )
 }

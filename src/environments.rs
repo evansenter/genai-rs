@@ -136,6 +136,7 @@ impl<'de> Deserialize<'de> for EnvironmentStatus {
 /// `/v1beta/environments` resource.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct Environment {
     /// Output only. The ID of the environment.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -268,6 +269,7 @@ impl CreateEnvironmentRequest {
 /// Response from listing environments.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct EnvironmentListResponse {
     /// The environments in this page. A null or malformed list degrades to
     /// empty; malformed elements drop individually.

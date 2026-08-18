@@ -1521,7 +1521,8 @@ This ensures forward compatibility when Google adds new enum values.
 
 Response structs (e.g., `AutoFunctionResult`) also use `#[non_exhaustive]` so we can add fields without breaking user code. This has a trade-off:
 
-**Users cannot construct these types directly** (no struct literal syntax outside the crate). This is intentional:
+**No struct-literal or `..Default::default()` syntax outside the crate** — see
+**Constructing fixtures** below for what remains available. This is intentional:
 - Response types represent API responses, not user-constructed data
 - Mocking them in unit tests would give false confidence
 - We can add fields (like `executions` was added to `AutoFunctionResult`) without breaking changes
@@ -1531,9 +1532,74 @@ Response structs (e.g., `AutoFunctionResult`) also use `#[non_exhaustive]` so we
 2. Mock at the HTTP layer, not the response type layer
 3. Test their own logic separately from API response handling
 
-Note: since revision 2026-05-20, `InteractionResponse` derives `Default` and
-uses `#[serde(default)]`, so test fixtures can be built with
-`InteractionResponse { status: InteractionStatus::Completed, steps: vec![...], ..Default::default() }`.
+**Which structs get it.** The test is not "does the API return it" but *does
+closing it take away the caller's only way to build it*. `#[non_exhaustive]`
+removes struct-literal construction — including the `..Default::default()`
+functional-update form, though not `T::default()` followed by field assignment,
+which still works on the many of these that derive `Default` (see
+**Constructing fixtures** below). On a type the user assembles and the API
+never returns, that costs construction syntax and buys the crate nothing: it
+gains no freedom to add required fields to something only the user builds. So
+`GenerationConfig`, `FunctionDeclaration` and the tool configs stay open.
+
+Everything else carries it, and the two cases that look like exceptions are
+not. A **read-write resource** — one the API both returns and accepts — is
+closed, because the returning half is what the attribute is for and a
+constructor covers the sending half: `Agent`, `Environment`, `Trigger` and
+`Webhook` are all closed, and `Agent::new(id)` and
+`Webhook::new(uri, events)` are why that costs nothing. A **create body that
+ships builders** is closed for the same reason:
+`CreateFileSearchStoreRequest` carries the attribute because `new()` /
+`with_display_name()` / `with_extra()` already are the construction path.
+
+So: `InteractionResponse`, `UsageMetadata`, the `*ListResponse` wrappers, the
+result-item types and the resource shapes carry it; a request type stays open
+only while it has no constructor of its own.
+
+**Enforced, not reviewed.** `tests/non_exhaustive_responses.rs` scans `src/`
+and fails on any deserializable public struct missing the attribute that is
+not listed in its `REQUEST_SIDE` exemption list. Review is a poor detector for
+an attribute being *absent* — that is how the five structs in #430 diverged —
+so adding a new response type without it now fails the build, and exempting
+one requires saying so in a list that explains why.
+
+**Constructing fixtures.** `#[non_exhaustive]` removes struct-literal and
+functional-update (`..Default::default()`) syntax outside the crate. It does
+*not* remove `T::default()` followed by field assignment, and most of these
+types derive `Default`:
+
+```text
+// In-crate, still fine:
+InteractionResponse { status: InteractionStatus::Completed, ..Default::default() }
+
+// From an integration test or a downstream crate:
+let mut response = InteractionResponse::default();
+response.status = InteractionStatus::Completed;
+```
+
+Only the types with neither `Default` nor a constructor need a JSON fixture:
+`FileMetadata`, `FileError`, `VideoMetadata`, `ListFilesResponse`,
+`StreamError`, `InteractionStreamEvent`, and `AutoFunctionResult`.
+
+`AutoFunctionResult` is on that list rather than off it despite predating
+this sweep, because it is the type the section above opens with — so a
+reader who follows the pointer from that example arrives here asking about
+exactly it. It derives `Clone, Debug, Serialize, Deserialize` and no
+`Default`, and its inherent methods are `all_executions_succeeded()` and
+`failed_executions()`; the nearby `new()` belongs to
+`AutoFunctionResultAccumulator`.
+
+(`FileUploadResponse` carries the attribute too, but is not in that list: it
+lives in `pub(crate) mod http` and is not re-exported, so no downstream
+caller can name it and the attribute is inert on it. That is the guard
+over-scanning a `pub struct` inside a private module — the loud direction it
+deliberately prefers.)
+
+`tests/proptest_roundtrip_tests.rs` shows both routes.
+
+Not in that list, despite having no `Default`: `ModalityTokens` gained a
+`new()`, `StreamEvent` already had one, and `OwnedFunctionCallInfo` is
+produced by the public `FunctionCallInfo::to_owned()`.
 
 If a `test-support` feature for constructing mock instances becomes commonly requested, we'll consider adding it.
 
