@@ -314,6 +314,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `examples/file_search.rs` now provisions its own store and runs end to end,
   replacing a placeholder store ID that could never work.
 
+- **`ModalityTokens::new()`** — the type had no `Default` and no constructor,
+  so closing it above would otherwise have left `serde` as the only way to
+  produce one.
+
 ### Documented
 
 - Several live-verified File Search behaviors now in
@@ -324,10 +328,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no chunk contents (so `has_file_search_results()` can be `true` while
   `file_search_results()` is empty), and `file_search` cannot be combined with
   either `google_search` or `url_context` (`code_execution` is fine).
-
-- **`ModalityTokens::new()`** — the type had no `Default` and no constructor,
-  so closing it above would otherwise have left `serde` as the only way to
-  produce one.
 
 ### Removed
 
