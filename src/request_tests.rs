@@ -19,7 +19,6 @@ fn test_serialize_create_interaction_request_with_model() {
         store: None,
         system_instruction: None,
         service_tier: None,
-        cached_content: None,
         webhook_config: None,
         environment: None,
         safety_settings: None,
@@ -552,7 +551,6 @@ fn test_create_interaction_request_with_agent_config() {
         store: Some(true),
         system_instruction: None,
         service_tier: None,
-        cached_content: None,
         webhook_config: None,
         environment: None,
         safety_settings: None,
@@ -635,7 +633,6 @@ fn test_interaction_request_roundtrip() {
         store: Some(true),
         system_instruction: Some("Be helpful.".to_string()),
         service_tier: Some(ServiceTier::Flex),
-        cached_content: Some("cachedContents/xyz".to_string()),
         webhook_config: None,
         environment: None,
         safety_settings: None,
@@ -660,7 +657,6 @@ fn test_interaction_request_roundtrip() {
     assert_eq!(original.store, deserialized.store);
     assert_eq!(original.system_instruction, deserialized.system_instruction);
     assert_eq!(original.service_tier, deserialized.service_tier);
-    assert_eq!(original.cached_content, deserialized.cached_content);
 
     // Verify generation_config roundtrips
     let orig_config = original.generation_config.as_ref().unwrap();
@@ -703,7 +699,6 @@ fn test_response_format_serializes_as_snake_case() {
         store: None,
         system_instruction: None,
         service_tier: None,
-        cached_content: None,
         webhook_config: None,
         environment: None,
         safety_settings: None,
@@ -913,7 +908,6 @@ fn test_request_with_webhook_config_and_environment_wire_shape() {
         store: None,
         system_instruction: None,
         service_tier: None,
-        cached_content: None,
         webhook_config: Some(
             WebhookConfig::new().with_uris(vec!["https://example.com/hook".to_string()]),
         ),

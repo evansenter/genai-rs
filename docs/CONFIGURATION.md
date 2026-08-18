@@ -382,21 +382,23 @@ let response = client
 
 ## Cached Content
 
-Reference an explicit context cache to reuse large, repeated context (e.g., a long document) across requests:
+**Explicit context caching is not available on the Interactions API.** The
+request field was removed after live probing (2026-08-16) showed the API
+rejects it outright:
 
-```rust,no_run
-# use genai_rs::Client;
-# async fn example(client: &Client) -> Result<(), genai_rs::GenaiError> {
-let response = client
-    .interaction()
-    .with_model(genai_rs::DEFAULT_MODEL)
-    .with_text("Summarize the cached document")
-    .with_cached_content("cachedContents/xyz")
-    .create()
-    .await?;
-# Ok(())
-# }
+```text
+400 Unknown parameter 'cached_content'
 ```
+
+`cachedContent` and `cached_content_name` are rejected too, and so are both
+spellings nested inside `generation_config` — the position several other
+config-shaped fields do live at. The `/v1beta/cachedContents` resource itself
+works: a cache creates and reports its token count. But nothing in the
+Interactions API consumes one, so there is no way to reference a cache from a
+request.
+
+**Implicit caching still applies** and needs no configuration. Check how much
+of a request hit cache via the response's `usage.total_cached_tokens`.
 
 ## Function Calling Modes
 
@@ -654,7 +656,6 @@ Note: `top_k` was removed by the API revision 2026-05-20.
 | `with_tool_choice()` | Set the full `ToolChoice` union directly |
 | `with_allowed_tools()` | Restrict model to named tools (AllowedTools form) |
 | `with_service_tier()` | Set latency/priority tier |
-| `with_cached_content()` | Reference an explicit context cache |
 | `with_response_format()` | JSON schema for structured output |
 | `with_timeout()` | Set request timeout |
 

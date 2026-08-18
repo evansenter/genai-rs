@@ -280,7 +280,14 @@ pub struct UsageMetadata {
         deserialize_with = "deserialize_optional_token_count"
     )]
     pub total_tokens: Option<u32>,
-    /// Total number of cached tokens (from context caching, reduces billing)
+    /// Total number of cached tokens, which reduce billing.
+    ///
+    /// This is **implicit** caching, applied by the API with no
+    /// configuration. Explicit context caching is not available on the
+    /// Interactions API: the request field is rejected at every spelling and
+    /// at both the top level and inside `generation_config` (verified live
+    /// 2026-08-16), so there is nothing to pair this with — a non-zero value
+    /// here is the whole story.
     #[serde(
         skip_serializing_if = "Option::is_none",
         deserialize_with = "deserialize_optional_token_count"

@@ -178,9 +178,8 @@ distinguishes them.
 | *"Unknown parameter 'x'"* | Absent from the schema entirely | **Remove** |
 
 Kept for parity: `safety_settings`, `labels`, `Tool::Retrieval`,
-`enable_bigquery_tool`. Removed: `response_mime_type`; `cached_content`
-removal pending in #439, which is open at the time of writing — until it
-lands, the builder is still shipped.
+`enable_bigquery_tool`. Removed: `response_mime_type` and `cached_content`
+(#439).
 
 **Consequences.** Modeling a field the endpoint rejects is only justified when
 the field is real somewhere. `cached_content` shipped as a public builder
