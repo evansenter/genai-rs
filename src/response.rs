@@ -1785,7 +1785,8 @@ impl InteractionResponse {
 // Closed deliberately, in the same change that takes the break. Adding
 // `tool_call_count` is source-breaking *only* because this struct is open, and
 // the API is expected to grow step types — this PR argues `mcp_server_tool_call`
-// may start arriving, and the #438 sweep exists to catch new ones. Without the
+// may start arriving, and the recurring SDK-bindings sweep (#421) is the
+// intended detector for new ones. Without the
 // attribute every future counter repeats this break for a purely mechanical
 // reason; with it, they are additive.
 //

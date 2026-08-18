@@ -123,7 +123,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Closed in the same change that takes the break, deliberately. The field
   addition is source-breaking *only* because the struct was open, and the API
   is expected to grow step types — `mcp_server_tool_call` may start arriving,
-  and the #438 sweep exists to catch new ones — so every future counter would
+  and the recurring SDK-bindings sweep (#421) is the intended detector for
+  new ones — so every future counter would
   repeat this break for a purely mechanical reason. Doing it now costs
   consumers nothing extra: they are already recompiling for the new field.
 
