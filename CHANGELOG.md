@@ -240,6 +240,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `InteractionInput::Content` returns `400 Unknown parameter 'processing'`, so
   use `InteractionInput::Steps`.
 
+- **`ModalityTokens::new()`** — the type had no `Default` and no constructor,
+  so closing it above would otherwise have left `serde` as the only way to
+  produce one.
+
 ### Removed
 
 - **Breaking: `with_cached_content()` and `InteractionRequest.cached_content`.**
@@ -268,10 +272,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Implicit caching is unaffected and still reported via
   `usage.total_cached_tokens`.
-
-- **`ModalityTokens::new()`** — the type had no `Default` and no constructor,
-  so closing it above would otherwise have left `serde` as the only way to
-  produce one.
 
 ## [0.10.0] - 2026-08-16
 
