@@ -146,8 +146,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   As on the request side, a key colliding with a modeled field wins on
   serialize via `serde_json::to_value`.
 
-### Changed (breaking)
-
 - **Breaking:** the five structs above have a new `extra` field. All derive
   `Default`, so exhaustive struct literals can add `..Default::default()`.
   (These types are not `#[non_exhaustive]`, unlike the convention
