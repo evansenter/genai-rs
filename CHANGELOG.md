@@ -115,6 +115,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/ENUM_WIRE_FORMATS.md` documents for response structs — tracked
   separately.)
 
+- **`StepSummary` gains a `tool_call_count` field, and is now
+  `#[non_exhaustive]`.** Exhaustive struct literals and destructuring without
+  a `..` rest pattern will fail to compile — both because of the new field and
+  because the struct is now closed.
+
+  Closed in the same change that takes the break, deliberately. The field
+  addition is source-breaking *only* because the struct was open, and the API
+  is expected to grow step types — `mcp_server_tool_call` may start arriving,
+  and the recurring SDK-bindings sweep (#421) is the intended detector for
+  new ones — so every future counter would
+  repeat this break for a purely mechanical reason. Doing it now costs
+  consumers nothing extra: they are already recompiling for the new field.
+
+  `Default` is derived, so the migration is `StepSummary::default()` then
+  assign — pinned by `tests/ui/pass_step_summary_migration.rs`, a trybuild
+  fixture compiled as its own crate. Its counterpart
+  `tests/ui/fail_step_summary_struct_literal.rs` pins the attribute itself:
+  the migration path compiles the same with or without it, so only a
+  `compile_fail` fixture goes red if it is removed.
+
 ### Fixed
 
 - **`#[tool]` no longer requires consumer-side dependencies or imports**
@@ -199,6 +219,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when the video sits inside a `user_input` step. Sending the same content via
   `InteractionInput::Content` returns `400 Unknown parameter 'processing'`, so
   use `InteractionInput::Steps`.
+
+- **`Step::ToolCall`** — the generic `tool_call` step the API actually emits
+  for server-side tool invocations, including MCP (#433).
+
+  Before this it landed in `Step::Unknown`, so a successful MCP interaction
+  reported no tool calls at all. Verified live (2026-08-16,
+  `gemini-3.7-flash`, a real MCP server): the step carries only
+  `{id, signature}`. Which server or tool ran is not recoverable from the
+  response; `usage.total_tool_use_tokens` is what shows the call happened.
+
+- **`InteractionResponse::tool_calls()` / `has_tool_calls()`** and the
+  `ToolCallInfo` borrowed view they return — `id` plus `signature`, which is
+  everything the API discloses about a server-side tool call.
+
+- **`StepSummary::tool_call_count`** — where MCP calls are counted.
+  `mcp_server_tool_call_count` reads **0** on a successful MCP interaction,
+  which is worse than absent: a caller checking it concludes MCP did not run.
+  Both fields now cross-reference each other.
+
+  `Step::McpServerToolCall` / `McpServerToolResult` are retained and now
+  documented as spec-present but never observed — the same status as
+  `Tool::Retrieval`, and unlike `cached_content` (D-005) nothing rejects
+  them.
 
 ### Removed
 
