@@ -200,6 +200,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `InteractionInput::Content` returns `400 Unknown parameter 'processing'`, so
   use `InteractionInput::Steps`.
 
+### Removed
+
+- **Breaking: `with_cached_content()` and `InteractionRequest.cached_content`.**
+  The Interactions API rejects the field outright:
+
+  ```
+  400 Unknown parameter 'cached_content'
+  ```
+
+  `cachedContent` and `cached_content_name` are rejected too, so it isn't a
+  spelling problem — and neither is it a placement one: `generation_config`
+  holds several fields that are not top-level (`transcription_config`,
+  `speech_config`), but both spellings are rejected there as well
+  (`Unknown parameter 'cached_content' at 'generation_config'`). The
+  `/v1beta/cachedContents` resource works fine — a cache creates and reports
+  its token count — but nothing in the Interactions API consumes one, so the
+  builder method could only ever produce a 400.
+
+  It shipped because the field was modeled from the spec and never live-probed;
+  its test asserted the field *serialized* correctly, which it did.
+
+  This follows the `response_mime_type` precedent — rejected outright, so
+  removed — rather than the `safety_settings` / `Tool::Retrieval` one, where
+  the API explicitly names the feature as Vertex-only and the surface is kept
+  for spec parity.
+
+  Implicit caching is unaffected and still reported via
+  `usage.total_cached_tokens`.
+
 - **File Search Store management.** `Tool::FileSearch` takes store names, but
   the crate had no way to *create* a store — so file search was unusable
   without provisioning one out-of-band. New `Client` methods close that loop:

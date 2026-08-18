@@ -47,7 +47,7 @@ Methods follow a consistent naming pattern based on their behavior:
 | `with_system_instruction()` | with | replaces | Plain string; not inherited across turns |
 | `with_timeout()` | with | replaces | |
 | `with_service_tier(ServiceTier)` | with | replaces | `Flex`/`Standard`/`Priority` (wire: lowercase `"flex"`/`"standard"`/`"priority"`) |
-| `with_cached_content(impl Into<String>)` | with | replaces | References an explicit context cache (e.g. `"cachedContents/xyz"`) |
+| ~~`with_cached_content()`~~ | — | — | **Removed** — the API rejects the field (`400 Unknown parameter 'cached_content'`); no Interactions request can reference a cache |
 | `with_webhook_config(WebhookConfig)` | with | replaces | Per-request webhook routing (`uris` + `user_metadata`) |
 | `with_environment(impl Into<EnvironmentSpec>)` | with | replaces | Environment ID string or typed `RemoteEnvironment` |
 | `with_safety_settings(Vec<SafetySetting>)` | with | replaces | Vertex-only (Gemini API rejects with 400) |
