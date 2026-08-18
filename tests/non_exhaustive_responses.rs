@@ -39,12 +39,12 @@
 //! carry the attribute by hand, and those two do not. Named rather than
 //! counted, deliberately — a tally here drifts the moment a view is added or
 //! annotated, and the actionable half is *which* types are uncovered, not how
-//! many. Unlike the enum gap this
-//! needs no new plumbing, only a widened condition — but widening it is a
-//! scoping decision, not an oversight to be quietly fixed. Stated here, with
-//! the count, so a clean run is not read as covering them and so a reader who
-//! greps for one named type does not conclude the boundary is one struct
-//! wide.
+//! many. (`ImageInfo` and `AudioInfo` are the only other view types and their
+//! fields are private, so they are not in this gap at all.) Unlike the enum
+//! gap this needs no new plumbing, only a widened condition — but widening it
+//! is a scoping decision, not an oversight to be quietly fixed. Stated here so
+//! a clean run is not read as covering them, and so a reader who greps for one
+//! named type does not conclude the boundary is one struct wide.
 //!
 //! Two parsing assumptions, both currently true of `src/` and neither
 //! enforced:
