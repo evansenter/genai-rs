@@ -441,7 +441,11 @@ fn mime_type_header(mime_type: &str) -> Result<HeaderValue, GenaiError> {
 /// failing on one a header cannot carry.
 ///
 /// Non-ASCII is *not* the hazard: `HeaderValue` permits obs-text, so
-/// `résumé.txt` and `文件.txt` both build fine (verified against reqwest 0.12).
+/// `résumé.txt` and `文件.txt` both build fine — pinned by
+/// `upload_file_name_header_passes_non_ascii_through` below, which is the real
+/// guarantee here since it runs against whatever `http` version the workspace
+/// resolves rather than one named in a comment. (`HeaderValue` is `http`'s
+/// type, re-exported through reqwest.)
 /// Control characters are — a filename containing a newline is legal on Linux,
 /// and `HeaderValue::try_from` rejects it. `RequestBuilder::header` stores that
 /// as a *deferred* builder error rather than failing at the call, so it

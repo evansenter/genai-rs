@@ -214,7 +214,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   | `wait_for_document_active` | Block until a document is indexed |
 
   Plus the `FileSearchStore`, `FileSearchDocument`, and `DocumentState` types,
-  all carrying Evergreen `extra` passthrough.
+  all carrying Evergreen `extra` passthrough. The two list envelopes
+  (`FileSearchStoreListResponse`, `DocumentListResponse`) do not, matching
+  `AgentListResponse` and its siblings — a field the API adds alongside
+  `next_page_token` is still dropped. Tracked in #460.
 
   ```rust
   let store = client.create_file_search_store(Some("my-docs")).await?;

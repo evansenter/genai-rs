@@ -1993,8 +1993,14 @@ impl Client {
     ///
     /// # Errors
     ///
-    /// Returns [`GenaiError::InvalidInput`] for a malformed store name or an
-    /// unreadable file, and an API or network error if the request fails.
+    /// Returns [`GenaiError::InvalidInput`] for a malformed store name, a file
+    /// that is unreadable, empty, or over the 2 GB ceiling, or a file whose
+    /// MIME type cannot be inferred from its extension — use
+    /// [`upload_to_file_search_store_with_mime`](Self::upload_to_file_search_store_with_mime)
+    /// in that case. Returns an API or network error if the request fails.
+    ///
+    /// Note that "unreadable" and "empty" are separate cases: a zero-byte file
+    /// reads fine and is rejected on its own guard.
     ///
     /// # Example
     ///
@@ -2040,10 +2046,10 @@ impl Client {
     ///
     /// # Errors
     ///
-    /// Returns [`GenaiError::InvalidInput`] for a malformed store name, an
-    /// unreadable file, or a MIME type that cannot be sent as a header value
-    /// (one containing control characters), and an API or network error if the
-    /// request fails.
+    /// Returns [`GenaiError::InvalidInput`] for a malformed store name, a file
+    /// that is unreadable, empty, or over the 2 GB ceiling, or a MIME type that
+    /// cannot be sent as a header value (one containing control characters).
+    /// Returns an API or network error if the request fails.
     ///
     /// MIME *syntax* is not checked here: `nonsense` or `text/` are valid
     /// header values, so they reach the API and come back as an API error
