@@ -37,9 +37,29 @@ jobs:
         with:
           path: genai-rs
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install mold linker
-        timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+      # Best effort, and deliberately not a gate. Neither job here exists to
+      # test a linker — mold is a link-speed optimization — but this step has
+      # failed the consumer job twice by hanging: `apt-get update` retries an
+      # unreachable azure mirror until the step timeout fires, so the install
+      # never runs. The `|| true` guarded a non-zero exit, not the hang.
+      #
+      # Install against the image's existing index first, since the runner
+      # already indexes `mold` and `update` is the part that hangs; fall back
+      # to a *bounded* update only if that misses. `continue-on-error` then
+      # keeps a mirror outage from reddening a job whose red is supposed to
+      # mean one specific thing — the argument the failure annotation further
+      # down already makes, applied to the outcome rather than the message.
+      - name: Install mold linker (best effort)
+        id: mold
+        continue-on-error: true
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          if ! sudo apt-get install -y mold; then
+            timeout 60 sudo apt-get update || true
+            sudo apt-get install -y mold
+          fi
+          echo "have_mold=1" >> "$GITHUB_OUTPUT"
 
       - name: Scaffold a consumer crate outside the workspace
         run: |
@@ -167,7 +187,13 @@ jobs:
           # discovery walks up from the build directory, and the checkout is
           # at `genai-rs/` while the build runs in `consumer/`, so
           # `genai-rs/.cargo/config.toml` is never on that path.
-          RUSTFLAGS: -C link-arg=-fuse-ld=mold
+          #
+          # Conditional on the install having succeeded. Naming a linker
+          # that is not installed is exactly the #428 failure — `cannot
+          # find 'ld'`, reported against a binary that *is* present rather
+          # than the one that is not — and it would fire on every mirror
+          # outage now that the install no longer gates the job.
+          RUSTFLAGS: ${{ steps.mold.outputs.have_mold == '1' && '-C link-arg=-fuse-ld=mold' || '' }}
         run: |
           set -euo pipefail
           cargo run
@@ -206,9 +232,29 @@ jobs:
         with:
           path: genai-rs
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install mold linker
-        timeout-minutes: 5
-        run: sudo apt-get update || true; sudo apt-get install -y mold
+      # Best effort, and deliberately not a gate. Neither job here exists to
+      # test a linker — mold is a link-speed optimization — but this step has
+      # failed the consumer job twice by hanging: `apt-get update` retries an
+      # unreachable azure mirror until the step timeout fires, so the install
+      # never runs. The `|| true` guarded a non-zero exit, not the hang.
+      #
+      # Install against the image's existing index first, since the runner
+      # already indexes `mold` and `update` is the part that hangs; fall back
+      # to a *bounded* update only if that misses. `continue-on-error` then
+      # keeps a mirror outage from reddening a job whose red is supposed to
+      # mean one specific thing — the argument the failure annotation further
+      # down already makes, applied to the outcome rather than the message.
+      - name: Install mold linker (best effort)
+        id: mold
+        continue-on-error: true
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          if ! sudo apt-get install -y mold; then
+            timeout 60 sudo apt-get update || true
+            sudo apt-get install -y mold
+          fi
+          echo "have_mold=1" >> "$GITHUB_OUTPUT"
 
       - name: Scaffold a minimal consumer (no async-trait, no serde_json, no trait import)
         run: |
@@ -259,7 +305,13 @@ jobs:
           # Same cargo-config-discovery gap as the job above: the build runs
           # in `minimal/`, so `genai-rs/.cargo/config.toml` is never on the
           # walk-up path and the mold install would otherwise be inert.
-          RUSTFLAGS: -C link-arg=-fuse-ld=mold
+          #
+          # Conditional on the install having succeeded. Naming a linker
+          # that is not installed is exactly the #428 failure — `cannot
+          # find 'ld'`, reported against a binary that *is* present rather
+          # than the one that is not — and it would fire on every mirror
+          # outage now that the install no longer gates the job.
+          RUSTFLAGS: ${{ steps.mold.outputs.have_mold == '1' && '-C link-arg=-fuse-ld=mold' || '' }}
         run: cargo build
 
       - name: Report status
