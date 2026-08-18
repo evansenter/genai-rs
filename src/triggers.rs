@@ -422,6 +422,21 @@ pub struct Trigger {
         deserialize_with = "crate::serde_util::deserialize_lenient_timestamp::<_, crate::serde_util::ForTrigger>"
     )]
     pub last_resume_time: Option<DateTime<Utc>>,
+    /// Fields the API returned that this struct does not model, preserved
+    /// for roundtrip (Evergreen).
+    ///
+    /// Without this, a deserialize-then-serialize cycle silently drops any
+    /// field the crate has not modeled yet — invisible to the caller, and
+    /// unrecoverable. This is the sharpest case in the family: trigger creation is
+    /// agent-gated, so the response shape has never been live-verified and a
+    /// field the API returns today would be both invisible and unrecoverable.
+    ///
+    /// A key that collides with a modeled field **wins on serialize** via
+    /// `serde_json::to_value`, matching the request-side escape hatches.
+    /// (`to_string` on a flattened struct emits both keys rather than
+    /// deduplicating; don't hand-serialize colliding keys.)
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Deserializes `Trigger::interaction`, degrading a nested `input` that
@@ -818,6 +833,20 @@ pub struct TriggerExecution {
         deserialize_with = "crate::serde_util::deserialize_lenient_timestamp::<_, crate::serde_util::ForTriggerExecution>"
     )]
     pub end_time: Option<DateTime<Utc>>,
+    /// Fields the API returned that this struct does not model, preserved
+    /// for roundtrip (Evergreen).
+    ///
+    /// Without this, a deserialize-then-serialize cycle silently drops any
+    /// field the crate has not modeled yet — invisible to the caller, and
+    /// unrecoverable. Same unverified-shape caveat as [`Trigger`]: the executions
+    /// listing has not been observed against a real agent-gated trigger.
+    ///
+    /// A key that collides with a modeled field **wins on serialize** via
+    /// `serde_json::to_value`, matching the request-side escape hatches.
+    /// (`to_string` on a flattened struct emits both keys rather than
+    /// deduplicating; don't hand-serialize colliding keys.)
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Response from listing triggers.
@@ -1377,5 +1406,98 @@ mod tests {
             assert_eq!(serde_json::to_value(&status).unwrap(), wire);
             assert_eq!(status.to_string(), wire);
         }
+    }
+
+    // --- Evergreen `extra` passthrough on response shapes (#406) ---
+
+    #[test]
+    fn trigger_preserves_unknown_response_fields() {
+        // The response shape is unverified while trigger creation is
+        // agent-gated, so a field the API returns today would otherwise be
+        // both invisible and unrecoverable to a caller.
+        let wire = serde_json::json!({
+            "id": "trig_123",
+            "display_name": "nightly",
+            "future_field": {"nested": [1, 2]}
+        });
+
+        let trigger: Trigger = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(
+            trigger.extra.get("future_field"),
+            Some(&serde_json::json!({"nested": [1, 2]}))
+        );
+        assert_eq!(serde_json::to_value(&trigger).unwrap(), wire);
+    }
+
+    #[test]
+    fn trigger_without_unknown_fields_has_empty_extra() {
+        let trigger: Trigger =
+            serde_json::from_value(serde_json::json!({"id": "trig_123"})).unwrap();
+        assert!(trigger.extra.is_empty());
+        // An empty map must not add a key on serialize.
+        assert_eq!(
+            serde_json::to_value(&trigger).unwrap(),
+            serde_json::json!({"id": "trig_123"})
+        );
+    }
+
+    #[test]
+    fn trigger_execution_preserves_unknown_response_fields() {
+        let wire = serde_json::json!({
+            "id": "exec_1",
+            "trigger_id": "trig_123",
+            "future_metric": 42
+        });
+
+        let execution: TriggerExecution = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(
+            execution.extra.get("future_metric"),
+            Some(&serde_json::json!(42))
+        );
+        assert_eq!(serde_json::to_value(&execution).unwrap(), wire);
+    }
+
+    #[test]
+    fn trigger_extra_wins_on_collision() {
+        // The doc comment on all five new `extra` fields states this as a
+        // guarantee, and it is not intrinsic — it holds only because the
+        // flattened map is emitted last, which is a consequence of `extra`
+        // being declared after the modeled fields. Moving the declaration up
+        // is a plausible tidy-up that nothing else in these structs depends
+        // on, and it would silently flip the documented behaviour on all
+        // five while every other test still passed. Pinned on `Trigger` as
+        // the representative; the mechanism is identical across the five.
+        let mut trigger: Trigger =
+            serde_json::from_value(serde_json::json!({"id": "trig_123"})).unwrap();
+        trigger
+            .extra
+            .insert("id".into(), serde_json::json!("from_extra"));
+        let json = serde_json::to_value(&trigger).unwrap();
+        assert_eq!(
+            json["id"], "from_extra",
+            "a colliding key must win on serialize, as the field doc promises"
+        );
+    }
+
+    #[test]
+    fn trigger_execution_without_unknown_fields_has_empty_extra() {
+        let execution: TriggerExecution =
+            serde_json::from_value(serde_json::json!({"id": "exec_1"})).unwrap();
+        assert!(execution.extra.is_empty());
+        // An empty map must not add a key on serialize.
+        assert_eq!(
+            serde_json::to_value(&execution).unwrap(),
+            serde_json::json!({"id": "exec_1"})
+        );
+    }
+
+    #[test]
+    fn trigger_extra_does_not_disturb_equality_for_identical_wire() {
+        // PartialEq includes the map, so two triggers parsed from the same
+        // wire stay equal — existing equality-based tests are unaffected.
+        let wire = serde_json::json!({"id": "trig_123", "unknown": true});
+        let a: Trigger = serde_json::from_value(wire.clone()).unwrap();
+        let b: Trigger = serde_json::from_value(wire).unwrap();
+        assert_eq!(a, b);
     }
 }

@@ -126,6 +126,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   syntax needs `processing: None` (or `..`) added. The `Content::video_*()`
   constructors are unaffected.
 
+- **Evergreen `extra` passthrough on response-side resource shapes.**
+  `Trigger`, `TriggerExecution`, `Environment`, `Agent`, and `Webhook` now
+  carry a flattened `extra` map, so a deserialize-then-serialize cycle no
+  longer silently drops fields the crate hasn't modeled.
+
+  Scoped to those five resource shapes themselves. Types nested inside them
+  still drop unmodeled keys — `SigningSecret`, `EnvironmentSource`,
+  `NetworkConfig` — as do the list envelopes (`AgentListResponse` and its
+  siblings), so a new field alongside `next_page_token` is still lost.
+  Extending the passthrough down those trees is follow-up work.
+
+  `Content` and `RemoteEnvironment` already did this; the request bodies
+  gained it in 0.9.0. These five were the remaining hole, and `Trigger` /
+  `TriggerExecution` are the sharpest cases — trigger creation is agent-gated,
+  so their response shapes have never been live-verified and a field the API
+  returns today would be both invisible and unrecoverable.
+
+  As on the request side, a key colliding with a modeled field wins on
+  serialize via `serde_json::to_value`.
+
+- **Breaking:** the five structs above have a new `extra` field. All derive
+  `Default`, so exhaustive struct literals can add `..Default::default()`.
+  (These types are not `#[non_exhaustive]`, unlike the convention
+  `docs/ENUM_WIRE_FORMATS.md` documents for response structs — tracked
+  separately.)
+
 ## [0.10.0] - 2026-08-16
 
 ### Added
