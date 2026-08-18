@@ -160,6 +160,12 @@ RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo doc --workspace --no-deps --featur
 
 ## Core Design Philosophy: Evergreen Soft-Typing
 
+> **Why is it like this?** `DECISIONS.md` holds the reasoning behind the
+> durable design choices — Evergreen soft-typing, `#[non_exhaustive]` response
+> structs, model constants, the verify-from-bindings-first rule, and what to do
+> with fields the API rejects. This file holds the rules; that file holds the
+> arguments. `CONTRIBUTING.md` covers setup and the review checklist.
+
 This library follows the [Evergreen spec](https://github.com/google-deepmind/evergreen-spec) philosophy: **unknown data should be preserved, not rejected**.
 
 ### Key Principles
@@ -314,14 +320,46 @@ After merging version bump PR:
    before the tag exists rather than after):
    `RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo +nightly doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs`
    (matches the `[package.metadata.docs.rs]` feature set; `-D warnings` here
-   is deliberately stricter than docs.rs and the CI gate — warnings are an
-   early signal locally, but only hard errors fail the actual docs.rs build)
+   is deliberately stricter than docs.rs, though not stricter than the CI
+   gate — `rust.yml`'s docs.rs-feature-set step sets the same flags on
+   stable. What the local run buys is the toolchain: nightly, which is what
+   docs.rs builds on. `release.yml` does run nightly rustdoc, but without
+   `-D warnings` and only once the tag exists — which is the whole point of
+   doing it here first. Warnings are an early signal locally; only hard
+   errors fail the actual docs.rs build.)
 1. **Tag the release**: `git tag -a vX.Y.Z origin/main -m "Release vX.Y.Z"`
 2. **Push tag**: `git push origin vX.Y.Z`
-3. **Create GitHub release**: `gh release create vX.Y.Z --title "vX.Y.Z" --notes "..."` (copy from CHANGELOG)
-4. **Publish to crates.io**:
-   - `cargo publish -p genai-rs-macros` (wait 30s for index)
-   - `cargo publish -p genai-rs`
+3. **Watch the run.** The tag push is the trigger — `release.yml` runs on
+   `push: tags: ['v*']` and does the rest itself, in this order:
+
+   | Job | What it does |
+   |-----|--------------|
+   | `validate` | check, unit tests, doctests, the full integration suite, fmt, clippy, and the docs.rs build on both stable and nightly |
+   | `publish` | re-checks the tag against `Cargo.toml`, publishes `genai-rs-macros`, polls crates.io until it is indexed (up to 5 min), then publishes `genai-rs` |
+   | `github-release` | creates the GitHub release; body is the `## [X.Y.Z]` section of `CHANGELOG.md`, followed by the auto-generated PR list and compare link |
+
+   If that section is missing — the Version Bump Checklist above is what
+   creates it: rename `## [Unreleased]` if the file has one, otherwise add a
+   `## [X.Y.Z] - YYYY-MM-DD` heading above the previous release — the job
+   does not fail. It emits a `::warning::No [X.Y.Z] section in CHANGELOG.md` and falls
+   back to a raw commit list, which is then worth replacing by hand. The
+   fallback leaves no trace in the release itself — and since the
+   auto-generated list is appended either way, the signal is the *absence of
+   the CHANGELOG prose* at the top of the body, not the presence of a list.
+
+   Nothing here is a manual step. Running `cargo publish` or
+   `gh release create` by hand races the workflow: neither silently
+   double-publishes — `cargo publish` refuses an already-uploaded version —
+   but both fail confusingly, on a release that already succeeded.
+
+   **If something fails, what you do next depends on how far it got:**
+
+   | Failure | Recovery |
+   |---------|----------|
+   | `validate` fails | Nothing published. Re-run the job first — this step runs the full live integration suite, which CLAUDE.md's own testing section warns may flake, and it hard-fails on an empty or whitespace `GEMINI_API_KEY`. Re-tag only for a real defect. |
+   | `publish` fails on the tag check | Nothing published — the tag-vs-`Cargo.toml` check runs before the first upload. Delete the tag, fix the version, tag again. |
+   | `publish` fails *between* the two crates | `genai-rs-macros` is already on crates.io and that version can never be re-uploaded, so re-tagging does **not** recover: the retry's first `cargo publish -p genai-rs-macros` fails and `genai-rs` never publishes. Bump to a new patch version and release that. |
+   | `github-release` fails | Both crates are published; only the GitHub release is missing. Re-run the job, or create the release by hand from the CHANGELOG. |
 
 ## Logging
 

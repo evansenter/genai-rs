@@ -318,7 +318,8 @@ jobs:
           for test in ${{ matrix.tests }}; do
             echo "::group::Running $test"
             # --success-output=final keeps passing-test output (notably the
-            # SEMANTIC_VALIDATION_SKIPPED marker) greppable in CI logs.
+            # SEMANTIC_VALIDATION_SKIPPED and LIVE_TOOL_EVIDENCE_SKIPPED
+            # markers) greppable in CI logs.
             # Capture the status instead of dying on it so the group is
             # closed and the skip warning still fires on a failing run —
             # the run where the skip count is most diagnostic.
@@ -332,16 +333,34 @@ jobs:
             # what the ci-flakiness-report job is for.
             cargo nextest run --test $test --run-ignored all --retries 2 --success-output=final 2>&1 | tee "/tmp/$test.log" || rc=$?
             echo "::endgroup::"
-            skips=$(grep -c SEMANTIC_VALIDATION_SKIPPED "/tmp/$test.log" || true)
+            # Both markers, counted together. `LIVE_TOOL_EVIDENCE_SKIPPED`
+            # is emitted by a live tool test whose interaction succeeded, or
+            # failed in a way the test's triage guard did not recognise,
+            # without evidence the server was reached — one occurrence is
+            # model variability or a third-party blip, a persistent one is a
+            # silently broken tool, which is the failure that would otherwise
+            # stay green and unremarked.
+            skips=$(grep -cE 'SEMANTIC_VALIDATION_SKIPPED|LIVE_TOOL_EVIDENCE_SKIPPED' "/tmp/$test.log" || true)
             if [ "${skips:-0}" -gt 3 ]; then
               # The tolerated-skip escape hatch is only meaningful while it
               # stays rare — past this threshold the run's green can't be
               # trusted, so fail instead of warn. Escalate only a passing
               # run: a real nextest failure keeps its own exit code.
-              echo "::error::$test: $skips semantic validations passed vacuously — too many to trust this run (grep SEMANTIC_VALIDATION_SKIPPED in the log for causes)"
+              #
+              # 3 is unchanged now that both marker classes share the budget,
+              # and that is deliberate rather than an oversight. It does mean
+              # a permanently unreachable MCP server costs
+              # `tools_and_config_tests` one of its three slots — but a run
+              # that is both missing live tool evidence *and* burning
+              # validator transients is precisely the run whose green is
+              # least worth trusting, so spending them from one pool is the
+              # behaviour wanted. release.yml re-derived its own number
+              # because it counts a whole workspace run against a much larger
+              # denominator, where one extra marker really is noise.
+              echo "::error::$test: $skips unverified assertion(s) or tolerated failure(s) — too many to trust this run (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)"
               if [ "$rc" -eq 0 ]; then rc=1; fi
             elif [ "${skips:-0}" -gt 0 ]; then
-              echo "::warning::$test: $skips semantic validation(s) passed vacuously (grep SEMANTIC_VALIDATION_SKIPPED in the log for causes)"
+              echo "::warning::$test: $skips unverified assertion(s) or tolerated failure(s) (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)"
             fi
             [ "$rc" -eq 0 ] || exit "$rc"
           done
@@ -364,6 +383,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        id: checkout
       # One entry point for every harness under `.github/scripts/tests/`,
       # via the same make target a contributor runs locally, so CI and
       # `make check` cannot disagree about what is covered.
@@ -380,6 +400,74 @@ jobs:
       # cannot reach.
       - name: Run the shell harnesses and shellcheck
         run: make test-scripts
+
+      # The real CHANGELOG, not a fixture: this is what a release would
+      # actually read, and a heading that drifts off the `## [X.Y.Z]` shape
+      # would otherwise only surface at tag time as an empty release body.
+      # Independent of the step above, and kept that way. Folding this into
+      # `shell-scripts` put it downstream of `make test-scripts`, and Actions
+      # stops a job at the first failing step — so without this guard, a red
+      # harness anywhere under `.github/scripts/tests/` (including the four
+      # this PR does not own) would skip the one check that catches a
+      # CHANGELOG heading drifting off the `## [X.Y.Z]` shape, whose absence
+      # otherwise only resurfaces at tag time. `make test-scripts` itself
+      # collects `rc=1` and keeps going for exactly this reason; this step
+      # sits outside that loop and has to say so.
+      #
+      # `!cancelled()` rather than `always()`: both restore independence, but
+      # `always()` also runs the step after someone cancels the job.
+      #
+      # Gated on the checkout too, not just on `!cancelled()`. Independence
+      # from `make test-scripts` is the point; independence from the
+      # checkout is not something to want — without it this step would run
+      # on a failed checkout and die on `awk: can't open file Cargo.toml`,
+      # a bare red step carrying none of the diagnostics the block below
+      # takes care to emit, underneath a clearer failure.
+      - name: Extract the current version's section from the real CHANGELOG
+        if: ${{ !cancelled() && steps.checkout.conclusion == 'success' }}
+        run: |
+          set -euo pipefail
+          # One awk pass rather than `grep | head -1 | sed`. This step turns on
+          # `pipefail`, which the equivalent steps in release.yml do not, and
+          # under it a `head` that closes the pipe before `grep` flushes makes
+          # the pipeline 141 and fails the step. Not reachable against this
+          # tree — one matching line, flushed at exit — but free to remove,
+          # and `exit` gives the `head -1` semantics for nothing. Both
+          # release.yml sites are swept to the same one-liner, so the three
+          # readers of this rule cannot drift apart — and the load-bearing one
+          # is release.yml's, which gates publishing.
+          VERSION=$(awk -F'"' '/^version = /{print $2; exit}' Cargo.toml)
+          # An empty read makes this step vacuous rather than loud: the
+          # extractor would be called with two arguments, pass the arity
+          # check, search for `## []`, find nothing, and land in the benign
+          # `elif` — a green step that verified nothing about the real
+          # CHANGELOG, which is the only thing it exists to do. `set -u` does
+          # not catch it, because the variable is set and merely empty.
+          # Reachable by restructuring Cargo.toml: an indented
+          # `[workspace.package]` version, or `version.workspace = true`.
+          if [ -z "$VERSION" ]; then
+            echo "::error::No anchored 'version = ' line in Cargo.toml — the version could not be read, so this check verified nothing."
+            exit 1
+          fi
+          echo "Cargo.toml version: $VERSION"
+          rc=0
+          .github/scripts/extract_changelog_section.sh CHANGELOG.md "$VERSION" || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "CHANGELOG.md has a [$VERSION] section"
+          elif [ "$rc" -eq 1 ]; then
+            # A warning, not a failure. Between a version bump landing and its
+            # CHANGELOG entry being written, and on any PR that predates the
+            # bump, this is the normal state — failing here would redden
+            # unrelated PRs. release.yml warns and falls back for the same
+            # reason.
+            echo "::warning::CHANGELOG.md has no [$VERSION] section — a release tagged now would fall back to a raw commit list for its body."
+          else
+            # Exit 2 is a caller or environment error — bad arguments, or no
+            # CHANGELOG.md at all. Not the benign case above, and not
+            # something a PR should be allowed to introduce quietly.
+            echo "::error::extract_changelog_section.sh exited $rc — a usage or environment error, not a missing section."
+            exit 1
+          fi
 
       # Python, so it needs a toolchain step the rest of this job does not —
       # kept here anyway rather than in a job of its own. #443 folded two
@@ -401,21 +489,25 @@ jobs:
       # than on anything real.
       #
       # `!cancelled()` rather than `always()`: both restore independence,
-      # but `always()` would also run these after a job is cancelled.
+      # but `always()` would also run these after a job is cancelled. Gated
+      # on the checkout as well, matching the step above — independence from
+      # `make test-scripts` is the point; independence from the checkout is
+      # not, and without it these would run on a failed checkout and fail on
+      # a missing file rather than on anything real.
       - uses: actions/setup-python@v5
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.checkout.conclusion == 'success' }}
         with:
           python-version: '3.12'
       - run: pip install --quiet pyyaml
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.checkout.conclusion == 'success' }}
       - name: 'Parse-check workflow run: blocks'
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.checkout.conclusion == 'success' }}
         run: python3 .github/scripts/check_workflow_shell.py
       # Not a harness under `.github/scripts/tests/`, so the glob above does
       # not reach it — it checks a duplicated fact in the tree rather than
       # exercising a script, and needs naming explicitly.
       - name: Gap tracker matches the CI sweep baseline
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.checkout.conclusion == 'success' }}
         run: .github/scripts/check_gap_tracker_baseline.sh
 
   clippy:

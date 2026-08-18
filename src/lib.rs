@@ -311,6 +311,8 @@ mod doc_tests {
     // Root-level documentation
     doc_comment!(include_str!("../README.md"));
     doc_comment!(include_str!("../TROUBLESHOOTING.md"));
+    doc_comment!(include_str!("../CONTRIBUTING.md"));
+    doc_comment!(include_str!("../DECISIONS.md"));
 
     // Detailed guides in docs/
     doc_comment!(include_str!("../docs/AGENTS_AND_BACKGROUND.md"));
