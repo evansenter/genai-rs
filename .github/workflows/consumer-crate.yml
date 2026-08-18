@@ -218,6 +218,21 @@ jobs:
               response.id = Some("x".into());
               assert_eq!(response.id.as_deref(), Some("x"));
 
+              // `ModalityTokens::new()` exists *only* because closing the
+              // type left serde as the only way for a downstream crate to
+              // build one — that is the reason given in its own doc and in
+              // `docs/ENUM_WIRE_FORMATS.md`. Its unit test cannot check that
+              // claim, because the attribute is inert inside the defining
+              // crate, so this is the only place the constructor's reason for
+              // existing is verified rather than asserted.
+              let modality = genai_rs::ModalityTokens::new("text", 1);
+              assert_eq!(modality.tokens, 1);
+
+              // Same for the read-write resources: `ENUM_WIRE_FORMATS.md`
+              // says closing them costs nothing *because* these exist.
+              let agent = genai_rs::Agent::new("agents/x");
+              assert_eq!(agent.id.as_deref(), Some("agents/x"));
+
               println!("ok: {}", declaration.name());
           }
           RUST

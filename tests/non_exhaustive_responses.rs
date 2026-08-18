@@ -315,9 +315,21 @@ fn offenders_and_exemptions_in(
         // Trimmed, so a declaration indented inside an inline `mod` counts.
         let trimmed = line.trim_start();
 
-        let Some(rest) = trimmed.strip_prefix("pub struct ") else {
+        // Peeled, so a declaration sharing its line with its attributes is
+        // seen at all. `#[derive(Deserialize)] pub struct Foo;` matches no
+        // `pub struct ` prefix, so `Foo` was never scanned — no offender, no
+        // exemption, clean run. Same shape `cfg_test_mask` and
+        // `cfg_test_modules` were hardened for; this was the third path.
+        let decl = peel_attrs(trimmed);
+        let Some(rest) = decl.strip_prefix("pub struct ") else {
             continue;
         };
+        // The peeled prefix is the declaration's own attribute block and has
+        // to be collected, or the walk-back below — which only looks at lines
+        // *above* this one — would read
+        // `#[derive(Deserialize)] #[non_exhaustive] pub struct Foo;` as
+        // missing the attribute and report an offender with no correct fix.
+        let same_line_attrs = &trimmed[..trimmed.len() - decl.len()];
         // Split before any generics so `Foo<'a>` compares as `Foo`.
         let name = rest
             .split(['<', '{', '(', ' ', ';'])
@@ -343,7 +355,7 @@ fn offenders_and_exemptions_in(
         // Deserialize. Counting parens in prose has the same shape of bug:
         // one unmatched `(` leaves the depth non-zero and walks the scan
         // into unrelated earlier source.
-        let mut attrs = String::new();
+        let mut attrs = String::from(same_line_attrs);
         let mut cursor = index;
         let mut depth = 0i32;
         while cursor > 0 {
@@ -511,6 +523,16 @@ pub struct AfterInlineGate {}
 
 #[derive(Deserialize)]
 pub struct AfterInlineSemicolonGate {}
+
+// Declaration sharing its line with its attributes. Without peeling here the
+// struct matches no `pub struct ` prefix and is never seen at all — no
+// offender, no exemption, clean run.
+#[derive(Deserialize)] pub struct SameLineAttrsBare {}
+
+// The same shape already annotated. The peeled prefix has to be folded into
+// the attribute text, because the walk-back only looks at lines *above* this
+// one — otherwise this reads as missing the attribute.
+#[derive(Deserialize)] #[non_exhaustive] pub struct SameLineAttrsAnnotated {}
 "#;
 
     // Supplied explicitly rather than derived from the fixture, so this
@@ -547,6 +569,16 @@ pub struct AfterInlineSemicolonGate {}
     assert!(
         names.contains(&"BlankLineBeforeDecl"),
         "blank line between the attribute block and the declaration: {found:?}"
+    );
+    assert!(
+        names.contains(&"SameLineAttrsBare"),
+        "a declaration sharing its line with its attributes is scanned at \
+         all: {found:?}"
+    );
+    assert!(
+        !names.contains(&"SameLineAttrsAnnotated"),
+        "and its same-line attributes count, so an annotated one is not an \
+         offender: {found:?}"
     );
     assert!(
         !names.contains(&"HiddenByInlineGate"),
