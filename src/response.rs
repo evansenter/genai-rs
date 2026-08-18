@@ -696,6 +696,12 @@ pub struct ToolCallInfo<'a> {
     /// Unique identifier for this call.
     pub id: &'a str,
     /// Opaque signature; pass back unchanged when replaying statelessly.
+    ///
+    /// Skipped when absent so a logged `ToolCallInfo` and a logged
+    /// [`Step::ToolCall`] show the same shape for the same missing field —
+    /// the hand-written `Serialize` for the step omits the key rather than
+    /// emitting `null`, and a byte-for-byte roundtrip test pins that.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub signature: Option<&'a str>,
 }
 

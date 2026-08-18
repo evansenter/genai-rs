@@ -234,7 +234,7 @@ roundtrip tests.
 > sole declared tool (see the fuller note in `docs/BUILT_IN_TOOLS.md` under
 > MCP Servers). The "MCP tool calls arrive as generic `tool_call` steps"
 > section below has the wire detail. Tracked in
-> [#433](https://github.com/evansenter/genai-rs/issues/433).
+> [#459](https://github.com/evansenter/genai-rs/issues/459).
 
 Note the asymmetry: `function_call` and `mcp_server_tool_call` keep their
 arguments at the **top level** (the latter per spec, unobserved), while the
@@ -292,7 +292,7 @@ response. The call did happen and its cost is real, which
 spec-present and unobserved, the same status as `Tool::Retrieval`. They are
 kept rather than removed because nothing *rejects* them — unlike
 `cached_content` (D-005), which the API actively 400s — so the endpoint may
-begin emitting them. Tracked in #433.
+begin emitting them. Tracked in #459.
 
 For callers: check `step_summary().tool_call_count`, not
 `.mcp_server_tool_call_count`. The latter reads 0 on a successful MCP

@@ -571,7 +571,7 @@ let config = McpServerConfig::new("filesystem", "https://mcp.example.com/fs")
 > Which server or tool ran is not recoverable from the response.
 > `Step::McpServerToolCall` / `McpServerToolResult` remain modeled from the
 > spec and kept for when the API starts emitting them. Tracked in
-> [#433](https://github.com/evansenter/genai-rs/issues/433).
+> [#459](https://github.com/evansenter/genai-rs/issues/459).
 
 ## Combining Tools
 

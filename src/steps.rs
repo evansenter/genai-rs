@@ -379,7 +379,7 @@ pub enum Step {
     /// [`Step::ToolCall`] above instead (verified live 2026-08-16), so a
     /// match on this variant never fires today. Modeled for parity, like
     /// `Tool::Retrieval` — kept rather than removed because nothing
-    /// *rejects* it, so the API may begin emitting it. See #433.
+    /// *rejects* it, so the API may begin emitting it. Tracked in #459.
     McpServerToolCall {
         /// Unique ID for this call.
         id: String,
@@ -1416,7 +1416,7 @@ pub enum StepDelta {
     ///
     /// Not currently emitted by the API — see
     /// [`Step::McpServerToolCall`] for the verified wire behaviour
-    /// and #433.
+    /// and #459.
     McpServerToolCall {
         /// Tool name.
         name: String,
@@ -1429,7 +1429,7 @@ pub enum StepDelta {
     ///
     /// Not currently emitted by the API — see
     /// [`Step::McpServerToolCall`] for the verified wire behaviour
-    /// and #433.
+    /// and #459.
     McpServerToolResult {
         /// Tool name.
         name: Option<String>,
