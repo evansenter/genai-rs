@@ -13,6 +13,7 @@
 use genai_rs::{
     Annotation, CodeExecutionLanguage, Content, FunctionCallingMode, InteractionStatus, Resolution,
     Role, SearchType, ServiceTier, Step, ThinkingLevel, ThinkingSummaries, ToolChoice,
+    VideoProcessing,
 };
 use serde_json::json;
 
@@ -674,9 +675,39 @@ mod interaction_content {
             uri: Some("gs://bucket/video.mp4".to_string()),
             mime_type: Some("video/mp4".to_string()),
             resolution: None,
+            processing: None,
         };
         let json = serde_json::to_value(&content).unwrap();
         assert_eq!(json["type"], "video");
+    }
+
+    #[test]
+    fn video_processing_uses_snake_case_fields() {
+        // Verified live 2026-08-16: the API validates this field by path and
+        // rejects unknown enum values, so the field names must match exactly.
+        let content = Content::video_uri("gs://bucket/video.mp4", "video/mp4").with_processing(
+            VideoProcessing::segment()
+                .start_offset("5s")
+                .end_offset("10s")
+                .fps(1.0)
+                .build(),
+        );
+        let json = serde_json::to_value(&content).unwrap();
+
+        assert_eq!(json["processing"]["type"], "static");
+        assert_eq!(json["processing"]["start_offset"], "5s");
+        assert_eq!(json["processing"]["end_offset"], "10s");
+        assert_eq!(json["processing"]["fps"], 1.0);
+    }
+
+    #[test]
+    fn video_processing_bare_mode_is_a_string_not_an_object() {
+        let content = Content::video_uri("gs://bucket/video.mp4", "video/mp4")
+            .with_processing(VideoProcessing::Agentic);
+        let json = serde_json::to_value(&content).unwrap();
+
+        assert_eq!(json["processing"], "agentic");
+        assert!(json["processing"].is_string());
     }
 
     #[test]

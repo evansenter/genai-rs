@@ -469,6 +469,47 @@ jobs:
             exit 1
           fi
 
+      # Python, so it needs a toolchain step the rest of this job does not —
+      # kept here anyway rather than in a job of its own. #443 folded two
+      # script jobs into this one and #441 deleted a third; a fourth
+      # checkout-plus-run-a-script job would re-create exactly what those
+      # removed, and leave no rule for where the next check goes. One
+      # `setup-python` is a cheaper price than that ambiguity, and the job
+      # still needs no Rust toolchain, so it still reports in seconds.
+      #
+      # Every step below is guarded, because folding them in here put them
+      # downstream of `make test-scripts` and Actions stops a job at the
+      # first failing step. Without the guard a red harness under
+      # `.github/scripts/tests/` — including ones this PR does not own —
+      # would silently skip both checks, and a skipped check is
+      # indistinguishable from a passing one. `make test-scripts` collects
+      # `rc=1` and keeps going for the same reason; these sit outside that
+      # loop. The setup steps carry the guard too: skipping those while
+      # running the check would fail it on a missing `yaml` import rather
+      # than on anything real.
+      #
+      # `!cancelled()` rather than `always()`: both restore independence,
+      # but `always()` would also run these after a job is cancelled. Gated
+      # on the checkout as well, matching the step above — independence from
+      # `make test-scripts` is the point; independence from the checkout is
+      # not, and without it these would run on a failed checkout and fail on
+      # a missing file rather than on anything real.
+      - uses: actions/setup-python@v5
+        if: ${{ !cancelled() && steps.checkout.conclusion == 'success' }}
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet pyyaml
+        if: ${{ !cancelled() && steps.checkout.conclusion == 'success' }}
+      - name: 'Parse-check workflow run: blocks'
+        if: ${{ !cancelled() && steps.checkout.conclusion == 'success' }}
+        run: python3 .github/scripts/check_workflow_shell.py
+      # Not a harness under `.github/scripts/tests/`, so the glob above does
+      # not reach it — it checks a duplicated fact in the tree rather than
+      # exercising a script, and needs naming explicitly.
+      - name: Gap tracker matches the CI sweep baseline
+        if: ${{ !cancelled() && steps.checkout.conclusion == 'success' }}
+        run: .github/scripts/check_gap_tracker_baseline.sh
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
