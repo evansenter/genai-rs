@@ -786,15 +786,27 @@ fn is_cfg_test_attr(trimmed: &str) -> bool {
     // inside it is reported as an offender with no correct fix. Same
     // one-implementation argument as the body peel, applied to the entry
     // condition.
+    // Bounded to the gate's own brackets. Scanning the rest of the line lets a
+    // same-line item supply the token: `#[cfg(unix)] mod test;` answered true
+    // on the module name, and `cfg_test_modules` would then reserve `src/test`
+    // and drop `src/test.rs` from the scan entirely — the skip-a-file
+    // direction, indistinguishable from a clean run. Pre-existing, but the
+    // same-line peels are what make such a line reach here.
     let mut cursor = trimmed;
-    let rest = loop {
-        if let Some(rest) = cursor.strip_prefix("#[cfg(") {
-            break rest;
+    let attr = loop {
+        let Some((attr, rest)) = split_attr(cursor) else {
+            return false;
+        };
+        if attr.starts_with("#[cfg(") {
+            break attr;
         }
-        match attr_remainder(cursor) {
-            Some(next) if next.starts_with("#[") => cursor = next,
-            _ => return false,
+        if !rest.starts_with("#[") {
+            return false;
         }
+        cursor = rest;
+    };
+    let Some(rest) = attr.strip_prefix("#[cfg(") else {
+        return false;
     };
     // Decided by whether `test` survives with its `not(..)` groups removed,
     // not by where `not(` appears in the string. Both neighbours matter and
@@ -814,6 +826,21 @@ fn is_cfg_test_attr(trimmed: &str) -> bool {
 /// (`#[cfg(test)] type T = Vec<[u8; 4]>;`), so neither the first nor the last
 /// is reliably the attribute's own close.
 fn attr_remainder(trimmed: &str) -> Option<&str> {
+    let (_, rest) = split_attr(trimmed)?;
+    (!rest.is_empty() && !rest.starts_with("//")).then_some(rest)
+}
+
+/// A leading attribute and what follows it, split at the attribute's own close.
+///
+/// Bracket depth rather than `rfind("]")`: `#[cfg(all(test, not(miri)))]` ends
+/// in a run of them, and a remainder can carry brackets of its own
+/// (`#[cfg(test)] type T = Vec<[u8; 4]>;`), so neither the first nor the last
+/// is reliably the close.
+///
+/// Both halves come from one walk deliberately. `is_cfg_test_attr` needs the
+/// attribute, the peels need the remainder, and computing them separately is
+/// how they would come to disagree about where the boundary is.
+fn split_attr(trimmed: &str) -> Option<(&str, &str)> {
     if !trimmed.starts_with("#[") {
         return None;
     }
@@ -824,8 +851,8 @@ fn attr_remainder(trimmed: &str) -> Option<&str> {
             ']' => {
                 depth -= 1;
                 if depth == 0 {
-                    let rest = trimmed[offset + ch.len_utf8()..].trim_start();
-                    return (!rest.is_empty() && !rest.starts_with("//")).then_some(rest);
+                    let end = offset + ch.len_utf8();
+                    return Some((&trimmed[..end], trimmed[end..].trim_start()));
                 }
             }
             _ => {}
@@ -1076,6 +1103,12 @@ pub mod also_not_test_only;
 #[allow(dead_code)] mod attr_carrying_item;
 
 pub mod third_not_test_only;
+
+#[allow(dead_code)] #[cfg(test)] mod attr_first;
+
+pub mod fourth_not_test_only;
+
+#[cfg(unix)] mod test;
 ";
     let modules = cfg_test_modules("src/lib.rs", lib_rs);
     assert_eq!(
@@ -1087,6 +1120,7 @@ pub mod third_not_test_only;
             "src/attr_then_newline_helper".to_string(),
             "src/same_line_after_attr".to_string(),
             "src/attr_carrying_item".to_string(),
+            "src/attr_first".to_string(),
         ]),
         "both declaration forms parse; an ungated `mod` is not collected, and \
          neither is an inline `mod .. {{ }}`, which names no file. A same-line \
@@ -1095,7 +1129,11 @@ pub mod third_not_test_only;
          same-line remainder that is itself an attribute falls through to the \
          forward scan when the line ends there (`attr_then_newline_helper`) \
          and is peeled when the item follows on the same line \
-         (`same_line_after_attr`, with `also_not_test_only` absent)"
+         (`same_line_after_attr`, with `also_not_test_only` absent). A gate \
+         behind another attribute is still a gate (`attr_first`, with \
+         `fourth_not_test_only` absent), and `#[cfg(unix)] mod test;` is not \
+         one — `src/test` must be absent, or `src/test.rs` would drop out of \
+         the scan on the module's name"
     );
 
     // Skipped: the declared file, and anything under a directory of that name.
@@ -1206,6 +1244,16 @@ fn the_cfg_test_gate_recognises_compound_forms_and_only_those() {
     // pinned here so closing it later is a deliberate change rather than an
     // accident.
     assert!(!is_cfg_test_attr("#[cfg(all("));
+    // The token must come from the gate, not from an item sharing its line.
+    // `mod test;` here would otherwise reserve `src/test` and drop
+    // `src/test.rs` from the scan — a clean run over unguarded code.
+    assert!(!is_cfg_test_attr("#[cfg(unix)] mod test;"));
+    assert!(!is_cfg_test_attr("#[cfg(unix)] fn test() {}"));
+    assert!(!is_cfg_test_attr(
+        "#[allow(dead_code)] #[cfg(unix)] mod test;"
+    ));
+    // ...and a real gate still reads as one with an item beside it.
+    assert!(is_cfg_test_attr("#[cfg(test)] mod real;"));
     assert!(is_cfg_test_attr(
         "#[cfg(all(test, not(feature = \"antigravity\")))]"
     ));
