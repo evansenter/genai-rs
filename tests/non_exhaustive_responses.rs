@@ -43,8 +43,9 @@
 //! uncovered, and those are named. (`ImageInfo` and `AudioInfo` are views too
 //! but have no public fields, so no downstream literal or exhaustive
 //! destructure is possible against them and a field addition is not a source
-//! break — they are on neither side of this.) Unlike the enum gap this needs no new plumbing, only a widened
-//! condition — but widening it is a scoping decision, not an oversight to be
+//! break — they are on neither side of this.) Unlike the enum gap this needs
+//! no new plumbing, only a widened condition — but widening it is a scoping
+//! decision, not an oversight to be
 //! quietly fixed. Stated here so a clean run is not read as covering them, and
 //! so a reader who greps for one named type does not conclude the boundary is
 //! one struct wide.
