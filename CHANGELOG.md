@@ -84,6 +84,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   `tests/ui/pass_no_consumer_imports.rs` pins the no-imports behavior.
 
+- **`speech_config` in the `{"speakers": [...]}` form no longer silently
+  discards every speaker.** `google-genai` 2.18.x widened the field to
+  `SpeakerConfig | List[SpeechConfig]`. Because `SpeechConfig`'s fields are
+  all optional and serde ignores unknown keys, the object form matched the
+  deserializer's single-object arm and produced one all-`None` config — the
+  speakers vanished with no error.
+
+  All three wire forms now normalize to the list: the spec list, the
+  `{"speakers": [...]}` object, and the legacy single object.
+
+  Note the Gemini API **rejects both object forms on send** (`400 ... Expected
+  an array, got object`, verified live 2026-08-16), so the crate continues to
+  emit the list. The leniency is deserialize-only, and it matters because a
+  `GenerationConfig` also arrives nested inside a stored `Trigger`
+  interaction that another SDK may have created.
+
+  No public type changed — `speech_config` is still `Option<Vec<SpeechConfig>>`.
+
 ### Added
 
 - **Video `processing` — segment clipping, frame-rate sampling, and agentic
@@ -125,24 +143,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   constructs or exhaustively destructures the variant with struct-literal
   syntax needs `processing: None` (or `..`) added. The `Content::video_*()`
   constructors are unaffected.
-
-- **`speech_config` in the `{"speakers": [...]}` form no longer silently
-  discards every speaker.** `google-genai` 2.18.x widened the field to
-  `SpeakerConfig | List[SpeechConfig]`. Because `SpeechConfig`'s fields are
-  all optional and serde ignores unknown keys, the object form matched the
-  deserializer's single-object arm and produced one all-`None` config — the
-  speakers vanished with no error.
-
-  All three wire forms now normalize to the list: the spec list, the
-  `{"speakers": [...]}` object, and the legacy single object.
-
-  Note the Gemini API **rejects both object forms on send** (`400 ... Expected
-  an array, got object`, verified live 2026-08-16), so the crate continues to
-  emit the list. The leniency is deserialize-only, and it matters because a
-  `GenerationConfig` also arrives nested inside a stored `Trigger`
-  interaction that another SDK may have created.
-
-  No public type changed — `speech_config` is still `Option<Vec<SpeechConfig>>`.
 
 ## [0.10.0] - 2026-08-16
 
