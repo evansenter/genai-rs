@@ -218,6 +218,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `InteractionInput::Content` returns `400 Unknown parameter 'processing'`, so
   use `InteractionInput::Steps`.
 
+- **`Step::ToolCall`** — the generic `tool_call` step the API actually emits
+  for server-side tool invocations, including MCP (#433).
+
+  Before this it landed in `Step::Unknown`, so a successful MCP interaction
+  reported no tool calls at all. Verified live (2026-08-16,
+  `gemini-3.7-flash`, a real MCP server): the step carries only
+  `{id, signature}`. Which server or tool ran is not recoverable from the
+  response; `usage.total_tool_use_tokens` is what shows the call happened.
+
+- **`InteractionResponse::tool_calls()` / `has_tool_calls()`** and the
+  `ToolCallInfo` borrowed view they return — `id` plus `signature`, which is
+  everything the API discloses about a server-side tool call.
+
+- **`StepSummary::tool_call_count`** — where MCP calls are counted.
+  `mcp_server_tool_call_count` reads **0** on a successful MCP interaction,
+  which is worse than absent: a caller checking it concludes MCP did not run.
+  Both fields now cross-reference each other.
+
+  `Step::McpServerToolCall` / `McpServerToolResult` are retained and now
+  documented as spec-present but never observed — the same status as
+  `Tool::Retrieval`, and unlike `cached_content` (D-005) nothing rejects
+  them.
+
 ### Removed
 
 - **Breaking: `with_cached_content()` and `InteractionRequest.cached_content`.**
@@ -246,29 +269,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Implicit caching is unaffected and still reported via
   `usage.total_cached_tokens`.
-
-- **`Step::ToolCall`** — the generic `tool_call` step the API actually emits
-  for server-side tool invocations, including MCP (#433).
-
-  Before this it landed in `Step::Unknown`, so a successful MCP interaction
-  reported no tool calls at all. Verified live (2026-08-16,
-  `gemini-3.7-flash`, a real MCP server): the step carries only
-  `{id, signature}`. Which server or tool ran is not recoverable from the
-  response; `usage.total_tool_use_tokens` is what shows the call happened.
-
-- **`InteractionResponse::tool_calls()` / `has_tool_calls()`** and the
-  `ToolCallInfo` borrowed view they return — `id` plus `signature`, which is
-  everything the API discloses about a server-side tool call.
-
-- **`StepSummary::tool_call_count`** — where MCP calls are counted.
-  `mcp_server_tool_call_count` reads **0** on a successful MCP interaction,
-  which is worse than absent: a caller checking it concludes MCP did not run.
-  Both fields now cross-reference each other.
-
-  `Step::McpServerToolCall` / `McpServerToolResult` are retained and now
-  documented as spec-present but never observed — the same status as
-  `Tool::Retrieval`, and unlike `cached_content` (D-005) nothing rejects
-  them.
 
 ## [0.10.0] - 2026-08-16
 
