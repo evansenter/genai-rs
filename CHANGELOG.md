@@ -134,6 +134,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tests/ui/fail_step_summary_struct_literal.rs` pins the attribute itself:
   the migration path compiles the same with or without it, so only a
   `compile_fail` fixture goes red if it is removed.
+
 ### Fixed
 
 - **`#[tool]` no longer requires consumer-side dependencies or imports**
