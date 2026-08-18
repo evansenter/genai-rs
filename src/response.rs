@@ -1778,9 +1778,13 @@ impl InteractionResponse {
 //
 // Folding it in here is free for consumers: they are already recompiling for
 // the new field. `Default` is derived, so the documented migration
-// (`StepSummary::default()` then assign) still works, and there are no
-// construction sites outside this crate — the only two are in
-// `src/response_tests.rs`, where the attribute does not apply.
+// (`StepSummary::default()` then assign) still works, and nothing that
+// compiled before stops compiling: the only in-crate literals are the two in
+// `src/response_tests.rs`, where the attribute does not apply, and the only
+// out-of-crate sites are the two trybuild fixtures added alongside this
+// attribute — `tests/ui/pass_step_summary_migration.rs`, which uses the
+// surviving idiom, and `tests/ui/fail_step_summary_struct_literal.rs`, which
+// exists to be rejected.
 #[non_exhaustive]
 pub struct StepSummary {
     /// Number of `user_input` steps

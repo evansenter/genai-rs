@@ -178,10 +178,13 @@ roundtrip tests.
 > variants exist for when the API starts emitting them; today a match on
 > `Step::McpServerToolCall` never fires and
 > `step_summary().mcp_server_tool_call_count` reads 0 on a successful call.
-> The usable signal is `response.tool_use_tokens()` — a single aggregate
-> with no per-tool breakdown, so it isolates the MCP server only when MCP
-> is the sole declared tool (see the fuller note in
-> `docs/BUILT_IN_TOOLS.md` under MCP Servers). Tracked in
+> Check `step_summary().tool_call_count` instead, or
+> `InteractionResponse::tool_calls()` for the per-call ids —
+> `response.tool_use_tokens()` is the *other* signal, a single aggregate with
+> no per-tool breakdown, so it isolates the MCP server only when MCP is the
+> sole declared tool (see the fuller note in `docs/BUILT_IN_TOOLS.md` under
+> MCP Servers). The "MCP tool calls arrive as generic `tool_call` steps"
+> section below has the wire detail. Tracked in
 > [#433](https://github.com/evansenter/genai-rs/issues/433).
 
 Note the asymmetry: `function_call` and `mcp_server_tool_call` keep their
