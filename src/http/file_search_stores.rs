@@ -292,6 +292,12 @@ pub async fn upload_to_file_search_store(
         .unwrap_or("upload")
         .to_string();
 
+    // Resolved before the wire record, not at the call below, so the two agree.
+    // Logging `file_name` here would report a name the request never carried
+    // whenever the header degrades — and the reason this helper exists is that
+    // the failure it replaces was opaque at debug time.
+    let file_name_header = upload_file_name_header(&file_name);
+
     let request_id = ctx.next_request_id();
     ctx.emit_request(
         request_id,
@@ -299,7 +305,7 @@ pub async fn upload_to_file_search_store(
         &url,
         Some(&serde_json::json!({
             "display_name": display_name,
-            "file_name": file_name,
+            "file_name": String::from_utf8_lossy(file_name_header.as_bytes()),
             "mime_type": mime_type,
             "size_bytes": bytes.len(),
         })),
@@ -310,10 +316,7 @@ pub async fn upload_to_file_search_store(
         .post(&url)
         .header(API_KEY_HEADER, &ctx.api_key)
         .header("X-Goog-Upload-Protocol", "raw")
-        .header(
-            "X-Goog-Upload-File-Name",
-            upload_file_name_header(&file_name),
-        )
+        .header("X-Goog-Upload-File-Name", file_name_header)
         .header(reqwest::header::CONTENT_TYPE, mime_type)
         .body(bytes)
         .send()
