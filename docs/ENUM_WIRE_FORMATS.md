@@ -54,6 +54,7 @@ All types below implement graceful handling of unrecognized values via an `Unkno
 | 36 | `TriggerStatus` | src/triggers.rs | `status_type` | active/paused/error (SDK-spec, pending live) |
 | 37 | `TriggerExecutionStatus` | src/triggers.rs | `status_type` | Execution outcomes (SDK-spec, pending live) |
 | 38 | `VideoProcessing` | src/content.rs | `processing_type` | Mode string OR `{type:"static", ...}` object (verified live 2026-08-16) |
+| 39 | `DocumentState` | src/file_search_stores.rs | `state_type` | File search document indexing state (verified live 2026-08-16) |
 
 **Removed in revision 2026-05-20** (no longer exist in this library or on the wire):
 `UrlRetrievalStatus`, `GroundingMetadata`, `UrlContextMetadata`, `Turn`, and all tool-related
@@ -746,6 +747,65 @@ field is validated rather than passed through:
 `2026-05-20`, and through the crate itself via
 `tests/multimodal_tests.rs::test_video_processing_segment_reduces_token_cost`.
 
+### File Search Stores (`/v1beta/fileSearchStores`)
+
+**This resource is camelCase**, unlike the Interactions API's snake_case.
+The types in `src/file_search_stores.rs` carry an explicit
+`rename_all = "camelCase"` for exactly this reason.
+
+```json
+{
+  "name": "fileSearchStores/my-docs-4kws71n2ybpr",
+  "displayName": "my-docs",
+  "createTime": "2026-08-16T15:13:13.783782Z",
+  "updateTime": "2026-08-16T15:13:13.783782Z",
+  "embeddingModel": "models/gemini-embedding-001"
+}
+```
+
+List envelopes are `{"fileSearchStores": [...]}` and `{"documents": [...]}`;
+an empty store list comes back as a bare `{}`. Both `page_size` and
+`pageSize` paging spellings are accepted.
+
+Document `sizeBytes` is a JSON **string** (`"27"`), protobuf-JSON style, and
+is parsed to a number via the shared `deserialize_string_i64` helper.
+
+| `DocumentState` | Wire Value |
+|-----------------|------------|
+| `Pending` | `"STATE_PENDING"` |
+| `Active` | `"STATE_ACTIVE"` |
+| `Failed` | `"STATE_FAILED"` |
+
+Note the `STATE_` prefix — this differs from the Files API's `FileState`,
+which uses bare `"PROCESSING"` / `"ACTIVE"` / `"FAILED"`.
+
+**Behavioral constraints** (all verified live 2026-08-16):
+
+- **Indexing is asynchronous.** A fresh upload is `STATE_PENDING` and file
+  search will not match it until `STATE_ACTIVE` (observed ~1-2s for a small
+  text file). Use `Client::wait_for_document_active()`.
+- **Deleting an indexed document requires `force=true`** — otherwise
+  `400 Cannot delete non-empty Document` (`FAILED_PRECONDITION`). Same for a
+  store holding documents: `400 Cannot delete non-empty FileSearchStore`.
+- **Uploads accept both `raw` and `multipart` protocols.** The crate uses
+  `raw` (bytes as body, `display_name` as a query param) to avoid enabling
+  reqwest's `multipart` feature for a single endpoint.
+- **The upload response is an operation wrapper**, not a document:
+  `{"name": ".../upload/operations/...", "response": {"documentName": ...}}`.
+  The crate resolves `documentName` into a full document via a follow-up GET.
+- **`file_search_result` steps carry no chunks.** The step contains only
+  `call_id`, `signature`, and `type` — there is no `result` field, so
+  `has_file_search_results()` is `true` while `file_search_results()` is
+  empty. The retrieved content is visible only through the model's answer.
+- **`file_search` cannot be combined with either web-retrieval tool.** Both
+  `google_search` and `url_context` are rejected alongside it with a 400
+  naming the pair: `'<other>' and 'file_search' cannot be combined in the
+  same request. Please choose one to continue.` `code_execution` is
+  accepted. See the tool section below for the full table.
+
+**Verified**: 2026-08-16 - full lifecycle plus end-to-end retrieval in
+`tests/file_search_stores_tests.rs` and `examples/file_search.rs`.
+
 ### Tool::FileSearch (request)
 
 Used to enable semantic document retrieval from file search stores.
@@ -754,7 +814,7 @@ Used to enable semantic document retrieval from file search stores.
 {
   "tools": [{
     "type": "file_search",
-    "file_search_store_names": ["stores/my-store-123"],
+    "file_search_store_names": ["fileSearchStores/my-store-123"],
     "top_k": 10,
     "metadata_filter": "category = 'technical'"
   }]
@@ -763,13 +823,21 @@ Used to enable semantic document retrieval from file search stores.
 
 | Rust Field | Wire Name | Required | Notes |
 |------------|-----------|----------|-------|
-| `store_names` | `file_search_store_names` | Yes | Array of store identifiers |
+| `store_names` | `file_search_store_names` | Yes | Full store resource names (`fileSearchStores/<id>`), as returned by `Client::create_file_search_store` |
 | `top_k` | `top_k` | No | Number of results to return |
 | `metadata_filter` | `metadata_filter` | No | Filter expression |
 
 **Note**: The RFC proposed `file_ids` but the actual API uses `file_search_store_names` (stores, not individual files).
 
-**Verified**: 2026-01-05 - Request format tested with `LOUD_WIRE=1 cargo run --example file_search`.
+**Verified**: 2026-08-16 — request format tested with `LOUD_WIRE=1 cargo run --example file_search`
+against a store the example provisions itself. The earlier 2026-01-05 stamp
+predated `Client::create_file_search_store`, so the example it names could not
+have run against a real store.
+
+**Rejected combinations** (400, verified live 2026-08-16): `file_search` with
+`google_search`, and `file_search` with `url_context` — "cannot be combined in
+the same request. Please choose one to continue." `file_search` with
+`code_execution` is accepted.
 
 ### FileSearchCall / FileSearchResult (steps)
 
@@ -781,28 +849,27 @@ Returned when the model retrieves documents from file search stores. Revision
 ```
 
 ```json
-{
-  "type": "file_search_result",
-  "call_id": "call_abc123",
-  "result": [
-    {
-      "title": "Document.pdf",
-      "text": "Relevant content from the document...",
-      "file_search_store": "stores/my-store-123"
-    }
-  ]
-}
+{ "type": "file_search_result", "call_id": "call_abc123" }
 ```
+
+> **`result` is never populated on this API.** Verified live 2026-08-16
+> against a store with indexed, `STATE_ACTIVE` documents that demonstrably
+> grounded the answer: `has_file_search_results()` is true and
+> `file_search_results()` is empty. Retrieved chunks are folded into the
+> response text rather than surfaced separately. The `result` array below is
+> the spec's shape, modeled for forward compatibility — treat an empty set as
+> expected, not as "the search found nothing". Tracked in #429.
 
 | Rust Field | Wire Name | Notes |
 |------------|-----------|-------|
 | `call_id` | `call_id` | snake_case in JSON |
-| `result` | `result` | Array of FileSearchResultItem |
-| `result[].title` | `title` | Document title |
-| `result[].text` | `text` | Retrieved text snippet |
-| `result[].store` | `file_search_store` | snake_case in JSON |
+| `result` | `result` | Array of FileSearchResultItem — spec-present, never observed |
+| `result[].title` | `title` | Document title (unobserved) |
+| `result[].text` | `text` | Retrieved text snippet (unobserved) |
+| `result[].store` | `file_search_store` | snake_case in JSON (unobserved) |
 
-**Status**: Item shape verified 2026-01 pre-revision (as `Content`); step form pending live verification (2026-05-20 revision).
+**Status**: Step form verified live 2026-08-16 — the `file_search_call` and
+`file_search_result` steps arrive, the latter with no `result` payload.
 
 ### GoogleSearchCall / GoogleSearchResult (steps)
 

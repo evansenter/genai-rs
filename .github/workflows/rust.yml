@@ -288,7 +288,7 @@ jobs:
           - group: multimodal
             tests: "multimodal_tests api_canary_tests temp_file_tests"
           - group: files-and-wire
-            tests: "api_wire_format_live_tests files_api_tests"
+            tests: "api_wire_format_live_tests files_api_tests file_search_stores_tests"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

@@ -312,7 +312,22 @@ Semantic search across documents in pre-configured file search stores.
 
 ### Setup: Create a Store First
 
-File Search operates on *file search stores* (identifiers like `stores/my-store-123`), not on ad-hoc Files API uploads. Create a store and upload documents to it via Google AI Studio or the Stores API, then reference the store identifier in requests.
+File Search operates on *file search stores* (resource names like `fileSearchStores/my-store-123`), not on ad-hoc Files API uploads. Create a store, upload documents into it, and wait for indexing before searching:
+
+```rust,ignore
+let store = client.create_file_search_store(Some("my-docs")).await?;
+
+let document = client
+    .upload_to_file_search_store(&store.name, "handbook.pdf", Some("handbook"))
+    .await?;
+
+// Required. A document still in STATE_PENDING is not an error — file search
+// just returns no matches for it, so an upload-then-query sequence silently
+// finds nothing without this.
+client.wait_for_document_active(&document.name, None, None).await?;
+```
+
+The store can also be created in Google AI Studio; pass its resource name either way. See `examples/file_search.rs` for the full lifecycle including cleanup.
 
 ### Basic Search
 
@@ -323,24 +338,27 @@ let response = client
     .interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("What does the report say about Q4 revenue?")
-    .add_tool(FileSearchConfig::new(vec!["stores/my-store-123".to_string()]))
+    .add_tool(FileSearchConfig::new(vec![store.name.clone()]))
     .create()
     .await?;
 
-// Access search results
-for result in response.file_search_results() {
-    println!("Title: {}", result.title);
-    println!("Text: {}", result.text);
-    println!("Store: {}", result.store);
-}
+// The answer itself is the reliable output.
+println!("{}", response.as_text().unwrap_or_default());
 ```
+
+> **`file_search_results()` returns nothing on this API.** The accessor exists
+> and compiles, but the live API never emits the step it reads — verified
+> against a store with indexed, `STATE_ACTIVE` documents that demonstrably
+> grounded the answer. Retrieved chunks are not surfaced separately; they are
+> folded into the response text. Treat an empty result set as expected, not as
+> "the search found nothing." Tracked in #429.
 
 ### With Configuration
 
 ```rust,ignore
 use genai_rs::FileSearchConfig;
 
-let config = FileSearchConfig::new(vec!["stores/my-store-123".to_string()])
+let config = FileSearchConfig::new(vec![store.name.clone()])
     .with_top_k(10)                            // max retrieval chunks
     .with_metadata_filter("category:technical"); // filter by document metadata
 
@@ -590,7 +608,7 @@ let response = client
     .await?;
 ```
 
-### Document Analysis with Web Context
+### Document Analysis with Code Execution
 
 ```rust,ignore
 use genai_rs::FileSearchConfig;
@@ -598,12 +616,26 @@ use genai_rs::FileSearchConfig;
 let response = client
     .interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
-    .with_text("Compare our internal report with public benchmarks")
-    .add_tool(FileSearchConfig::new(vec!["stores/reports".to_string()]))
-    .with_url_context()
+    .with_text("Total the quarterly figures in our internal report")
+    .add_tool(FileSearchConfig::new(vec![store.name.clone()]))
+    .with_code_execution()
     .create()
     .await?;
 ```
+
+#### File Search cannot be combined with the other retrieval tools
+
+The API rejects File Search alongside either web-retrieval tool, with a 400
+naming the pair (verified live 2026-08-16 against `gemini-3.7-flash`):
+
+| Combination | Result |
+|-------------|--------|
+| `file_search` + `google_search` | **400** — "`'google_search'` and `'file_search'` cannot be combined in the same request. Please choose one to continue." |
+| `file_search` + `url_context` | **400** — same message, naming `url_context` |
+| `file_search` + `code_execution` | Accepted |
+
+To ground on both internal documents and the web, run two interactions and
+combine the results yourself.
 
 ### With Client-Side Functions
 
