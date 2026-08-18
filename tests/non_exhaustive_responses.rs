@@ -661,15 +661,26 @@ fn cfg_test_modules(rel: &str, source: &str) -> BTreeSet<String> {
         // the silent direction this file exists to close. `cfg_test_mask`
         // was hardened for the same same-line shape; leaving its twin open
         // would mean the two parsers disagree about what a gate applies to.
-        // Filtered so the short-circuit is a pure widening rather than a
-        // trade. `#[cfg(test)] #[allow(dead_code)]` with `mod helper;` on the
-        // next line has a same-line remainder that is itself an attribute —
-        // taking it authoritatively would skip the forward scan and never
-        // collect `helper`. That is the loud direction (the file gets scanned
-        // and a struct there is reported), but it is a shape the forward scan
-        // already handled, and the point of these two parsers is that they
-        // agree.
-        let same_line = attr_remainder(line.trim_start()).filter(|r| !r.starts_with("#["));
+        // Attribute prefixes are peeled, not rejected. A same-line remainder
+        // can itself be another attribute, and the two arrangements need
+        // opposite answers:
+        //
+        //   `#[cfg(test)] #[allow(dead_code)]` / `mod helper;`  -> next line
+        //   `#[cfg(test)] #[allow(dead_code)] mod helper;`      -> this line
+        //
+        // Rejecting any attribute remainder gets the first right and the
+        // second wrong — and wrong in the silent direction, because the
+        // forward scan resumes at `index + 1`, past the line the item is
+        // actually on, so the gate pairs with the *next* declaration and
+        // reserves a module that is not test-only. Peeling handles both: it
+        // bottoms out at `None` when the line is all attributes, which is
+        // exactly when the forward scan is the right answer.
+        //
+        // Terminates because each peel returns a strictly shorter slice.
+        let mut same_line = attr_remainder(line.trim_start());
+        while let Some(rest) = same_line.filter(|r| r.starts_with("#[")) {
+            same_line = attr_remainder(rest);
+        }
         // Otherwise scan forward rather than assuming the very next line.
         // `#[cfg(test)]` / `#[allow(dead_code)]` / `mod x;` is legal, as is a
         // comment in between, and pairing only with `index + 1` would miss the
@@ -917,13 +928,6 @@ fn manual_deserialize_targets(text: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// Pins the file-level skip and the `lib.rs` parser.
-///
-/// The main test cannot: none of the six gated files declares a `pub struct`,
-/// so it passes identically whether the skip is correct, deleted, or dropping
-/// every file under `src/`. That is the silent inertness this file argues
-/// against everywhere else — and the round-5 cfg-test bug is what it looks
-/// like when it bites.
 /// The bracket-depth reasoning in `attr_remainder`'s doc, exercised directly.
 ///
 /// The fixture above reaches it only through `cfg_test_modules`, where a wrong
@@ -952,6 +956,13 @@ fn attr_remainder_finds_the_attribute_s_own_close() {
     assert_eq!(attr_remainder("mod x;"), None);
 }
 
+/// Pins the file-level skip and the `lib.rs` parser.
+///
+/// The main test cannot: none of the six gated files declares a `pub struct`,
+/// so it passes identically whether the skip is correct, deleted, or dropping
+/// every file under `src/`. That is the silent inertness this file argues
+/// against everywhere else — and the round-5 cfg-test bug is what it looks
+/// like when it bites.
 #[test]
 fn the_test_module_skip_is_scoped_to_the_declared_paths() {
     let lib_rs = "\
@@ -978,6 +989,10 @@ pub mod not_test_only;
 
 #[cfg(test)] #[allow(dead_code)]
 mod attr_then_newline_helper;
+
+#[cfg(test)] #[allow(dead_code)] mod same_line_after_attr;
+
+pub mod also_not_test_only;
 ";
     let modules = cfg_test_modules("src/lib.rs", lib_rs);
     assert_eq!(
@@ -987,13 +1002,16 @@ mod attr_then_newline_helper;
             "src/response_tests".to_string(),
             "src/same_line_helper".to_string(),
             "src/attr_then_newline_helper".to_string(),
+            "src/same_line_after_attr".to_string(),
         ]),
         "both declaration forms parse; an ungated `mod` is not collected, and \
          neither is an inline `mod .. {{ }}`, which names no file. A same-line \
          gate pairs with its own item (`same_line_helper`) and does not leak \
          onto the next declaration (`not_test_only` must be absent); a \
          same-line remainder that is itself an attribute falls through to the \
-         forward scan (`attr_then_newline_helper`)"
+         forward scan when the line ends there (`attr_then_newline_helper`) \
+         and is peeled when the item follows on the same line \
+         (`same_line_after_attr`, with `also_not_test_only` absent)"
     );
 
     // Skipped: the declared file, and anything under a directory of that name.
