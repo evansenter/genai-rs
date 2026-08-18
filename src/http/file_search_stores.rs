@@ -284,19 +284,7 @@ pub async fn upload_to_file_search_store(
         GenaiError::InvalidInput(format!("Failed to read {}: {e}", file_path.display()))
     })?;
 
-    // Validated rather than passed through, because the `# Errors` block on
-    // `upload_to_file_search_store_with_mime` promises `InvalidInput` for a bad
-    // MIME type and a caller matching on it would otherwise match nothing: an
-    // unheaderable value becomes a deferred reqwest builder error surfacing
-    // from `.send()` as an opaque `Http` naming neither the header nor the
-    // field. Unlike the filename below, this one is not a fallback that can be
-    // degraded — it declares how the API should parse the body — so it fails
-    // loudly and names the field.
-    let mime_type_header = HeaderValue::try_from(mime_type).map_err(|_| {
-        GenaiError::InvalidInput(format!(
-            "MIME type {mime_type:?} cannot be sent as a header value"
-        ))
-    })?;
+    let mime_type_header = mime_type_header(mime_type)?;
 
     // The API derives a fallback display name from this when the query
     // parameter is absent, so send it either way.
@@ -424,6 +412,31 @@ pub async fn upload_to_file_search_store(
     })
 }
 
+/// The `Content-Type` value for an upload, failing rather than degrading.
+///
+/// Validated rather than passed through, because the `# Errors` block on
+/// `Client::upload_to_file_search_store_with_mime` promises `InvalidInput` for
+/// a MIME type a header cannot carry, and a caller matching on it would
+/// otherwise match nothing: `RequestBuilder::header` stores the rejection as a
+/// *deferred* builder error, so it surfaces from `.send()` as an opaque
+/// `GenaiError::Http` naming neither the header nor the field.
+///
+/// Unlike [`upload_file_name_header`] this fails rather than degrades. That
+/// header is a fallback display name; this one declares how the API should
+/// parse the body, so silently substituting anything would be worse than
+/// refusing.
+///
+/// Note what this does *not* check: MIME *syntax*. `HeaderValue` rejects
+/// control characters, so `nonsense`, `text` and `text/` are all valid header
+/// values — they reach the API and come back as an `Api` error.
+fn mime_type_header(mime_type: &str) -> Result<HeaderValue, GenaiError> {
+    HeaderValue::try_from(mime_type).map_err(|_| {
+        GenaiError::InvalidInput(format!(
+            "MIME type {mime_type:?} cannot be sent as a header value"
+        ))
+    })
+}
+
 /// The `X-Goog-Upload-File-Name` value for a filename, degrading rather than
 /// failing on one a header cannot carry.
 ///
@@ -461,15 +474,32 @@ mod tests {
     #[test]
     fn unheaderable_mime_type_is_rejected_as_invalid_input() {
         // Pins the `# Errors` promise on
-        // `upload_to_file_search_store_with_mime`. Without the check the value
-        // reaches `.header()` and becomes a deferred reqwest builder error at
-        // `.send()` — a `GenaiError::Http` naming neither the header nor the
-        // field, so a caller matching `InvalidInput` matches nothing.
-        //
-        // Asserted through the same `HeaderValue::try_from` the upload path
-        // uses, because the upload itself needs a real file and a live client.
-        assert!(HeaderValue::try_from("text/plain").is_ok());
-        assert!(HeaderValue::try_from("text/plain\nX-Injected: 1").is_err());
+        // `upload_to_file_search_store_with_mime`: an unheaderable value must
+        // come back as `InvalidInput`, not as the deferred reqwest builder
+        // error `.header()` would otherwise produce at `.send()` — a
+        // `GenaiError::Http` naming neither the header nor the field, which a
+        // caller matching `InvalidInput` never sees.
+        let err = mime_type_header("text/plain\nX-Injected: 1").unwrap_err();
+        assert!(
+            matches!(err, GenaiError::InvalidInput(_)),
+            "expected InvalidInput, got {err:?}"
+        );
+        // Names the offending value, so the error is actionable.
+        assert!(err.to_string().contains("X-Injected"), "got {err}");
+    }
+
+    #[test]
+    fn valid_mime_types_pass_through_unchanged() {
+        assert_eq!(
+            mime_type_header("text/plain").unwrap().as_bytes(),
+            b"text/plain"
+        );
+        // Syntax is deliberately not checked — see the helper's doc comment.
+        // These are legal header values, so they reach the API and are
+        // rejected there, not here. Pinned so a future "validate the MIME
+        // grammar too" change has to be a deliberate one.
+        assert!(mime_type_header("nonsense").is_ok());
+        assert!(mime_type_header("text/").is_ok());
     }
 
     #[test]

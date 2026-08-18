@@ -2041,8 +2041,13 @@ impl Client {
     /// # Errors
     ///
     /// Returns [`GenaiError::InvalidInput`] for a malformed store name, an
-    /// unreadable file, or an invalid MIME type, and an API or network error
-    /// if the request fails.
+    /// unreadable file, or a MIME type that cannot be sent as a header value
+    /// (one containing control characters), and an API or network error if the
+    /// request fails.
+    ///
+    /// MIME *syntax* is not checked here: `nonsense` or `text/` are valid
+    /// header values, so they reach the API and come back as an API error
+    /// rather than `InvalidInput`.
     pub async fn upload_to_file_search_store_with_mime(
         &self,
         store_name: &str,

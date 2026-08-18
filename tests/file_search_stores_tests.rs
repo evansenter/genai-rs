@@ -24,7 +24,9 @@ mod common;
 
 use common::{get_client, stateful_builder};
 use futures_util::FutureExt;
-use genai_rs::{Client, Content, DocumentState, InteractionInput, InteractionStatus, Tool};
+use genai_rs::{
+    Client, Content, DocumentState, GenaiError, InteractionInput, InteractionStatus, Tool,
+};
 use std::panic::AssertUnwindSafe;
 
 /// Creates a uniquely-named store so concurrent runs don't collide.
@@ -65,9 +67,23 @@ where
     // — noise that teaches the reader to ignore the one message here that
     // means something. Costs one GET per test and makes the helper idempotent,
     // which is what lets every test go through it.
-    if client.get_file_search_store(&name).await.is_ok()
-        && let Err(e) = client.delete_file_search_store(&name, true).await
-    {
+    //
+    // Only a 404 counts as already-gone. Treating *any* probe failure as
+    // nothing-to-clean-up would let a transient 503, a timeout, or a rate
+    // limit during a matrix run skip the delete and print nothing — leaking
+    // the store in precisely the silent way this harness exists to prevent,
+    // and worse than the unconditional delete it replaced. Every other
+    // outcome falls through and attempts the delete, so an unexpected status
+    // (403 rather than 404, say) degrades to the old behavior: the delete
+    // runs, and says so if it fails.
+    let already_gone = matches!(
+        client.get_file_search_store(&name).await,
+        Err(GenaiError::Api {
+            status_code: 404,
+            ..
+        })
+    );
+    if !already_gone && let Err(e) = client.delete_file_search_store(&name, true).await {
         eprintln!("cleanup failed for {name}: {e:?}");
     }
 
