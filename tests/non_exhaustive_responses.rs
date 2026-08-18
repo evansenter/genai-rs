@@ -441,6 +441,19 @@ mod tests {
 #[derive(Deserialize)]
 pub struct AfterTests {}
 
+// The gated module's brace arrives on an *attribute* line. Skipping that line
+// wholesale loses the brace, so depth seeds from `fn inner` below and the mask
+// closes on its brace, exposing the struct after it.
+#[cfg(test)]
+#[allow(dead_code)] mod attr_line_carries_brace {
+    fn inner() {}
+    #[derive(Deserialize)]
+    pub struct MaskedByAttrLineBrace {}
+}
+
+#[derive(Deserialize)]
+pub struct AfterAttrLineBrace {}
+
 // And a semicolon-terminated gated item, which has no braces to balance.
 #[cfg(test)]
 pub(crate) mod helper;
@@ -527,6 +540,15 @@ pub struct AfterInlineSemicolonGate {}
     assert!(
         !names.contains(&"HiddenByInlineGate"),
         "a same-line `#[cfg(test)] mod x {{` still gates its body: {found:?}"
+    );
+    assert!(
+        !names.contains(&"MaskedByAttrLineBrace"),
+        "a gated module whose brace arrives on an attribute line still masks \
+         its body: {found:?}"
+    );
+    assert!(
+        names.contains(&"AfterAttrLineBrace"),
+        "and the mask closes at that module's end: {found:?}"
     );
     assert!(
         names.contains(&"AfterInlineGate"),
@@ -677,20 +699,26 @@ fn cfg_test_modules(rel: &str, source: &str) -> BTreeSet<String> {
         // exactly when the forward scan is the right answer.
         //
         // Terminates because each peel returns a strictly shorter slice.
-        let mut same_line = attr_remainder(line.trim_start());
-        while let Some(rest) = same_line.filter(|r| r.starts_with("#[")) {
-            same_line = attr_remainder(rest);
-        }
+        let peeled = peel_attrs(line.trim_start());
+        let same_line = (!peeled.is_empty()).then_some(peeled);
         // Otherwise scan forward rather than assuming the very next line.
         // `#[cfg(test)]` / `#[allow(dead_code)]` / `mod x;` is legal, as is a
         // comment in between, and pairing only with `index + 1` would miss the
         // module — leaving a test-only file scanned as public API and reported
         // as an offender with no correct fix.
+        // The forward scan peels too. Discarding every attribute-prefixed
+        // line outright would make the two halves disagree about what such a
+        // line means: `#[cfg(test)]` on one line and `#[allow(dead_code)] mod
+        // helper;` on the next would skip the second entirely, land on
+        // whatever declaration follows, and reserve *that* module — the same
+        // silent mispairing the same-line peel above closes.
         let Some(decl) = same_line.or_else(|| {
             lines[index + 1..]
                 .iter()
                 .map(|l| l.trim_start())
-                .find(|l| !l.is_empty() && !l.starts_with("//") && !l.starts_with("#["))
+                .filter(|l| !l.is_empty() && !l.starts_with("//"))
+                .map(peel_attrs)
+                .find(|l| !l.is_empty())
         }) else {
             continue;
         };
@@ -781,6 +809,23 @@ fn attr_remainder(trimmed: &str) -> Option<&str> {
     None
 }
 
+/// A line with any leading attributes removed, or empty if that is all it was.
+///
+/// Both parsers need this and needed it in the same way: an attribute may sit
+/// on the same line as the item it applies to, and treating such a line as
+/// "just an attribute" loses the item. Shared so the two cannot drift apart on
+/// the question of what an attribute-prefixed line means.
+fn peel_attrs(trimmed: &str) -> &str {
+    let mut rest = trimmed;
+    while rest.starts_with("#[") {
+        match attr_remainder(rest) {
+            Some(next) => rest = next,
+            None => return "",
+        }
+    }
+    rest
+}
+
 /// Removes every `not(..)` group, so a `test` token left standing is one the
 /// gate actually requires.
 ///
@@ -857,8 +902,16 @@ fn cfg_test_mask(lines: &[&str]) -> Vec<bool> {
         if awaiting_gated_item {
             mask[index] = true;
             // Comments and further attributes sit between the gate and the
-            // item it gates; neither ends the wait.
-            if trimmed.starts_with("//") || trimmed.starts_with("#[") {
+            // item it gates; neither ends the wait *on its own*. But an
+            // attribute line can carry the item too — `#[allow(dead_code)] mod
+            // tests {` — and skipping it wholesale loses that brace, so the
+            // depth seeds from the next brace-opening line instead and the
+            // mask closes early, exposing the rest of the module as public
+            // API. Same shape the `is_cfg_test_attr` branch below counts for.
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if trimmed.starts_with("#[") && peel_attrs(trimmed).is_empty() {
                 continue;
             }
             let opens = line.matches('{').count() as i32;
@@ -993,6 +1046,11 @@ mod attr_then_newline_helper;
 #[cfg(test)] #[allow(dead_code)] mod same_line_after_attr;
 
 pub mod also_not_test_only;
+
+#[cfg(test)]
+#[allow(dead_code)] mod attr_carrying_item;
+
+pub mod third_not_test_only;
 ";
     let modules = cfg_test_modules("src/lib.rs", lib_rs);
     assert_eq!(
@@ -1003,6 +1061,7 @@ pub mod also_not_test_only;
             "src/same_line_helper".to_string(),
             "src/attr_then_newline_helper".to_string(),
             "src/same_line_after_attr".to_string(),
+            "src/attr_carrying_item".to_string(),
         ]),
         "both declaration forms parse; an ungated `mod` is not collected, and \
          neither is an inline `mod .. {{ }}`, which names no file. A same-line \
