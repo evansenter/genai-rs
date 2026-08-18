@@ -1091,10 +1091,13 @@ pub enum VideoProcessing {
     /// Model-driven exploration of the video (wire: the bare string
     /// `"agentic"`).
     ///
-    /// Measured to consume the same video token count as
-    /// [`Static`](Self::Static) over an unclipped video — see the token table
-    /// on [`VideoProcessing`]. Use a segment window, not the mode, to control
-    /// cost.
+    /// **No longer reports video tokens at all.** As of 2026-08-18 this bills
+    /// as `image`, in a quantity that varies run to run (2,112 and 4,158 on
+    /// two consecutive runs) — which made it the cheapest of the measured
+    /// options, below even a clipped window. It consumed the same count as
+    /// [`Static`](Self::Static) when first measured on 2026-08-16, so treat
+    /// this as a moving figure and see the token table on
+    /// [`VideoProcessing`].
     Agentic,
     /// Static processing with an explicit segment window and/or frame rate
     /// (wire: `{"type": "static", ...}`).
@@ -2103,8 +2106,9 @@ impl Content {
     /// Only applicable to [`Content::Video`]; on any other content type this
     /// logs a warning and returns the content unchanged.
     ///
-    /// A segment window can cut video token cost by two orders of magnitude —
-    /// see [`VideoProcessing`] for the wire forms and measured numbers.
+    /// A segment window is what reduces video token cost among the `static`
+    /// forms — see [`VideoProcessing`] for the wire forms and the measured
+    /// numbers, which the service has revised once already.
     ///
     /// **Note:** content carrying `processing` must be sent inside a
     /// [`Step::UserInput`](crate::Step::UserInput); the bare-content-array

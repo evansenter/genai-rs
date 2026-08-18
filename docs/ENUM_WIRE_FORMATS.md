@@ -636,7 +636,6 @@ among the `static` forms. What has not: the magnitudes, and the earlier
 conclusion that mode selection is never a lever — `"agentic"` is now the
 cheapest option of all, below even the clipped window.
 
-
 **Position constraint**: the API accepts `processing` only when the video
 content is inside a `user_input` step. The bare-content-array input form is
 rejected:
