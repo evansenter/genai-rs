@@ -34,16 +34,16 @@
 //! Adding a field to either is a source break for any downstream struct
 //! literal or exhaustive destructure, and this guard will not say so.
 //!
-//! The sibling views are split rather than uniform: the rest of them —
-//! `ToolCallInfo`, `CodeExecutionCallInfo`, `CodeExecutionResultInfo`,
-//! `UrlContextResultInfo`, `GoogleMapsResultInfo` — carry the attribute by
-//! hand, so those two are the whole of the gap today. Named rather than
-//! counted, deliberately: a tally drifts the moment a view is added or
-//! annotated, and the actionable half is *which* types are uncovered, not how
-//! many. (`ImageInfo` and `AudioInfo` are views too but have no public fields,
-//! so no downstream literal or exhaustive destructure is possible against them
-//! and a field addition is not a source break — they are on neither side of
-//! this.) Unlike the enum gap this needs no new plumbing, only a widened
+//! The sibling views are split rather than uniform: the rest of them carry
+//! the attribute by hand, so those two are the whole of the gap today. The
+//! covered set is deliberately not enumerated here, and neither is a count —
+//! both drift whenever a view is added or annotated, for reasons having
+//! nothing to do with the gap, and this paragraph has already been corrected
+//! twice on that half alone. The actionable half is *which* types are
+//! uncovered, and those are named. (`ImageInfo` and `AudioInfo` are views too
+//! but have no public fields, so no downstream literal or exhaustive
+//! destructure is possible against them and a field addition is not a source
+//! break — they are on neither side of this.) Unlike the enum gap this needs no new plumbing, only a widened
 //! condition — but widening it is a scoping decision, not an oversight to be
 //! quietly fixed. Stated here so a clean run is not read as covering them, and
 //! so a reader who greps for one named type does not conclude the boundary is

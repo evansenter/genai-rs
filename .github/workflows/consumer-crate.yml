@@ -64,19 +64,33 @@ jobs:
           # `consumer/` (or `minimal/`) and never walks up to it.
           enable-config: "false"
 
-      # `have-mold` is empty for three different reasons — not Linux, the
-      # install failed, or the action never resolved — and at the point
-      # RUSTFLAGS reads it they are indistinguishable. Say so in the log, so a
-      # misconfiguration is visible rather than inferred from link times. The
-      # condition lives in `if:`, not in the body: a `run:` block is a YAML
+      # Split by `outcome`, not merged into one "no mold" message. An empty
+      # `have-mold` means either "nothing to do" (not Linux — the composite
+      # exits 0) or "something went wrong", and `continue-on-error` erases the
+      # difference from the step's own conclusion. Reporting them together is
+      # what let an unresolvable `uses:` path ship green: the step said
+      # success, the output was empty, and empty looked ordinary.
+      #
+      # `warning` rather than `notice` for the failure arm so it reaches the
+      # run summary. Neither arm fails the job — mold is a link-speed
+      # optimization, and gating these jobs on it is the thing this whole
+      # arrangement exists to avoid.
+      #
+      # Conditions live in `if:`, never in the body: a `run:` block is a YAML
       # block scalar that Actions substitutes before bash parses it.
-      - name: Note when mold is not in use
-        if: ${{ !cancelled() && steps.mold.outputs.have-mold == '' }}
+      - name: Warn when the mold step failed
+        if: ${{ !cancelled() && steps.mold.outcome == 'failure' }}
         run: |
-          echo "::notice::mold was not enabled — building with the default"
-          echo "linker. Link times are longer; nothing else about this job"
-          echo "changes. Check the setup-mold step above for which of the"
-          echo "three causes applied."
+          echo "::warning::setup-mold failed — building with the default"
+          echo "linker. Two causes look identical from here: apt could not"
+          echo "reach a mirror, or the action path did not resolve (a local"
+          echo "'uses:' resolves against \$GITHUB_WORKSPACE, and this job"
+          echo "checks out to genai-rs/). Check the step log for which."
+      - name: Note when mold is deliberately skipped
+        if: ${{ !cancelled() && steps.mold.outcome == 'success' && steps.mold.outputs.have-mold == '' }}
+        run: |
+          echo "::notice::mold not applicable on this runner — building with"
+          echo "the default linker. Expected off Linux; nothing is wrong."
 
       - name: Scaffold a consumer crate outside the workspace
         run: |
@@ -276,19 +290,33 @@ jobs:
           # `consumer/` (or `minimal/`) and never walks up to it.
           enable-config: "false"
 
-      # `have-mold` is empty for three different reasons — not Linux, the
-      # install failed, or the action never resolved — and at the point
-      # RUSTFLAGS reads it they are indistinguishable. Say so in the log, so a
-      # misconfiguration is visible rather than inferred from link times. The
-      # condition lives in `if:`, not in the body: a `run:` block is a YAML
+      # Split by `outcome`, not merged into one "no mold" message. An empty
+      # `have-mold` means either "nothing to do" (not Linux — the composite
+      # exits 0) or "something went wrong", and `continue-on-error` erases the
+      # difference from the step's own conclusion. Reporting them together is
+      # what let an unresolvable `uses:` path ship green: the step said
+      # success, the output was empty, and empty looked ordinary.
+      #
+      # `warning` rather than `notice` for the failure arm so it reaches the
+      # run summary. Neither arm fails the job — mold is a link-speed
+      # optimization, and gating these jobs on it is the thing this whole
+      # arrangement exists to avoid.
+      #
+      # Conditions live in `if:`, never in the body: a `run:` block is a YAML
       # block scalar that Actions substitutes before bash parses it.
-      - name: Note when mold is not in use
-        if: ${{ !cancelled() && steps.mold.outputs.have-mold == '' }}
+      - name: Warn when the mold step failed
+        if: ${{ !cancelled() && steps.mold.outcome == 'failure' }}
         run: |
-          echo "::notice::mold was not enabled — building with the default"
-          echo "linker. Link times are longer; nothing else about this job"
-          echo "changes. Check the setup-mold step above for which of the"
-          echo "three causes applied."
+          echo "::warning::setup-mold failed — building with the default"
+          echo "linker. Two causes look identical from here: apt could not"
+          echo "reach a mirror, or the action path did not resolve (a local"
+          echo "'uses:' resolves against \$GITHUB_WORKSPACE, and this job"
+          echo "checks out to genai-rs/). Check the step log for which."
+      - name: Note when mold is deliberately skipped
+        if: ${{ !cancelled() && steps.mold.outcome == 'success' && steps.mold.outputs.have-mold == '' }}
+        run: |
+          echo "::notice::mold not applicable on this runner — building with"
+          echo "the default linker. Expected off Linux; nothing is wrong."
 
       - name: Scaffold a minimal consumer (no async-trait, no serde_json, no trait import)
         run: |
