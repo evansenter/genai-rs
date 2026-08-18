@@ -18,26 +18,28 @@ use crate::schema::get_type_info;
 /// runtime JSON parsing.
 fn json_value_to_tokens(value: &serde_json::Value) -> TokenStream {
     match value {
-        serde_json::Value::Null => quote! { ::serde_json::Value::Null },
-        serde_json::Value::Bool(b) => quote! { ::serde_json::Value::Bool(#b) },
+        serde_json::Value::Null => quote! { ::genai_rs::__private::serde_json::Value::Null },
+        serde_json::Value::Bool(b) => quote! { ::genai_rs::__private::serde_json::Value::Bool(#b) },
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                quote! { ::serde_json::json!(#i) }
+                quote! { ::genai_rs::__private::serde_json::json!(#i) }
             } else if let Some(f) = n.as_f64() {
-                quote! { ::serde_json::json!(#f) }
+                quote! { ::genai_rs::__private::serde_json::json!(#f) }
             } else if let Some(u) = n.as_u64() {
                 // u64 that doesn't fit in i64 - convert to f64 at compile time
                 let f = u as f64;
-                quote! { ::serde_json::json!(#f) }
+                quote! { ::genai_rs::__private::serde_json::json!(#f) }
             } else {
                 // Should not happen for valid JSON numbers
-                quote! { ::serde_json::Value::Null }
+                quote! { ::genai_rs::__private::serde_json::Value::Null }
             }
         }
-        serde_json::Value::String(s) => quote! { ::serde_json::Value::String(#s.to_string()) },
+        serde_json::Value::String(s) => {
+            quote! { ::genai_rs::__private::serde_json::Value::String(#s.to_string()) }
+        }
         serde_json::Value::Array(arr) => {
             let items = arr.iter().map(json_value_to_tokens);
-            quote! { ::serde_json::Value::Array(vec![#(#items),*]) }
+            quote! { ::genai_rs::__private::serde_json::Value::Array(vec![#(#items),*]) }
         }
         serde_json::Value::Object(obj) => {
             let pairs = obj.iter().map(|(k, v)| {
@@ -45,8 +47,8 @@ fn json_value_to_tokens(value: &serde_json::Value) -> TokenStream {
                 quote! { (#k.to_string(), #v_tokens) }
             });
             quote! {
-                ::serde_json::Value::Object({
-                    let mut map = ::serde_json::Map::new();
+                ::genai_rs::__private::serde_json::Value::Object({
+                    let mut map = ::genai_rs::__private::serde_json::Map::new();
                     #(
                         let (k, v) = #pairs;
                         map.insert(k, v);
@@ -158,7 +160,7 @@ pub fn generate_declaration_function(
                 arg_extraction_tokens.push(quote! {
                     let #param_ident: #param_type = match args.get(#param_name_str) {
                         Some(val) if !val.is_null() => {
-                            ::serde_json::from_value(val.clone()).map_err(|e| {
+                            ::genai_rs::__private::serde_json::from_value(val.clone()).map_err(|e| {
                                 ::genai_rs::function_calling::FunctionError::ArgumentMismatch(
                                     format!("Failed to deserialize optional argument '{}': {}", #param_name_str, e)
                                 )
@@ -171,7 +173,7 @@ pub fn generate_declaration_function(
                 arg_extraction_tokens.push(quote! {
                     let #param_ident: #param_type = args.get(#param_name_str)
                         .ok_or_else(|| ::genai_rs::function_calling::FunctionError::ArgumentMismatch(format!("Missing required argument '{}'", #param_name_str)))
-                        .and_then(|val| ::serde_json::from_value(val.clone()).map_err(|e| {
+                        .and_then(|val| ::genai_rs::__private::serde_json::from_value(val.clone()).map_err(|e| {
                             ::genai_rs::function_calling::FunctionError::ArgumentMismatch(
                                 format!("Failed to deserialize argument '{}': {}", #param_name_str, e)
                             )
@@ -203,7 +205,7 @@ pub fn generate_declaration_function(
             }
         }
 
-        #[::async_trait::async_trait]
+        #[::genai_rs::__private::async_trait::async_trait]
         impl ::genai_rs::function_calling::CallableFunction for #callable_struct_name {
             fn declaration(&self) -> ::genai_rs::FunctionDeclaration {
                 ::genai_rs::FunctionDeclaration::new(
@@ -217,19 +219,19 @@ pub fn generate_declaration_function(
                 )
             }
 
-            async fn call(&self, args: ::serde_json::Value) -> Result<::serde_json::Value, ::genai_rs::function_calling::FunctionError> {
+            async fn call(&self, args: ::genai_rs::__private::serde_json::Value) -> Result<::genai_rs::__private::serde_json::Value, ::genai_rs::function_calling::FunctionError> {
                 #(#arg_extraction_tokens)*
 
                 let original_fn_result = #fn_call_expr;
 
-                match ::serde_json::to_value(original_fn_result) {
+                match ::genai_rs::__private::serde_json::to_value(original_fn_result) {
                     Ok(value_from_fn_result) => {
                         // If the value is already a JSON object, return it as is.
                         // Otherwise, wrap it in a {"result": ...} object.
                         if value_from_fn_result.is_object() {
                             Ok(value_from_fn_result)
                         } else {
-                            Ok(::serde_json::json!({ "result": value_from_fn_result }))
+                            Ok(::genai_rs::__private::serde_json::json!({ "result": value_from_fn_result }))
                         }
                     }
                     Err(e) => Err(::genai_rs::function_calling::FunctionError::ExecutionError(Box::new(e)))
@@ -238,7 +240,12 @@ pub fn generate_declaration_function(
         }
 
         pub fn #generated_fn_name() -> ::genai_rs::FunctionDeclaration {
-             #callable_struct_name::new().declaration()
+             // Fully-qualified rather than method position: in method
+             // position this needs `CallableFunction` in scope at every
+             // expansion site, which is a requirement the caller cannot
+             // see from the `#[tool]` attribute alone (#402).
+             <#callable_struct_name as ::genai_rs::function_calling::CallableFunction>
+                 ::declaration(&#callable_struct_name::new())
         }
 
         pub fn #generated_callable_factory_fn_name() -> Box<dyn ::genai_rs::function_calling::CallableFunction> {

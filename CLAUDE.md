@@ -143,6 +143,12 @@ RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo doc --workspace --no-deps --featur
 
 ## Core Design Philosophy: Evergreen Soft-Typing
 
+> **Why is it like this?** `DECISIONS.md` holds the reasoning behind the
+> durable design choices — Evergreen soft-typing, `#[non_exhaustive]` response
+> structs, model constants, the verify-from-bindings-first rule, and what to do
+> with fields the API rejects. This file holds the rules; that file holds the
+> arguments. `CONTRIBUTING.md` covers setup and the review checklist.
+
 This library follows the [Evergreen spec](https://github.com/google-deepmind/evergreen-spec) philosophy: **unknown data should be preserved, not rejected**.
 
 ### Key Principles
@@ -297,8 +303,13 @@ After merging version bump PR:
    before the tag exists rather than after):
    `RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo +nightly doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs`
    (matches the `[package.metadata.docs.rs]` feature set; `-D warnings` here
-   is deliberately stricter than docs.rs and the CI gate — warnings are an
-   early signal locally, but only hard errors fail the actual docs.rs build)
+   is deliberately stricter than docs.rs, though not stricter than the CI
+   gate — `rust.yml`'s docs.rs-feature-set step sets the same flags on
+   stable. What the local run buys is the toolchain: nightly, which is what
+   docs.rs builds on. `release.yml` does run nightly rustdoc, but without
+   `-D warnings` and only once the tag exists — which is the whole point of
+   doing it here first. Warnings are an early signal locally; only hard
+   errors fail the actual docs.rs build.)
 1. **Tag the release**: `git tag -a vX.Y.Z origin/main -m "Release vX.Y.Z"`
 2. **Push tag**: `git push origin vX.Y.Z`
 3. **Watch the run.** The tag push is the trigger — `release.yml` runs on
