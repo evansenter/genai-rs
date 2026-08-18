@@ -1769,6 +1769,19 @@ impl InteractionResponse {
 /// Content counts (`text_count`, `image_count`, ...) tally content blocks
 /// inside `model_output` steps.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+// Closed deliberately, in the same change that takes the break. Adding
+// `tool_call_count` is source-breaking *only* because this struct is open, and
+// the API is expected to grow step types — this PR argues `mcp_server_tool_call`
+// may start arriving, and the #438 sweep exists to catch new ones. Without the
+// attribute every future counter repeats this break for a purely mechanical
+// reason; with it, they are additive.
+//
+// Folding it in here is free for consumers: they are already recompiling for
+// the new field. `Default` is derived, so the documented migration
+// (`StepSummary::default()` then assign) still works, and there are no
+// construction sites outside this crate — the only two are in
+// `src/response_tests.rs`, where the attribute does not apply.
+#[non_exhaustive]
 pub struct StepSummary {
     /// Number of `user_input` steps
     pub user_input_count: usize,

@@ -111,9 +111,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
-- **`StepSummary` gains a `tool_call_count` field.** `StepSummary` is not
-  `#[non_exhaustive]`, so exhaustive struct literals and destructuring
-  without a `..` rest pattern will fail to compile.
+- **`StepSummary` gains a `tool_call_count` field, and is now
+  `#[non_exhaustive]`.** Exhaustive struct literals and destructuring without
+  a `..` rest pattern will fail to compile — both because of the new field and
+  because the struct is now closed.
+
+  Closed in the same change that takes the break, deliberately. The field
+  addition is source-breaking *only* because the struct was open, and the API
+  is expected to grow step types — `mcp_server_tool_call` may start arriving,
+  and the #438 sweep exists to catch new ones — so every future counter would
+  repeat this break for a purely mechanical reason. Doing it now costs
+  consumers nothing extra: they are already recompiling for the new field.
+
+  `Default` is derived, so the migration is
+  `StepSummary::default()` then assign, verified from a crate outside this
+  workspace where the attribute actually applies.
 
 ## [0.10.0] - 2026-08-16
 
