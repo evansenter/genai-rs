@@ -1540,7 +1540,11 @@ assignment, which still works on the many of these that derive `Default`
 (see **Constructing fixtures** below) — while buying the crate
 nothing — it does not gain the freedom to add required fields to something the
 user assembles. So `GenerationConfig`, `FunctionDeclaration`, the tool configs
-and the create/update bodies stay open; `InteractionResponse`, `UsageMetadata`,
+and the create/update bodies stay open — except where one ships builders, which
+is the construction path closing it would otherwise take away
+(`CreateFileSearchStoreRequest` carries the attribute for exactly that reason,
+and `new()` / `with_display_name()` / `with_extra()` are why it can).
+`InteractionResponse`, `UsageMetadata`,
 the `*ListResponse` wrappers, the result-item types and the resource shapes
 (`Agent`, `Environment`, `Trigger`, `Webhook`, ...) carry it.
 

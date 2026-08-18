@@ -115,7 +115,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Request-side types are deliberately untouched: `GenerationConfig`,
   `FunctionDeclaration`, the tool configs and the create/update bodies are
   yours to build, and closing them would cost construction syntax while
-  gaining the crate nothing.
+  gaining the crate nothing. The exception is a body that ships builders —
+  `CreateFileSearchStoreRequest` is `#[non_exhaustive]` because `new()` /
+  `with_display_name()` / `with_extra()` already give callers a construction
+  path, so closing it takes nothing away.
 
   `tests/non_exhaustive_responses.rs` now fails the build on a new response
   struct without the attribute, so the backlog cannot re-accumulate.
