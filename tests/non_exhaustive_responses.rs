@@ -652,18 +652,27 @@ fn cfg_test_modules(rel: &str, source: &str) -> BTreeSet<String> {
         if !is_cfg_test_attr(line.trim_start()) {
             continue;
         }
-        // Scan forward to the declaration rather than assuming it is the
-        // very next line. `#[cfg(test)]` / `#[allow(dead_code)]` / `mod x;`
-        // is legal, as is a comment in between, and pairing only with
-        // `index + 1` would miss the module — leaving a test-only file to be
-        // scanned as public API and reported as an offender with no correct
-        // fix. `cfg_test_mask` already tolerates exactly this shape, so the
-        // two parsers agreeing is the point.
-        let Some(decl) = lines[index + 1..]
-            .iter()
-            .map(|l| l.trim_start())
-            .find(|l| !l.is_empty() && !l.starts_with("//") && !l.starts_with("#["))
-        else {
+        // An item on the attribute's own line is that attribute's item, and
+        // scanning past it pairs the gate with the *next* declaration
+        // instead. `#[cfg(test)] use std::sync::Once;` above `pub mod
+        // client;` would reserve `src/client`, `is_test_only_path` would
+        // return true for `src/client.rs`, and the whole file would drop out
+        // of the scan — a clean run over unguarded response structs, which is
+        // the silent direction this file exists to close. `cfg_test_mask`
+        // was hardened for the same same-line shape; leaving its twin open
+        // would mean the two parsers disagree about what a gate applies to.
+        let same_line = attr_remainder(line.trim_start());
+        // Otherwise scan forward rather than assuming the very next line.
+        // `#[cfg(test)]` / `#[allow(dead_code)]` / `mod x;` is legal, as is a
+        // comment in between, and pairing only with `index + 1` would miss the
+        // module — leaving a test-only file scanned as public API and reported
+        // as an offender with no correct fix.
+        let Some(decl) = same_line.or_else(|| {
+            lines[index + 1..]
+                .iter()
+                .map(|l| l.trim_start())
+                .find(|l| !l.is_empty() && !l.starts_with("//") && !l.starts_with("#["))
+        }) else {
             continue;
         };
         // `mod x;` starts the line, while `pub mod x;` / `pub(crate) mod x;`
@@ -711,6 +720,33 @@ fn cfg_test_modules(rel: &str, source: &str) -> BTreeSet<String> {
 /// `#[cfg(all(not(test), unix))]` mark code that compiles only *outside*
 /// tests, i.e. real API; reading either as gated would skip a file this
 /// guard exists to scan, which is the direction that fails silently.
+/// What follows a leading attribute on the same line, if anything.
+///
+/// Bracket depth rather than `rfind("]")`: `#[cfg(all(test, not(miri)))]` ends
+/// in a run of them, and a remainder can contain brackets of its own
+/// (`#[cfg(test)] type T = Vec<[u8; 4]>;`), so neither the first nor the last
+/// is reliably the attribute's own close.
+fn attr_remainder(trimmed: &str) -> Option<&str> {
+    if !trimmed.starts_with("#[") {
+        return None;
+    }
+    let mut depth = 0i32;
+    for (offset, ch) in trimmed.char_indices() {
+        match ch {
+            '[' => depth += 1,
+            ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    let rest = trimmed[offset + ch.len_utf8()..].trim_start();
+                    return (!rest.is_empty() && !rest.starts_with("//")).then_some(rest);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn is_cfg_test_attr(trimmed: &str) -> bool {
     let Some(rest) = trimmed.strip_prefix("#[cfg(") else {
         return false;
@@ -897,6 +933,10 @@ mod not_gated;
 mod inline {
     pub struct NotAFile;
 }
+
+#[cfg(test)] use std::sync::Once;
+
+pub mod not_test_only;
 ";
     let modules = cfg_test_modules("src/lib.rs", lib_rs);
     assert_eq!(
