@@ -284,6 +284,20 @@ pub async fn upload_to_file_search_store(
         GenaiError::InvalidInput(format!("Failed to read {}: {e}", file_path.display()))
     })?;
 
+    // Validated rather than passed through, because the `# Errors` block on
+    // `upload_to_file_search_store_with_mime` promises `InvalidInput` for a bad
+    // MIME type and a caller matching on it would otherwise match nothing: an
+    // unheaderable value becomes a deferred reqwest builder error surfacing
+    // from `.send()` as an opaque `Http` naming neither the header nor the
+    // field. Unlike the filename below, this one is not a fallback that can be
+    // degraded — it declares how the API should parse the body — so it fails
+    // loudly and names the field.
+    let mime_type_header = HeaderValue::try_from(mime_type).map_err(|_| {
+        GenaiError::InvalidInput(format!(
+            "MIME type {mime_type:?} cannot be sent as a header value"
+        ))
+    })?;
+
     // The API derives a fallback display name from this when the query
     // parameter is absent, so send it either way.
     let file_name = file_path
@@ -317,7 +331,7 @@ pub async fn upload_to_file_search_store(
         .header(API_KEY_HEADER, &ctx.api_key)
         .header("X-Goog-Upload-Protocol", "raw")
         .header("X-Goog-Upload-File-Name", file_name_header)
-        .header(reqwest::header::CONTENT_TYPE, mime_type)
+        .header(reqwest::header::CONTENT_TYPE, mime_type_header)
         .body(bytes)
         .send()
         .await?;
@@ -426,12 +440,37 @@ pub async fn upload_to_file_search_store(
 /// ride in a header degrades to the same placeholder the non-UTF-8 arm at the
 /// call site already uses, rather than failing the upload over it.
 fn upload_file_name_header(file_name: &str) -> HeaderValue {
-    HeaderValue::try_from(file_name).unwrap_or_else(|_| HeaderValue::from_static("upload"))
+    HeaderValue::try_from(file_name).unwrap_or_else(|_| {
+        // Warn rather than degrade silently. `display_name` is usually also
+        // supplied, so the API-side fallback name is only consulted when it is
+        // not — meaning the effect is otherwise invisible until someone
+        // inspects a document uploaded without one. Same level the crate's
+        // other recoverable degradations use.
+        tracing::warn!(
+            file_name,
+            "filename cannot ride in a header (control character); sending \"upload\" instead"
+        );
+        HeaderValue::from_static("upload")
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unheaderable_mime_type_is_rejected_as_invalid_input() {
+        // Pins the `# Errors` promise on
+        // `upload_to_file_search_store_with_mime`. Without the check the value
+        // reaches `.header()` and becomes a deferred reqwest builder error at
+        // `.send()` — a `GenaiError::Http` naming neither the header nor the
+        // field, so a caller matching `InvalidInput` matches nothing.
+        //
+        // Asserted through the same `HeaderValue::try_from` the upload path
+        // uses, because the upload itself needs a real file and a live client.
+        assert!(HeaderValue::try_from("text/plain").is_ok());
+        assert!(HeaderValue::try_from("text/plain\nX-Injected: 1").is_err());
+    }
 
     #[test]
     fn upload_file_name_header_passes_non_ascii_through() {

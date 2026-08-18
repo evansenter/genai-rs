@@ -12,7 +12,9 @@
 //! Every test runs its body through [`with_store`], which deletes the store
 //! even when the body panics. Without that, a single failed assertion leaks
 //! a `genai-rs-test-*` store and its indexed documents into the project, and
-//! those accumulate silently across runs.
+//! those accumulate silently across runs. That includes `test_store_lifecycle`,
+//! whose body deletes the store itself: the helper probes before deleting, so
+//! a body that already cleaned up costs one GET and prints nothing.
 //!
 //! ```bash
 //! cargo test --test file_search_stores_tests -- --include-ignored --nocapture
@@ -57,7 +59,15 @@ where
 
     let outcome = AssertUnwindSafe(body(name.clone())).catch_unwind().await;
 
-    if let Err(e) = client.delete_file_search_store(&name, true).await {
+    // Probed rather than deleted unconditionally. A body whose subject *is*
+    // the delete (see `test_store_lifecycle`) leaves nothing to clean up, and
+    // an unconditional delete would print "cleanup failed" on every green run
+    // — noise that teaches the reader to ignore the one message here that
+    // means something. Costs one GET per test and makes the helper idempotent,
+    // which is what lets every test go through it.
+    if client.get_file_search_store(&name).await.is_ok()
+        && let Err(e) = client.delete_file_search_store(&name, true).await
+    {
         eprintln!("cleanup failed for {name}: {e:?}");
     }
 
@@ -86,48 +96,51 @@ async fn test_store_lifecycle() {
         return;
     };
 
-    // Not via `with_store`: this test deletes the store itself as the
-    // subject of the assertion below, so a second delete in cleanup would
-    // be testing nothing.
-    let store = create_test_store(&client, "lifecycle").await;
-    println!("created store: {}", store.name);
+    // Through `with_store` like every other test, even though this one deletes
+    // the store itself: the four assertions before that delete are each an
+    // early exit that would otherwise leak the store. The helper's cleanup
+    // probes before deleting, so the successful path costs one extra GET and
+    // prints nothing.
+    with_store(&client, "lifecycle", |name| {
+        let client = &client;
+        async move {
+            let store = client
+                .get_file_search_store(&name)
+                .await
+                .expect("get store failed");
+            println!("created store: {}", store.name);
 
-    assert!(
-        store.name.starts_with("fileSearchStores/"),
-        "store name should be a full resource name, got {:?}",
-        store.name
-    );
-    assert!(store.display_name.is_some());
-    assert!(store.create_time.is_some());
+            assert!(
+                store.name.starts_with("fileSearchStores/"),
+                "store name should be a full resource name, got {:?}",
+                store.name
+            );
+            assert!(store.display_name.is_some());
+            assert!(store.create_time.is_some());
 
-    // Get returns the same resource.
-    let fetched = client
-        .get_file_search_store(&store.name)
-        .await
-        .expect("get store failed");
-    assert_eq!(fetched.name, store.name);
-    assert_eq!(fetched.display_name, store.display_name);
+            // The new store appears in a listing.
+            let listed = client
+                .list_file_search_stores(None, None)
+                .await
+                .expect("list stores failed");
+            assert!(
+                listed.stores.iter().any(|s| s.name == store.name),
+                "created store should appear in the list"
+            );
 
-    // The new store appears in a listing.
-    let listed = client
-        .list_file_search_stores(None, None)
-        .await
-        .expect("list stores failed");
-    assert!(
-        listed.stores.iter().any(|s| s.name == store.name),
-        "created store should appear in the list"
-    );
+            client
+                .delete_file_search_store(&store.name, true)
+                .await
+                .expect("delete store failed");
 
-    client
-        .delete_file_search_store(&store.name, true)
-        .await
-        .expect("delete store failed");
-
-    // Deleted stores are gone.
-    assert!(
-        client.get_file_search_store(&store.name).await.is_err(),
-        "get should fail after delete"
-    );
+            // Deleted stores are gone.
+            assert!(
+                client.get_file_search_store(&store.name).await.is_err(),
+                "get should fail after delete"
+            );
+        }
+    })
+    .await;
 }
 
 #[tokio::test]
