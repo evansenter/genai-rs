@@ -1,0 +1,9 @@
+error[E0639]: cannot create non-exhaustive struct using struct expression
+  --> tests/ui/fail_step_summary_struct_literal.rs:18:19
+   |
+18 |       let _update = genai_rs::StepSummary {
+   |  ___________________^
+19 | |         tool_call_count: 1,
+20 | |         ..Default::default()
+21 | |     };
+   | |_____^
