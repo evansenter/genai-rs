@@ -1,12 +1,54 @@
-# Interactions API Gap Analysis (2026-07)
+# Interactions API Gap Analysis
+
+> ## ⚠️ This is a point-in-time snapshot, not a completeness guarantee
+>
+> | | |
+> |---|---|
+> | **Last swept against** | `google-genai` **2.18.1** |
+> | **Sweep date** | **2026-08-16** |
+> | **Baseline in CI** | `.github/last-swept-sdk-version` |
+>
+> Everything below being checked off means *"nothing was missing as of the
+> sweep date"* — it does **not** mean the crate is currently complete. The
+> SDK ships new Interactions surface between sweeps, and this file cannot
+> know about it.
+>
+> **Before relying on this file, check whether a newer `google-genai` has
+> shipped.** The scheduled `api-surface-sweep` workflow does this daily and
+> opens an issue when the SDK moves; if that issue is open, this file is
+> behind by at least that much. The workflow closes that issue itself on the
+> next run that finds no bindings diff against the recorded baseline, so an
+> open issue always means genuinely-unswept surface rather than a close
+> someone forgot.
+
+## How to verify API surface (read this before trusting any source)
+
+These three disagree, and they disagree in a consistent direction. Use them
+in this order:
+
+| Rank | Source | Why |
+|------|--------|-----|
+| 1 | **Generated bindings** — `google-genai`'s `_gaos/types/interactions/*.py` | Machine-generated from the spec; ships *ahead* of prose. Diffing two releases is the only reliable way to spot new surface. |
+| 2 | **Live probes** against `generativelanguage.googleapis.com` | Ground truth for what the Gemini endpoint actually accepts, which is often narrower than the spec. |
+| 3 | **Prose docs** — `ai.google.dev` *and this file* | Both lag the other two. Neither is evidence of absence. |
+
+This ordering was learned the hard way. The 2.17.0 → 2.18.1 sweep found
+`Content::Video.processing` (a 127x token-cost lever) and a widened
+`speech_config` union — **neither documented on `ai.google.dev`**, and both
+invisible to a reader who trusted this file's checked-off list. See #421.
+
+Rank 2 matters as much as rank 1: the bindings describe a union for
+`speech_config` that the Gemini API rejects outright, and `Tool::Retrieval`
+is in the bindings but Vertex-only. New surface found at rank 1 must be
+live-probed before it is modeled as usable.
 
 Status: implementation tracker — items are removed/checked off as they land.
-Source: Google's `google-genai` Python SDK 2.10.0 generated API bindings
-(machine-generated from the Interactions API spec), cross-checked against SDK
-1.65/1.74/2.0 for protocol history. Re-swept 2026-08 against SDK 2.17.0
-(items 18-20 below) with every new parameter live-probed first. `ai.google.dev` doc endpoints were not
-reachable from the analysis environment; all behaviors should be re-verified
-live with `LOUD_WIRE=1` before release.
+Source: Google's `google-genai` generated API bindings, originally 2.10.0
+cross-checked against SDK 1.65/1.74/2.0 for protocol history; re-swept
+2026-08 against 2.17.0 (items 18-20, landed) and 2026-08-16 against 2.18.1
+(items 21-22, **found but not yet modeled**), with every new parameter
+live-probed first. All behaviors should be re-verified live with
+`LOUD_WIRE=1` before release.
 
 ## Headline: wire revision migration — ✅ DONE (2026-07)
 
@@ -178,6 +220,33 @@ Completed in the 2026-08 sweep against SDK 2.17.0 (the 0.9.0 release):
     typed agent-config helper.~~ ✅ (`TranscriptionConfig`,
     `SafetySetting` in `src/safety.rs`, `with_labels()`/`add_label()`,
     `AntigravityConfig`)
+
+## Found in the 2026-08-16 sweep against SDK 2.18.1 — NOT yet modeled
+
+⚠️ **These are open gaps, not completed items.** Both were found by diffing
+the bindings and confirmed by live probe; neither is in the crate yet.
+Deliberately listed separately from the completed items above, because a
+struck-through line reads as shipped and that is precisely the confusion
+this file's header now warns about.
+
+21. `Content::Video.processing` — segment clipping (`start_offset` /
+    `end_offset`), `fps`, and the `static | agentic` mode enum.
+    **Tracked in #419.**
+
+    New in 2.18.x and **absent from `ai.google.dev`** — found only by
+    diffing the bindings. Live-probed: the segment window is a ~127x
+    token-cost lever (455 vs 57,775 video input tokens on one source
+    video), while the mode and `fps` alone change nothing. Also
+    position-sensitive — accepted only inside a `user_input` step (#427).
+
+22. `generation_config.speech_config` widened to
+    `SpeakerConfig | List[SpeechConfig]`. **Tracked in #420.**
+
+    Live-probed: the Gemini API **rejects both object forms** on send
+    (`400 ... Expected an array, got object`), so the crate should keep
+    emitting the list; the gap is on deserialize, where the object form
+    currently matches an all-optional `SpeechConfig` and silently discards
+    every speaker.
 
 ## Spec-vs-implementation disagreements — ✅ ALL FIXED
 

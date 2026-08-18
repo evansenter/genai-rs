@@ -1,0 +1,411 @@
+name: API Surface Sweep
+
+# Detects new Interactions API surface before it becomes an invisible gap.
+#
+# `docs/INTERACTIONS_API_GAP.md` is a point-in-time snapshot: every item
+# checked off means "nothing missing as of the sweep date", not "complete".
+# Between sweeps the SDK ships new surface and the file cannot know. That is
+# exactly what happened between 2.17.0 and 2.18.1 — `Content::Video.processing`
+# (a ~127x token-cost lever) and a widened `speech_config` union both landed
+# unnoticed, and neither was documented on ai.google.dev, so only a bindings
+# diff could have caught them. See #421.
+#
+# This job diffs the latest google-genai release against the version recorded
+# in .github/last-swept-sdk-version and opens/updates an issue when the
+# Interactions type bindings change.
+
+on:
+  schedule:
+    - cron: '0 8 * * *' # Daily at 8am UTC, an hour before the flakiness report
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sweep:
+    name: Diff google-genai Interactions bindings
+    runs-on: ubuntu-latest
+    # Bounds every network call in the job, not just the one that carries an
+    # explicit `timeout=`. The two `pip download`s and the `gh` calls would
+    # otherwise inherit the 360-minute Actions default, and a stalled
+    # download produces exactly the six-hour-late cron failure the per-call
+    # timeout was added to avoid. 15 minutes is generous: a normal run is
+    # under two.
+    timeout-minutes: 15
+    env:
+      # One rolling issue, same reasoning as the flakiness report (#425):
+      # a fixed title makes the dedupe exact, so a sweep that runs daily
+      # updates in place instead of filing a duplicate every morning.
+      #
+      # Job-level rather than per-step because the open path and the close
+      # path both look the issue up by this exact string. Two copies that
+      # drifted apart would leave the close path silently matching nothing.
+      SWEEP_ISSUE_TITLE: 'API surface sweep: google-genai has new Interactions bindings'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compare latest SDK against the recorded baseline
+        id: diff
+        run: |
+          set -euo pipefail
+
+          BASELINE=$(tr -d '[:space:]' < .github/last-swept-sdk-version)
+          echo "baseline=$BASELINE" >> "$GITHUB_OUTPUT"
+          echo "Baseline (last swept): $BASELINE"
+
+          # `timeout=` is not optional here. Without it urlopen inherits the
+          # default socket timeout, which is None — so a pypi.org connection
+          # that is accepted and then stalls blocks until the Actions
+          # 360-minute job limit rather than failing fast. On a schedule-only
+          # job that is the difference between a prompt cron failure and one
+          # that arrives six hours later. `set -euo pipefail` turns the
+          # resulting URLError into a legible job failure.
+          LATEST=$(python -c "
+          import json, urllib.request
+          with urllib.request.urlopen('https://pypi.org/pypi/google-genai/json', timeout=30) as r:
+              print(json.load(r)['info']['version'])
+          ")
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "Latest on PyPI: $LATEST"
+
+          if [ "$BASELINE" = "$LATEST" ]; then
+            echo "Up to date — nothing to diff."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # `--only-binary=:all:` is what actually enforces wheels — `--no-deps`
+          # only skips dependency resolution. Without it an sdist-only release
+          # lands a .tar.gz, the *.whl glob below does not expand, and the job
+          # fails on an unzip error rather than on anything legible.
+          pip download "google-genai==$BASELINE" --no-deps --only-binary=:all: -q -d base
+          pip download "google-genai==$LATEST"   --no-deps --only-binary=:all: -q -d new
+          (cd base && unzip -q ./*.whl -d x)
+          (cd new  && unzip -q ./*.whl -d x)
+
+          BASE_DIR=base/x/google/genai/_gaos/types/interactions
+          NEW_DIR=new/x/google/genai/_gaos/types/interactions
+
+          # Assert the paths exist before diffing. `diff -r` exits 2 and writes
+          # to stderr when a directory is missing, and `|| true` would swallow
+          # that — leaving full.diff empty, which the check below reads as
+          # "bindings unchanged". A vanished path would then be indistinguishable
+          # from a genuine no-op, and since the baseline is never bumped in that
+          # state the job would re-report "unchanged" every morning with no
+          # failure signal: the detector silently inert.
+          #
+          # `_gaos/types/interactions` is a private, underscore-prefixed module,
+          # so upstream restructuring it without notice is a realistic event
+          # rather than a hypothetical.
+          for dir in "$BASE_DIR" "$NEW_DIR"; do
+            if [ ! -d "$dir" ]; then
+              echo "::error::Interactions bindings path not found: $dir"
+              echo "google-genai has likely restructured its generated bindings."
+              echo "This job cannot detect new API surface until the path below is updated."
+              exit 1
+            fi
+          done
+
+          # Two signals, because they catch different things: a new *file* is
+          # a new type (e.g. staticmediaprocessing.py), while a changed field
+          # line is a widened or added field on an existing type (e.g.
+          # speech_config becoming a union).
+          # `|| [ $? -eq 1 ]`, not `|| true`: diff exits 1 for "differences
+          # found" and 2 for trouble (unreadable file, I/O error). Folding 2
+          # into success leaves full.diff empty, which the check below reads
+          # as "bindings unchanged" — the directory assertion above covers the
+          # likeliest cause, this covers the rest. Under `set -e` an exit 2
+          # now fails the job.
+          diff <(cd "$BASE_DIR" && ls) <(cd "$NEW_DIR" && ls) > files.diff || [ $? -eq 1 ]
+          diff -r "$BASE_DIR" "$NEW_DIR" > full.diff || [ $? -eq 1 ]
+
+          if [ ! -s full.diff ]; then
+            echo "SDK moved $BASELINE -> $LATEST but Interactions bindings are unchanged."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## New Interactions API surface detected"
+            echo
+            echo "\`google-genai\` moved **$BASELINE → $LATEST** and the generated"
+            echo "Interactions bindings changed."
+            echo
+            echo "Generated bindings ship *ahead* of prose docs, so treat this as the"
+            echo "leading indicator: anything here may be absent from ai.google.dev."
+            echo
+            if [ -s files.diff ]; then
+              echo "### Added/removed type files"
+              echo
+              echo '```diff'
+              cat files.diff
+              echo '```'
+              echo
+            fi
+            echo "### Full bindings diff"
+            echo
+            echo '<details><summary>Expand</summary>'
+            echo
+            # Tilde fence, not backticks: the body is upstream Python source,
+            # and any triple backtick in a docstring would close a backtick
+            # fence early and swallow the </details> into the code block.
+            echo '~~~diff'
+            # Cap the body so a large diff can't exceed GitHub's issue limit.
+            head -c 40000 full.diff
+            if [ "$(wc -c < full.diff)" -gt 40000 ]; then
+              echo
+              echo "... truncated; the untruncated diff is attached to this"
+              echo "workflow run as the \`sweep-diffs\` artifact ..."
+            fi
+            echo '~~~'
+            echo
+            echo '</details>'
+            echo
+            echo "### Next steps"
+            echo
+            echo "1. **Live-probe** anything new before modeling it. The bindings"
+            echo "   describe a broader surface than the Gemini endpoint implements —"
+            echo "   \`speech_config\`'s object arm and \`Tool::Retrieval\` are both"
+            echo "   spec-present and API-rejected."
+            echo "2. Model what survives probing; file issues for the rest."
+            echo "3. Update \`docs/INTERACTIONS_API_GAP.md\`: the header's"
+            echo "   **Last swept against** version *and* its dates, plus a"
+            echo "   \"found, NOT yet modeled\" entry for anything not landed in the"
+            echo "   same change. Do **not** add a completed-items entry for something"
+            echo "   still open — a struck-through line reads as shipped, which is the"
+            echo "   confusion that file's header exists to prevent."
+            echo "4. Bump \`.github/last-swept-sdk-version\` to \`$LATEST\`. That is"
+            echo "   what closes this loop: the next run sees baseline == latest"
+            echo "   and closes this issue itself, which is what clears the"
+            echo "   staleness signal the tracker header points readers at."
+          } > sweep_report.md
+
+          # GitHub rejects an issue body over 65,536 characters with a 422.
+          # The cap above bounds full.diff alone — files.diff and the
+          # boilerplate are appended uncapped, and the same upstream
+          # restructure the path assertion anticipates would make files.diff
+          # a listing of the whole directory twice over. Cap the assembled
+          # body, which is the thing that actually has to fit.
+          if [ "$(wc -c < sweep_report.md)" -gt 60000 ]; then
+            head -c 60000 sweep_report.md > sweep_report.trunc
+            # Close whatever the cut landed inside. A spurious empty fence
+            # when it did not is a cosmetic blemish; an unterminated one
+            # swallows the rest of the issue.
+            {
+              echo
+              echo '~~~'
+              echo
+              echo '</details>'
+              echo
+              echo "**Body truncated** to fit GitHub's issue size limit."
+              echo "The untruncated diff is attached to this workflow run as the"
+              echo "\`sweep-diffs\` artifact."
+            } >> sweep_report.trunc
+            mv sweep_report.trunc sweep_report.md
+          fi
+
+          # Machine-readable, invisible in the rendered issue. The update
+          # comment below greps the *existing* body for this exact line
+          # before posting, so it fires once per new `$LATEST` rather than
+          # every morning until a maintainer bumps the baseline.
+          #
+          # Appended *after* the cap, not inside the block above. As the last
+          # line of a body that then gets `head -c 60000`'d, it was the first
+          # thing truncation dropped — so on exactly the wholesale-restructure
+          # path the cap exists for, the posted body carried no marker, the
+          # next morning's grep missed, and the daily comment came back.
+          echo >> sweep_report.md
+          echo "<!-- sweep-latest: $LATEST -->" >> sweep_report.md
+
+          cat sweep_report.md
+
+      # The diffs are produced inline in the step above, not by a script
+      # anyone can run locally, and only the *truncated* report reaches the
+      # job log. Without this the truncation notices would point at a full
+      # diff no run actually exposes — and truncation fires exactly when a
+      # wholesale upstream restructure makes the untruncated diff most worth
+      # having.
+      - name: Upload the raw diffs
+        if: steps.diff.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sweep-diffs
+          path: |
+            full.diff
+            files.diff
+          retention-days: 30
+
+      - name: Open or update the sweep issue
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Through env rather than `${{ }}` inline in the script: an
+          # expression is substituted before bash parses the block, so a
+          # value containing a quote would break the block itself.
+          LATEST: ${{ steps.diff.outputs.latest }}
+          BASELINE: ${{ steps.diff.outputs.baseline }}
+        run: |
+          set -euo pipefail
+
+          TITLE="$SWEEP_ISSUE_TITLE"
+
+          # Both `--label` and the exact title are load-bearing keys, here
+          # and on the close path. Removing the label from the issue is a
+          # silent break: this lookup then finds nothing and files a
+          # duplicate under the same title every morning, while the close
+          # path leaves the staleness signal asserted forever. Retitling
+          # breaks both paths together and loudly, which is the safer of
+          # the two failure modes — the label is not decoration.
+          #
+          # `--state all`, not open: if the issue is closed without bumping
+          # `.github/last-swept-sdk-version`, an open-only search would find
+          # nothing and file a fresh one with the same title every morning
+          # until the baseline moves — the duplicate accumulation the fixed
+          # title exists to prevent, just gated on a close instead of a date.
+          EXISTING=$(gh issue list \
+            --label "api-sweep" \
+            --state all \
+            --limit 100 \
+            --json number,title \
+            --jq '[.[] | select(.title == $ENV.SWEEP_ISSUE_TITLE) | .number] | first // empty')
+
+          if [ -n "$EXISTING" ]; then
+            # Read the body before overwriting it: the marker in it records
+            # which `$LATEST` this issue was last updated for, and that is
+            # what decides whether the comment below is new information.
+            # Fetched in one `gh issue view`, and assigned rather than
+            # inlined into the `if` below. A command substitution *inside*
+            # an `if` condition is exempt from `set -e`, so a transient 5xx
+            # there would yield an empty string, skip the reopen, and let
+            # the edit and comment land on a still-closed issue — the same
+            # silent state described below, moved one call earlier rather
+            # than removed. In a simple assignment the failure does trip
+            # `set -e`.
+            PREV=$(gh issue view "$EXISTING" --json state,body)
+            PREV_STATE=$(printf '%s' "$PREV" | jq -r .state)
+            PREV_BODY=$(printf '%s' "$PREV" | jq -r .body)
+
+            # Reopen only when actually closed, rather than reopening
+            # unconditionally and discarding the outcome. `2>/dev/null ||
+            # true` was covering the already-open no-op, but it also hid a
+            # real failure — a transient 5xx, a locked issue, a token whose
+            # `issues: write` was narrowed — after which the edit and the
+            # comment both land on a *closed* issue and the job still prints
+            # "Updated issue" and exits 0. That is the one state the tracker
+            # header contract cannot survive: it tells readers no open sweep
+            # issue means nothing is unswept, while unswept surface sits on a
+            # closed, freshly-updated issue. The two failure modes are
+            # asymmetric and this one is the silent half.
+            if [ "$PREV_STATE" = "CLOSED" ]; then
+              gh issue reopen "$EXISTING"
+            fi
+
+            gh issue edit "$EXISTING" --body-file sweep_report.md
+
+            # A body edit notifies nobody and does not bump the issue in an
+            # inbox. Without this, only the first release that moves the
+            # bindings ever signals: every later one before the baseline is
+            # bumped would silently rewrite the body, so the newest surface
+            # would arrive with no "there is something to look at" event. A
+            # comment restores that without reintroducing the duplicate
+            # issues the fixed title exists to prevent.
+            # Heredoc + env vars rather than an inline --body carrying a
+            # GitHub expression: those are substituted into this script
+            # before bash parses it, so a value containing a quote would
+            # break the block itself rather than just the message.
+            #
+            # Note this comment deliberately does not spell the expression
+            # out. A `run:` block is a YAML block scalar, so `#` here is
+            # literal string content, not a YAML comment — the substitution
+            # above applies to it too, and an empty expression is a workflow
+            # parse error rather than a harmless note. The `env:` comment
+            # further up can spell it, because that one is a real YAML
+            # comment and never reaches Actions.
+            {
+              echo "Updated: \`google-genai\` **$LATEST** also moves the"
+              echo "Interactions bindings. The issue body above now reflects"
+              echo "the diff against baseline \`$BASELINE\`."
+              echo
+              echo "---"
+              echo "_Generated by [Claude Code](https://claude.ai/code)_"
+            } > update_comment.md
+            # `changed=true` holds on every run between detection and the
+            # baseline bump, not only on a release that moves the bindings
+            # again — `LATEST` moves with upstream, but `BASELINE` sits still
+            # until a maintainer edits the file. Commenting on all of them
+            # would re-post identical text every morning at 08:00 UTC: a
+            # softer version of the 15-duplicate-reports problem #425 just
+            # fixed, one issue instead of many but the same decaying signal.
+            if printf '%s' "$PREV_BODY" | grep -qF -- "<!-- sweep-latest: $LATEST -->"; then
+              echo "Issue #$EXISTING already announced $LATEST; body refreshed, no comment."
+            else
+              gh issue comment "$EXISTING" --body-file update_comment.md
+              echo "Updated issue #$EXISTING"
+            fi
+          else
+            gh label create "api-sweep" \
+              --description "New upstream API surface detected" \
+              --color "1d76db" \
+              2>/dev/null || true
+
+            gh issue create \
+              --title "$TITLE" \
+              --body-file sweep_report.md \
+              --label "api-sweep"
+          fi
+
+      - name: Close the sweep issue once the baseline has caught up
+        if: steps.diff.outputs.changed == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # `docs/INTERACTIONS_API_GAP.md` tells readers that an open sweep
+          # issue means the tracker is behind by at least that much. Nothing
+          # was closing it, so once a maintainer worked the findings and
+          # bumped the baseline, that signal kept asserting the tracker was
+          # stale forever — and a signal that is always on is no signal.
+          #
+          # The bump is the maintainer's declaration that the loop is closed,
+          # so the next clean run is the right place to act on it. This also
+          # covers the other clean path: SDK moved, Interactions bindings
+          # unchanged. Nothing to report there either.
+          EXISTING=$(gh issue list \
+            --label "api-sweep" \
+            --state open \
+            --limit 100 \
+            --json number,title \
+            --jq '[.[] | select(.title == $ENV.SWEEP_ISSUE_TITLE) | .number] | first // empty')
+
+          if [ -z "$EXISTING" ]; then
+            echo "No open sweep issue to close."
+            exit 0
+          fi
+
+          # "No diff against the recorded baseline" rather than "baseline is
+          # level with latest": this step also fires on the other clean path,
+          # where the SDK moved but the Interactions bindings did not. Closing
+          # is right on both — nothing is unswept either way — but on that one
+          # the baseline is a release behind, and this comment's only job is
+          # explaining why the staleness signal went away.
+          cat > close_comment.md <<'EOF'
+          The Interactions bindings show no diff against the recorded baseline,
+          so there is no unswept surface and this sweep is closed. It reopens
+          automatically on the next `google-genai` release that moves them.
+
+          ---
+          _Generated by [Claude Code](https://claude.ai/code)_
+          EOF
+
+          gh issue comment "$EXISTING" --body-file close_comment.md
+          gh issue close "$EXISTING" --reason completed
+          echo "Closed issue #$EXISTING"
