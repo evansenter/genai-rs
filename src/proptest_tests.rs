@@ -15,6 +15,7 @@ use proptest::test_runner::TestCaseError;
 use super::content::{
     Annotation, CodeExecutionLanguage, Content, FileSearchResultItem, GoogleMapsResultItem,
     GoogleSearchResultItem, Place, Resolution, ReviewSnippet, UrlContextResultItem,
+    VideoProcessing,
 };
 use super::environment::{
     AllowlistEntry, EnvironmentSource, EnvironmentSpec, NetworkConfig, RemoteEnvironment,
@@ -182,6 +183,43 @@ fn arb_resolution() -> impl Strategy<Value = Resolution> {
             data: serde_json::Value::String(s),
         }),
     ]
+}
+
+/// Strategy for `VideoProcessing`, covering both wire forms (bare mode string
+/// and the `{"type": "static", ...}` object) plus the Unknown variant.
+fn arb_video_processing() -> impl Strategy<Value = VideoProcessing> {
+    prop_oneof![
+        Just(VideoProcessing::Static),
+        Just(VideoProcessing::Agentic),
+        (
+            proptest::option::of(arb_offset()),
+            proptest::option::of(arb_offset()),
+            proptest::option::of(arb_fps()),
+        )
+            .prop_map(
+                |(start_offset, end_offset, fps)| VideoProcessing::StaticSegment {
+                    start_offset,
+                    end_offset,
+                    fps,
+                }
+            ),
+        // Unknown variant with arbitrary mode string
+        arb_unknown_type().prop_map(|s| VideoProcessing::Unknown {
+            processing_type: s.clone(),
+            data: serde_json::Value::String(s),
+        }),
+    ]
+}
+
+/// Offsets are decimal seconds with an `s` suffix (e.g. `"10.5s"`).
+fn arb_offset() -> impl Strategy<Value = String> {
+    (0u32..3600u32, 0u32..10u32).prop_map(|(secs, tenths)| format!("{}.{}s", secs, tenths))
+}
+
+/// Frame rates round-trip through JSON exactly, so restrict to values with an
+/// exact f64 representation rather than arbitrary floats.
+fn arb_fps() -> impl Strategy<Value = f64> {
+    (1u32..=120u32).prop_map(f64::from)
 }
 
 // =============================================================================
@@ -589,14 +627,18 @@ fn arb_known_content() -> impl Strategy<Value = Content> {
             proptest::option::of(arb_text()),
             proptest::option::of(arb_text()),
             proptest::option::of(arb_text()),
-            proptest::option::of(arb_resolution())
+            proptest::option::of(arb_resolution()),
+            proptest::option::of(arb_video_processing())
         )
-            .prop_map(|(data, uri, mime_type, resolution)| Content::Video {
-                data,
-                uri,
-                mime_type,
-                resolution
-            }),
+            .prop_map(
+                |(data, uri, mime_type, resolution, processing)| Content::Video {
+                    data,
+                    uri,
+                    mime_type,
+                    resolution,
+                    processing
+                }
+            ),
         // Document content
         (
             proptest::option::of(arb_text()),
