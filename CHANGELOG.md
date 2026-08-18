@@ -123,9 +123,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repeat this break for a purely mechanical reason. Doing it now costs
   consumers nothing extra: they are already recompiling for the new field.
 
-  `Default` is derived, so the migration is
-  `StepSummary::default()` then assign, verified from a crate outside this
-  workspace where the attribute actually applies.
+  `Default` is derived, so the migration is `StepSummary::default()` then
+  assign — pinned by `tests/ui/pass_step_summary_migration.rs`, a trybuild
+  fixture compiled as its own crate, which is the only place in the repo
+  where the attribute actually applies.
 
 ## [0.10.0] - 2026-08-16
 
