@@ -27,6 +27,7 @@ use crate::file_search_stores::{
     FileSearchStoreListResponse,
 };
 use crate::wire::WireEvent;
+use reqwest::header::HeaderValue;
 use std::path::Path;
 
 /// Upload ceiling, borrowed from the Files API's `MAX_FILE_SIZE` (2 GB) and
@@ -309,7 +310,10 @@ pub async fn upload_to_file_search_store(
         .post(&url)
         .header(API_KEY_HEADER, &ctx.api_key)
         .header("X-Goog-Upload-Protocol", "raw")
-        .header("X-Goog-Upload-File-Name", file_name)
+        .header(
+            "X-Goog-Upload-File-Name",
+            upload_file_name_header(&file_name),
+        )
         .header(reqwest::header::CONTENT_TYPE, mime_type)
         .body(bytes)
         .send()
@@ -403,9 +407,55 @@ pub async fn upload_to_file_search_store(
     })
 }
 
+/// The `X-Goog-Upload-File-Name` value for a filename, degrading rather than
+/// failing on one a header cannot carry.
+///
+/// Non-ASCII is *not* the hazard: `HeaderValue` permits obs-text, so
+/// `résumé.txt` and `文件.txt` both build fine (verified against reqwest 0.12).
+/// Control characters are — a filename containing a newline is legal on Linux,
+/// and `HeaderValue::try_from` rejects it. `RequestBuilder::header` stores that
+/// as a *deferred* builder error rather than failing at the call, so it
+/// surfaces from `.send()` as an opaque reqwest error naming neither the header
+/// nor the file, and no request is ever issued.
+///
+/// The header is only a fallback display name — the API derives one from it
+/// when the `display_name` query parameter is absent — so a name that cannot
+/// ride in a header degrades to the same placeholder the non-UTF-8 arm at the
+/// call site already uses, rather than failing the upload over it.
+fn upload_file_name_header(file_name: &str) -> HeaderValue {
+    HeaderValue::try_from(file_name).unwrap_or_else(|_| HeaderValue::from_static("upload"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upload_file_name_header_passes_non_ascii_through() {
+        // The failure mode this guards is control characters, not non-ASCII.
+        // Degrading an accented or CJK filename to "upload" would be a silent
+        // regression in the name the API falls back to, so pin that it does not.
+        for name in ["resume.txt", "résumé.txt", "文件.txt", "a b.txt"] {
+            // Compared as bytes, not via `to_str()`: the value stores the raw
+            // UTF-8 fine, but `HeaderValue::to_str` refuses obs-text, so a
+            // `to_str()` assertion here would fail on the code being correct.
+            assert_eq!(
+                upload_file_name_header(name).as_bytes(),
+                name.as_bytes(),
+                "{name} should ride in the header unchanged"
+            );
+        }
+    }
+
+    #[test]
+    fn upload_file_name_header_degrades_on_control_characters() {
+        // Legal on Linux, and rejected by HeaderValue. Without the fallback
+        // this becomes a deferred reqwest builder error at .send() that names
+        // neither the header nor the file.
+        for name in ["a\nb.txt", "a\rb.txt", "a\0b.txt"] {
+            assert_eq!(upload_file_name_header(name).as_bytes(), b"upload");
+        }
+    }
 
     #[test]
     fn stores_url_construction() {
