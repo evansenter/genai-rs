@@ -692,6 +692,26 @@ impl FunctionCallInfo<'_> {
     }
 }
 
+/// A generic server-side tool call, borrowed from the response.
+///
+/// This is what an MCP invocation looks like — the API does not identify the
+/// server or the tool, so `id` and `signature` are all there is. See
+/// [`InteractionResponse::tool_calls`].
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[non_exhaustive]
+pub struct ToolCallInfo<'a> {
+    /// Unique identifier for this call.
+    pub id: &'a str,
+    /// Opaque signature; pass back unchanged when replaying statelessly.
+    ///
+    /// Skipped when absent so a logged `ToolCallInfo` and a logged
+    /// [`Step::ToolCall`] show the same shape for the same missing field —
+    /// the hand-written `Serialize` for the step omits the key rather than
+    /// emitting `null`, and a byte-for-byte roundtrip test pins that.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<&'a str>,
+}
+
 /// Owned version of [`FunctionCallInfo`] for storing beyond response lifetime.
 ///
 /// This type owns all its data, making it suitable for:
@@ -1490,6 +1510,48 @@ impl InteractionResponse {
     }
 
     // =========================================================================
+    // Generic Tool Call Step Helpers
+    // =========================================================================
+
+    /// Whether the response contains generic `tool_call` steps.
+    ///
+    /// This is the one to check for MCP — see
+    /// [`tool_calls`](Self::tool_calls).
+    #[must_use]
+    pub fn has_tool_calls(&self) -> bool {
+        self.steps
+            .iter()
+            .any(|s| matches!(s, Step::ToolCall { .. }))
+    }
+
+    /// The generic `tool_call` steps, in order.
+    ///
+    /// These are server-side tool invocations the API does not further
+    /// identify, and they are what an MCP call arrives as — the endpoint
+    /// does not emit `mcp_server_tool_call` (verified live 2026-08-16). The
+    /// steps carry only an `id` and an optional `signature`, so which server
+    /// or tool ran is not recoverable; `usage.total_tool_use_tokens` is what
+    /// shows the call happened.
+    ///
+    /// Returns a borrowed view carrying both fields, matching
+    /// [`function_calls`](Self::function_calls) — the `signature` is what a
+    /// caller needs for stateless replay, so returning bare ids would not do.
+    /// See #433.
+    #[must_use]
+    pub fn tool_calls(&self) -> Vec<ToolCallInfo<'_>> {
+        self.steps
+            .iter()
+            .filter_map(|step| match step {
+                Step::ToolCall { id, signature } => Some(ToolCallInfo {
+                    id: id.as_str(),
+                    signature: signature.as_deref(),
+                }),
+                _ => None,
+            })
+            .collect()
+    }
+
+    // =========================================================================
     // File Search Step Helpers
     // =========================================================================
 
@@ -1628,6 +1690,7 @@ impl InteractionResponse {
                 Step::GoogleSearchResult { .. } => summary.google_search_result_count += 1,
                 Step::UrlContextCall { .. } => summary.url_context_call_count += 1,
                 Step::UrlContextResult { .. } => summary.url_context_result_count += 1,
+                Step::ToolCall { .. } => summary.tool_call_count += 1,
                 Step::McpServerToolCall { .. } => summary.mcp_server_tool_call_count += 1,
                 Step::McpServerToolResult { .. } => summary.mcp_server_tool_result_count += 1,
                 Step::FileSearchCall { .. } => summary.file_search_call_count += 1,
@@ -1738,6 +1801,24 @@ impl InteractionResponse {
 /// Content counts (`text_count`, `image_count`, ...) tally content blocks
 /// inside `model_output` steps.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+// Closed deliberately, in the same change that takes the break. Adding
+// `tool_call_count` is source-breaking *only* because this struct is open, and
+// the API is expected to grow step types — this PR argues `mcp_server_tool_call`
+// may start arriving, and the recurring SDK-bindings sweep (#421) is the
+// intended detector for new ones. Without the
+// attribute every future counter repeats this break for a purely mechanical
+// reason; with it, they are additive.
+//
+// Folding it in here is free for consumers: they are already recompiling for
+// the new field. `Default` is derived, so the documented migration
+// (`StepSummary::default()` then assign) still works, and nothing that
+// compiled before stops compiling: the only in-crate literals are the two in
+// `src/response_tests.rs`, where the attribute does not apply, and the only
+// out-of-crate sites are the two trybuild fixtures added alongside this
+// attribute — `tests/ui/pass_step_summary_migration.rs`, which uses the
+// surviving idiom, and `tests/ui/fail_step_summary_struct_literal.rs`, which
+// exists to be rejected.
+#[non_exhaustive]
 pub struct StepSummary {
     /// Number of `user_input` steps
     pub user_input_count: usize,
@@ -1771,19 +1852,33 @@ pub struct StepSummary {
     pub url_context_call_count: usize,
     /// Number of `url_context_result` steps
     pub url_context_result_count: usize,
-    /// Number of `mcp_server_tool_call` steps
+    /// Number of generic `tool_call` steps — server-side tool invocations
+    /// the API does not further identify.
     ///
-    /// Not currently emitted by the API: MCP calls arrive as generic
-    /// `tool_call` steps, so this reads 0 even on a successful call.
-    /// Use [`InteractionResponse::tool_use_tokens`] instead — noting that it
-    /// is a single aggregate across all tools, so it isolates the MCP server
-    /// only when MCP is the sole declared tool. Tracked in #433.
+    /// **This is where MCP calls land.** The endpoint emits `tool_call`
+    /// rather than `mcp_server_tool_call` (verified live 2026-08-16), so
+    /// [`mcp_server_tool_call_count`](Self::mcp_server_tool_call_count)
+    /// reads 0 on a successful MCP interaction while this reads non-zero.
+    /// Check this one. See #433.
+    pub tool_call_count: usize,
+    /// Number of `mcp_server_tool_call` steps.
+    ///
+    /// **Expect 0.** The API emits generic `tool_call` steps for MCP; see
+    /// [`tool_call_count`](Self::tool_call_count). Retained because the
+    /// step type is spec-defined and may start arriving.
+    ///
+    /// [`InteractionResponse::tool_use_tokens`] is the other signal that
+    /// MCP ran, with the caveat that it is a single aggregate across all
+    /// tools — so it isolates the MCP server only when MCP is the sole
+    /// declared tool.
     pub mcp_server_tool_call_count: usize,
-    /// Number of `mcp_server_tool_result` steps
+    /// Number of `mcp_server_tool_result` steps.
     ///
-    /// Reads 0 for the same reason as
-    /// [`Self::mcp_server_tool_call_count`] — the API emits neither of the
-    /// pair today.
+    /// **Expect 0**, for the same reason as
+    /// [`mcp_server_tool_call_count`](Self::mcp_server_tool_call_count) —
+    /// the API emits neither of the pair today — and with the same
+    /// consequence, since 0 here reads as "the MCP call returned nothing"
+    /// rather than "we do not model what came back".
     pub mcp_server_tool_result_count: usize,
     /// Number of `file_search_call` steps
     pub file_search_call_count: usize,
@@ -1803,7 +1898,7 @@ impl fmt::Display for StepSummary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut parts = Vec::new();
 
-        let fields: [(&str, usize); 22] = [
+        let fields: [(&str, usize); 23] = [
             ("user_input", self.user_input_count),
             ("model_output", self.model_output_count),
             ("text", self.text_count),
@@ -1820,6 +1915,7 @@ impl fmt::Display for StepSummary {
             ("google_search_result", self.google_search_result_count),
             ("url_context_call", self.url_context_call_count),
             ("url_context_result", self.url_context_result_count),
+            ("tool_call", self.tool_call_count),
             ("mcp_server_tool_call", self.mcp_server_tool_call_count),
             ("mcp_server_tool_result", self.mcp_server_tool_result_count),
             ("file_search_call", self.file_search_call_count),

@@ -666,6 +666,16 @@ mod common {
         }))
         .unwrap();
 
+        // ToolCall — the generic server-side call the API emits for MCP.
+        // Under `strict-unknown` an unmodeled type is a hard error rather
+        // than a silent Unknown, so this list is what asserts it stays known.
+        let _: Step = serde_json::from_value(json!({
+            "type": "tool_call",
+            "id": "call_1",
+            "signature": "sig"
+        }))
+        .unwrap();
+
         // FileSearchResult
         let _: Step = serde_json::from_value(json!({
             "type": "file_search_result",

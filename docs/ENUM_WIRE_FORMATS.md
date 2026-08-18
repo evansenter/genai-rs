@@ -212,9 +212,9 @@ roundtrip tests.
 | `url_context_result` | `Step::UrlContextResult` | `{"call_id": "...", "result": [UrlContextResultItem], "is_error"?: bool, "signature"?: "..."}` |
 | `google_search_call` | `Step::GoogleSearchCall` | `{"id": "...", "arguments": {"queries": [...]}, "search_type"?: "...", "signature"?: "..."}` |
 | `google_search_result` | `Step::GoogleSearchResult` | `{"call_id": "...", "result": [GoogleSearchResultItem], "is_error"?: bool, "signature"?: "..."}` |
-| `mcp_server_tool_call` | `Step::McpServerToolCall` | **Modeled from spec, not observed** — see below. `{"id": "...", "name": "...", "server_name": "...", "arguments": {...}}` |
-| `mcp_server_tool_result` | `Step::McpServerToolResult` | **Modeled from spec, not observed** — see below. `{"call_id": "...", "name"?: "...", "server_name"?: "...", "result": <payload>}` |
-| `tool_call` | `Step::Unknown { step_type: "tool_call", .. }` | `{"id": "...", "signature": "..."}` — observed for MCP interactions (verified live 2026-08-16, `signature` present); the generic tag, not MCP-specific, and unmodeled, so it lands in the fallback |
+| `tool_call` | `Step::ToolCall` | `{"id": "...", "signature"?: "..."}` — **what MCP calls actually look like** (live 2026-08-16). `signature` was present on every observed step but is spec-optional, so it is modeled `Option<String>` |
+| `mcp_server_tool_call` | `Step::McpServerToolCall` | `{"id": "...", "name": "...", "server_name": "...", "arguments": {...}}` — spec-present, never observed |
+| `mcp_server_tool_result` | `Step::McpServerToolResult` | `{"call_id": "...", "name"?: "...", "server_name"?: "...", "result": <payload>}` — spec-present, never observed |
 | `file_search_call` | `Step::FileSearchCall` | `{"id": "...", "signature"?: "..."}` |
 | `file_search_result` | `Step::FileSearchResult` | `{"call_id": "...", "result": [FileSearchResultItem], "signature"?: "..."}` |
 | `google_maps_call` | `Step::GoogleMapsCall` | `{"id": "...", "arguments": {"queries": [...]}, "signature"?: "..."}` |
@@ -228,11 +228,14 @@ roundtrip tests.
 > variants exist for when the API starts emitting them; today a match on
 > `Step::McpServerToolCall` never fires and
 > `step_summary().mcp_server_tool_call_count` reads 0 on a successful call.
-> The usable signal is `response.tool_use_tokens()` — a single aggregate
-> with no per-tool breakdown, so it isolates the MCP server only when MCP
-> is the sole declared tool (see the fuller note in
-> `docs/BUILT_IN_TOOLS.md` under MCP Servers). Tracked in
-> [#433](https://github.com/evansenter/genai-rs/issues/433).
+> Check `step_summary().tool_call_count` instead, or
+> `InteractionResponse::tool_calls()` for the per-call ids —
+> `response.tool_use_tokens()` is the *other* signal, a single aggregate with
+> no per-tool breakdown, so it isolates the MCP server only when MCP is the
+> sole declared tool (see the fuller note in `docs/BUILT_IN_TOOLS.md` under
+> MCP Servers). The "MCP tool calls arrive as generic `tool_call` steps"
+> section below has the wire detail. Tracked in
+> [#459](https://github.com/evansenter/genai-rs/issues/459).
 
 Note the asymmetry: `function_call` and `mcp_server_tool_call` keep their
 arguments at the **top level** (the latter per spec, unobserved), while the
@@ -267,6 +270,34 @@ Example `code_execution_call` wire format (nested `arguments`):
 
 `Step::Unknown` serializes back with the original `type` and all sibling
 fields intact (lossless roundtrip).
+
+#### MCP tool calls arrive as generic `tool_call` steps
+
+Verified live 2026-08-16 (`gemini-3.7-flash`, a real MCP server at
+`mcp.deepwiki.com`, successful call). The response carries:
+
+```text
+tool_call     ['id', 'signature', 'type']
+model_output  ['content', 'type']
+thought       ['signature', 'type']
+model_output  ['content', 'type']
+total_tool_use_tokens: 1962
+```
+
+No `mcp_server_tool_call` step, and no server name, tool name, or arguments
+anywhere — so **which** MCP server or tool ran is not recoverable from the
+response. The call did happen and its cost is real, which
+`total_tool_use_tokens` shows.
+
+`Step::McpServerToolCall` / `Step::McpServerToolResult` are therefore
+spec-present and unobserved, the same status as `Tool::Retrieval`. They are
+kept rather than removed because nothing *rejects* them — unlike
+`cached_content` (D-005), which the API actively 400s — so the endpoint may
+begin emitting them. Tracked in #459.
+
+For callers: check `step_summary().tool_call_count`, not
+`.mcp_server_tool_call_count`. The latter reads 0 on a successful MCP
+interaction.
 
 ### Thought (step)
 
@@ -309,7 +340,8 @@ exceptions** where the wire tag differs from the variant name:
 | `code_execution_call` / `code_execution_result` | code execution variants | Call delta carries flattened `language`/`code` |
 | `url_context_call` / `url_context_result` | URL context variants | |
 | `google_search_call` / `google_search_result` | Google Search variants | |
-| `mcp_server_tool_call` / `mcp_server_tool_result` | MCP variants | Modeled from spec, not observed — see the step table note (#433) |
+| `tool_call` | *(no delta variant)* | Step type only — arrives whole on `step.start`, which carries the full `Step`. A `step.delta` tagged `tool_call` has not been observed; it would land in `StepDelta::Unknown` and be skipped — logged at `debug`, so `RUST_LOG=genai_rs=debug` is what would surface it. |
+| `mcp_server_tool_call` / `mcp_server_tool_result` | MCP variants | Spec-only; see below |
 | `file_search_call` / `file_search_result` | file search variants | |
 | `google_maps_call` / `google_maps_result` | Google Maps variants | |
 | (anything else) | `StepDelta::Unknown { delta_type, data }` | Preserved |

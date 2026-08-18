@@ -834,14 +834,15 @@ mod mcp_server {
         // pass on a model that ignored the tool — the exact failure it was
         // chosen to avoid.
         //
-        // It is also the *only* usable signal today. The API emits generic
-        // `tool_call` steps for MCP, not the `mcp_server_tool_call` /
-        // `mcp_server_tool_result` types the crate models from the spec —
-        // verified on the wire 2026-08-16, where the steps carry only
-        // {id, signature, type}. Those steps therefore deserialize into
-        // `Step::Unknown` (Evergreen degrading as designed) and
-        // `step_summary().mcp_server_tool_call_count` reads 0 even on a
-        // successful call. Tracked in #433.
+        // It is the corroborating aggregate, not the primary signal. The API
+        // emits generic `tool_call` steps for MCP, not the
+        // `mcp_server_tool_call` / `mcp_server_tool_result` types the crate
+        // models from the spec — verified on the wire 2026-08-16, where the
+        // steps carry only {id, signature, type}. Those steps now deserialize
+        // into `Step::ToolCall` (#433), so the signal a caller should check is
+        // `step_summary().tool_call_count`, or `tool_calls()` for the
+        // per-call ids. `mcp_server_tool_call_count` still reads 0 on a
+        // successful call, because nothing emits those step types yet.
         // Through the public accessor rather than reaching into `usage`:
         // it is the same chain, and an integration test is the right place
         // to exercise the surface a caller actually has.
