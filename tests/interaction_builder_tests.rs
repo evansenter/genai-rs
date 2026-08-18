@@ -1212,27 +1212,6 @@ mod new_request_options {
     }
 
     #[test]
-    fn test_with_cached_content_sets_field_and_wire_format() {
-        let client = Client::new("test-api-key".to_string());
-
-        let request = client
-            .interaction()
-            .with_model(genai_rs::DEFAULT_MODEL)
-            .with_text("Hello")
-            .with_cached_content("cachedContents/xyz")
-            .build()
-            .expect("Should build successfully");
-
-        assert_eq!(
-            request.cached_content.as_deref(),
-            Some("cachedContents/xyz")
-        );
-
-        let value = serde_json::to_value(&request).expect("Should serialize");
-        assert_eq!(value["cached_content"], json!("cachedContents/xyz"));
-    }
-
-    #[test]
     fn test_with_presence_and_frequency_penalty() {
         let client = Client::new("test-api-key".to_string());
 

@@ -31,8 +31,7 @@ set (`#[tool]` functions) registered in both modes.
 
 - Modes: both, sharing tools.
 - Exercises: run_command policy confirmation, tool reuse across modes,
-  Interactions structured output, service tiers, explicit caching
-  (`cached_content`) for the style-guide preamble.
+  Interactions structured output, service tiers.
 
 ## 3. `doc-gardener` — trigger-driven maintenance daemon
 

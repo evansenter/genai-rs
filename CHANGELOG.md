@@ -119,7 +119,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   `tests/non_exhaustive_responses.rs` now fails the build on a new response
   struct without the attribute, so the backlog cannot re-accumulate.
-
 - **Breaking:** `Content::Video` has a new `processing` field. Code that
   constructs or exhaustively destructures the variant with struct-literal
   syntax needs `processing: None` (or `..`) added. The `Content::video_*()`
@@ -146,6 +145,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   serialize via `serde_json::to_value`.
 
 - **Breaking:** the five structs above have a new `extra` field. All derive
+  `Default`, so exhaustive struct literals can add `..Default::default()`.
+  (These types are not `#[non_exhaustive]`, unlike the convention
+  `docs/ENUM_WIRE_FORMATS.md` documents for response structs — tracked
+  separately.)
+
   `Default`; see the `#[non_exhaustive]` entry above for how to construct
   them from outside the crate — `..Default::default()` is functional-update
   syntax, which that attribute now blocks, so the route is `T::default()`
@@ -235,6 +239,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when the video sits inside a `user_input` step. Sending the same content via
   `InteractionInput::Content` returns `400 Unknown parameter 'processing'`, so
   use `InteractionInput::Steps`.
+
+### Removed
+
+- **Breaking: `with_cached_content()` and `InteractionRequest.cached_content`.**
+  The Interactions API rejects the field outright:
+
+  ```
+  400 Unknown parameter 'cached_content'
+  ```
+
+  `cachedContent` and `cached_content_name` are rejected too, so it isn't a
+  spelling problem — and neither is it a placement one: `generation_config`
+  holds several fields that are not top-level (`transcription_config`,
+  `speech_config`), but both spellings are rejected there as well
+  (`Unknown parameter 'cached_content' at 'generation_config'`). The
+  `/v1beta/cachedContents` resource works fine — a cache creates and reports
+  its token count — but nothing in the Interactions API consumes one, so the
+  builder method could only ever produce a 400.
+
+  It shipped because the field was modeled from the spec and never live-probed;
+  its test asserted the field *serialized* correctly, which it did.
+
+  This follows the `response_mime_type` precedent — rejected outright, so
+  removed — rather than the `safety_settings` / `Tool::Retrieval` one, where
+  the API explicitly names the feature as Vertex-only and the surface is kept
+  for spec parity.
+
+  Implicit caching is unaffected and still reported via
+  `usage.total_cached_tokens`.
 
 - **`ModalityTokens::new()`** — the type had no `Default` and no constructor,
   so closing it above would otherwise have left `serde` as the only way to
