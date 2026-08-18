@@ -54,6 +54,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`#[tool]` no longer requires consumer-side dependencies or imports**
+  (#402). A crate depending only on `genai-rs` and `genai-rs-macros`, with no
+  trait import, now compiles.
+
+  Previously the generated code named `::async_trait` and `::serde_json`,
+  which resolve in the *consumer's* dependency graph, so both had to be added
+  as direct dependencies; and it called `.declaration()` in method position,
+  which needed `use genai_rs::CallableFunction;` at every expansion site.
+
+  ```toml
+  # No longer needed alongside genai-rs-macros:
+  # async-trait = "0.1"
+  # serde_json = "1.0"
+  ```
+
+  Scoped to `#[tool]`: a **manual** `CallableFunction` impl still needs both
+  `async-trait` and `serde_json` as direct dependencies — the trait is
+  declared with `#[async_trait]`, and its `call` signature names
+  `serde_json::Value`.
+
+  **Version coupling:** the generated code now references
+  `genai_rs::__private`, so `genai-rs-macros` requires a `genai-rs` from this
+  release or later. `genai-rs-macros` is a proc-macro crate and declares no
+  dependency on `genai-rs`, so Cargo cannot enforce this — pinning the two to
+  independent versions with the macro ahead of the library fails at every
+  `#[tool]` site with `could not find __private in genai_rs`. Bump them
+  together, as the release checklist already does.
+
+  `tests/ui/pass_no_consumer_imports.rs` pins the no-imports behavior.
+
 - **`speech_config` in the `{"speakers": [...]}` form no longer silently
   discards every speaker.** `google-genai` 2.18.x widened the field to
   `SpeakerConfig | List[SpeechConfig]`. Because `SpeechConfig`'s fields are

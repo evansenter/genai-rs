@@ -82,7 +82,6 @@ struct SalesRecord {
 ### Statistical Analysis
 
 ```rust,ignore
-use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 #[tool(column(description = "Column: 'quantity' or 'unit_price'"))]
@@ -94,7 +93,6 @@ fn get_column_stats(column: String) -> String {
 ### Group Aggregation
 
 ```rust,ignore
-use genai_rs::CallableFunction;
 use genai_rs_macros::tool;
 
 #[tool(group_by(description = "Group by: 'category', 'region', 'product'"))]
