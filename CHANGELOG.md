@@ -73,8 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the clipped accounting has been revised while the unclipped side held.
   And `"agentic"` no longer reports video tokens at all: it bills as `image`,
   2,112 and 4,158 on two consecutive runs, which makes it the cheapest mode
-  rather than one equivalent to `static`. The shape has held across both
-  measurements; the magnitudes have not.
+  rather than one equivalent to `static` — so mode selection *is* a lever
+  now, contrary to what the 2026-08-16 reading showed. What held across both
+  is that a window reduces ingestion among the `static` forms.
 
   ```rust
   let video = Content::video_uri("files/abc123", "video/mp4")

@@ -1031,9 +1031,11 @@ impl fmt::Display for Resolution {
 /// varies run to run, which makes it the cheapest mode rather than one
 /// equivalent to `static` as previously recorded.
 ///
-/// Treat the table as a dated observation, not a contract. The shape of the
-/// finding — a window reduces ingestion, mode selection alone does not —
-/// has held across both measurements; the magnitudes have not.
+/// Treat the table as a dated observation, not a contract. What has held
+/// across both measurements is that a window reduces ingestion among the
+/// `static` forms. What has not: the magnitudes, and the earlier conclusion
+/// that mode selection is never a lever — `"agentic"` is now the cheapest
+/// option of all, below even the clipped window.
 ///
 /// # Wire forms
 ///

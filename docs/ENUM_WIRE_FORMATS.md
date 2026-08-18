@@ -612,8 +612,8 @@ Controls how the model ingests a video. A union of a bare mode string and a
 round-trips to the form it arrived in; a bare `"static"` is never normalized
 into an empty object, nor the reverse.
 
-**The segment window is the only cost lever.** Measured video input tokens,
-same source video, `gemini-3.7-flash`:
+**Among the `static` forms, the segment window is the cost lever.** Measured
+video input tokens, same source video, `gemini-3.7-flash`:
 
 | `processing` | Video input tokens |
 |--------------|--------------------|
@@ -631,11 +631,11 @@ revised the clipped accounting. `"agentic"` also stopped reporting video
 tokens entirely, billing `image` instead in a run-to-run varying quantity,
 which makes it the cheapest mode rather than one equivalent to `static`.
 
-The shape has held across both measurements — a window reduces ingestion,
-mode selection alone does not — but the magnitudes are a dated observation.
+What has held across both measurements is that a window reduces ingestion
+among the `static` forms. What has not: the magnitudes, and the earlier
+conclusion that mode selection is never a lever — `"agentic"` is now the
+cheapest option of all, below even the clipped window.
 
-Mode selection and `fps` alone made no difference; only `start_offset` /
-`end_offset` did.
 
 **Position constraint**: the API accepts `processing` only when the video
 content is inside a `user_input` step. The bare-content-array input form is
@@ -656,7 +656,7 @@ field is validated rather than passed through:
 400 Invalid enum value 'bogus_nonsense' at 'input[0].content[1].processing'.
 ```
 
-**Verified**: 2026-08-16 - live against `gemini-3.7-flash`, Api-Revision
+**Verified**: 2026-08-16, re-measured 2026-08-18 - live against `gemini-3.7-flash`, Api-Revision
 `2026-05-20`, and through the crate itself via
 `tests/multimodal_tests.rs::test_video_processing_segment_reduces_token_cost`.
 
