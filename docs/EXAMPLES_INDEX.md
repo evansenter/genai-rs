@@ -323,7 +323,7 @@ write-capable `AskQuestion` builtin), `send_streaming()`, `shutdown()`.
 | `text_to_speech` | `gemini-2.5-pro-preview-tts` model access |
 | `deep_research` | Deep Research agent access |
 | `computer_use` | Computer Use capability access |
-| `file_search` | Pre-configured file search store |
+| `file_search` | None — creates its own store, uploads, and deletes it on exit |
 | `google_search` | Google Search grounding access |
 | `antigravity_agent`, `repo_auditor`, `session_resume`, `workspace_explorer`, `mcp_toolbelt`, `proactive_agent`, `cancellable_turn` | `localharness` binary (`pip install google-antigravity==0.1.10`) + `--features antigravity` |
 

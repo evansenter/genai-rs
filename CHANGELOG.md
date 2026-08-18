@@ -279,6 +279,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Tool::Retrieval`, and unlike `cached_content` (D-005) nothing rejects
   them.
 
+- **File Search Store management.** `Tool::FileSearch` takes store names, but
+  the crate had no way to *create* a store — so file search was unusable
+  without provisioning one out-of-band. New `Client` methods close that loop:
+
+  | Method | Purpose |
+  |--------|---------|
+  | `create_file_search_store` / `_with_request` | Create a store |
+  | `get_file_search_store` / `list_file_search_stores` | Read stores |
+  | `delete_file_search_store` | Delete (with `force`) |
+  | `upload_to_file_search_store` / `_with_mime` | Add a document |
+  | `get_file_search_document` / `list_file_search_documents` / `delete_file_search_document` | Manage documents |
+  | `wait_for_document_active` | Block until a document is indexed |
+
+  Plus the `FileSearchStore`, `FileSearchDocument`, and `DocumentState` types,
+  all carrying Evergreen `extra` passthrough. The two list envelopes
+  (`FileSearchStoreListResponse`, `DocumentListResponse`) do not, matching
+  `AgentListResponse` and its siblings — a field the API adds alongside
+  `next_page_token` is still dropped. Tracked in #460.
+
+  ```rust
+  let store = client.create_file_search_store(Some("my-docs")).await?;
+  let doc = client.upload_to_file_search_store(&store.name, "handbook.pdf", None).await?;
+  client.wait_for_document_active(&doc.name, None, None).await?;
+  ```
+
+  `wait_for_document_active` is not optional in practice: indexing is
+  asynchronous, and file search silently returns nothing for a document still
+  in `STATE_PENDING`.
+
+  `examples/file_search.rs` now provisions its own store and runs end to end,
+  replacing a placeholder store ID that could never work.
+
+### Documented
+
+- Several live-verified File Search behaviors now in
+  `docs/ENUM_WIRE_FORMATS.md`: the resource is **camelCase** (unlike the
+  Interactions API), `sizeBytes` is a JSON string, `DocumentState` uses a
+  `STATE_` prefix that `FileState` does not, deleting an indexed document or
+  a non-empty store requires `force=true`, `file_search_result` steps carry
+  no chunk contents (so `has_file_search_results()` can be `true` while
+  `file_search_results()` is empty), and `file_search` cannot be combined with
+  either `google_search` or `url_context` (`code_execution` is fine).
+
 - **`ModalityTokens::new()`** — the type had no `Default` and no constructor,
   so closing it above would otherwise have left `serde` as the only way to
   produce one.

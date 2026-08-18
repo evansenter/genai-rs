@@ -1863,6 +1863,372 @@ impl Client {
             tokio::time::sleep(poll_interval).await;
         }
     }
+
+    // =========================================================================
+    // File Search Stores (/v1beta/fileSearchStores)
+    // =========================================================================
+
+    /// Creates a file search store.
+    ///
+    /// The returned [`FileSearchStore::name`](crate::FileSearchStore::name) is
+    /// what [`Tool::FileSearch`](crate::Tool::FileSearch) takes in
+    /// `store_names`.
+    ///
+    /// `display_name` is a human-readable label; the API derives the resource
+    /// name from it by stripping non-alphanumeric characters and appending a
+    /// unique suffix, so the two are related but not interchangeable.
+    ///
+    /// # Errors
+    ///
+    /// Returns an API or network error if the request fails.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::Client;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::new("api-key".to_string());
+    ///
+    /// let store = client.create_file_search_store(Some("my-docs")).await?;
+    /// println!("created {}", store.name);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn create_file_search_store(
+        &self,
+        display_name: Option<&str>,
+    ) -> Result<crate::FileSearchStore, GenaiError> {
+        // Through the builders rather than a struct literal, so the two
+        // construction paths cannot drift and the builders have an in-crate
+        // caller.
+        let mut request = crate::CreateFileSearchStoreRequest::new();
+        if let Some(name) = display_name {
+            request = request.with_display_name(name);
+        }
+        crate::http::file_search_stores::create_file_search_store(&self.http, &request).await
+    }
+
+    /// Creates a file search store from an explicit request body.
+    ///
+    /// Use this over [`create_file_search_store`](Self::create_file_search_store)
+    /// to set fields the crate does not model yet, via
+    /// [`CreateFileSearchStoreRequest::extra`](crate::CreateFileSearchStoreRequest::extra).
+    ///
+    /// # Errors
+    ///
+    /// Returns an API or network error if the request fails.
+    pub async fn create_file_search_store_with_request(
+        &self,
+        request: &crate::CreateFileSearchStoreRequest,
+    ) -> Result<crate::FileSearchStore, GenaiError> {
+        crate::http::file_search_stores::create_file_search_store(&self.http, request).await
+    }
+
+    /// Retrieves a file search store by resource name.
+    ///
+    /// # Arguments
+    ///
+    /// * `store_name` - Full resource name (e.g. `fileSearchStores/abc123`).
+    ///   A bare ID is rejected locally as [`GenaiError::InvalidInput`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenaiError::InvalidInput`] for a malformed name, and an API
+    /// or network error if the request fails.
+    pub async fn get_file_search_store(
+        &self,
+        store_name: &str,
+    ) -> Result<crate::FileSearchStore, GenaiError> {
+        crate::http::file_search_stores::get_file_search_store(&self.http, store_name).await
+    }
+
+    /// Lists file search stores.
+    ///
+    /// # Errors
+    ///
+    /// Returns an API or network error if the request fails.
+    pub async fn list_file_search_stores(
+        &self,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+    ) -> Result<crate::FileSearchStoreListResponse, GenaiError> {
+        crate::http::file_search_stores::list_file_search_stores(&self.http, page_size, page_token)
+            .await
+    }
+
+    /// Deletes a file search store.
+    ///
+    /// # Arguments
+    ///
+    /// * `store_name` - Full resource name (e.g. `fileSearchStores/abc123`).
+    /// * `force` - Delete even when the store still holds documents. Without
+    ///   it, a non-empty store is rejected with `FAILED_PRECONDITION`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenaiError::InvalidInput`] for a malformed name, and an API
+    /// or network error if the request fails.
+    pub async fn delete_file_search_store(
+        &self,
+        store_name: &str,
+        force: bool,
+    ) -> Result<(), GenaiError> {
+        crate::http::file_search_stores::delete_file_search_store(&self.http, store_name, force)
+            .await
+    }
+
+    /// Uploads a local file into a file search store.
+    ///
+    /// MIME type is inferred from the file extension, matching
+    /// [`upload_file`](Self::upload_file). Use
+    /// [`upload_to_file_search_store_with_mime`](Self::upload_to_file_search_store_with_mime)
+    /// to set it explicitly.
+    ///
+    /// The document is indexed asynchronously and starts in
+    /// [`DocumentState::Pending`](crate::DocumentState::Pending); file search
+    /// will not match it until it reaches
+    /// [`Active`](crate::DocumentState::Active). See
+    /// [`wait_for_document_active`](Self::wait_for_document_active).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenaiError::InvalidInput`] for a malformed store name, a file
+    /// that is unreadable, empty, or over the local 2 GB ceiling, or a file
+    /// whose MIME type cannot be inferred from its extension — use
+    /// [`upload_to_file_search_store_with_mime`](Self::upload_to_file_search_store_with_mime)
+    /// in that case. Returns an API or network error if the request fails.
+    ///
+    /// Note that "unreadable" and "empty" are separate cases: a zero-byte file
+    /// reads fine and is rejected on its own guard.
+    ///
+    /// The 2 GB ceiling is borrowed from the Files API and has not been
+    /// verified for this resource, so treat it as a local guard rather than
+    /// the API's limit — the API may reject a smaller file with its own.
+    /// Note also that the raw upload protocol sends the file as a single
+    /// body with no resumable path, so it is read fully into memory before
+    /// the request is issued: a 1.5 GB upload costs 1.5 GB of resident
+    /// memory.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::Client;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::new("api-key".to_string());
+    /// let store = client.create_file_search_store(Some("my-docs")).await?;
+    ///
+    /// let doc = client
+    ///     .upload_to_file_search_store(&store.name, "handbook.pdf", Some("handbook"))
+    ///     .await?;
+    /// client.wait_for_document_active(&doc.name, None, None).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn upload_to_file_search_store(
+        &self,
+        store_name: &str,
+        file_path: impl AsRef<std::path::Path>,
+        display_name: Option<&str>,
+    ) -> Result<crate::FileSearchDocument, GenaiError> {
+        let path = file_path.as_ref();
+        let mime_type = crate::multimodal::detect_mime_type(path).ok_or_else(|| {
+            GenaiError::InvalidInput(format!(
+                "Could not determine MIME type for '{}'. Please use \
+                 upload_to_file_search_store_with_mime() to specify explicitly.",
+                path.display()
+            ))
+        })?;
+        crate::http::file_search_stores::upload_to_file_search_store(
+            &self.http,
+            store_name,
+            path,
+            display_name,
+            mime_type,
+        )
+        .await
+    }
+
+    /// Uploads a local file into a store with an explicit MIME type.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenaiError::InvalidInput`] for a malformed store name, a file
+    /// that is unreadable, empty, or over the local 2 GB ceiling, or a MIME
+    /// type that cannot be sent as a header value (one containing control
+    /// characters). Returns an API or network error if the request fails.
+    ///
+    /// As with
+    /// [`upload_to_file_search_store`](Self::upload_to_file_search_store), the
+    /// 2 GB ceiling is borrowed from the Files API and unverified for this
+    /// resource, and the file is read fully into memory before the request is
+    /// issued.
+    ///
+    /// MIME *syntax* is not checked here: `nonsense` or `text/` are valid
+    /// header values, so they reach the API and come back as an API error
+    /// rather than `InvalidInput`.
+    pub async fn upload_to_file_search_store_with_mime(
+        &self,
+        store_name: &str,
+        file_path: impl AsRef<std::path::Path>,
+        display_name: Option<&str>,
+        mime_type: &str,
+    ) -> Result<crate::FileSearchDocument, GenaiError> {
+        crate::http::file_search_stores::upload_to_file_search_store(
+            &self.http,
+            store_name,
+            file_path.as_ref(),
+            display_name,
+            mime_type,
+        )
+        .await
+    }
+
+    /// Lists documents in a file search store.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenaiError::InvalidInput`] for a malformed store name, and
+    /// an API or network error if the request fails.
+    pub async fn list_file_search_documents(
+        &self,
+        store_name: &str,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+    ) -> Result<crate::DocumentListResponse, GenaiError> {
+        crate::http::file_search_stores::list_documents(
+            &self.http, store_name, page_size, page_token,
+        )
+        .await
+    }
+
+    /// Retrieves a document from a file search store.
+    ///
+    /// # Arguments
+    ///
+    /// * `document_name` - Full resource name (e.g.
+    ///   `fileSearchStores/abc/documents/doc1`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenaiError::InvalidInput`] for a malformed name, and an API
+    /// or network error if the request fails.
+    pub async fn get_file_search_document(
+        &self,
+        document_name: &str,
+    ) -> Result<crate::FileSearchDocument, GenaiError> {
+        crate::http::file_search_stores::get_document(&self.http, document_name).await
+    }
+
+    /// Deletes a document from a file search store.
+    ///
+    /// # Arguments
+    ///
+    /// * `document_name` - Full resource name.
+    /// * `force` - Required for a document that has been chunked, which is
+    ///   every successfully indexed one. Without it the API responds
+    ///   `400 Cannot delete non-empty Document`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenaiError::InvalidInput`] for a malformed name, and an API
+    /// or network error if the request fails.
+    pub async fn delete_file_search_document(
+        &self,
+        document_name: &str,
+        force: bool,
+    ) -> Result<(), GenaiError> {
+        crate::http::file_search_stores::delete_document(&self.http, document_name, force).await
+    }
+
+    /// Polls a document until it is indexed and queryable.
+    ///
+    /// Uploading is not enough: file search silently returns no matches for a
+    /// document still in [`Pending`](crate::DocumentState::Pending), so
+    /// anything that uploads and immediately queries needs this in between.
+    /// Indexing is typically fast (observed ~1-2s for a small text file), but
+    /// it is not synchronous.
+    ///
+    /// Unknown states are polled through rather than treated as terminal, per
+    /// the Evergreen principle — the `timeout` is what bounds the wait.
+    ///
+    /// # Arguments
+    ///
+    /// * `document_name` - Full resource name.
+    /// * `timeout` - Maximum time to wait; defaults to 60s when `None`.
+    /// * `poll_interval` - Delay between polls; defaults to 500ms when `None`.
+    ///   Worth raising when uploading many documents at once, since the
+    ///   default issues a GET every half second per document.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenaiError::Internal`] if the document reaches
+    /// [`Failed`](crate::DocumentState::Failed) or if the wait times out —
+    /// neither is retryable, and the two are distinguished by their message —
+    /// and [`GenaiError::InvalidInput`] for a malformed name. Errors from the
+    /// underlying polling GET propagate as they are.
+    pub async fn wait_for_document_active(
+        &self,
+        document_name: &str,
+        timeout: Option<std::time::Duration>,
+        poll_interval: Option<std::time::Duration>,
+    ) -> Result<crate::FileSearchDocument, GenaiError> {
+        use std::time::{Duration, Instant};
+
+        let timeout = timeout.unwrap_or(Duration::from_secs(60));
+        let poll_interval = poll_interval.unwrap_or(Duration::from_millis(500));
+        let start = Instant::now();
+
+        loop {
+            let current = self.get_file_search_document(document_name).await?;
+
+            match &current.state {
+                Some(crate::DocumentState::Active) => return Ok(current),
+                Some(crate::DocumentState::Failed) => {
+                    // `Internal`, not `Api { status_code: 500 }`. `Failed` is
+                    // terminal, but `is_retryable()` reports true for any
+                    // `Api` with a 5xx — so the 500 spelling tells a caller
+                    // following `examples/retry_with_backoff.rs` to keep
+                    // re-polling a document that will never index, burning
+                    // the whole retry budget and re-issuing the GET loop each
+                    // time. The status was invented here rather than observed:
+                    // unlike `wait_for_file_ready`, which carries the API's
+                    // own `error_code`, `DocumentState::Failed` is a state
+                    // value with no HTTP error behind it. The timeout arm
+                    // below already uses `Internal` for the same reason.
+                    return Err(GenaiError::Internal(format!(
+                        "Document '{document_name}' failed to index. This is \
+                         terminal — re-uploading is the only recovery."
+                    )));
+                }
+                Some(state) if state.is_unknown() => {
+                    tracing::warn!(
+                        "Document '{}' is in unknown state {}, continuing to poll. \
+                         This may indicate API evolution - consider updating genai-rs.",
+                        document_name,
+                        state
+                    );
+                }
+                _ => {}
+            }
+
+            if start.elapsed() > timeout {
+                let state_info = current
+                    .state
+                    .as_ref()
+                    .map_or_else(|| "unknown".to_string(), ToString::to_string);
+                return Err(GenaiError::Internal(format!(
+                    "Timeout waiting for document '{document_name}' to become active \
+                     (waited {:?}, last state: {state_info}). It may still be indexing - \
+                     try again with a longer timeout.",
+                    start.elapsed()
+                )));
+            }
+
+            tokio::time::sleep(poll_interval).await;
+        }
+    }
 }
 
 #[cfg(test)]

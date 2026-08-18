@@ -24,6 +24,15 @@ on:
       - 'genai-rs-macros/src/**'
       - 'README.md'
       - '.github/workflows/consumer-crate.yml'
+      # The composite this workflow depends on. Listed because these are the
+      # only jobs that resolve it from a *subdirectory* checkout — everything
+      # in `rust.yml` checks out at the workspace root, so a `./`-relative
+      # path works there and breaks here. That asymmetry already shipped once:
+      # `uses: ./.github/actions/setup-mold` resolved fine everywhere else and
+      # not at all here, and `continue-on-error` reported it as success.
+      # Without this line an edit to the composite alone never runs the one
+      # workflow that would catch it.
+      - '.github/actions/setup-mold/action.yml'
 
 env:
   CARGO_TERM_COLOR: always

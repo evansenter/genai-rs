@@ -1776,12 +1776,22 @@ impl From<ComputerUseConfig> for Tool {
 
 /// Configuration for the File Search built-in tool.
 ///
+/// Store names are full resource names (`fileSearchStores/<id>`), as returned
+/// by [`create_file_search_store`](crate::Client::create_file_search_store).
+/// The store-management methods reject a bare ID locally; whether the
+/// Interactions API does the same for this field has not been probed, so
+/// pass the full name here too.
+///
+/// Cannot be combined with `google_search` or `url_context` in one request;
+/// the API returns a 400 naming the pair (verified live 2026-08-16).
+///
 /// # Example
 ///
 /// ```no_run
 /// use genai_rs::FileSearchConfig;
 ///
-/// let config = FileSearchConfig::new(vec!["my-store".to_string()])
+/// # let store_name = String::new();
+/// let config = FileSearchConfig::new(vec![store_name])
 ///     .with_top_k(10)
 ///     .with_metadata_filter("category:technical");
 /// ```
