@@ -49,7 +49,18 @@
 //! is not read as covering them, and so a reader who greps for one named type
 //! does not conclude the boundary is one struct wide.
 //!
-//! Two parsing assumptions, both currently true of `src/` and neither
+//! **A gate wrapped across lines is invisible.** `#[cfg(all(` left open at end
+//! of line strips to `all(`, which carries no `test` token, and no
+//! continuation line re-enters the check because each is tested independently
+//! and none starts with `#[cfg(`. The module is then neither masked nor
+//! reserved, and a gated fixture struct inside it is reported as an offender
+//! with no correct fix. Stated rather than closed because the fix is
+//! line-joining — a different shape of parser than the per-line one here —
+//! and the trigger is a gate long enough for rustfmt to wrap rather than a
+//! style choice, so it is worth knowing about even while nothing in `src/`
+//! writes one. Loud when it fires, unlike the skip-a-file modes above.
+//!
+//! Two further parsing assumptions, both currently true of `src/` and neither
 //! enforced:
 //!
 //! - **Braces are counted textually, so string literals move the cfg-test
@@ -768,8 +779,22 @@ fn cfg_test_modules(rel: &str, source: &str) -> BTreeSet<String> {
 /// tests, i.e. real API; reading either as gated would skip a file this
 /// guard exists to scan, which is the direction that fails silently.
 fn is_cfg_test_attr(trimmed: &str) -> bool {
-    let Some(rest) = trimmed.strip_prefix("#[cfg(") else {
-        return false;
+    // Each successive peel is tested, not only the leading attribute. The gate
+    // need not come first: `#[allow(dead_code)] #[cfg(test)] mod tests {` is
+    // the same gate, and reading it as ungated fails on all three paths at
+    // once — the module is neither reserved nor masked, so a fixture struct
+    // inside it is reported as an offender with no correct fix. Same
+    // one-implementation argument as the body peel, applied to the entry
+    // condition.
+    let mut cursor = trimmed;
+    let rest = loop {
+        if let Some(rest) = cursor.strip_prefix("#[cfg(") {
+            break rest;
+        }
+        match attr_remainder(cursor) {
+            Some(next) if next.starts_with("#[") => cursor = next,
+            _ => return false,
+        }
     };
     // Decided by whether `test` survives with its `not(..)` groups removed,
     // not by where `not(` appears in the string. Both neighbours matter and
@@ -1170,6 +1195,17 @@ fn the_cfg_test_gate_recognises_compound_forms_and_only_those() {
     // ...but `not` wrapping something *else* leaves `test` a live conjunct,
     // so these are still test-only and must stay gated.
     assert!(is_cfg_test_attr("#[cfg(all(test, not(miri)))]"));
+    // The gate need not be the leading attribute on its line.
+    assert!(is_cfg_test_attr(
+        "#[allow(dead_code)] #[cfg(test)] mod tests {"
+    ));
+    assert!(is_cfg_test_attr("#[allow(dead_code)] #[cfg(test)]"));
+    // ...but peeling must not invent one that is not there.
+    assert!(!is_cfg_test_attr("#[allow(dead_code)] #[derive(Debug)]"));
+    // A wrapped gate stays invisible — stated in the module header, and
+    // pinned here so closing it later is a deliberate change rather than an
+    // accident.
+    assert!(!is_cfg_test_attr("#[cfg(all("));
     assert!(is_cfg_test_attr(
         "#[cfg(all(test, not(feature = \"antigravity\")))]"
     ));
