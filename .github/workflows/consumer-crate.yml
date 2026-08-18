@@ -90,16 +90,21 @@ jobs:
       - name: Warn when the mold step failed
         if: ${{ !cancelled() && steps.mold.outcome == 'failure' }}
         run: |
-          echo "::warning::setup-mold failed — building with the default"
-          echo "linker. Two causes look identical from here: apt could not"
-          echo "reach a mirror, or the action path did not resolve (a local"
-          echo "'uses:' resolves against \$GITHUB_WORKSPACE, and this job"
-          echo "checks out to genai-rs/). Check the step log for which."
+          # One `echo` for the annotation. `::warning::` is consumed by the
+          # workflow-command parser on the line it appears on, so a multi-line
+          # message reaches the run summary truncated at the first newline —
+          # which would strand the explanation in the step log this is telling
+          # you to go read, and getting it into the summary is the whole reason
+          # this is a warning rather than a notice.
+          echo "::warning::setup-mold failed, so this job built with the default linker (slower; nothing else changes). Two causes look identical from here: apt could not reach a mirror, or the action path did not resolve. See the log lines below."
+          echo "A local 'uses:' resolves against \$GITHUB_WORKSPACE, and this"
+          echo "job checks out to genai-rs/ — so the path needs that prefix."
+          echo "Check the setup-mold step log to tell the two apart."
       - name: Note when mold is deliberately skipped
         if: ${{ !cancelled() && steps.mold.outcome == 'success' && steps.mold.outputs.have-mold == '' }}
         run: |
-          echo "::notice::mold not applicable on this runner — building with"
-          echo "the default linker. Expected off Linux; nothing is wrong."
+          # Single line, same reason as the warning above.
+          echo "::notice::mold is not applicable on this runner, so this job built with the default linker. Expected off Linux; nothing is wrong."
 
       - name: Scaffold a consumer crate outside the workspace
         run: |
@@ -316,16 +321,21 @@ jobs:
       - name: Warn when the mold step failed
         if: ${{ !cancelled() && steps.mold.outcome == 'failure' }}
         run: |
-          echo "::warning::setup-mold failed — building with the default"
-          echo "linker. Two causes look identical from here: apt could not"
-          echo "reach a mirror, or the action path did not resolve (a local"
-          echo "'uses:' resolves against \$GITHUB_WORKSPACE, and this job"
-          echo "checks out to genai-rs/). Check the step log for which."
+          # One `echo` for the annotation. `::warning::` is consumed by the
+          # workflow-command parser on the line it appears on, so a multi-line
+          # message reaches the run summary truncated at the first newline —
+          # which would strand the explanation in the step log this is telling
+          # you to go read, and getting it into the summary is the whole reason
+          # this is a warning rather than a notice.
+          echo "::warning::setup-mold failed, so this job built with the default linker (slower; nothing else changes). Two causes look identical from here: apt could not reach a mirror, or the action path did not resolve. See the log lines below."
+          echo "A local 'uses:' resolves against \$GITHUB_WORKSPACE, and this"
+          echo "job checks out to genai-rs/ — so the path needs that prefix."
+          echo "Check the setup-mold step log to tell the two apart."
       - name: Note when mold is deliberately skipped
         if: ${{ !cancelled() && steps.mold.outcome == 'success' && steps.mold.outputs.have-mold == '' }}
         run: |
-          echo "::notice::mold not applicable on this runner — building with"
-          echo "the default linker. Expected off Linux; nothing is wrong."
+          # Single line, same reason as the warning above.
+          echo "::notice::mold is not applicable on this runner, so this job built with the default linker. Expected off Linux; nothing is wrong."
 
       - name: Scaffold a minimal consumer (no async-trait, no serde_json, no trait import)
         run: |
