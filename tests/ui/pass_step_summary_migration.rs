@@ -4,12 +4,19 @@
 //! The attribute is inert inside `genai-rs`, so no unit test can cover this:
 //! both in-tree literals use `..Default::default()`, which is exactly the
 //! idiom external crates *lose*. trybuild builds this as its own crate
-//! against genai-rs, so the attribute actually applies here — making this
-//! the cheapest place in the repo to hold the documented path.
+//! against genai-rs, and this is the only out-of-crate site in the repo that
+//! constructs `StepSummary` — making it the cheapest place to hold the
+//! documented path.
 //!
 //! What it would catch: dropping `Default` from `StepSummary`, or making a
 //! counter non-public. Both would compile fine in-crate and break every
 //! downstream caller following the migration note.
+//!
+//! What it would *not* catch is the attribute itself. `#[non_exhaustive]`
+//! only ever removes syntax from a downstream caller, so a fixture written in
+//! the surviving subset compiles identically either way — delete the
+//! attribute and this file stays green. That half is
+//! `fail_step_summary_struct_literal.rs`.
 
 fn main() {
     // The documented route: `default()` then assign. Struct-literal and

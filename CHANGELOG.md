@@ -125,8 +125,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   `Default` is derived, so the migration is `StepSummary::default()` then
   assign — pinned by `tests/ui/pass_step_summary_migration.rs`, a trybuild
-  fixture compiled as its own crate, which is the only place in the repo
-  where the attribute actually applies.
+  fixture compiled as its own crate, which is the only out-of-crate site in
+  the repo that constructs `StepSummary`. Its counterpart
+  `tests/ui/fail_step_summary_struct_literal.rs` pins the attribute itself:
+  the migration path compiles the same with or without it, so only a
+  `compile_fail` fixture goes red if it is removed.
 
 ## [0.10.0] - 2026-08-16
 
