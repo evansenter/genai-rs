@@ -246,6 +246,21 @@ pub use request_builder::{ConversationBuilder, InteractionBuilder};
 pub mod function_calling;
 pub use function_calling::{CallableFunction, FunctionError, ToolService};
 
+/// Re-exports for `genai-rs-macros`. **Not a public API** — no semver
+/// guarantee, and nothing outside the generated code should name it.
+///
+/// `#[tool]` expands to code referencing `async_trait` and `serde_json`.
+/// Resolving those as `::async_trait` / `::serde_json` looks them up in the
+/// *consumer's* dependency graph, which forced every downstream crate to add
+/// both as direct dependencies just to use the macro (#402). Routing through
+/// here resolves them in this crate's graph instead, so `genai-rs` +
+/// `genai-rs-macros` is the whole dependency list.
+#[doc(hidden)]
+pub mod __private {
+    pub use async_trait;
+    pub use serde_json;
+}
+
 // =============================================================================
 // Streaming Types for Auto Function Calling
 // =============================================================================
