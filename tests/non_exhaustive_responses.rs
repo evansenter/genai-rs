@@ -14,7 +14,7 @@
 //! silently, and no amount of text matching fixes that. Stated so the
 //! coverage is not read as wider than it is.
 //!
-//! **Enums are not scanned at all**, and that is the larger gap of the two.
+//! **Enums are not scanned at all**, and that is the larger gap.
 //! `docs/ENUM_WIRE_FORMATS.md` catalogues ~25 of them, each repeating the
 //! same "marked `#[non_exhaustive]` for forward compatibility" sentence this
 //! guard now enforces for structs — so a new deserializable `pub enum`
