@@ -1710,9 +1710,8 @@ impl Client {
     ///
     /// # Errors
     ///
-    /// Returns an error if:
-    /// - The file processing fails
-    /// - The timeout is exceeded
+    /// Returns [`GenaiError::Internal`] if processing fails (terminal, so
+    /// not retryable) or the timeout is exceeded, or an error from polling.
     ///
     /// # Example
     ///
@@ -1754,27 +1753,19 @@ impl Client {
             }
 
             if current.is_failed() {
-                let error_code = current.error.as_ref().and_then(|e| e.code);
-                let error_msg = current
+                // `Internal`, not `Api`: the file will never process, and a
+                // fabricated 5xx would make `is_retryable()` say otherwise.
+                // `FileError::code` is a google.rpc code, not an HTTP status.
+                let detail = current
                     .error
                     .as_ref()
-                    .and_then(|e| e.message.as_deref())
-                    .unwrap_or("File processing failed without details");
-
-                tracing::error!(
-                    "File '{}' processing failed: code={:?}, message={}",
-                    file.name,
-                    error_code,
-                    error_msg
-                );
-
-                // Use Api error since this is a server-side processing failure
-                return Err(GenaiError::Api {
-                    status_code: error_code.map_or(500, |c| c as u16),
-                    message: format!("File processing failed: {}", error_msg),
-                    request_id: None,
-                    retry_after: None,
-                });
+                    .map_or_else(|| "no details".to_string(), ToString::to_string);
+                tracing::error!("File '{}' processing failed: {}", file.name, detail);
+                return Err(GenaiError::Internal(format!(
+                    "File '{}' failed processing ({detail}). This is terminal — \
+                     re-uploading is the only recovery.",
+                    file.name
+                )));
             }
 
             // Log unknown states per Evergreen logging strategy
@@ -2130,17 +2121,8 @@ impl Client {
             match &current.state {
                 Some(crate::DocumentState::Active) => return Ok(current),
                 Some(crate::DocumentState::Failed) => {
-                    // `Internal`, not `Api { status_code: 500 }`. `Failed` is
-                    // terminal, but `is_retryable()` reports true for any
-                    // `Api` with a 5xx — so the 500 spelling tells a caller
-                    // following `examples/retry_with_backoff.rs` to keep
-                    // re-polling a document that will never index, burning
-                    // the whole retry budget and re-issuing the GET loop each
-                    // time. The status was invented here rather than observed:
-                    // unlike `wait_for_file_ready`, which carries the API's
-                    // own `error_code`, `DocumentState::Failed` is a state
-                    // value with no HTTP error behind it. The timeout arm
-                    // below already uses `Internal` for the same reason.
+                    // `Internal`: terminal, and a 5xx `Api` would read as
+                    // retryable.
                     return Err(GenaiError::Internal(format!(
                         "Document '{document_name}' failed to index. This is \
                          terminal — re-uploading is the only recovery."

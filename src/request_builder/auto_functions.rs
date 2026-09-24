@@ -629,10 +629,7 @@ impl<'a> InteractionBuilder<'a> {
                             complete_response = Some(response);
                         }
                         StreamChunk::Error { message, code } => {
-                            tracing::warn!(
-                                "Streaming error during auto-function loop: {} (code: {:?})",
-                                message, code
-                            );
+                            Err(GenaiError::Stream { message, code })?;
                         }
                         // Log unknown chunk types for observability, but continue for forward compatibility
                         StreamChunk::Unknown { chunk_type, .. } => {
