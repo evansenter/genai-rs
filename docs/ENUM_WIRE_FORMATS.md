@@ -60,6 +60,7 @@ All types below implement graceful handling of unrecognized values via an `Unkno
 | 42 | `CredentialType` | src/credentials.rs | `credential_type` | bearer_token/environment_variable/oauth2 |
 | 43 | `CredentialStatus` | src/credentials.rs | `status_type` | active/revoked |
 | 44 | `InjectionLocation` | src/credentials.rs | `location_type` | header/query/body |
+| 45 | `EnvironmentFileType` | src/environment_files.rs | `file_type` | FILE/DIRECTORY (uppercase on the wire) |
 
 **Removed in revision 2026-05-20** (no longer exist in this library or on the wire):
 `UrlRetrievalStatus`, `GroundingMetadata`, `UrlContextMetadata`, `Turn`, and all tool-related
@@ -140,6 +141,7 @@ Helper methods on each type:
 | `CredentialType` | snake_case | `"bearer_token"`, `"environment_variable"`, `"oauth2"` | `/v1beta/credentials` `type`; create bodies are tagged by it. `bearer_token`/`environment_variable` verified live 2026-09-24 (`oauth2` create validates `token_url` reachability) |
 | `CredentialStatus` | lowercase | `"active"`, `"revoked"` | Output only; `active` observed 2026-09-24 |
 | `InjectionLocation` | lowercase | `"header"`, `"query"`, `"body"` | Sent as a list; the API also accepts a single string (2026-09-24) |
+| `EnvironmentFileType` | **uppercase** | `"FILE"`, `"DIRECTORY"` | `/v1beta/environments/{id}/files` entries. The bindings say lowercase; the API sends uppercase (live 2026-09-24). Both accepted; serializes uppercase |
 | `GoogleSearchResultItem` | snake_case | `{"title": "...", "url": "...", "rendered_content": "..."}` | Optional `search_suggestions` added in 2026-05-20. Verified live 2026-07: items may carry **only** `search_suggestions` (an HTML rendering payload) with no `title`/`url`; empty `title`/`url` are skipped on serialize for wire fidelity |
 | `UrlContextResultItem` | snake_case | `{"url": "...", "status": "success"}` | Verified 2026-01-13 - no paywall field |
 | `ImageAspectRatio` | ratio string | `"1:1"`, `"16:9"`, `"9:16"` | 14 aspect ratios |

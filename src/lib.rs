@@ -182,6 +182,11 @@ pub mod agents;
 pub use agents::{Agent, AgentListResponse};
 
 // Webhooks resource (/v1beta/webhooks) and per-request webhook_config
+pub mod environment_files;
+pub use environment_files::{
+    EnvironmentFile, EnvironmentFileList, EnvironmentFileType, EnvironmentFileUpload,
+};
+
 pub mod credentials;
 pub use credentials::{
     CreateCredentialRequest, Credential, CredentialConfig, CredentialListResponse,
