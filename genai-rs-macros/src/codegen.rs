@@ -6,8 +6,6 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{ItemFn, Pat};
-use utoipa::openapi::RefOr;
-use utoipa::openapi::schema::Schema;
 
 use crate::schema::get_type_info;
 
@@ -23,15 +21,12 @@ fn json_value_to_tokens(value: &serde_json::Value) -> TokenStream {
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
                 quote! { ::genai_rs::__private::serde_json::json!(#i) }
-            } else if let Some(f) = n.as_f64() {
-                quote! { ::genai_rs::__private::serde_json::json!(#f) }
             } else if let Some(u) = n.as_u64() {
-                // u64 that doesn't fit in i64 - convert to f64 at compile time
-                let f = u as f64;
-                quote! { ::genai_rs::__private::serde_json::json!(#f) }
+                quote! { ::genai_rs::__private::serde_json::json!(#u) }
             } else {
-                // Should not happen for valid JSON numbers
-                quote! { ::genai_rs::__private::serde_json::Value::Null }
+                // Without `arbitrary_precision` every other number is an f64.
+                let f = n.as_f64().unwrap_or_default();
+                quote! { ::genai_rs::__private::serde_json::json!(#f) }
             }
         }
         serde_json::Value::String(s) => {
@@ -73,7 +68,7 @@ pub fn generate_declaration_function(
     func: &ItemFn,
     func_name: &str,
     func_description: &str,
-    parameters_schema_ref: &RefOr<Schema>,
+    properties: &serde_json::Value,
     required_params_for_struct_field: &[String],
 ) -> TokenStream {
     let generated_fn_name =
@@ -82,9 +77,10 @@ pub fn generate_declaration_function(
     let callable_struct_name_str = func_name
         .split('_')
         .map(|s| {
-            s.chars()
+            let mut chars = s.chars();
+            chars
                 .next()
-                .map_or_else(|| s.to_string(), |c| c.to_uppercase().to_string() + &s[1..])
+                .map_or_else(String::new, |c| c.to_uppercase().chain(chars).collect())
         })
         .collect::<String>()
         + "Callable";
@@ -105,42 +101,7 @@ pub fn generate_declaration_function(
         }
     };
 
-    // Convert the schema to a JSON Value to extract properties.
-    // This avoids runtime string parsing - properties are embedded directly in generated code.
-    let parameters_schema_value = match serde_json::to_value(parameters_schema_ref) {
-        Ok(v) => v,
-        Err(e) => {
-            return syn::Error::new(
-                func.sig.ident.span(),
-                format!(
-                    "Failed to serialize parameter schema for '{}': {}",
-                    func_name, e
-                ),
-            )
-            .to_compile_error();
-        }
-    };
-
-    // Extract properties from the schema. For functions with parameters, this should always exist.
-    let properties_value = match parameters_schema_value.get("properties") {
-        Some(props) => props.clone(),
-        None => {
-            // Functions with no parameters will have no properties - that's fine
-            if !required_params_for_struct_field.is_empty() {
-                return syn::Error::new(
-                    func.sig.ident.span(),
-                    format!(
-                        "Internal error: generated schema for '{}' has no properties despite having required parameters",
-                        func_name
-                    ),
-                )
-                .to_compile_error();
-            }
-            serde_json::json!({})
-        }
-    };
-
-    let properties_tokens = json_value_to_tokens(&properties_value);
+    let properties_tokens = json_value_to_tokens(properties);
 
     let mut arg_names = Vec::new();
     let mut arg_extraction_tokens = Vec::new();
@@ -240,10 +201,8 @@ pub fn generate_declaration_function(
         }
 
         pub fn #generated_fn_name() -> ::genai_rs::FunctionDeclaration {
-             // Fully-qualified rather than method position: in method
-             // position this needs `CallableFunction` in scope at every
-             // expansion site, which is a requirement the caller cannot
-             // see from the `#[tool]` attribute alone (#402).
+             // Fully qualified, so the expansion site needs no
+             // `CallableFunction` import.
              <#callable_struct_name as ::genai_rs::function_calling::CallableFunction>
                  ::declaration(&#callable_struct_name::new())
         }
