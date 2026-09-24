@@ -34,9 +34,7 @@ use super::response::{
 use super::response_format::{ResponseDelivery, ResponseFormat, ResponseFormatSpec};
 use super::safety::{HarmCategory, SafetyMethod, SafetySetting, SafetyThreshold};
 use super::steps::{FunctionResultPayload, Step, StepDelta, StepError};
-use super::streaming::{
-    AutoFunctionResult, AutoFunctionStreamChunk, FunctionExecutionResult, PendingFunctionCall,
-};
+use super::streaming::{AutoFunctionResult, AutoFunctionStreamChunk, FunctionExecutionResult};
 use super::tools::{
     AllowedTools, ExaAiSearchConfig, FunctionCallingMode, FunctionParameters, HybridSearchConfig,
     ParallelAiSearchConfig, RagFilter, RagRanking, RagResource, RagRetrievalConfig, RagStoreConfig,
@@ -2760,17 +2758,12 @@ fn arb_function_execution_result() -> impl Strategy<Value = FunctionExecutionRes
         })
 }
 
-fn arb_pending_function_call() -> impl Strategy<Value = PendingFunctionCall> {
-    (arb_identifier(), arb_identifier(), arb_json_value())
-        .prop_map(|(name, call_id, args)| PendingFunctionCall::new(name, call_id, args))
-}
-
 fn arb_auto_function_stream_chunk() -> impl Strategy<Value = AutoFunctionStreamChunk> {
     prop_oneof![
         arb_step_delta().prop_map(AutoFunctionStreamChunk::Delta),
         (
             arb_interaction_response(),
-            prop::collection::vec(arb_pending_function_call(), 0..5)
+            prop::collection::vec(arb_owned_function_call_info(), 0..5)
         )
             .prop_map(|(response, pending_calls)| {
                 AutoFunctionStreamChunk::ExecutingFunctions {
@@ -2811,11 +2804,6 @@ proptest! {
             serde_json::from_str(&json).expect("Deserialization should succeed");
         // Duration travels as milliseconds, which the strategy generates.
         prop_assert_eq!(result, restored);
-    }
-
-    #[test]
-    fn pending_function_call_roundtrip(call in arb_pending_function_call()) {
-        assert_value_roundtrip(&call)?;
     }
 
     #[test]

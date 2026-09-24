@@ -203,20 +203,21 @@ client.delete_file(&file.name).await?;
 use genai_rs::{Content, Resolution};
 
 let quick = Content::image_data("base64...", "image/png").with_resolution(Resolution::Low);
-let detailed = Content::image_data_with_resolution("base64...", "image/png", Resolution::High);
+let detailed = Content::image_data("base64...", "image/png").with_resolution(Resolution::High);
 # let _ = (quick, detailed);
 ```
 
 ## Content constructors
 
 All are associated functions on `Content`, re-exported from the crate root.
+Chain `.with_resolution(..)` onto an image or video to set its resolution.
 
 | Kind | Inline | By URI |
 |------|--------|--------|
 | Text | `Content::text(s)` | — |
-| Image | `image_data(b64, mime)`, `image_data_with_resolution(..)` | `image_uri(uri, mime)`, `image_uri_with_resolution(..)` |
+| Image | `image_data(b64, mime)` | `image_uri(uri, mime)` |
 | Audio | `audio_data(b64, mime)` | `audio_uri(uri, mime)` |
-| Video | `video_data(b64, mime)`, `video_data_with_resolution(..)` | `video_uri(uri, mime)`, `video_uri_with_resolution(..)` |
+| Video | `video_data(b64, mime)` | `video_uri(uri, mime)` |
 | Document | `document_data(b64, mime)` | `document_uri(uri, mime)` |
 | Any | — | `from_file(&FileMetadata)`, `from_uri_and_mime(uri, mime)` |
 

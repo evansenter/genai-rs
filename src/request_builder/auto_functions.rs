@@ -20,7 +20,6 @@ use crate::ToolService;
 use crate::function_calling::{CallableFunction, FunctionRegistry, get_global_function_registry};
 use crate::streaming::{
     AutoFunctionResult, AutoFunctionStreamChunk, AutoFunctionStreamEvent, FunctionExecutionResult,
-    PendingFunctionCall,
 };
 
 use super::InteractionBuilder;
@@ -695,10 +694,8 @@ impl<'a> InteractionBuilder<'a> {
 
                 // Signal that we're executing functions with pending call info
                 debug!("Executing {} function call(s)", calls_to_execute.len());
-                let pending_calls: Vec<PendingFunctionCall> = calls_to_execute
-                    .iter()
-                    .map(|(call_id, name, args)| PendingFunctionCall::new(name, call_id, args.clone()))
-                    .collect();
+                let pending_calls: Vec<_> =
+                    response_function_calls.iter().map(|call| call.to_owned()).collect();
                 // ExecutingFunctions is client-generated, no API event_id
                 yield AutoFunctionStreamEvent::new(
                     AutoFunctionStreamChunk::ExecutingFunctions {

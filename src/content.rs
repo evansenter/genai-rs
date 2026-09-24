@@ -1750,33 +1750,6 @@ impl Content {
         }
     }
 
-    /// Creates image content from base64-encoded data with specified resolution.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use genai_rs::{Content, Resolution};
-    ///
-    /// let image = Content::image_data_with_resolution(
-    ///     "base64encodeddata...",
-    ///     "image/png",
-    ///     Resolution::High
-    /// );
-    /// ```
-    #[must_use]
-    pub fn image_data_with_resolution(
-        data: impl Into<String>,
-        mime_type: impl Into<String>,
-        resolution: Resolution,
-    ) -> Self {
-        Self::Image {
-            data: Some(data.into()),
-            uri: None,
-            mime_type: Some(mime_type.into()),
-            resolution: Some(resolution),
-        }
-    }
-
     /// Creates image content from a URI.
     ///
     /// # Example
@@ -1793,21 +1766,6 @@ impl Content {
             uri: Some(uri.into()),
             mime_type: Some(mime_type.into()),
             resolution: None,
-        }
-    }
-
-    /// Creates image content from a URI with specified resolution.
-    #[must_use]
-    pub fn image_uri_with_resolution(
-        uri: impl Into<String>,
-        mime_type: impl Into<String>,
-        resolution: Resolution,
-    ) -> Self {
-        Self::Image {
-            data: None,
-            uri: Some(uri.into()),
-            mime_type: Some(mime_type.into()),
-            resolution: Some(resolution),
         }
     }
 
@@ -1871,22 +1829,6 @@ impl Content {
         }
     }
 
-    /// Creates video content from base64-encoded data with specified resolution.
-    #[must_use]
-    pub fn video_data_with_resolution(
-        data: impl Into<String>,
-        mime_type: impl Into<String>,
-        resolution: Resolution,
-    ) -> Self {
-        Self::Video {
-            data: Some(data.into()),
-            uri: None,
-            mime_type: Some(mime_type.into()),
-            resolution: Some(resolution),
-            processing: None,
-        }
-    }
-
     /// Creates video content from a URI.
     ///
     /// # Example
@@ -1903,22 +1845,6 @@ impl Content {
             uri: Some(uri.into()),
             mime_type: Some(mime_type.into()),
             resolution: None,
-            processing: None,
-        }
-    }
-
-    /// Creates video content from a URI with specified resolution.
-    #[must_use]
-    pub fn video_uri_with_resolution(
-        uri: impl Into<String>,
-        mime_type: impl Into<String>,
-        resolution: Resolution,
-    ) -> Self {
-        Self::Video {
-            data: None,
-            uri: Some(uri.into()),
-            mime_type: Some(mime_type.into()),
-            resolution: Some(resolution),
             processing: None,
         }
     }

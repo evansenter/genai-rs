@@ -2219,7 +2219,7 @@ fn test_new_image_data_creates_correct_variant() {
 #[test]
 fn test_new_image_data_with_resolution_creates_correct_variant() {
     let content =
-        Content::image_data_with_resolution("base64encodeddata", "image/png", Resolution::High);
+        Content::image_data("base64encodeddata", "image/png").with_resolution(Resolution::High);
     match content {
         Content::Image {
             data,
@@ -2257,11 +2257,8 @@ fn test_new_image_uri_creates_correct_variant() {
 
 #[test]
 fn test_new_image_uri_with_resolution_creates_correct_variant() {
-    let content = Content::image_uri_with_resolution(
-        "https://example.com/image.png",
-        "image/png",
-        Resolution::Low,
-    );
+    let content = Content::image_uri("https://example.com/image.png", "image/png")
+        .with_resolution(Resolution::Low);
     match content {
         Content::Image {
             data,
@@ -2344,7 +2341,7 @@ fn test_new_video_data_creates_correct_variant() {
 #[test]
 fn test_new_video_data_with_resolution_creates_correct_variant() {
     let content =
-        Content::video_data_with_resolution("base64videodata", "video/mp4", Resolution::Low);
+        Content::video_data("base64videodata", "video/mp4").with_resolution(Resolution::Low);
     match content {
         Content::Video {
             data, resolution, ..
@@ -2379,11 +2376,8 @@ fn test_new_video_uri_creates_correct_variant() {
 
 #[test]
 fn test_new_video_uri_with_resolution_creates_correct_variant() {
-    let content = Content::video_uri_with_resolution(
-        "https://example.com/video.mp4",
-        "video/mp4",
-        Resolution::Medium,
-    );
+    let content = Content::video_uri("https://example.com/video.mp4", "video/mp4")
+        .with_resolution(Resolution::Medium);
     match content {
         Content::Video {
             uri, resolution, ..
@@ -2509,7 +2503,7 @@ fn test_constructor_serialization_roundtrip() {
     let deserialized: Content = serde_json::from_str(&json).expect("Should deserialize");
     assert_eq!(deserialized.as_text(), Some("Test message"));
 
-    let image = Content::image_data_with_resolution("data", "image/png", Resolution::High);
+    let image = Content::image_data("data", "image/png").with_resolution(Resolution::High);
     let json = serde_json::to_string(&image).expect("Should serialize");
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(value["type"], "image");
@@ -2939,7 +2933,8 @@ fn test_video_content_processing_roundtrip() {
 #[test]
 fn test_video_content_with_processing_preserves_resolution() {
     // with_processing must not clobber a previously set resolution.
-    let video = Content::video_uri_with_resolution("files/x", "video/mp4", Resolution::High)
+    let video = Content::video_uri("files/x", "video/mp4")
+        .with_resolution(Resolution::High)
         .with_processing(VideoProcessing::Static);
 
     match &video {

@@ -52,49 +52,8 @@
 
 use std::time::Duration;
 
-use crate::{InteractionResponse, StepDelta};
+use crate::{InteractionResponse, OwnedFunctionCallInfo, StepDelta};
 use serde::{Deserialize, Serialize};
-
-/// A function call that is about to be executed.
-///
-/// This represents a function call detected during streaming but not yet executed.
-/// It contains the call metadata (name, ID, args) but not the result, which will
-/// be available in [`FunctionExecutionResult`] after execution completes.
-///
-/// # Example
-///
-/// ```no_run
-/// # use genai_rs::PendingFunctionCall;
-/// # let call: PendingFunctionCall = todo!();
-/// println!("About to execute: {}({})", call.name, call.args);
-/// println!("  Call ID: {}", call.call_id);
-/// ```
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub struct PendingFunctionCall {
-    /// Name of the function to be called
-    pub name: String,
-    /// The call_id from the API (used to match results)
-    pub call_id: String,
-    /// The arguments to pass to the function
-    pub args: serde_json::Value,
-}
-
-impl PendingFunctionCall {
-    /// Creates a new pending function call.
-    #[must_use]
-    pub fn new(
-        name: impl Into<String>,
-        call_id: impl Into<String>,
-        args: serde_json::Value,
-    ) -> Self {
-        Self {
-            name: name.into(),
-            call_id: call_id.into(),
-            args,
-        }
-    }
-}
 
 /// A chunk from streaming with automatic function calling.
 ///
@@ -135,7 +94,7 @@ pub enum AutoFunctionStreamChunk {
         /// The response from the API (may have empty `function_calls()` in streaming mode)
         response: InteractionResponse,
         /// The function calls that are about to be executed (always populated)
-        pending_calls: Vec<PendingFunctionCall>,
+        pending_calls: Vec<OwnedFunctionCallInfo>,
     },
 
     /// Function execution completed with results.
@@ -1370,28 +1329,6 @@ mod tests {
     }
 
     #[test]
-    fn test_pending_function_call() {
-        let call = PendingFunctionCall::new("get_weather", "call-123", json!({"city": "Seattle"}));
-
-        assert_eq!(call.name, "get_weather");
-        assert_eq!(call.call_id, "call-123");
-        assert_eq!(call.args, json!({"city": "Seattle"}));
-    }
-
-    #[test]
-    fn test_pending_function_call_serialization_roundtrip() {
-        let call = PendingFunctionCall::new("test_func", "id-456", json!({"key": "value"}));
-
-        let json_str = serde_json::to_string(&call).expect("Serialization should succeed");
-        assert!(json_str.contains("test_func"));
-        assert!(json_str.contains("id-456"));
-
-        let deserialized: PendingFunctionCall =
-            serde_json::from_str(&json_str).expect("Deserialization should succeed");
-        assert_eq!(deserialized, call);
-    }
-
-    #[test]
     fn test_executing_functions_new_format_roundtrip() {
         use crate::InteractionStatus;
 
@@ -1403,8 +1340,16 @@ mod tests {
                 ..Default::default()
             },
             pending_calls: vec![
-                PendingFunctionCall::new("func1", "call-1", json!({"a": 1})),
-                PendingFunctionCall::new("func2", "call-2", json!({"b": 2})),
+                OwnedFunctionCallInfo {
+                    id: "call-1".to_string(),
+                    name: "func1".to_string(),
+                    args: json!({"a": 1}),
+                },
+                OwnedFunctionCallInfo {
+                    id: "call-2".to_string(),
+                    name: "func2".to_string(),
+                    args: json!({"b": 2}),
+                },
             ],
         };
 

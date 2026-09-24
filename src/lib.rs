@@ -259,7 +259,7 @@ pub mod __private {
 pub mod streaming;
 pub use streaming::{
     AutoFunctionResult, AutoFunctionResultAccumulator, AutoFunctionStreamChunk,
-    AutoFunctionStreamEvent, FunctionExecutionResult, PendingFunctionCall,
+    AutoFunctionStreamEvent, FunctionExecutionResult,
 };
 
 // =============================================================================
