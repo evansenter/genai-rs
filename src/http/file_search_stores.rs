@@ -9,8 +9,8 @@
 //! so the shared [`with_paging`] helper works unchanged.
 
 use super::common::{
-    NO_BODY, api_request, path_segment, require_id, send_and_read, send_checked, with_paging,
-    with_query,
+    NO_BODY, api_request, mime_type_header, path_segment, require_id, send_and_read, send_checked,
+    with_paging, with_query,
 };
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
@@ -315,19 +315,6 @@ pub async fn upload_to_file_search_store(
     })
 }
 
-/// The `Content-Type` value for an upload.
-///
-/// Fails rather than degrading: `RequestBuilder::header` would otherwise
-/// defer the rejection to `.send()` as an opaque `GenaiError::Http`, where
-/// the promised `InvalidInput` never appears. MIME *syntax* is not checked.
-fn mime_type_header(mime_type: &str) -> Result<HeaderValue, GenaiError> {
-    HeaderValue::try_from(mime_type).map_err(|_| {
-        GenaiError::InvalidInput(format!(
-            "MIME type {mime_type:?} cannot be sent as a header value"
-        ))
-    })
-}
-
 /// The `X-Goog-Upload-File-Name` value for a filename.
 ///
 /// A filename with a control character (legal on Linux) cannot ride in a
@@ -349,30 +336,6 @@ mod tests {
 
     fn ctx() -> HttpContext {
         HttpContext::new(reqwest::Client::new(), "k".to_string(), vec![])
-    }
-
-    #[test]
-    fn unheaderable_mime_type_is_rejected_as_invalid_input() {
-        // Must be `InvalidInput`, not the deferred builder error `.header()`
-        // would surface at `.send()`.
-        let err = mime_type_header("text/plain\nX-Injected: 1").unwrap_err();
-        assert!(
-            matches!(err, GenaiError::InvalidInput(_)),
-            "expected InvalidInput, got {err:?}"
-        );
-        // Names the offending value, so the error is actionable.
-        assert!(err.to_string().contains("X-Injected"), "got {err}");
-    }
-
-    #[test]
-    fn valid_mime_types_pass_through_unchanged() {
-        assert_eq!(
-            mime_type_header("text/plain").unwrap().as_bytes(),
-            b"text/plain"
-        );
-        // Syntax is deliberately not checked; the API rejects these.
-        assert!(mime_type_header("nonsense").is_ok());
-        assert!(mime_type_header("text/").is_ok());
     }
 
     #[test]

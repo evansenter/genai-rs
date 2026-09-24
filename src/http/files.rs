@@ -1,7 +1,8 @@
 //! HTTP calls for the Files API; the types live in [`crate::files`].
 
 use super::common::{
-    API_KEY_HEADER, NO_BODY, path_segment, require_id, send_and_read, send_checked, with_query,
+    API_KEY_HEADER, NO_BODY, mime_type_header, path_segment, require_id, send_and_read,
+    send_checked, with_query,
 };
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
@@ -43,6 +44,7 @@ async fn start_upload_session(
     mime_type: &str,
     display_name: Option<&str>,
 ) -> Result<String, GenaiError> {
+    let mime_type_value = mime_type_header(mime_type)?;
     if ctx.has_inspectors() {
         ctx.emit(WireEvent::UploadStart {
             id: request_id,
@@ -63,7 +65,7 @@ async fn start_upload_session(
         .header("X-Goog-Upload-Protocol", "resumable")
         .header("X-Goog-Upload-Command", "start")
         .header("X-Goog-Upload-Header-Content-Length", file_size.to_string())
-        .header("X-Goog-Upload-Header-Content-Type", mime_type)
+        .header("X-Goog-Upload-Header-Content-Type", mime_type_value)
         .json(&metadata);
     let response = send_checked(ctx, request_id, builder).await?;
 

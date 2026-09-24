@@ -8,16 +8,10 @@
 //! covered too. Files API uploads (`upload_file*`) are left out: that API is
 //! being redesigned.
 //!
-//! Known bugs live in `http_mock_resources/known_bugs.rs`, outside the
-//! top-level files `ci_coverage.rs` scans for live-test ignore reasons.
-//!
 //! Tests whose replies carry unknown enum values are compiled out under
 //! `strict-unknown`, which rejects those values by design.
 
 mod common;
-
-#[path = "http_mock_resources/known_bugs.rs"]
-mod known_bugs;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -1297,6 +1291,45 @@ async fn upload_environment_file_start_rejection_stops_before_the_bytes() {
         "{err:?}"
     );
     assert_eq!(stub.requests().len(), 1);
+}
+
+/// `RequestBuilder::header` would defer an unheaderable value to `send()`
+/// as `GenaiError::Http`, which `is_retryable()` calls transient, so a retry
+/// loop would spin on input that can never succeed.
+#[tokio::test]
+async fn upload_environment_file_rejects_an_unheaderable_mime_type_as_invalid_input() {
+    let stub = Stub::replying(vec![]).await;
+
+    let err = stub
+        .client()
+        .upload_environment_file(
+            "env-1",
+            "a.txt",
+            b"x".to_vec(),
+            "text/plain\nX-Injected: 1",
+            EnvironmentFileUpload::default(),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, GenaiError::InvalidInput(_)), "{err:?}");
+    assert!(!err.is_retryable(), "{err:?}");
+    assert!(stub.requests().is_empty());
+}
+
+/// The Files API upload validates its MIME type the same way.
+#[tokio::test]
+async fn upload_file_bytes_rejects_an_unheaderable_mime_type_as_invalid_input() {
+    let stub = Stub::replying(vec![]).await;
+
+    let err = stub
+        .client()
+        .upload_file_bytes(b"x".to_vec(), "text/plain\nX-Injected: 1", None)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, GenaiError::InvalidInput(_)), "{err:?}");
+    assert!(stub.requests().is_empty());
 }
 
 // =============================================================================

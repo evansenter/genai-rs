@@ -129,6 +129,22 @@ pub(crate) fn path_segment(id: &str) -> std::borrow::Cow<'_, str> {
     urlencoding::encode(id)
 }
 
+/// A caller-supplied MIME type as a header value, for an upload's
+/// `Content-Type` or `X-Goog-Upload-Header-Content-Type`.
+///
+/// Fails up front: `RequestBuilder::header` would otherwise defer the
+/// rejection to `.send()` as a `GenaiError::Http`, which `is_retryable()`
+/// reports as transient. MIME *syntax* is not checked.
+pub(crate) fn mime_type_header(
+    mime_type: &str,
+) -> Result<reqwest::header::HeaderValue, GenaiError> {
+    reqwest::header::HeaderValue::try_from(mime_type).map_err(|_| {
+        GenaiError::InvalidInput(format!(
+            "MIME type {mime_type:?} cannot be sent as a header value"
+        ))
+    })
+}
+
 /// Appends percent-encoded query params to `url`, skipping `None` values.
 ///
 /// Joins with `&` when `url` already carries a query string.
@@ -166,6 +182,30 @@ pub(crate) fn with_paging(url: String, page_size: Option<u32>, page_token: Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unheaderable_mime_type_is_rejected_as_invalid_input() {
+        // Must be `InvalidInput`, not the deferred builder error `.header()`
+        // would surface at `.send()`.
+        let err = mime_type_header("text/plain\nX-Injected: 1").unwrap_err();
+        assert!(
+            matches!(err, GenaiError::InvalidInput(_)),
+            "expected InvalidInput, got {err:?}"
+        );
+        // Names the offending value, so the error is actionable.
+        assert!(err.to_string().contains("X-Injected"), "got {err}");
+    }
+
+    #[test]
+    fn valid_mime_types_pass_through_unchanged() {
+        assert_eq!(
+            mime_type_header("text/plain").unwrap().as_bytes(),
+            b"text/plain"
+        );
+        // Syntax is deliberately not checked; the API rejects these.
+        assert!(mime_type_header("nonsense").is_ok());
+        assert!(mime_type_header("text/").is_ok());
+    }
 
     #[test]
     fn with_paging_no_params_leaves_url_unchanged() {
