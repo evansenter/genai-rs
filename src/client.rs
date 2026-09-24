@@ -5,19 +5,17 @@ use reqwest::Client as ReqwestClient;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Logs a request body at debug level, preferring JSON format when possible.
-fn log_request_body<T: std::fmt::Debug + serde::Serialize>(body: &T) {
-    match serde_json::to_string_pretty(body) {
-        Ok(json) => tracing::debug!("Request Body (JSON):\n{json}"),
-        Err(_) => tracing::debug!("Request Body: {body:#?}"),
+/// Logs a request or response body at debug level as pretty JSON.
+///
+/// Checked first: bodies can carry megabytes of base64 media, and
+/// `tracing::debug!` only defers formatting, not this serialization.
+fn log_body<T: std::fmt::Debug + serde::Serialize>(label: &str, body: &T) {
+    if !tracing::enabled!(tracing::Level::DEBUG) {
+        return;
     }
-}
-
-/// Logs a response body at debug level, preferring JSON format when possible.
-fn log_response_body<T: std::fmt::Debug + serde::Serialize>(body: &T) {
     match serde_json::to_string_pretty(body) {
-        Ok(json) => tracing::debug!("Response Body (JSON):\n{json}"),
-        Err(_) => tracing::debug!("Response Body: {body:#?}"),
+        Ok(json) => tracing::debug!("{label} Body (JSON):\n{json}"),
+        Err(_) => tracing::debug!("{label} Body: {body:#?}"),
     }
 }
 
@@ -52,6 +50,27 @@ fn with_env_inspectors(mut inspectors: Vec<Arc<dyn WireInspector>>) -> Vec<Arc<d
     inspectors
 }
 
+/// The file name, used as the display name of path-based uploads.
+fn file_display_name(path: &std::path::Path) -> Option<String> {
+    path.file_name()
+        .and_then(|s| s.to_str())
+        .map(ToString::to_string)
+}
+
+/// The MIME type inferred from `path`'s extension, or an error naming the
+/// `*_with_mime` method to use instead.
+fn mime_type_for_upload(
+    path: &std::path::Path,
+    explicit_alternative: &str,
+) -> Result<&'static str, GenaiError> {
+    crate::multimodal::detect_mime_type(path).ok_or_else(|| {
+        GenaiError::InvalidInput(format!(
+            "Could not determine MIME type for '{}'. Please use {explicit_alternative} to specify explicitly.",
+            path.display()
+        ))
+    })
+}
+
 /// Builder for `Client` instances.
 ///
 /// # Example
@@ -68,6 +87,7 @@ fn with_env_inspectors(mut inspectors: Vec<Arc<dyn WireInspector>>) -> Vec<Arc<d
 /// ```
 pub struct ClientBuilder {
     api_key: String,
+    base_url: Option<String>,
     timeout: Option<Duration>,
     connect_timeout: Option<Duration>,
     wire_inspectors: Vec<Arc<dyn WireInspector>>,
@@ -78,6 +98,7 @@ impl std::fmt::Debug for ClientBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ClientBuilder")
             .field("api_key", &"[REDACTED]")
+            .field("base_url", &self.base_url)
             .field("timeout", &self.timeout)
             .field("connect_timeout", &self.connect_timeout)
             .field("wire_inspectors", &self.wire_inspectors.len())
@@ -138,6 +159,30 @@ impl ClientBuilder {
         self
     }
 
+    /// Sends every request to `base_url` instead of
+    /// `https://generativelanguage.googleapis.com`.
+    ///
+    /// Takes a scheme and host, optionally with a path prefix; the
+    /// `/v1beta/...` and `/upload/v1beta/...` paths are appended to it, so a
+    /// proxy or a local mock server sees the same paths the real API does.
+    /// A trailing slash is ignored.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use genai_rs::Client;
+    ///
+    /// let client = Client::builder("api_key".to_string())
+    ///     .with_base_url("http://127.0.0.1:8080")
+    ///     .build()?;
+    /// # Ok::<(), genai_rs::GenaiError>(())
+    /// ```
+    #[must_use]
+    pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.base_url = Some(base_url.into());
+        self
+    }
+
     /// Adds a wire inspector that observes raw API traffic.
     ///
     /// Inspectors receive a [`crate::wire::WireEvent`] for every request,
@@ -185,13 +230,15 @@ impl ClientBuilder {
             .build()
             .map_err(|e| GenaiError::ClientBuild(e.to_string()))?;
 
-        Ok(Client {
-            http: HttpContext::new(
-                http_client,
-                self.api_key,
-                with_env_inspectors(self.wire_inspectors),
-            ),
-        })
+        let mut http = HttpContext::new(
+            http_client,
+            self.api_key,
+            with_env_inspectors(self.wire_inspectors),
+        );
+        if let Some(base_url) = self.base_url {
+            http = http.with_base_url(base_url);
+        }
+        Ok(Client { http })
     }
 }
 
@@ -205,6 +252,7 @@ impl Client {
     pub const fn builder(api_key: String) -> ClientBuilder {
         ClientBuilder {
             api_key,
+            base_url: None,
             timeout: None,
             connect_timeout: None,
             wire_inspectors: Vec::new(),
@@ -310,12 +358,11 @@ impl Client {
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::builder("api_key".to_string()).build()?;
-    /// let mut request = client
+    /// let request = client
     ///     .interaction()
     ///     .with_model(genai_rs::DEFAULT_MODEL)
     ///     .with_text("Count to 5")
     ///     .build()?;
-    /// request.stream = Some(true);
     ///
     /// let mut last_event_id = None;
     /// let mut stream = client.execute_stream(request);
@@ -366,17 +413,17 @@ impl Client {
     /// # Ok(())
     /// # }
     /// ```
-    #[tracing::instrument(skip(self), fields(model = ?request.model, agent = ?request.agent))]
+    #[tracing::instrument(skip_all, fields(model = ?request.model, agent = ?request.agent))]
     pub async fn execute(
         &self,
         request: crate::InteractionRequest,
     ) -> Result<crate::InteractionResponse, GenaiError> {
         tracing::debug!("Creating interaction");
-        log_request_body(&request);
+        log_body("Request", &request);
 
         let response = crate::http::interactions::create_interaction(&self.http, request).await?;
 
-        log_response_body(&response);
+        log_body("Response", &response);
         tracing::debug!("Interaction created: ID={:?}", response.id);
 
         Ok(response)
@@ -384,7 +431,9 @@ impl Client {
 
     /// Executes a pre-built interaction request with streaming.
     ///
-    /// This is the streaming variant of [`execute()`](Self::execute).
+    /// This is the streaming variant of [`execute()`](Self::execute). The
+    /// request's `stream` field is set for you (and cleared by `execute()`),
+    /// since the endpoint and body must agree.
     ///
     /// Returns a stream of [`StreamEvent`](crate::StreamEvent) items as they arrive.
     /// Each event contains:
@@ -423,7 +472,7 @@ impl Client {
     /// # Ok(())
     /// # }
     /// ```
-    #[tracing::instrument(skip(self), fields(model = ?request.model, agent = ?request.agent))]
+    #[tracing::instrument(skip_all, fields(model = ?request.model, agent = ?request.agent))]
     pub fn execute_stream(
         &self,
         request: crate::InteractionRequest,
@@ -431,7 +480,7 @@ impl Client {
         use futures_util::StreamExt;
 
         tracing::debug!("Creating streaming interaction");
-        log_request_body(&request);
+        log_body("Request", &request);
 
         let stream = crate::http::interactions::create_interaction_stream(&self.http, request);
 
@@ -450,9 +499,8 @@ impl Client {
 
     /// Retrieves an existing interaction by its ID.
     ///
-    /// `interaction_id` is the bare ID (the form [`InteractionResponse::id`](crate::InteractionResponse)
-    /// returns) — not an `interactions/...` resource name, which would be
-    /// percent-encoded into a single path segment and 404.
+    /// `interaction_id` is the bare ID ([`InteractionResponse::id`](crate::InteractionResponse)),
+    /// not an `interactions/...` resource name.
     ///
     /// Useful for checking the status of long-running interactions or agents,
     /// or for retrieving the full conversation history.
@@ -468,9 +516,7 @@ impl Client {
     /// - Response parsing fails
     /// - The API returns an error
     ///
-    /// An empty or dot-segment ID is rejected locally as
-    /// [`GenaiError::InvalidInput`]
-    /// before any request is sent.
+    /// An empty or dot-segment ID fails locally with [`GenaiError::InvalidInput`].
     pub async fn get_interaction(
         &self,
         interaction_id: &str,
@@ -480,7 +526,7 @@ impl Client {
         let response =
             crate::http::interactions::get_interaction(&self.http, interaction_id, false).await?;
 
-        log_response_body(&response);
+        log_body("Response", &response);
         tracing::debug!("Retrieved interaction: status={:?}", response.status);
 
         Ok(response)
@@ -504,9 +550,7 @@ impl Client {
     /// - Response parsing fails
     /// - The API returns an error
     ///
-    /// An empty or dot-segment ID is rejected locally as
-    /// [`GenaiError::InvalidInput`]
-    /// before any request is sent.
+    /// An empty or dot-segment ID fails locally with [`GenaiError::InvalidInput`].
     pub async fn get_interaction_with_input(
         &self,
         interaction_id: &str,
@@ -516,7 +560,7 @@ impl Client {
         let response =
             crate::http::interactions::get_interaction(&self.http, interaction_id, true).await?;
 
-        log_response_body(&response);
+        log_body("Response", &response);
         tracing::debug!("Retrieved interaction: status={:?}", response.status);
 
         Ok(response)
@@ -524,16 +568,18 @@ impl Client {
 
     /// Retrieves an existing interaction by its ID with streaming.
     ///
-    /// `interaction_id` is the bare ID (the form [`InteractionResponse::id`](crate::InteractionResponse)
-    /// returns) — not an `interactions/...` resource name, which would be
-    /// percent-encoded into a single path segment and 404.
+    /// `interaction_id` is the bare ID ([`InteractionResponse::id`](crate::InteractionResponse)),
+    /// not an `interactions/...` resource name.
     ///
     /// Returns a stream of events for the interaction. This is useful for:
     /// - Resuming an interrupted stream using `last_event_id`
     /// - Streaming a long-running interaction's progress (e.g., deep research)
     ///
-    /// Each event includes an `event_id` that can be used to resume the stream
-    /// from that point if the connection is interrupted.
+    /// Only **background** interactions (`with_background(true)`) can be
+    /// streamed this way; for an ordinary one the API answers
+    /// `400 Streaming retrieval of interactions is not supported`. Their
+    /// events carry an `event_id` to resume from after an interruption; the
+    /// resumed stream starts after that event.
     ///
     /// # Arguments
     ///
@@ -613,9 +659,8 @@ impl Client {
 
     /// Deletes an interaction by its ID.
     ///
-    /// `interaction_id` is the bare ID (the form [`InteractionResponse::id`](crate::InteractionResponse)
-    /// returns) — not an `interactions/...` resource name, which would be
-    /// percent-encoded into a single path segment and 404.
+    /// `interaction_id` is the bare ID ([`InteractionResponse::id`](crate::InteractionResponse)),
+    /// not an `interactions/...` resource name.
     ///
     /// Removes the interaction from the server, freeing up storage and making it
     /// unavailable for future reference via `previous_interaction_id`.
@@ -630,9 +675,7 @@ impl Client {
     /// - The HTTP request fails
     /// - The API returns an error
     ///
-    /// An empty or dot-segment ID is rejected locally as
-    /// [`GenaiError::InvalidInput`]
-    /// before any request is sent.
+    /// An empty or dot-segment ID fails locally with [`GenaiError::InvalidInput`].
     pub async fn delete_interaction(&self, interaction_id: &str) -> Result<(), GenaiError> {
         tracing::debug!("Deleting interaction: ID={interaction_id}");
 
@@ -645,9 +688,8 @@ impl Client {
 
     /// Cancels an in-progress background interaction.
     ///
-    /// `interaction_id` is the bare ID (the form [`InteractionResponse::id`](crate::InteractionResponse)
-    /// returns) — not an `interactions/...` resource name, which would be
-    /// percent-encoded into a single path segment and 404.
+    /// `interaction_id` is the bare ID ([`InteractionResponse::id`](crate::InteractionResponse)),
+    /// not an `interactions/...` resource name.
     ///
     /// Only applicable to interactions created with `background: true` that are
     /// still in `InProgress` status. Returns the updated interaction with
@@ -671,9 +713,7 @@ impl Client {
     /// - The HTTP request fails
     /// - The API returns an error
     ///
-    /// An empty or dot-segment ID is rejected locally as
-    /// [`GenaiError::InvalidInput`]
-    /// before any request is sent.
+    /// An empty or dot-segment ID fails locally with [`GenaiError::InvalidInput`].
     ///
     /// # Example
     ///
@@ -712,7 +752,7 @@ impl Client {
         let response =
             crate::http::interactions::cancel_interaction(&self.http, interaction_id).await?;
 
-        log_response_body(&response);
+        log_body("Response", &response);
         tracing::debug!("Interaction cancelled: status={:?}", response.status);
 
         Ok(response)
@@ -760,18 +800,15 @@ impl Client {
 
     /// Retrieves a registered webhook by ID.
     ///
-    /// `webhook_id` is the bare ID (the form [`Webhook::id`](crate::Webhook)
-    /// returns) — not a `webhooks/...` resource name, which would be
-    /// percent-encoded into a single path segment and 404.
+    /// `webhook_id` is the bare ID ([`Webhook::id`](crate::Webhook)), not a `webhooks/...`
+    /// resource name.
     ///
     /// # Errors
     ///
     /// Returns an error if the webhook doesn't exist, the HTTP request fails,
     /// or response parsing fails.
     ///
-    /// An empty or dot-segment ID is rejected locally as
-    /// [`GenaiError::InvalidInput`]
-    /// before any request is sent.
+    /// An empty or dot-segment ID fails locally with [`GenaiError::InvalidInput`].
     pub async fn get_webhook(&self, webhook_id: &str) -> Result<crate::Webhook, GenaiError> {
         crate::http::webhooks::get_webhook(&self.http, webhook_id).await
     }
@@ -796,9 +833,8 @@ impl Client {
 
     /// Updates a registered webhook.
     ///
-    /// `webhook_id` is the bare ID (the form [`Webhook::id`](crate::Webhook)
-    /// returns) — not a `webhooks/...` resource name, which would be
-    /// percent-encoded into a single path segment and 404.
+    /// `webhook_id` is the bare ID ([`Webhook::id`](crate::Webhook)), not a `webhooks/...`
+    /// resource name.
     ///
     /// # Arguments
     ///
@@ -817,9 +853,7 @@ impl Client {
     /// Returns an error if the webhook doesn't exist, the HTTP request fails,
     /// or response parsing fails.
     ///
-    /// An empty or dot-segment ID is rejected locally as
-    /// [`GenaiError::InvalidInput`]
-    /// before any request is sent.
+    /// An empty or dot-segment ID fails locally with [`GenaiError::InvalidInput`].
     ///
     /// # Example
     ///
@@ -848,26 +882,22 @@ impl Client {
 
     /// Deletes a registered webhook.
     ///
-    /// `webhook_id` is the bare ID (the form [`Webhook::id`](crate::Webhook)
-    /// returns) — not a `webhooks/...` resource name, which would be
-    /// percent-encoded into a single path segment and 404.
+    /// `webhook_id` is the bare ID ([`Webhook::id`](crate::Webhook)), not a `webhooks/...`
+    /// resource name.
     ///
     /// # Errors
     ///
     /// Returns an error if the webhook doesn't exist or the HTTP request fails.
     ///
-    /// An empty or dot-segment ID is rejected locally as
-    /// [`GenaiError::InvalidInput`]
-    /// before any request is sent.
+    /// An empty or dot-segment ID fails locally with [`GenaiError::InvalidInput`].
     pub async fn delete_webhook(&self, webhook_id: &str) -> Result<(), GenaiError> {
         crate::http::webhooks::delete_webhook(&self.http, webhook_id).await
     }
 
     /// Sends a test event to a webhook (`:ping`).
     ///
-    /// `webhook_id` is the bare ID (the form [`Webhook::id`](crate::Webhook)
-    /// returns) — not a `webhooks/...` resource name, which would be
-    /// percent-encoded into a single path segment and 404.
+    /// `webhook_id` is the bare ID ([`Webhook::id`](crate::Webhook)), not a `webhooks/...`
+    /// resource name.
     ///
     /// Use this to verify your endpoint receives and validates deliveries
     /// before relying on it for real events.
@@ -880,18 +910,15 @@ impl Client {
     ///
     /// Returns an error if the webhook doesn't exist or the HTTP request fails.
     ///
-    /// An empty or dot-segment ID is rejected locally as
-    /// [`GenaiError::InvalidInput`]
-    /// before any request is sent.
+    /// An empty or dot-segment ID fails locally with [`GenaiError::InvalidInput`].
     pub async fn ping_webhook(&self, webhook_id: &str) -> Result<(), GenaiError> {
         crate::http::webhooks::ping_webhook(&self.http, webhook_id).await
     }
 
     /// Rotates a webhook's signing secret (`:rotateSigningSecret`).
     ///
-    /// `webhook_id` is the bare ID (the form [`Webhook::id`](crate::Webhook)
-    /// returns) — not a `webhooks/...` resource name, which would be
-    /// percent-encoded into a single path segment and 404.
+    /// `webhook_id` is the bare ID ([`Webhook::id`](crate::Webhook)), not a `webhooks/...`
+    /// resource name.
     ///
     /// Returns the newly generated secret. Pass a
     /// [`RevocationBehavior`](crate::RevocationBehavior) to control whether
@@ -903,9 +930,7 @@ impl Client {
     /// Returns an error if the webhook doesn't exist, the HTTP request fails,
     /// or response parsing fails.
     ///
-    /// An empty or dot-segment ID is rejected locally as
-    /// [`GenaiError::InvalidInput`]
-    /// before any request is sent.
+    /// An empty or dot-segment ID fails locally with [`GenaiError::InvalidInput`].
     pub async fn rotate_webhook_signing_secret(
         &self,
         webhook_id: &str,
@@ -936,17 +961,14 @@ impl Client {
 
     /// Retrieves a trigger by ID.
     ///
-    /// `trigger_id` is the bare ID (the form [`Trigger::id`](crate::Trigger)
-    /// returns) — not a `triggers/...` resource name, which would be
-    /// percent-encoded into a single path segment and 404.
+    /// `trigger_id` is the bare ID ([`Trigger::id`](crate::Trigger)), not a `triggers/...`
+    /// resource name.
     ///
     /// # Errors
     ///
     /// Returns an error on network failure or when the trigger doesn't exist.
     ///
-    /// An empty or dot-segment ID is rejected locally as
-    /// [`GenaiError::InvalidInput`]
-    /// before any request is sent.
+    /// An empty or dot-segment ID fails locally with [`GenaiError::InvalidInput`].
     pub async fn get_trigger(&self, trigger_id: &str) -> Result<crate::Trigger, GenaiError> {
         crate::http::triggers::get_trigger(&self.http, trigger_id).await
     }
@@ -978,17 +1000,14 @@ impl Client {
     /// * `update` - The fields to change (only set fields are sent; there
     ///   is no `update_mask` on this endpoint — see [`crate::TriggerUpdate`]).
     ///
-    /// `trigger_id` is the bare ID (the form [`Trigger::id`](crate::Trigger)
-    /// returns) — not a `triggers/...` resource name, which would be
-    /// percent-encoded into a single path segment and 404.
+    /// `trigger_id` is the bare ID ([`Trigger::id`](crate::Trigger)), not a `triggers/...`
+    /// resource name.
     ///
     /// # Errors
     ///
     /// Returns an error on network failure or when the trigger doesn't exist.
     ///
-    /// An empty or dot-segment ID is rejected locally as
-    /// [`GenaiError::InvalidInput`]
-    /// before any request is sent.
+    /// An empty or dot-segment ID fails locally with [`GenaiError::InvalidInput`].
     pub async fn update_trigger(
         &self,
         trigger_id: &str,
@@ -999,26 +1018,22 @@ impl Client {
 
     /// Deletes a trigger.
     ///
-    /// `trigger_id` is the bare ID (the form [`Trigger::id`](crate::Trigger)
-    /// returns) — not a `triggers/...` resource name, which would be
-    /// percent-encoded into a single path segment and 404.
+    /// `trigger_id` is the bare ID ([`Trigger::id`](crate::Trigger)), not a `triggers/...`
+    /// resource name.
     ///
     /// # Errors
     ///
     /// Returns an error on network failure or when the trigger doesn't exist.
     ///
-    /// An empty or dot-segment ID is rejected locally as
-    /// [`GenaiError::InvalidInput`]
-    /// before any request is sent.
+    /// An empty or dot-segment ID fails locally with [`GenaiError::InvalidInput`].
     pub async fn delete_trigger(&self, trigger_id: &str) -> Result<(), GenaiError> {
         crate::http::triggers::delete_trigger(&self.http, trigger_id).await
     }
 
     /// Fires a trigger immediately, outside its schedule.
     ///
-    /// `trigger_id` is the bare ID (the form [`Trigger::id`](crate::Trigger)
-    /// returns) — not a `triggers/...` resource name, which would be
-    /// percent-encoded into a single path segment and 404.
+    /// `trigger_id` is the bare ID ([`Trigger::id`](crate::Trigger)), not a `triggers/...`
+    /// resource name.
     ///
     /// **Unverified endpoint shape**: this posts to the `executions`
     /// sub-collection (not a `:run` colon verb), a path derived from the
@@ -1031,9 +1046,7 @@ impl Client {
     ///
     /// Returns an error on network failure or when the trigger doesn't exist.
     ///
-    /// An empty or dot-segment ID is rejected locally as
-    /// [`GenaiError::InvalidInput`]
-    /// before any request is sent.
+    /// An empty or dot-segment ID fails locally with [`GenaiError::InvalidInput`].
     pub async fn run_trigger(
         &self,
         trigger_id: &str,
@@ -1049,9 +1062,8 @@ impl Client {
     /// * `page_size` - Optional maximum number of executions per page.
     /// * `page_token` - Optional token from a previous list call.
     ///
-    /// `trigger_id` is the bare ID (the form [`Trigger::id`](crate::Trigger)
-    /// returns) — not a `triggers/...` resource name, which would be
-    /// percent-encoded into a single path segment and 404.
+    /// `trigger_id` is the bare ID ([`Trigger::id`](crate::Trigger)), not a `triggers/...`
+    /// resource name.
     ///
     /// **Unverified endpoint shape**: reads the same `executions`
     /// sub-collection [`run_trigger`](Self::run_trigger) posts to, with
@@ -1063,9 +1075,7 @@ impl Client {
     ///
     /// Returns an error on network failure or when the trigger doesn't exist.
     ///
-    /// An empty or dot-segment ID is rejected locally as
-    /// [`GenaiError::InvalidInput`]
-    /// before any request is sent.
+    /// An empty or dot-segment ID fails locally with [`GenaiError::InvalidInput`].
     pub async fn list_trigger_executions(
         &self,
         trigger_id: &str,
@@ -1112,9 +1122,7 @@ impl Client {
     /// Returns an error on network failure or when the environment doesn't
     /// exist.
     ///
-    /// An empty or dot-segment ID is rejected locally as
-    /// [`GenaiError::InvalidInput`]
-    /// before any request is sent.
+    /// An empty or dot-segment ID fails locally with [`GenaiError::InvalidInput`].
     pub async fn get_environment(
         &self,
         environment_id: &str,
@@ -1155,9 +1163,7 @@ impl Client {
     /// Returns an error on network failure or when the environment doesn't
     /// exist.
     ///
-    /// An empty or dot-segment ID is rejected locally as
-    /// [`GenaiError::InvalidInput`]
-    /// before any request is sent.
+    /// An empty or dot-segment ID fails locally with [`GenaiError::InvalidInput`].
     pub async fn delete_environment(&self, environment_id: &str) -> Result<(), GenaiError> {
         crate::http::environments::delete_environment(&self.http, environment_id).await
     }
@@ -1216,18 +1222,15 @@ impl Client {
 
     /// Retrieves an agent by ID.
     ///
-    /// `agent_id` is the bare ID (the form [`Agent::id`](crate::Agent)
-    /// returns) — not an `agents/...` resource name, which would be
-    /// percent-encoded into a single path segment and 404.
+    /// `agent_id` is the bare ID ([`Agent::id`](crate::Agent)), not an `agents/...`
+    /// resource name.
     ///
     /// # Errors
     ///
     /// Returns an error if the agent doesn't exist, the HTTP request fails,
     /// or response parsing fails.
     ///
-    /// An empty or dot-segment ID is rejected locally as
-    /// [`GenaiError::InvalidInput`]
-    /// before any request is sent.
+    /// An empty or dot-segment ID fails locally with [`GenaiError::InvalidInput`].
     pub async fn get_agent(&self, agent_id: &str) -> Result<crate::Agent, GenaiError> {
         crate::http::agents::get_agent(&self.http, agent_id).await
     }
@@ -1254,17 +1257,14 @@ impl Client {
 
     /// Deletes an agent by ID.
     ///
-    /// `agent_id` is the bare ID (the form [`Agent::id`](crate::Agent)
-    /// returns) — not an `agents/...` resource name, which would be
-    /// percent-encoded into a single path segment and 404.
+    /// `agent_id` is the bare ID ([`Agent::id`](crate::Agent)), not an `agents/...`
+    /// resource name.
     ///
     /// # Errors
     ///
     /// Returns an error if the agent doesn't exist or the HTTP request fails.
     ///
-    /// An empty or dot-segment ID is rejected locally as
-    /// [`GenaiError::InvalidInput`]
-    /// before any request is sent.
+    /// An empty or dot-segment ID fails locally with [`GenaiError::InvalidInput`].
     pub async fn delete_agent(&self, agent_id: &str) -> Result<(), GenaiError> {
         crate::http::agents::delete_agent(&self.http, agent_id).await
     }
@@ -1317,40 +1317,8 @@ impl Client {
         path: impl AsRef<std::path::Path>,
     ) -> Result<crate::FileMetadata, GenaiError> {
         let path = path.as_ref();
-
-        // Read file contents
-        let file_data = tokio::fs::read(path).await.map_err(|e| {
-            tracing::warn!("Failed to read file '{}': {}", path.display(), e);
-            GenaiError::InvalidInput(format!("Failed to read file '{}': {}", path.display(), e))
-        })?;
-
-        // Detect MIME type from extension
-        let mime_type = crate::multimodal::detect_mime_type(path).ok_or_else(|| {
-            tracing::warn!(
-                "Could not determine MIME type for '{}' - unknown extension",
-                path.display()
-            );
-            GenaiError::InvalidInput(format!(
-                "Could not determine MIME type for '{}'. Please use upload_file_with_mime() to specify explicitly.",
-                path.display()
-            ))
-        })?;
-
-        // Use filename as display name
-        let display_name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_string());
-
-        tracing::debug!(
-            "Uploading file: path={}, size={} bytes, mime_type={}",
-            path.display(),
-            file_data.len(),
-            mime_type
-        );
-
-        crate::http::files::upload_file(&self.http, file_data, mime_type, display_name.as_deref())
-            .await
+        let mime_type = mime_type_for_upload(path, "upload_file_with_mime()")?;
+        self.upload_file_with_mime(path, mime_type).await
     }
 
     /// Uploads a file with an explicit MIME type.
@@ -1380,26 +1348,16 @@ impl Client {
         mime_type: &str,
     ) -> Result<crate::FileMetadata, GenaiError> {
         let path = path.as_ref();
-
         let file_data = tokio::fs::read(path).await.map_err(|e| {
-            tracing::warn!("Failed to read file '{}': {}", path.display(), e);
             GenaiError::InvalidInput(format!("Failed to read file '{}': {}", path.display(), e))
         })?;
-
-        let display_name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_string());
-
-        tracing::debug!(
-            "Uploading file: path={}, size={} bytes, mime_type={}",
-            path.display(),
-            file_data.len(),
-            mime_type
-        );
-
-        crate::http::files::upload_file(&self.http, file_data, mime_type, display_name.as_deref())
-            .await
+        crate::http::files::upload_file(
+            &self.http,
+            file_data,
+            mime_type,
+            file_display_name(path).as_deref(),
+        )
+        .await
     }
 
     /// Uploads file bytes directly with a specified MIME type.
@@ -1555,7 +1513,7 @@ impl Client {
     ///
     /// Returns a tuple of:
     /// - `FileMetadata`: The uploaded file's metadata
-    /// - `ResumableUpload`: A handle that can be used to resume if the upload is interrupted
+    /// - `ResumableUpload`: metadata of the upload session that was used
     ///
     /// # Memory Usage
     ///
@@ -1598,38 +1556,8 @@ impl Client {
         path: impl AsRef<std::path::Path>,
     ) -> Result<(crate::FileMetadata, crate::ResumableUpload), GenaiError> {
         let path = path.as_ref();
-
-        // Detect MIME type from extension
-        let mime_type = crate::multimodal::detect_mime_type(path).ok_or_else(|| {
-            tracing::warn!(
-                "Could not determine MIME type for '{}' - unknown extension",
-                path.display()
-            );
-            GenaiError::InvalidInput(format!(
-                "Could not determine MIME type for '{}'. Please use upload_file_chunked_with_mime() to specify explicitly.",
-                path.display()
-            ))
-        })?;
-
-        // Use filename as display name
-        let display_name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_string());
-
-        tracing::debug!(
-            "Chunked upload: path={}, mime_type={}",
-            path.display(),
-            mime_type
-        );
-
-        crate::http::files::upload_file_chunked(
-            &self.http,
-            path,
-            mime_type,
-            display_name.as_deref(),
-        )
-        .await
+        let mime_type = mime_type_for_upload(path, "upload_file_chunked_with_mime()")?;
+        self.upload_file_chunked_with_mime(path, mime_type).await
     }
 
     /// Uploads a file using chunked transfer with an explicit MIME type.
@@ -1661,26 +1589,8 @@ impl Client {
         path: impl AsRef<std::path::Path>,
         mime_type: &str,
     ) -> Result<(crate::FileMetadata, crate::ResumableUpload), GenaiError> {
-        let path = path.as_ref();
-
-        let display_name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_string());
-
-        tracing::debug!(
-            "Chunked upload: path={}, mime_type={}",
-            path.display(),
-            mime_type
-        );
-
-        crate::http::files::upload_file_chunked(
-            &self.http,
-            path,
-            mime_type,
-            display_name.as_deref(),
-        )
-        .await
+        self.upload_file_chunked_with_options(path, mime_type, crate::DEFAULT_CHUNK_SIZE)
+            .await
     }
 
     /// Uploads a file using chunked transfer with a custom chunk size.
@@ -1720,24 +1630,11 @@ impl Client {
         chunk_size: usize,
     ) -> Result<(crate::FileMetadata, crate::ResumableUpload), GenaiError> {
         let path = path.as_ref();
-
-        let display_name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_string());
-
-        tracing::debug!(
-            "Chunked upload: path={}, mime_type={}, chunk_size={}",
-            path.display(),
-            mime_type,
-            chunk_size
-        );
-
-        crate::http::files::upload_file_chunked_with_chunk_size(
+        crate::http::files::upload_file_chunked(
             &self.http,
             path,
             mime_type,
-            display_name.as_deref(),
+            file_display_name(path).as_deref(),
             chunk_size,
         )
         .await
@@ -1760,9 +1657,8 @@ impl Client {
     ///
     /// # Errors
     ///
-    /// Returns an error if:
-    /// - The file processing fails
-    /// - The timeout is exceeded
+    /// Returns [`GenaiError::Internal`] if processing fails (terminal, so
+    /// not retryable) or the timeout is exceeded, or an error from polling.
     ///
     /// # Example
     ///
@@ -1804,27 +1700,19 @@ impl Client {
             }
 
             if current.is_failed() {
-                let error_code = current.error.as_ref().and_then(|e| e.code);
-                let error_msg = current
+                // `Internal`, not `Api`: the file will never process, and a
+                // fabricated 5xx would make `is_retryable()` say otherwise.
+                // `FileError::code` is a google.rpc code, not an HTTP status.
+                let detail = current
                     .error
                     .as_ref()
-                    .and_then(|e| e.message.as_deref())
-                    .unwrap_or("File processing failed without details");
-
-                tracing::error!(
-                    "File '{}' processing failed: code={:?}, message={}",
-                    file.name,
-                    error_code,
-                    error_msg
-                );
-
-                // Use Api error since this is a server-side processing failure
-                return Err(GenaiError::Api {
-                    status_code: error_code.map_or(500, |c| c as u16),
-                    message: format!("File processing failed: {}", error_msg),
-                    request_id: None,
-                    retry_after: None,
-                });
+                    .map_or_else(|| "no details".to_string(), ToString::to_string);
+                tracing::error!("File '{}' processing failed: {}", file.name, detail);
+                return Err(GenaiError::Internal(format!(
+                    "File '{}' failed processing ({detail}). This is terminal — \
+                     re-uploading is the only recovery.",
+                    file.name
+                )));
             }
 
             // Log unknown states per Evergreen logging strategy
@@ -1899,9 +1787,6 @@ impl Client {
         &self,
         display_name: Option<&str>,
     ) -> Result<crate::FileSearchStore, GenaiError> {
-        // Through the builders rather than a struct literal, so the two
-        // construction paths cannot drift and the builders have an in-crate
-        // caller.
         let mut request = crate::CreateFileSearchStoreRequest::new();
         if let Some(name) = display_name {
             request = request.with_display_name(name);
@@ -2033,13 +1918,7 @@ impl Client {
         display_name: Option<&str>,
     ) -> Result<crate::FileSearchDocument, GenaiError> {
         let path = file_path.as_ref();
-        let mime_type = crate::multimodal::detect_mime_type(path).ok_or_else(|| {
-            GenaiError::InvalidInput(format!(
-                "Could not determine MIME type for '{}'. Please use \
-                 upload_to_file_search_store_with_mime() to specify explicitly.",
-                path.display()
-            ))
-        })?;
+        let mime_type = mime_type_for_upload(path, "upload_to_file_search_store_with_mime()")?;
         crate::http::file_search_stores::upload_to_file_search_store(
             &self.http,
             store_name,
@@ -2186,17 +2065,8 @@ impl Client {
             match &current.state {
                 Some(crate::DocumentState::Active) => return Ok(current),
                 Some(crate::DocumentState::Failed) => {
-                    // `Internal`, not `Api { status_code: 500 }`. `Failed` is
-                    // terminal, but `is_retryable()` reports true for any
-                    // `Api` with a 5xx — so the 500 spelling tells a caller
-                    // following `examples/retry_with_backoff.rs` to keep
-                    // re-polling a document that will never index, burning
-                    // the whole retry budget and re-issuing the GET loop each
-                    // time. The status was invented here rather than observed:
-                    // unlike `wait_for_file_ready`, which carries the API's
-                    // own `error_code`, `DocumentState::Failed` is a state
-                    // value with no HTTP error behind it. The timeout arm
-                    // below already uses `Internal` for the same reason.
+                    // `Internal`: terminal, and a 5xx `Api` would read as
+                    // retryable.
                     return Err(GenaiError::Internal(format!(
                         "Document '{document_name}' failed to index. This is \
                          terminal — re-uploading is the only recovery."
@@ -2309,16 +2179,8 @@ mod tests {
             fn on_event(&self, _event: &crate::wire::WireEvent) {}
         }
 
-        // Held for the build: an unrelated LOUD_WIRE=1 window would add a
-        // third inspector to this client. The guard is shared with the
-        // other LOUD_WIRE mutator in `src/wire.rs`.
-        //
-        // `unset()` because the guard blocks *concurrent* mutators but does
-        // not neutralize an *ambient* one: under `LOUD_WIRE=1 cargo test`,
-        // `build()` would append a printer on top of the two Noops and this
-        // would see 3. Previously that depended on whether the sibling
-        // test's unconditional `remove_var` had already landed; now that the
-        // sibling restores instead of clearing, it would be deterministic.
+        // The guard serializes LOUD_WIRE mutators; `unset()` also clears an
+        // ambient `LOUD_WIRE=1`, which would add a third inspector.
         let mut guard = crate::test_subscriber::LoudWireGuard::acquire();
         guard.unset();
 

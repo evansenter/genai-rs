@@ -390,23 +390,9 @@ impl std::fmt::Debug for Webhook {
             )
             .field("create_time", &self.create_time)
             .field("update_time", &self.update_time)
-            // Enumerated by hand, so `extra` has to be listed or it is
-            // invisible — on the one shape where that matters most. The
-            // field exists because unmodeled keys are otherwise lost to the
-            // caller, and a `Debug` print is the first thing anyone reaches
-            // for when a response field seems to be missing.
-            //
-            // The trade, stated so a later redaction audit reads it as
-            // intended rather than as an oversight: `new_signing_secret` is
-            // redacted two lines up, but `extra` prints verbatim, and by
-            // construction nothing can redact a key the crate does not
-            // model. If the API grows a secret-bearing field before this
-            // crate catches up, debug-formatting a webhook prints it in
-            // cleartext. Dropping `extra` from `Debug` would only trade that
-            // for the invisibility the field exists to fix; the four
-            // derive-`Debug` shapes here have the same property, and the
-            // user-content-at-debug-level-only rule in
-            // `docs/LOGGING_STRATEGY.md` is what bounds the blast radius.
+            // Listed so unmodeled keys stay visible. They print verbatim:
+            // nothing can redact a secret-bearing field the crate does not
+            // model yet.
             .field("extra", &self.extra)
             .finish()
     }

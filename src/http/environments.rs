@@ -3,23 +3,18 @@
 //! Same header conventions as the other Interactions API resources
 //! (API key + `Api-Revision`); shared plumbing lives in `http/common.rs`.
 
-use super::common::{
-    API_VERSION, BASE_URL_PREFIX, path_segment, require_id, send_and_read, to_body, with_paging,
-};
+use super::common::{NO_BODY, path_segment, require_id, send_and_read, with_paging};
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
 use crate::environments::{CreateEnvironmentRequest, Environment, EnvironmentListResponse};
 use crate::errors::GenaiError;
 
-fn environments_url() -> String {
-    format!("{BASE_URL_PREFIX}/{API_VERSION}/environments")
+fn environments_url(ctx: &HttpContext) -> String {
+    ctx.api_url("environments")
 }
 
-fn environment_url(id: &str) -> String {
-    format!(
-        "{BASE_URL_PREFIX}/{API_VERSION}/environments/{}",
-        path_segment(id)
-    )
+fn environment_url(ctx: &HttpContext, id: &str) -> String {
+    ctx.api_url(&format!("environments/{}", path_segment(id)))
 }
 
 /// Creates an environment (`POST /v1beta/environments`).
@@ -31,8 +26,8 @@ pub async fn create_environment(
     let text = send_and_read(
         ctx,
         reqwest::Method::POST,
-        &environments_url(),
-        Some(to_body(request)?),
+        &environments_url(ctx),
+        Some(request),
     )
     .await?;
     deserialize_with_context(&text, "Environment from create")
@@ -48,8 +43,8 @@ pub async fn get_environment(
     let text = send_and_read(
         ctx,
         reqwest::Method::GET,
-        &environment_url(environment_id),
-        None,
+        &environment_url(ctx, environment_id),
+        NO_BODY,
     )
     .await?;
     deserialize_with_context(&text, "Environment from get")
@@ -62,8 +57,8 @@ pub async fn list_environments(
     page_token: Option<&str>,
 ) -> Result<EnvironmentListResponse, GenaiError> {
     tracing::debug!("Listing environments: page_size={page_size:?}, page_token={page_token:?}");
-    let url = with_paging(environments_url(), page_size, page_token);
-    let text = send_and_read(ctx, reqwest::Method::GET, &url, None).await?;
+    let url = with_paging(environments_url(ctx), page_size, page_token);
+    let text = send_and_read(ctx, reqwest::Method::GET, &url, NO_BODY).await?;
     deserialize_with_context(&text, "EnvironmentListResponse")
 }
 
@@ -74,8 +69,8 @@ pub async fn delete_environment(ctx: &HttpContext, environment_id: &str) -> Resu
     send_and_read(
         ctx,
         reqwest::Method::DELETE,
-        &environment_url(environment_id),
-        None,
+        &environment_url(ctx, environment_id),
+        NO_BODY,
     )
     .await?;
     Ok(())
@@ -87,17 +82,18 @@ mod tests {
 
     #[test]
     fn test_environments_url_construction() {
+        let ctx = HttpContext::new(reqwest::Client::new(), "k".to_string(), vec![]);
         assert_eq!(
-            environments_url(),
+            environments_url(&ctx),
             "https://generativelanguage.googleapis.com/v1beta/environments"
         );
         assert_eq!(
-            environment_url("env-123"),
+            environment_url(&ctx, "env-123"),
             "https://generativelanguage.googleapis.com/v1beta/environments/env-123"
         );
         // A path-metacharacter ID is encoded, not interpolated raw.
         assert_eq!(
-            environment_url("a/b?c"),
+            environment_url(&ctx, "a/b?c"),
             "https://generativelanguage.googleapis.com/v1beta/environments/a%2Fb%3Fc"
         );
     }

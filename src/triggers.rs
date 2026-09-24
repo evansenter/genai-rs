@@ -288,35 +288,17 @@ pub struct Trigger {
     pub time_zone: Option<String>,
     /// The interaction request created on each firing.
     ///
-    /// A nested `input` this crate can't deserialize (explicit null, a
-    /// stray scalar) degrades to empty text with a `warn!`, and any
-    /// other undeserializable `interaction` (a non-object shape, a type
-    /// mismatch on a modeled field) degrades to `None`, instead of
-    /// failing the whole list response. An *absent* `input` (a projection
-    /// that elides it — the common list shape) likewise reads as empty
-    /// text, silently: don't treat `interaction.input` as evidence of the
-    /// stored prompt. (Under default features a
-    /// malformed steps *array* never reaches this path — the Evergreen
-    /// `Step` deserializer absorbs unrecognized elements as
-    /// `Step::Unknown` per-element; under `strict-unknown` it is rejected
-    /// and degrades here like any other bad input.) Leniency is
-    /// scoped to this response side; [`TriggerCreateParams`]'s send-side
-    /// interaction stays strict, so a config-file typo is a clean parse
-    /// error rather than a silently scheduled empty prompt.
+    /// Lenient on this response side, so one odd trigger cannot fail a whole
+    /// list: an undeserializable `input` reads as empty text and any other
+    /// undeserializable `interaction` as `None`, each with a `warn!`. An
+    /// absent `input` (list projections elide it) reads as empty text
+    /// silently, so don't treat `interaction.input` as evidence of the stored
+    /// prompt. [`TriggerCreateParams`]'s send side stays strict.
     ///
-    /// Also lossy for unmodeled keys: [`InteractionRequest`] carries no
-    /// `extra` escape hatch, so an interaction field this crate doesn't
-    /// model is dropped on deserialize rather than preserved — a second
-    /// roundtrip asymmetry alongside the absent-`input` one above. (The
-    /// same currently holds for [`Trigger`]'s own top-level unmodeled
-    /// keys; a response-side `extra` is tracked as issue #406.)
-    ///
-    /// And a third: because this is an [`InteractionRequest`], its `input`
-    /// carries that type's request-side serializer, so a trigger created
-    /// outside this SDK with a bare `[Content]` input re-serializes as a
-    /// `user_input` step (#427). Semantically identical, and the step form
-    /// is the one wanted on the `TriggerUpdateParams` send path — but it is
-    /// a reshape of server data rather than a faithful echo.
+    /// Two roundtrip asymmetries follow from this being an
+    /// [`InteractionRequest`]: interaction fields this crate does not model
+    /// are dropped (it has no `extra`), and a bare `[Content]` input
+    /// re-serializes as a `user_input` step.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -602,33 +584,18 @@ pub struct TriggerCreateParams {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-/// Pre-flight warns for a trigger's nested interaction. Called from
-/// [`TriggerCreateParams::new`], the deserialize path a config file loads
-/// through, and `create_trigger` itself — the funnel covering struct
-/// literals and post-construction mutation. The `new`-then-create flow
-/// therefore warns twice; deliberate, trading a duplicate log line for a
-/// fail-fast signal at construction plus a guaranteed pre-wire one.
-/// Warns rather than hard-errors throughout: full validation of this shape
-/// can't be exercised while creation is agent-gated.
+/// Pre-flight warnings for a trigger's nested interaction, each a
+/// server-side rejection or a silent failure the agent gate would otherwise
+/// hide until the round-trip:
+/// - `store` set: the API rejects it inside a trigger's interaction.
+/// - no `agent`: a trigger must target a custom agent; a model-only request
+///   is refused ("Agent '' is invalid or not found").
+/// - empty input: would fire on a schedule with an empty prompt.
 ///
-/// Three checks:
-/// - `store` set: live-verified server rejection (see the module docs) —
-///   the API rejects `store` inside a trigger's nested interaction, and
-///   the agent gate would otherwise mask that until the round-trip.
-/// - no `agent`: the other live-verified rejection — a trigger's
-///   interaction must target a custom agent, and a model-only request is
-///   refused ("Agent '' is invalid or not found"). The likelier mistake
-///   of the three, since `with_model(...)` is the muscle memory from
-///   every other entry point in the crate.
-/// - empty input: [`InteractionInput::default()`] is an empty string, so
-///   a struct literal that sets `agent` and falls through to
-///   `..Default::default()` without setting `input` compiles, serializes,
-///   and would then fire on a schedule with an empty prompt and nobody
-///   watching — and an explicit empty `Content`/`Steps` vector is the
-///   same outcome spelled differently. The send-side strictness on
-///   `input` only covers the deserialize path (where an absent key is a
-///   parse error); this funnel is the only place the struct-literal
-///   shapes can be caught.
+/// Called from [`TriggerCreateParams::new`], the deserialize path, and
+/// `create_trigger` (which also catches struct literals and later mutation),
+/// so `new`-then-create warns twice. Warns rather than errors: the full shape
+/// can't be validated while creation is agent-gated.
 pub(crate) fn warn_on_interaction_footguns(interaction: &InteractionRequest) {
     if interaction.store.is_some() {
         tracing::warn!(

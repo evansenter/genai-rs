@@ -685,6 +685,7 @@ impl AudioInfo<'_> {
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[non_exhaustive]
 pub struct FunctionCallInfo<'a> {
     /// Unique identifier for this function call (used when sending results back)
     pub id: &'a str,
@@ -754,6 +755,7 @@ pub struct OwnedFunctionCallInfo {
 ///
 /// This is a **view type** that borrows data from the underlying [`InteractionResponse`].
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[non_exhaustive]
 pub struct FunctionResultInfo<'a> {
     /// Name of the function that was called (optional per API spec)
     pub name: Option<&'a str>,
@@ -1318,12 +1320,6 @@ impl InteractionResponse {
             .any(|s| matches!(s, Step::CodeExecutionCall { .. }))
     }
 
-    /// Get the first code execution call, if any.
-    #[must_use]
-    pub fn code_execution_call(&self) -> Option<CodeExecutionCallInfo<'_>> {
-        self.code_execution_calls().into_iter().next()
-    }
-
     /// Extract all code execution calls from steps.
     #[must_use]
     pub fn code_execution_calls(&self) -> Vec<CodeExecutionCallInfo<'_>> {
@@ -1408,18 +1404,6 @@ impl InteractionResponse {
             .any(|s| matches!(s, Step::GoogleSearchCall { .. }))
     }
 
-    /// Get the first Google Search query, if any.
-    #[must_use]
-    pub fn google_search_call(&self) -> Option<&str> {
-        self.steps.iter().find_map(|step| {
-            if let Step::GoogleSearchCall { queries, .. } = step {
-                queries.iter().find(|q| !q.is_empty()).map(|q| q.as_str())
-            } else {
-                None
-            }
-        })
-    }
-
     /// Extract all Google Search queries from steps (flattened across calls).
     #[must_use]
     pub fn google_search_calls(&self) -> Vec<&str> {
@@ -1470,18 +1454,6 @@ impl InteractionResponse {
         self.steps
             .iter()
             .any(|s| matches!(s, Step::UrlContextCall { .. }))
-    }
-
-    /// Get the ID of the first URL context call, if any.
-    #[must_use]
-    pub fn url_context_call_id(&self) -> Option<&str> {
-        self.steps.iter().find_map(|step| {
-            if let Step::UrlContextCall { id, .. } = step {
-                Some(id.as_str())
-            } else {
-                None
-            }
-        })
     }
 
     /// Extract URL context call URLs from steps (flattened across calls).
@@ -1789,28 +1761,6 @@ impl InteractionResponse {
     pub fn tool_use_tokens(&self) -> Option<u32> {
         self.usage.as_ref().and_then(|u| u.total_tool_use_tokens)
     }
-
-    // =========================================================================
-    // Timestamp Helpers
-    // =========================================================================
-
-    /// Get the timestamp when this interaction was created.
-    ///
-    /// Returns `None` if the interaction was created with `store=false` or
-    /// if the API didn't include timestamp information.
-    #[must_use]
-    pub fn created(&self) -> Option<DateTime<Utc>> {
-        self.created
-    }
-
-    /// Get the timestamp when this interaction was last updated.
-    ///
-    /// Returns `None` if the interaction was created with `store=false` or
-    /// if the API didn't include timestamp information.
-    #[must_use]
-    pub fn updated(&self) -> Option<DateTime<Utc>> {
-        self.updated
-    }
 }
 
 /// Summary of step and content types present in an interaction response.
@@ -1821,23 +1771,8 @@ impl InteractionResponse {
 /// Content counts (`text_count`, `image_count`, ...) tally content blocks
 /// inside `model_output` steps.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-// Closed deliberately, in the same change that takes the break. Adding
-// `tool_call_count` is source-breaking *only* because this struct is open, and
-// the API is expected to grow step types — this PR argues `mcp_server_tool_call`
-// may start arriving, and the recurring SDK-bindings sweep (#421) is the
-// intended detector for new ones. Without the
-// attribute every future counter repeats this break for a purely mechanical
-// reason; with it, they are additive.
-//
-// Folding it in here is free for consumers: they are already recompiling for
-// the new field. `Default` is derived, so the documented migration
-// (`StepSummary::default()` then assign) still works, and nothing that
-// compiled before stops compiling: the only in-crate literals are the two in
-// `src/response_tests.rs`, where the attribute does not apply, and the only
-// out-of-crate sites are the two trybuild fixtures added alongside this
-// attribute — `tests/ui/pass_step_summary_migration.rs`, which uses the
-// surviving idiom, and `tests/ui/fail_step_summary_struct_literal.rs`, which
-// exists to be rejected.
+// Closed so that counters for new step types are additive; build one with
+// `StepSummary::default()` and field assignment.
 #[non_exhaustive]
 pub struct StepSummary {
     /// Number of `user_input` steps
@@ -2067,7 +2002,7 @@ mod tests {
         );
         let usage = response.usage.as_ref().unwrap();
         assert_eq!(usage.grounding_count_for_tool("google_search"), Some(2));
-        assert!(response.created().is_some());
+        assert!(response.created.is_some());
     }
 
     #[test]

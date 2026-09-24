@@ -36,75 +36,43 @@ costs three helper methods (`is_unknown`, `unknown_<context>_type`,
 `unknown_data`) and a round-trip test. In exchange, an API addition is a
 `warn!` rather than an outage.
 
-The `strict-unknown` feature flag inverts this for tests that want to *find*
-unknowns rather than tolerate them.
+The `strict-unknown` feature flag inverts this for `Content` and `Step`
+only: an unknown content or step type becomes a deserialization error. The
+other Unknown-bearing enums (`Tool`, `StepDelta`, `StreamChunk`, the status
+enums, …) ignore the flag, so it finds unknowns in those two unions, not
+everywhere.
 
 *Stated as a rule in CLAUDE.md ("Core Design Philosophy").*
 
 ---
 
-## D-002 — Response structs are `#[non_exhaustive]`; no struct literals (2026-08-16)
+## D-002 — Response structs are `#[non_exhaustive]`; no struct literals (2026-08-16, revised 2026-09-24)
 
 **Context.** Response types grow fields as the API does. If users can build
 them with struct literals, every added field is a breaking change.
 
-**Decision.** Response structs carry `#[non_exhaustive]`, so outside the
-crate they cannot be built with a struct literal — including functional-update
-syntax — and, absent a public constructor such as a derived `Default`, cannot
-be built at all. That distinction is the whole of it: the attribute bars the
-struct *expression*, not construction, which is why the `Default` note below
-reads as elaboration rather than contradiction. The Consequences follow from
-the literal being blocked, so they hold either way.
+**Decision.** Response structs carry `#[non_exhaustive]`. Outside the crate
+that bars struct literals, including `..Default::default()` functional-update
+syntax. It does not bar construction: a type that derives `Default` can still
+be built with `T::default()` followed by public-field assignment, which is
+the supported route for test fixtures (`InteractionResponse` is one).
 
-Stated as the rule; see the gap below for how far the tree currently follows
-it.
+Request-side types are exempt: callers build those, and closing them would
+cost struct-literal construction while buying the crate nothing.
 
-**Consequences.** Where the rule is followed, users cannot hand-build a
-response to test against — which is the point. (The qualifier is load-bearing
-on this tree: see the gap below.)
+**Consequences.** Fields can be added without a breaking change, and users
+cannot hand-build a response to test against — which is the point: response
+types represent API responses, and mocking them gives false confidence.
+Test against the real API, or mock at the HTTP layer
+(`ClientBuilder::with_base_url` points a client at a local server).
 
-- Response types represent API responses, not user-constructed data
-- Mocking them in unit tests gives false confidence
-- Fields can be added without breaking changes
+`tests/non_exhaustive_responses.rs` enforces the attribute on every
+deserializable public struct in `src/` outside an explicit request-side
+allowlist. Borrowed view types (`FunctionCallInfo`, `ToolCallInfo`, …) are
+not deserializable, so the scan does not see them; those with public fields
+carry the attribute by hand. Enums are not scanned.
 
-For testing, users should use integration tests against the real API, or mock
-at the HTTP layer rather than the response-type layer.
-
-Since revision 2026-05-20, `InteractionResponse` derives `Default` and uses
-`#[serde(default)]`, so fixtures can be built with `..Default::default()` —
-which works from outside the crate only because that type does *not* carry
-`#[non_exhaustive]` today. On a type that did, that syntax would be blocked:
-`..Default::default()` is functional-update syntax, and the attribute bars a
-struct expression including the FRU form. The external route that survives
-is `T::default()` followed by public-field assignment, which is why the
-attribute alone does not make a type unconstructible — worth knowing before
-the #430 sweep lands and someone reaches for a fixture on a newly annotated
-type.
-
-**Known gap**, wider than the rule suggests and including the flagship type.
-`InteractionResponse` (`src/response.rs`) does not carry the attribute: it
-derives `Default` and every field is `pub`, so it is constructible from
-outside the crate today and adding a field to it *is* breaking. Of that
-file's fifteen public structs, six carry it — `CodeExecutionCallInfo`,
-`CodeExecutionResultInfo`, `UrlContextResultInfo`, `GoogleMapsResultInfo`,
-`StepSummary` and `ToolCallInfo`. The other nine do not: `ModalityTokens`,
-`GroundingToolCount`, `UsageMetadata`, `ImageInfo`, `AudioInfo`,
-`FunctionCallInfo`, `OwnedFunctionCallInfo`, `FunctionResultInfo` and
-`InteractionResponse`. Beyond that file, the five
-resource shapes tracked in #430 (`Trigger`, `TriggerExecution`,
-`Environment`, `Agent`, `Webhook`) are in the same position.
-
-Cited by type name rather than by line number deliberately. An earlier
-draft carried the lines, and an unrelated merge moved most of them by +11
-— leaving citations that were correct on the branch and wrong on the file
-they pointed into, which is the exact failure D-011 below is about. Names
-are greppable and survive the next reshuffle.
-
-#430 asks for its own list to be treated as found-so-far rather than
-exhaustive, and its sweep checkbox is open — so this entry records the rule
-together with a backlog, not a rule the tree already satisfies.
-
-*Also stated as a rule in `docs/ENUM_WIRE_FORMATS.md` ("Structs and `#[non_exhaustive]`"), which does not mention the #430 gap named above.*
+*Also stated as a rule in `docs/ENUM_WIRE_FORMATS.md` ("Structs and `#[non_exhaustive]`").*
 
 ---
 

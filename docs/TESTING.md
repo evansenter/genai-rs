@@ -112,7 +112,7 @@ Verify actual API wire formats match our expectations.
 
 ### Strict Mode Tests
 
-Test behavior with `--features strict-unknown` which makes unknown types error instead of gracefully degrade.
+Test behavior with `--features strict-unknown`, which makes unknown `Content` and `Step` types error instead of degrading gracefully (other enums are unaffected).
 
 ```bash
 cargo test --features strict-unknown

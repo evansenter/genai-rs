@@ -1,64 +1,45 @@
-//! Files API module for uploading and managing files with Google's Generative AI.
+//! Files API: upload files once and reference them by URI across
+//! interactions.
 //!
-//! The Files API allows uploading large files once and referencing them across multiple
-//! interactions, reducing bandwidth and improving performance.
-//!
-//! # Overview
-//!
-//! Files are uploaded to Google's servers and can be referenced by their URI in
-//! subsequent API calls. Files are automatically deleted after 48 hours.
-//!
-//! # Limits
-//!
-//! - Maximum file size: 2 GB
-//! - Storage capacity: 20 GB per project
-//! - File retention: 48 hours
-//!
-//! # Implementation Notes
-//!
-//! The current implementation uses Google's resumable upload protocol but completes
-//! the upload in a single request. True resumable uploads (where you can retry from
-//! an offset after network failure) are not implemented. For most use cases under
-//! the 2 GB limit, this single-request approach works reliably. If you need to
-//! upload very large files in unreliable network conditions, consider implementing
-//! chunked upload logic with the resumable upload URI.
+//! Files are stored for 48 hours. Limits: 2 GB per file, 20 GB per project.
+//! Uploads use Google's resumable protocol, completed in a single
+//! `upload, finalize` request; the `chunked` variants stream the body from
+//! disk instead of reading it into memory.
 //!
 //! # Example
 //!
-//! ```ignore
-//! use genai_rs::Client;
+//! ```no_run
+//! use genai_rs::{Client, Content};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let client = Client::new("api-key".to_string());
 //!
-//! // Upload a file
 //! let file = client.upload_file("video.mp4").await?;
-//! println!("Uploaded: {} ({})", file.display_name.as_deref().unwrap_or(""), file.uri);
-//!
-//! // Use in interaction
-//! let response = client.interaction()
+//! let response = client
+//!     .interaction()
 //!     .with_model(genai_rs::DEFAULT_MODEL)
-//!     .add_file(&file)
-//!     .with_text("Describe this video")
+//!     .with_content(vec![
+//!         Content::text("Describe this video"),
+//!         Content::from_file(&file),
+//!     ])
 //!     .create()
 //!     .await?;
 //!
-//! // Clean up when done
 //! client.delete_file(&file.name).await?;
 //! # Ok(())
 //! # }
 //! ```
 
-use super::common::{API_KEY_HEADER, path_segment, require_id, with_paging_and};
+use super::common::{
+    API_KEY_HEADER, NO_BODY, path_segment, require_id, send_and_read, send_checked, with_query,
+};
 use super::context::HttpContext;
-use super::error_helpers::{check_response, check_response_wire, deserialize_with_context};
+use super::error_helpers::deserialize_with_context;
 use crate::errors::GenaiError;
 use crate::wire::WireEvent;
 use chrono::{DateTime, Utc};
-use reqwest::Client as ReqwestClient;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tokio::io::AsyncRead;
 use tokio_util::io::ReaderStream;
 
 /// Represents an uploaded file in the Files API.
@@ -313,11 +294,8 @@ pub struct VideoMetadata {
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
 pub struct ListFilesResponse {
-    /// List of files. Deliberately *not* on the lenient-list helper
-    /// (`serde_util::deserialize_lenient_vec`) the five Interactions
-    /// envelopes use: this surface is live-verified and unrevisioned, so
-    /// a malformed element is a real protocol break worth failing loudly
-    /// on.
+    /// List of files. Strict, unlike the Interactions list envelopes: a
+    /// malformed element here is a real protocol break worth failing on.
     #[serde(default)]
     pub files: Vec<FileMetadata>,
 
@@ -336,52 +314,118 @@ pub struct FileUploadResponse {
 
 // --- API Functions ---
 
-const BASE_URL: &str = "https://generativelanguage.googleapis.com";
-/// The Files API's own version segment. Deliberately *not* the shared
-/// Interactions `API_VERSION`: this API is unrevisioned and tracks
-/// separately (matching google-genai's separate files client), so an
-/// Interactions version bump must not drag these paths along. A unit test
-/// pins `UPLOAD_URL` to the same segment so the two spellings cannot
-/// drift apart within this module.
-const FILES_API_VERSION: &str = "v1beta";
-const UPLOAD_URL: &str = "https://generativelanguage.googleapis.com/upload/v1beta/files";
 /// Maximum file size for uploads (2 GB)
 const MAX_FILE_SIZE: u64 = 2_147_483_648;
 
-/// Uploads a file to the Files API using the resumable upload protocol.
-///
-/// # Arguments
-///
-/// * `ctx` - HTTP context (client, API key, wire inspectors)
-/// * `file_data` - Raw bytes of the file
-/// * `mime_type` - MIME type of the file
-/// * `display_name` - Optional display name for the file
-///
-/// # Errors
-///
-/// Returns an error if the upload fails or the response cannot be parsed.
-pub async fn upload_file(
-    ctx: &HttpContext,
-    file_data: Vec<u8>,
-    mime_type: &str,
-    display_name: Option<&str>,
-) -> Result<FileMetadata, GenaiError> {
-    // Validate file is not empty
-    if file_data.is_empty() {
+/// Rejects an empty or oversized upload before any request is made.
+fn check_upload_size(file_size: u64) -> Result<(), GenaiError> {
+    if file_size == 0 {
         return Err(GenaiError::InvalidInput(
             "Cannot upload empty file".to_string(),
         ));
     }
-
-    // Validate file size doesn't exceed API limit (2 GB)
-    let file_size = file_data.len() as u64;
     if file_size > MAX_FILE_SIZE {
         return Err(GenaiError::InvalidInput(format!(
             "File size {} bytes exceeds maximum allowed size of {} bytes (2 GB)",
             file_size, MAX_FILE_SIZE
         )));
     }
+    Ok(())
+}
 
+/// Starts a resumable upload session and returns its upload URL.
+///
+/// Emits [`WireEvent::UploadStart`] under `request_id`.
+async fn start_upload_session(
+    ctx: &HttpContext,
+    request_id: u64,
+    file_label: &str,
+    file_size: u64,
+    mime_type: &str,
+    display_name: Option<&str>,
+) -> Result<String, GenaiError> {
+    if ctx.has_inspectors() {
+        ctx.emit(WireEvent::UploadStart {
+            id: request_id,
+            file_name: file_label.to_string(),
+            mime_type: mime_type.to_string(),
+            size_bytes: file_size,
+        });
+    }
+
+    let metadata = match display_name {
+        Some(name) => serde_json::json!({ "file": { "displayName": name } }),
+        None => serde_json::json!({ "file": {} }),
+    };
+    let builder = ctx
+        .http_client
+        .post(ctx.upload_url("files"))
+        .header(API_KEY_HEADER, &ctx.api_key)
+        .header("X-Goog-Upload-Protocol", "resumable")
+        .header("X-Goog-Upload-Command", "start")
+        .header("X-Goog-Upload-Header-Content-Length", file_size.to_string())
+        .header("X-Goog-Upload-Header-Content-Type", mime_type)
+        .json(&metadata);
+    let response = send_checked(ctx, request_id, builder).await?;
+
+    response
+        .headers()
+        .get("x-goog-upload-url")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            GenaiError::MalformedResponse(
+                "Upload session response is missing the x-goog-upload-url header".to_string(),
+            )
+        })
+}
+
+/// Sends the whole body to an upload session and finalizes it.
+///
+/// Emits [`WireEvent::UploadComplete`] under `request_id`.
+async fn finish_upload(
+    ctx: &HttpContext,
+    request_id: u64,
+    upload_url: &str,
+    file_size: u64,
+    body: reqwest::Body,
+) -> Result<FileMetadata, GenaiError> {
+    let builder = ctx
+        .http_client
+        .post(upload_url)
+        .header("X-Goog-Upload-Offset", "0")
+        .header("X-Goog-Upload-Command", "upload, finalize")
+        .header("Content-Length", file_size.to_string())
+        .body(body);
+    let response = send_checked(ctx, request_id, builder).await?;
+    let response_text = response.text().await?;
+    let file =
+        deserialize_with_context::<FileUploadResponse>(&response_text, "FileUploadResponse")?.file;
+
+    tracing::debug!("File uploaded: name={}, uri={}", file.name, file.uri);
+    if ctx.has_inspectors() {
+        ctx.emit(WireEvent::UploadComplete {
+            id: request_id,
+            uri: file.uri.clone(),
+        });
+    }
+    Ok(file)
+}
+
+/// Uploads in-memory bytes to the Files API.
+///
+/// # Errors
+///
+/// Returns [`GenaiError::InvalidInput`] for an empty or oversized file, or an
+/// error if either request of the upload fails.
+pub async fn upload_file(
+    ctx: &HttpContext,
+    file_data: Vec<u8>,
+    mime_type: &str,
+    display_name: Option<&str>,
+) -> Result<FileMetadata, GenaiError> {
+    let file_size = file_data.len() as u64;
+    check_upload_size(file_size)?;
     tracing::debug!(
         "Uploading file: size={} bytes, mime_type={}, display_name={:?}",
         file_size,
@@ -389,125 +433,24 @@ pub async fn upload_file(
         display_name
     );
 
-    // Note: This function receives raw bytes, not a file path, so we can only use
-    // the display_name if provided. For file path context, use the chunked upload
-    // variants which preserve and surface the original file path.
     let request_id = ctx.next_request_id();
-    if ctx.has_inspectors() {
-        ctx.emit(WireEvent::UploadStart {
-            id: request_id,
-            file_name: display_name.unwrap_or("(unnamed)").to_string(),
-            mime_type: mime_type.to_string(),
-            size_bytes: file_size,
-        });
-    }
-
-    // Step 1: Start the resumable upload
-    let metadata = if let Some(name) = display_name {
-        serde_json::json!({ "file": { "displayName": name } })
-    } else {
-        serde_json::json!({ "file": {} })
-    };
-
-    let start_response = ctx
-        .http_client
-        .post(UPLOAD_URL)
-        .header(API_KEY_HEADER, &ctx.api_key)
-        .header("X-Goog-Upload-Protocol", "resumable")
-        .header("X-Goog-Upload-Command", "start")
-        .header("X-Goog-Upload-Header-Content-Length", file_size.to_string())
-        .header("X-Goog-Upload-Header-Content-Type", mime_type)
-        .header("Content-Type", "application/json")
-        .json(&metadata)
-        .send()
-        .await?;
-
-    let start_response = check_response_wire(start_response, ctx, request_id).await?;
-
-    // Extract the upload URL from the response headers
-    let upload_url = start_response
-        .headers()
-        .get("x-goog-upload-url")
-        .and_then(|v| v.to_str().ok())
-        .ok_or_else(|| {
-            GenaiError::InvalidInput("Missing upload URL in response headers".to_string())
-        })?
-        .to_string();
-
-    tracing::debug!("Got upload URL, uploading file data...");
-
-    // Step 2: Upload the file bytes
-    let upload_response = ctx
-        .http_client
-        .post(&upload_url)
-        .header("X-Goog-Upload-Offset", "0")
-        .header("X-Goog-Upload-Command", "upload, finalize")
-        .header("Content-Length", file_size.to_string())
-        .body(file_data)
-        .send()
-        .await?;
-
-    let upload_response = check_response_wire(upload_response, ctx, request_id).await?;
-    let response_text = upload_response.text().await.map_err(GenaiError::Http)?;
-    let file_response: FileUploadResponse =
-        deserialize_with_context(&response_text, "FileUploadResponse")?;
-
-    tracing::debug!(
-        "File uploaded successfully: name={}, uri={}",
-        file_response.file.name,
-        file_response.file.uri
-    );
-
-    if ctx.has_inspectors() {
-        ctx.emit(WireEvent::UploadComplete {
-            id: request_id,
-            uri: file_response.file.uri.clone(),
-        });
-    }
-
-    Ok(file_response.file)
+    let upload_url = start_upload_session(
+        ctx,
+        request_id,
+        display_name.unwrap_or("(unnamed)"),
+        file_size,
+        mime_type,
+        display_name,
+    )
+    .await?;
+    finish_upload(ctx, request_id, &upload_url, file_size, file_data.into()).await
 }
 
-/// Handle to a resumable upload session.
-///
-/// This struct represents an active upload session with Google's resumable upload protocol.
-/// It can be used to resume an interrupted upload from the last successfully uploaded offset.
-///
-/// # Session Expiration
-///
-/// Upload sessions expire after approximately **1 week** of inactivity. If you attempt to
-/// resume an expired session, `query_offset()` or `resume()` will return an error.
-/// For long-running uploads, start a new session rather than relying on old handles.
-///
-/// # Thread Safety
-///
-/// While this struct is `Clone`, **concurrent calls to `resume()` on cloned handles are
-/// not supported** and may result in upload failures. Use a single handle per upload
-/// session, or coordinate access externally.
-///
-/// # Example
-///
-/// ```ignore
-/// use genai_rs::{ResumableUpload, upload_file_chunked};
-/// use std::time::Duration;
-///
-/// // Start a streaming upload (ctx is the client's internal HttpContext)
-/// let (file, upload) = upload_file_chunked(
-///     &ctx,
-///     "large_video.mp4",
-///     "video/mp4",
-///     Some("my-video"),
-/// ).await?;
-///
-/// // If the upload was interrupted, you could resume it using upload.resume()
-/// ```
+/// Metadata of the resumable-upload session a streaming upload used.
 #[derive(Clone, Debug)]
 pub struct ResumableUpload {
-    /// The resumable upload URL returned by the API
     upload_url: String,
-    /// Total file size in bytes
     file_size: u64,
-    /// MIME type of the file
     mime_type: String,
 }
 
@@ -529,237 +472,34 @@ impl ResumableUpload {
     pub fn mime_type(&self) -> &str {
         &self.mime_type
     }
-
-    /// Queries the current upload offset from the server.
-    ///
-    /// This is useful for resuming an interrupted upload. The returned offset
-    /// indicates how many bytes have been successfully uploaded.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The query request fails
-    /// - The upload session has expired (sessions expire after ~1 week)
-    /// - The server response is missing the expected offset header
-    pub async fn query_offset(&self, http_client: &ReqwestClient) -> Result<u64, GenaiError> {
-        let response = http_client
-            .post(&self.upload_url)
-            .header("X-Goog-Upload-Command", "query")
-            .header("Content-Length", "0")
-            .send()
-            .await?;
-
-        let response = check_response(response).await?;
-
-        // Extract the current offset from the response headers
-        let offset = response
-            .headers()
-            .get("x-goog-upload-size-received")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.parse().ok())
-            .ok_or_else(|| {
-                tracing::warn!(
-                    "Missing or invalid x-goog-upload-size-received header in query response"
-                );
-                GenaiError::InvalidInput(
-                    "Upload session query failed: missing offset header. \
-                     The session may have expired (sessions expire after ~1 week)."
-                        .to_string(),
-                )
-            })?;
-
-        tracing::debug!("Query offset: {} bytes uploaded", offset);
-
-        Ok(offset)
-    }
-
-    /// Resumes an upload from the specified offset.
-    ///
-    /// This reads the file from the given offset and uploads the remaining bytes.
-    /// The `reader` must be positioned at the offset (e.g., by seeking or skipping).
-    ///
-    /// # Arguments
-    ///
-    /// * `http_client` - The HTTP client to use
-    /// * `reader` - An async reader positioned at the resume offset
-    /// * `offset` - The byte offset to resume from
-    /// * `chunk_size` - Size of chunks to stream (default: 8MB)
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the upload fails or the response cannot be parsed.
-    pub async fn resume<R: AsyncRead + Unpin + Send + Sync + 'static>(
-        &self,
-        http_client: &ReqwestClient,
-        reader: R,
-        offset: u64,
-        chunk_size: Option<usize>,
-    ) -> Result<FileMetadata, GenaiError> {
-        let remaining_size = self.file_size.saturating_sub(offset);
-
-        if remaining_size == 0 {
-            return Err(GenaiError::InvalidInput(
-                "Upload already complete (offset equals file size)".to_string(),
-            ));
-        }
-
-        tracing::debug!(
-            "Resuming upload from offset {} ({} bytes remaining)",
-            offset,
-            remaining_size
-        );
-
-        // Create a streaming body from the reader
-        let chunk_size = chunk_size.unwrap_or(DEFAULT_CHUNK_SIZE);
-        let stream = ReaderStream::with_capacity(reader, chunk_size);
-        let body = reqwest::Body::wrap_stream(stream);
-
-        // Resume the upload
-        let upload_response = http_client
-            .post(&self.upload_url)
-            .header("X-Goog-Upload-Offset", offset.to_string())
-            .header("X-Goog-Upload-Command", "upload, finalize")
-            .header("Content-Length", remaining_size.to_string())
-            .body(body)
-            .send()
-            .await?;
-
-        let upload_response = check_response(upload_response).await?;
-        let response_text = upload_response.text().await.map_err(GenaiError::Http)?;
-        let file_response: FileUploadResponse =
-            deserialize_with_context(&response_text, "FileUploadResponse")?;
-
-        tracing::debug!(
-            "Upload resumed successfully: name={}, uri={}",
-            file_response.file.name,
-            file_response.file.uri
-        );
-
-        Ok(file_response.file)
-    }
 }
 
-/// Default chunk size for chunked uploads (8 MB).
-///
-/// This balances memory usage with network efficiency. Smaller chunks use less
-/// memory but may have higher overhead; larger chunks are more efficient but
-/// require more memory for buffering.
-pub const DEFAULT_CHUNK_SIZE: usize = 8 * 1024 * 1024; // 8 MB
+/// Default read-buffer size for streaming uploads (8 MB).
+pub const DEFAULT_CHUNK_SIZE: usize = 8 * 1024 * 1024;
 
-/// Uploads a file to the Files API using chunked transfer to minimize memory usage.
+/// Uploads a file from disk, streaming it rather than reading it into memory.
 ///
-/// Unlike `upload_file`, this function streams the file from disk in chunks,
-/// never loading the entire file into memory. This is ideal for large files
-/// (500MB-2GB) or memory-constrained environments.
-///
-/// # Arguments
-///
-/// * `ctx` - HTTP context (client, API key, wire inspectors)
-/// * `path` - Path to the file to upload
-/// * `mime_type` - MIME type of the file
-/// * `display_name` - Optional display name for the file
-///
-/// # Returns
-///
-/// Returns a tuple of:
-/// - `FileMetadata`: The uploaded file's metadata
-/// - `ResumableUpload`: A handle that can be used to resume if the upload is interrupted
+/// `chunk_size` is the read-buffer size, which bounds memory use; the body
+/// still goes up as one `upload, finalize` request.
 ///
 /// # Errors
 ///
-/// Returns an error if:
-/// - The file cannot be opened or read
-/// - The upload initiation fails
-/// - The upload itself fails
-///
-/// # Memory Usage
-///
-/// This function uses approximately `chunk_size` (default 8MB) of memory for
-/// buffering, regardless of the file size. A 2GB file uses the same memory
-/// as a 10MB file.
-///
-/// # Example
-///
-/// ```ignore
-/// use genai_rs::upload_file_chunked;
-///
-/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// // Upload a large video file without loading it all into memory
-/// // (ctx is the client's internal HttpContext)
-/// let (file, _upload_handle) = upload_file_chunked(
-///     &ctx,
-///     "large_video.mp4",
-///     "video/mp4",
-///     Some("my-video"),
-/// ).await?;
-///
-/// println!("Uploaded: {}", file.uri);
-/// # Ok(())
-/// # }
-/// ```
+/// Returns [`GenaiError::InvalidInput`] if the file cannot be read or is
+/// empty or oversized, or an error if the upload fails.
 pub async fn upload_file_chunked(
     ctx: &HttpContext,
-    path: impl AsRef<Path>,
-    mime_type: &str,
-    display_name: Option<&str>,
-) -> Result<(FileMetadata, ResumableUpload), GenaiError> {
-    upload_file_chunked_with_chunk_size(ctx, path, mime_type, display_name, DEFAULT_CHUNK_SIZE)
-        .await
-}
-
-/// Uploads a file using chunked transfer with a custom chunk size.
-///
-/// This is the same as `upload_file_chunked` but allows specifying the chunk
-/// size. Larger chunks are more efficient for fast networks, while smaller
-/// chunks use less memory.
-///
-/// # Arguments
-///
-/// * `ctx` - HTTP context (client, API key, wire inspectors)
-/// * `path` - Path to the file to upload
-/// * `mime_type` - MIME type of the file
-/// * `display_name` - Optional display name for the file
-/// * `chunk_size` - Size of chunks to stream in bytes
-///
-/// # Errors
-///
-/// Returns an error if the file cannot be read or the upload fails.
-pub async fn upload_file_chunked_with_chunk_size(
-    ctx: &HttpContext,
-    path: impl AsRef<Path>,
+    path: &Path,
     mime_type: &str,
     display_name: Option<&str>,
     chunk_size: usize,
 ) -> Result<(FileMetadata, ResumableUpload), GenaiError> {
-    let path = path.as_ref();
-
-    // Get file metadata to check size
-    let metadata = tokio::fs::metadata(path).await.map_err(|e| {
-        tracing::warn!(
-            "Failed to get file metadata for '{}': {}",
-            path.display(),
-            e
-        );
-        GenaiError::InvalidInput(format!("Failed to access file '{}': {}", path.display(), e))
-    })?;
-
-    let file_size = metadata.len();
-
-    // Validate file is not empty
-    if file_size == 0 {
-        return Err(GenaiError::InvalidInput(
-            "Cannot upload empty file".to_string(),
-        ));
-    }
-
-    // Validate file size doesn't exceed API limit (2 GB)
-    if file_size > MAX_FILE_SIZE {
-        return Err(GenaiError::InvalidInput(format!(
-            "File size {} bytes exceeds maximum allowed size of {} bytes (2 GB)",
-            file_size, MAX_FILE_SIZE
-        )));
-    }
-
+    let file_size = tokio::fs::metadata(path)
+        .await
+        .map_err(|e| {
+            GenaiError::InvalidInput(format!("Failed to access file '{}': {}", path.display(), e))
+        })?
+        .len();
+    check_upload_size(file_size)?;
     tracing::debug!(
         "Streaming upload: path={}, size={} bytes, mime_type={}, chunk_size={} bytes",
         path.display(),
@@ -769,118 +509,37 @@ pub async fn upload_file_chunked_with_chunk_size(
     );
 
     let request_id = ctx.next_request_id();
-    if ctx.has_inspectors() {
-        let file_name = display_name
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| path.to_string_lossy().into_owned());
-        ctx.emit(WireEvent::UploadStart {
-            id: request_id,
-            file_name,
-            mime_type: mime_type.to_string(),
-            size_bytes: file_size,
-        });
-    }
-
-    // Step 1: Start the resumable upload session
-    let metadata_json = if let Some(name) = display_name {
-        serde_json::json!({ "file": { "displayName": name } })
-    } else {
-        serde_json::json!({ "file": {} })
-    };
-
-    let start_response = ctx
-        .http_client
-        .post(UPLOAD_URL)
-        .header(API_KEY_HEADER, &ctx.api_key)
-        .header("X-Goog-Upload-Protocol", "resumable")
-        .header("X-Goog-Upload-Command", "start")
-        .header("X-Goog-Upload-Header-Content-Length", file_size.to_string())
-        .header("X-Goog-Upload-Header-Content-Type", mime_type)
-        .header("Content-Type", "application/json")
-        .json(&metadata_json)
-        .send()
-        .await?;
-
-    let start_response = check_response_wire(start_response, ctx, request_id).await?;
-
-    // Extract the upload URL from the response headers
-    let upload_url = start_response
-        .headers()
-        .get("x-goog-upload-url")
-        .and_then(|v| v.to_str().ok())
-        .ok_or_else(|| {
-            GenaiError::InvalidInput("Missing upload URL in response headers".to_string())
-        })?
-        .to_string();
-
-    tracing::debug!("Got upload URL, streaming file data...");
-
-    // Create the resumable upload handle
-    let resumable_upload = ResumableUpload {
-        upload_url: upload_url.clone(),
+    let file_label = display_name
+        .map(str::to_string)
+        .unwrap_or_else(|| path.to_string_lossy().into_owned());
+    let upload_url = start_upload_session(
+        ctx,
+        request_id,
+        &file_label,
         file_size,
-        mime_type: mime_type.to_string(),
-    };
+        mime_type,
+        display_name,
+    )
+    .await?;
 
-    // Step 2: Open the file and create a streaming body
     let file = tokio::fs::File::open(path).await.map_err(|e| {
-        tracing::warn!("Failed to open file '{}': {}", path.display(), e);
         GenaiError::InvalidInput(format!("Failed to open file '{}': {}", path.display(), e))
     })?;
+    let body = reqwest::Body::wrap_stream(ReaderStream::with_capacity(file, chunk_size));
+    let metadata = finish_upload(ctx, request_id, &upload_url, file_size, body).await?;
 
-    // Create a stream directly from the file - ReaderStream already buffers internally
-    let stream = ReaderStream::with_capacity(file, chunk_size);
-    let body = reqwest::Body::wrap_stream(stream);
-
-    // Step 3: Upload the file bytes using streaming
-    let upload_response = ctx
-        .http_client
-        .post(&upload_url)
-        .header("X-Goog-Upload-Offset", "0")
-        .header("X-Goog-Upload-Command", "upload, finalize")
-        .header("Content-Length", file_size.to_string())
-        .body(body)
-        .send()
-        .await?;
-
-    let upload_response = check_response_wire(upload_response, ctx, request_id).await?;
-    let response_text = upload_response.text().await.map_err(GenaiError::Http)?;
-    let file_response: FileUploadResponse =
-        deserialize_with_context(&response_text, "FileUploadResponse")?;
-
-    tracing::debug!(
-        "File streamed successfully: name={}, uri={}",
-        file_response.file.name,
-        file_response.file.uri
-    );
-
-    if ctx.has_inspectors() {
-        ctx.emit(WireEvent::UploadComplete {
-            id: request_id,
-            uri: file_response.file.uri.clone(),
-        });
-    }
-
-    Ok((file_response.file, resumable_upload))
+    Ok((
+        metadata,
+        ResumableUpload {
+            upload_url,
+            file_size,
+            mime_type: mime_type.to_string(),
+        },
+    ))
 }
 
-/// Validates a Files API resource name and rebuilds it as a URL path
-/// fragment with the ID percent-encoded.
-///
-/// A Files API name is always the `files/` prefix plus one opaque ID
-/// (the shape every upload response returns), so this positively checks
-/// that shape — prefix present, exactly one non-empty segment after it —
-/// and then routes the ID through [`path_segment`] like every other
-/// resource module. That closes the whole threat family at once —
-/// `require_id` rejects the empty name and every dot-segment spelling
-/// (WHATWG normalizes the percent-encoded forms at parse time too), the
-/// interior-slash check rejects stray segments, and the encoder defuses
-/// `?`/`#` query and fragment splits — instead of enumerating
-/// threats against a raw interpolation one guard at a time. A name that
-/// fails the shape check could never have addressed a file anyway — the
-/// raw form's URL was a guaranteed 404 or a different endpoint — so
-/// rejecting locally with `InvalidInput` only converts silent misfires
-/// into loud ones.
+/// Validates a `files/<id>` resource name and rebuilds it with the ID
+/// percent-encoded.
 fn file_resource_path(file_name: &str) -> Result<String, GenaiError> {
     let Some(id) = file_name.strip_prefix("files/") else {
         return Err(GenaiError::InvalidInput(format!(
@@ -898,80 +557,33 @@ fn file_resource_path(file_name: &str) -> Result<String, GenaiError> {
     Ok(format!("files/{}", path_segment(id)))
 }
 
-/// Gets metadata for a specific file.
-///
-/// # Arguments
-///
-/// * `ctx` - HTTP context (client, API key, wire inspectors)
-/// * `file_name` - The full resource name of the file (e.g., "files/abc123")
+/// Gets metadata for a file by its full resource name (`files/abc123`).
 ///
 /// # Errors
 ///
 /// Returns [`GenaiError::InvalidInput`] for a name that is not
-/// `files/<id>` (see [`file_resource_path`]), or an error if the request
-/// fails or the file doesn't exist.
+/// `files/<id>`, or an error if the request fails or the file doesn't exist.
 pub async fn get_file(ctx: &HttpContext, file_name: &str) -> Result<FileMetadata, GenaiError> {
-    tracing::debug!("Getting file metadata: {}", file_name);
-
-    let url = format!(
-        "{BASE_URL}/{FILES_API_VERSION}/{}",
-        file_resource_path(file_name)?
-    );
-
-    let request_id = ctx.next_request_id();
-    ctx.emit_request(request_id, "GET", &url, None);
-
-    let response = ctx
-        .http_client
-        .get(&url)
-        .header(API_KEY_HEADER, &ctx.api_key)
-        .send()
-        .await?;
-
-    ctx.emit(WireEvent::ResponseStatus {
-        id: request_id,
-        status: response.status().as_u16(),
-    });
-
-    let response = check_response_wire(response, ctx, request_id).await?;
-    let response_text = response.text().await.map_err(GenaiError::Http)?;
-
-    ctx.emit_response_body(request_id, &response_text);
-
-    let file: FileMetadata = deserialize_with_context(&response_text, "FileMetadata")?;
-
-    tracing::debug!("Got file: state={:?}", file.state);
-
+    let url = ctx.api_url(&file_resource_path(file_name)?);
+    let text = send_and_read(ctx, reqwest::Method::GET, &url, NO_BODY).await?;
+    let file: FileMetadata = deserialize_with_context(&text, "FileMetadata")?;
+    tracing::debug!("Got file {}: state={:?}", file.name, file.state);
     Ok(file)
 }
 
-/// Builds the list URL. Extracted from [`list_files`] so the paging
-/// shape is testable like its `with_paging` siblings. The Files API
-/// spells its params `pageSize`/`pageToken`, so it can't use
-/// `with_paging`'s fixed spelling — but it rides `with_paging_and`'s
-/// `extra` slice (like `update_webhook`'s `update_mask`), so the
-/// separator choice and value encoding stay centrally pinned.
-fn list_files_url(page_size: Option<u32>, page_token: Option<&str>) -> String {
-    let base = format!("{BASE_URL}/{FILES_API_VERSION}/files");
-    let size_str;
-    let mut extra: Vec<(&str, &str)> = Vec::new();
-    if let Some(size) = page_size {
-        size_str = size.to_string();
-        extra.push(("pageSize", &size_str));
-    }
-    if let Some(token) = page_token {
-        extra.push(("pageToken", token));
-    }
-    with_paging_and(base, None, None, &extra)
+/// The list URL. The Files API spells its paging params in camelCase.
+fn list_files_url(ctx: &HttpContext, page_size: Option<u32>, page_token: Option<&str>) -> String {
+    let page_size = page_size.map(|size| size.to_string());
+    with_query(
+        ctx.api_url("files"),
+        &[
+            ("pageSize", page_size.as_deref()),
+            ("pageToken", page_token),
+        ],
+    )
 }
 
-/// Lists all uploaded files.
-///
-/// # Arguments
-///
-/// * `ctx` - HTTP context (client, API key, wire inspectors)
-/// * `page_size` - Optional maximum number of files to return
-/// * `page_token` - Optional token for pagination
+/// Lists uploaded files.
 ///
 /// # Errors
 ///
@@ -981,82 +593,22 @@ pub async fn list_files(
     page_size: Option<u32>,
     page_token: Option<&str>,
 ) -> Result<ListFilesResponse, GenaiError> {
-    tracing::debug!(
-        "Listing files: page_size={:?}, page_token={:?}",
-        page_size,
-        page_token
-    );
-
-    let url = list_files_url(page_size, page_token);
-
-    let request_id = ctx.next_request_id();
-    ctx.emit_request(request_id, "GET", &url, None);
-
-    let response = ctx
-        .http_client
-        .get(&url)
-        .header(API_KEY_HEADER, &ctx.api_key)
-        .send()
-        .await?;
-
-    ctx.emit(WireEvent::ResponseStatus {
-        id: request_id,
-        status: response.status().as_u16(),
-    });
-
-    let response = check_response_wire(response, ctx, request_id).await?;
-    let response_text = response.text().await.map_err(GenaiError::Http)?;
-
-    ctx.emit_response_body(request_id, &response_text);
-
-    let list_response: ListFilesResponse =
-        deserialize_with_context(&response_text, "ListFilesResponse")?;
-
-    tracing::debug!("Listed {} files", list_response.files.len());
-
-    Ok(list_response)
+    let url = list_files_url(ctx, page_size, page_token);
+    let text = send_and_read(ctx, reqwest::Method::GET, &url, NO_BODY).await?;
+    let list: ListFilesResponse = deserialize_with_context(&text, "ListFilesResponse")?;
+    tracing::debug!("Listed {} files", list.files.len());
+    Ok(list)
 }
 
-/// Deletes an uploaded file.
-///
-/// # Arguments
-///
-/// * `ctx` - HTTP context (client, API key, wire inspectors)
-/// * `file_name` - The full resource name of the file to delete (e.g.,
-///   "files/abc123")
+/// Deletes a file by its full resource name (`files/abc123`).
 ///
 /// # Errors
 ///
 /// Returns [`GenaiError::InvalidInput`] for a name that is not
-/// `files/<id>` (see [`file_resource_path`]), or an error if the request
-/// fails or the file doesn't exist.
+/// `files/<id>`, or an error if the request fails or the file doesn't exist.
 pub async fn delete_file(ctx: &HttpContext, file_name: &str) -> Result<(), GenaiError> {
-    tracing::debug!("Deleting file: {}", file_name);
-
-    let url = format!(
-        "{BASE_URL}/{FILES_API_VERSION}/{}",
-        file_resource_path(file_name)?
-    );
-
-    let request_id = ctx.next_request_id();
-    ctx.emit_request(request_id, "DELETE", &url, None);
-
-    let response = ctx
-        .http_client
-        .delete(&url)
-        .header(API_KEY_HEADER, &ctx.api_key)
-        .send()
-        .await?;
-
-    ctx.emit(WireEvent::ResponseStatus {
-        id: request_id,
-        status: response.status().as_u16(),
-    });
-
-    check_response_wire(response, ctx, request_id).await?;
-
-    tracing::debug!("File deleted successfully");
-
+    let url = ctx.api_url(&file_resource_path(file_name)?);
+    send_and_read(ctx, reqwest::Method::DELETE, &url, NO_BODY).await?;
     Ok(())
 }
 
@@ -1066,7 +618,9 @@ mod tests {
 
     #[test]
     fn list_files_url_encodes_paging() {
-        let base = format!("{BASE_URL}/{FILES_API_VERSION}/files");
+        let ctx = HttpContext::new(reqwest::Client::new(), "k".to_string(), vec![]);
+        let list_files_url = |size, token| super::list_files_url(&ctx, size, token);
+        let base = "https://generativelanguage.googleapis.com/v1beta/files";
         assert_eq!(list_files_url(None, None), base);
         assert_eq!(
             list_files_url(Some(10), None),
@@ -1081,9 +635,7 @@ mod tests {
             list_files_url(Some(10), Some("tok")),
             format!("{base}?pageSize=10&pageToken=tok")
         );
-        // The invariant with_paging pins for every other list endpoint: a
-        // reserved character arrives percent-encoded. `+` is the arm a
-        // standard-base64 token would actually hit (it would otherwise
+        // `+` is what a standard-base64 token would hit (it would otherwise
         // decode to a space server-side).
         assert_eq!(
             list_files_url(None, Some("a/b&c=d+e")),
@@ -1125,14 +677,6 @@ mod tests {
             file_resource_path("files/abc#frag").unwrap(),
             "files/abc%23frag"
         );
-    }
-
-    #[test]
-    fn test_upload_url_matches_files_api_version() {
-        // UPLOAD_URL is a literal (const format! doesn't exist), so pin it
-        // to FILES_API_VERSION — a version migration must move both
-        // spellings or fail here.
-        assert!(UPLOAD_URL.contains(&format!("/upload/{FILES_API_VERSION}/")));
     }
 
     #[test]

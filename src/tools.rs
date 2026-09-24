@@ -337,9 +337,7 @@ impl<'de> Deserialize<'de> for Tool {
             #[serde(rename = "computer_use")]
             ComputerUse {
                 environment: String,
-                // Spec wire format is snake_case; accept the legacy camelCase
-                // alias for pre-revision payloads.
-                #[serde(default, alias = "excludedPredefinedFunctions")]
+                #[serde(default)]
                 excluded_predefined_functions: Vec<String>,
                 #[serde(default)]
                 enable_prompt_injection_detection: Option<bool>,
@@ -2273,7 +2271,6 @@ mod tests {
         let json = serde_json::to_string(&tool).expect("Serialization failed");
         assert!(json.contains("\"type\":\"computer_use\""));
         assert!(json.contains("\"environment\":\"browser\""));
-        // Spec wire format is snake_case (fixed from legacy camelCase)
         assert!(json.contains("\"excluded_predefined_functions\""));
         assert!(!json.contains("excludedPredefinedFunctions"));
         assert!(json.contains("\"enable_prompt_injection_detection\":true"));
@@ -2296,20 +2293,6 @@ mod tests {
                     vec!["data_modification".to_string()]
                 );
             }
-            other => panic!("Expected ComputerUse variant, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_tool_computer_use_legacy_camel_case_accepted() {
-        // Pre-revision payloads used camelCase; the alias keeps them parseable.
-        let json = r#"{"type":"computer_use","environment":"browser","excludedPredefinedFunctions":["a"]}"#;
-        let parsed: Tool = serde_json::from_str(json).expect("Deserialization failed");
-        match parsed {
-            Tool::ComputerUse {
-                excluded_predefined_functions,
-                ..
-            } => assert_eq!(excluded_predefined_functions, vec!["a".to_string()]),
             other => panic!("Expected ComputerUse variant, got {:?}", other),
         }
     }

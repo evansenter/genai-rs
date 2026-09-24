@@ -23,7 +23,6 @@ pub struct ParamConfig {
 }
 
 /// Parses individual parameter config like: `name(description = "...", enum_values = [...])`
-#[derive(Debug)]
 struct SingleParamConfigInput {
     name: Ident,
     description: Option<LitStr>,
@@ -86,7 +85,6 @@ impl Parse for SingleParamConfigInput {
 }
 
 /// Parses the complete macro attribute: `param1(...), param2(...)`
-#[derive(Debug)]
 struct AllParamsConfigInput {
     configs: Punctuated<SingleParamConfigInput, Token![,]>,
 }

@@ -497,8 +497,8 @@ pub struct StreamEvent {
     /// Event ID for stream resumption.
     ///
     /// Pass this to `last_event_id` when calling `get_interaction_stream()` to resume
-    /// the stream from this point. Events are ordered, so resuming from an event_id
-    /// will replay all subsequent events.
+    /// the stream after this point. Only background interactions' streams carry
+    /// it (and only they can be resumed); otherwise it is `None`.
     pub event_id: Option<String>,
 }
 
@@ -725,7 +725,7 @@ pub struct StreamError {
 
     /// Error code from the API (if provided). Per spec this is a URI that
     /// identifies the error type.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub code: Option<String>,
 }
 

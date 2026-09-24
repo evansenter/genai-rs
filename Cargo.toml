@@ -23,7 +23,6 @@ bytes = "1.11"
 syn = { version = "2.0", features = ["full", "parsing"] }
 quote = "1.0"
 proc-macro2 = "1.0"
-utoipa = "5.5"
 chrono = { version = "0.4", features = ["serde"] }
 
 [package]
@@ -102,12 +101,11 @@ default = ["wire-color"]
 ## plain pretty-printed text.
 wire-color = ["dep:colored", "dep:colored_json"]
 
-## Strict mode for unknown content types.
+## Strict mode for unknown `Content` and `Step` types.
 ##
-## When enabled, encountering unknown content types in API responses will
-## return deserialization errors instead of gracefully capturing them in
-## Unknown variants. Use this if you want to fail-fast when the API returns
-## content types your code doesn't handle.
+## When enabled, an unrecognized content type or step type in an API response
+## is a deserialization error instead of an `Unknown` variant. Only those two
+## unions are covered; other enums still capture unknown values gracefully.
 ##
 ## Default: disabled (unknown types are captured gracefully)
 strict-unknown = []

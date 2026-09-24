@@ -4,35 +4,24 @@
 //! the agents resource is part of the revisioned Interactions surface
 //! (the generated google-genai bindings apply the revision header globally).
 
-use super::common::{
-    API_VERSION, BASE_URL_PREFIX, path_segment, require_id, send_and_read, to_body, with_paging_and,
-};
+use super::common::{NO_BODY, path_segment, require_id, send_and_read, with_paging, with_query};
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
 use crate::agents::{Agent, AgentListResponse};
 use crate::errors::GenaiError;
 
-fn agents_url() -> String {
-    format!("{BASE_URL_PREFIX}/{API_VERSION}/agents")
+fn agents_url(ctx: &HttpContext) -> String {
+    ctx.api_url("agents")
 }
 
-fn agent_url(id: &str) -> String {
-    format!(
-        "{BASE_URL_PREFIX}/{API_VERSION}/agents/{}",
-        path_segment(id)
-    )
+fn agent_url(ctx: &HttpContext, id: &str) -> String {
+    ctx.api_url(&format!("agents/{}", path_segment(id)))
 }
 
 /// Creates an agent (`POST /v1beta/agents`).
 pub async fn create_agent(ctx: &HttpContext, agent: &Agent) -> Result<Agent, GenaiError> {
     tracing::debug!("Creating agent: id={:?}", agent.id);
-    let text = send_and_read(
-        ctx,
-        reqwest::Method::POST,
-        &agents_url(),
-        Some(to_body(agent)?),
-    )
-    .await?;
+    let text = send_and_read(ctx, reqwest::Method::POST, &agents_url(ctx), Some(agent)).await?;
     deserialize_with_context(&text, "Agent from create")
 }
 
@@ -40,7 +29,13 @@ pub async fn create_agent(ctx: &HttpContext, agent: &Agent) -> Result<Agent, Gen
 pub async fn get_agent(ctx: &HttpContext, agent_id: &str) -> Result<Agent, GenaiError> {
     require_id(agent_id, "agent")?;
     tracing::debug!("Getting agent: ID={agent_id}");
-    let text = send_and_read(ctx, reqwest::Method::GET, &agent_url(agent_id), None).await?;
+    let text = send_and_read(
+        ctx,
+        reqwest::Method::GET,
+        &agent_url(ctx, agent_id),
+        NO_BODY,
+    )
+    .await?;
     deserialize_with_context(&text, "Agent from get")
 }
 
@@ -55,10 +50,11 @@ pub async fn list_agents(
         "Listing agents: page_size={page_size:?}, page_token={page_token:?}, parent={parent:?}"
     );
 
-    let extra: Vec<(&str, &str)> = parent.map(|p| ("parent", p)).into_iter().collect();
-    let url = with_paging_and(agents_url(), page_size, page_token, &extra);
-
-    let text = send_and_read(ctx, reqwest::Method::GET, &url, None).await?;
+    let url = with_query(
+        with_paging(agents_url(ctx), page_size, page_token),
+        &[("parent", parent)],
+    );
+    let text = send_and_read(ctx, reqwest::Method::GET, &url, NO_BODY).await?;
     deserialize_with_context(&text, "AgentListResponse")
 }
 
@@ -66,7 +62,13 @@ pub async fn list_agents(
 pub async fn delete_agent(ctx: &HttpContext, agent_id: &str) -> Result<(), GenaiError> {
     require_id(agent_id, "agent")?;
     tracing::debug!("Deleting agent: ID={agent_id}");
-    send_and_read(ctx, reqwest::Method::DELETE, &agent_url(agent_id), None).await?;
+    send_and_read(
+        ctx,
+        reqwest::Method::DELETE,
+        &agent_url(ctx, agent_id),
+        NO_BODY,
+    )
+    .await?;
     Ok(())
 }
 
@@ -76,17 +78,18 @@ mod tests {
 
     #[test]
     fn test_agents_url_construction() {
+        let ctx = HttpContext::new(reqwest::Client::new(), "k".to_string(), vec![]);
         assert_eq!(
-            agents_url(),
+            agents_url(&ctx),
             "https://generativelanguage.googleapis.com/v1beta/agents"
         );
         assert_eq!(
-            agent_url("my-agent"),
+            agent_url(&ctx, "my-agent"),
             "https://generativelanguage.googleapis.com/v1beta/agents/my-agent"
         );
         // A path-metacharacter ID is encoded, not interpolated raw.
         assert_eq!(
-            agent_url("a/b?c"),
+            agent_url(&ctx, "a/b?c"),
             "https://generativelanguage.googleapis.com/v1beta/agents/a%2Fb%3Fc"
         );
     }

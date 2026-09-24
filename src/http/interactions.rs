@@ -1,12 +1,11 @@
 use super::common::{
-    API_KEY_HEADER, API_REVISION, API_REVISION_HEADER, Endpoint, construct_endpoint_url, require_id,
+    NO_BODY, api_request, path_segment, require_id, send_and_read, send_checked, with_query,
 };
 use super::context::HttpContext;
-use super::error_helpers::{check_response_wire, deserialize_with_context};
+use super::error_helpers::deserialize_with_context;
 use super::sse_parser::parse_sse_stream;
 use crate::errors::GenaiError;
 use crate::steps::StepAccumulator;
-use crate::wire::WireEvent;
 use crate::{
     InteractionRequest, InteractionResponse, InteractionStreamEvent, StreamChunk, StreamEvent,
 };
@@ -14,55 +13,35 @@ use async_stream::try_stream;
 use futures_util::{Stream, StreamExt};
 use tracing::{debug, warn};
 
-/// Creates a new interaction with the Gemini API.
-///
-/// This is the unified interface for interacting with both models and agents.
-/// Supports function calling, structured outputs, and more.
+fn interactions_url(ctx: &HttpContext) -> String {
+    ctx.api_url("interactions")
+}
+
+fn interaction_url(ctx: &HttpContext, id: &str) -> String {
+    ctx.api_url(&format!("interactions/{}", path_segment(id)))
+}
+
+/// Creates an interaction (`POST /v1beta/interactions`).
 ///
 /// # Errors
 ///
-/// Returns an error if:
-/// - The HTTP request fails
-/// - The response status is not successful
-/// - The response cannot be parsed as JSON
+/// Returns an error if the request fails, the status is not a success, or
+/// the body does not parse as an [`InteractionResponse`].
 pub async fn create_interaction(
     ctx: &HttpContext,
-    request: InteractionRequest,
+    mut request: InteractionRequest,
 ) -> Result<InteractionResponse, GenaiError> {
-    let endpoint = Endpoint::CreateInteraction { stream: false };
-    let url = construct_endpoint_url(endpoint);
-
-    let request_id = ctx.next_request_id();
-    ctx.emit_request(
-        request_id,
-        "POST",
-        &url,
-        ctx.serialize_wire_body(&request).as_ref(),
-    );
-
-    let response = ctx
-        .http_client
-        .post(&url)
-        .header(API_KEY_HEADER, &ctx.api_key)
-        .header(API_REVISION_HEADER, API_REVISION)
-        .json(&request)
-        .send()
-        .await?;
-
-    ctx.emit(WireEvent::ResponseStatus {
-        id: request_id,
-        status: response.status().as_u16(),
-    });
-
-    let response = check_response_wire(response, ctx, request_id).await?;
-    let response_text = response.text().await.map_err(GenaiError::Http)?;
-
-    ctx.emit_response_body(request_id, &response_text);
-
-    let interaction_response: InteractionResponse =
-        deserialize_with_context(&response_text, "InteractionResponse from create")?;
-
-    Ok(interaction_response)
+    // The transport decides: a `stream: true` body on this endpoint would
+    // come back as SSE and fail to parse.
+    request.stream = None;
+    let text = send_and_read(
+        ctx,
+        reqwest::Method::POST,
+        &interactions_url(ctx),
+        Some(&request),
+    )
+    .await?;
+    deserialize_with_context(&text, "InteractionResponse from create")
 }
 
 /// Dispatches one parsed SSE event to `StreamChunk`s, updating the step
@@ -197,57 +176,19 @@ fn dispatch_stream_event(
     }
 }
 
-/// Creates a new interaction with streaming responses.
+/// Creates an interaction and streams its events
+/// (`POST /v1beta/interactions?alt=sse` with `stream: true`).
 ///
-/// Returns a stream of `StreamEvent` items as they arrive from the server.
-/// Each event contains:
-/// - `chunk`: The content (Created, StatusUpdate, StepStart, StepDelta, StepStop, Completed, Error, ...)
-/// - `event_id`: An identifier for stream resumption
-///
-/// Chunk types (API revision 2026-05-20 lifecycle):
-/// - `StreamChunk::Created`: Initial event (`interaction.created`) with interaction ID
-/// - `StreamChunk::StatusUpdate`: Status changes during processing
-/// - `StreamChunk::StepStart`: A step begins at an index
-/// - `StreamChunk::StepDelta`: Incremental step payload (text, arguments_delta, thought_signature, ...)
-/// - `StreamChunk::StepStop`: A step finished (carries per-step usage)
-/// - `StreamChunk::Completed`: The final complete interaction response
-/// - `StreamChunk::Error`: Error occurred during streaming
-///
-/// # Example
-/// ```ignore
-/// let mut last_event_id = None;
-/// let stream = create_interaction_stream(&ctx, request);
-/// while let Some(event) = stream.next().await {
-///     let event = event?;
-///     last_event_id = event.event_id.clone();  // Track for resume
-///     match event.chunk {
-///         StreamChunk::Created { interaction } => {
-///             println!("Started: {:?}", interaction.id);
-///         }
-///         StreamChunk::StepDelta { delta, .. } => {
-///             if let Some(text) = delta.as_text() {
-///                 print!("{}", text);
-///             }
-///         }
-///         StreamChunk::Completed(response) => {
-///             println!("\nComplete: {:?} tokens", response.total_tokens());
-///         }
-///         StreamChunk::Error { message, .. } => {
-///             eprintln!("Error: {}", message);
-///         }
-///         _ => {} // Handle other event types as needed
-///     }
-/// }
-/// ```
+/// Yields a [`StreamEvent`] per surfaced SSE event (revision 2026-05-20
+/// lifecycle: `Created`, `StatusUpdate`, `StepStart`, `StepDelta`,
+/// `StepStop`, then `Completed` or `Error`).
 pub fn create_interaction_stream<'a>(
     ctx: &'a HttpContext,
-    request: InteractionRequest,
+    mut request: InteractionRequest,
 ) -> impl Stream<Item = Result<StreamEvent, GenaiError>> + Send + 'a {
-    let endpoint = Endpoint::CreateInteraction { stream: true };
-    let url = construct_endpoint_url(endpoint);
+    request.stream = Some(true);
+    let url = with_query(interactions_url(ctx), &[("alt", Some("sse"))]);
 
-    // Emit the request event before try_stream! so the request id is
-    // captured even if the stream is never polled.
     let request_id = ctx.next_request_id();
     ctx.emit_request(
         request_id,
@@ -255,39 +196,29 @@ pub fn create_interaction_stream<'a>(
         &url,
         ctx.serialize_wire_body(&request).as_ref(),
     );
+    let builder = api_request(ctx, reqwest::Method::POST, &url).json(&request);
+    stream_events(ctx, request_id, builder)
+}
 
+/// Sends a streaming request and turns its SSE body into [`StreamEvent`]s,
+/// accumulating steps so the final `Completed` response is whole.
+fn stream_events(
+    ctx: &HttpContext,
+    request_id: u64,
+    builder: reqwest::RequestBuilder,
+) -> impl Stream<Item = Result<StreamEvent, GenaiError>> + Send + '_ {
     try_stream! {
-        // Accumulate steps from step.start/step.delta/step.stop events so the
-        // final Completed response carries a fully-populated steps array even
-        // when the server's interaction.completed payload omits it.
-        let mut accumulator = StepAccumulator::new();
-
-        let response = ctx
-            .http_client
-            .post(&url)
-            .header(API_KEY_HEADER, &ctx.api_key)
-            .header(API_REVISION_HEADER, API_REVISION)
-            .json(&request)
-            .send()
-            .await?;
-
-        ctx.emit(WireEvent::ResponseStatus {
-            id: request_id,
-            status: response.status().as_u16(),
-        });
-
-        let response = check_response_wire(response, ctx, request_id).await?;
-        let byte_stream = response.bytes_stream();
-        let parsed_stream = parse_sse_stream::<InteractionStreamEvent>(byte_stream, ctx, request_id);
+        let response = send_checked(ctx, request_id, builder).await?;
+        let parsed_stream =
+            parse_sse_stream::<InteractionStreamEvent>(response.bytes_stream(), ctx, request_id);
         futures_util::pin_mut!(parsed_stream);
 
+        let mut accumulator = StepAccumulator::new();
         while let Some(result) = parsed_stream.next().await {
             let event = result?;
             debug!(
                 "SSE event received: event_type={:?}, index={:?}, event_id={:?}",
-                event.event_type,
-                event.index,
-                event.event_id
+                event.event_type, event.index, event.event_id
             );
 
             let event_id = event.event_id.clone();
@@ -298,232 +229,99 @@ pub fn create_interaction_stream<'a>(
     }
 }
 
-/// Retrieves an existing interaction by its ID.
+/// Retrieves an interaction (`GET /v1beta/interactions/{id}`).
 ///
-/// Useful for checking the status of long-running interactions or agents,
-/// or for retrieving the full conversation history.
-///
-/// Set `include_input` to also receive the original `input` in the response.
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - The HTTP request fails
-/// - The response status is not successful
-/// - The response cannot be parsed as JSON
+/// `include_input` sets the `include_input=true` query parameter.
 pub async fn get_interaction(
     ctx: &HttpContext,
     interaction_id: &str,
     include_input: bool,
 ) -> Result<InteractionResponse, GenaiError> {
     require_id(interaction_id, "interaction")?;
-    let endpoint = Endpoint::GetInteraction {
-        id: interaction_id,
-        stream: false,
-        last_event_id: None,
-        include_input,
-    };
-    let url = construct_endpoint_url(endpoint);
-
-    let request_id = ctx.next_request_id();
-    ctx.emit_request(request_id, "GET", &url, None);
-
-    let response = ctx
-        .http_client
-        .get(&url)
-        .header(API_KEY_HEADER, &ctx.api_key)
-        .header(API_REVISION_HEADER, API_REVISION)
-        .send()
-        .await?;
-
-    ctx.emit(WireEvent::ResponseStatus {
-        id: request_id,
-        status: response.status().as_u16(),
-    });
-
-    let response = check_response_wire(response, ctx, request_id).await?;
-    let response_text = response.text().await.map_err(GenaiError::Http)?;
-
-    ctx.emit_response_body(request_id, &response_text);
-
-    let interaction_response: InteractionResponse =
-        deserialize_with_context(&response_text, "InteractionResponse from get")?;
-
-    Ok(interaction_response)
+    let url = with_query(
+        interaction_url(ctx, interaction_id),
+        &[("include_input", include_input.then_some("true"))],
+    );
+    let text = send_and_read(ctx, reqwest::Method::GET, &url, NO_BODY).await?;
+    deserialize_with_context(&text, "InteractionResponse from get")
 }
 
-/// Retrieves an existing interaction by its ID with streaming.
+/// The URL for streaming an existing interaction. Without `stream=true` the
+/// server ignores `alt=sse` and answers with the plain JSON interaction.
+fn interaction_stream_url(
+    ctx: &HttpContext,
+    interaction_id: &str,
+    last_event_id: Option<&str>,
+) -> String {
+    with_query(
+        interaction_url(ctx, interaction_id),
+        &[
+            ("alt", Some("sse")),
+            ("stream", Some("true")),
+            ("last_event_id", last_event_id),
+        ],
+    )
+}
+
+/// Streams an existing interaction's events
+/// (`GET /v1beta/interactions/{id}?alt=sse&stream=true`), optionally resuming
+/// after `last_event_id`.
 ///
-/// Returns a stream of `StreamEvent` items as they arrive from the server.
-/// This is useful for:
-/// - Resuming an interrupted stream using `last_event_id`
-/// - Streaming a long-running interaction's progress (e.g., deep research)
-///
-/// Each event includes an `event_id` that can be used to resume the stream
-/// from that point if the connection is interrupted.
-///
-/// # Example
-/// ```ignore
-/// // Resume a stream after interruption
-/// let mut stream = get_interaction_stream(&ctx, &id, Some("evt_abc123"));
-/// while let Some(event) = stream.next().await {
-///     let event = event?;
-///     println!("Received chunk: {:?}", event.chunk);
-///     // Track event_id for potential future resume
-///     if let Some(evt_id) = &event.event_id {
-///         last_event_id = Some(evt_id.clone());
-///     }
-/// }
-/// ```
+/// An invalid `interaction_id` is yielded as the stream's only item.
 pub fn get_interaction_stream<'a>(
     ctx: &'a HttpContext,
     interaction_id: &'a str,
     last_event_id: Option<&'a str>,
 ) -> impl Stream<Item = Result<StreamEvent, GenaiError>> + Send + 'a {
-    let endpoint = Endpoint::GetInteraction {
-        id: interaction_id,
-        stream: true,
-        last_event_id,
-        include_input: false,
-    };
-    let url = construct_endpoint_url(endpoint);
-
     try_stream! {
-        // Guard before the wire event so a rejected empty ID doesn't emit
-        // a phantom request that is never sent.
         require_id(interaction_id, "interaction")?;
+        let url = interaction_stream_url(ctx, interaction_id, last_event_id);
 
         let request_id = ctx.next_request_id();
-        let resume_info = last_event_id
-            .map(|id| format!(" (resuming from {})", id))
-            .unwrap_or_default();
-        ctx.emit_request(
-            request_id,
-            &format!("GET (stream){}", resume_info),
-            &url,
-            None,
-        );
+        let method = match last_event_id {
+            Some(id) => format!("GET (stream, resuming from {id})"),
+            None => "GET (stream)".to_string(),
+        };
+        ctx.emit_request(request_id, &method, &url, None);
 
-        // Accumulate steps (same as create_interaction_stream)
-        let mut accumulator = StepAccumulator::new();
-
-        let response = ctx
-            .http_client
-            .get(&url)
-            .header(API_KEY_HEADER, &ctx.api_key)
-            .header(API_REVISION_HEADER, API_REVISION)
-            .send()
-            .await?;
-
-        ctx.emit(WireEvent::ResponseStatus {
-            id: request_id,
-            status: response.status().as_u16(),
-        });
-
-        let response = check_response_wire(response, ctx, request_id).await?;
-        let byte_stream = response.bytes_stream();
-        let parsed_stream = parse_sse_stream::<InteractionStreamEvent>(byte_stream, ctx, request_id);
-        futures_util::pin_mut!(parsed_stream);
-
-        while let Some(result) = parsed_stream.next().await {
-            let event = result?;
-            debug!(
-                "SSE event received: event_type={:?}, index={:?}, event_id={:?}",
-                event.event_type,
-                event.index,
-                event.event_id
-            );
-
-            let event_id = event.event_id.clone();
-            if let Some(chunk) = dispatch_stream_event(event, &mut accumulator) {
-                yield StreamEvent::new(chunk, event_id);
-            }
+        let builder = api_request(ctx, reqwest::Method::GET, &url);
+        let events = stream_events(ctx, request_id, builder);
+        futures_util::pin_mut!(events);
+        while let Some(event) = events.next().await {
+            yield event?;
         }
     }
 }
 
-/// Deletes an interaction by its ID.
-///
-/// Removes the interaction from the server, freeing up storage and making it
-/// unavailable for future reference via `previous_interaction_id`.
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - The HTTP request fails
-/// - The response status is not successful
+/// Deletes an interaction (`DELETE /v1beta/interactions/{id}`).
 pub async fn delete_interaction(ctx: &HttpContext, interaction_id: &str) -> Result<(), GenaiError> {
     require_id(interaction_id, "interaction")?;
-    let endpoint = Endpoint::DeleteInteraction { id: interaction_id };
-    let url = construct_endpoint_url(endpoint);
-
-    let request_id = ctx.next_request_id();
-    ctx.emit_request(request_id, "DELETE", &url, None);
-
-    let response = ctx
-        .http_client
-        .delete(&url)
-        .header(API_KEY_HEADER, &ctx.api_key)
-        .header(API_REVISION_HEADER, API_REVISION)
-        .send()
-        .await?;
-
-    ctx.emit(WireEvent::ResponseStatus {
-        id: request_id,
-        status: response.status().as_u16(),
-    });
-
-    check_response_wire(response, ctx, request_id).await?;
+    send_and_read(
+        ctx,
+        reqwest::Method::DELETE,
+        &interaction_url(ctx, interaction_id),
+        NO_BODY,
+    )
+    .await?;
     Ok(())
 }
 
-/// Cancels a background interaction by its ID.
-///
-/// Halts an in-progress background interaction. Only applicable to interactions
-/// created with `background: true` that are still in `InProgress` status.
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - The HTTP request fails
-/// - The response status is not successful
-/// - The response cannot be parsed as JSON
-/// - The interaction is not in a cancellable state
+/// Cancels a background interaction
+/// (`POST /v1beta/interactions/{id}/cancel`).
 pub async fn cancel_interaction(
     ctx: &HttpContext,
     interaction_id: &str,
 ) -> Result<InteractionResponse, GenaiError> {
     require_id(interaction_id, "interaction")?;
-    let endpoint = Endpoint::CancelInteraction { id: interaction_id };
-    let url = construct_endpoint_url(endpoint);
-
-    let request_id = ctx.next_request_id();
-    ctx.emit_request(request_id, "POST", &url, Some(&serde_json::json!({})));
-
-    // Send empty JSON body - the API requires Content-Length header
-    let response = ctx
-        .http_client
-        .post(&url)
-        .header(API_KEY_HEADER, &ctx.api_key)
-        .header(API_REVISION_HEADER, API_REVISION)
-        .json(&serde_json::json!({}))
-        .send()
-        .await?;
-
-    ctx.emit(WireEvent::ResponseStatus {
-        id: request_id,
-        status: response.status().as_u16(),
-    });
-
-    let response = check_response_wire(response, ctx, request_id).await?;
-    let response_text = response.text().await.map_err(GenaiError::Http)?;
-
-    ctx.emit_response_body(request_id, &response_text);
-
-    let interaction_response: InteractionResponse =
-        deserialize_with_context(&response_text, "InteractionResponse from cancel")?;
-
-    Ok(interaction_response)
+    let url = format!("{}/cancel", interaction_url(ctx, interaction_id));
+    let text = send_and_read(
+        ctx,
+        reqwest::Method::POST,
+        &url,
+        Some(&serde_json::json!({})),
+    )
+    .await?;
+    deserialize_with_context(&text, "InteractionResponse from cancel")
 }
 
 #[cfg(test)]
@@ -532,46 +330,31 @@ mod tests {
     use crate::{InteractionInput, InteractionStatus, Step, StepDelta};
 
     #[test]
-    fn test_endpoint_url_construction() {
-        // Test that we can construct proper URLs for each endpoint
-        // API key is now passed via header, not in URL
-        let endpoint_create = Endpoint::CreateInteraction { stream: false };
-        let url = construct_endpoint_url(endpoint_create);
-        assert!(url.contains("/v1beta/interactions"));
-        assert!(!url.contains("key=")); // API key should not be in URL
-
-        let endpoint_get = Endpoint::GetInteraction {
-            id: "test_id_123",
-            stream: false,
-            last_event_id: None,
-            include_input: false,
-        };
-        let url = construct_endpoint_url(endpoint_get);
-        assert!(url.contains("/v1beta/interactions/test_id_123"));
-        assert!(!url.contains("key=")); // API key should not be in URL
-
-        let endpoint_get_with_input = Endpoint::GetInteraction {
-            id: "test_id_123",
-            stream: false,
-            last_event_id: None,
-            include_input: true,
-        };
-        let url = construct_endpoint_url(endpoint_get_with_input);
-        assert!(url.contains("include_input=true"));
-
-        let endpoint_delete = Endpoint::DeleteInteraction { id: "test_id_456" };
-        let url = construct_endpoint_url(endpoint_delete);
-        assert!(url.contains("/v1beta/interactions/test_id_456"));
-
-        let endpoint_cancel = Endpoint::CancelInteraction { id: "test_id_789" };
-        let url = construct_endpoint_url(endpoint_cancel);
-        assert!(url.contains("/v1beta/interactions/test_id_789/cancel"));
+    fn test_interaction_urls() {
+        let ctx = HttpContext::new(reqwest::Client::new(), "k".to_string(), vec![]);
+        assert_eq!(
+            interactions_url(&ctx),
+            "https://generativelanguage.googleapis.com/v1beta/interactions"
+        );
+        // A path-metacharacter ID is encoded, not interpolated raw.
+        assert_eq!(
+            interaction_url(&ctx, "a/b?c"),
+            "https://generativelanguage.googleapis.com/v1beta/interactions/a%2Fb%3Fc"
+        );
     }
 
     #[test]
-    fn test_api_revision_constants() {
-        assert_eq!(API_REVISION_HEADER, "Api-Revision");
-        assert_eq!(API_REVISION, "2026-05-20");
+    fn test_interaction_stream_url_requests_sse() {
+        let ctx = HttpContext::new(reqwest::Client::new(), "k".to_string(), vec![]);
+        assert_eq!(
+            interaction_stream_url(&ctx, "int-1", None),
+            "https://generativelanguage.googleapis.com/v1beta/interactions/int-1?alt=sse&stream=true"
+        );
+        // The resume token is percent-encoded.
+        assert_eq!(
+            interaction_stream_url(&ctx, "int-1", Some("evt+1&x")),
+            "https://generativelanguage.googleapis.com/v1beta/interactions/int-1?alt=sse&stream=true&last_event_id=evt%2B1%26x"
+        );
     }
 
     #[test]
