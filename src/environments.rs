@@ -220,6 +220,11 @@ pub struct Environment {
 /// ```
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct CreateEnvironmentRequest {
+    /// An environment to copy. Must be a bare ID: the documented
+    /// `environments/{id}` form returned 404 (2026-09-24). Excludes
+    /// `sources`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_environment: Option<String>,
     /// The file sources to materialize into the environment.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sources: Option<Vec<EnvironmentSource>>,
@@ -249,6 +254,21 @@ impl CreateEnvironmentRequest {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A request that forks an existing environment, files included.
+    ///
+    /// ```
+    /// use genai_rs::CreateEnvironmentRequest;
+    ///
+    /// let fork = CreateEnvironmentRequest::from_environment("38aac1ae7f30fe9bd67afe42382ea041");
+    /// ```
+    #[must_use]
+    pub fn from_environment(environment_id: impl Into<String>) -> Self {
+        Self {
+            from_environment: Some(environment_id.into()),
+            ..Self::default()
+        }
     }
 
     /// Adds a file source, accumulating with any added earlier.
@@ -405,6 +425,14 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(request.extra["future_field"], true);
+    }
+
+    #[test]
+    fn fork_request_serializes_from_environment() {
+        assert_eq!(
+            serde_json::to_value(CreateEnvironmentRequest::from_environment("env-1")).unwrap(),
+            serde_json::json!({"from_environment": "env-1"})
+        );
     }
 
     #[test]

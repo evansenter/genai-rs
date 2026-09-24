@@ -12,7 +12,13 @@ name: API Surface Sweep
 #
 # This job diffs the latest google-genai release against the version recorded
 # in .github/last-swept-sdk-version and opens/updates an issue when the
-# Interactions type bindings change.
+# generated bindings change: every type under `_gaos/types/` (Interactions
+# and the resources beside it: voices, credentials, environments, ...) plus
+# the endpoint paths in `_gaos/*.py`. Compared as a normalized schema dump
+# (.github/scripts/dump_bindings_schema.py), because a raw `diff -r` of
+# 2.18.1 -> 2.25.0 was 2,771 lines of mostly lint headers and docstring
+# rewraps, and the old `types/interactions`-only scope missed two new
+# resources outright.
 
 on:
   schedule:
@@ -25,7 +31,7 @@ permissions:
 
 jobs:
   sweep:
-    name: Diff google-genai Interactions bindings
+    name: Diff google-genai generated bindings
     runs-on: ubuntu-latest
     # Bounds every network call in the job, not just the one that carries an
     # explicit `timeout=`. The two `pip download`s and the `gh` calls would
@@ -89,44 +95,35 @@ jobs:
           (cd base && unzip -q ./*.whl -d x)
           (cd new  && unzip -q ./*.whl -d x)
 
-          BASE_DIR=base/x/google/genai/_gaos/types/interactions
-          NEW_DIR=new/x/google/genai/_gaos/types/interactions
+          BASE_DIR=base/x/google/genai/_gaos
+          NEW_DIR=new/x/google/genai/_gaos
 
-          # Assert the paths exist before diffing. `diff -r` exits 2 and writes
-          # to stderr when a directory is missing, and `|| true` would swallow
-          # that — leaving full.diff empty, which the check below reads as
-          # "bindings unchanged". A vanished path would then be indistinguishable
-          # from a genuine no-op, and since the baseline is never bumped in that
-          # state the job would re-report "unchanged" every morning with no
-          # failure signal: the detector silently inert.
-          #
-          # `_gaos/types/interactions` is a private, underscore-prefixed module,
-          # so upstream restructuring it without notice is a realistic event
-          # rather than a hypothetical.
-          for dir in "$BASE_DIR" "$NEW_DIR"; do
+          # Assert the paths exist before diffing: an empty diff from a
+          # vanished path would read as "bindings unchanged" every morning,
+          # the detector silently inert. `_gaos` is private and underscore-
+          # prefixed, so an unannounced restructure is realistic. (The dump
+          # script also exits non-zero on a tree with no models.)
+          for dir in "$BASE_DIR/types" "$NEW_DIR/types"; do
             if [ ! -d "$dir" ]; then
-              echo "::error::Interactions bindings path not found: $dir"
+              echo "::error::Bindings path not found: $dir"
               echo "google-genai has likely restructured its generated bindings."
               echo "This job cannot detect new API surface until the path below is updated."
               exit 1
             fi
           done
 
-          # Two signals, because they catch different things: a new *file* is
-          # a new type (e.g. staticmediaprocessing.py), while a changed field
-          # line is a widened or added field on an existing type (e.g.
-          # speech_config becoming a union).
+          # Two signals: a new *file* is a new type or resource module; a
+          # schema line is a field, union arm, enum literal or endpoint.
           # `|| [ $? -eq 1 ]`, not `|| true`: diff exits 1 for "differences
-          # found" and 2 for trouble (unreadable file, I/O error). Folding 2
-          # into success leaves full.diff empty, which the check below reads
-          # as "bindings unchanged" — the directory assertion above covers the
-          # likeliest cause, this covers the rest. Under `set -e` an exit 2
-          # now fails the job.
-          diff <(cd "$BASE_DIR" && ls) <(cd "$NEW_DIR" && ls) > files.diff || [ $? -eq 1 ]
-          diff -r "$BASE_DIR" "$NEW_DIR" > full.diff || [ $? -eq 1 ]
+          # found" and 2 for trouble, which must fail the job under `set -e`.
+          diff <(cd "$BASE_DIR" && find . -name '*.py' | sort) \
+               <(cd "$NEW_DIR" && find . -name '*.py' | sort) > files.diff || [ $? -eq 1 ]
+          python3 .github/scripts/dump_bindings_schema.py "$BASE_DIR" > base.schema
+          python3 .github/scripts/dump_bindings_schema.py "$NEW_DIR" > new.schema
+          diff base.schema new.schema > schema.diff || [ $? -eq 1 ]
 
-          if [ ! -s full.diff ]; then
-            echo "SDK moved $BASELINE -> $LATEST but Interactions bindings are unchanged."
+          if [ ! -s schema.diff ]; then
+            echo "SDK moved $BASELINE -> $LATEST but the bindings schema is unchanged."
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -137,7 +134,7 @@ jobs:
             echo "## New Interactions API surface detected"
             echo
             echo "\`google-genai\` moved **$BASELINE → $LATEST** and the generated"
-            echo "Interactions bindings changed."
+            echo "bindings changed (types under \`_gaos/types/\`, or endpoint paths)."
             echo
             echo "Generated bindings ship *ahead* of prose docs, so treat this as the"
             echo "leading indicator: anything here may be absent from ai.google.dev."
@@ -150,7 +147,11 @@ jobs:
               echo '```'
               echo
             fi
-            echo "### Full bindings diff"
+            echo "### Schema diff"
+            echo
+            echo "\`<\` removed, \`>\` added. One line per model field (\`model\`),"
+            echo "type alias or enum (\`alias\`), and endpoint (\`endpoint\`); unions"
+            echo "and literals are sorted, so reordering is not reported."
             echo
             echo '<details><summary>Expand</summary>'
             echo
@@ -159,8 +160,8 @@ jobs:
             # fence early and swallow the </details> into the code block.
             echo '~~~diff'
             # Cap the body so a large diff can't exceed GitHub's issue limit.
-            head -c 40000 full.diff
-            if [ "$(wc -c < full.diff)" -gt 40000 ]; then
+            head -c 40000 schema.diff
+            if [ "$(wc -c < schema.diff)" -gt 40000 ]; then
               echo
               echo "... truncated; the untruncated diff is attached to this"
               echo "workflow run as the \`sweep-diffs\` artifact ..."
@@ -173,8 +174,9 @@ jobs:
             echo
             echo "1. **Live-probe** anything new before modeling it. The bindings"
             echo "   describe a broader surface than the Gemini endpoint implements —"
-            echo "   \`speech_config\`'s object arm and \`Tool::Retrieval\` are both"
-            echo "   spec-present and API-rejected."
+            echo "   \`cached_content\` and \`Tool::Retrieval\` are both spec-present"
+            echo "   and API-rejected — and the endpoint also accepts surface the"
+            echo "   bindings lack."
             echo "2. Model what survives probing; file issues for the rest."
             echo "3. Update \`docs/INTERACTIONS_API_GAP.md\`: the header's"
             echo "   **Last swept against** version *and* its dates, plus a"
@@ -189,7 +191,7 @@ jobs:
           } > sweep_report.md
 
           # GitHub rejects an issue body over 65,536 characters with a 422.
-          # The cap above bounds full.diff alone — files.diff and the
+          # The cap above bounds schema.diff alone — files.diff and the
           # boilerplate are appended uncapped, and the same upstream
           # restructure the path assertion anticipates would make files.diff
           # a listing of the whole directory twice over. Cap the assembled
@@ -239,7 +241,7 @@ jobs:
         with:
           name: sweep-diffs
           path: |
-            full.diff
+            schema.diff
             files.diff
           retention-days: 30
 

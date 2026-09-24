@@ -757,54 +757,40 @@ mod file_loading {
 mod text_to_speech {
     use crate::common::{extended_test_timeout, get_client, with_timeout};
 
-    /// Tests basic text-to-speech audio output
+    /// Single-voice TTS on the default TTS model returns playable WAV.
     #[tokio::test]
-    #[ignore = "Requires API key and TTS model access"]
+    #[ignore = "Requires API key"]
     async fn test_text_to_speech_basic() {
         let Some(client) = get_client() else {
             println!("Skipping: GEMINI_API_KEY not set");
             return;
         };
 
-        // TTS requires a specific model
-        let tts_model = genai_rs::DEFAULT_TTS_MODEL;
-
-        // TTS can be slow - use extended timeout
         with_timeout(extended_test_timeout(), async {
             let response = client
                 .interaction()
-                .with_model(tts_model)
+                .with_model(genai_rs::DEFAULT_TTS_MODEL)
                 .with_text("Hello, world!")
                 .with_audio_output()
                 .with_voice("Kore")
+                .with_store_disabled()
                 .create()
-                .await;
+                .await
+                .expect("TTS request failed");
 
-            match response {
-                Ok(r) => {
-                    println!("TTS response status: {:?}", r.status);
-                    assert!(r.has_audio(), "Response should contain audio output");
-
-                    if let Some(audio) = r.first_audio() {
-                        let bytes = audio.bytes().expect("Should decode audio");
-                        println!("Audio size: {} bytes", bytes.len());
-                        println!("Audio MIME type: {:?}", audio.mime_type());
-                        println!("Audio extension: {}", audio.extension());
-                        assert!(!bytes.is_empty(), "Audio should not be empty");
-                    }
-                }
-                Err(e) => {
-                    // TTS model might not be available in all regions
-                    println!("TTS test error (may be expected): {:?}", e);
-                }
-            }
+            let audio = response.first_audio().expect("response has no audio");
+            let bytes = audio.bytes().expect("audio must decode");
+            // gemini-3.8-flash-tts returns a RIFF container, not raw L16.
+            assert_eq!(audio.mime_type(), Some("audio/wav"));
+            assert!(bytes.starts_with(b"RIFF"), "expected a WAV container");
+            assert_eq!(audio.extension(), "wav");
         })
         .await;
     }
 
-    /// Tests text-to-speech with speech configuration
+    /// An explicit `SpeechConfig` (voice + language) is accepted.
     #[tokio::test]
-    #[ignore = "Requires API key and TTS model access"]
+    #[ignore = "Requires API key"]
     async fn test_text_to_speech_with_speech_config() {
         use genai_rs::SpeechConfig;
 
@@ -813,51 +799,28 @@ mod text_to_speech {
             return;
         };
 
-        let tts_model = genai_rs::DEFAULT_TTS_MODEL;
-
-        // TTS can be slow - use extended timeout
         with_timeout(extended_test_timeout(), async {
-            let config = SpeechConfig {
-                voice: Some("Puck".to_string()),
-                language: Some("en-US".to_string()),
-                speaker: None,
-            };
-
             let response = client
                 .interaction()
-                .with_model(tts_model)
+                .with_model(genai_rs::DEFAULT_TTS_MODEL)
                 .with_text("Testing speech configuration.")
                 .with_audio_output()
-                .with_speech_config(config)
+                .with_speech_config(SpeechConfig::with_voice_and_language("Puck", "en-US"))
+                .with_store_disabled()
                 .create()
-                .await;
+                .await
+                .expect("TTS request with speech config failed");
 
-            match response {
-                Ok(r) => {
-                    println!("TTS with config status: {:?}", r.status);
-                    assert!(r.has_audio(), "Response should contain audio output");
-                }
-                Err(e) => {
-                    println!("TTS with config error (may be expected): {:?}", e);
-                }
-            }
+            assert!(response.has_audio(), "response has no audio");
         })
         .await;
     }
 
-    /// Verifies that nested SpeechConfig format fails and flat format succeeds.
-    ///
-    /// Documentation shows a nested format:
-    /// ```json
-    /// {"speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Kore"}}}}
-    /// ```
-    ///
-    /// We use a flat format: `{"voice": "Kore", "language": "en-US"}`
-    ///
-    /// This test documents API behavior: nested format returns 400, flat format works.
-    /// See docs/ENUM_WIRE_FORMATS.md ("SpeechConfig (generation_config)").
+    /// The generateContent-style nested `voiceConfig` object is rejected;
+    /// the flat list form the crate sends is accepted. See
+    /// docs/ENUM_WIRE_FORMATS.md ("SpeechConfig (generation_config)").
     #[tokio::test]
-    #[ignore = "Requires API key and TTS model access"]
+    #[ignore = "Requires API key"]
     async fn test_speech_config_nested_format_fails_flat_succeeds() {
         use genai_rs::{GenerationConfig, InteractionInput, InteractionRequest};
         use reqwest::Client as ReqwestClient;

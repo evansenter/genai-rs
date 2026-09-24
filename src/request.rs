@@ -572,7 +572,8 @@ pub struct TranscriptionConfig {
     pub custom_vocabulary: Option<Vec<String>>,
     /// Speaker diarization mode. The SDK spec documents `"speaker"` as the
     /// only supported value today; kept an open string (Evergreen) so new
-    /// modes work without a crate release.
+    /// modes work without a crate release. Deprecated upstream (google-genai
+    /// 2.25) in favor of [`TranscriptionMode::Verbatim`] in `mode`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diarization_mode: Option<String>,
     /// BCP-47 language codes hinting the audio's language(s). Omitted or
@@ -581,9 +582,126 @@ pub struct TranscriptionConfig {
     pub language_codes: Option<Vec<String>>,
     /// Timestamp granularities to include. The SDK spec documents `"word"`
     /// as the only supported value today (empty = no timestamps); kept an
-    /// open string list (Evergreen).
+    /// open string list (Evergreen). Deprecated upstream in favor of
+    /// [`TranscriptionMode::Verbatim`] in `mode`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp_granularities: Option<Vec<String>>,
+    /// Transcription mode. Accepted and validated live (2026-09-24); no
+    /// output difference was observed on general models.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<TranscriptionMode>,
+}
+
+/// Transcription mode (`transcription_config.mode`).
+///
+/// Serializes as the tagged object (`{"type": "smart"}`,
+/// `{"type": "verbatim", ...}`); the bare strings `"smart"` / `"verbatim"`
+/// the API also accepts deserialize to the same variants.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum TranscriptionMode {
+    /// Smart transcription.
+    Smart,
+    /// Verbatim transcription.
+    Verbatim {
+        /// Speaker diarization; `"speaker"` is the documented value.
+        diarization_mode: Option<String>,
+        /// Timestamp granularities; `"word"` is the documented value.
+        timestamp_granularities: Option<Vec<String>>,
+    },
+    /// Unknown variant for forward compatibility (Evergreen pattern).
+    Unknown {
+        /// The unrecognized mode type from the API.
+        mode_type: String,
+        /// The raw JSON value, preserved for roundtrip.
+        data: serde_json::Value,
+    },
+}
+
+impl TranscriptionMode {
+    /// Returns true if this is an unknown mode.
+    #[must_use]
+    pub const fn is_unknown(&self) -> bool {
+        matches!(self, Self::Unknown { .. })
+    }
+
+    /// Returns the unrecognized mode type, if this is unknown.
+    #[must_use]
+    pub fn unknown_mode_type(&self) -> Option<&str> {
+        match self {
+            Self::Unknown { mode_type, .. } => Some(mode_type),
+            _ => None,
+        }
+    }
+
+    /// Returns the preserved JSON, if this is unknown.
+    #[must_use]
+    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::Unknown { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for TranscriptionMode {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        match self {
+            Self::Smart => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("type", "smart")?;
+                map.end()
+            }
+            Self::Verbatim {
+                diarization_mode,
+                timestamp_granularities,
+            } => {
+                let mut map = serializer.serialize_map(None)?;
+                map.serialize_entry("type", "verbatim")?;
+                if let Some(d) = diarization_mode {
+                    map.serialize_entry("diarization_mode", d)?;
+                }
+                if let Some(t) = timestamp_granularities {
+                    map.serialize_entry("timestamp_granularities", t)?;
+                }
+                map.end()
+            }
+            Self::Unknown { data, .. } => data.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for TranscriptionMode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let tag = value
+            .as_str()
+            .or_else(|| value.get("type").and_then(|t| t.as_str()));
+        let strings = |key: &str| -> Option<Vec<String>> {
+            serde_json::from_value(value.get(key)?.clone()).ok()
+        };
+        match tag {
+            Some("smart") => Ok(Self::Smart),
+            Some("verbatim") => Ok(Self::Verbatim {
+                diarization_mode: value
+                    .get("diarization_mode")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                timestamp_granularities: strings("timestamp_granularities"),
+            }),
+            other => {
+                let mode_type = other.unwrap_or("<missing type>").to_string();
+                tracing::warn!(
+                    "Encountered unknown TranscriptionMode '{mode_type}' - using Unknown variant (Evergreen)"
+                );
+                Ok(Self::Unknown {
+                    mode_type,
+                    data: value,
+                })
+            }
+        }
+    }
 }
 
 impl TranscriptionConfig {
@@ -591,6 +709,13 @@ impl TranscriptionConfig {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set the transcription mode.
+    #[must_use]
+    pub fn with_mode(mut self, mode: TranscriptionMode) -> Self {
+        self.mode = Some(mode);
+        self
     }
 
     /// Set the BCP-47 language hints (omitted means automatic detection).
@@ -764,6 +889,28 @@ impl SpeechConfig {
             voice: Some(voice.into()),
             language: Some(language.into()),
             ..Default::default()
+        }
+    }
+
+    /// Creates the config for one speaker of a multi-speaker request; pair
+    /// it with [`Content::speaker_text`](crate::Content::speaker_text).
+    ///
+    /// ```
+    /// use genai_rs::SpeechConfig;
+    ///
+    /// let alice = SpeechConfig::for_speaker("Alice", "Kore", "en-US");
+    /// assert_eq!(alice.speaker.as_deref(), Some("Alice"));
+    /// ```
+    #[must_use]
+    pub fn for_speaker(
+        speaker: impl Into<String>,
+        voice: impl Into<String>,
+        language: impl Into<String>,
+    ) -> Self {
+        Self {
+            voice: Some(voice.into()),
+            language: Some(language.into()),
+            speaker: Some(speaker.into()),
         }
     }
 }
@@ -1375,10 +1522,9 @@ pub struct InteractionRequest {
 
     /// User-defined metadata labels for the request.
     ///
-    /// Server-side constraint (verified live 2026-08-08): the Gemini API
-    /// rejects `labels` — "not available on the Gemini API but it is
-    /// available on the Gemini Enterprise Agent Platform" (Vertex-only).
-    /// The field is modeled for spec parity and forward compatibility.
+    /// Accepted by the Gemini API and echoed on the response as
+    /// [`InteractionResponse::labels`](crate::InteractionResponse::labels)
+    /// (verified live 2026-09-24; it was Vertex-only on 2026-08-08).
     ///
     /// `BTreeMap` (not `HashMap`) so the serialized key order is
     /// deterministic — wire captures and `LOUD_WIRE` diffs of the same
@@ -2205,6 +2351,57 @@ mod tests {
         assert_eq!(config.voice, Some("Puck".to_string()));
         assert_eq!(config.language, Some("en-GB".to_string()));
         assert_eq!(config.speaker, None);
+    }
+
+    #[test]
+    fn test_transcription_mode_wire_forms() {
+        let config = TranscriptionConfig::new().with_mode(TranscriptionMode::Verbatim {
+            diarization_mode: Some("speaker".into()),
+            timestamp_granularities: Some(vec!["word".into()]),
+        });
+        assert_eq!(
+            serde_json::to_value(&config).unwrap(),
+            serde_json::json!({"mode": {
+                "type": "verbatim",
+                "diarization_mode": "speaker",
+                "timestamp_granularities": ["word"]
+            }})
+        );
+        for (wire, expected) in [
+            (serde_json::json!("smart"), TranscriptionMode::Smart),
+            (
+                serde_json::json!({"type": "smart"}),
+                TranscriptionMode::Smart,
+            ),
+            (
+                serde_json::json!("verbatim"),
+                TranscriptionMode::Verbatim {
+                    diarization_mode: None,
+                    timestamp_granularities: None,
+                },
+            ),
+        ] {
+            assert_eq!(
+                serde_json::from_value::<TranscriptionMode>(wire).unwrap(),
+                expected
+            );
+        }
+        let unknown: TranscriptionMode =
+            serde_json::from_value(serde_json::json!({"type": "future", "x": 1})).unwrap();
+        assert_eq!(unknown.unknown_mode_type(), Some("future"));
+        assert_eq!(
+            serde_json::to_value(&unknown).unwrap(),
+            serde_json::json!({"type": "future", "x": 1})
+        );
+    }
+
+    #[test]
+    fn test_speech_config_for_speaker() {
+        let config = SpeechConfig::for_speaker("Bob", "Puck", "en-US");
+        assert_eq!(
+            serde_json::to_value(&config).unwrap(),
+            serde_json::json!({"voice": "Puck", "language": "en-US", "speaker": "Bob"})
+        );
     }
 
     #[test]

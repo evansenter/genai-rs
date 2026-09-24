@@ -17,9 +17,9 @@ All types below implement graceful handling of unrecognized values via an `Unkno
 | # | Type | Location | Context Field | Notes |
 |---|------|----------|---------------|-------|
 | 1 | `Content` | src/content.rs | `content_type` | Media-only: text/image/audio/video/document |
-| 2 | `Step` | src/steps.rs | `step_type` | Interaction steps (17 known types) |
+| 2 | `Step` | src/steps.rs | `step_type` | Interaction steps (22 known types) |
 | 3 | `StepDelta` | src/steps.rs | `delta_type` | `step.delta` SSE payloads |
-| 4 | `Annotation` | src/content.rs | `annotation_type` | Citation union (url/file/place) |
+| 4 | `Annotation` | src/content.rs | `annotation_type` | Citations (url/file/place) + `speech_metadata` + `word_info` |
 | 5 | `Resolution` | src/content.rs | `resolution_type` | Image/video quality |
 | 6 | `StreamChunk` | src/wire_streaming.rs | `chunk_type` | Low-level SSE chunks |
 | 7 | `AutoFunctionStreamChunk` | src/streaming.rs | `chunk_type` | High-level streaming |
@@ -55,6 +55,14 @@ All types below implement graceful handling of unrecognized values via an `Unkno
 | 37 | `TriggerExecutionStatus` | src/triggers.rs | `status_type` | Execution outcomes (SDK-spec, pending live) |
 | 38 | `VideoProcessing` | src/content.rs | `processing_type` | Mode string OR `{type:"static", ...}` object (verified live 2026-08-16) |
 | 39 | `DocumentState` | src/file_search_stores.rs | `state_type` | File search document indexing state (verified live 2026-08-16) |
+| 40 | `VoiceType` | src/voices.rs | `voice_type` | prebuilt/prompted/replicated (`/v1beta/voices`) |
+| 41 | `VoicePitch` | src/voices.rs | `pitch_type` | low/medium/high |
+| 42 | `CredentialType` | src/credentials.rs | `credential_type` | bearer_token/environment_variable/oauth2 |
+| 43 | `CredentialStatus` | src/credentials.rs | `status_type` | active/revoked |
+| 44 | `InjectionLocation` | src/credentials.rs | `location_type` | header/query/body |
+| 45 | `EnvironmentFileType` | src/environment_files.rs | `file_type` | FILE/DIRECTORY (uppercase on the wire) |
+| 46 | `VideoResolution` | src/response_format.rs | `resolution_type` | 360p/720p/1080p/4k |
+| 47 | `TranscriptionMode` | src/request.rs | `mode_type` | smart/verbatim, string OR tagged object |
 
 **Removed in revision 2026-05-20** (no longer exist in this library or on the wire):
 `UrlRetrievalStatus`, `GroundingMetadata`, `UrlContextMetadata`, `Turn`, and all tool-related
@@ -116,7 +124,7 @@ Helper methods on each type:
 | `Tool::GoogleSearch` | snake_case + optional array | `{"type": "google_search", "search_types": ["web_search"]}` | |
 | `Tool::GoogleMaps` | snake_case + optional fields | `{"type": "google_maps", "enable_widget": true, "latitude": ..., "longitude": ...}` | `latitude`/`longitude` pending live verification (2026-05-20 revision) |
 | `Tool::ComputerUse` | snake_case | `{"type": "computer_use", "environment": "browser", ...}` | **Changed**: fields now snake_case. Pending live verification (2026-05-20 revision) |
-| `SpeechConfig` | **list** of flat objects | `[{"voice": "Kore", "language": "en-US", "speaker": "Alice"}]` | **Changed** in 2026-05-20: `speech_config` is a list (multi-speaker TTS). Three forms accepted on deserialize — the list, a bare single object, and the spec's `{"speakers": [...]}` wrapper — but **only the list is sendable**; both object forms 400 with `Expected an array, got object` (live 2026-08-16). ✅ Verified live 2026-07 (two-speaker list accepted; single combined `audio/l16` stream returned; the API does not echo `speech_config` on reads — `include_input` observed as a no-op) |
+| `SpeechConfig` | **list** of flat objects | `[{"voice": "Kore", "language": "en-US", "speaker": "Alice"}]` | The crate sends the list. Three forms accepted on deserialize (list, bare object, `{"speakers": [...]}`). On send, `{"speakers": [...]}` is now accepted too and a bare object is rejected (live 2026-09-24; see [speech_config wire forms](#speech_config-wire-forms)) |
 | `Tool::Retrieval` | snake_case object | `{"type": "retrieval", "retrieval_types": [...], "vertex_ai_search_config": {...}}` | New. ⚠️ Live 2026-07: the Gemini API rejects `type: "retrieval"` (Vertex-only — "allowed on the Gemini Enterprise Agent Platform"); Gemini tool types are `google_maps`, `mcp_server`, `function`, `google_search`, `file_search`, `computer_use`, `code_execution`, `url_context` |
 | `RetrievalType` | snake_case string | `"vertex_ai_search"`, `"rag_store"`, `"exa_ai_search"`, `"parallel_ai_search"` | Not verifiable live on the Gemini API (the retrieval tool itself is rejected as Vertex-only, 2026-07) |
 | `WebhookEvent` | dotted lowercase | `"batch.succeeded"`, `"interaction.completed"`, `"video.generated"` | ✅ Verified live 2026-07: the API's own validation error lists exactly our 7 values |
@@ -129,7 +137,15 @@ Helper methods on each type:
 | `ResponseDelivery` | lowercase | `"inline"`, `"uri"` | Audio/image/video formats. ✅ Verified live 2026-07: the API's validation error lists exactly `inline`/`uri` — but `delivery` itself is currently rejected for audio and image on the Gemini API (inline-only) |
 | `VideoTask` | snake_case | `"text_to_video"`, `"image_to_video"`, `"reference_to_video"`, `"edit"`, `"extend"` | `generation_config.video_config.task`. ✅ Verified live 2026-07 via the API's validation error — which also revealed `"extend"` (added to the enum) |
 | `Visualization` | lowercase | `"off"`, `"auto"` | Deep Research `agent_config.visualization`. ✅ Verified live 2026-07: the API's validation error lists exactly `off`/`auto`; accepted with `collaborative_planning` (`enable_bigquery_tool` is Vertex-only) |
-| Audio MIME type (TTS response) | plain | `"audio/l16"` | Raw PCM audio. Live 2026-07 (revision 2026-05-20): lowercase `audio/l16` with a separate `sample_rate: 24000` field on the content block (no `;codec=...;rate=...` params observed) |
+| Audio MIME type (TTS response) | plain | `"audio/wav"` / `"audio/L16;codec=pcm;rate=24000"` | Model-dependent — see [Audio Response](#audio-response-tts-output). Live 2026-09-24 |
+| `VoiceType` | lowercase | `"prebuilt"`, `"prompted"`, `"replicated"` | `/v1beta/voices` `type` and list filter. `prebuilt`/`prompted` verified live 2026-09-24 |
+| `VoicePitch` | lowercase | `"low"`, `"medium"`, `"high"` | Voice metadata and list filter; verified live 2026-09-24 |
+| `CredentialType` | snake_case | `"bearer_token"`, `"environment_variable"`, `"oauth2"` | `/v1beta/credentials` `type`; create bodies are tagged by it. `bearer_token`/`environment_variable` verified live 2026-09-24 (`oauth2` create validates `token_url` reachability) |
+| `CredentialStatus` | lowercase | `"active"`, `"revoked"` | Output only; `active` observed 2026-09-24 |
+| `InjectionLocation` | lowercase | `"header"`, `"query"`, `"body"` | Sent as a list; the API also accepts a single string (2026-09-24) |
+| `VideoResolution` | lowercase | `"360p"`, `"720p"`, `"1080p"`, `"4k"` | Video `response_format` `resolution`. Server-validated (the error lists exactly these, 2026-09-24); no Interactions model outputs video to exercise it |
+| `TranscriptionMode` | string OR object | `"smart"` / `{"type": "verbatim", "diarization_mode": "speaker"}` | `transcription_config.mode`; see [TranscriptionConfig](#transcriptionconfig-open-string-values) |
+| `EnvironmentFileType` | **uppercase** | `"FILE"`, `"DIRECTORY"` | `/v1beta/environments/{id}/files` entries. The bindings say lowercase; the API sends uppercase (live 2026-09-24). Both accepted; serializes uppercase |
 | `GoogleSearchResultItem` | snake_case | `{"title": "...", "url": "...", "rendered_content": "..."}` | Optional `search_suggestions` added in 2026-05-20. Verified live 2026-07: items may carry **only** `search_suggestions` (an HTML rendering payload) with no `title`/`url`; empty `title`/`url` are skipped on serialize for wire fidelity |
 | `UrlContextResultItem` | snake_case | `{"url": "...", "status": "success"}` | Verified 2026-01-13 - no paywall field |
 | `ImageAspectRatio` | ratio string | `"1:1"`, `"16:9"`, `"9:16"` | 14 aspect ratios |
@@ -219,6 +235,10 @@ roundtrip tests.
 | `file_search_result` | `Step::FileSearchResult` | `{"call_id": "...", "result": [FileSearchResultItem], "signature"?: "..."}` |
 | `google_maps_call` | `Step::GoogleMapsCall` | `{"id": "...", "arguments": {"queries": [...]}, "signature"?: "..."}` |
 | `google_maps_result` | `Step::GoogleMapsResult` | `{"call_id": "...", "result": [GoogleMapsResultItem], "signature"?: "..."}` |
+| `processing_call` | `Step::ProcessingCall` | `{"id": "...", "signature"?: "..."}` — emitted for video with `processing: "agentic"` (live 2026-09-24, `gemini-3.8-flash`; one or more per turn). The ~36KB signature is **required** on stateless replay (`400 Processing call step is missing signature`) |
+| `processing_result` | `Step::ProcessingResult` | `{"call_id": "...", "signature"?: "..."}` — same replay requirement |
+| `retrieval_call` | `Step::RetrievalCall` | `{"id": "...", "arguments": {"queries": [...]}, "retrieval_type"?: RetrievalType, "signature"?: "..."}` — Vertex-only (the `retrieval` tool is rejected on the Gemini API); spec parity |
+| `retrieval_result` | `Step::RetrievalResult` | `{"call_id": "...", "is_error"?: bool, "signature"?: "..."}` — Vertex-only |
 | (anything else) | `Step::Unknown { step_type, data }` | Full JSON preserved for roundtrip |
 
 > **MCP is not on the wire in that shape.** Verified live 2026-08-16: an MCP
@@ -336,7 +356,7 @@ exceptions** where the wire tag differs from the variant name:
 | `thought_signature` | `StepDelta::ThoughtSignature` | `{"signature": "..."}` |
 | `text_annotation_delta` | `StepDelta::TextAnnotation` | **Tag differs from variant name.** `{"annotations": [Annotation]}` |
 | `arguments_delta` | `StepDelta::ArgumentsDelta` | `{"arguments": "<raw JSON fragment>"}` — function-call arguments stream as string fragments; concatenate and parse at `step.stop` |
-| `function_result` | `StepDelta::FunctionResult` | Same shape as the step |
+| `function_result` | `StepDelta::FunctionResult` | Same shape as the step, but `call_id` is optional (dropped from the 2.25 bindings); the accumulator keeps the `call_id` from `step.start` |
 | `code_execution_call` / `code_execution_result` | code execution variants | Call delta carries flattened `language`/`code` |
 | `url_context_call` / `url_context_result` | URL context variants | |
 | `google_search_call` / `google_search_result` | Google Search variants | |
@@ -344,7 +364,9 @@ exceptions** where the wire tag differs from the variant name:
 | `mcp_server_tool_call` / `mcp_server_tool_result` | MCP variants | Spec-only; see below |
 | `file_search_call` / `file_search_result` | file search variants | |
 | `google_maps_call` / `google_maps_result` | Google Maps variants | |
-| (anything else) | `StepDelta::Unknown { delta_type, data }` | Preserved |
+| `processing_call` / `processing_result` | processing variants | `{"signature": "..."}`. `step.start` announces `signature: ""`; the value arrives only here (live 2026-09-24) |
+| `retrieval_call` / `retrieval_result` | retrieval variants | Vertex-only |
+| (anything else) | `StepDelta::Unknown { delta_type, data }` | Preserved. If it carries a `signature` and the step at that index is a same-typed `Step::Unknown`, the signature is merged onto the step so replay does not lose it |
 
 Helpers: `as_text()`, `as_arguments_delta()`, `is_unknown()`, `unknown_delta_type()`, `unknown_data()`.
 
@@ -391,10 +413,13 @@ Old revision: a single struct `{start_index, end_index, source}`. Revision
 | `url_citation` | `Annotation::UrlCitation` | `url`, `title` |
 | `file_citation` | `Annotation::FileCitation` | `document_uri`, `file_name`, `source`, `custom_metadata`, `page_number`, `media_id` |
 | `place_citation` | `Annotation::PlaceCitation` | `place_id`, `name`, `url`, `review_snippets: [ReviewSnippet]` |
-| (anything else) | `Annotation::Unknown { annotation_type, data }` | Preserved |
+| `speech_metadata` | `Annotation::SpeechMetadata` | `speaker`, `style`; `start_index`/`end_index` **optional**. TTS **input** annotation: required per turn for multi-speaker on `gemini-3.8-flash-tts`; rejected by older TTS models. Spanned annotations must tile the text without gaps (live 2026-09-24) |
+| `word_info` | `Annotation::WordInfo` | `text`, `speaker`, `start_offset`/`end_offset` (duration strings), optional indices. Transcription output; not yet observed |
+| (anything else) | `Annotation::Unknown { annotation_type, data }` | Preserved. The server's enum also lists `in_context_file_citation` and `reference_metadata`, absent from the 2.25 bindings (2026-09-24) |
 
 All citation variants carry `start_index`/`end_index` (UTF-8 byte offsets into
-the annotated text). `ReviewSnippet { title, url, review_id }` (all optional)
+the annotated text); on `speech_metadata` and `word_info` they are optional, so
+`start_index()`/`end_index()` return `None` when absent. `ReviewSnippet { title, url, review_id }` (all optional)
 is exported. Helpers: `start_index()`, `end_index()`, `source()`,
 `extract_span(&text)`, plus the standard Unknown trio.
 
@@ -977,10 +1002,15 @@ a distinct `speaker` matching the prompt) for multi-speaker TTS:
 
 ```json
 {
-  "model": "gemini-2.5-pro-preview-tts",
-  "input": "Alice: Hi Bob!\nBob: Hey Alice!",
+  "model": "gemini-3.8-flash-tts",
+  "input": [
+    {"type": "text", "text": "Hi Bob!",
+     "annotations": [{"type": "speech_metadata", "speaker": "Alice"}]},
+    {"type": "text", "text": "Hey Alice!",
+     "annotations": [{"type": "speech_metadata", "speaker": "Bob"}]}
+  ],
+  "response_modalities": ["audio"],
   "generation_config": {
-    "response_modalities": ["audio"],
     "speech_config": [
       {"voice": "Kore", "language": "en-US", "speaker": "Alice"},
       {"voice": "Puck", "language": "en-US", "speaker": "Bob"}
@@ -989,11 +1019,16 @@ a distinct `speaker` matching the prompt) for multi-speaker TTS:
 }
 ```
 
+On `gemini-3.8-flash-tts` each text turn must name its speaker with a
+`speech_metadata` annotation (see [Annotation](#annotation-citation-union));
+2.5-pro and 3.1-flash TTS models take the `Alice: ...` transcript form instead
+and reject the annotation (verified live 2026-09-24).
+
 | Rust Field | Wire Name | Required | Notes |
 |------------|-----------|----------|-------|
 | `voice` | `voice` | No* | Voice name (e.g., "Kore", "Puck", "Charon") |
 | `language` | `language` | Yes** | Language code (e.g., "en-US", "es-ES") |
-| `speaker` | `speaker` | No | Must match a speaker name in the prompt for multi-speaker TTS |
+| `speaker` | `speaker` | No | Multi-speaker only: the name each turn's `speech_metadata` annotation (or transcript label) refers to |
 
 *Voice defaults to a system voice if not specified.
 **Language is required by the API when voice is specified.
@@ -1009,26 +1044,21 @@ shape (list vs. single object) is unobservable.
 
 **Verified**: 2026-01-10 (nested vs. flat voice fields, both sent as a list) - `test_speech_config_nested_format_fails_flat_succeeds` shows the nested form failing with `no such field: 'voiceConfig'`. Note that its "flat" case builds `Some(vec![SpeechConfig::…])`, which serializes as a one-element **list** — that test varies where the voice fields sit, not object-vs-list, and never sent a bare object.
 
-The **list** form was verified live 2026-07 (multi-speaker TTS) and re-probed 2026-08-16 as the only form the API accepts on requests; both object forms are rejected on send, and are accepted on **deserialize only**. See [speech_config wire forms](#speech_config-wire-forms) just below for the error and the full form table — kept in one place so a later verification stamp has a single site to update.
+The crate sends the **list** form. See [speech_config wire forms](#speech_config-wire-forms) just below for which object forms the API accepts — kept in one place so a later verification stamp has a single site to update.
 
 #### speech_config wire forms
 
 `google-genai` 2.18.x widened `generation_config.speech_config` from a plain
-list to `SpeakerConfig | List[SpeechConfig]`. **The Gemini API does not
-accept the object arm** (verified live 2026-08-16 against
-`gemini-2.5-pro-preview-tts`):
+list to `SpeakerConfig | List[SpeechConfig]`. What the API accepts on send
+changed between sweeps:
 
-```text
-400 The value is invalid for 'generation_config.speech_config'.
-    Expected an array, got object.
-```
+| Form | 2026-08-16 (`gemini-2.5-pro-preview-tts`) | 2026-09-24 (all TTS models) |
+|------|------|------|
+| `[{voice, language, speaker}, ...]` | accepted | accepted |
+| `{"speakers": [...]}` | `400 ... Expected an array, got object.` | accepted (server maps it to `structured_speech_config`) |
+| bare `{voice, language}` | `400 ... Expected an array, got object.` | `400 Unknown parameter 'voice' at 'generation_config.structured_speech_config'` |
 
-Both `{"speakers": [...]}` and the legacy `{voice, language, speaker}` single
-object are rejected on send — same class as `Tool::Retrieval` and
-`safety_settings`, where the generated bindings describe a broader surface
-than this endpoint implements.
-
-The crate therefore **always sends the list**, and accepts all three forms on
+The crate **always sends the list** (valid in both sweeps), and accepts all three forms on
 deserialize:
 
 | Wire | Normalized to |
@@ -1065,15 +1095,13 @@ specific MIME type:
 }
 ```
 
-| MIME Type | Format | Notes |
-|-----------|--------|-------|
-| `audio/L16;codec=pcm;rate=24000` | Raw PCM | 16-bit linear PCM at 24kHz |
+| MIME Type | Models | Format | `extension()` |
+|-----------|--------|--------|---------------|
+| `audio/wav` | `gemini-3.8-flash-tts`, `gemini-3.8-flash-lite-tts` | RIFF/WAV, 24 kHz mono s16; no `sample_rate`/`channels` fields | `wav` |
+| `audio/L16;codec=pcm;rate=24000` | `gemini-2.5-pro-preview-tts` | Raw 16-bit PCM | `pcm` |
+| `audio/l16; rate=24000; channels=1` | `gemini-3.1-flash-tts-preview` | Raw 16-bit PCM, with `sample_rate`/`channels` | `pcm` |
 
-The `AudioInfo::extension()` method maps this to `"pcm"` for file saving.
-Audio content blocks also carry optional `sample_rate` and `channels` fields
-since revision 2026-05-20.
-
-**Status**: MIME type verified 2026-01-07 pre-revision; steps envelope pending live verification (2026-05-20 revision).
+**Status**: all three verified live 2026-09-24 (steps envelope, revision 2026-05-20).
 
 ### UrlContextCall (step)
 
@@ -1318,13 +1346,26 @@ Union: a string environment ID, or a typed remote environment object.
   ],
   "network": {"allowlist": [
     {"domain": "*.googleapis.com"},
-    {"domain": "api.example.com", "transform": [{"Authorization": "Bearer ..."}]}
-  ]}
+    {"domain": "api.example.com", "transform": [{"Authorization": "Bearer ..."}]},
+    {"domain": "api.github.com", "credential": "github-token"}
+  ]},
+  "env": {
+    "PLAIN_VAR": {"value": "hello"},
+    "SECRET_VAR": {"credential": "my-env-credential"}
+  }
 }
 ```
 
 - `network` is a union: the string `"disabled"` (all network off), an
   `{"allowlist": [...]}` object, or omitted entirely (all traffic allowed).
+- `env` (`RemoteEnvironment::env`) and `AllowlistEntry::credential` reference
+  the `/v1beta/credentials` resource. Live 2026-09-24: both are validated
+  (unknown sibling keys rejected; an unknown credential ID is a 404) and
+  echoed, but **no runtime effect was observed** — the sandbox saw neither
+  variable, and no header reached the allowlisted host. The echo spells `env`
+  as a list of single-key maps (`[{"PLAIN_VAR": {...}}, ...]`); both forms
+  deserialize. The bindings' string arm of `env` is rejected
+  (`Invalid input at 'environment'`) and is preserved in `extra` if read.
 - The response echoes the server-assigned environment as `environment_id`,
   which can be passed back as the string form on later turns.
 
@@ -1469,14 +1510,21 @@ with the SDK-documented value sets:
 
 | Field | Documented values | Notes |
 |-------|-------------------|-------|
-| `diarization_mode` | `"speaker"` | Only supported value per SDK 2.17.0 spec |
-| `timestamp_granularities` | `"word"` | Only supported value per spec; empty list = no timestamps |
+| `diarization_mode` | `"speaker"` | Only supported value per SDK 2.17.0 spec. Deprecated in 2.25 in favor of `mode` |
+| `timestamp_granularities` | `"word"` | Only supported value per spec; empty list = no timestamps. Deprecated in 2.25 in favor of `mode` |
 | `language_codes` | BCP-47 codes | Empty/omitted = automatic language detection |
 
-**Status**: The config object itself was accepted live (200, 2026-08-08);
-the documented value sets are from the SDK spec and their output effects
-(`WordInfo` timing/speaker fields) are pending live verification with an
-audio input.
+`mode` (`TranscriptionMode`, 2.20+) is a union: the strings `"smart"` /
+`"verbatim"`, or `{"type": "smart"}` / `{"type": "verbatim",
+"diarization_mode"?, "timestamp_granularities"?}`. The crate sends the object
+form and reads both; unknown types land in `TranscriptionMode::Unknown
+{ mode_type, data }`. The bindings' `language_hints` (added already
+deprecated) is **not** modeled: the API returns `400 Unknown parameter
+'language_hints'` (2026-09-24).
+
+**Status**: every form above was accepted live with audio input and the enum
+is server-validated (`Invalid enum value 'zzz'`), 2026-09-24. No output
+difference (and no `word_info` annotation) was observed on general models.
 
 ## Testing New Enums
 

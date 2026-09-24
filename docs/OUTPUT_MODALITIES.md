@@ -24,7 +24,7 @@ Gemini models can generate different types of output content:
 |----------|--------|----------------|----------|
 | **Text** | Default | Any | Conversations, analysis |
 | **Image** | `with_image_output()` | `gemini-3.1-flash-image` | Image generation |
-| **Audio** | `with_audio_output()` | `gemini-2.5-pro-preview-tts` | Text-to-speech |
+| **Audio** | `with_audio_output()` | `DEFAULT_TTS_MODEL` (`gemini-3.8-flash-tts`) | Text-to-speech |
 | **Video** | `with_video_output()` | Video-capable model (e.g., Veo previews) | Video generation (background) |
 | **JSON** | `with_response_format()` | Any | Structured data extraction |
 
@@ -135,123 +135,129 @@ let response = client
     .create()
     .await?;
 
-// Save audio
+// `DEFAULT_TTS_MODEL` returns `audio/wav`, so the bytes are a playable file.
 if let Some(audio) = response.first_audio() {
-    let bytes = audio.bytes()?;
-    std::fs::write(format!("output.{}", audio.extension()), &bytes)?;
+    std::fs::write(format!("output.{}", audio.extension()), audio.bytes()?)?;
 }
 ```
 
-### Voice Selection
+Output format depends on the model (verified live 2026-09-24):
 
-Available voices include:
+| Model | `mime_type` | Notes |
+|-------|-------------|-------|
+| `gemini-3.8-flash-tts`, `gemini-3.8-flash-lite-tts` | `audio/wav` | RIFF container, 24 kHz mono; no `sample_rate`/`channels` metadata |
+| `gemini-2.5-pro-preview-tts`, `gemini-3.1-flash-tts-preview` | `audio/L16;...;rate=24000` | Raw PCM; `extension()` returns `pcm`, so wrap it in a WAV header yourself |
 
-| Voice | Character |
-|-------|-----------|
-| Aoede | Warm and friendly |
-| Charon | Deep and authoritative |
-| Fenrir | Clear and professional |
-| Kore | Bright and energetic |
-| Puck | Playful and expressive |
+### Voices
+
+`with_voice()` takes a voice ID. The catalog, with descriptions, is served by
+the Voices API (see [Custom voices](#custom-voices)):
 
 ```rust,ignore
-// Simple voice selection
-let response = client
-    .interaction()
-    .with_model(genai_rs::DEFAULT_TTS_MODEL)
-    .with_text("Welcome to our service")
-    .with_audio_output()
-    .with_voice("Puck")
-    .create()
-    .await?;
+let page = client.list_voices(&genai_rs::ListVoicesParams::new().with_page_size(10)).await?;
+for voice in &page.voices {
+    println!("{:?}: {:?}", voice.id, voice.description);
+}
 ```
+
+Prebuilt IDs are lowercase (`kore`, `puck`, locale voices like
+`ar-001-advisor-2`); the capitalized spellings are accepted too.
 
 ### Full Speech Configuration
 
 ```rust,ignore
 use genai_rs::SpeechConfig;
 
-// Using SpeechConfig struct
-let config = SpeechConfig {
-    voice: Some("Charon".to_string()),
-    language: Some("en-GB".to_string()),
-    speaker: None,  // For multi-speaker scenarios
-};
-
 let response = client
     .interaction()
     .with_model(genai_rs::DEFAULT_TTS_MODEL)
     .with_text("Good morning, everyone!")
     .with_audio_output()
-    .with_speech_config(config)
+    .with_speech_config(SpeechConfig::with_voice_and_language("Charon", "en-GB"))
     .create()
     .await?;
-```
-
-### SpeechConfig Convenience Methods
-
-```rust,ignore
-use genai_rs::SpeechConfig;
-
-// Voice only
-let config = SpeechConfig::with_voice("Kore");
-
-// Voice with language
-let config = SpeechConfig::with_voice_and_language("Charon", "en-GB");
 ```
 
 ### Audio Metadata
 
 ```rust,ignore
 for audio in response.audios() {
-    // MIME type (e.g., Some("audio/wav"))
-    let mime = audio.mime_type();
-
-    // File extension
-    let ext = audio.extension();  // "wav", "mp3", etc.
-
-    // Sample rate and channel count, if reported by the API
-    let rate = audio.sample_rate();  // e.g., Some(24000)
-    let channels = audio.channels(); // e.g., Some(1)
-
-    // Raw bytes
+    let mime = audio.mime_type();        // e.g. Some("audio/wav")
+    let ext = audio.extension();         // "wav", "pcm", "mp3", ...
+    let rate = audio.sample_rate();      // reported by the L16 models only
     let bytes = audio.bytes()?;
 }
 ```
 
 ## Multi-Speaker TTS
 
-On the wire, `generation_config.speech_config` is a **list** of speaker
-configurations. `with_speech_config()` sends a single-entry list; for
-multi-speaker dialogue, provide one entry per speaker whose `speaker` name
-matches the prompt:
+`generation_config.speech_config` is a list with one entry per speaker. On
+`DEFAULT_TTS_MODEL`, each text turn must name its speaker with a
+`speech_metadata` annotation — `Content::speaker_text()` builds one:
 
 ```rust,ignore
-use genai_rs::SpeechConfig;
+use genai_rs::{Content, InteractionInput, SpeechConfig};
 
 let response = client
     .interaction()
     .with_model(genai_rs::DEFAULT_TTS_MODEL)
-    .with_text("Alice: Hi Bob!\nBob: Hey Alice, lovely day!")
+    .with_input(InteractionInput::Content(vec![
+        Content::speaker_text("Alice", "Hi Bob!"),
+        Content::speaker_text("Bob", "Hey Alice, lovely day!"),
+    ]))
     .with_audio_output()
     .with_speech_configs(vec![
-        SpeechConfig {
-            voice: Some("Kore".to_string()),
-            language: Some("en-US".to_string()),
-            speaker: Some("Alice".to_string()),
-        },
-        SpeechConfig {
-            voice: Some("Puck".to_string()),
-            language: Some("en-US".to_string()),
-            speaker: Some("Bob".to_string()),
-        },
+        SpeechConfig::for_speaker("Alice", "Kore", "en-US"),
+        SpeechConfig::for_speaker("Bob", "Puck", "en-US"),
     ])
     .create()
     .await?;
 ```
 
+The API returns one combined audio stream. Rules observed live (2026-09-24):
+
+| Request | Result |
+|---------|--------|
+| `Alice: ...` / `Bob: ...` transcript text, no annotations | `400 Multi-speaker interactions must specify a speaker for each text turn` on 3.8 TTS models; accepted by 2.5-pro and 3.1-flash TTS |
+| Annotations on 2.5-pro or 3.1-flash TTS | `400 Speech annotations are not supported for model ...` |
+| A speaker not in `speech_config` | `400 ... must specify a speaker matching a speaker defined in speech_config` |
+| Spanned annotations (`start_index`/`end_index`) with a gap | `400 ... must cover the entire text string without gaps` |
+
+An annotation may also carry a `style` (e.g. `"whisper"`); for a single voice,
+leave `speaker` unset: `Annotation::speech_metadata(None, Some("whisper".into()))`.
+
 `add_speech_config()` accumulates entries one at a time;
 `with_speech_configs()` replaces the whole list.
+
+### Custom voices
+
+`/v1beta/voices` designs a voice from a text prompt and stores it; the returned
+ID works anywhere a prebuilt voice name does.
+
+```rust,ignore
+use genai_rs::CreateVoiceRequest;
+
+let voice = client
+    .create_voice(&CreateVoiceRequest::prompted("A calm, low-pitched narrator."))
+    .await?;
+let id = voice.id.clone().expect("stored voices have an id");
+
+let response = client
+    .interaction()
+    .with_model(genai_rs::DEFAULT_TTS_MODEL)
+    .with_text("Chapter one.")
+    .with_audio_output()
+    .with_voice(&id)
+    .create()
+    .await?;
+
+client.delete_voice(&id).await?;
+```
+
+Prompted voices must be stored (`store: true`, the default for
+`CreateVoiceRequest::prompted`) and expire after a year. A custom voice worked
+on the 3.8 and 2.5-pro TTS models; `gemini-3.1-flash-tts-preview` returned
+500.
 
 ## Video Generation
 

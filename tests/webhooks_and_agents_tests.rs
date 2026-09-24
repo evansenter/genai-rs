@@ -13,8 +13,9 @@ mod common;
 
 use common::{TINY_WAV_BASE64, get_client};
 use genai_rs::{
-    Agent, DeepResearchConfig, ResponseFormat, RetrievalConfig, SpeechConfig, Tool, Visualization,
-    Webhook, WebhookConfig, WebhookEvent, WebhookState, WebhookUpdate,
+    Agent, Content, DeepResearchConfig, InteractionInput, ResponseFormat, RetrievalConfig,
+    SpeechConfig, Tool, Visualization, Webhook, WebhookConfig, WebhookEvent, WebhookState,
+    WebhookUpdate,
 };
 
 /// A test webhook endpoint. Deliveries fail (no listener), which is fine for
@@ -353,43 +354,37 @@ async fn test_multi_speaker_tts_with_audio_response_format() {
         return;
     };
 
-    let result = client
+    // On gemini-3.8-flash-tts each turn names its speaker with a
+    // `speech_metadata` annotation; the older `Alice: ...` transcript form is
+    // rejected ("must specify a speaker for each text turn", 2026-09-24).
+    let response = client
         .interaction()
         .with_model(genai_rs::DEFAULT_TTS_MODEL)
-        .with_text("Alice: Hello Bob!\nBob: Hi Alice, lovely day!")
+        .with_input(InteractionInput::Content(vec![
+            Content::speaker_text("Alice", "Hello Bob!"),
+            Content::speaker_text("Bob", "Hi Alice, lovely day!"),
+        ]))
         .with_audio_output()
         .with_speech_configs(vec![
-            SpeechConfig {
-                voice: Some("Kore".to_string()),
-                language: Some("en-US".to_string()),
-                speaker: Some("Alice".to_string()),
-            },
-            SpeechConfig {
-                voice: Some("Puck".to_string()),
-                language: Some("en-US".to_string()),
-                speaker: Some("Bob".to_string()),
-            },
+            SpeechConfig::for_speaker("Alice", "Kore", "en-US"),
+            SpeechConfig::for_speaker("Bob", "Puck", "en-US"),
         ])
+        .with_response_format(ResponseFormat::Audio {
+            mime_type: None,
+            delivery: None,
+            sample_rate: Some(24_000),
+            bit_rate: None,
+        })
+        .with_store_disabled()
         .create()
-        .await;
+        .await
+        .expect("multi-speaker TTS request failed");
 
-    match result {
-        Ok(response) => {
-            // Verified live (2026-07): the list-form speech_config is
-            // accepted and the API returns one combined `audio/l16` stream
-            // covering both speakers (per-speaker audio is not split out).
-            let audio = response.first_audio().expect("expected audio output");
-            let bytes = audio.bytes().expect("audio data must be decodable");
-            assert!(!bytes.is_empty(), "decoded audio must be non-empty");
-            println!(
-                "Multi-speaker TTS: mime_type={:?}, sample_rate={:?}, {} bytes",
-                audio.mime_type(),
-                audio.sample_rate(),
-                bytes.len()
-            );
-        }
-        Err(e) => panic!("Multi-speaker TTS request rejected: {e}"),
-    }
+    // One combined stream covering both speakers.
+    let audio = response.first_audio().expect("expected audio output");
+    let bytes = audio.bytes().expect("audio data must be decodable");
+    assert!(bytes.starts_with(b"RIFF"), "expected a WAV container");
+    assert_eq!(audio.extension(), "wav");
 }
 
 // =============================================================================
@@ -482,12 +477,11 @@ async fn test_safety_settings_vertex_gated() {
 }
 
 /// `labels` was Vertex-only until at least 2026-08-08; as of 2026-09-24 the
-/// Gemini API accepts them and echoes them back. `InteractionResponse` does
-/// not model the echo yet, so it is read from the raw response body.
+/// Gemini API accepts them and echoes them back.
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_labels_accepted_and_echoed() {
-    let Some((client, body)) = common::get_inspecting_client() else {
+    let Some(client) = get_client() else {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
     };
@@ -504,10 +498,8 @@ async fn test_labels_accepted_and_echoed() {
     .expect("labels should be accepted (verified live 2026-09-24)");
 
     assert_eq!(response.status, genai_rs::InteractionStatus::Completed);
-    assert_eq!(
-        body.take()["labels"],
-        serde_json::json!({"team": "genai-rs-ci"})
-    );
+    let labels = response.labels.expect("labels were not echoed");
+    assert_eq!(labels.get("team").map(String::as_str), Some("genai-rs-ci"));
 }
 
 #[tokio::test]

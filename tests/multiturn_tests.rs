@@ -8,8 +8,8 @@
 mod common;
 
 use common::{
-    assert_response_semantic, extended_test_timeout, get_client, get_inspecting_client,
-    interaction_builder, stateful_builder, with_timeout,
+    assert_response_semantic, extended_test_timeout, get_client, interaction_builder,
+    stateful_builder, with_timeout,
 };
 use genai_rs::{FunctionCallingMode, FunctionDeclaration, InteractionStatus, Step};
 use serde_json::json;
@@ -254,8 +254,7 @@ async fn test_conversation_branch() {
 /// un-resent turn, because that behaviour is not a clean signal: the model's
 /// replayed thoughts from turn 1 can restate the instruction, so it often
 /// still follows it (4 of 6 runs for a conditional rule, verified live
-/// 2026-09-24). `InteractionResponse` does not expose `system_instruction`,
-/// so the stored record is read from the raw GET body.
+/// 2026-09-24). The stored record is read back with a GET.
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_system_instruction_not_inherited() {
@@ -263,15 +262,14 @@ async fn test_system_instruction_not_inherited() {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
     };
-    let (inspecting, bodies) = get_inspecting_client().expect("key checked above");
     let stored_instruction = |id: String| {
-        let (inspecting, bodies) = (&inspecting, &bodies);
+        let client = &client;
         async move {
-            inspecting
+            client
                 .get_interaction(&id)
                 .await
-                .expect("get_interaction");
-            bodies.take().get("system_instruction").cloned()
+                .expect("get_interaction")
+                .system_instruction
         }
     };
 
@@ -299,8 +297,8 @@ async fn test_system_instruction_not_inherited() {
     let turn2_id = turn2.id.expect("turn 2 id");
 
     assert_eq!(
-        stored_instruction(turn1_id).await,
-        Some(json!(RULE)),
+        stored_instruction(turn1_id).await.as_deref(),
+        Some(RULE),
         "turn 1 should record the instruction it sent"
     );
     assert_eq!(

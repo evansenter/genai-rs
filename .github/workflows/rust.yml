@@ -154,11 +154,11 @@ jobs:
           - group: core
             tests: "interactions_api_tests multiturn_tests streaming_multiturn_tests streaming_resume_tests error_handling_tests"
           - group: tools
-            tests: "tools_and_config_tests webhooks_and_agents_tests"
+            tests: "tools_and_config_tests webhooks_and_agents_tests credentials_tests environment_files_tests"
           - group: functions
             tests: "function_calling_tests tool_service_tests"
           - group: multimodal
-            tests: "multimodal_tests api_canary_tests temp_file_tests"
+            tests: "multimodal_tests api_canary_tests temp_file_tests processing_steps_tests voices_tests binding_parity_tests"
           - group: files-and-wire
             tests: "files_api_tests file_search_stores_tests"
     steps:

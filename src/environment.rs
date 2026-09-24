@@ -14,7 +14,7 @@
 //! a typed remote environment object, modeled here as [`EnvironmentSpec`].
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// The type of a source mounted into an environment.
 ///
@@ -230,6 +230,11 @@ pub struct AllowlistEntry {
     /// Headers to inject on outbound requests matching this domain.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transform: Option<Vec<HashMap<String, String>>>,
+    /// ID of a [`Credential`](crate::Credential) to inject on requests to
+    /// this domain. Accepted and echoed (an unknown ID is a 404), but no
+    /// injected header was observed at runtime (2026-09-24).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
     /// Additional fields not yet modeled (Evergreen forward compatibility)
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
@@ -250,6 +255,53 @@ impl AllowlistEntry {
     pub fn with_transform(mut self, transform: Vec<HashMap<String, String>>) -> Self {
         self.transform = Some(transform);
         self
+    }
+
+    /// References a stored credential to inject on requests to this domain.
+    #[must_use]
+    pub fn with_credential(mut self, credential_id: impl Into<String>) -> Self {
+        self.credential = Some(credential_id.into());
+        self
+    }
+}
+
+/// An environment variable set in a remote environment's sandbox: a plain
+/// value, or a reference to a stored [`Credential`](crate::Credential).
+///
+/// Accepted and echoed by the API, but the variable was not visible in an
+/// antigravity sandbox when probed (2026-09-24).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct EnvVar {
+    /// A plain value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    /// ID of a stored credential supplying the value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
+    /// Additional fields not yet modeled (Evergreen forward compatibility)
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl EnvVar {
+    /// A plain value.
+    #[must_use]
+    pub fn value(value: impl Into<String>) -> Self {
+        Self {
+            value: Some(value.into()),
+            ..Default::default()
+        }
+    }
+
+    /// A value supplied by a stored credential.
+    #[must_use]
+    pub fn credential(credential_id: impl Into<String>) -> Self {
+        Self {
+            credential: Some(credential_id.into()),
+            ..Default::default()
+        }
     }
 }
 
@@ -416,6 +468,8 @@ pub struct RemoteEnvironment {
     pub sources: Vec<EnvironmentSource>,
     /// Outbound network configuration. `None` allows all outbound traffic.
     pub network: Option<NetworkConfig>,
+    /// Environment variables for the sandbox (wire `env`, sent as a map).
+    pub env: BTreeMap<String, EnvVar>,
     /// Additional fields not yet modeled (Evergreen forward compatibility)
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -440,6 +494,34 @@ impl RemoteEnvironment {
         self.network = Some(network);
         self
     }
+
+    /// Adds an environment variable, replacing one of the same name.
+    #[must_use]
+    pub fn add_env_var(mut self, name: impl Into<String>, var: EnvVar) -> Self {
+        self.env.insert(name.into(), var);
+        self
+    }
+}
+
+/// Reads `env` in the request's map form or the list of single-key maps the
+/// API echoes back (`[{"NAME": {...}}, ...]`, observed 2026-09-24). Returns
+/// `None` for any other shape so the caller can preserve it verbatim.
+fn env_from_wire(value: &serde_json::Value) -> Option<BTreeMap<String, EnvVar>> {
+    let entries: Vec<(&String, &serde_json::Value)> = match value {
+        serde_json::Value::Object(map) => map.iter().collect(),
+        serde_json::Value::Array(items) => {
+            let mut out = Vec::new();
+            for item in items {
+                out.extend(item.as_object()?.iter());
+            }
+            out
+        }
+        _ => return None,
+    };
+    entries
+        .into_iter()
+        .map(|(k, v)| Some((k.clone(), serde_json::from_value(v.clone()).ok()?)))
+        .collect()
 }
 
 impl Serialize for RemoteEnvironment {
@@ -455,6 +537,9 @@ impl Serialize for RemoteEnvironment {
         }
         if let Some(network) = &self.network {
             map.serialize_entry("network", network)?;
+        }
+        if !self.env.is_empty() {
+            map.serialize_entry("env", &self.env)?;
         }
         for (key, value) in &self.extra {
             map.serialize_entry(key, value)?;
@@ -474,6 +559,8 @@ impl<'de> Deserialize<'de> for RemoteEnvironment {
             sources: Vec<EnvironmentSource>,
             #[serde(default)]
             network: Option<NetworkConfig>,
+            #[serde(default)]
+            env: Option<serde_json::Value>,
             /// Unknown fields, preserved for Evergreen roundtrip.
             #[serde(flatten)]
             extra: serde_json::Map<String, serde_json::Value>,
@@ -482,9 +569,19 @@ impl<'de> Deserialize<'de> for RemoteEnvironment {
         // The `type` discriminant is re-emitted by `Serialize`; keeping it in
         // `extra` would duplicate the key on roundtrip.
         raw.extra.remove("type");
+        let mut env = BTreeMap::new();
+        if let Some(value) = raw.env {
+            match env_from_wire(&value) {
+                Some(parsed) => env = parsed,
+                None => {
+                    raw.extra.insert("env".into(), value);
+                }
+            }
+        }
         Ok(Self {
             sources: raw.sources,
             network: raw.network,
+            env,
             extra: raw.extra,
         })
     }
@@ -856,5 +953,65 @@ mod tests {
         assert!(!spec.is_unknown());
         assert_eq!(spec.unknown_environment_type(), None);
         assert_eq!(spec.unknown_data(), None);
+    }
+
+    // --- env vars and credential references (google-genai 2.24+) ---
+
+    #[test]
+    fn env_vars_serialize_as_a_map() {
+        let env = RemoteEnvironment::new()
+            .add_env_var("PLAIN_VAR", EnvVar::value("hello"))
+            .add_env_var("SECRET_VAR", EnvVar::credential("cred-1"));
+        assert_eq!(
+            serde_json::to_value(&env).unwrap(),
+            serde_json::json!({
+                "type": "remote",
+                "env": {
+                    "PLAIN_VAR": {"value": "hello"},
+                    "SECRET_VAR": {"credential": "cred-1"}
+                }
+            })
+        );
+    }
+
+    /// The API echoes `env` as a list of single-key maps, not the map it
+    /// accepts (live 2026-09-24).
+    #[test]
+    fn env_vars_deserialize_the_echoed_list_form() {
+        let echoed: RemoteEnvironment = serde_json::from_value(serde_json::json!({
+            "type": "remote",
+            "env": [
+                {"PLAIN_VAR": {"value": "hello123"}},
+                {"SECRET_VAR": {"credential": "sweep-env-1"}}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(echoed.env["PLAIN_VAR"], EnvVar::value("hello123"));
+        assert_eq!(echoed.env["SECRET_VAR"], EnvVar::credential("sweep-env-1"));
+        assert!(echoed.extra.is_empty());
+
+        let as_map: RemoteEnvironment = serde_json::from_value(serde_json::json!({
+            "type": "remote",
+            "env": {"PLAIN_VAR": {"value": "hello123"}}
+        }))
+        .unwrap();
+        assert_eq!(as_map.env.len(), 1);
+    }
+
+    #[test]
+    fn unrecognized_env_shape_is_preserved_in_extra() {
+        let wire = serde_json::json!({"type": "remote", "env": "FOO=bar"});
+        let env: RemoteEnvironment = serde_json::from_value(wire.clone()).unwrap();
+        assert!(env.env.is_empty());
+        assert_eq!(serde_json::to_value(&env).unwrap(), wire);
+    }
+
+    #[test]
+    fn allowlist_entry_credential_roundtrips() {
+        let entry = AllowlistEntry::new("httpbin.org").with_credential("bearer-1");
+        let wire = serde_json::json!({"domain": "httpbin.org", "credential": "bearer-1"});
+        assert_eq!(serde_json::to_value(&entry).unwrap(), wire);
+        let back: AllowlistEntry = serde_json::from_value(wire).unwrap();
+        assert_eq!(back, entry);
     }
 }

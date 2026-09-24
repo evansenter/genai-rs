@@ -6,6 +6,8 @@
 pub(crate) mod agents;
 pub(crate) mod common;
 pub(crate) mod context;
+pub(crate) mod credentials;
+pub(crate) mod environment_files;
 pub(crate) mod environments;
 pub(crate) mod error_helpers;
 pub(crate) mod file_search_stores;
@@ -13,4 +15,5 @@ pub(crate) mod files;
 pub(crate) mod interactions;
 pub(crate) mod sse_parser;
 pub(crate) mod triggers;
+pub(crate) mod voices;
 pub(crate) mod webhooks;

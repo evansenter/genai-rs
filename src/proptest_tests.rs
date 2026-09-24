@@ -624,7 +624,8 @@ fn arb_known_content() -> impl Strategy<Value = Content> {
                     uri,
                     mime_type,
                     resolution,
-                    processing
+                    processing,
+                    name: None,
                 }
             ),
         // Document content
@@ -1003,7 +1004,7 @@ fn arb_step_delta() -> impl Strategy<Value = StepDelta> {
         )
             .prop_map(
                 |(call_id, name, result, is_error)| StepDelta::FunctionResult {
-                    call_id,
+                    call_id: Some(call_id),
                     name,
                     result,
                     is_error,
@@ -1217,6 +1218,7 @@ fn arb_transcription_config() -> impl Strategy<Value = TranscriptionConfig> {
                 diarization_mode,
                 language_codes,
                 timestamp_granularities,
+                mode: None,
             },
         )
 }
@@ -1409,6 +1411,7 @@ fn arb_usage_metadata() -> impl Strategy<Value = UsageMetadata> {
                     cached_tokens_by_modality,
                     tool_use_tokens_by_modality,
                     grounding_tool_count,
+                    ..Default::default()
                 }
             },
         )
@@ -1645,6 +1648,7 @@ fn arb_rag_retrieval_config() -> impl Strategy<Value = RagRetrievalConfig> {
             proptest::option::of(arb_identifier()).prop_map(|model_name| RagRanking {
                 ranking_config: "rank_service".to_string(),
                 model_name,
+                rank_service: None,
             }),
         ),
     )
@@ -1937,6 +1941,7 @@ fn arb_response_format() -> impl Strategy<Value = ResponseFormat> {
                     gcs_uri,
                     aspect_ratio,
                     duration,
+                    resolution: None,
                 }
             }),
     ]
@@ -2019,6 +2024,7 @@ fn arb_interaction_response() -> impl Strategy<Value = InteractionResponse> {
                 output_text,
                 created,
                 updated,
+                ..Default::default()
             }
         },
     )

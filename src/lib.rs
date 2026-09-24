@@ -59,6 +59,7 @@ pub(crate) mod http;
 pub(crate) mod serde_util;
 #[cfg(test)]
 pub(crate) mod test_subscriber;
+pub(crate) mod wire_enum;
 
 // =============================================================================
 // Model defaults
@@ -92,7 +93,11 @@ pub const MINIMAL_THINKING_MODEL: &str = "gemini-3.6-flash";
 pub const DEFAULT_IMAGE_MODEL: &str = "gemini-3.1-flash-image";
 
 /// The model to use for text-to-speech.
-pub const DEFAULT_TTS_MODEL: &str = "gemini-2.5-pro-preview-tts";
+///
+/// Returns `audio/wav` (a RIFF container, playable as-is) rather than raw
+/// L16 PCM. Multi-speaker requests need a speaker annotation on each text
+/// turn; see [`Content::speaker_text`].
+pub const DEFAULT_TTS_MODEL: &str = "gemini-3.8-flash-tts";
 
 /// The Deep Research agent id, for [`with_agent`](InteractionBuilder::with_agent).
 ///
@@ -132,18 +137,18 @@ pub mod request;
 pub use request::{
     AgentConfig, AntigravityConfig, DeepResearchConfig, DynamicConfig, GenerationConfig,
     ImageAspectRatio, ImageConfig, ImageSize, InteractionInput, InteractionRequest, Role,
-    ServiceTier, SpeechConfig, ThinkingLevel, ThinkingSummaries, TranscriptionConfig, TurnContent,
-    VideoConfig, VideoTask, Visualization,
+    ServiceTier, SpeechConfig, ThinkingLevel, ThinkingSummaries, TranscriptionConfig,
+    TranscriptionMode, TurnContent, VideoConfig, VideoTask, Visualization,
 };
 
 // Typed response_format union (text/audio/image/video + list form)
 pub mod response_format;
-pub use response_format::{ResponseDelivery, ResponseFormat, ResponseFormatSpec};
+pub use response_format::{ResponseDelivery, ResponseFormat, ResponseFormatSpec, VideoResolution};
 
 // Environment types (environment request field, agent base_environment)
 pub mod environment;
 pub use environment::{
-    AllowlistEntry, EnvironmentSource, EnvironmentSpec, NetworkConfig, RemoteEnvironment,
+    AllowlistEntry, EnvVar, EnvironmentSource, EnvironmentSpec, NetworkConfig, RemoteEnvironment,
     SourceType,
 };
 
@@ -177,6 +182,23 @@ pub mod agents;
 pub use agents::{Agent, AgentListResponse};
 
 // Webhooks resource (/v1beta/webhooks) and per-request webhook_config
+pub mod environment_files;
+pub use environment_files::{
+    EnvironmentFile, EnvironmentFileList, EnvironmentFileType, EnvironmentFileUpload,
+};
+
+pub mod credentials;
+pub use credentials::{
+    CreateCredentialRequest, Credential, CredentialConfig, CredentialListResponse,
+    CredentialStatus, CredentialType, CredentialUpdate, InjectionLocation,
+};
+
+pub mod voices;
+pub use voices::{
+    CreateVoiceRequest, ListVoicesParams, PromptedVoice, ReplicatedVoice, Voice, VoiceAudio,
+    VoiceListResponse, VoicePitch, VoiceSpec, VoiceType,
+};
+
 pub mod webhooks;
 pub use webhooks::{
     RevocationBehavior, RotateSigningSecretResponse, SigningSecret, Webhook, WebhookConfig,
@@ -198,8 +220,8 @@ pub use tools::{
     AllowedTools, ComputerUseConfig, ExaAiSearchConfig, FileSearchConfig, FunctionCallingMode,
     FunctionDeclaration, FunctionDeclarationBuilder, FunctionParameters, GoogleMapsConfig,
     GoogleSearchConfig, HybridSearchConfig, McpServerConfig, ParallelAiSearchConfig, RagFilter,
-    RagRanking, RagResource, RagRetrievalConfig, RagStoreConfig, RetrievalConfig, RetrievalType,
-    SearchType, Tool, ToolChoice, VertexAiSearchConfig,
+    RagRanking, RagResource, RagRetrievalConfig, RagStoreConfig, RankService, RetrievalConfig,
+    RetrievalType, SearchType, Tool, ToolChoice, VertexAiSearchConfig,
 };
 
 // Wire streaming types (from API)

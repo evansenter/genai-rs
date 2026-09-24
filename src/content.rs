@@ -109,6 +109,40 @@ pub enum Annotation {
         /// End of the cited span (UTF-8 byte offset, exclusive).
         end_index: usize,
     },
+    /// Speaker and style for a span of TTS input text
+    /// (`type: "speech_metadata"`).
+    ///
+    /// Multi-speaker synthesis on `gemini-3.8-flash-tts` requires one per
+    /// text turn, naming a speaker from `speech_config`; the older
+    /// `Name: line` transcript form is rejected there. Older TTS models
+    /// reject these annotations outright (verified live 2026-09-24). Omit the
+    /// indices to cover the whole text block; with indices, the spans must
+    /// tile the text without gaps. See [`Content::speaker_text`].
+    SpeechMetadata {
+        /// Speaker name, matching a `speaker` in `speech_config`.
+        speaker: Option<String>,
+        /// Delivery instruction, e.g. `"whisper"`.
+        style: Option<String>,
+        /// Start of the span (UTF-8 byte offset, inclusive).
+        start_index: Option<usize>,
+        /// End of the span (UTF-8 byte offset, exclusive).
+        end_index: Option<usize>,
+    },
+    /// Per-word transcription detail (`type: "word_info"`).
+    WordInfo {
+        /// The word.
+        text: Option<String>,
+        /// Diarized speaker label.
+        speaker: Option<String>,
+        /// Start time within the audio, as a duration string (e.g. `"1.2s"`).
+        start_offset: Option<String>,
+        /// End time within the audio, as a duration string.
+        end_offset: Option<String>,
+        /// Start of the span (UTF-8 byte offset, inclusive).
+        start_index: Option<usize>,
+        /// End of the span (UTF-8 byte offset, exclusive).
+        end_index: Option<usize>,
+    },
     /// Unknown annotation type for forward compatibility.
     Unknown {
         /// The unrecognized type name from the API.
@@ -132,6 +166,26 @@ impl Annotation {
             title,
             start_index,
             end_index,
+        }
+    }
+
+    /// Creates a `speech_metadata` annotation covering a whole text block.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use genai_rs::Annotation;
+    ///
+    /// let whisper = Annotation::speech_metadata(None, Some("whisper".into()));
+    /// assert_eq!(whisper.start_index(), None);
+    /// ```
+    #[must_use]
+    pub const fn speech_metadata(speaker: Option<String>, style: Option<String>) -> Self {
+        Self::SpeechMetadata {
+            speaker,
+            style,
+            start_index: None,
+            end_index: None,
         }
     }
 
@@ -171,6 +225,9 @@ impl Annotation {
             Self::UrlCitation { start_index, .. }
             | Self::FileCitation { start_index, .. }
             | Self::PlaceCitation { start_index, .. } => Some(*start_index),
+            Self::SpeechMetadata { start_index, .. } | Self::WordInfo { start_index, .. } => {
+                *start_index
+            }
             Self::Unknown { data, .. } => data
                 .get("start_index")
                 .and_then(|v| v.as_u64())
@@ -185,6 +242,7 @@ impl Annotation {
             Self::UrlCitation { end_index, .. }
             | Self::FileCitation { end_index, .. }
             | Self::PlaceCitation { end_index, .. } => Some(*end_index),
+            Self::SpeechMetadata { end_index, .. } | Self::WordInfo { end_index, .. } => *end_index,
             Self::Unknown { data, .. } => data
                 .get("end_index")
                 .and_then(|v| v.as_u64())
@@ -207,7 +265,7 @@ impl Annotation {
                 ..
             } => document_uri.as_deref().or(file_name.as_deref()),
             Self::PlaceCitation { url, place_id, .. } => url.as_deref().or(place_id.as_deref()),
-            Self::Unknown { .. } => None,
+            Self::SpeechMetadata { .. } | Self::WordInfo { .. } | Self::Unknown { .. } => None,
         }
     }
 
@@ -317,6 +375,54 @@ impl Serialize for Annotation {
                 map.serialize_entry("start_index", start_index)?;
                 map.serialize_entry("end_index", end_index)?;
             }
+            Self::SpeechMetadata {
+                speaker,
+                style,
+                start_index,
+                end_index,
+            } => {
+                map.serialize_entry("type", "speech_metadata")?;
+                if let Some(s) = speaker {
+                    map.serialize_entry("speaker", s)?;
+                }
+                if let Some(s) = style {
+                    map.serialize_entry("style", s)?;
+                }
+                if let Some(i) = start_index {
+                    map.serialize_entry("start_index", i)?;
+                }
+                if let Some(i) = end_index {
+                    map.serialize_entry("end_index", i)?;
+                }
+            }
+            Self::WordInfo {
+                text,
+                speaker,
+                start_offset,
+                end_offset,
+                start_index,
+                end_index,
+            } => {
+                map.serialize_entry("type", "word_info")?;
+                if let Some(t) = text {
+                    map.serialize_entry("text", t)?;
+                }
+                if let Some(s) = speaker {
+                    map.serialize_entry("speaker", s)?;
+                }
+                if let Some(o) = start_offset {
+                    map.serialize_entry("start_offset", o)?;
+                }
+                if let Some(o) = end_offset {
+                    map.serialize_entry("end_offset", o)?;
+                }
+                if let Some(i) = start_index {
+                    map.serialize_entry("start_index", i)?;
+                }
+                if let Some(i) = end_index {
+                    map.serialize_entry("end_index", i)?;
+                }
+            }
             Self::Unknown {
                 annotation_type,
                 data,
@@ -394,6 +500,30 @@ impl<'de> Deserialize<'de> for Annotation {
                 #[serde(default)]
                 end_index: usize,
             },
+            SpeechMetadata {
+                #[serde(default)]
+                speaker: Option<String>,
+                #[serde(default)]
+                style: Option<String>,
+                #[serde(default)]
+                start_index: Option<usize>,
+                #[serde(default)]
+                end_index: Option<usize>,
+            },
+            WordInfo {
+                #[serde(default)]
+                text: Option<String>,
+                #[serde(default)]
+                speaker: Option<String>,
+                #[serde(default)]
+                start_offset: Option<String>,
+                #[serde(default)]
+                end_offset: Option<String>,
+                #[serde(default)]
+                start_index: Option<usize>,
+                #[serde(default)]
+                end_index: Option<usize>,
+            },
         }
 
         match serde_json::from_value::<KnownAnnotation>(value.clone()) {
@@ -440,6 +570,32 @@ impl<'de> Deserialize<'de> for Annotation {
                     name,
                     url,
                     review_snippets,
+                    start_index,
+                    end_index,
+                },
+                KnownAnnotation::SpeechMetadata {
+                    speaker,
+                    style,
+                    start_index,
+                    end_index,
+                } => Annotation::SpeechMetadata {
+                    speaker,
+                    style,
+                    start_index,
+                    end_index,
+                },
+                KnownAnnotation::WordInfo {
+                    text,
+                    speaker,
+                    start_offset,
+                    end_offset,
+                    start_index,
+                    end_index,
+                } => Annotation::WordInfo {
+                    text,
+                    speaker,
+                    start_offset,
+                    end_offset,
                     start_index,
                     end_index,
                 },
@@ -1440,6 +1596,9 @@ pub enum Content {
         /// agentic processing. Has a large effect on token cost — see
         /// [`VideoProcessing`].
         processing: Option<VideoProcessing>,
+        /// Optional label for the video. Accepted on input (verified live
+        /// 2026-09-24); no effect on the output was observed.
+        name: Option<String>,
     },
     /// Document content for file-based inputs.
     ///
@@ -1551,6 +1710,7 @@ impl Serialize for Content {
                 mime_type,
                 resolution,
                 processing,
+                name,
             } => {
                 let mut map = serializer.serialize_map(None)?;
                 map.serialize_entry("type", "video")?;
@@ -1568,6 +1728,9 @@ impl Serialize for Content {
                 }
                 if let Some(p) = processing {
                     map.serialize_entry("processing", p)?;
+                }
+                if let Some(n) = name {
+                    map.serialize_entry("name", n)?;
                 }
                 map.end()
             }
@@ -1728,6 +1891,35 @@ impl Content {
         }
     }
 
+    /// Creates text spoken by one speaker of a multi-speaker TTS request.
+    ///
+    /// The text carries an [`Annotation::SpeechMetadata`] naming `speaker`,
+    /// which must match a `speaker` in the request's speech configs. Required
+    /// for multi-speaker synthesis on `gemini-3.8-flash-tts`; older TTS models
+    /// reject the annotation.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use genai_rs::Content;
+    ///
+    /// let turns = vec![
+    ///     Content::speaker_text("Alice", "Hello Bob!"),
+    ///     Content::speaker_text("Bob", "Hi Alice."),
+    /// ];
+    /// assert_eq!(turns[0].as_text(), Some("Hello Bob!"));
+    /// ```
+    #[must_use]
+    pub fn speaker_text(speaker: impl Into<String>, text: impl Into<String>) -> Self {
+        Self::Text {
+            text: Some(text.into()),
+            annotations: Some(vec![Annotation::speech_metadata(
+                Some(speaker.into()),
+                None,
+            )]),
+        }
+    }
+
     /// Creates image content from base64-encoded data.
     ///
     /// # Example
@@ -1826,6 +2018,7 @@ impl Content {
             mime_type: Some(mime_type.into()),
             resolution: None,
             processing: None,
+            name: None,
         }
     }
 
@@ -1846,6 +2039,7 @@ impl Content {
             mime_type: Some(mime_type.into()),
             resolution: None,
             processing: None,
+            name: None,
         }
     }
 
@@ -1944,6 +2138,7 @@ impl Content {
                 mime_type: Some(mime_str),
                 resolution: None,
                 processing: None,
+                name: None,
             }
         } else {
             // Default to document for PDFs, text files, and other types
@@ -2028,6 +2223,7 @@ impl Content {
                 uri,
                 mime_type,
                 processing,
+                name,
                 ..
             } => Self::Video {
                 data,
@@ -2035,6 +2231,7 @@ impl Content {
                 mime_type,
                 resolution: Some(resolution),
                 processing,
+                name,
             },
             other => {
                 tracing::warn!(
@@ -2076,6 +2273,7 @@ impl Content {
                 uri,
                 mime_type,
                 resolution,
+                name,
                 ..
             } => Self::Video {
                 data,
@@ -2083,12 +2281,40 @@ impl Content {
                 mime_type,
                 resolution,
                 processing: Some(processing),
+                name,
             },
             other => {
                 tracing::warn!(
                     "with_processing() called on content type that doesn't support processing. \
                      Processing is only applicable to Video content."
                 );
+                other
+            }
+        }
+    }
+
+    /// Sets a label on video content; other content is returned unchanged
+    /// with a warning. Accepted by the API (verified live 2026-09-24).
+    #[must_use]
+    pub fn with_video_name(self, name: impl Into<String>) -> Self {
+        match self {
+            Self::Video {
+                data,
+                uri,
+                mime_type,
+                resolution,
+                processing,
+                ..
+            } => Self::Video {
+                data,
+                uri,
+                mime_type,
+                resolution,
+                processing,
+                name: Some(name.into()),
+            },
+            other => {
+                tracing::warn!("with_video_name() called on non-video content; ignoring.");
                 other
             }
         }
@@ -2142,6 +2368,8 @@ impl<'de> Deserialize<'de> for Content {
                 resolution: Option<Resolution>,
                 #[serde(default)]
                 processing: Option<VideoProcessing>,
+                #[serde(default)]
+                name: Option<String>,
             },
             Document {
                 data: Option<String>,
@@ -2184,12 +2412,14 @@ impl<'de> Deserialize<'de> for Content {
                     mime_type,
                     resolution,
                     processing,
+                    name,
                 } => Content::Video {
                     data,
                     uri,
                     mime_type,
                     resolution,
                     processing,
+                    name,
                 },
                 KnownContent::Document {
                     data,
@@ -2239,5 +2469,84 @@ impl<'de> Deserialize<'de> for Content {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod binding_2_25_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// The per-content form accepted live by `gemini-3.8-flash-tts`
+    /// (2026-09-24): no indices, one annotation per text block.
+    #[test]
+    fn speaker_text_serializes_the_accepted_multi_speaker_shape() {
+        assert_eq!(
+            serde_json::to_value(Content::speaker_text("Alice", "Hello Bob!")).unwrap(),
+            json!({
+                "type": "text",
+                "text": "Hello Bob!",
+                "annotations": [{"type": "speech_metadata", "speaker": "Alice"}]
+            })
+        );
+    }
+
+    #[test]
+    fn speech_metadata_roundtrips_with_and_without_indices() {
+        for wire in [
+            json!({"type": "speech_metadata", "speaker": "Bob", "style": "whisper",
+                   "start_index": 11, "end_index": 37}),
+            json!({"type": "speech_metadata", "style": "excited"}),
+        ] {
+            let annotation: Annotation = serde_json::from_value(wire.clone()).unwrap();
+            assert!(matches!(annotation, Annotation::SpeechMetadata { .. }));
+            assert_eq!(serde_json::to_value(&annotation).unwrap(), wire);
+        }
+        let spanned: Annotation = serde_json::from_value(
+            json!({"type": "speech_metadata", "start_index": 0, "end_index": 5}),
+        )
+        .unwrap();
+        assert_eq!(spanned.extract_span("Hello there"), Some("Hello"));
+        assert_eq!(spanned.source(), None);
+    }
+
+    #[test]
+    fn word_info_roundtrips_the_binding_shape() {
+        let wire = json!({
+            "type": "word_info",
+            "text": "Hello",
+            "speaker": "1",
+            "start_offset": "0.1s",
+            "end_offset": "0.4s",
+            "start_index": 0,
+            "end_index": 5
+        });
+        let annotation: Annotation = serde_json::from_value(wire.clone()).unwrap();
+        match &annotation {
+            Annotation::WordInfo {
+                text, start_offset, ..
+            } => {
+                assert_eq!(text.as_deref(), Some("Hello"));
+                assert_eq!(start_offset.as_deref(), Some("0.1s"));
+            }
+            other => panic!("expected WordInfo, got {other:?}"),
+        }
+        assert_eq!(annotation.end_index(), Some(5));
+        assert_eq!(serde_json::to_value(&annotation).unwrap(), wire);
+    }
+
+    #[test]
+    fn video_name_roundtrips() {
+        let wire = json!({"type": "video", "uri": "files/abc", "mime_type": "video/mp4", "name": "clip.mp4"});
+        let content: Content = serde_json::from_value(wire.clone()).unwrap();
+        assert!(matches!(&content, Content::Video { name: Some(n), .. } if n == "clip.mp4"));
+        assert_eq!(serde_json::to_value(&content).unwrap(), wire);
+        // Builders preserve it.
+        let content = content.with_resolution(Resolution::Low);
+        assert!(matches!(&content, Content::Video { name: Some(_), .. }));
+        let named = Content::video_uri("files/x", "video/mp4").with_video_name("n");
+        assert!(matches!(&named, Content::Video { name: Some(n), .. } if n == "n"));
+        let text = Content::text("hi").with_video_name("n");
+        assert_eq!(text.as_text(), Some("hi"));
     }
 }

@@ -440,6 +440,50 @@ pub enum Step {
         /// Opaque signature; pass through unchanged.
         signature: Option<String>,
     },
+    /// Server-initiated media processing call (`type: "processing_call"`).
+    ///
+    /// Emitted before the model answers when video uses
+    /// [`VideoProcessing::Agentic`](crate::VideoProcessing::Agentic)
+    /// (verified live 2026-09-24, `gemini-3.8-flash`). The signature is large
+    /// (~36KB) and **required** for stateless replay: omitting it yields
+    /// `400 Processing call step is missing signature`.
+    ProcessingCall {
+        /// Unique ID for this call.
+        id: String,
+        /// Opaque signature; pass through unchanged.
+        signature: Option<String>,
+    },
+    /// Result of a [`Step::ProcessingCall`] (`type: "processing_result"`).
+    ProcessingResult {
+        /// The `id` of the corresponding call.
+        call_id: String,
+        /// Opaque signature; pass through unchanged.
+        signature: Option<String>,
+    },
+    /// Retrieval tool call (`type: "retrieval_call"`).
+    ///
+    /// Produced by [`Tool::Retrieval`](crate::Tool::Retrieval), which the
+    /// Gemini API rejects as Vertex-only; modeled for spec parity.
+    RetrievalCall {
+        /// Unique ID for this call.
+        id: String,
+        /// Retrieval queries (wire: nested under `arguments.queries`).
+        queries: Vec<String>,
+        /// Which retrieval backend handled the call.
+        retrieval_type: Option<crate::tools::RetrievalType>,
+        /// Opaque signature; pass through unchanged.
+        signature: Option<String>,
+    },
+    /// Retrieval tool result (`type: "retrieval_result"`); Vertex-only, see
+    /// [`Step::RetrievalCall`].
+    RetrievalResult {
+        /// The `id` of the corresponding call.
+        call_id: String,
+        /// Whether the retrieval errored.
+        is_error: Option<bool>,
+        /// Opaque signature; pass through unchanged.
+        signature: Option<String>,
+    },
     /// Unknown step type for forward compatibility.
     ///
     /// Captures step types this library doesn't recognize yet. Roundtrips
@@ -614,7 +658,11 @@ impl Step {
             | Self::FileSearchResult { signature, .. }
             | Self::GoogleMapsCall { signature, .. }
             | Self::GoogleMapsResult { signature, .. }
-            | Self::ToolCall { signature, .. } => signature.as_deref(),
+            | Self::ToolCall { signature, .. }
+            | Self::ProcessingCall { signature, .. }
+            | Self::ProcessingResult { signature, .. }
+            | Self::RetrievalCall { signature, .. }
+            | Self::RetrievalResult { signature, .. } => signature.as_deref(),
             _ => None,
         }
     }
@@ -641,6 +689,10 @@ impl Step {
             Self::FileSearchResult { .. } => "file_search_result",
             Self::GoogleMapsCall { .. } => "google_maps_call",
             Self::GoogleMapsResult { .. } => "google_maps_result",
+            Self::ProcessingCall { .. } => "processing_call",
+            Self::ProcessingResult { .. } => "processing_result",
+            Self::RetrievalCall { .. } => "retrieval_call",
+            Self::RetrievalResult { .. } => "retrieval_result",
             Self::Unknown { step_type, .. } => step_type,
         }
     }
@@ -879,6 +931,50 @@ impl Serialize for Step {
                     map.serialize_entry("signature", s)?;
                 }
             }
+            Self::ProcessingCall { id, signature } => {
+                map.serialize_entry("type", "processing_call")?;
+                map.serialize_entry("id", id)?;
+                if let Some(s) = signature {
+                    map.serialize_entry("signature", s)?;
+                }
+            }
+            Self::ProcessingResult { call_id, signature } => {
+                map.serialize_entry("type", "processing_result")?;
+                map.serialize_entry("call_id", call_id)?;
+                if let Some(s) = signature {
+                    map.serialize_entry("signature", s)?;
+                }
+            }
+            Self::RetrievalCall {
+                id,
+                queries,
+                retrieval_type,
+                signature,
+            } => {
+                map.serialize_entry("type", "retrieval_call")?;
+                map.serialize_entry("id", id)?;
+                map.serialize_entry("arguments", &serde_json::json!({ "queries": queries }))?;
+                if let Some(t) = retrieval_type {
+                    map.serialize_entry("retrieval_type", t)?;
+                }
+                if let Some(s) = signature {
+                    map.serialize_entry("signature", s)?;
+                }
+            }
+            Self::RetrievalResult {
+                call_id,
+                is_error,
+                signature,
+            } => {
+                map.serialize_entry("type", "retrieval_result")?;
+                map.serialize_entry("call_id", call_id)?;
+                if let Some(e) = is_error {
+                    map.serialize_entry("is_error", e)?;
+                }
+                if let Some(s) = signature {
+                    map.serialize_entry("signature", s)?;
+                }
+            }
             Self::Unknown { step_type, data } => {
                 map.serialize_entry("type", step_type)?;
                 match data {
@@ -1059,6 +1155,32 @@ impl<'de> Deserialize<'de> for Step {
                 #[serde(default)]
                 signature: Option<String>,
             },
+            ProcessingCall {
+                id: String,
+                #[serde(default)]
+                signature: Option<String>,
+            },
+            ProcessingResult {
+                call_id: String,
+                #[serde(default)]
+                signature: Option<String>,
+            },
+            RetrievalCall {
+                id: String,
+                #[serde(default)]
+                arguments: Option<serde_json::Value>,
+                #[serde(default)]
+                retrieval_type: Option<crate::tools::RetrievalType>,
+                #[serde(default)]
+                signature: Option<String>,
+            },
+            RetrievalResult {
+                call_id: String,
+                #[serde(default)]
+                is_error: Option<bool>,
+                #[serde(default)]
+                signature: Option<String>,
+            },
         }
 
         match serde_json::from_value::<KnownStep>(value.clone()) {
@@ -1221,6 +1343,32 @@ impl<'de> Deserialize<'de> for Step {
                     result,
                     signature,
                 },
+                KnownStep::ProcessingCall { id, signature } => {
+                    Step::ProcessingCall { id, signature }
+                }
+                KnownStep::ProcessingResult { call_id, signature } => {
+                    Step::ProcessingResult { call_id, signature }
+                }
+                KnownStep::RetrievalCall {
+                    id,
+                    arguments,
+                    retrieval_type,
+                    signature,
+                } => Step::RetrievalCall {
+                    id,
+                    queries: string_vec_from_arguments(arguments.as_ref(), "queries"),
+                    retrieval_type,
+                    signature,
+                },
+                KnownStep::RetrievalResult {
+                    call_id,
+                    is_error,
+                    signature,
+                } => Step::RetrievalResult {
+                    call_id,
+                    is_error,
+                    signature,
+                },
             }),
             Err(parse_error) => {
                 let step_type = value
@@ -1354,8 +1502,10 @@ pub enum StepDelta {
     },
     /// Function result (`type: "function_result"`).
     FunctionResult {
-        /// The `id` of the call this result responds to.
-        call_id: String,
+        /// The `id` of the call this result responds to. Absent from the
+        /// 2.25 bindings, so it may stop arriving; the step's `call_id` from
+        /// `step.start` is kept when it does.
+        call_id: Option<String>,
         /// Function name.
         name: Option<String>,
         /// The result payload.
@@ -1462,6 +1612,33 @@ pub enum StepDelta {
     GoogleMapsResult {
         /// Places and widget data.
         result: Vec<GoogleMapsResultItem>,
+        /// Opaque signature.
+        signature: Option<String>,
+    },
+    /// Processing call delta (`type: "processing_call"`). Carries the
+    /// signature that `step.start` announces as `""`.
+    ProcessingCall {
+        /// Opaque signature.
+        signature: Option<String>,
+    },
+    /// Processing result delta (`type: "processing_result"`).
+    ProcessingResult {
+        /// Opaque signature.
+        signature: Option<String>,
+    },
+    /// Retrieval call delta (`type: "retrieval_call"`); Vertex-only.
+    RetrievalCall {
+        /// Retrieval queries.
+        queries: Vec<String>,
+        /// Which retrieval backend handled the call.
+        retrieval_type: Option<crate::tools::RetrievalType>,
+        /// Opaque signature.
+        signature: Option<String>,
+    },
+    /// Retrieval result delta (`type: "retrieval_result"`); Vertex-only.
+    RetrievalResult {
+        /// Whether the retrieval errored.
+        is_error: Option<bool>,
         /// Opaque signature.
         signature: Option<String>,
     },
@@ -1613,7 +1790,7 @@ impl Serialize for StepDelta {
                 is_error,
             } => {
                 map.serialize_entry("type", "function_result")?;
-                map.serialize_entry("call_id", call_id)?;
+                opt_entry!(map, "call_id", call_id);
                 opt_entry!(map, "name", name);
                 map.serialize_entry("result", result)?;
                 opt_entry!(map, "is_error", is_error);
@@ -1707,6 +1884,32 @@ impl Serialize for StepDelta {
             Self::GoogleMapsResult { result, signature } => {
                 map.serialize_entry("type", "google_maps_result")?;
                 map.serialize_entry("result", result)?;
+                opt_entry!(map, "signature", signature);
+            }
+            Self::ProcessingCall { signature } => {
+                map.serialize_entry("type", "processing_call")?;
+                opt_entry!(map, "signature", signature);
+            }
+            Self::ProcessingResult { signature } => {
+                map.serialize_entry("type", "processing_result")?;
+                opt_entry!(map, "signature", signature);
+            }
+            Self::RetrievalCall {
+                queries,
+                retrieval_type,
+                signature,
+            } => {
+                map.serialize_entry("type", "retrieval_call")?;
+                map.serialize_entry("arguments", &serde_json::json!({ "queries": queries }))?;
+                opt_entry!(map, "retrieval_type", retrieval_type);
+                opt_entry!(map, "signature", signature);
+            }
+            Self::RetrievalResult {
+                is_error,
+                signature,
+            } => {
+                map.serialize_entry("type", "retrieval_result")?;
+                opt_entry!(map, "is_error", is_error);
                 opt_entry!(map, "signature", signature);
             }
             Self::Unknown { delta_type, data } => {
@@ -1804,7 +2007,8 @@ impl<'de> Deserialize<'de> for StepDelta {
                 arguments: String,
             },
             FunctionResult {
-                call_id: String,
+                #[serde(default)]
+                call_id: Option<String>,
                 #[serde(default)]
                 name: Option<String>,
                 #[serde(default)]
@@ -1887,6 +2091,28 @@ impl<'de> Deserialize<'de> for StepDelta {
             GoogleMapsResult {
                 #[serde(default)]
                 result: Vec<GoogleMapsResultItem>,
+                #[serde(default)]
+                signature: Option<String>,
+            },
+            ProcessingCall {
+                #[serde(default)]
+                signature: Option<String>,
+            },
+            ProcessingResult {
+                #[serde(default)]
+                signature: Option<String>,
+            },
+            RetrievalCall {
+                #[serde(default)]
+                arguments: Option<serde_json::Value>,
+                #[serde(default)]
+                retrieval_type: Option<crate::tools::RetrievalType>,
+                #[serde(default)]
+                signature: Option<String>,
+            },
+            RetrievalResult {
+                #[serde(default)]
+                is_error: Option<bool>,
                 #[serde(default)]
                 signature: Option<String>,
             },
@@ -2049,6 +2275,26 @@ impl<'de> Deserialize<'de> for StepDelta {
                 KnownDelta::GoogleMapsResult { result, signature } => {
                     StepDelta::GoogleMapsResult { result, signature }
                 }
+                KnownDelta::ProcessingCall { signature } => StepDelta::ProcessingCall { signature },
+                KnownDelta::ProcessingResult { signature } => {
+                    StepDelta::ProcessingResult { signature }
+                }
+                KnownDelta::RetrievalCall {
+                    arguments,
+                    retrieval_type,
+                    signature,
+                } => StepDelta::RetrievalCall {
+                    queries: string_vec_from_arguments(arguments.as_ref(), "queries"),
+                    retrieval_type,
+                    signature,
+                },
+                KnownDelta::RetrievalResult {
+                    is_error,
+                    signature,
+                } => StepDelta::RetrievalResult {
+                    is_error,
+                    signature,
+                },
             }),
             Err(parse_error) => {
                 let delta_type = value
@@ -2076,6 +2322,21 @@ impl<'de> Deserialize<'de> for StepDelta {
 // =============================================================================
 // Streaming step accumulation
 // =============================================================================
+
+/// Folds a streamed signature fragment into a step's signature.
+///
+/// `step.start` announces some signatures as `""` and delivers the value in
+/// a delta (verified live on `processing_call`), so an empty existing value
+/// is replaced; a non-empty one is extended, matching `thought_signature`.
+fn merge_signature(existing: &mut Option<String>, fragment: Option<&str>) {
+    let Some(fragment) = fragment.filter(|f| !f.is_empty()) else {
+        return;
+    };
+    match existing {
+        Some(sig) if !sig.is_empty() => sig.push_str(fragment),
+        _ => *existing = Some(fragment.to_string()),
+    }
+}
 
 /// Accumulates `step.start` / `step.delta` / `step.stop` events into complete
 /// [`Step`]s, so streaming consumers get a fully-populated `steps` array on
@@ -2243,6 +2504,7 @@ impl StepAccumulator {
                             mime_type: mime_type.clone(),
                             resolution: resolution.clone(),
                             processing: None,
+                            name: None,
                         });
                     }
                 }
@@ -2309,14 +2571,16 @@ impl StepAccumulator {
                 result,
                 is_error,
             } => {
-                // Preserve a signature delivered on step.start; the delta
-                // payload does not carry one.
-                let signature = match &entry.step {
-                    Step::FunctionResult { signature, .. } => signature.clone(),
-                    _ => None,
+                // Keep what step.start delivered: the delta carries no
+                // signature, and may carry no call_id.
+                let (start_call_id, signature) = match &entry.step {
+                    Step::FunctionResult {
+                        call_id, signature, ..
+                    } => (Some(call_id.clone()), signature.clone()),
+                    _ => (None, None),
                 };
                 entry.step = Step::FunctionResult {
-                    call_id: call_id.clone(),
+                    call_id: call_id.clone().or(start_call_id).unwrap_or_default(),
                     name: name.clone(),
                     result: result.clone(),
                     is_error: *is_error,
@@ -2519,11 +2783,75 @@ impl StepAccumulator {
                     }
                 }
             }
-            StepDelta::Unknown { delta_type, .. } => {
-                tracing::debug!(
-                    "Skipping unknown StepDelta type '{}' during accumulation",
-                    delta_type
-                );
+            StepDelta::ProcessingCall { signature } => {
+                if let Step::ProcessingCall { signature: sig, .. } = &mut entry.step {
+                    merge_signature(sig, signature.as_deref());
+                }
+            }
+            StepDelta::ProcessingResult { signature } => {
+                if let Step::ProcessingResult { signature: sig, .. } = &mut entry.step {
+                    merge_signature(sig, signature.as_deref());
+                }
+            }
+            StepDelta::RetrievalCall {
+                queries,
+                retrieval_type,
+                signature,
+            } => {
+                if let Step::RetrievalCall {
+                    queries: existing,
+                    retrieval_type: rt,
+                    signature: sig,
+                    ..
+                } = &mut entry.step
+                {
+                    existing.extend(queries.iter().cloned());
+                    if retrieval_type.is_some() {
+                        *rt = retrieval_type.clone();
+                    }
+                    merge_signature(sig, signature.as_deref());
+                }
+            }
+            StepDelta::RetrievalResult {
+                is_error,
+                signature,
+            } => {
+                if let Step::RetrievalResult {
+                    is_error: err,
+                    signature: sig,
+                    ..
+                } = &mut entry.step
+                {
+                    if is_error.is_some() {
+                        *err = *is_error;
+                    }
+                    merge_signature(sig, signature.as_deref());
+                }
+            }
+            StepDelta::Unknown { delta_type, data } => {
+                // A signature is the one field known to matter for replay, so
+                // carry it onto a same-typed Unknown step rather than drop it.
+                if let Step::Unknown {
+                    step_type,
+                    data: serde_json::Value::Object(step_obj),
+                } = &mut entry.step
+                    && step_type == delta_type
+                    && let Some(fragment) = data.get("signature").and_then(|v| v.as_str())
+                {
+                    let mut sig = step_obj
+                        .get("signature")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    merge_signature(&mut sig, Some(fragment));
+                    if let Some(sig) = sig {
+                        step_obj.insert("signature".into(), serde_json::Value::String(sig));
+                    }
+                } else {
+                    tracing::debug!(
+                        "Skipping unknown StepDelta type '{}' during accumulation",
+                        delta_type
+                    );
+                }
             }
         }
     }
@@ -3295,5 +3623,208 @@ mod tests {
         let steps = acc.finish();
         assert!(matches!(steps[0], Step::Thought { .. }));
         assert!(matches!(steps[1], Step::ModelOutput { .. }));
+    }
+
+    // =========================================================================
+    // processing_* / retrieval_* steps (google-genai 2.21+ / 2.24+ bindings)
+    // =========================================================================
+
+    /// Live shape, `gemini-3.8-flash`, video with `processing: "agentic"`
+    /// (2026-09-24). Signatures shortened.
+    #[test]
+    fn processing_steps_roundtrip_the_live_shape() {
+        let call = json!({"type": "processing_call", "id": "call_140238", "signature": "EqnS"});
+        let result =
+            json!({"type": "processing_result", "call_id": "call_140238", "signature": "ErrR"});
+
+        let step: Step = serde_json::from_value(call.clone()).unwrap();
+        assert!(matches!(&step, Step::ProcessingCall { id, .. } if id == "call_140238"));
+        assert_eq!(step.signature(), Some("EqnS"));
+        assert_eq!(step.step_type(), "processing_call");
+        assert_eq!(serde_json::to_value(&step).unwrap(), call);
+
+        let step: Step = serde_json::from_value(result.clone()).unwrap();
+        assert!(
+            matches!(&step, Step::ProcessingResult { call_id, .. } if call_id == "call_140238")
+        );
+        assert_eq!(step.signature(), Some("ErrR"));
+        assert_eq!(serde_json::to_value(&step).unwrap(), result);
+    }
+
+    #[test]
+    fn retrieval_steps_roundtrip_the_binding_shape() {
+        let call = json!({
+            "type": "retrieval_call",
+            "id": "call_1",
+            "arguments": {"queries": ["rust serde"]},
+            "retrieval_type": "vertex_ai_search",
+            "signature": "sig"
+        });
+        let step: Step = serde_json::from_value(call.clone()).unwrap();
+        match &step {
+            Step::RetrievalCall {
+                queries,
+                retrieval_type,
+                ..
+            } => {
+                assert_eq!(queries, &["rust serde"]);
+                assert_eq!(
+                    retrieval_type,
+                    &Some(crate::tools::RetrievalType::VertexAiSearch)
+                );
+            }
+            other => panic!("expected RetrievalCall, got {other:?}"),
+        }
+        assert_eq!(serde_json::to_value(&step).unwrap(), call);
+
+        let result = json!({"type": "retrieval_result", "call_id": "call_1", "is_error": false});
+        let step: Step = serde_json::from_value(result.clone()).unwrap();
+        assert!(matches!(
+            step,
+            Step::RetrievalResult {
+                is_error: Some(false),
+                ..
+            }
+        ));
+        assert_eq!(serde_json::to_value(&step).unwrap(), result);
+    }
+
+    #[test]
+    fn processing_and_retrieval_deltas_deserialize() {
+        for (wire, expect) in [
+            (
+                json!({"type": "processing_call", "signature": "a"}),
+                "processing_call",
+            ),
+            (
+                json!({"type": "processing_result", "signature": "b"}),
+                "processing_result",
+            ),
+            (
+                json!({"type": "retrieval_call", "arguments": {"queries": ["q"]}}),
+                "retrieval_call",
+            ),
+            (
+                json!({"type": "retrieval_result", "is_error": true}),
+                "retrieval_result",
+            ),
+        ] {
+            let delta: StepDelta = serde_json::from_value(wire.clone()).unwrap();
+            assert!(!delta.is_unknown(), "{expect} fell through to Unknown");
+            assert_eq!(serde_json::to_value(&delta).unwrap(), wire);
+        }
+    }
+
+    /// The streamed `processing_call` announces `signature: ""` on
+    /// `step.start` and sends the value in `step.delta` (live 2026-09-24).
+    /// Dropping it made stateless replay fail with
+    /// `400 Processing call step is missing signature`.
+    #[test]
+    fn accumulator_moves_streamed_processing_signature_onto_the_step() {
+        let mut acc = StepAccumulator::new();
+        acc.start(
+            0,
+            serde_json::from_value(json!({"type": "processing_call", "id": "c1", "signature": ""}))
+                .unwrap(),
+        );
+        acc.apply_delta(
+            0,
+            &serde_json::from_value(json!({"type": "processing_call", "signature": "SIG"}))
+                .unwrap(),
+        );
+        acc.stop(0);
+        acc.start(
+            1,
+            serde_json::from_value(
+                json!({"type": "processing_result", "call_id": "c1", "signature": ""}),
+            )
+            .unwrap(),
+        );
+        acc.apply_delta(
+            1,
+            &serde_json::from_value(json!({"type": "processing_result", "signature": "RES"}))
+                .unwrap(),
+        );
+        let steps = acc.finish();
+        assert_eq!(steps[0].signature(), Some("SIG"));
+        assert_eq!(steps[1].signature(), Some("RES"));
+    }
+
+    #[test]
+    fn merge_signature_replaces_empty_and_extends_fragments() {
+        let mut sig = Some(String::new());
+        merge_signature(&mut sig, Some("ab"));
+        assert_eq!(sig.as_deref(), Some("ab"));
+        merge_signature(&mut sig, Some("cd"));
+        assert_eq!(sig.as_deref(), Some("abcd"));
+        merge_signature(&mut sig, Some(""));
+        merge_signature(&mut sig, None);
+        assert_eq!(sig.as_deref(), Some("abcd"));
+        let mut none = None;
+        merge_signature(&mut none, Some("x"));
+        assert_eq!(none.as_deref(), Some("x"));
+    }
+
+    /// A step type the crate does not model yet must not lose a streamed
+    /// signature either — the same failure, one API release later.
+    #[test]
+    fn accumulator_merges_unknown_delta_signature_into_unknown_step() {
+        let mut acc = StepAccumulator::new();
+        // Built directly: `strict-unknown` rejects unknown steps on deserialize.
+        acc.start(
+            0,
+            Step::Unknown {
+                step_type: "future_call".into(),
+                data: json!({"type": "future_call", "id": "f1", "signature": ""}),
+            },
+        );
+        acc.apply_delta(
+            0,
+            &serde_json::from_value(json!({"type": "future_call", "signature": "FUT"})).unwrap(),
+        );
+        // A differently-typed unknown delta is not merged.
+        acc.apply_delta(
+            0,
+            &serde_json::from_value(json!({"type": "other_delta", "signature": "NO"})).unwrap(),
+        );
+        let steps = acc.finish();
+        assert_eq!(
+            steps[0].unknown_data().unwrap(),
+            &json!({"type": "future_call", "id": "f1", "signature": "FUT"})
+        );
+        assert_eq!(
+            serde_json::to_value(&steps[0]).unwrap(),
+            json!({"type": "future_call", "id": "f1", "signature": "FUT"})
+        );
+    }
+
+    /// `FunctionResultDelta.call_id` is gone from the 2.25 bindings.
+    #[test]
+    fn function_result_delta_without_call_id_stays_typed() {
+        let delta: StepDelta =
+            serde_json::from_value(json!({"type": "function_result", "result": "ok"})).unwrap();
+        assert!(matches!(
+            delta,
+            StepDelta::FunctionResult { call_id: None, .. }
+        ));
+
+        let mut acc = StepAccumulator::new();
+        acc.start(
+            0,
+            serde_json::from_value(
+                json!({"type": "function_result", "call_id": "c9", "signature": "s"}),
+            )
+            .unwrap(),
+        );
+        acc.apply_delta(0, &delta);
+        match &acc.finish()[0] {
+            Step::FunctionResult {
+                call_id, signature, ..
+            } => {
+                assert_eq!(call_id, "c9");
+                assert_eq!(signature.as_deref(), Some("s"));
+            }
+            other => panic!("expected FunctionResult, got {other:?}"),
+        }
     }
 }

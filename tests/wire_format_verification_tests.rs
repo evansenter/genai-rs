@@ -608,6 +608,7 @@ mod interaction_content {
             mime_type: Some("video/mp4".to_string()),
             resolution: None,
             processing: None,
+            name: None,
         };
         let json = serde_json::to_value(&content).unwrap();
         assert_eq!(json["type"], "video");

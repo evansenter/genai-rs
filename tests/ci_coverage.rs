@@ -15,11 +15,6 @@ const OUTSIDE_MATRIX: &[&str] = &["antigravity_harness"];
 /// The one ignore reason for a live test (CLAUDE.md, "Test conventions").
 const LIVE_REASON: &str = "Requires API key";
 
-/// Reasons still in the tree that predate the convention.
-// The TTS tests in multimodal_tests.rs are owned by the TTS model migration;
-// drop this once they move to LIVE_REASON.
-const LEGACY_REASONS: &[&str] = &["Requires API key and TTS model access"];
-
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
@@ -118,7 +113,7 @@ fn live_tests_use_the_standard_ignore_reason() {
             continue;
         }
         for reason in ignore_reasons(&text) {
-            if reason != LIVE_REASON && !LEGACY_REASONS.contains(&reason) {
+            if reason != LIVE_REASON {
                 offenders.push(format!("tests/{name}.rs: {reason:?}"));
             }
         }

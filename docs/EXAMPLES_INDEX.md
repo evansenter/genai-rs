@@ -78,7 +78,7 @@ clean exit means it worked. A cheap subset is smoke-run in CI
 | `structured_output` | `with_response_format()` into typed structs; with Google Search; while streaming |
 | `thinking` | `ThinkingLevel` (incl. `Minimal` on `MINIMAL_THINKING_MODEL`), thought summaries, streamed summaries |
 | `image_generation` | `DEFAULT_IMAGE_MODEL`, `with_image_output()`, `with_image_config()`, `images()` |
-| `text_to_speech` | `DEFAULT_TTS_MODEL`, `with_audio_output()`, voices, `SpeechConfig` |
+| `text_to_speech` | `DEFAULT_TTS_MODEL`, `with_audio_output()`, `SpeechConfig::for_speaker()` + `Content::speaker_text()` for dialogue |
 
 ## Background Work and Agents
 
