@@ -13,4 +13,5 @@ pub(crate) mod files;
 pub(crate) mod interactions;
 pub(crate) mod sse_parser;
 pub(crate) mod triggers;
+pub(crate) mod voices;
 pub(crate) mod webhooks;

@@ -17,9 +17,9 @@ All types below implement graceful handling of unrecognized values via an `Unkno
 | # | Type | Location | Context Field | Notes |
 |---|------|----------|---------------|-------|
 | 1 | `Content` | src/content.rs | `content_type` | Media-only: text/image/audio/video/document |
-| 2 | `Step` | src/steps.rs | `step_type` | Interaction steps (17 known types) |
+| 2 | `Step` | src/steps.rs | `step_type` | Interaction steps (22 known types) |
 | 3 | `StepDelta` | src/steps.rs | `delta_type` | `step.delta` SSE payloads |
-| 4 | `Annotation` | src/content.rs | `annotation_type` | Citation union (url/file/place) |
+| 4 | `Annotation` | src/content.rs | `annotation_type` | Citations (url/file/place) + `speech_metadata` + `word_info` |
 | 5 | `Resolution` | src/content.rs | `resolution_type` | Image/video quality |
 | 6 | `StreamChunk` | src/wire_streaming.rs | `chunk_type` | Low-level SSE chunks |
 | 7 | `AutoFunctionStreamChunk` | src/streaming.rs | `chunk_type` | High-level streaming |
@@ -55,6 +55,8 @@ All types below implement graceful handling of unrecognized values via an `Unkno
 | 37 | `TriggerExecutionStatus` | src/triggers.rs | `status_type` | Execution outcomes (SDK-spec, pending live) |
 | 38 | `VideoProcessing` | src/content.rs | `processing_type` | Mode string OR `{type:"static", ...}` object (verified live 2026-08-16) |
 | 39 | `DocumentState` | src/file_search_stores.rs | `state_type` | File search document indexing state (verified live 2026-08-16) |
+| 40 | `VoiceType` | src/voices.rs | `voice_type` | prebuilt/prompted/replicated (`/v1beta/voices`) |
+| 41 | `VoicePitch` | src/voices.rs | `pitch_type` | low/medium/high |
 
 **Removed in revision 2026-05-20** (no longer exist in this library or on the wire):
 `UrlRetrievalStatus`, `GroundingMetadata`, `UrlContextMetadata`, `Turn`, and all tool-related
@@ -116,7 +118,7 @@ Helper methods on each type:
 | `Tool::GoogleSearch` | snake_case + optional array | `{"type": "google_search", "search_types": ["web_search"]}` | |
 | `Tool::GoogleMaps` | snake_case + optional fields | `{"type": "google_maps", "enable_widget": true, "latitude": ..., "longitude": ...}` | `latitude`/`longitude` pending live verification (2026-05-20 revision) |
 | `Tool::ComputerUse` | snake_case | `{"type": "computer_use", "environment": "browser", ...}` | **Changed**: fields now snake_case. Pending live verification (2026-05-20 revision) |
-| `SpeechConfig` | **list** of flat objects | `[{"voice": "Kore", "language": "en-US", "speaker": "Alice"}]` | **Changed** in 2026-05-20: `speech_config` is a list (multi-speaker TTS). Three forms accepted on deserialize — the list, a bare single object, and the spec's `{"speakers": [...]}` wrapper — but **only the list is sendable**; both object forms 400 with `Expected an array, got object` (live 2026-08-16). ✅ Verified live 2026-07 (two-speaker list accepted; single combined `audio/l16` stream returned; the API does not echo `speech_config` on reads — `include_input` observed as a no-op) |
+| `SpeechConfig` | **list** of flat objects | `[{"voice": "Kore", "language": "en-US", "speaker": "Alice"}]` | The crate sends the list. Three forms accepted on deserialize (list, bare object, `{"speakers": [...]}`). On send, `{"speakers": [...]}` is now accepted too and a bare object is rejected (live 2026-09-24; see [speech_config wire forms](#speech_config-wire-forms)) |
 | `Tool::Retrieval` | snake_case object | `{"type": "retrieval", "retrieval_types": [...], "vertex_ai_search_config": {...}}` | New. ⚠️ Live 2026-07: the Gemini API rejects `type: "retrieval"` (Vertex-only — "allowed on the Gemini Enterprise Agent Platform"); Gemini tool types are `google_maps`, `mcp_server`, `function`, `google_search`, `file_search`, `computer_use`, `code_execution`, `url_context` |
 | `RetrievalType` | snake_case string | `"vertex_ai_search"`, `"rag_store"`, `"exa_ai_search"`, `"parallel_ai_search"` | Not verifiable live on the Gemini API (the retrieval tool itself is rejected as Vertex-only, 2026-07) |
 | `WebhookEvent` | dotted lowercase | `"batch.succeeded"`, `"interaction.completed"`, `"video.generated"` | ✅ Verified live 2026-07: the API's own validation error lists exactly our 7 values |
@@ -129,7 +131,9 @@ Helper methods on each type:
 | `ResponseDelivery` | lowercase | `"inline"`, `"uri"` | Audio/image/video formats. ✅ Verified live 2026-07: the API's validation error lists exactly `inline`/`uri` — but `delivery` itself is currently rejected for audio and image on the Gemini API (inline-only) |
 | `VideoTask` | snake_case | `"text_to_video"`, `"image_to_video"`, `"reference_to_video"`, `"edit"`, `"extend"` | `generation_config.video_config.task`. ✅ Verified live 2026-07 via the API's validation error — which also revealed `"extend"` (added to the enum) |
 | `Visualization` | lowercase | `"off"`, `"auto"` | Deep Research `agent_config.visualization`. ✅ Verified live 2026-07: the API's validation error lists exactly `off`/`auto`; accepted with `collaborative_planning` (`enable_bigquery_tool` is Vertex-only) |
-| Audio MIME type (TTS response) | plain | `"audio/l16"` | Raw PCM audio. Live 2026-07 (revision 2026-05-20): lowercase `audio/l16` with a separate `sample_rate: 24000` field on the content block (no `;codec=...;rate=...` params observed) |
+| Audio MIME type (TTS response) | plain | `"audio/wav"` / `"audio/L16;codec=pcm;rate=24000"` | Model-dependent — see [Audio Response](#audio-response-tts-output). Live 2026-09-24 |
+| `VoiceType` | lowercase | `"prebuilt"`, `"prompted"`, `"replicated"` | `/v1beta/voices` `type` and list filter. `prebuilt`/`prompted` verified live 2026-09-24 |
+| `VoicePitch` | lowercase | `"low"`, `"medium"`, `"high"` | Voice metadata and list filter; verified live 2026-09-24 |
 | `GoogleSearchResultItem` | snake_case | `{"title": "...", "url": "...", "rendered_content": "..."}` | Optional `search_suggestions` added in 2026-05-20. Verified live 2026-07: items may carry **only** `search_suggestions` (an HTML rendering payload) with no `title`/`url`; empty `title`/`url` are skipped on serialize for wire fidelity |
 | `UrlContextResultItem` | snake_case | `{"url": "...", "status": "success"}` | Verified 2026-01-13 - no paywall field |
 | `ImageAspectRatio` | ratio string | `"1:1"`, `"16:9"`, `"9:16"` | 14 aspect ratios |

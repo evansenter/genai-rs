@@ -59,6 +59,7 @@ pub(crate) mod http;
 pub(crate) mod serde_util;
 #[cfg(test)]
 pub(crate) mod test_subscriber;
+pub(crate) mod wire_enum;
 
 // =============================================================================
 // Model defaults
@@ -181,6 +182,12 @@ pub mod agents;
 pub use agents::{Agent, AgentListResponse};
 
 // Webhooks resource (/v1beta/webhooks) and per-request webhook_config
+pub mod voices;
+pub use voices::{
+    CreateVoiceRequest, ListVoicesParams, PromptedVoice, ReplicatedVoice, Voice, VoiceAudio,
+    VoiceListResponse, VoicePitch, VoiceSpec, VoiceType,
+};
+
 pub mod webhooks;
 pub use webhooks::{
     RevocationBehavior, RotateSigningSecretResponse, SigningSecret, Webhook, WebhookConfig,
