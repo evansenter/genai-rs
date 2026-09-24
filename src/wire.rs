@@ -108,14 +108,14 @@ pub enum WireEvent {
         /// Raw error payload as returned by the server.
         body: String,
     },
-    /// A frame observed on an SSE stream.
+    /// One event dispatched from an SSE stream.
     SseFrame {
         /// Correlation id shared by all events of this request.
         id: u64,
-        /// The value of an `event:` line, when the frame is an event-type
-        /// line. `None` for `data:` payload frames.
+        /// The event's `event:` field, if it had one.
         event_type: Option<String>,
-        /// The raw `data:` payload. Empty for `event:`-only frames.
+        /// The event's `data:` payload (multiple `data:` lines joined with
+        /// `\n`).
         data: String,
     },
     /// A file upload is starting.

@@ -2128,8 +2128,7 @@ impl<'a> InteractionBuilder<'a> {
         let client = self.client;
         let timeout = self.timeout;
         Box::pin(async_stream::try_stream! {
-            let mut request = self.build()?;
-            request.stream = Some(true);
+            let request = self.build()?;
             let mut stream = client.execute_stream(request);
 
             loop {
@@ -2296,7 +2295,7 @@ impl<'a> InteractionBuilder<'a> {
             response_modalities: self.response_modalities,
             response_format: self.response_format,
             generation_config,
-            stream: None, // Set by create() vs create_stream()
+            stream: None, // Set by the transport: execute() vs execute_stream()
             background: self.background,
             store: self.store,
             system_instruction: self.system_instruction,

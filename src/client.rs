@@ -52,6 +52,27 @@ fn with_env_inspectors(mut inspectors: Vec<Arc<dyn WireInspector>>) -> Vec<Arc<d
     inspectors
 }
 
+/// The file name, used as the display name of path-based uploads.
+fn file_display_name(path: &std::path::Path) -> Option<String> {
+    path.file_name()
+        .and_then(|s| s.to_str())
+        .map(ToString::to_string)
+}
+
+/// The MIME type inferred from `path`'s extension, or an error naming the
+/// `*_with_mime` method to use instead.
+fn mime_type_for_upload(
+    path: &std::path::Path,
+    explicit_alternative: &str,
+) -> Result<&'static str, GenaiError> {
+    crate::multimodal::detect_mime_type(path).ok_or_else(|| {
+        GenaiError::InvalidInput(format!(
+            "Could not determine MIME type for '{}'. Please use {explicit_alternative} to specify explicitly.",
+            path.display()
+        ))
+    })
+}
+
 /// Builder for `Client` instances.
 ///
 /// # Example
@@ -68,6 +89,7 @@ fn with_env_inspectors(mut inspectors: Vec<Arc<dyn WireInspector>>) -> Vec<Arc<d
 /// ```
 pub struct ClientBuilder {
     api_key: String,
+    base_url: Option<String>,
     timeout: Option<Duration>,
     connect_timeout: Option<Duration>,
     wire_inspectors: Vec<Arc<dyn WireInspector>>,
@@ -78,6 +100,7 @@ impl std::fmt::Debug for ClientBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ClientBuilder")
             .field("api_key", &"[REDACTED]")
+            .field("base_url", &self.base_url)
             .field("timeout", &self.timeout)
             .field("connect_timeout", &self.connect_timeout)
             .field("wire_inspectors", &self.wire_inspectors.len())
@@ -138,6 +161,30 @@ impl ClientBuilder {
         self
     }
 
+    /// Sends every request to `base_url` instead of
+    /// `https://generativelanguage.googleapis.com`.
+    ///
+    /// Takes a scheme and host, optionally with a path prefix; the
+    /// `/v1beta/...` and `/upload/v1beta/...` paths are appended to it, so a
+    /// proxy or a local mock server sees the same paths the real API does.
+    /// A trailing slash is ignored.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use genai_rs::Client;
+    ///
+    /// let client = Client::builder("api_key".to_string())
+    ///     .with_base_url("http://127.0.0.1:8080")
+    ///     .build()?;
+    /// # Ok::<(), genai_rs::GenaiError>(())
+    /// ```
+    #[must_use]
+    pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.base_url = Some(base_url.into());
+        self
+    }
+
     /// Adds a wire inspector that observes raw API traffic.
     ///
     /// Inspectors receive a [`crate::wire::WireEvent`] for every request,
@@ -185,13 +232,15 @@ impl ClientBuilder {
             .build()
             .map_err(|e| GenaiError::ClientBuild(e.to_string()))?;
 
-        Ok(Client {
-            http: HttpContext::new(
-                http_client,
-                self.api_key,
-                with_env_inspectors(self.wire_inspectors),
-            ),
-        })
+        let mut http = HttpContext::new(
+            http_client,
+            self.api_key,
+            with_env_inspectors(self.wire_inspectors),
+        );
+        if let Some(base_url) = self.base_url {
+            http = http.with_base_url(base_url);
+        }
+        Ok(Client { http })
     }
 }
 
@@ -205,6 +254,7 @@ impl Client {
     pub const fn builder(api_key: String) -> ClientBuilder {
         ClientBuilder {
             api_key,
+            base_url: None,
             timeout: None,
             connect_timeout: None,
             wire_inspectors: Vec::new(),
@@ -310,12 +360,11 @@ impl Client {
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::builder("api_key".to_string()).build()?;
-    /// let mut request = client
+    /// let request = client
     ///     .interaction()
     ///     .with_model(genai_rs::DEFAULT_MODEL)
     ///     .with_text("Count to 5")
     ///     .build()?;
-    /// request.stream = Some(true);
     ///
     /// let mut last_event_id = None;
     /// let mut stream = client.execute_stream(request);
@@ -384,7 +433,9 @@ impl Client {
 
     /// Executes a pre-built interaction request with streaming.
     ///
-    /// This is the streaming variant of [`execute()`](Self::execute).
+    /// This is the streaming variant of [`execute()`](Self::execute). The
+    /// request's `stream` field is set for you (and cleared by `execute()`),
+    /// since the endpoint and body must agree.
     ///
     /// Returns a stream of [`StreamEvent`](crate::StreamEvent) items as they arrive.
     /// Each event contains:
@@ -524,16 +575,18 @@ impl Client {
 
     /// Retrieves an existing interaction by its ID with streaming.
     ///
-    /// `interaction_id` is the bare ID (the form [`InteractionResponse::id`](crate::InteractionResponse)
-    /// returns) — not an `interactions/...` resource name, which would be
-    /// percent-encoded into a single path segment and 404.
+    /// `interaction_id` is the bare ID ([`InteractionResponse::id`](crate::InteractionResponse)),
+    /// not an `interactions/...` resource name.
     ///
     /// Returns a stream of events for the interaction. This is useful for:
     /// - Resuming an interrupted stream using `last_event_id`
     /// - Streaming a long-running interaction's progress (e.g., deep research)
     ///
-    /// Each event includes an `event_id` that can be used to resume the stream
-    /// from that point if the connection is interrupted.
+    /// Only **background** interactions (`with_background(true)`) can be
+    /// streamed this way; for an ordinary one the API answers
+    /// `400 Streaming retrieval of interactions is not supported`. Their
+    /// events carry an `event_id` to resume from after an interruption; the
+    /// resumed stream starts after that event.
     ///
     /// # Arguments
     ///
@@ -1317,40 +1370,8 @@ impl Client {
         path: impl AsRef<std::path::Path>,
     ) -> Result<crate::FileMetadata, GenaiError> {
         let path = path.as_ref();
-
-        // Read file contents
-        let file_data = tokio::fs::read(path).await.map_err(|e| {
-            tracing::warn!("Failed to read file '{}': {}", path.display(), e);
-            GenaiError::InvalidInput(format!("Failed to read file '{}': {}", path.display(), e))
-        })?;
-
-        // Detect MIME type from extension
-        let mime_type = crate::multimodal::detect_mime_type(path).ok_or_else(|| {
-            tracing::warn!(
-                "Could not determine MIME type for '{}' - unknown extension",
-                path.display()
-            );
-            GenaiError::InvalidInput(format!(
-                "Could not determine MIME type for '{}'. Please use upload_file_with_mime() to specify explicitly.",
-                path.display()
-            ))
-        })?;
-
-        // Use filename as display name
-        let display_name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_string());
-
-        tracing::debug!(
-            "Uploading file: path={}, size={} bytes, mime_type={}",
-            path.display(),
-            file_data.len(),
-            mime_type
-        );
-
-        crate::http::files::upload_file(&self.http, file_data, mime_type, display_name.as_deref())
-            .await
+        let mime_type = mime_type_for_upload(path, "upload_file_with_mime()")?;
+        self.upload_file_with_mime(path, mime_type).await
     }
 
     /// Uploads a file with an explicit MIME type.
@@ -1380,26 +1401,16 @@ impl Client {
         mime_type: &str,
     ) -> Result<crate::FileMetadata, GenaiError> {
         let path = path.as_ref();
-
         let file_data = tokio::fs::read(path).await.map_err(|e| {
-            tracing::warn!("Failed to read file '{}': {}", path.display(), e);
             GenaiError::InvalidInput(format!("Failed to read file '{}': {}", path.display(), e))
         })?;
-
-        let display_name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_string());
-
-        tracing::debug!(
-            "Uploading file: path={}, size={} bytes, mime_type={}",
-            path.display(),
-            file_data.len(),
-            mime_type
-        );
-
-        crate::http::files::upload_file(&self.http, file_data, mime_type, display_name.as_deref())
-            .await
+        crate::http::files::upload_file(
+            &self.http,
+            file_data,
+            mime_type,
+            file_display_name(path).as_deref(),
+        )
+        .await
     }
 
     /// Uploads file bytes directly with a specified MIME type.
@@ -1555,7 +1566,7 @@ impl Client {
     ///
     /// Returns a tuple of:
     /// - `FileMetadata`: The uploaded file's metadata
-    /// - `ResumableUpload`: A handle that can be used to resume if the upload is interrupted
+    /// - `ResumableUpload`: metadata of the upload session that was used
     ///
     /// # Memory Usage
     ///
@@ -1598,38 +1609,8 @@ impl Client {
         path: impl AsRef<std::path::Path>,
     ) -> Result<(crate::FileMetadata, crate::ResumableUpload), GenaiError> {
         let path = path.as_ref();
-
-        // Detect MIME type from extension
-        let mime_type = crate::multimodal::detect_mime_type(path).ok_or_else(|| {
-            tracing::warn!(
-                "Could not determine MIME type for '{}' - unknown extension",
-                path.display()
-            );
-            GenaiError::InvalidInput(format!(
-                "Could not determine MIME type for '{}'. Please use upload_file_chunked_with_mime() to specify explicitly.",
-                path.display()
-            ))
-        })?;
-
-        // Use filename as display name
-        let display_name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_string());
-
-        tracing::debug!(
-            "Chunked upload: path={}, mime_type={}",
-            path.display(),
-            mime_type
-        );
-
-        crate::http::files::upload_file_chunked(
-            &self.http,
-            path,
-            mime_type,
-            display_name.as_deref(),
-        )
-        .await
+        let mime_type = mime_type_for_upload(path, "upload_file_chunked_with_mime()")?;
+        self.upload_file_chunked_with_mime(path, mime_type).await
     }
 
     /// Uploads a file using chunked transfer with an explicit MIME type.
@@ -1661,26 +1642,8 @@ impl Client {
         path: impl AsRef<std::path::Path>,
         mime_type: &str,
     ) -> Result<(crate::FileMetadata, crate::ResumableUpload), GenaiError> {
-        let path = path.as_ref();
-
-        let display_name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_string());
-
-        tracing::debug!(
-            "Chunked upload: path={}, mime_type={}",
-            path.display(),
-            mime_type
-        );
-
-        crate::http::files::upload_file_chunked(
-            &self.http,
-            path,
-            mime_type,
-            display_name.as_deref(),
-        )
-        .await
+        self.upload_file_chunked_with_options(path, mime_type, crate::DEFAULT_CHUNK_SIZE)
+            .await
     }
 
     /// Uploads a file using chunked transfer with a custom chunk size.
@@ -1720,24 +1683,11 @@ impl Client {
         chunk_size: usize,
     ) -> Result<(crate::FileMetadata, crate::ResumableUpload), GenaiError> {
         let path = path.as_ref();
-
-        let display_name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_string());
-
-        tracing::debug!(
-            "Chunked upload: path={}, mime_type={}, chunk_size={}",
-            path.display(),
-            mime_type,
-            chunk_size
-        );
-
-        crate::http::files::upload_file_chunked_with_chunk_size(
+        crate::http::files::upload_file_chunked(
             &self.http,
             path,
             mime_type,
-            display_name.as_deref(),
+            file_display_name(path).as_deref(),
             chunk_size,
         )
         .await
@@ -2033,13 +1983,7 @@ impl Client {
         display_name: Option<&str>,
     ) -> Result<crate::FileSearchDocument, GenaiError> {
         let path = file_path.as_ref();
-        let mime_type = crate::multimodal::detect_mime_type(path).ok_or_else(|| {
-            GenaiError::InvalidInput(format!(
-                "Could not determine MIME type for '{}'. Please use \
-                 upload_to_file_search_store_with_mime() to specify explicitly.",
-                path.display()
-            ))
-        })?;
+        let mime_type = mime_type_for_upload(path, "upload_to_file_search_store_with_mime()")?;
         crate::http::file_search_stores::upload_to_file_search_store(
             &self.http,
             store_name,

@@ -4,10 +4,7 @@
 //! the webhooks resource is part of the revisioned Interactions surface
 //! (the generated google-genai bindings apply the revision header globally).
 
-use super::common::{
-    API_VERSION, BASE_URL_PREFIX, path_segment, require_id, send_and_read, to_body, with_paging,
-    with_paging_and,
-};
+use super::common::{NO_BODY, path_segment, require_id, send_and_read, with_paging, with_query};
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
 use crate::errors::GenaiError;
@@ -15,15 +12,12 @@ use crate::webhooks::{
     RevocationBehavior, RotateSigningSecretResponse, Webhook, WebhookListResponse, WebhookUpdate,
 };
 
-fn webhooks_url() -> String {
-    format!("{BASE_URL_PREFIX}/{API_VERSION}/webhooks")
+fn webhooks_url(ctx: &HttpContext) -> String {
+    ctx.api_url("webhooks")
 }
 
-fn webhook_url(id: &str) -> String {
-    format!(
-        "{BASE_URL_PREFIX}/{API_VERSION}/webhooks/{}",
-        path_segment(id)
-    )
+fn webhook_url(ctx: &HttpContext, id: &str) -> String {
+    ctx.api_url(&format!("webhooks/{}", path_segment(id)))
 }
 
 /// Registers a new webhook (`POST /v1beta/webhooks`).
@@ -34,8 +28,8 @@ pub async fn create_webhook(ctx: &HttpContext, webhook: &Webhook) -> Result<Webh
     let text = send_and_read(
         ctx,
         reqwest::Method::POST,
-        &webhooks_url(),
-        Some(to_body(webhook)?),
+        &webhooks_url(ctx),
+        Some(webhook),
     )
     .await?;
     deserialize_with_context(&text, "Webhook from create")
@@ -45,7 +39,13 @@ pub async fn create_webhook(ctx: &HttpContext, webhook: &Webhook) -> Result<Webh
 pub async fn get_webhook(ctx: &HttpContext, webhook_id: &str) -> Result<Webhook, GenaiError> {
     require_id(webhook_id, "webhook")?;
     tracing::debug!("Getting webhook: ID={webhook_id}");
-    let text = send_and_read(ctx, reqwest::Method::GET, &webhook_url(webhook_id), None).await?;
+    let text = send_and_read(
+        ctx,
+        reqwest::Method::GET,
+        &webhook_url(ctx, webhook_id),
+        NO_BODY,
+    )
+    .await?;
     deserialize_with_context(&text, "Webhook from get")
 }
 
@@ -57,8 +57,8 @@ pub async fn list_webhooks(
 ) -> Result<WebhookListResponse, GenaiError> {
     tracing::debug!("Listing webhooks: page_size={page_size:?}, page_token={page_token:?}");
 
-    let url = with_paging(webhooks_url(), page_size, page_token);
-    let text = send_and_read(ctx, reqwest::Method::GET, &url, None).await?;
+    let url = with_paging(webhooks_url(ctx), page_size, page_token);
+    let text = send_and_read(ctx, reqwest::Method::GET, &url, NO_BODY).await?;
     deserialize_with_context(&text, "WebhookListResponse")
 }
 
@@ -75,15 +75,11 @@ pub async fn update_webhook(
     require_id(webhook_id, "webhook")?;
     tracing::debug!("Updating webhook: ID={webhook_id}, update_mask={update_mask:?}");
 
-    // The last query string in the HTTP layer routes through the shared
-    // helper too, bringing the mask under its percent-encoding tests.
-    let extra: Vec<(&str, &str)> = update_mask
-        .map(|m| ("update_mask", m))
-        .into_iter()
-        .collect();
-    let url = with_paging_and(webhook_url(webhook_id), None, None, &extra);
-
-    let text = send_and_read(ctx, reqwest::Method::PATCH, &url, Some(to_body(update)?)).await?;
+    let url = with_query(
+        webhook_url(ctx, webhook_id),
+        &[("update_mask", update_mask)],
+    );
+    let text = send_and_read(ctx, reqwest::Method::PATCH, &url, Some(update)).await?;
     deserialize_with_context(&text, "Webhook from update")
 }
 
@@ -91,7 +87,13 @@ pub async fn update_webhook(
 pub async fn delete_webhook(ctx: &HttpContext, webhook_id: &str) -> Result<(), GenaiError> {
     require_id(webhook_id, "webhook")?;
     tracing::debug!("Deleting webhook: ID={webhook_id}");
-    send_and_read(ctx, reqwest::Method::DELETE, &webhook_url(webhook_id), None).await?;
+    send_and_read(
+        ctx,
+        reqwest::Method::DELETE,
+        &webhook_url(ctx, webhook_id),
+        NO_BODY,
+    )
+    .await?;
     Ok(())
 }
 
@@ -99,13 +101,13 @@ pub async fn delete_webhook(ctx: &HttpContext, webhook_id: &str) -> Result<(), G
 pub async fn ping_webhook(ctx: &HttpContext, webhook_id: &str) -> Result<(), GenaiError> {
     require_id(webhook_id, "webhook")?;
     tracing::debug!("Pinging webhook: ID={webhook_id}");
-    let url = format!("{}:ping", webhook_url(webhook_id));
+    let url = format!("{}:ping", webhook_url(ctx, webhook_id));
     // Request and response bodies are empty per the spec.
     send_and_read(
         ctx,
         reqwest::Method::POST,
         &url,
-        Some(serde_json::json!({})),
+        Some(&serde_json::json!({})),
     )
     .await?;
     Ok(())
@@ -120,18 +122,21 @@ pub async fn rotate_signing_secret(
 ) -> Result<RotateSigningSecretResponse, GenaiError> {
     require_id(webhook_id, "webhook")?;
     tracing::debug!("Rotating signing secret: ID={webhook_id}");
-    let url = format!("{}:rotateSigningSecret", webhook_url(webhook_id));
+    let url = format!("{}:rotateSigningSecret", webhook_url(ctx, webhook_id));
 
-    let mut body = serde_json::Map::new();
-    if let Some(behavior) = &revocation_behavior {
-        body.insert("revocation_behavior".to_string(), to_body(behavior)?);
+    #[derive(serde::Serialize)]
+    struct RotateBody {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        revocation_behavior: Option<RevocationBehavior>,
     }
 
     let text = send_and_read(
         ctx,
         reqwest::Method::POST,
         &url,
-        Some(serde_json::Value::Object(body)),
+        Some(&RotateBody {
+            revocation_behavior,
+        }),
     )
     .await?;
     deserialize_with_context(&text, "RotateSigningSecretResponse")
@@ -143,38 +148,29 @@ mod tests {
 
     #[test]
     fn test_webhooks_url_construction() {
+        let ctx = HttpContext::new(reqwest::Client::new(), "k".to_string(), vec![]);
         assert_eq!(
-            webhooks_url(),
+            webhooks_url(&ctx),
             "https://generativelanguage.googleapis.com/v1beta/webhooks"
         );
         assert_eq!(
-            webhook_url("wh-123"),
+            webhook_url(&ctx, "wh-123"),
             "https://generativelanguage.googleapis.com/v1beta/webhooks/wh-123"
         );
         // A path-metacharacter ID is encoded, not interpolated raw (the
         // colon-verb suffixes below are appended outside webhook_url, so
         // they are unaffected by the encoding).
         assert_eq!(
-            webhook_url("a/b?c"),
+            webhook_url(&ctx, "a/b?c"),
             "https://generativelanguage.googleapis.com/v1beta/webhooks/a%2Fb%3Fc"
         );
         assert_eq!(
-            format!("{}:ping", webhook_url("wh-123")),
+            format!("{}:ping", webhook_url(&ctx, "wh-123")),
             "https://generativelanguage.googleapis.com/v1beta/webhooks/wh-123:ping"
         );
         assert_eq!(
-            format!("{}:rotateSigningSecret", webhook_url("wh-123")),
+            format!("{}:rotateSigningSecret", webhook_url(&ctx, "wh-123")),
             "https://generativelanguage.googleapis.com/v1beta/webhooks/wh-123:rotateSigningSecret"
         );
-    }
-
-    #[test]
-    fn test_list_query_params_are_snake_case() {
-        // The Interactions API family uses snake_case query params
-        // (unlike the unrevisioned Files API, which uses camelCase).
-        let mut url = webhooks_url();
-        url.push_str("?page_size=10&page_token=tok");
-        assert!(url.contains("page_size=10"));
-        assert!(url.contains("page_token=tok"));
     }
 }

@@ -3,9 +3,7 @@
 //! Same header conventions as the other Interactions API resources
 //! (API key + `Api-Revision`); shared plumbing lives in `http/common.rs`.
 
-use super::common::{
-    API_VERSION, BASE_URL_PREFIX, path_segment, require_id, send_and_read, to_body, with_paging,
-};
+use super::common::{NO_BODY, path_segment, require_id, send_and_read, with_paging};
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
 use crate::errors::GenaiError;
@@ -14,22 +12,16 @@ use crate::triggers::{
     TriggerListResponse, TriggerUpdate,
 };
 
-fn triggers_url() -> String {
-    format!("{BASE_URL_PREFIX}/{API_VERSION}/triggers")
+fn triggers_url(ctx: &HttpContext) -> String {
+    ctx.api_url("triggers")
 }
 
-fn trigger_url(id: &str) -> String {
-    format!(
-        "{BASE_URL_PREFIX}/{API_VERSION}/triggers/{}",
-        path_segment(id)
-    )
+fn trigger_url(ctx: &HttpContext, id: &str) -> String {
+    ctx.api_url(&format!("triggers/{}", path_segment(id)))
 }
 
-fn trigger_executions_url(trigger_id: &str) -> String {
-    format!(
-        "{BASE_URL_PREFIX}/{API_VERSION}/triggers/{}/executions",
-        path_segment(trigger_id)
-    )
+fn trigger_executions_url(ctx: &HttpContext, trigger_id: &str) -> String {
+    ctx.api_url(&format!("triggers/{}/executions", path_segment(trigger_id)))
 }
 
 /// Creates a trigger (`POST /v1beta/triggers`).
@@ -38,17 +30,9 @@ pub async fn create_trigger(
     params: &TriggerCreateParams,
 ) -> Result<Trigger, GenaiError> {
     tracing::debug!("Creating trigger: schedule={}", params.schedule);
-    // The funnel every request passes through, so the pre-flight warns
-    // also cover params mutated after construction (every field is
-    // pub) — the one path the constructor and deserialize warns miss.
+    // Also covers params mutated after construction (every field is pub).
     crate::triggers::warn_on_interaction_footguns(&params.interaction);
-    let text = send_and_read(
-        ctx,
-        reqwest::Method::POST,
-        &triggers_url(),
-        Some(to_body(params)?),
-    )
-    .await?;
+    let text = send_and_read(ctx, reqwest::Method::POST, &triggers_url(ctx), Some(params)).await?;
     deserialize_with_context(&text, "Trigger from create")
 }
 
@@ -56,7 +40,13 @@ pub async fn create_trigger(
 pub async fn get_trigger(ctx: &HttpContext, trigger_id: &str) -> Result<Trigger, GenaiError> {
     require_id(trigger_id, "trigger")?;
     tracing::debug!("Getting trigger: ID={trigger_id}");
-    let text = send_and_read(ctx, reqwest::Method::GET, &trigger_url(trigger_id), None).await?;
+    let text = send_and_read(
+        ctx,
+        reqwest::Method::GET,
+        &trigger_url(ctx, trigger_id),
+        NO_BODY,
+    )
+    .await?;
     deserialize_with_context(&text, "Trigger from get")
 }
 
@@ -67,8 +57,8 @@ pub async fn list_triggers(
     page_token: Option<&str>,
 ) -> Result<TriggerListResponse, GenaiError> {
     tracing::debug!("Listing triggers: page_size={page_size:?}, page_token={page_token:?}");
-    let url = with_paging(triggers_url(), page_size, page_token);
-    let text = send_and_read(ctx, reqwest::Method::GET, &url, None).await?;
+    let url = with_paging(triggers_url(ctx), page_size, page_token);
+    let text = send_and_read(ctx, reqwest::Method::GET, &url, NO_BODY).await?;
     deserialize_with_context(&text, "TriggerListResponse")
 }
 
@@ -87,8 +77,8 @@ pub async fn update_trigger(
     let text = send_and_read(
         ctx,
         reqwest::Method::PATCH,
-        &trigger_url(trigger_id),
-        Some(to_body(update)?),
+        &trigger_url(ctx, trigger_id),
+        Some(update),
     )
     .await?;
     deserialize_with_context(&text, "Trigger from update")
@@ -98,7 +88,13 @@ pub async fn update_trigger(
 pub async fn delete_trigger(ctx: &HttpContext, trigger_id: &str) -> Result<(), GenaiError> {
     require_id(trigger_id, "trigger")?;
     tracing::debug!("Deleting trigger: ID={trigger_id}");
-    send_and_read(ctx, reqwest::Method::DELETE, &trigger_url(trigger_id), None).await?;
+    send_and_read(
+        ctx,
+        reqwest::Method::DELETE,
+        &trigger_url(ctx, trigger_id),
+        NO_BODY,
+    )
+    .await?;
     Ok(())
 }
 
@@ -119,8 +115,8 @@ pub async fn run_trigger(
     let text = send_and_read(
         ctx,
         reqwest::Method::POST,
-        &trigger_executions_url(trigger_id),
-        Some(serde_json::json!({})),
+        &trigger_executions_url(ctx, trigger_id),
+        Some(&serde_json::json!({})),
     )
     .await?;
     deserialize_with_context(&text, "TriggerExecution from run")
@@ -136,8 +132,12 @@ pub async fn list_trigger_executions(
 ) -> Result<TriggerExecutionListResponse, GenaiError> {
     require_id(trigger_id, "trigger")?;
     tracing::debug!("Listing trigger executions: ID={trigger_id}");
-    let url = with_paging(trigger_executions_url(trigger_id), page_size, page_token);
-    let text = send_and_read(ctx, reqwest::Method::GET, &url, None).await?;
+    let url = with_paging(
+        trigger_executions_url(ctx, trigger_id),
+        page_size,
+        page_token,
+    );
+    let text = send_and_read(ctx, reqwest::Method::GET, &url, NO_BODY).await?;
     deserialize_with_context(&text, "TriggerExecutionListResponse")
 }
 
@@ -147,29 +147,30 @@ mod tests {
 
     #[test]
     fn test_triggers_url_construction() {
+        let ctx = HttpContext::new(reqwest::Client::new(), "k".to_string(), vec![]);
         assert_eq!(
-            triggers_url(),
+            triggers_url(&ctx),
             "https://generativelanguage.googleapis.com/v1beta/triggers"
         );
         assert_eq!(
-            trigger_url("trig-123"),
+            trigger_url(&ctx, "trig-123"),
             "https://generativelanguage.googleapis.com/v1beta/triggers/trig-123"
         );
         // The sub-collection form the SDK spec mandates for run/list
         // executions (see the run_trigger doc comment) — this path has no
         // live probe, so the unit test is its only coverage.
         assert_eq!(
-            trigger_executions_url("trig-123"),
+            trigger_executions_url(&ctx, "trig-123"),
             "https://generativelanguage.googleapis.com/v1beta/triggers/trig-123/executions"
         );
         // A path-metacharacter ID is encoded, not interpolated raw — on
         // both the item URL and the sub-collection URL.
         assert_eq!(
-            trigger_url("a/b?c"),
+            trigger_url(&ctx, "a/b?c"),
             "https://generativelanguage.googleapis.com/v1beta/triggers/a%2Fb%3Fc"
         );
         assert_eq!(
-            trigger_executions_url("a/b?c"),
+            trigger_executions_url(&ctx, "a/b?c"),
             "https://generativelanguage.googleapis.com/v1beta/triggers/a%2Fb%3Fc/executions"
         );
     }

@@ -582,8 +582,6 @@ impl<'a> InteractionBuilder<'a> {
             // Main auto-function streaming loop
             for loop_count in 0..max_loops {
                 debug!("Auto-function streaming loop iteration {}/{}", loop_count + 1, max_loops);
-                // Enable streaming for this request
-                request.stream = Some(true);
 
                 // Stream this iteration's response
                 let mut stream = client.execute_stream(request.clone());
