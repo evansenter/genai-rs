@@ -1482,10 +1482,9 @@ pub struct InteractionRequest {
 
     /// User-defined metadata labels for the request.
     ///
-    /// Server-side constraint (verified live 2026-08-08): the Gemini API
-    /// rejects `labels` — "not available on the Gemini API but it is
-    /// available on the Gemini Enterprise Agent Platform" (Vertex-only).
-    /// The field is modeled for spec parity and forward compatibility.
+    /// Accepted by the Gemini API and echoed on the response as
+    /// [`InteractionResponse::labels`](crate::InteractionResponse::labels)
+    /// (verified live 2026-09-24; it was Vertex-only on 2026-08-08).
     ///
     /// `BTreeMap` (not `HashMap`) so the serialized key order is
     /// deterministic — wire captures and `LOUD_WIRE` diffs of the same

@@ -1424,6 +1424,7 @@ fn arb_usage_metadata() -> impl Strategy<Value = UsageMetadata> {
                     cached_tokens_by_modality,
                     tool_use_tokens_by_modality,
                     grounding_tool_count,
+                    ..Default::default()
                 }
             },
         )
@@ -2034,6 +2035,7 @@ fn arb_interaction_response() -> impl Strategy<Value = InteractionResponse> {
                 output_text,
                 created,
                 updated,
+                ..Default::default()
             }
         },
     )

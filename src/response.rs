@@ -366,6 +366,14 @@ pub struct UsageMetadata {
     /// calls were made while grounding this interaction).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grounding_tool_count: Option<Vec<GroundingToolCount>>,
+
+    /// Fields the API returned that this struct does not model, preserved
+    /// for roundtrip (Evergreen). Live responses carry `raw_prompt_token`,
+    /// `model_invocation_token_counts` and
+    /// `non_grounding_model_invocation_token_counts`, none of which are in
+    /// the bindings (2026-09-24).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl UsageMetadata {
@@ -926,6 +934,21 @@ pub struct InteractionResponse {
     /// Timestamp when the interaction was last updated (ISO 8601 UTC)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated: Option<DateTime<Utc>>,
+
+    /// The system instruction the interaction ran with, as echoed by the API.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_instruction: Option<String>,
+
+    /// The request's labels, as echoed by the API (verified live
+    /// 2026-09-24).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub labels: Option<std::collections::BTreeMap<String, String>>,
+
+    /// Fields the API returned that this struct does not model, preserved
+    /// for roundtrip (Evergreen): e.g. the `environment`, `generation_config`
+    /// and `agent_config` echoes.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl InteractionResponse {
@@ -2460,5 +2483,40 @@ mod tests {
         assert_eq!(status.unknown_status_type(), Some("hibernating"));
         assert!(status.unknown_data().is_some());
         assert_eq!(serde_json::to_string(&status).unwrap(), "\"hibernating\"");
+    }
+
+    /// Shapes from a live `gemini-3.8-flash` response (2026-09-24).
+    #[test]
+    fn usage_preserves_unmodeled_live_fields() {
+        let wire = serde_json::json!({
+            "total_tokens": 123,
+            "total_input_tokens": 7,
+            "raw_prompt_token": 38,
+            "model_invocation_token_counts": [{
+                "prompt_tokens_details": [{"modality": "text", "tokens": 38}],
+                "candidates_tokens_details": [{"modality": "text", "tokens": 5}]
+            }]
+        });
+        let usage: UsageMetadata = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(usage.total_tokens, Some(123));
+        assert_eq!(usage.extra["raw_prompt_token"], 38);
+        assert_eq!(serde_json::to_value(&usage).unwrap(), wire);
+    }
+
+    #[test]
+    fn interaction_echoes_labels_system_instruction_and_extras() {
+        let wire = serde_json::json!({
+            "id": "int_1",
+            "status": "completed",
+            "steps": [],
+            "system_instruction": "Be brief.",
+            "labels": {"team": "audit"},
+            "environment": {"type": "remote", "env": [{"A": {"value": "1"}}]}
+        });
+        let response: InteractionResponse = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(response.system_instruction.as_deref(), Some("Be brief."));
+        assert_eq!(response.labels.as_ref().unwrap()["team"], "audit");
+        assert_eq!(response.extra["environment"], wire["environment"]);
+        assert_eq!(serde_json::to_value(&response).unwrap(), wire);
     }
 }

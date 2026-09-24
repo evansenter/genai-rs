@@ -14,8 +14,8 @@ mod common;
 use common::{TINY_WAV_BASE64, get_client};
 use genai_rs::{
     Agent, Content, DeepResearchConfig, InteractionInput, ResponseFormat, RetrievalConfig,
-    SpeechConfig, Tool, Visualization,
-    Webhook, WebhookConfig, WebhookEvent, WebhookState, WebhookUpdate,
+    SpeechConfig, Tool, Visualization, Webhook, WebhookConfig, WebhookEvent, WebhookState,
+    WebhookUpdate,
 };
 
 /// A test webhook endpoint. Deliveries fail (no listener), which is fine for
@@ -477,12 +477,11 @@ async fn test_safety_settings_vertex_gated() {
 }
 
 /// `labels` was Vertex-only until at least 2026-08-08; as of 2026-09-24 the
-/// Gemini API accepts them and echoes them back. `InteractionResponse` does
-/// not model the echo yet, so it is read from the raw response body.
+/// Gemini API accepts them and echoes them back.
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_labels_accepted_and_echoed() {
-    let Some((client, body)) = common::get_inspecting_client() else {
+    let Some(client) = get_client() else {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
     };
@@ -499,10 +498,8 @@ async fn test_labels_accepted_and_echoed() {
     .expect("labels should be accepted (verified live 2026-09-24)");
 
     assert_eq!(response.status, genai_rs::InteractionStatus::Completed);
-    assert_eq!(
-        body.take()["labels"],
-        serde_json::json!({"team": "genai-rs-ci"})
-    );
+    let labels = response.labels.expect("labels were not echoed");
+    assert_eq!(labels.get("team").map(String::as_str), Some("genai-rs-ci"));
 }
 
 #[tokio::test]

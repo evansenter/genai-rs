@@ -1417,10 +1417,11 @@ impl<'a> InteractionBuilder<'a> {
     /// Sets the user-defined metadata labels for this request, replacing
     /// any previously added ones.
     ///
-    /// Server-side constraint (verified live 2026-08-08): the Gemini API
-    /// rejects `labels` (Vertex-only); modeled for spec parity. Stored in a
-    /// `BTreeMap` so the serialized key order is deterministic; a repeated
-    /// key in the input keeps the last value.
+    /// Accepted by the Gemini API and echoed as
+    /// [`InteractionResponse::labels`](crate::InteractionResponse::labels)
+    /// (verified live 2026-09-24). Stored in a `BTreeMap` so the serialized
+    /// key order is deterministic; a repeated key in the input keeps the
+    /// last value.
     #[must_use]
     pub fn with_labels(
         mut self,
