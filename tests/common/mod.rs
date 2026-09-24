@@ -9,6 +9,8 @@
 //! Items carry `#[allow(dead_code)]` because each test file compiles this
 //! module separately and no single file uses all of it.
 
+pub mod http_stub;
+
 use futures_util::StreamExt;
 use genai_rs::{
     AutoFunctionStreamChunk, AutoFunctionStreamEvent, Client, GenaiError, InteractionResponse,
