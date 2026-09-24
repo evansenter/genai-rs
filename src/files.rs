@@ -3,8 +3,9 @@
 //!
 //! Files are stored for 48 hours. Limits: 2 GB per file, 20 GB per project.
 //! Uploads use Google's resumable protocol, completed in a single
-//! `upload, finalize` request; the `chunked` variants stream the body from
-//! disk instead of reading it into memory.
+//! `upload, finalize` request. Path-based uploads stream the file from disk
+//! (about 8 MB of buffer, whatever the file size);
+//! [`Client::upload_file_bytes`] sends bytes already in memory.
 //!
 //! # Example
 //!
@@ -226,11 +227,12 @@ pub(crate) fn mime_type_for_upload(
 
 /// Files API methods.
 impl Client {
-    /// Uploads a file from a path to the Files API.
+    /// Uploads a file from a path to the Files API, streaming it from disk.
     ///
     /// Files are stored for 48 hours and can be referenced in interactions by their URI.
     /// This is more efficient than inline base64 encoding for large files or files
-    /// that will be used across multiple interactions.
+    /// that will be used across multiple interactions. Memory use is bounded
+    /// (about 8 MB of read buffer) whatever the file size, up to the 2 GB limit.
     ///
     /// # Arguments
     ///
@@ -276,7 +278,7 @@ impl Client {
         self.upload_file_with_mime(path, mime_type).await
     }
 
-    /// Uploads a file with an explicit MIME type.
+    /// Uploads a file with an explicit MIME type, streaming it from disk.
     ///
     /// Use this when automatic MIME type detection isn't suitable.
     ///
@@ -303,12 +305,9 @@ impl Client {
         mime_type: &str,
     ) -> Result<crate::FileMetadata, GenaiError> {
         let path = path.as_ref();
-        let file_data = tokio::fs::read(path).await.map_err(|e| {
-            GenaiError::InvalidInput(format!("Failed to read file '{}': {}", path.display(), e))
-        })?;
-        crate::http::files::upload_file(
+        crate::http::files::upload_path(
             &self.http,
-            file_data,
+            path,
             mime_type,
             file_display_name(path).as_deref(),
         )
@@ -352,7 +351,7 @@ impl Client {
             display_name
         );
 
-        crate::http::files::upload_file(&self.http, data, mime_type, display_name).await
+        crate::http::files::upload_bytes(&self.http, data, mime_type, display_name).await
     }
 
     /// Gets metadata for an uploaded file.
@@ -452,147 +451,6 @@ impl Client {
     /// ```
     pub async fn delete_file(&self, file_name: &str) -> Result<(), GenaiError> {
         crate::http::files::delete_file(&self.http, file_name).await
-    }
-
-    /// Uploads a file using chunked transfer to minimize memory usage.
-    ///
-    /// Unlike `upload_file`, this method streams the file from disk in chunks,
-    /// never loading the entire file into memory. This is ideal for large files
-    /// (500MB-2GB) or memory-constrained environments.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - Path to the file to upload
-    ///
-    /// # Returns
-    ///
-    /// Returns a tuple of:
-    /// - `FileMetadata`: The uploaded file's metadata
-    /// - `ResumableUpload`: metadata of the upload session that was used
-    ///
-    /// # Memory Usage
-    ///
-    /// This method uses approximately 8MB of memory for buffering, regardless of
-    /// the file size. A 2GB file uses the same memory as a 10MB file.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The file cannot be read
-    /// - The MIME type cannot be determined
-    /// - The upload fails
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use genai_rs::{Client, Content};
-    ///
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = Client::new("api-key".to_string());
-    ///
-    /// // Upload a large video file without loading it all into memory
-    /// let (file, _upload_handle) = client.upload_file_chunked("large_video.mp4").await?;
-    /// println!("Uploaded: {} -> {}", file.name, file.uri);
-    ///
-    /// // Use in interaction
-    /// let response = client.interaction()
-    ///     .with_model(genai_rs::DEFAULT_MODEL)
-    ///     .with_content(vec![
-    ///         Content::text("Describe this video"),
-    ///         Content::from_file(&file),
-    ///     ])
-    ///     .create()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn upload_file_chunked(
-        &self,
-        path: impl AsRef<std::path::Path>,
-    ) -> Result<(crate::FileMetadata, crate::ResumableUpload), GenaiError> {
-        let path = path.as_ref();
-        let mime_type = mime_type_for_upload(path, "upload_file_chunked_with_mime()")?;
-        self.upload_file_chunked_with_mime(path, mime_type).await
-    }
-
-    /// Uploads a file using chunked transfer with an explicit MIME type.
-    ///
-    /// Use this when automatic MIME type detection isn't suitable.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - Path to the file to upload
-    /// * `mime_type` - MIME type of the file (e.g., "video/mp4")
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use genai_rs::Client;
-    ///
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = Client::new("api-key".to_string());
-    ///
-    /// let (file, _) = client.upload_file_chunked_with_mime(
-    ///     "data.bin",
-    ///     "application/octet-stream"
-    /// ).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn upload_file_chunked_with_mime(
-        &self,
-        path: impl AsRef<std::path::Path>,
-        mime_type: &str,
-    ) -> Result<(crate::FileMetadata, crate::ResumableUpload), GenaiError> {
-        self.upload_file_chunked_with_options(path, mime_type, crate::DEFAULT_CHUNK_SIZE)
-            .await
-    }
-
-    /// Uploads a file using chunked transfer with a custom chunk size.
-    ///
-    /// This is the same as `upload_file_chunked_with_mime` but allows
-    /// specifying the chunk size for streaming. Larger chunks are more
-    /// efficient for fast networks, while smaller chunks use less memory.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - Path to the file to upload
-    /// * `mime_type` - MIME type of the file
-    /// * `chunk_size` - Size of chunks to stream in bytes (default: 8MB)
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use genai_rs::Client;
-    ///
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = Client::new("api-key".to_string());
-    ///
-    /// // Use 16MB chunks for faster upload on a fast network
-    /// let chunk_size = 16 * 1024 * 1024;
-    /// let (file, _) = client.upload_file_chunked_with_options(
-    ///     "large_video.mp4",
-    ///     "video/mp4",
-    ///     chunk_size
-    /// ).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn upload_file_chunked_with_options(
-        &self,
-        path: impl AsRef<std::path::Path>,
-        mime_type: &str,
-        chunk_size: usize,
-    ) -> Result<(crate::FileMetadata, crate::ResumableUpload), GenaiError> {
-        let path = path.as_ref();
-        crate::http::files::upload_file_chunked(
-            &self.http,
-            path,
-            mime_type,
-            file_display_name(path).as_deref(),
-            chunk_size,
-        )
-        .await
     }
 
     /// Waits for a file to finish processing.

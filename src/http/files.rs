@@ -117,9 +117,9 @@ async fn finish_upload(
 ///
 /// # Errors
 ///
-/// Returns [`GenaiError::InvalidInput`] for an empty or oversized file, or an
-/// error if either request of the upload fails.
-pub async fn upload_file(
+/// Returns [`GenaiError::InvalidInput`] for an empty or oversized file or an
+/// unheaderable MIME type, or an error if either request of the upload fails.
+pub async fn upload_bytes(
     ctx: &HttpContext,
     file_data: Vec<u8>,
     mime_type: &str,
@@ -147,66 +147,35 @@ pub async fn upload_file(
     finish_upload(ctx, request_id, &upload_url, file_size, file_data.into()).await
 }
 
-/// Metadata of the resumable-upload session a streaming upload used.
-#[derive(Clone, Debug)]
-pub struct ResumableUpload {
-    upload_url: String,
-    file_size: u64,
-    mime_type: String,
-}
-
-impl ResumableUpload {
-    /// Returns the upload URL for this session.
-    #[must_use]
-    pub fn upload_url(&self) -> &str {
-        &self.upload_url
-    }
-
-    /// Returns the total file size.
-    #[must_use]
-    pub fn file_size(&self) -> u64 {
-        self.file_size
-    }
-
-    /// Returns the MIME type.
-    #[must_use]
-    pub fn mime_type(&self) -> &str {
-        &self.mime_type
-    }
-}
-
-/// Default read-buffer size for streaming uploads (8 MB).
-pub const DEFAULT_CHUNK_SIZE: usize = 8 * 1024 * 1024;
+/// Read-buffer size for streaming a file from disk, which bounds memory use
+/// per upload; the body still goes up as one `upload, finalize` request.
+const READ_BUFFER_SIZE: usize = 8 * 1024 * 1024;
 
 /// Uploads a file from disk, streaming it rather than reading it into memory.
 ///
-/// `chunk_size` is the read-buffer size, which bounds memory use; the body
-/// still goes up as one `upload, finalize` request.
-///
 /// # Errors
 ///
-/// Returns [`GenaiError::InvalidInput`] if the file cannot be read or is
-/// empty or oversized, or an error if the upload fails.
-pub async fn upload_file_chunked(
+/// Returns [`GenaiError::InvalidInput`] if the file cannot be read, is empty
+/// or oversized, or the MIME type is unheaderable, or an error if the upload
+/// fails.
+pub async fn upload_path(
     ctx: &HttpContext,
     path: &Path,
     mime_type: &str,
     display_name: Option<&str>,
-    chunk_size: usize,
-) -> Result<(FileMetadata, ResumableUpload), GenaiError> {
-    let file_size = tokio::fs::metadata(path)
-        .await
-        .map_err(|e| {
-            GenaiError::InvalidInput(format!("Failed to access file '{}': {}", path.display(), e))
-        })?
-        .len();
+) -> Result<FileMetadata, GenaiError> {
+    let read_error = |e: std::io::Error| {
+        GenaiError::InvalidInput(format!("Failed to read file '{}': {e}", path.display()))
+    };
+    // Size the upload from the open handle, so it describes the file sent.
+    let file = tokio::fs::File::open(path).await.map_err(read_error)?;
+    let file_size = file.metadata().await.map_err(read_error)?.len();
     check_upload_size(file_size)?;
     tracing::debug!(
-        "Streaming upload: path={}, size={} bytes, mime_type={}, chunk_size={} bytes",
+        "Uploading file: path={}, size={} bytes, mime_type={}",
         path.display(),
         file_size,
         mime_type,
-        chunk_size
     );
 
     let request_id = ctx.next_request_id();
@@ -223,20 +192,8 @@ pub async fn upload_file_chunked(
     )
     .await?;
 
-    let file = tokio::fs::File::open(path).await.map_err(|e| {
-        GenaiError::InvalidInput(format!("Failed to open file '{}': {}", path.display(), e))
-    })?;
-    let body = reqwest::Body::wrap_stream(ReaderStream::with_capacity(file, chunk_size));
-    let metadata = finish_upload(ctx, request_id, &upload_url, file_size, body).await?;
-
-    Ok((
-        metadata,
-        ResumableUpload {
-            upload_url,
-            file_size,
-            mime_type: mime_type.to_string(),
-        },
-    ))
+    let body = reqwest::Body::wrap_stream(ReaderStream::with_capacity(file, READ_BUFFER_SIZE));
+    finish_upload(ctx, request_id, &upload_url, file_size, body).await
 }
 
 /// Validates a `files/<id>` resource name and rebuilds it with the ID

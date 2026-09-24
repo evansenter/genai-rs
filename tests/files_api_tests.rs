@@ -1,5 +1,5 @@
-//! Files API: upload (simple and chunked), get, list, delete, readiness
-//! polling, and use in an interaction.
+//! Files API: upload (from disk, streamed, and from memory), get, list,
+//! delete, readiness polling, and use in an interaction.
 //!
 //! ```bash
 //! cargo nextest run --test files_api_tests --run-ignored all
@@ -357,191 +357,110 @@ async fn test_get_nonexistent_file_returns_error() {
 }
 
 // =============================================================================
-// Chunked Upload Tests
+// Streamed upload from disk
 // =============================================================================
 
-/// Tests chunked upload with a moderately sized file.
-///
-/// This test creates a file larger than the default chunk size to verify
-/// the streaming mechanism works correctly across multiple chunks.
+/// A file larger than the 8 MB read buffer streams up intact.
 #[tokio::test]
 #[ignore = "Requires API key"]
-async fn test_upload_file_chunked() {
+async fn test_upload_file_streams_a_file_larger_than_the_read_buffer() {
     let client = get_client();
 
-    // Create a temporary file larger than the default chunk size (8MB)
-    // Use 9MB to ensure at least 2 chunks are streamed
     let temp_dir = tempfile::tempdir().unwrap();
     let file_path = temp_dir.path().join("large_test.txt");
-
-    // Generate 9MB of data
     let data: Vec<u8> = (0..9 * 1024 * 1024).map(|i| (i % 256) as u8).collect();
     std::fs::write(&file_path, &data).unwrap();
 
-    // Upload using chunked method
-    let (file, resumable_upload) = client
-        .upload_file_chunked_with_mime(&file_path, "text/plain")
+    let file = client
+        .upload_file_with_mime(&file_path, "text/plain")
         .await
-        .expect("Chunked upload failed");
+        .expect("Streamed upload failed");
 
-    // Verify file metadata
     assert!(
         file.name.starts_with("files/"),
         "File name should start with 'files/'"
     );
     assert_eq!(file.mime_type, "text/plain");
-    assert!(
-        file.display_name.as_deref() == Some("large_test.txt"),
-        "Display name should be the filename"
-    );
+    assert_eq!(file.display_name.as_deref(), Some("large_test.txt"));
     assert!(!file.uri.is_empty(), "URI should not be empty");
-
     assert_eq!(
         file.size_bytes_as_u64(),
         Some(data.len() as u64),
         "File size should match uploaded data"
     );
 
-    // Verify ResumableUpload metadata
-    assert_eq!(
-        resumable_upload.file_size(),
-        data.len() as u64,
-        "ResumableUpload should track file size"
-    );
-    assert_eq!(resumable_upload.mime_type(), "text/plain");
-    assert!(
-        !resumable_upload.upload_url().is_empty(),
-        "Upload URL should not be empty"
-    );
-
-    // Clean up
     client
         .delete_file(&file.name)
         .await
         .expect("Failed to delete file");
 }
 
-/// Tests chunked upload with automatic MIME type detection.
+/// `upload_file` infers the MIME type from the extension.
 #[tokio::test]
 #[ignore = "Requires API key"]
-async fn test_upload_file_chunked_auto_mime() {
+async fn test_upload_file_auto_mime() {
     let client = get_client();
 
-    // Create a temporary file with a known extension
     let temp_dir = tempfile::tempdir().unwrap();
     let file_path = temp_dir.path().join("test.mp4");
+    std::fs::write(&file_path, vec![0u8; 1024]).unwrap();
 
-    // Write some fake video data (just bytes, won't actually play)
-    let data = vec![0u8; 1024]; // 1KB fake video
-    std::fs::write(&file_path, &data).unwrap();
+    let file = client.upload_file(&file_path).await.expect("Upload failed");
 
-    // Upload using chunked method with auto MIME detection
-    let (file, _) = client
-        .upload_file_chunked(&file_path)
-        .await
-        .expect("Chunked upload failed");
-
-    // Verify MIME type was detected correctly
     assert_eq!(
         file.mime_type, "video/mp4",
         "MIME type should be auto-detected from extension"
     );
     assert_eq!(file.display_name.as_deref(), Some("test.mp4"));
 
-    // Clean up
-    client.delete_file(&file.name).await.unwrap();
-}
-
-/// Tests chunked upload with a custom chunk size.
-#[tokio::test]
-#[ignore = "Requires API key"]
-async fn test_upload_file_chunked_custom_chunk_size() {
-    let client = get_client();
-
-    // Create a temporary file
-    let temp_dir = tempfile::tempdir().unwrap();
-    let file_path = temp_dir.path().join("chunk_test.txt");
-
-    // Generate 5MB of data
-    let data: Vec<u8> = (0..5 * 1024 * 1024).map(|i| (i % 256) as u8).collect();
-    std::fs::write(&file_path, &data).unwrap();
-
-    // Upload with a custom chunk size (1MB)
-    let chunk_size = 1024 * 1024; // 1MB
-    let (file, resumable_upload) = client
-        .upload_file_chunked_with_options(&file_path, "text/plain", chunk_size)
-        .await
-        .expect("Chunked upload with custom chunk size failed");
-
-    // Verify upload succeeded
-    assert!(file.name.starts_with("files/"));
-    assert_eq!(resumable_upload.file_size(), data.len() as u64);
-
-    // Clean up
     client.delete_file(&file.name).await.unwrap();
 }
 
 /// Empty files are rejected before any request is made.
 #[tokio::test]
-async fn test_upload_file_chunked_empty_file_error() {
+async fn test_upload_file_empty_file_error() {
     let client = Client::new("test-api-key".to_string());
 
-    // Create an empty temporary file
     let temp_dir = tempfile::tempdir().unwrap();
     let file_path = temp_dir.path().join("empty.txt");
     std::fs::write(&file_path, b"").unwrap();
 
-    // Chunked upload should fail for empty files
-    let result = client
-        .upload_file_chunked_with_mime(&file_path, "text/plain")
-        .await;
-
-    assert!(result.is_err(), "Should fail for empty file");
-    let err_string = result.unwrap_err().to_string();
-    assert!(
-        err_string.contains("empty"),
-        "Error should mention empty file: {}",
-        err_string
-    );
+    let err = client
+        .upload_file_with_mime(&file_path, "text/plain")
+        .await
+        .expect_err("Should fail for empty file");
+    assert!(matches!(err, GenaiError::InvalidInput(_)), "{err:?}");
+    assert!(err.to_string().contains("empty"), "{err}");
 }
 
 /// A missing file fails on open, before any request is made.
 #[tokio::test]
-async fn test_upload_file_chunked_nonexistent_file_error() {
+async fn test_upload_file_nonexistent_file_error() {
     let client = Client::new("test-api-key".to_string());
 
-    // Try to stream a file that doesn't exist
-    let result = client
-        .upload_file_chunked_with_mime("/nonexistent/path/to/file.txt", "text/plain")
-        .await;
-
-    assert!(result.is_err(), "Should fail for nonexistent file");
-    let err_string = result.unwrap_err().to_string();
-    assert!(
-        err_string.contains("Failed to access") || err_string.contains("No such file"),
-        "Error should indicate file access failure: {}",
-        err_string
-    );
+    let err = client
+        .upload_file_with_mime("/nonexistent/path/to/file.txt", "text/plain")
+        .await
+        .expect_err("Should fail for nonexistent file");
+    assert!(matches!(err, GenaiError::InvalidInput(_)), "{err:?}");
+    assert!(err.to_string().contains("Failed to read file"), "{err}");
 }
 
-/// Tests that file uploaded via chunked method can be used in an interaction.
+/// A file uploaded from disk can be used in an interaction.
 #[tokio::test]
 #[ignore = "Requires API key"]
-async fn test_chunked_upload_in_interaction() {
+async fn test_path_upload_in_interaction() {
     let client = get_client();
 
-    // Create a text file with content
     let temp_dir = tempfile::tempdir().unwrap();
     let file_path = temp_dir.path().join("interact.txt");
-    let content =
-        "The quick brown fox jumps over the lazy dog. This file was uploaded via chunked upload.";
+    let content = "The quick brown fox jumps over the lazy dog. This file was streamed from disk.";
     std::fs::write(&file_path, content).unwrap();
 
-    // Upload using chunked method
-    let (file, _) = client
-        .upload_file_chunked_with_mime(&file_path, "text/plain")
+    let file = client
+        .upload_file_with_mime(&file_path, "text/plain")
         .await
-        .expect("Chunked upload failed");
+        .expect("Upload failed");
 
     // Wait for file to be ready
     let ready_file = client

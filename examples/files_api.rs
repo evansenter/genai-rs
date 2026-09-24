@@ -2,8 +2,8 @@
 //!
 //! Inline base64 (`Content::image_data` and friends) re-sends the bytes on
 //! every request. An uploaded file is sent once and referenced by URI until
-//! it expires (48 hours) or you delete it. `upload_file_chunked` streams
-//! large files from disk without loading them into memory.
+//! it expires (48 hours) or you delete it. `upload_file` streams from disk,
+//! so a large file is never loaded into memory.
 //!
 //! Run with: `cargo run --example files_api`
 

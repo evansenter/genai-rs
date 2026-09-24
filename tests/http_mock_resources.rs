@@ -5,8 +5,7 @@
 //! included), query, and JSON body, and a realistic response is parsed into
 //! the typed result with Evergreen `Unknown` and `extra` preservation. Error
 //! mapping and the wait helpers' success, failure and timeout paths are
-//! covered too. Files API uploads (`upload_file*`) are left out: that API is
-//! being redesigned.
+//! covered too.
 //!
 //! Tests whose replies carry unknown enum values are compiled out under
 //! `strict-unknown`, which rejects those values by design.
@@ -2333,6 +2332,57 @@ async fn get_interaction_stream_http_error_is_the_only_item() {
 // =============================================================================
 // Files API: metadata, list, delete, wait
 // =============================================================================
+
+/// A path upload streams the file as the finalize body, byte for byte.
+#[tokio::test]
+async fn upload_file_streams_the_file_from_disk_then_finalizes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("notes.txt");
+    // Under one 8 MB read buffer, but it spans many TCP writes, and the
+    // pattern catches reordering or truncation.
+    let data: Vec<u8> = (0..200_003u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&path, &data).unwrap();
+    let size = data.len().to_string();
+
+    let stub = Stub::replying(vec![
+        Reply::json(200, json!({})).header("x-goog-upload-url", "{base}/upload-session/f1"),
+        Reply::json(
+            200,
+            json!({"file": {"name": "files/f1", "mimeType": "text/plain", "uri": "u", "sizeBytes": size}}),
+        ),
+    ])
+    .await;
+
+    let file = stub.client().upload_file(&path).await.unwrap();
+    assert_eq!(file.name, "files/f1");
+    assert_eq!(file.size_bytes_as_u64(), Some(data.len() as u64));
+
+    let [start, finish] = stub.requests().try_into().unwrap();
+    assert_eq!(start.method, "POST");
+    assert_eq!(start.target, "/upload/v1beta/files");
+    assert_eq!(start.header("x-goog-api-key"), Some("test-key"));
+    assert_eq!(start.header("x-goog-upload-protocol"), Some("resumable"));
+    assert_eq!(start.header("x-goog-upload-command"), Some("start"));
+    assert_eq!(
+        start.header("x-goog-upload-header-content-length"),
+        Some(size.as_str())
+    );
+    assert_eq!(
+        start.header("x-goog-upload-header-content-type"),
+        Some("text/plain")
+    );
+    assert_eq!(start.json(), json!({"file": {"displayName": "notes.txt"}}));
+
+    assert_eq!(finish.method, "POST");
+    assert_eq!(finish.target, "/upload-session/f1");
+    assert_eq!(
+        finish.header("x-goog-upload-command"),
+        Some("upload, finalize")
+    );
+    assert_eq!(finish.header("x-goog-upload-offset"), Some("0"));
+    assert_eq!(finish.header("content-length"), Some(size.as_str()));
+    assert!(finish.body == data, "the finalize body is the file");
+}
 
 #[tokio::test]
 async fn files_endpoints_send_the_documented_requests() {

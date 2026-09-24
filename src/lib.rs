@@ -233,7 +233,6 @@ pub mod files;
 pub use files::{
     FileError, FileMetadata, FileState, FileUploadResponse, ListFilesResponse, VideoMetadata,
 };
-pub use http::files::{DEFAULT_CHUNK_SIZE, ResumableUpload};
 
 // =============================================================================
 // Client and Builder
