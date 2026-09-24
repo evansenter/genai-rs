@@ -5,7 +5,6 @@
 
 set -euo pipefail
 
-# Parse arguments
 TRENDS_FILE=""
 TESTS_FILE=""
 START_DATE=""
@@ -41,17 +40,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Validate required arguments
 : "${TRENDS_FILE:?--trends required}"
 : "${TESTS_FILE:?--tests required}"
 : "${START_DATE:?--start-date required}"
 : "${END_DATE:?--end-date required}"
 
-# Read JSON files
 TRENDS=$(cat "$TRENDS_FILE")
 TESTS=$(cat "$TESTS_FILE")
 
-# Extract current values
 TOTAL_RUNS=$(echo "$TRENDS" | jq -r '.current.total_runs')
 FAILED_RUNS=$(echo "$TRENDS" | jq -r '.current.failed_runs')
 UNIQUE_FLAKY=$(echo "$TRENDS" | jq -r '.current.unique_flaky')
@@ -61,18 +57,15 @@ ASSERTION_FAILURES=$(echo "$TRENDS" | jq -r '.current.assertion_failures')
 PANIC=$(echo "$TRENDS" | jq -r '.current.panic')
 UNKNOWN=$(echo "$TRENDS" | jq -r '.current.unknown')
 
-# Calculate failure rate
 if [ "$TOTAL_RUNS" -gt 0 ]; then
   FAILURE_RATE=$(awk "BEGIN {printf \"%.1f\", ($FAILED_RUNS / $TOTAL_RUNS) * 100}")
 else
   FAILURE_RATE="0.0"
 fi
 
-# Check trend availability
 HAS_24H=$(echo "$TRENDS" | jq -r '.trends_24h.available')
 HAS_7D=$(echo "$TRENDS" | jq -r '.trends_7d.available')
 
-# Helper to format trend with delta
 format_trend() {
   local value="$1"
   local trend="$2"
@@ -91,7 +84,6 @@ format_trend() {
   fi
 }
 
-# Start report
 cat <<EOF
 ## CI Flakiness Report ($START_DATE to $END_DATE)
 
@@ -101,7 +93,6 @@ cat <<EOF
 |--------|---------|------|-------|
 EOF
 
-# Add summary rows with trends
 TREND_24H_FAILED=$(echo "$TRENDS" | jq -r '.trends_24h.failed_runs')
 TREND_7D_FAILED=$(echo "$TRENDS" | jq -r '.trends_7d.failed_runs')
 DELTA_24H_FAILED=$(echo "$TRENDS" | jq -r '.deltas_24h.failed_runs')
@@ -112,7 +103,6 @@ TREND_7D_FLAKY=$(echo "$TRENDS" | jq -r '.trends_7d.unique_flaky')
 DELTA_24H_FLAKY=$(echo "$TRENDS" | jq -r '.deltas_24h.unique_flaky')
 DELTA_7D_FLAKY=$(echo "$TRENDS" | jq -r '.deltas_7d.unique_flaky')
 
-# Format 24hr column
 if [ "$HAS_24H" = "true" ]; then
   COL_24H_FAILED=$(format_trend "" "$TREND_24H_FAILED" "$DELTA_24H_FAILED")
   COL_24H_FLAKY=$(format_trend "" "$TREND_24H_FLAKY" "$DELTA_24H_FLAKY")
@@ -121,7 +111,6 @@ else
   COL_24H_FLAKY="—"
 fi
 
-# Format 7-day column
 if [ "$HAS_7D" = "true" ]; then
   COL_7D_FAILED=$(format_trend "" "$TREND_7D_FAILED" "$DELTA_7D_FAILED")
   COL_7D_FLAKY=$(format_trend "" "$TREND_7D_FLAKY" "$DELTA_7D_FLAKY")
@@ -136,7 +125,6 @@ cat <<EOF
 | Unique flaky tests | $UNIQUE_FLAKY | $COL_24H_FLAKY | $COL_7D_FLAKY |
 EOF
 
-# Add failure breakdown section (only if there are failures)
 TOTAL_CATEGORIZED=$((API_ERRORS + RATE_LIMIT + ASSERTION_FAILURES + PANIC + UNKNOWN))
 if [ "$TOTAL_CATEGORIZED" -gt 0 ]; then
   cat <<EOF
@@ -147,7 +135,6 @@ if [ "$TOTAL_CATEGORIZED" -gt 0 ]; then
 |----------|-------|------|-------|
 EOF
 
-  # Helper to format category row
   format_category_row() {
     local name="$1"
     local count="$2"
@@ -187,7 +174,6 @@ EOF
   format_category_row "Unknown" "$UNKNOWN" "unknown"
 fi
 
-# Add top flaky tests section
 TEST_COUNT=$(echo "$TESTS" | jq 'length')
 if [ "$TEST_COUNT" -gt 0 ]; then
   cat <<EOF
@@ -198,7 +184,6 @@ if [ "$TEST_COUNT" -gt 0 ]; then
 |------|----------|----------|------|
 EOF
 
-  # Output top 10 tests sorted by failure count
   echo "$TESTS" | jq -r '
     sort_by(-.failures) |
     .[:10][] |
@@ -213,7 +198,6 @@ No test failures detected in the reporting period.
 EOF
 fi
 
-# Add conditional recommendations
 echo ""
 echo "### Recommendations"
 echo ""
@@ -244,7 +228,6 @@ if [ "$RECOMMENDATIONS" -eq 0 ]; then
   echo "No specific recommendations — CI looks healthy!"
 fi
 
-# Footer
 cat <<EOF
 
 ---

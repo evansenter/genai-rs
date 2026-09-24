@@ -53,13 +53,8 @@ import tempfile
 
 import yaml
 
-# `run:` defaults to bash on Linux runners. Anything explicitly set to
-# another interpreter is not ours to parse.
-#
-# Matched on the leading word rather than the whole value, so custom
-# templates like `bash -euo pipefail {0}` — one flag away from the
-# documented ones — stay covered. An exact-match allowlist would opt such a
-# step out of this gate with nothing in the output saying so.
+# `run:` defaults to bash on Linux; other explicit interpreters are skipped.
+# Matched on the leading word, so `bash -euo pipefail {0}` stays covered.
 SHELLS = {"bash", "sh"}
 
 
@@ -200,29 +195,9 @@ def main() -> int:
         assumed += path_assumed
         failures += path_failures
 
-    # The scripts a `run:` block invokes have the same discovery latency as
-    # the block itself — `.github/scripts/*.sh` are called only from the
-    # daily flakiness report, so a quoting bug in one arrives as a failed
-    # cron email. To the loop above they are a one-line command that parses
-    # fine, which would make a green check read as broader than it is.
-    #
-    # This pass is no longer *unique* coverage for those paths. Since this
-    # check moved into the `shell-scripts` job, `make test-scripts` runs
-    # `shellcheck -S warning` over the same glob in the same job, and
-    # shellcheck reports syntax errors too. Kept anyway: it keeps this
-    # script meaningful when run on its own, and it keeps the reported
-    # block count honest about what was examined. It is redundancy now
-    # rather than the only line of defence, and worth knowing as such
-    # before treating a green run here as covering these files alone.
-    # Counted separately from the workflow blocks above, deliberately. The
-    # inertness guard below asks whether the `run:` extraction still yields
-    # anything, and there are eight scripts here — so folding both into one
-    # total means that if `iter_run_steps` yielded nothing at all (an
-    # unexpected YAML shape, a `shell:` value that stops matching SHELLS, a
-    # refactor), the count would still be 8, `== 0` would be false, and the
-    # summary would report "All 8 shell blocks parse" with the half of the
-    # gate the workflows depend on silently off. Two populations, two
-    # counters, and the guard applies to the one it is about.
+    # Scripts too: they have the same discovery latency. Counted separately, so
+    # the inert-gate check below still fires if run-block extraction yields
+    # nothing.
     scripts = sorted(glob.glob(".github/scripts/*.sh"))
     script_checked = 0
     for script in scripts:
@@ -235,11 +210,7 @@ def main() -> int:
         print(f"\n{failures} of {total} shell block(s) failed to parse.")
         return 1
 
-    # Report blocks, not files, and fail on zero. This gate exists for a
-    # defect class that is otherwise invisible until a cron email arrives,
-    # so it going inert — an unrecognized `shell:` value, an unexpected YAML
-    # shape, a refactor of iter_run_steps that drops blocks — must not look
-    # identical to it passing.
+    # Fail on zero: an inert gate must not look like a pass.
     if checked == 0:
         print("::error::No workflow `run:` blocks were checked — the gate is inert.")
         return 1

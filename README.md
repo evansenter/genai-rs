@@ -59,8 +59,8 @@ async fn main() -> Result<(), genai_rs::GenaiError> {
 | Code Execution | `with_code_execution()` | Python sandbox |
 | URL Context | `with_url_context()` | Web page analysis |
 | Google Maps | `with_google_maps()` | Places and geographic grounding |
-| File Search | `add_tool(FileSearchConfig::new(stores))` | Semantic retrieval from vector stores |
-| Computer Use | `add_tool(ComputerUseConfig::new())` | Browser/desktop automation (allowlisted keys) |
+| File Search | `add_tool(FileSearchConfig::new(stores))` | Semantic retrieval over your file search stores (`create_file_search_store`) |
+| Computer Use | `add_tool(ComputerUseConfig::new())` | Browser/desktop actions your code executes (allowlisted keys) |
 | MCP Servers | `add_tool(McpServerConfig::new(name, url))` | Model Context Protocol tools |
 | Retrieval | `add_tool(RetrievalConfig::new()...)` | Vertex AI Search / RAG stores (Vertex-only, see below) |
 
@@ -68,7 +68,7 @@ async fn main() -> Result<(), genai_rs::GenaiError> {
 
 | Input | Output |
 |-------|--------|
-| Images, Audio, Video, PDFs | Text, Images, Audio (TTS, incl. multi-speaker), Video config |
+| Images, Audio, Video, PDFs | Text, Images, Audio (TTS, incl. multi-speaker), Video (generation config) |
 
 ### API coverage and Vertex-gated features
 
@@ -113,7 +113,7 @@ certificates against the **OS trust store**. Minimal containers
 
 ## Examples
 
-Runnable examples covering all features:
+Runnable examples (each one runs against the live API and exits 0):
 
 ```bash
 export GEMINI_API_KEY=your-key
@@ -235,7 +235,7 @@ let webhook = client.create_webhook(&Webhook::new(
 
 // ...then route long-running interactions to it (background required)
 let response = client.interaction()
-    .with_agent("deep-research-preview-04-2026")
+    .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
     .with_text("Research the history of the Rust programming language.")
     .with_background(true)
     .with_webhook_config(WebhookConfig::new().with_uris(vec![webhook.uri.clone()]))
@@ -365,7 +365,8 @@ For programmatic capture (snapshot tests, bug reports), implement the
 `WireInspector` trait and register it with
 `ClientBuilder::add_wire_inspector()` — inspectors receive structured
 `WireEvent`s (requests, response bodies, SSE frames, harness WebSocket
-traffic) with per-client correlation ids and secret redaction applied.
+traffic) with per-client correlation ids. Bodies reach custom inspectors
+unredacted; only the built-in `LOUD_WIRE` and tracing printers redact secrets.
 See [Logging Strategy](docs/LOGGING_STRATEGY.md) for details.
 
 ## Forward Compatibility
@@ -392,7 +393,7 @@ make test-all  # Full integration suite (requires GEMINI_API_KEY)
 ```text
 genai-rs/           # Main crate: Client, InteractionBuilder, types
 genai-rs-macros/    # Procedural macro for #[tool]
-docs/               # Comprehensive guides
+docs/               # Guides
 examples/           # Runnable examples
 ```
 
@@ -404,7 +405,8 @@ speed — but it is the one setup step that is not `cargo`.
 
 Contributions welcome! Please read:
 
-- [CLAUDE.md](CLAUDE.md) - Development guidelines and architecture
+- [CONTRIBUTING.md](CONTRIBUTING.md) - Setup, the quality gate, review checklist
+- [DECISIONS.md](DECISIONS.md) - Why the crate is shaped the way it is
 - [CHANGELOG.md](CHANGELOG.md) - Version history and migration guides
 - [SECURITY.md](SECURITY.md) - Security policy and reporting
 
