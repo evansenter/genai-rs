@@ -741,8 +741,7 @@ impl FileSearchResultItem {
 ///
 /// # Wire Format
 ///
-/// Revision 2026-05-20 uses lowercase: `"python"`. The legacy uppercase
-/// `"PYTHON"` is still accepted on deserialization for robustness.
+/// Lowercase: `"python"`.
 ///
 /// # Forward Compatibility (Evergreen Philosophy)
 ///
@@ -817,8 +816,7 @@ impl<'de> Deserialize<'de> for CodeExecutionLanguage {
         let value = serde_json::Value::deserialize(deserializer)?;
 
         match value.as_str() {
-            // Spec wire format is lowercase; accept legacy uppercase too.
-            Some("python") | Some("PYTHON") => Ok(Self::Python),
+            Some("python") => Ok(Self::Python),
             Some(other) => {
                 tracing::warn!(
                     "Encountered unknown CodeExecutionLanguage '{}'. \

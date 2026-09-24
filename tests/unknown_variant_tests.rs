@@ -506,12 +506,9 @@ mod function_calling_mode {
     }
 
     #[test]
-    fn legacy_uppercase_modes_still_recognized() {
-        // Wire format is lowercase in revision 2026-05-20, but legacy
-        // uppercase values are still accepted (and are NOT unknown).
+    fn pre_revision_uppercase_modes_are_unknown() {
         let value: FunctionCallingMode = serde_json::from_value(json!("AUTO")).unwrap();
-        assert!(!value.is_unknown());
-        assert!(matches!(value, FunctionCallingMode::Auto));
+        assert_eq!(value.unknown_mode_type(), Some("AUTO"));
     }
 }
 

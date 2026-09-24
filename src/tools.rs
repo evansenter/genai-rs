@@ -791,11 +791,10 @@ impl<'de> Deserialize<'de> for FunctionCallingMode {
         let value = serde_json::Value::deserialize(deserializer)?;
 
         match value.as_str() {
-            // Spec wire format is lowercase; accept legacy UPPERCASE too.
-            Some("auto") | Some("AUTO") => Ok(Self::Auto),
-            Some("any") | Some("ANY") => Ok(Self::Any),
-            Some("none") | Some("NONE") => Ok(Self::None),
-            Some("validated") | Some("VALIDATED") => Ok(Self::Validated),
+            Some("auto") => Ok(Self::Auto),
+            Some("any") => Ok(Self::Any),
+            Some("none") => Ok(Self::None),
+            Some("validated") => Ok(Self::Validated),
             Some(other) => {
                 tracing::warn!(
                     "Encountered unknown FunctionCallingMode '{}'. \
@@ -1984,16 +1983,6 @@ mod tests {
             let parsed: FunctionCallingMode =
                 serde_json::from_str(&json).expect("Deserialization failed");
             assert_eq!(parsed, mode);
-        }
-
-        // Legacy UPPERCASE values are still accepted on deserialize
-        for (raw, expected) in [
-            ("\"AUTO\"", FunctionCallingMode::Auto),
-            ("\"VALIDATED\"", FunctionCallingMode::Validated),
-        ] {
-            let parsed: FunctionCallingMode =
-                serde_json::from_str(raw).expect("Deserialization failed");
-            assert_eq!(parsed, expected);
         }
     }
 

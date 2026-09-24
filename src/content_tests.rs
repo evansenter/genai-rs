@@ -773,21 +773,6 @@ fn test_deserialize_code_execution_call_step() {
 }
 
 #[test]
-fn test_deserialize_code_execution_call_step_legacy_uppercase_language() {
-    // Legacy uppercase "PYTHON" is still accepted on deserialize
-    let json = r#"{"type": "code_execution_call", "id": "call_123", "arguments": {"code": "print(42)", "language": "PYTHON"}}"#;
-    let step: Step = serde_json::from_str(json).expect("Should deserialize");
-
-    match &step {
-        Step::CodeExecutionCall { language, code, .. } => {
-            assert_eq!(*language, CodeExecutionLanguage::Python);
-            assert_eq!(code, "print(42)");
-        }
-        _ => panic!("Expected CodeExecutionCall variant, got {:?}", step),
-    }
-}
-
-#[test]
 fn test_deserialize_code_execution_call_step_missing_arguments_defaults() {
     // Under revision 2026-05-20 a code_execution_call without arguments is
     // handled leniently: language defaults to Python and code to empty.
@@ -1122,12 +1107,11 @@ fn test_code_execution_language_known_variants_serde() {
 }
 
 #[test]
-fn test_code_execution_language_accepts_legacy_uppercase() {
-    // Legacy uppercase "PYTHON" is still accepted on deserialize
+fn test_code_execution_language_uppercase_is_unknown() {
+    // The pre-revision spelling is not the wire format any more.
     let deserialized: CodeExecutionLanguage =
-        serde_json::from_str(r#""PYTHON""#).expect("Should deserialize legacy format");
-    assert_eq!(deserialized, CodeExecutionLanguage::Python);
-    assert!(!deserialized.is_unknown());
+        serde_json::from_str(r#""PYTHON""#).expect("Should deserialize");
+    assert_eq!(deserialized.unknown_language_type(), Some("PYTHON"));
 }
 
 // --- Google Search / URL Context Steps ---
