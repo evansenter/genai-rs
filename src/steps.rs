@@ -108,14 +108,20 @@ impl FunctionResultPayload {
 }
 
 impl From<serde_json::Value> for FunctionResultPayload {
-    /// Converts an arbitrary JSON value into the appropriate payload variant.
+    /// Converts a function's return value into a payload the API accepts.
     ///
-    /// Strings become [`FunctionResultPayload::Text`]; everything else becomes
-    /// [`FunctionResultPayload::Json`].
+    /// Strings become [`FunctionResultPayload::Text`] and objects
+    /// [`FunctionResultPayload::Json`]. Any other value (array, number, bool,
+    /// null) is wrapped as `{"result": value}`, because the API rejects a
+    /// top-level array. For content blocks, convert from `Vec<Content>`.
+    ///
+    /// This is the send-side conversion; deserializing a response uses
+    /// [`FunctionResultPayload::from_value`], which keeps the wire shape.
     fn from(value: serde_json::Value) -> Self {
         match value {
             serde_json::Value::String(s) => Self::Text(s),
-            other => Self::Json(other),
+            object @ serde_json::Value::Object(_) => Self::Json(object),
+            other => Self::Json(serde_json::json!({ "result": other })),
         }
     }
 }

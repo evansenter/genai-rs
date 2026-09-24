@@ -184,7 +184,8 @@ Function calls arrive as `Step::FunctionCall { id, name, arguments, .. }` steps,
 and `response.function_calls()` returns them as `FunctionCallInfo { id, name,
 args }`. Send results back as `Step::function_result(name, call_id, result)`,
 where `result` is any `Into<FunctionResultPayload>` (a `serde_json::Value`,
-`&str`, `String`, or `Vec<Content>`):
+`&str`, `String`, or `Vec<Content>`; a `Value` that is not a string or object
+is sent as `{"result": value}`):
 
 ```rust,no_run
 use genai_rs::{Client, FunctionDeclaration, Step};

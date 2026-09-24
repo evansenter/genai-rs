@@ -447,9 +447,11 @@ let json = FunctionResultPayload::from(serde_json::json!({"temp": 22}));
 assert_eq!(serde_json::to_string(&json).unwrap(), "{\"temp\":22}");
 ```
 
-`From` impls exist for `serde_json::Value` (strings become `Text`, everything
-else `Json`), `&str`, `String`, and `Vec<Content>`. Helpers: `as_text()`,
-`as_json()`, `as_contents()`, `to_value()`.
+`From` impls exist for `serde_json::Value`, `&str`, `String`, and
+`Vec<Content>`. From a `Value`, strings become `Text` and objects `Json`; any
+other value (array, number, bool, null) is wrapped as `{"result": value}`,
+because the API rejects a top-level array. Deserializing never wraps.
+Helpers: `as_text()`, `as_json()`, `as_contents()`, `to_value()`.
 
 **Status**: Pending live verification (2026-05-20 revision).
 

@@ -701,6 +701,22 @@ fn test_function_result_payload_conversions() {
     assert_eq!(payload.as_json().unwrap()["temp"], 72);
     assert_eq!(payload.to_value(), serde_json::json!({"temp": 72}));
 
+    // Any other value is wrapped: the API rejects a top-level array
+    for value in [
+        serde_json::json!([1, 2, 3]),
+        serde_json::json!([{"type": "text", "text": "not converted to Contents"}]),
+        serde_json::json!(42),
+        serde_json::json!(true),
+        serde_json::Value::Null,
+    ] {
+        let payload: FunctionResultPayload = value.clone().into();
+        assert_eq!(
+            payload.to_value(),
+            serde_json::json!({"result": value}),
+            "{value}"
+        );
+    }
+
     // From Vec<Content> -> Contents
     let payload: FunctionResultPayload = vec![Content::text("block")].into();
     let contents = payload.as_contents().expect("Should be Contents");
