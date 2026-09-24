@@ -25,6 +25,15 @@
 //!   independently of the builtin capability set, so an agent can have
 //!   *only* external tools.
 //!
+//! ## Things to know
+//!
+//! - MCP tools get the server's filesystem, network and credentials, not
+//!   your agent's.
+//! - Stdio servers are spawned per agent, so a slow-starting server delays
+//!   `spawn()`. `with_timeout_seconds` bounds each tool call, not startup.
+//! - A tool error (`isError`) comes back as a tool result the model sees,
+//!   not as a transport failure.
+//!
 //! ## Requirements
 //!
 //! ```bash
@@ -147,37 +156,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         agent.shutdown().await?;
         return Err("no MCP tool ran — the harness did not reach the server".into());
     }
-    if answer.contains(FLANGE_CODE) {
-        println!("✓ The answer carries a value only the MCP server knows.");
-    } else {
-        println!("⚠ The answer did not include the server's code ({FLANGE_CODE}).");
+    if !answer.contains(FLANGE_CODE) {
+        agent.shutdown().await?;
+        return Err(format!(
+            "the MCP call ran but its result ({FLANGE_CODE}) did not reach the answer"
+        )
+        .into());
     }
+    println!("✓ The answer carries a value only the MCP server knows.");
 
     agent.shutdown().await?;
-
-    println!("\n=== Example Complete ===\n");
-
-    println!("--- What You'll See with LOUD_WIRE=1 ---");
-    println!("  WS Send: {{\"config\": {{\"mcpServers\": [{{\"name\": \"widgets\", ...}}]}}}}");
-    println!("    - the server config, sent once at conversation init");
-    println!("  WS Receive: {{\"stepUpdate\": {{\"mcpTool\": {{\"serverName\": \"widgets\",");
-    println!("    \"toolName\": \"lookup_widget\", \"argumentsJson\": \"...\"}}}}}}");
-    println!("    - one per call; the harness brokers it, your process does not");
-    println!("  Try LOUD_WIRE=mcpTool,summary to see only these, one line each\n");
-
-    println!("--- Production Considerations ---");
-    println!("• The server name is the `<server>` in `mcp_<server>_<tool>` —");
-    println!("  a policy naming the wrong one silently never matches");
-    println!("• MCP tools run in the SERVER's process, not yours: they get the");
-    println!("  server's filesystem, network and credentials, not your agent's");
-    println!("• Capabilities and MCP are independent — Capabilities::none() still");
-    println!("  leaves MCP tools available, which is how you build an agent whose");
-    println!("  only tools are external");
-    println!("• Stdio servers are spawned per agent, so a slow-starting server");
-    println!("  delays spawn() itself. with_timeout_seconds bounds each tool");
-    println!("  CALL, not startup — budget the spawn on your side if it matters");
-    println!("• Tool errors (isError) come back as tool results, not transport");
-    println!("  failures — the model sees them and can adapt");
 
     Ok(())
 }

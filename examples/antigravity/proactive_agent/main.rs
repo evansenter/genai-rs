@@ -24,6 +24,14 @@
 //!   a trigger that fires into a conversation with no history kills the
 //!   session outright. See the comment on the opening `chat` below.
 //!
+//! ## Things to know
+//!
+//! - The first firing is one interval after spawn, not at spawn. Do the first
+//!   pass yourself if the work is needed immediately.
+//! - Intervals must be non-zero; `spawn()` validates this.
+//! - Trigger tasks stop on `shutdown()` and on drop, so no timer outlives the
+//!   agent.
+//!
 //! ## Requirements
 //!
 //! ```bash
@@ -191,32 +199,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // shutdown() stops the trigger tasks; so does dropping the agent. No
     // timer outlives the session either way.
     agent.shutdown().await?;
-
-    println!("\n=== Example Complete ===\n");
-
-    println!("--- What You'll See with LOUD_WIRE=1 ---");
-    println!("  WS Send: {{\"automatedTrigger\": \"Check the sensor log...\"}}");
-    println!("    - one per firing, sent by the crate, not by a user turn");
-    println!("  WS Receive: {{\"stepUpdate\": ...}} - the trigger's turn, unobserved");
-    println!("  WS Send: {{\"haltRequest\": true}} then {{\"userInput\": ...}}");
-    println!("    - the next chat() halting the trigger's turn before sending");
-    println!("  Try LOUD_WIRE=automatedTrigger,summary to see only deliveries\n");
-
-    println!("--- Production Considerations ---");
-    println!("• Give the conversation one real turn before any trigger can");
-    println!("  fire. On harness 0.1.10/0.1.18 a trigger into an empty");
-    println!("  conversation kills the session, not just the turn");
-    println!("• A trigger's turn is NOT surfaced: its text never reaches your");
-    println!("  stream. Use triggers for side effects (tool calls, history), and");
-    println!("  read the results with a normal turn afterwards");
-    println!("• Delivery is idle-only. A firing due mid-turn is deferred, and");
-    println!("  missed intervals collapse into one — there is no backlog");
-    println!("• The first firing is after one interval, not at spawn. Do the");
-    println!("  first pass yourself if you need work done immediately");
-    println!("• Intervals must be non-zero; spawn() validates this");
-    println!("• A wire inspector is the only way to observe deliveries today —");
-    println!("  worth wiring to metrics if a silent trigger would matter");
-    println!("• Trigger tasks stop on shutdown() and on drop, so no timer leaks");
 
     Ok(())
 }

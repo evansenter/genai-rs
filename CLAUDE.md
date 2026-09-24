@@ -156,8 +156,10 @@ reaches the wire must use a real id.
 
 ### Examples
 
-See `examples/CLAUDE.md`: every example runs live and exits 0, propagates
-errors, checks its own claim, and cleans up.
+See `examples/CLAUDE.md`, which covers every example including
+`examples/antigravity/`: each runs live and exits 0, propagates errors, fails
+when its own claim doesn't hold, prints results rather than commentary, and
+cleans up.
 
 ## Changelog and versioning
 

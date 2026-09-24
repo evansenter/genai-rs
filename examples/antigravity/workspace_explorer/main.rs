@@ -22,6 +22,17 @@
 //! - **`on_post_tool`** — recording what each custom call actually
 //!   returned.
 //!
+//! ## Things to know
+//!
+//! - Policies gate by tool name; `on_pre_tool` gates by content. Use both: a
+//!   name-based allow cannot tell a safe argument from a dangerous one.
+//! - Hooks run inline on the event pump. Keep them non-blocking, and never
+//!   wait for a human decision inside one.
+//! - A denial reaches the model as the call's error, so the reason string
+//!   steers its next attempt.
+//! - The workspace root is announced to the model by default
+//!   (`with_workspace_announcement(false)` to ground paths yourself).
+//!
 //! ## Requirements
 //!
 //! ```bash
@@ -301,33 +312,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "the agent took no actions and made no tool calls — nothing was exercised".into(),
         );
     }
-
-    println!("\n=== Example Complete ===\n");
-
-    println!("--- What You'll See with LOUD_WIRE=1 ---");
-    println!("  WS Send: {{\"config\": {{\"workspaces\": [{{\"filesystemWorkspace\": ...}}]}}}}");
-    println!("    - the workspace root the builtins are pointed at");
-    println!("  WS Receive: {{\"stepUpdate\": {{\"listDirectory\": ...}}}} - a harness action");
-    println!("  WS Receive: {{\"stepUpdate\": {{\"viewFile\": ...}}}} - each file read");
-    println!(
-        "  WS Receive: {{\"callHookRequest\": {{\"preToolArgs\": ...}}}} - the gate, per call"
-    );
-    println!("  WS Receive: {{\"toolCall\": ...}} / WS Send: {{\"toolResponse\": ...}}");
-    println!("    - record_finding, dispatched through the crate's registry");
-    println!("  (a denied call is answered in callHookResponse with the refusal reason,");
-    println!("   so the model sees why and can adapt)\n");
-
-    println!("--- Production Considerations ---");
-    println!("• Policies gate by NAME; on_pre_tool gates by CONTENT. Use both —");
-    println!("  a name-based allow cannot tell a safe argument from a dangerous one");
-    println!("• Hooks run inline on the event pump: keep them non-blocking, and");
-    println!("  never await a human decision inside one");
-    println!("• ToolAction carries trajectory_id — with subagents running, that is");
-    println!("  what tells the parent's actions apart from a subagent's");
-    println!("• Denials are visible to the model as the call's error, so a good");
-    println!("  reason string steers the next attempt instead of stalling it");
-    println!("• Workspace announcement is on by default; disable it only if you");
-    println!("  ground the model on paths yourself");
 
     Ok(())
 }

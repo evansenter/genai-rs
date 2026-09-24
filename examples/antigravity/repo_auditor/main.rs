@@ -17,6 +17,17 @@
 //! - Structured output via `with_response_schema` (the `finish` tool schema)
 //! - Live step streaming (`send_streaming` + `AgentEvent`)
 //!
+//! ## Things to know
+//!
+//! - Keep an auditor read-only: never enable `edit_file` or `run_command`.
+//!   `deny_all()` also keeps tools added in later harness versions denied.
+//! - Severity policy lives in code (`classify_severity`), and `render()`
+//!   cross-checks the model's report against it rather than trusting it.
+//! - Cost: a run makes ~35 model calls and uses roughly 300–650K prompt
+//!   tokens on harness 0.1.18, because every call resends the trajectory and
+//!   the harness's requests get almost no implicit cache hits (4K of 274K
+//!   cached, measured 2026-09-24).
+//!
 //! ## Running
 //!
 //! ```bash
@@ -311,42 +322,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     agent.shutdown().await?; // graceful: persists the harness trajectory
-
-    println!("\n=== Example Complete ===\n");
-
-    println!("--- What You'll See with LOUD_WIRE=1 ---");
-    println!("  HARNESS /path/to/localharness (pid N) - process spawn");
-    println!(
-        "  WS Send: {{\"config\": ...}} - init with workspace, tools, customSubagents, finish schema"
-    );
-    println!(
-        "  WS Send: {{\"config\": {{\"systemInstructions\": ...}}}} - workspace root announced to the model"
-    );
-    println!("  WS Receive: {{\"initializeConversationResponse\": ...}} - cascade id");
-    println!("  WS Send: {{\"userInput\": ...}} - the audit task");
-    println!(
-        "  WS Receive: {{\"callHookRequest\": {{\"preToolArgs\": ...}}}} / WS Send: \
-         {{\"callHookResponse\": ...}} - Rust-side policy verdicts, one per tool call"
-    );
-    println!("  WS Receive: {{\"stepUpdate\": ...}} - listDirectory/viewFile/invokeSubagent steps");
-    println!(
-        "  WS Receive: {{\"toolCall\": ...}} / WS Send: {{\"toolResponse\": ...}} - classify_severity"
-    );
-    println!("  WS Receive: {{\"stepUpdate\": {{\"finish\": ...}}}} - structured report\n");
-
-    println!("--- Production Considerations ---");
-    println!("• Keep audits read-only: never enable edit_file/run_command for an auditor agent");
-    println!("• Policies are allow-lists here — new harness tools stay denied by deny_all()");
-    println!(
-        "• Put severity policy in code (a table), not prompts: it stays auditable and testable"
-    );
-    println!("• Cross-check model output against deterministic tools, as render() does here");
-    println!(
-        "• Bound runaway turns with with_turn_timeout; add with_save_dir to resume long audits"
-    );
-    println!("• Pin the harness wheel (google-antigravity==0.1.18, SUPPORTED_HARNESS_VERSION)");
-    println!("• Gate on the argument names the hook is actually handed (the model's own —");
-    println!("  AbsolutePath, DirectoryPath, ...) and fail closed when they are missing");
 
     if mismatches > 0 {
         return Err(format!("{mismatches} finding(s) contradict the severity classifier").into());
