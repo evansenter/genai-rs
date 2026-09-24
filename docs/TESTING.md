@@ -66,9 +66,10 @@ Automatic generation of test cases for serialization roundtrips.
 cargo test proptest                       # Run proptest tests
 ```
 
-**Location**:
-- `src/proptest_tests.rs` - Strategy generators for all types
-- `tests/proptest_roundtrip_tests.rs` - Integration proptests
+**Location**: `src/proptest_tests.rs` holds every strategy and roundtrip
+property. It is in-crate so there is one set of strategies to keep current;
+an integration-test copy drifts, because crate-private strategies cannot be
+shared with it.
 
 **What they verify**:
 - Any valid type serializes and deserializes to the same value
@@ -620,7 +621,7 @@ Serialization is tested at two layers:
 
 | Layer | Location | Purpose |
 |-------|----------|---------|
-| **Proptest** | `src/proptest_tests.rs`, `tests/proptest_roundtrip_tests.rs` | Fuzzing with random inputs to find edge cases |
+| **Proptest** | `src/proptest_tests.rs` | Fuzzing with random inputs to find edge cases |
 | **Manual** | `*_tests.rs` files | Document expected behavior, verify specific scenarios |
 
 **Both are valuable:**
