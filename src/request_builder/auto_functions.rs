@@ -544,7 +544,7 @@ impl<'a> InteractionBuilder<'a> {
     ///   function calls that completed in previous iterations are preserved on the API
     ///   side via the interaction chain, but the stream yields an error rather than
     ///   a partial result. Use `previous_interaction_id` to continue.
-    /// - A function call is missing its required `call_id` field
+    /// - The server sends an error event mid-stream ([`GenaiError::Stream`])
     /// - `max_function_call_loops` is set to 0 (invalid configuration)
     pub fn create_stream_with_auto_functions(
         self,

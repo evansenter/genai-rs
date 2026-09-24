@@ -164,8 +164,9 @@ fn dispatch_stream_event(
             }
         }
         other => {
-            debug!(
-                "Unknown SSE event type '{}' - preserving as StreamChunk::Unknown",
+            warn!(
+                "Unknown SSE event type '{}' - preserving as StreamChunk::Unknown. \
+                 This may indicate a new API feature.",
                 other
             );
             Some(StreamChunk::Unknown {
