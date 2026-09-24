@@ -329,6 +329,7 @@ mod doc_tests {
     // compile them if promoted to `no_run` and made self-contained — a
     // possible future improvement.
     doc_comment!(include_str!("../docs/ANTIGRAVITY.md"));
+    doc_comment!(include_str!("../docs/BUILDER_API.md"));
     doc_comment!(include_str!("../docs/BUILT_IN_TOOLS.md"));
     doc_comment!(include_str!("../docs/CONFIGURATION.md"));
     doc_comment!(include_str!("../docs/CONVERSATION_PATTERNS.md"));
