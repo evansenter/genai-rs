@@ -627,7 +627,7 @@ mod tests {
         // Verify we can deserialize a cancelled interaction response
         let response_json = r#"{
             "id": "cancelled_interaction_123",
-            "model": crate::DEFAULT_DEEP_RESEARCH_AGENT,
+            "model": "test-model",
             "steps": [],
             "status": "cancelled"
         }"#;
