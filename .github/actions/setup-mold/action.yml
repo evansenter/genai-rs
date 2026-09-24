@@ -32,46 +32,18 @@ runs:
       id: install
       shell: bash
       env:
-        # Read through `env:` rather than interpolating `${{ }}` into the
-        # `run:` body. A `run:` block is a YAML block scalar that Actions
-        # substitutes textually before bash parses it, so an expression there
-        # is a substitution hazard rather than a shell variable.
+        # Via `env:`, not `${{ }}` in the body, which Actions substitutes
+        # textually before bash parses it.
         ENABLE_CONFIG: ${{ inputs.enable-config }}
-      # Bounded with `timeout` rather than `timeout-minutes:`, which
-      # composite-action steps do not support — setting it here fails the
-      # whole workflow with "Failed to load action.yml" before anything runs.
-      #
-      # The bound matters: one PR run sat 98 minutes on an unresponsive apt
-      # mirror and would have held the runner until GitHub's 6h default.
-      # Normal is ~10-20s, so 300s only ever trips on a stall.
-      #
-      # 60 + 240 rather than one shared 300 or two independent 300s. Two
-      # independent full budgets would double the worst case to ~10 minutes,
-      # against the single `timeout-minutes: 5` this replaced. But one
-      # shared budget collapses the `|| true` on `update`: an `update` that
-      # ate the whole 300s would take `install` down with it and fail every
-      # job using this composite, where today it is swallowed and `install`
-      # proceeds from cached package lists. Splitting keeps the total under
-      # the old ceiling *and* keeps that fallback meaningful.
-      #
-      # `sudo timeout`, not `timeout sudo`: the latter signals `sudo` and
-      # depends on it forwarding SIGTERM down to the process that is
-      # actually stalled. This puts the timer in the same process tree.
-      #
-      # The `cp` is the half that matters after #428: `.cargo/config.toml` is
-      # no longer checked in, so without it CI silently loses mold. This
-      # composite exists so that pairing lives in one place — it was copied
-      # across 13 steps, and a copy is what goes stale if the example file is
-      # ever renamed.
+      # `timeout`, since composite steps don't support `timeout-minutes:`: one
+      # run sat 98 minutes on a stalled apt mirror. Split 60 + 240 so a stalled
+      # `update` is still swallowed by `|| true`. `sudo timeout`, so the timer
+      # signals apt itself rather than relying on sudo to forward it.
       run: |
         set -euo pipefail
 
-        # Input contract first, before the OS check and before paying for the
-        # install. Validating after the `RUNNER_OS` early exit would enforce it
-        # only on Linux: a caller that typos `enable-config: "ture"` in a
-        # macOS- or Windows-only job would get a green run forever, and the
-        # mistake would surface the day someone adds a Linux leg — the same
-        # delayed signal the three-arm form was written to avoid.
+        # Validated before the OS check, so a typo fails on every OS, not only
+        # Linux.
         case "$ENABLE_CONFIG" in
           true | false) ;;
           *)
@@ -80,11 +52,7 @@ runs:
             ;;
         esac
 
-        # Self-guarding rather than leaving `if: runner.os == 'Linux'` to
-        # each caller: a per-call condition is the N-copies arrangement this
-        # composite exists to remove. Without it the next job to add a bare
-        # `uses:` line breaks the macOS and Windows legs, and nothing in the
-        # action's name would have warned them.
+        # Self-guarding, so callers need no `if: runner.os == 'Linux'`.
         if [ "${RUNNER_OS:-}" != "Linux" ]; then
           echo "Not Linux (RUNNER_OS=${RUNNER_OS:-unset}) — skipping mold."
           echo "The cargo config this enables targets x86_64-unknown-linux-gnu"
@@ -95,19 +63,13 @@ runs:
         sudo timeout 60 apt-get update || true
         sudo timeout 240 apt-get install -y mold
 
-        # Still strict when it runs. The `cp` is the half that matters after
-        # #428, and a caller that asked for it and does not get it should fail
-        # loudly — that is the rename protection this composite exists for.
-        # Opting out is a caller assertion that there is nothing to enable, not
-        # a tolerance for the file having gone missing, which is why the value
-        # is validated above rather than defaulted here.
+        # Strict when enabled: `.cargo/config.toml` is not checked in (#428), so
+        # a missing example file must fail loudly.
         if [ "$ENABLE_CONFIG" = "true" ]; then
           cp .cargo/config.toml.example .cargo/config.toml
         else
           echo "enable-config=false — skipping the cargo config copy."
         fi
 
-        # Last, so it is never written on a partial success: `set -e` aborts
-        # above it if either the install or the `cp` fails, leaving the output
-        # empty. The gate fails closed.
+        # Last, so a partial success leaves it empty: the gate fails closed.
         echo "have-mold=1" >> "$GITHUB_OUTPUT"
