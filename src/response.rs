@@ -1689,6 +1689,10 @@ impl InteractionResponse {
                 Step::FileSearchResult { .. } => summary.file_search_result_count += 1,
                 Step::GoogleMapsCall { .. } => summary.google_maps_call_count += 1,
                 Step::GoogleMapsResult { .. } => summary.google_maps_result_count += 1,
+                Step::ProcessingCall { .. } => summary.processing_call_count += 1,
+                Step::ProcessingResult { .. } => summary.processing_result_count += 1,
+                Step::RetrievalCall { .. } => summary.retrieval_call_count += 1,
+                Step::RetrievalResult { .. } => summary.retrieval_result_count += 1,
                 Step::Unknown { step_type, .. } => {
                     summary.unknown_count += 1;
                     unknown_types_set.insert(step_type.clone());
@@ -1843,6 +1847,14 @@ pub struct StepSummary {
     pub google_maps_call_count: usize,
     /// Number of `google_maps_result` steps
     pub google_maps_result_count: usize,
+    /// Number of `processing_call` steps (agentic video processing)
+    pub processing_call_count: usize,
+    /// Number of `processing_result` steps
+    pub processing_result_count: usize,
+    /// Number of `retrieval_call` steps (Vertex-only retrieval tool)
+    pub retrieval_call_count: usize,
+    /// Number of `retrieval_result` steps
+    pub retrieval_result_count: usize,
     /// Number of unknown steps/content blocks
     pub unknown_count: usize,
     /// List of unique unknown type names encountered (sorted alphabetically)
@@ -1853,7 +1865,7 @@ impl fmt::Display for StepSummary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut parts = Vec::new();
 
-        let fields: [(&str, usize); 23] = [
+        let fields: [(&str, usize); 27] = [
             ("user_input", self.user_input_count),
             ("model_output", self.model_output_count),
             ("text", self.text_count),
@@ -1877,6 +1889,10 @@ impl fmt::Display for StepSummary {
             ("file_search_result", self.file_search_result_count),
             ("google_maps_call", self.google_maps_call_count),
             ("google_maps_result", self.google_maps_result_count),
+            ("processing_call", self.processing_call_count),
+            ("processing_result", self.processing_result_count),
+            ("retrieval_call", self.retrieval_call_count),
+            ("retrieval_result", self.retrieval_result_count),
         ];
 
         for (name, count) in fields {

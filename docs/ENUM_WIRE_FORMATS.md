@@ -219,6 +219,10 @@ roundtrip tests.
 | `file_search_result` | `Step::FileSearchResult` | `{"call_id": "...", "result": [FileSearchResultItem], "signature"?: "..."}` |
 | `google_maps_call` | `Step::GoogleMapsCall` | `{"id": "...", "arguments": {"queries": [...]}, "signature"?: "..."}` |
 | `google_maps_result` | `Step::GoogleMapsResult` | `{"call_id": "...", "result": [GoogleMapsResultItem], "signature"?: "..."}` |
+| `processing_call` | `Step::ProcessingCall` | `{"id": "...", "signature"?: "..."}` — emitted for video with `processing: "agentic"` (live 2026-09-24, `gemini-3.8-flash`; one or more per turn). The ~36KB signature is **required** on stateless replay (`400 Processing call step is missing signature`) |
+| `processing_result` | `Step::ProcessingResult` | `{"call_id": "...", "signature"?: "..."}` — same replay requirement |
+| `retrieval_call` | `Step::RetrievalCall` | `{"id": "...", "arguments": {"queries": [...]}, "retrieval_type"?: RetrievalType, "signature"?: "..."}` — Vertex-only (the `retrieval` tool is rejected on the Gemini API); spec parity |
+| `retrieval_result` | `Step::RetrievalResult` | `{"call_id": "...", "is_error"?: bool, "signature"?: "..."}` — Vertex-only |
 | (anything else) | `Step::Unknown { step_type, data }` | Full JSON preserved for roundtrip |
 
 > **MCP is not on the wire in that shape.** Verified live 2026-08-16: an MCP
@@ -336,7 +340,7 @@ exceptions** where the wire tag differs from the variant name:
 | `thought_signature` | `StepDelta::ThoughtSignature` | `{"signature": "..."}` |
 | `text_annotation_delta` | `StepDelta::TextAnnotation` | **Tag differs from variant name.** `{"annotations": [Annotation]}` |
 | `arguments_delta` | `StepDelta::ArgumentsDelta` | `{"arguments": "<raw JSON fragment>"}` — function-call arguments stream as string fragments; concatenate and parse at `step.stop` |
-| `function_result` | `StepDelta::FunctionResult` | Same shape as the step |
+| `function_result` | `StepDelta::FunctionResult` | Same shape as the step, but `call_id` is optional (dropped from the 2.25 bindings); the accumulator keeps the `call_id` from `step.start` |
 | `code_execution_call` / `code_execution_result` | code execution variants | Call delta carries flattened `language`/`code` |
 | `url_context_call` / `url_context_result` | URL context variants | |
 | `google_search_call` / `google_search_result` | Google Search variants | |
@@ -344,7 +348,9 @@ exceptions** where the wire tag differs from the variant name:
 | `mcp_server_tool_call` / `mcp_server_tool_result` | MCP variants | Spec-only; see below |
 | `file_search_call` / `file_search_result` | file search variants | |
 | `google_maps_call` / `google_maps_result` | Google Maps variants | |
-| (anything else) | `StepDelta::Unknown { delta_type, data }` | Preserved |
+| `processing_call` / `processing_result` | processing variants | `{"signature": "..."}`. `step.start` announces `signature: ""`; the value arrives only here (live 2026-09-24) |
+| `retrieval_call` / `retrieval_result` | retrieval variants | Vertex-only |
+| (anything else) | `StepDelta::Unknown { delta_type, data }` | Preserved. If it carries a `signature` and the step at that index is a same-typed `Step::Unknown`, the signature is merged onto the step so replay does not lose it |
 
 Helpers: `as_text()`, `as_arguments_delta()`, `is_unknown()`, `unknown_delta_type()`, `unknown_data()`.
 

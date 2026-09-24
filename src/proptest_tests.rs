@@ -1015,7 +1015,7 @@ fn arb_step_delta() -> impl Strategy<Value = StepDelta> {
         )
             .prop_map(
                 |(call_id, name, result, is_error)| StepDelta::FunctionResult {
-                    call_id,
+                    call_id: Some(call_id),
                     name,
                     result,
                     is_error,
