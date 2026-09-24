@@ -24,7 +24,7 @@ Gemini supports two types of interactions:
 | Type | Entry Point | Execution | Use Case |
 |------|-------------|-----------|----------|
 | **Model** | `with_model(genai_rs::DEFAULT_MODEL)` | Synchronous | Quick responses, streaming |
-| **Agent** | `with_agent("deep-research-pro-preview")` | Background | Long-running tasks, research |
+| **Agent** | `with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)` | Background | Long-running tasks, research |
 
 Agents are specialized systems that perform multi-step tasks autonomously.
 
@@ -53,7 +53,7 @@ Autonomous systems that execute complex workflows:
 ```rust,ignore
 let response = client
     .interaction()
-    .with_agent("deep-research-pro-preview-12-2025")
+    .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
     .with_text("Research best practices for Rust REST APIs")
     .with_background(true)      // Required for agents
     .with_store_enabled()       // Required to retrieve results
@@ -68,12 +68,14 @@ let response = client
 
 Google-managed agents known to this crate (from the 2026-05-20 spec):
 
-| Agent ID | Description |
-|----------|-------------|
-| `deep-research-pro-preview-12-2025` | Gemini Deep Research agent (launch preview) |
-| `deep-research-preview-04-2026` | Gemini Deep Research agent |
-| `deep-research-max-preview-04-2026` | Gemini Deep Research Max agent |
-| `antigravity-preview-05-2026` | Antigravity managed agent for multi-step tasks with reasoning, file operations, and tool use (requires an [environment](#environments); tune via `AntigravityConfig` — `agent_config` type `antigravity`) |
+| Agent ID | Constant | Description |
+|----------|----------|-------------|
+| `deep-research-preview-04-2026` | `genai_rs::DEFAULT_DEEP_RESEARCH_AGENT` | Gemini Deep Research agent |
+| `deep-research-max-preview-04-2026` | — | Gemini Deep Research Max agent |
+| `deep-research-pro-preview-12-2025` | — | The launch preview of Deep Research |
+| `antigravity-preview-05-2026` | `genai_rs::DEFAULT_ANTIGRAVITY_AGENT` | Antigravity managed agent for multi-step tasks with file operations and tool use (requires an [environment](#environments); tune via `AntigravityConfig`, `agent_config` type `antigravity`) |
+
+Prefer the constants: a model bump then updates every call site at once.
 
 Availability varies by account and region; unknown agent IDs pass through
 unchanged (Evergreen), so newer agents work without a crate update.
@@ -92,7 +94,7 @@ use genai_rs::{Client, DeepResearchConfig, ThinkingSummaries};
 
 let response = client
     .interaction()
-    .with_agent("deep-research-pro-preview-12-2025")
+    .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
     .with_text("What are the current best practices for building production REST APIs in Rust?")
     .with_agent_config(
         DeepResearchConfig::new()
@@ -106,11 +108,9 @@ let response = client
 let interaction_id = response.id.expect("stored interaction has ID");
 ```
 
-### Expected Runtime
-
-- Simple queries: 30-60 seconds
-- Complex research: 60-120+ seconds
-- Very comprehensive queries: 2+ minutes
+Deep Research runs take minutes, not seconds, and the duration varies widely
+with the question. Use [webhooks](#webhooks-instead-of-polling) or
+[polling](#polling-patterns) rather than a request timeout.
 
 ### Configuration Options
 
@@ -120,22 +120,21 @@ use genai_rs::{DeepResearchConfig, ThinkingSummaries, Visualization};
 let config = DeepResearchConfig::new()
     .with_thinking_summaries(ThinkingSummaries::Auto) // Include reasoning summary
     .with_visualization(Visualization::Auto)          // Let the agent add visualizations
-    .with_collaborative_planning(true)                // Return a plan first; proceed after confirmation
-    .with_bigquery_tool(true);                        // Enable the BigQuery tool
+    .with_collaborative_planning(true);               // Return a plan first; proceed after confirmation
 
 client
     .interaction()
-    .with_agent("deep-research-preview-04-2026")
+    .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
     .with_agent_config(config)
     // ...
 ```
 
 | Option | Wire field | Values | Effect |
 |--------|-----------|--------|--------|
-| `with_thinking_summaries` | `thinking_summaries` | `THINKING_SUMMARIES_AUTO`/`_NONE` | Reasoning summaries in output |
+| `with_thinking_summaries` | `thinking_summaries` | `"auto"` / `"none"` (the API rejects `THINKING_SUMMARIES_*` since 2026-08-10) | Reasoning summaries in output |
 | `with_visualization` | `visualization` | `"off"` / `"auto"` | Visualizations in the report |
 | `with_collaborative_planning` | `collaborative_planning` | bool | Human-in-the-loop planning: the agent returns a research plan and proceeds only after you confirm in the next turn |
-| `with_bigquery_tool` | `enable_bigquery_tool` | bool | BigQuery access for the agent |
+| `with_bigquery_tool` | `enable_bigquery_tool` | bool | BigQuery access for the agent. **Vertex-only**: the Gemini API rejects the field |
 
 ## Custom Agents (Agents Resource)
 
@@ -186,7 +185,7 @@ use genai_rs::{AllowlistEntry, EnvironmentSource, NetworkConfig, RemoteEnvironme
 
 let response = client
     .interaction()
-    .with_agent("antigravity-preview-05-2026")
+    .with_agent(genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
     .with_text("Run the test suite and report failures")
     .with_environment(
         RemoteEnvironment::new()
@@ -205,7 +204,7 @@ let response = client
 let env_id = response.environment_id.clone().expect("assigned environment");
 let follow_up = client
     .interaction()
-    .with_agent("antigravity-preview-05-2026")
+    .with_agent(genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
     .with_previous_interaction(response.id.clone().unwrap())
     .with_text("Now fix the failing test")
     .with_environment(env_id)
@@ -224,7 +223,7 @@ use genai_rs::{AntigravityConfig, EnvironmentSource, RemoteEnvironment};
 
 let response = client
     .interaction()
-    .with_agent("antigravity-preview-05-2026")
+    .with_agent(genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
     .with_text("Print the contents of /etc/motd")
     .with_background(true)
     .with_store_enabled()
@@ -396,7 +395,7 @@ use genai_rs::WebhookConfig;
 
 let response = client
     .interaction()
-    .with_agent("deep-research-preview-04-2026")
+    .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
     .with_text("Research the history of quantum computing")
     .with_background(true)
     .with_store_enabled()
@@ -470,7 +469,7 @@ async fn poll_for_completion(
 // Start background task
 let initial = client
     .interaction()
-    .with_agent("deep-research-pro-preview-12-2025")
+    .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
     .with_text("Research topic")
     .with_background(true)
     .with_store_enabled()
@@ -481,7 +480,7 @@ let initial = client
 let result = poll_for_completion(
     &client,
     initial.id.as_ref().unwrap(),
-    Duration::from_secs(120),
+    Duration::from_secs(30 * 60), // research runs take minutes; size to your task
 ).await?;
 
 println!("Research complete: {}", result.as_text().unwrap());
@@ -528,7 +527,7 @@ Long-running tasks can be cancelled:
 // Start a background task
 let response = client
     .interaction()
-    .with_agent("deep-research-pro-preview-12-2025")
+    .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
     .with_text("Very long research query")
     .with_background(true)
     .with_store_enabled()
@@ -545,84 +544,20 @@ let cancelled = client.get_interaction(&interaction_id).await?;
 assert_eq!(cancelled.status, InteractionStatus::Cancelled);
 ```
 
-### Cancellation Behavior
-
-- Already completed tasks cannot be cancelled
-- Cancelled tasks may have partial results
-- Cancellation is not instantaneous
+Only background interactions that are still `InProgress` can be cancelled.
+`cancel_interaction` returns the interaction with status `Cancelled`, and it
+errors if the interaction is not background or has already finished.
 
 ## Best Practices
 
-### 1. Always Use Exponential Backoff
-
-```rust,ignore
-let mut delay = Duration::from_secs(2);
-let max_delay = Duration::from_secs(10);
-
-// After each poll
-delay = (delay * 2).min(max_delay);  // 2s, 4s, 8s, 10s, 10s...
-```
-
-### 2. Set Reasonable Timeouts
-
-```rust,ignore
-const MAX_POLL_DURATION: Duration = Duration::from_secs(120);  // 2 minutes
-
-// For Deep Research, consider longer timeouts
-const RESEARCH_TIMEOUT: Duration = Duration::from_secs(300);  // 5 minutes
-```
-
-### 3. Handle All Status Values
-
-```rust,ignore
-match response.status {
-    InteractionStatus::Completed => { /* success */ }
-    InteractionStatus::Failed => { /* handle failure */ }
-    InteractionStatus::Cancelled => { /* handle cancellation */ }
-    InteractionStatus::InProgress => { /* keep polling */ }
-    InteractionStatus::RequiresAction => { /* handle required action */ }
-    InteractionStatus::Incomplete => { /* ended early, e.g. token limit */ }
-    InteractionStatus::BudgetExceeded => { /* configured budget exhausted */ }
-    _ => {
-        // Unknown status - log and continue (Evergreen pattern)
-        log::warn!("Unknown status: {:?}", response.status);
-    }
-}
-```
-
-### 4. Store Interaction IDs
-
-For recovery after crashes or restarts:
-
-```rust,ignore
-// Save interaction ID to persistent storage
-save_to_database(&interaction_id);
-
-// Later, resume polling
-let interaction_id = load_from_database();
-let result = client.get_interaction(&interaction_id).await?;
-```
-
-### 5. Handle Partial Results
-
-Background tasks may have intermediate outputs:
-
-```rust,ignore
-let response = client.get_interaction(&interaction_id).await?;
-
-// Check for steps even if still in progress
-if !response.steps.is_empty() {
-    println!("Partial results available");
-}
-```
-
-To fold partial or final results into a conversation history, use
-`response.output_steps()`:
-
-```rust,ignore
-let mut history: Vec<Step> = vec![Step::user_text("Research topic")];
-history.extend(response.output_steps());
-```
+- **Back off while polling**, and keep polling on statuses you don't
+  recognize: they arrive as `InteractionStatus::Unknown` (Evergreen). Bound
+  the loop with your own deadline.
+- **Persist the interaction id** as soon as `create()` returns. After a crash
+  or restart, `client.get_interaction(&id)` picks the run back up.
+- **Partial results**: `response.steps` can be non-empty while the run is
+  still `InProgress`. Use `response.output_steps()` to fold what is there
+  into a history.
 
 ## Status Reference
 
