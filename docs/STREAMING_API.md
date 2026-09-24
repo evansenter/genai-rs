@@ -89,6 +89,8 @@ wire by `type`:
 | `GoogleSearchCall` / `GoogleSearchResult` | `google_search_*` | Google Search |
 | `FileSearchCall` / `FileSearchResult` | `file_search_*` | File Search |
 | `GoogleMapsCall` / `GoogleMapsResult` | `google_maps_*` | Google Maps |
+| `ProcessingCall` / `ProcessingResult` | `processing_*` | Media processing for agentic video. Carries the signature that `step.start` announces as `""`; the assembled `Completed` response keeps it |
+| `RetrievalCall` / `RetrievalResult` | `retrieval_*` | Retrieval tool (Vertex-only) |
 | `McpServerToolCall` / `McpServerToolResult` | `mcp_server_tool_*` | Spec-defined, never observed: MCP calls arrive whole on `step.start` as a generic `tool_call` step |
 | `Unknown { delta_type, data }` | anything else | Preserved for forward compatibility |
 
