@@ -725,7 +725,7 @@ pub struct StreamError {
 
     /// Error code from the API (if provided). Per spec this is a URI that
     /// identifies the error type.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub code: Option<String>,
 }
 

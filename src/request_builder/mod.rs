@@ -127,6 +127,9 @@ impl std::fmt::Debug for InteractionBuilder<'_> {
             .field("background", &self.background)
             .field("store", &self.store)
             .field("system_instruction", &self.system_instruction)
+            .field("service_tier", &self.service_tier)
+            .field("safety_settings", &self.safety_settings)
+            .field("labels", &self.labels)
             .field("max_function_call_loops", &self.max_function_call_loops)
             .field("tool_service", &self.tool_service.as_ref().map(|_| "..."))
             .field("timeout", &self.timeout)
@@ -977,7 +980,7 @@ impl<'a> InteractionBuilder<'a> {
     /// ```
     ///
     /// Use this when you want the model to generate images. Requires a model
-    /// that supports image generation (e.g., `gemini-3.1-flash-image`).
+    /// that supports image generation (e.g. [`DEFAULT_IMAGE_MODEL`](crate::DEFAULT_IMAGE_MODEL)).
     ///
     /// # Example
     ///
@@ -1016,7 +1019,7 @@ impl<'a> InteractionBuilder<'a> {
     /// ```
     ///
     /// Use this when you want the model to generate speech audio. Requires a model
-    /// that supports text-to-speech (e.g., `gemini-2.5-pro-preview-tts`).
+    /// that supports text-to-speech (e.g. [`DEFAULT_TTS_MODEL`](crate::DEFAULT_TTS_MODEL)).
     ///
     /// For voice customization, chain with [`with_speech_config`](Self::with_speech_config)
     /// or [`with_voice`](Self::with_voice).
@@ -2201,16 +2204,8 @@ impl<'a> InteractionBuilder<'a> {
         // Runtime validation for storage-related constraints
         self.validate()?;
 
-        // Validate that content input is not combined with history.
-        //
-        // A builder policy, not a wire constraint — and it stopped being the
-        // latter when `InteractionRequest::input` began emitting `Content` as
-        // a `user_input` step (#427). Composing the two would now serialize
-        // cleanly as history steps followed by that step, which is exactly
-        // the arrangement the error message below tells the caller to build
-        // by hand. Left in place deliberately: relaxing it is an API-surface
-        // decision about what `with_content()` means alongside history, not a
-        // consequence of the wire shape. Tracked in #454.
+        // A builder policy, not a wire constraint: say what the caller should
+        // build instead.
         if self.content_input.is_some() && !self.history.is_empty() {
             return Err(GenaiError::InvalidInput(
                 "Content input (with_content()) cannot be combined with with_history(). \

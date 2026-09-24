@@ -211,7 +211,7 @@ impl TurnContent {
 ///
 /// - `Text`: Simple text input for single-turn conversations
 /// - `Content`: Array of content blocks for multimodal input — sent as a
-///   single `user_input` step, not as a bare array (#427)
+///   single `user_input` step, not as a bare array
 /// - `Steps`: Array of [`Step`]s — the canonical multi-turn/history form
 ///   under API revision 2026-05-20 (replaces the deprecated `Turn` array)
 ///
@@ -240,8 +240,7 @@ pub enum InteractionInput {
     ///
     /// Serialized as one `user_input` step wrapping the blocks, not as a
     /// bare content array. Both are valid input shapes, but only the step
-    /// form accepts video `processing` (#427), and the steps array is the
-    /// canonical form under revision 2026-05-20. Deserializing that wire
+    /// form accepts video `processing`. Deserializing that wire
     /// shape back yields [`Self::Steps`], since the two are indistinguishable
     /// on the wire.
     Content(Vec<Content>),
@@ -283,36 +282,22 @@ impl Serialize for InteractionInput {
 /// [`InteractionInput::Content`] as a single `user_input` step rather than as
 /// a bare content array.
 ///
-/// Both are valid arms of the spec's input union, but the API accepts video
-/// `processing` only inside a step — the identical content in a bare array is
-/// rejected with `Unknown parameter 'processing' at 'input[1]'` (#427). That
-/// field is not modeled by this crate yet (#419), so today the wrap is
-/// alignment with the canonical form rather than a fix for a pairing a caller
-/// can express; it means #419 can land without a second wire-shape decision.
-///
-/// Verified live (2026-08-16, `gemini-3.7-flash`, revision 2026-05-20) that
-/// the step form is accepted everywhere the bare form is: text, inline image,
-/// inline audio, inline document, video by URI, and a stored follow-up turn
-/// via `previous_interaction_id` all complete under both shapes — and only
-/// the step form accepts `processing`. See `docs/ENUM_WIRE_FORMATS.md`.
+/// Both are valid arms of the input union, but the API accepts video
+/// `processing` only inside a step; the same content in a bare array is
+/// rejected with `Unknown parameter 'processing'`. The step form is accepted
+/// everywhere the bare one is (verified live for text, inline image, audio,
+/// document, video by URI, and stored follow-ups). See
+/// `docs/ENUM_WIRE_FORMATS.md`.
 ///
 /// Scoped to this field rather than to `InteractionInput`'s own `Serialize`
-/// so that [`InteractionResponse::input`](crate::InteractionResponse), which
-/// echoes back what the server sent, keeps re-serializing in the shape it
-/// arrived in. Not every response-side carrier is covered by that: because
-/// the wrap rides on this field, `Trigger::interaction` — itself an
-/// `InteractionRequest` — does reshape a bare `[Content]` input it read from
-/// the API. Recorded there alongside its other roundtrip asymmetries.
+/// so that [`InteractionResponse::input`](crate::InteractionResponse) keeps
+/// re-serializing server data in the shape it arrived in.
 fn serialize_request_input<S>(input: &InteractionInput, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    // Exhaustive rather than a catch-all `other =>`, even though
-    // `InteractionInput` is `#[non_exhaustive]`: within the defining crate the
-    // exhaustive match still compiles, so adding an arm to that enum breaks
-    // the build *here* and forces a wrap-or-not decision. A catch-all would
-    // silently default every future arm to the type's own serialization —
-    // probably the right answer most of the time, but arrived at by omission.
+    // Exhaustive on purpose: a new `InteractionInput` arm must make a
+    // wrap-or-not decision here rather than default to one by omission.
     match input {
         InteractionInput::Content(c) => {
             use serde::ser::SerializeSeq;
@@ -1388,33 +1373,18 @@ pub struct InteractionRequest {
     #[serde(rename = "agent_config", skip_serializing_if = "Option::is_none")]
     pub agent_config: Option<AgentConfig>,
 
-    /// The input for this interaction
+    /// The input for this interaction.
     ///
-    /// *Required* on deserialize, and strict: an absent, misspelled,
-    /// malformed, or null `input` (e.g. a typo in a config file feeding
-    /// [`TriggerCreateParams`](crate::TriggerCreateParams)) is a clean
-    /// parse error, not a silently scheduled empty prompt. (The
-    /// strictness covers `input` itself and the other modeled fields'
-    /// shapes; a misspelled *optional sibling* key in a
-    /// `TriggerCreateParams` config is absorbed by its flattened `extra`
-    /// escape hatch — the documented cost of that hatch.) The
-    /// *response*-side leniency lives on
-    /// [`Trigger::interaction`](crate::Trigger) instead, where a sparse
-    /// projection's absent `input` deserializes to empty text and an
-    /// undeserializable one degrades the same way rather than failing a
-    /// whole list response. (That path has a roundtrip asymmetry: absence
-    /// re-serializes as a *present* `input` key — the one spot in the
-    /// Evergreen surface where a sparse projection gains a field instead
-    /// of preserving absence.)
+    /// *Required* and strict on deserialize, so a typo in a config file
+    /// feeding [`TriggerCreateParams`](crate::TriggerCreateParams) is a parse
+    /// error rather than a scheduled empty prompt. (The lenient response side
+    /// is [`Trigger::interaction`](crate::Trigger).)
     ///
     /// On the way out, [`InteractionInput::Content`] is wrapped in a single
     /// `user_input` step: the API accepts video `processing` only inside a
-    /// step, and the step form is the canonical shape under revision
-    /// 2026-05-20 (#427). Scoped to this field rather than to
-    /// `InteractionInput`'s own `Serialize`, so
-    /// [`InteractionResponse::input`](crate::InteractionResponse) still
-    /// re-serializes server data in the shape it arrived in. See
-    /// `docs/ENUM_WIRE_FORMATS.md` for the live verification.
+    /// step. Scoped to this field rather than to `InteractionInput`'s own
+    /// `Serialize`, so [`InteractionResponse::input`](crate::InteractionResponse)
+    /// still re-serializes server data in the shape it arrived in.
     #[serde(serialize_with = "serialize_request_input")]
     pub input: InteractionInput,
 

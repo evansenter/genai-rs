@@ -685,6 +685,7 @@ impl AudioInfo<'_> {
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[non_exhaustive]
 pub struct FunctionCallInfo<'a> {
     /// Unique identifier for this function call (used when sending results back)
     pub id: &'a str,
@@ -754,6 +755,7 @@ pub struct OwnedFunctionCallInfo {
 ///
 /// This is a **view type** that borrows data from the underlying [`InteractionResponse`].
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[non_exhaustive]
 pub struct FunctionResultInfo<'a> {
     /// Name of the function that was called (optional per API spec)
     pub name: Option<&'a str>,
@@ -1769,23 +1771,8 @@ impl InteractionResponse {
 /// Content counts (`text_count`, `image_count`, ...) tally content blocks
 /// inside `model_output` steps.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-// Closed deliberately, in the same change that takes the break. Adding
-// `tool_call_count` is source-breaking *only* because this struct is open, and
-// the API is expected to grow step types — this PR argues `mcp_server_tool_call`
-// may start arriving, and the recurring SDK-bindings sweep (#421) is the
-// intended detector for new ones. Without the
-// attribute every future counter repeats this break for a purely mechanical
-// reason; with it, they are additive.
-//
-// Folding it in here is free for consumers: they are already recompiling for
-// the new field. `Default` is derived, so the documented migration
-// (`StepSummary::default()` then assign) still works, and nothing that
-// compiled before stops compiling: the only in-crate literals are the two in
-// `src/response_tests.rs`, where the attribute does not apply, and the only
-// out-of-crate sites are the two trybuild fixtures added alongside this
-// attribute — `tests/ui/pass_step_summary_migration.rs`, which uses the
-// surviving idiom, and `tests/ui/fail_step_summary_struct_literal.rs`, which
-// exists to be rejected.
+// Closed so that counters for new step types are additive; build one with
+// `StepSummary::default()` and field assignment.
 #[non_exhaustive]
 pub struct StepSummary {
     /// Number of `user_input` steps
