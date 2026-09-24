@@ -54,7 +54,7 @@ let response = client.interaction()
 **Characteristics:**
 - Server maintains conversation history
 - Use `previous_interaction_id` to chain turns
-- System instruction is inherited - only send on first turn (observed behavior, not explicitly documented by Google)
+- System instruction is NOT inherited - send it on every turn that needs it. (The model may still appear to follow an earlier one, because its replayed thoughts from that turn can restate it; `test_system_instruction_not_inherited` pins what the server records.)
 - Tools are NOT inherited - must resend on new user message turns, but not on function result turns (observed behavior, not explicitly documented by Google)
 - Enables `create_with_auto_functions()` for automatic function execution
 - Enables `with_background(true)` for async/agent execution (see `examples/deep_research.rs`)

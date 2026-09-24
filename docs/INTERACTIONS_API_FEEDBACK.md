@@ -61,7 +61,7 @@ There is no official documentation on what fields are inherited when using `prev
 
 | Field | Inherited? | Impact if wrong |
 |-------|------------|-----------------|
-| `systemInstruction` | ✅ Yes | Wasteful resending, potential conflicts |
+| `systemInstruction` | ❌ No | Silently dropped on later turns; the model can still echo it through replayed thoughts, which hides the omission |
 | `tools` | ❌ **No** | **Silent function calling failure** |
 | `model` | ❌ No | Request fails with clear error |
 | Conversation history | ✅ Yes | N/A |
