@@ -12,27 +12,13 @@ Also `jq` and `python3`. They are not optional extras: `make check` runs
 `make test-scripts`, which hard-fails when either is missing rather than
 skipping, so the pre-push gate needs both.
 
-**Linker (optional)**: run `./scripts/setup-dev.sh` once per clone to enable
-[mold](https://github.com/rui314/mold) for faster builds. It probes whether
-your compiler can actually link with mold rather than just checking that the
-binary exists, and is a no-op when it cannot — so it is safe to run either
-way.
-
-`.cargo/config.toml` is deliberately *not* checked in. When it was, it set
-`-fuse-ld=mold` unconditionally for `x86_64-unknown-linux-gnu`, so a clone on
-a machine without mold failed every build before compiling anything, with a
-message naming the wrong tool (#428):
-
-```text
-error: linking with `cc` failed: exit status: 1
-  = note: collect2: fatal error: cannot find 'ld'
-```
-
-`ld` is present in that state; mold is not, and the message never says so.
-The file is now gitignored and ships as `.cargo/config.toml.example`. If you
-have an old checkout still carrying the generated config and hit the error
-above, delete `.cargo/config.toml` — that is the fix, rather than overriding
-rustflags around it.
+**Linker (optional)**: `./scripts/setup-dev.sh` enables
+[mold](https://github.com/rui314/mold) for faster builds. It checks that your
+compiler can actually link with mold, and does nothing when it can't. It
+writes `.cargo/config.toml` from `.cargo/config.toml.example`. That file is
+gitignored (#428): when it was checked in, machines without mold failed every
+build with a misleading `cannot find 'ld'`. If you hit that error, delete
+`.cargo/config.toml`.
 
 ## The gate
 
@@ -44,27 +30,14 @@ make test-all   # full suite including integration tests (needs GEMINI_API_KEY)
 Integration tests take 2-5 minutes and some flake on LLM variability. Doctests
 run in CI only, not in `make test` (see D-009).
 
-One side effect worth knowing, since it touches the file Setup just told you
-to generate: `make test-scripts` exercises `setup-dev.sh` against the
-checkout's *real* `.cargo/config.toml`, restoring it from a temp copy on an
-EXIT trap. That file is gitignored, so if you kill the run outright rather
-than letting it finish, git cannot bring it back (#455).
-
-Recover by **deleting it first**:
+`make test-scripts` exercises `setup-dev.sh` against the checkout's real
+`.cargo/config.toml` and restores it on exit. If you kill the run outright, the
+file can be left in a broken state that the script then refuses to overwrite
+(#455). Recover with:
 
 ```bash
 rm -f .cargo/config.toml && ./scripts/setup-dev.sh
 ```
-
-Re-running the script on its own is not enough. It exits early with
-`already exists; leaving it alone` whenever the file is present, and a
-killed harness usually leaves one behind rather than removing it — written
-under the harness's stub compiler, so depending on where the run died it
-either pins `linker` to a name that no longer resolves — which fails at
-link time outright — or sets mold rustflags with no pin at all, which is
-only correct if mold really does work here, and the stub is what let it be
-written without establishing that. Either way the file looks present and
-the script reports nothing to do.
 
 ## Verifying API behavior
 
@@ -89,17 +62,16 @@ sources disagree, consistently in one direction — see D-004 in
    ```
 
    The version last swept against is in the `docs/INTERACTIONS_API_GAP.md`
-   header — currently 2.17.0, which is why the 2.18.1 `processing` field
-   (#419) went unmodeled behind a "fully covered" conclusion
+   header (and in `.github/last-swept-sdk-version`); diff from there. The
+   `api-surface-sweep` workflow opens an issue when a newer SDK ships.
 2. **Live probe** — `curl` against `generativelanguage.googleapis.com`, or a
    test with `LOUD_WIRE=1`
 3. **Prose docs** — `ai.google.dev` and this repo's own; both lag
 
 Changes to wire format need a live probe, not a spec reading. Video
-`processing` (#419) appears in the 2.18.1 bindings and in neither published
-doc, and one field
-(`cached_content`) was modeled from the spec and was rejected by the API for
-its entire shipped life — removed in #439.
+`processing` (#419) was in the 2.18.1 bindings and in neither published doc.
+`cached_content` was modeled from the spec, and the API rejected it for its
+entire shipped life (removed in #439).
 
 ## Adding wire types
 

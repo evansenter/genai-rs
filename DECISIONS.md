@@ -130,20 +130,21 @@ reach the wire. What it buys is one build driving either harness revision.
 ## D-004 — Verify API surface from generated bindings first, prose docs last (2026-08-16)
 
 **Context.** Three sources describe the API and they disagree, consistently
-in one direction. Video `processing` — a ~127x token-cost lever, 455 input
+in one direction. Video `processing` is a ~127x token-cost lever: 455 input
 tokens for a clipped static window against 57,775 for agentic (#419, modeled
-in #434) — is in the `google-genai` 2.18.1 bindings and in *neither*
-`ai.google.dev` page. It is also absent from 2.17.0, which is the version
-`docs/INTERACTIONS_API_GAP.md` last swept against (its header, and the
-completed list at `:166`), so the sweep that concluded "fully covered" could
-not have seen it. The widened `speech_config` union is the same shape found
-one sweep earlier (`INTERACTIONS_API_GAP.md:149`, item 11).
+in #434). It appeared in the `google-genai` 2.18.1 bindings and on *neither*
+`ai.google.dev` page. It is absent from 2.17.0, the version the gap tracker
+had last been swept against when this was written, so the sweep that
+concluded "fully covered" could not have seen it. The widened
+`speech_config` union was the same shape, found one sweep earlier.
 
 Conversely, the bindings describe a Retrieval tool and an
-`enable_bigquery_tool` flag that the endpoint rejects as Vertex-only
-(`INTERACTIONS_API_GAP.md:88-93`). Cited by line rather than recalled,
-because the whole argument here is that prose should not be taken at its
-word — including this paragraph.
+`enable_bigquery_tool` flag that the endpoint rejects as Vertex-only. The
+live-verification notes in `docs/INTERACTIONS_API_GAP.md` (its "Retrieval
+tool" and Deep Research config entries) record the rejections. They are
+cited by section rather than line: that file is edited on every sweep (see
+D-011), and this entry's argument is that prose should not be taken at its
+word, including this paragraph.
 
 **Decision.** Rank sources: (1) generated bindings from `google-genai`, which
 ship ahead of prose; (2) live probes, which are ground truth and often
@@ -153,10 +154,10 @@ usable.
 
 **Consequences.** "Absent from the docs" is not evidence of absence, and
 "present in the bindings" is not evidence of support. `docs/INTERACTIONS_API_GAP.md`
-is a point-in-time snapshot, not a completeness guarantee, and #438 adds
-both the staleness marker that says so in its header and a recurring sweep
-that files an issue when the SDK moves. Both are pending at the time of
-writing.
+is a point-in-time snapshot, not a completeness guarantee. Since #438 its
+header states the SDK version and date it was last swept against (the
+baseline also lives in `.github/last-swept-sdk-version`), and the
+`api-surface-sweep` workflow opens an issue when a newer SDK ships.
 
 Getting this ordering backwards is what let video `processing` sit unmodeled
 behind a "surface fully covered" conclusion that was false (#421) — the
