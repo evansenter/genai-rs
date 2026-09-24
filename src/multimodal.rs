@@ -515,29 +515,33 @@ pub async fn video_from_file_with_mime(
     Ok(Content::video_data(data, mime_type))
 }
 
+/// MIME types [`document_from_file`] sends as document content (verified live
+/// 2026-09-24 for the text types).
+const DOCUMENT_MIME_TYPES: &[&str] = &["application/pdf", "text/plain", "text/markdown"];
+
 /// Loads a document file with automatic MIME type detection.
 ///
 /// Reads the file, encodes it as base64, and validates the MIME type.
 ///
 /// # Supported Formats
 ///
-/// The Gemini Interactions API only supports PDF for document content:
+/// The formats the Interactions API accepts as document content:
 ///
 /// | Extension | MIME Type |
 /// |-----------|-----------|
 /// | `.pdf` | `application/pdf` |
+/// | `.txt` | `text/plain` |
+/// | `.md` | `text/markdown` |
 ///
-/// For text-based files (TXT, CSV, JSON, etc.), read the file content and send
-/// it as [`Content::text()`] instead. Document content type is specifically for
-/// PDF files that need visual processing (understanding charts, tables, images
-/// within the PDF).
+/// For other text formats (CSV, JSON, HTML, ...), read the file and send it as
+/// [`Content::text()`], or use [`document_from_file_with_mime`] to try one.
 ///
 /// # Errors
 ///
 /// Returns [`GenaiError::InvalidInput`] if:
 /// - The file cannot be read (with a suggestion based on the error type)
 /// - The file has no extension
-/// - The file is not a PDF
+/// - The file is not one of the formats above
 ///
 /// # Example
 ///
@@ -565,17 +569,16 @@ pub async fn document_from_file(path: impl AsRef<Path>) -> Result<Content, Genai
         ))
     })?;
 
-    // The Gemini Interactions API only supports PDF for document content type.
-    // Other text-based formats should be sent as Content::text() instead.
-    if mime_type != "application/pdf" {
+    if !DOCUMENT_MIME_TYPES.contains(&mime_type) {
         let suggestion = if mime_type.starts_with("image/") {
             "image_from_file()"
         } else if mime_type.starts_with("audio/") {
             "audio_from_file()"
         } else if mime_type.starts_with("video/") {
             "video_from_file()"
-        } else if mime_type.starts_with("text/") || mime_type == "application/json" {
-            // Suggest reading as text for text-based formats
+        } else if mime_type.starts_with("text/")
+            || matches!(mime_type, "application/json" | "application/xml")
+        {
             "Content::text() with the file contents read via std::fs::read_to_string()"
         } else {
             "the appropriate *_from_file() function"
@@ -583,8 +586,8 @@ pub async fn document_from_file(path: impl AsRef<Path>) -> Result<Content, Genai
 
         return Err(GenaiError::InvalidInput(format!(
             "File '{}' has MIME type '{}' which is not supported for document content. \
-             The Gemini API only supports 'application/pdf' for documents. \
-             For text-based files, use {}.",
+             The Gemini API accepts 'application/pdf', 'text/plain' and 'text/markdown' \
+             documents. For this file, use {}.",
             path.display(),
             mime_type,
             suggestion
@@ -801,6 +804,44 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("document_from_file()"));
+    }
+
+    #[tokio::test]
+    async fn test_document_from_file_accepts_pdf_text_and_markdown() {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, mime) in [
+            ("doc.pdf", "application/pdf"),
+            ("notes.txt", "text/plain"),
+            ("README.md", "text/markdown"),
+            ("SHOUT.TXT", "text/plain"),
+        ] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, b"hello").unwrap();
+            match document_from_file(&path).await.unwrap() {
+                Content::Document {
+                    mime_type, data, ..
+                } => {
+                    assert_eq!(mime_type.as_deref(), Some(mime), "{name}");
+                    assert_eq!(data.as_deref(), Some("aGVsbG8="), "{name}");
+                }
+                other => panic!("{name}: expected a document, got {other:?}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_document_from_file_rejects_other_text_formats() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["data.csv", "page.html", "data.json", "feed.xml"] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, b"x").unwrap();
+            let err = document_from_file(&path).await.unwrap_err().to_string();
+            assert!(
+                err.contains("not supported for document content"),
+                "{name}: {err}"
+            );
+            assert!(err.contains("Content::text()"), "{name}: {err}");
+        }
     }
 
     #[tokio::test]

@@ -19,13 +19,15 @@
 //! # Example
 //!
 //! ```no_run
-//! use genai_rs::Client;
+//! use genai_rs::{Client, CreateFileSearchStoreRequest};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let client = Client::new("api-key".to_string());
 //!
 //! // Provision a store and add a document.
-//! let store = client.create_file_search_store(Some("my-docs")).await?;
+//! let store = client
+//!     .create_file_search_store(&CreateFileSearchStoreRequest::new().with_display_name("my-docs"))
+//!     .await?;
 //! let document = client
 //!     .upload_to_file_search_store(&store.name, "handbook.pdf", Some("handbook"))
 //!     .await?;
@@ -320,13 +322,6 @@ pub struct CreateFileSearchStoreRequest {
 
 impl CreateFileSearchStoreRequest {
     /// Creates an empty request.
-    ///
-    /// The builder methods exist because this type is `#[non_exhaustive]`:
-    /// downstream crates can use neither struct-literal syntax nor the
-    /// `..Default::default()` functional-update form on it, so without them
-    /// the only route to [`extra`](Self::extra) — the reason
-    /// [`create_file_search_store_with_request`](crate::Client::create_file_search_store_with_request)
-    /// exists at all — is `default()` followed by field assignment.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -528,10 +523,8 @@ mod tests {
         );
     }
 
-    /// `extra` is the entire reason `create_file_search_store_with_request`
-    /// exists, and it rides `#[serde(flatten)]` — so what needs pinning is
-    /// that its keys land beside `displayName` rather than nested under an
-    /// `extra` object.
+    /// `extra` rides `#[serde(flatten)]`, so its keys must land beside
+    /// `displayName` rather than nested under an `extra` object.
     #[test]
     fn create_request_flattens_extra_beside_modeled_fields() {
         let mut extra = serde_json::Map::new();

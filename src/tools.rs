@@ -624,22 +624,26 @@ impl FunctionDeclarationBuilder {
         }
     }
 
-    /// Sets the function description
-    pub fn description(mut self, description: impl Into<String>) -> Self {
+    /// Sets the function description.
+    #[must_use]
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
         self.description = description.into();
         self
     }
 
-    /// Adds a parameter to the function schema
-    pub fn parameter(mut self, name: &str, schema: serde_json::Value) -> Self {
+    /// Adds a parameter to the function schema (replacing one of the same
+    /// name).
+    #[must_use]
+    pub fn add_parameter(mut self, name: &str, schema: serde_json::Value) -> Self {
         if let serde_json::Value::Object(ref mut map) = self.properties {
             map.insert(name.to_string(), schema);
         }
         self
     }
 
-    /// Sets the list of required parameter names
-    pub fn required(mut self, required: Vec<String>) -> Self {
+    /// Sets the list of required parameter names.
+    #[must_use]
+    pub fn with_required(mut self, required: Vec<String>) -> Self {
         self.required = required;
         self
     }
@@ -652,8 +656,8 @@ impl FunctionDeclarationBuilder {
     /// - Empty or whitespace-only function names
     /// - Required parameters that don't exist in the properties schema
     ///
-    /// These conditions may cause API errors but are allowed by the builder
-    /// for backwards compatibility.
+    /// These are warnings rather than errors: the API is the authority on
+    /// what it accepts.
     pub fn build(self) -> FunctionDeclaration {
         // Validate function name
         if self.name.trim().is_empty() {
@@ -791,11 +795,10 @@ impl<'de> Deserialize<'de> for FunctionCallingMode {
         let value = serde_json::Value::deserialize(deserializer)?;
 
         match value.as_str() {
-            // Spec wire format is lowercase; accept legacy UPPERCASE too.
-            Some("auto") | Some("AUTO") => Ok(Self::Auto),
-            Some("any") | Some("ANY") => Ok(Self::Any),
-            Some("none") | Some("NONE") => Ok(Self::None),
-            Some("validated") | Some("VALIDATED") => Ok(Self::Validated),
+            Some("auto") => Ok(Self::Auto),
+            Some("any") => Ok(Self::Any),
+            Some("none") => Ok(Self::None),
+            Some("validated") => Ok(Self::Validated),
             Some(other) => {
                 tracing::warn!(
                     "Encountered unknown FunctionCallingMode '{}'. \
@@ -1690,7 +1693,7 @@ impl From<McpServerConfig> for Tool {
 /// # Security Warning
 ///
 /// Computer use allows the model to control a real browser. Use
-/// [`ComputerUseConfig::excluding`] to restrict dangerous actions.
+/// [`ComputerUseConfig::with_excluded_predefined_functions`] to restrict dangerous actions.
 ///
 /// # Example
 ///
@@ -1698,7 +1701,7 @@ impl From<McpServerConfig> for Tool {
 /// use genai_rs::ComputerUseConfig;
 ///
 /// let config = ComputerUseConfig::new()
-///     .excluding(vec!["submit_form".to_string(), "download_file".to_string()]);
+///     .with_excluded_predefined_functions(vec!["submit_form".to_string(), "download_file".to_string()]);
 /// ```
 #[derive(Clone, Debug)]
 pub struct ComputerUseConfig {
@@ -1728,9 +1731,9 @@ impl ComputerUseConfig {
         self
     }
 
-    /// Excludes specific predefined browser functions from model access.
+    /// Sets the predefined browser functions hidden from the model.
     #[must_use]
-    pub fn excluding(mut self, functions: Vec<String>) -> Self {
+    pub fn with_excluded_predefined_functions(mut self, functions: Vec<String>) -> Self {
         self.excluded_predefined_functions = functions;
         self
     }
@@ -1742,14 +1745,14 @@ impl ComputerUseConfig {
         self
     }
 
-    /// Disables the given safety policies.
+    /// Sets the safety policies to disable.
     ///
     /// Known values include `financial_transactions`,
     /// `sensitive_data_modification`, `communication_tool`,
     /// `account_creation`, `data_modification`, `user_consent_management`,
     /// and `legal_terms_and_agreements`.
     #[must_use]
-    pub fn disabling_safety_policies(mut self, policies: Vec<String>) -> Self {
+    pub fn with_disabled_safety_policies(mut self, policies: Vec<String>) -> Self {
         self.disabled_safety_policies = policies;
         self
     }
@@ -1945,15 +1948,15 @@ mod tests {
     #[test]
     fn test_serialize_function_declaration() {
         let function = FunctionDeclaration::builder("get_weather")
-            .description("Get the current weather in a given location")
-            .parameter(
+            .with_description("Get the current weather in a given location")
+            .add_parameter(
                 "location",
                 serde_json::json!({
                     "type": "string",
                     "description": "The city and state, e.g. San Francisco, CA"
                 }),
             )
-            .required(vec!["location".to_string()])
+            .with_required(vec!["location".to_string()])
             .build();
 
         let json_string = serde_json::to_string(&function).expect("Serialization failed");
@@ -1984,16 +1987,6 @@ mod tests {
             let parsed: FunctionCallingMode =
                 serde_json::from_str(&json).expect("Deserialization failed");
             assert_eq!(parsed, mode);
-        }
-
-        // Legacy UPPERCASE values are still accepted on deserialize
-        for (raw, expected) in [
-            ("\"AUTO\"", FunctionCallingMode::Auto),
-            ("\"VALIDATED\"", FunctionCallingMode::Validated),
-        ] {
-            let parsed: FunctionCallingMode =
-                serde_json::from_str(raw).expect("Deserialization failed");
-            assert_eq!(parsed, expected);
         }
     }
 
@@ -2542,7 +2535,7 @@ mod tests {
         }
 
         let tool: Tool = ComputerUseConfig::new()
-            .excluding(vec!["download".to_string()])
+            .with_excluded_predefined_functions(vec!["download".to_string()])
             .into();
         match tool {
             Tool::ComputerUse {

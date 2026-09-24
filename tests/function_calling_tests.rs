@@ -94,23 +94,23 @@ const SYSTEM_INSTRUCTION: &str = "You are a helpful assistant that uses availabl
 
 fn weather_decl(description: &str) -> FunctionDeclaration {
     FunctionDeclaration::builder("get_weather")
-        .description(description)
-        .parameter(
+        .with_description(description)
+        .add_parameter(
             "city",
             json!({"type": "string", "description": "City name"}),
         )
-        .required(vec!["city".to_string()])
+        .with_required(vec!["city".to_string()])
         .build()
 }
 
 fn time_decl() -> FunctionDeclaration {
     FunctionDeclaration::builder("get_time")
-        .description("Get the current time in a timezone")
-        .parameter(
+        .with_description("Get the current time in a timezone")
+        .add_parameter(
             "timezone",
             json!({"type": "string", "description": "Timezone like UTC, PST, JST"}),
         )
-        .required(vec!["timezone".to_string()])
+        .with_required(vec!["timezone".to_string()])
         .build()
 }
 
@@ -130,7 +130,7 @@ mod basic {
         };
 
         let status_func = FunctionDeclaration::builder("get_server_status")
-            .description("Get the current server status (no parameters needed)")
+            .with_description("Get the current server status (no parameters needed)")
             .build();
 
         let response = stateful_builder(&client)
@@ -178,12 +178,12 @@ mod basic {
         };
 
         let search_func = FunctionDeclaration::builder("search_with_filters")
-            .description("Search with optional filters")
-            .parameter(
+            .with_description("Search with optional filters")
+            .add_parameter(
                 "user_id",
                 json!({"type": "string", "description": "User ID"}),
             )
-            .parameter(
+            .add_parameter(
                 "filters",
                 json!({
                     "type": "object",
@@ -195,7 +195,7 @@ mod basic {
                     }
                 }),
             )
-            .required(vec!["user_id".to_string()])
+            .with_required(vec!["user_id".to_string()])
             .build();
 
         let response = stateful_builder(&client)
@@ -227,9 +227,9 @@ mod basic {
         };
 
         let failing_func = FunctionDeclaration::builder("get_secret_data")
-            .description("Get secret data (may fail)")
-            .parameter("key", json!({"type": "string"}))
-            .required(vec!["key".to_string()])
+            .with_description("Get secret data (may fail)")
+            .add_parameter("key", json!({"type": "string"}))
+            .with_required(vec!["key".to_string()])
             .build();
 
         let response1 = stateful_builder(&client)
@@ -280,7 +280,7 @@ mod basic {
 
         with_timeout(test_timeout(), async {
             let get_time = FunctionDeclaration::builder("get_current_time")
-                .description("Get the current time")
+                .with_description("Get the current time")
                 .build();
 
             let response = interaction_builder(&client)
@@ -424,9 +424,9 @@ mod parallel {
             let functions = vec![
                 weather_decl("Get weather for a city"),
                 FunctionDeclaration::builder("get_stock_price")
-                    .description("Get stock price (may fail)")
-                    .parameter("symbol", json!({"type": "string"}))
-                    .required(vec!["symbol".to_string()])
+                    .with_description("Get stock price (may fail)")
+                    .add_parameter("symbol", json!({"type": "string"}))
+                    .with_required(vec!["symbol".to_string()])
                     .build(),
             ];
 
@@ -503,17 +503,17 @@ mod sequential {
 
         with_timeout(extended_test_timeout(), async {
             let convert_temp = FunctionDeclaration::builder("convert_temperature")
-                .description("Convert temperature between Celsius and Fahrenheit")
-                .parameter("value", json!({"type": "number"}))
-                .parameter(
+                .with_description("Convert temperature between Celsius and Fahrenheit")
+                .add_parameter("value", json!({"type": "number"}))
+                .add_parameter(
                     "from_unit",
                     json!({"type": "string", "enum": ["celsius", "fahrenheit"]}),
                 )
-                .parameter(
+                .add_parameter(
                     "to_unit",
                     json!({"type": "string", "enum": ["celsius", "fahrenheit"]}),
                 )
-                .required(vec![
+                .with_required(vec![
                     "value".to_string(),
                     "from_unit".to_string(),
                     "to_unit".to_string(),
@@ -824,8 +824,8 @@ mod auto_execution {
         };
 
         let undefined_func = FunctionDeclaration::builder("undefined_function")
-            .description("A function that doesn't have a registered handler")
-            .parameter("input", json!({"type": "string"}))
+            .with_description("A function that doesn't have a registered handler")
+            .add_parameter("input", json!({"type": "string"}))
             .build();
 
         let result = interaction_builder(&client)

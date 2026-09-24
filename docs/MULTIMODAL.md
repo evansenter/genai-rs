@@ -148,9 +148,15 @@ let video = Content::video_uri("files/abc123", "video/mp4").with_processing(clip
 use genai_rs::{Content, document_from_file};
 
 let pdf = document_from_file("report.pdf").await?;
+let notes = document_from_file("notes.md").await?; // text/markdown
 let inline_pdf = Content::document_data(base64_pdf, "application/pdf");
 let plain = Content::document_data(base64_text, "text/plain");
 ```
+
+The API accepts `application/pdf`, `text/plain` and `text/markdown` document
+content, and `document_from_file` sends those three (`.pdf`, `.txt`, `.md`).
+It rejects other text formats (CSV, JSON, HTML, XML) with a pointer to
+`Content::text()`; `document_from_file_with_mime` sends any MIME type as-is.
 
 `examples/pdf_input.rs` is a runnable demo.
 
@@ -203,20 +209,21 @@ client.delete_file(&file.name).await?;
 use genai_rs::{Content, Resolution};
 
 let quick = Content::image_data("base64...", "image/png").with_resolution(Resolution::Low);
-let detailed = Content::image_data_with_resolution("base64...", "image/png", Resolution::High);
+let detailed = Content::image_data("base64...", "image/png").with_resolution(Resolution::High);
 # let _ = (quick, detailed);
 ```
 
 ## Content constructors
 
 All are associated functions on `Content`, re-exported from the crate root.
+Chain `.with_resolution(..)` onto an image or video to set its resolution.
 
 | Kind | Inline | By URI |
 |------|--------|--------|
 | Text | `Content::text(s)` | — |
-| Image | `image_data(b64, mime)`, `image_data_with_resolution(..)` | `image_uri(uri, mime)`, `image_uri_with_resolution(..)` |
+| Image | `image_data(b64, mime)` | `image_uri(uri, mime)` |
 | Audio | `audio_data(b64, mime)` | `audio_uri(uri, mime)` |
-| Video | `video_data(b64, mime)`, `video_data_with_resolution(..)` | `video_uri(uri, mime)`, `video_uri_with_resolution(..)` |
+| Video | `video_data(b64, mime)` | `video_uri(uri, mime)` |
 | Document | `document_data(b64, mime)` | `document_uri(uri, mime)` |
 | Any | — | `from_file(&FileMetadata)`, `from_uri_and_mime(uri, mime)` |
 
@@ -236,8 +243,9 @@ The constructors leave them unset; the API fills them in on audio it returns.
 | Video | `mp4`, `webm`, `mov` → `video/quicktime`, `avi` → `video/x-msvideo`, `mkv` → `video/x-matroska` |
 | Document | `pdf` → `application/pdf`, `txt` → `text/plain`, `md` → `text/markdown`, `json`, `csv`, `html`, `xml` |
 
-Detection doesn't guarantee the model accepts a format. Always pass full MIME
-types (`"image/png"`, not `"png"`).
+Detection doesn't guarantee the model accepts a format: `document_from_file`
+only sends the PDF, plain-text and Markdown document types (above). Always pass
+full MIME types (`"image/png"`, not `"png"`).
 
 ## Examples
 

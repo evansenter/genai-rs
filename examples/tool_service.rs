@@ -43,15 +43,15 @@ fn evaluate(expression: &str) -> Result<f64, String> {
 impl CallableFunction for Calculator {
     fn declaration(&self) -> FunctionDeclaration {
         FunctionDeclaration::builder("calculate")
-            .description("Evaluate a binary arithmetic expression at the configured precision")
-            .parameter(
+            .with_description("Evaluate a binary arithmetic expression at the configured precision")
+            .add_parameter(
                 "expression",
                 json!({
                     "type": "string",
                     "description": "Two numbers and one operator separated by spaces, e.g. '10 / 3'"
                 }),
             )
-            .required(vec!["expression".to_string()])
+            .with_required(vec!["expression".to_string()])
             .build()
     }
 

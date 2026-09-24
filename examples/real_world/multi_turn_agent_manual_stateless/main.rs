@@ -28,17 +28,17 @@ const SYSTEM_PROMPT: &str = "You are a concise support agent for TechGadgets Inc
 fn declarations() -> Vec<FunctionDeclaration> {
     vec![
         FunctionDeclaration::builder("lookup_customer")
-            .description("Look up a customer by full name or email address")
-            .parameter("identifier", json!({"type": "string"}))
-            .required(vec!["identifier".to_string()])
+            .with_description("Look up a customer by full name or email address")
+            .add_parameter("identifier", json!({"type": "string"}))
+            .with_required(vec!["identifier".to_string()])
             .build(),
         FunctionDeclaration::builder("list_orders")
-            .description("List a customer's orders")
-            .parameter(
+            .with_description("List a customer's orders")
+            .add_parameter(
                 "customer_id",
                 json!({"type": "string", "description": "e.g. CUST-001"}),
             )
-            .required(vec!["customer_id".to_string()])
+            .with_required(vec!["customer_id".to_string()])
             .build(),
     ]
 }

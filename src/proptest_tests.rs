@@ -24,7 +24,7 @@ use super::environment::{
 use super::environments::EnvironmentStatus;
 use super::request::{
     AgentConfig, DeepResearchConfig, DynamicConfig, GenerationConfig, ImageAspectRatio,
-    ImageConfig, ImageSize, InteractionInput, Role, ServiceTier, SpeechConfig, ThinkingLevel,
+    ImageConfig, ImageSize, InteractionInput, ServiceTier, SpeechConfig, ThinkingLevel,
     ThinkingSummaries, TranscriptionConfig, TurnContent, VideoConfig, VideoTask, Visualization,
 };
 use super::response::{
@@ -34,9 +34,7 @@ use super::response::{
 use super::response_format::{ResponseDelivery, ResponseFormat, ResponseFormatSpec};
 use super::safety::{HarmCategory, SafetyMethod, SafetySetting, SafetyThreshold};
 use super::steps::{FunctionResultPayload, Step, StepDelta, StepError};
-use super::streaming::{
-    AutoFunctionResult, AutoFunctionStreamChunk, FunctionExecutionResult, PendingFunctionCall,
-};
+use super::streaming::{AutoFunctionResult, AutoFunctionStreamChunk, FunctionExecutionResult};
 use super::tools::{
     AllowedTools, ExaAiSearchConfig, FunctionCallingMode, FunctionParameters, HybridSearchConfig,
     ParallelAiSearchConfig, RagFilter, RagRanking, RagResource, RagRetrievalConfig, RagStoreConfig,
@@ -512,19 +510,6 @@ fn arb_code_execution_language() -> impl Strategy<Value = CodeExecutionLanguage>
         arb_unknown_type().prop_map(|language_type| CodeExecutionLanguage::Unknown {
             language_type: language_type.clone(),
             data: serde_json::Value::String(language_type),
-        }),
-    ]
-}
-
-/// Strategy for Role.
-fn arb_role() -> impl Strategy<Value = Role> {
-    prop_oneof![
-        Just(Role::User),
-        Just(Role::Model),
-        // Unknown variant with preserved data (role_type and data fields per Evergreen pattern)
-        arb_unknown_type().prop_map(|role_type| Role::Unknown {
-            data: serde_json::Value::String(role_type.clone()),
-            role_type,
         }),
     ]
 }
@@ -2208,14 +2193,6 @@ proptest! {
         prop_assert_eq!(config, restored);
     }
 
-    /// Test that Role roundtrips correctly through JSON.
-    #[test]
-    fn role_roundtrip(role in arb_role()) {
-        let json = serde_json::to_string(&role).expect("Serialization should succeed");
-        let restored: Role = serde_json::from_str(&json).expect("Deserialization should succeed");
-        prop_assert_eq!(role, restored);
-    }
-
     /// Test that Annotation roundtrips stably through JSON.
     ///
     /// Uses JSON comparison since the Unknown variant normalizes its data
@@ -2781,17 +2758,12 @@ fn arb_function_execution_result() -> impl Strategy<Value = FunctionExecutionRes
         })
 }
 
-fn arb_pending_function_call() -> impl Strategy<Value = PendingFunctionCall> {
-    (arb_identifier(), arb_identifier(), arb_json_value())
-        .prop_map(|(name, call_id, args)| PendingFunctionCall::new(name, call_id, args))
-}
-
 fn arb_auto_function_stream_chunk() -> impl Strategy<Value = AutoFunctionStreamChunk> {
     prop_oneof![
         arb_step_delta().prop_map(AutoFunctionStreamChunk::Delta),
         (
             arb_interaction_response(),
-            prop::collection::vec(arb_pending_function_call(), 0..5)
+            prop::collection::vec(arb_owned_function_call_info(), 0..5)
         )
             .prop_map(|(response, pending_calls)| {
                 AutoFunctionStreamChunk::ExecutingFunctions {
@@ -2832,11 +2804,6 @@ proptest! {
             serde_json::from_str(&json).expect("Deserialization should succeed");
         // Duration travels as milliseconds, which the strategy generates.
         prop_assert_eq!(result, restored);
-    }
-
-    #[test]
-    fn pending_function_call_roundtrip(call in arb_pending_function_call()) {
-        assert_value_roundtrip(&call)?;
     }
 
     #[test]

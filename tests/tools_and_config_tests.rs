@@ -646,7 +646,7 @@ mod computer_use {
     fn test_computer_use_config_wire_shape() {
         let tool: Tool = ComputerUseConfig::new()
             .with_environment("browser")
-            .excluding(vec!["submit_form".to_string()])
+            .with_excluded_predefined_functions(vec!["submit_form".to_string()])
             .with_prompt_injection_detection(true)
             .into();
 
@@ -1290,12 +1290,12 @@ mod function_calling_modes {
         };
 
         let weather_fn = FunctionDeclaration::builder("get_weather")
-            .description("Get the current weather for a location")
-            .parameter(
+            .with_description("Get the current weather for a location")
+            .add_parameter(
                 "location",
                 json!({"type": "string", "description": "The city name"}),
             )
-            .required(vec!["location".to_string()])
+            .with_required(vec!["location".to_string()])
             .build();
 
         let response = retry_request!([client, weather_fn] => {

@@ -274,11 +274,11 @@ let config = ComputerUseConfig::new()
     // Operating environment: "browser" (default), "mobile", or "desktop"
     .with_environment("browser")
     // Disable specific predefined functions for safety
-    .excluding(vec!["submit_form".to_string(), "download_file".to_string()])
+    .with_excluded_predefined_functions(vec!["submit_form".to_string(), "download_file".to_string()])
     // Detect prompt injection attempts in page content
     .with_prompt_injection_detection(true)
     // Opt out of specific safety policies (use with care)
-    .disabling_safety_policies(vec!["financial_transactions".to_string()]);
+    .with_disabled_safety_policies(vec!["financial_transactions".to_string()]);
 
 let response = client
     .interaction()
@@ -304,7 +304,9 @@ Semantic search across documents in pre-configured file search stores.
 File Search operates on *file search stores* (resource names like `fileSearchStores/my-store-123`), not on ad-hoc Files API uploads. Create a store, upload documents into it, and wait for indexing before searching:
 
 ```rust,ignore
-let store = client.create_file_search_store(Some("my-docs")).await?;
+let store = client
+    .create_file_search_store(&CreateFileSearchStoreRequest::new().with_display_name("my-docs"))
+    .await?;
 
 let document = client
     .upload_to_file_search_store(&store.name, "handbook.pdf", Some("handbook"))

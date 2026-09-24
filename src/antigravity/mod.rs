@@ -3306,7 +3306,7 @@ mod agent_tests {
     #[test]
     fn test_builder_subagents_reach_harness_config() {
         let declaration = crate::FunctionDeclaration::builder("severity_classifier")
-            .description("Classifies severity.")
+            .with_description("Classifies severity.")
             .build();
         let builder = AntigravityAgent::builder()
             .add_tool(declaration)

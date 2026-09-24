@@ -618,12 +618,12 @@ pub async fn assert_response_semantic(
 pub fn get_weather_function() -> genai_rs::FunctionDeclaration {
     use serde_json::json;
     genai_rs::FunctionDeclaration::builder("get_weather")
-        .description("Get the current weather for a city")
-        .parameter(
+        .with_description("Get the current weather for a city")
+        .add_parameter(
             "city",
             json!({"type": "string", "description": "City name"}),
         )
-        .required(vec!["city".to_string()])
+        .with_required(vec!["city".to_string()])
         .build()
 }
 
@@ -632,12 +632,12 @@ pub fn get_weather_function() -> genai_rs::FunctionDeclaration {
 pub fn get_time_function() -> genai_rs::FunctionDeclaration {
     use serde_json::json;
     genai_rs::FunctionDeclaration::builder("get_time")
-        .description("Get the current time in a timezone")
-        .parameter(
+        .with_description("Get the current time in a timezone")
+        .add_parameter(
             "timezone",
             json!({"type": "string", "description": "Timezone like PST, EST, JST"}),
         )
-        .required(vec!["timezone".to_string()])
+        .with_required(vec!["timezone".to_string()])
         .build()
 }
 

@@ -71,12 +71,12 @@ async fn test_streaming_multi_turn_function_calling() {
     };
 
     let get_weather = FunctionDeclaration::builder("get_weather")
-        .description("Get the current weather for a city")
-        .parameter(
+        .with_description("Get the current weather for a city")
+        .add_parameter(
             "city",
             json!({"type": "string", "description": "The city name"}),
         )
-        .required(vec!["city".to_string()])
+        .with_required(vec!["city".to_string()])
         .build();
 
     // Turn 1: Trigger function call

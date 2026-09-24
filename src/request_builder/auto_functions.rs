@@ -20,7 +20,6 @@ use crate::ToolService;
 use crate::function_calling::{CallableFunction, FunctionRegistry, get_global_function_registry};
 use crate::streaming::{
     AutoFunctionResult, AutoFunctionStreamChunk, AutoFunctionStreamEvent, FunctionExecutionResult,
-    PendingFunctionCall,
 };
 
 use super::InteractionBuilder;
@@ -153,7 +152,7 @@ impl<'a> InteractionBuilder<'a> {
     /// 4. Repeat until model returns text or max iterations reached
     ///
     /// Functions are auto-discovered from the global registry (via `#[tool]` macro)
-    /// or can be explicitly provided via `.add_function()` or `.set_tools()`.
+    /// or can be explicitly provided via `.add_function()` or `.with_tools()`.
     ///
     /// The loop automatically stops when:
     /// - Model returns text without function calls
@@ -545,7 +544,7 @@ impl<'a> InteractionBuilder<'a> {
     ///   function calls that completed in previous iterations are preserved on the API
     ///   side via the interaction chain, but the stream yields an error rather than
     ///   a partial result. Use `previous_interaction_id` to continue.
-    /// - A function call is missing its required `call_id` field
+    /// - The server sends an error event mid-stream ([`GenaiError::Stream`])
     /// - `max_function_call_loops` is set to 0 (invalid configuration)
     pub fn create_stream_with_auto_functions(
         self,
@@ -695,10 +694,8 @@ impl<'a> InteractionBuilder<'a> {
 
                 // Signal that we're executing functions with pending call info
                 debug!("Executing {} function call(s)", calls_to_execute.len());
-                let pending_calls: Vec<PendingFunctionCall> = calls_to_execute
-                    .iter()
-                    .map(|(call_id, name, args)| PendingFunctionCall::new(name, call_id, args.clone()))
-                    .collect();
+                let pending_calls: Vec<_> =
+                    response_function_calls.iter().map(|call| call.to_owned()).collect();
                 // ExecutingFunctions is client-generated, no API event_id
                 yield AutoFunctionStreamEvent::new(
                     AutoFunctionStreamChunk::ExecutingFunctions {

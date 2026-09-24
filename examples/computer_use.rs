@@ -30,7 +30,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .add_tool(
             ComputerUseConfig::new()
                 .with_environment("browser")
-                .excluding(vec![
+                .with_excluded_predefined_functions(vec![
                     "drag_and_drop".to_string(),
                     "key_combination".to_string(),
                 ])

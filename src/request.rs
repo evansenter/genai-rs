@@ -13,17 +13,11 @@ use crate::steps::Step;
 use crate::tools::{Tool, ToolChoice};
 use crate::webhooks::WebhookConfig;
 
-/// Role in a conversation turn.
+/// Who a conversation turn comes from, for
+/// [`ConversationBuilder::turn`](crate::ConversationBuilder::turn).
 ///
-/// Indicates whether the content came from the user or the model.
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-/// New roles may be added in future API versions.
-///
-/// # Evergreen Pattern
-///
-/// Unknown values from the API deserialize into the `Unknown` variant, preserving
-/// the original data for debugging and roundtrip serialization.
+/// Client-side only: under revision 2026-05-20 steps carry no role field on
+/// the wire, their step type (`user_input` / `model_output`) does that job.
 ///
 /// # Example
 ///
@@ -33,92 +27,13 @@ use crate::webhooks::WebhookConfig;
 /// let role = Role::User;
 /// assert!(matches!(role, Role::User));
 /// ```
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Role {
     /// Content from the user
     User,
     /// Content from the model
     Model,
-    /// Unknown variant for forward compatibility (Evergreen pattern)
-    Unknown {
-        /// The unrecognized role type from the API
-        role_type: String,
-        /// The raw JSON value, preserved for debugging and roundtrip
-        data: serde_json::Value,
-    },
-}
-
-impl Role {
-    /// Returns true if this is an unknown role.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
-    }
-
-    /// Returns the role type name if this is an unknown role.
-    #[must_use]
-    pub fn unknown_role_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { role_type, .. } => Some(role_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the preserved data if this is an unknown role.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Display for Role {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::User => write!(f, "user"),
-            Self::Model => write!(f, "model"),
-            Self::Unknown { role_type, .. } => write!(f, "{}", role_type),
-        }
-    }
-}
-
-impl Serialize for Role {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            Role::User => serializer.serialize_str("user"),
-            Role::Model => serializer.serialize_str("model"),
-            Role::Unknown { role_type, .. } => serializer.serialize_str(role_type),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for Role {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        match s.as_str() {
-            "user" => Ok(Role::User),
-            "model" => Ok(Role::Model),
-            other => {
-                tracing::warn!(
-                    "Encountered unknown Role '{}' - using Unknown variant (Evergreen)",
-                    other
-                );
-                Ok(Role::Unknown {
-                    role_type: other.to_string(),
-                    data: serde_json::Value::String(other.to_string()),
-                })
-            }
-        }
-    }
 }
 
 /// Content for a conversation turn.
