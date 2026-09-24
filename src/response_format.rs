@@ -153,7 +153,8 @@ pub enum ResponseFormat {
     /// `mime_type` and `delivery` are schema-valid but rejected
     /// ("Audio mime_type is not supported in response_format." /
     /// "Audio delivery mode is not supported."); `sample_rate` is accepted.
-    /// Output is returned inline as `audio/l16`.
+    /// Output is returned inline: `audio/wav` from the 3.8 TTS models,
+    /// `audio/l16` from older ones (2026-09-24).
     Audio {
         /// MIME type of the audio output. Known values: `audio/mp3`,
         /// `audio/ogg_opus`, `audio/l16`, `audio/wav`, `audio/alaw`,

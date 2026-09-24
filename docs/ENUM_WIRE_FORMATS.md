@@ -397,10 +397,13 @@ Old revision: a single struct `{start_index, end_index, source}`. Revision
 | `url_citation` | `Annotation::UrlCitation` | `url`, `title` |
 | `file_citation` | `Annotation::FileCitation` | `document_uri`, `file_name`, `source`, `custom_metadata`, `page_number`, `media_id` |
 | `place_citation` | `Annotation::PlaceCitation` | `place_id`, `name`, `url`, `review_snippets: [ReviewSnippet]` |
-| (anything else) | `Annotation::Unknown { annotation_type, data }` | Preserved |
+| `speech_metadata` | `Annotation::SpeechMetadata` | `speaker`, `style`; `start_index`/`end_index` **optional**. TTS **input** annotation: required per turn for multi-speaker on `gemini-3.8-flash-tts`; rejected by older TTS models. Spanned annotations must tile the text without gaps (live 2026-09-24) |
+| `word_info` | `Annotation::WordInfo` | `text`, `speaker`, `start_offset`/`end_offset` (duration strings), optional indices. Transcription output; not yet observed |
+| (anything else) | `Annotation::Unknown { annotation_type, data }` | Preserved. The server's enum also lists `in_context_file_citation` and `reference_metadata`, absent from the 2.25 bindings (2026-09-24) |
 
 All citation variants carry `start_index`/`end_index` (UTF-8 byte offsets into
-the annotated text). `ReviewSnippet { title, url, review_id }` (all optional)
+the annotated text); on `speech_metadata` and `word_info` they are optional, so
+`start_index()`/`end_index()` return `None` when absent. `ReviewSnippet { title, url, review_id }` (all optional)
 is exported. Helpers: `start_index()`, `end_index()`, `source()`,
 `extract_span(&text)`, plus the standard Unknown trio.
 
@@ -983,10 +986,15 @@ a distinct `speaker` matching the prompt) for multi-speaker TTS:
 
 ```json
 {
-  "model": "gemini-2.5-pro-preview-tts",
-  "input": "Alice: Hi Bob!\nBob: Hey Alice!",
+  "model": "gemini-3.8-flash-tts",
+  "input": [
+    {"type": "text", "text": "Hi Bob!",
+     "annotations": [{"type": "speech_metadata", "speaker": "Alice"}]},
+    {"type": "text", "text": "Hey Alice!",
+     "annotations": [{"type": "speech_metadata", "speaker": "Bob"}]}
+  ],
+  "response_modalities": ["audio"],
   "generation_config": {
-    "response_modalities": ["audio"],
     "speech_config": [
       {"voice": "Kore", "language": "en-US", "speaker": "Alice"},
       {"voice": "Puck", "language": "en-US", "speaker": "Bob"}
@@ -995,11 +1003,16 @@ a distinct `speaker` matching the prompt) for multi-speaker TTS:
 }
 ```
 
+On `gemini-3.8-flash-tts` each text turn must name its speaker with a
+`speech_metadata` annotation (see [Annotation](#annotation-citation-union));
+2.5-pro and 3.1-flash TTS models take the `Alice: ...` transcript form instead
+and reject the annotation (verified live 2026-09-24).
+
 | Rust Field | Wire Name | Required | Notes |
 |------------|-----------|----------|-------|
 | `voice` | `voice` | No* | Voice name (e.g., "Kore", "Puck", "Charon") |
 | `language` | `language` | Yes** | Language code (e.g., "en-US", "es-ES") |
-| `speaker` | `speaker` | No | Must match a speaker name in the prompt for multi-speaker TTS |
+| `speaker` | `speaker` | No | Multi-speaker only: the name each turn's `speech_metadata` annotation (or transcript label) refers to |
 
 *Voice defaults to a system voice if not specified.
 **Language is required by the API when voice is specified.
@@ -1015,26 +1028,21 @@ shape (list vs. single object) is unobservable.
 
 **Verified**: 2026-01-10 (nested vs. flat voice fields, both sent as a list) - `test_speech_config_nested_format_fails_flat_succeeds` shows the nested form failing with `no such field: 'voiceConfig'`. Note that its "flat" case builds `Some(vec![SpeechConfig::…])`, which serializes as a one-element **list** — that test varies where the voice fields sit, not object-vs-list, and never sent a bare object.
 
-The **list** form was verified live 2026-07 (multi-speaker TTS) and re-probed 2026-08-16 as the only form the API accepts on requests; both object forms are rejected on send, and are accepted on **deserialize only**. See [speech_config wire forms](#speech_config-wire-forms) just below for the error and the full form table — kept in one place so a later verification stamp has a single site to update.
+The crate sends the **list** form. See [speech_config wire forms](#speech_config-wire-forms) just below for which object forms the API accepts — kept in one place so a later verification stamp has a single site to update.
 
 #### speech_config wire forms
 
 `google-genai` 2.18.x widened `generation_config.speech_config` from a plain
-list to `SpeakerConfig | List[SpeechConfig]`. **The Gemini API does not
-accept the object arm** (verified live 2026-08-16 against
-`gemini-2.5-pro-preview-tts`):
+list to `SpeakerConfig | List[SpeechConfig]`. What the API accepts on send
+changed between sweeps:
 
-```text
-400 The value is invalid for 'generation_config.speech_config'.
-    Expected an array, got object.
-```
+| Form | 2026-08-16 (`gemini-2.5-pro-preview-tts`) | 2026-09-24 (all TTS models) |
+|------|------|------|
+| `[{voice, language, speaker}, ...]` | accepted | accepted |
+| `{"speakers": [...]}` | `400 ... Expected an array, got object.` | accepted (server maps it to `structured_speech_config`) |
+| bare `{voice, language}` | `400 ... Expected an array, got object.` | `400 Unknown parameter 'voice' at 'generation_config.structured_speech_config'` |
 
-Both `{"speakers": [...]}` and the legacy `{voice, language, speaker}` single
-object are rejected on send — same class as `Tool::Retrieval` and
-`safety_settings`, where the generated bindings describe a broader surface
-than this endpoint implements.
-
-The crate therefore **always sends the list**, and accepts all three forms on
+The crate **always sends the list** (valid in both sweeps), and accepts all three forms on
 deserialize:
 
 | Wire | Normalized to |
@@ -1071,15 +1079,13 @@ specific MIME type:
 }
 ```
 
-| MIME Type | Format | Notes |
-|-----------|--------|-------|
-| `audio/L16;codec=pcm;rate=24000` | Raw PCM | 16-bit linear PCM at 24kHz |
+| MIME Type | Models | Format | `extension()` |
+|-----------|--------|--------|---------------|
+| `audio/wav` | `gemini-3.8-flash-tts`, `gemini-3.8-flash-lite-tts` | RIFF/WAV, 24 kHz mono s16; no `sample_rate`/`channels` fields | `wav` |
+| `audio/L16;codec=pcm;rate=24000` | `gemini-2.5-pro-preview-tts` | Raw 16-bit PCM | `pcm` |
+| `audio/l16; rate=24000; channels=1` | `gemini-3.1-flash-tts-preview` | Raw 16-bit PCM, with `sample_rate`/`channels` | `pcm` |
 
-The `AudioInfo::extension()` method maps this to `"pcm"` for file saving.
-Audio content blocks also carry optional `sample_rate` and `channels` fields
-since revision 2026-05-20.
-
-**Status**: MIME type verified 2026-01-07 pre-revision; steps envelope pending live verification (2026-05-20 revision).
+**Status**: all three verified live 2026-09-24 (steps envelope, revision 2026-05-20).
 
 ### UrlContextCall (step)
 

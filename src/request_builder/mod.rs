@@ -1099,18 +1099,17 @@ impl<'a> InteractionBuilder<'a> {
     /// Sets the full list of speaker configurations for multi-speaker
     /// text-to-speech, replacing any previously set configs.
     ///
-    /// Each entry's `speaker` should match a speaker name given in the
-    /// prompt.
-    ///
-    /// The list wire form was verified live (2026-07): a two-speaker
-    /// request returns a single combined `audio/l16` stream. The API does
-    /// not echo `speech_config` back on reads (`include_input` was observed
-    /// to be a no-op), so the echo shape could not be observed.
+    /// Each entry's `speaker` names a speaker the input's turns refer to.
+    /// On [`DEFAULT_TTS_MODEL`](crate::DEFAULT_TTS_MODEL) every text turn
+    /// must carry that name via [`Content::speaker_text`]; older TTS models
+    /// instead read an `Alice: ...` transcript and reject the annotation
+    /// (verified live 2026-09-24). Either way one combined audio stream is
+    /// returned.
     ///
     /// # Example
     ///
     /// ```no_run
-    /// use genai_rs::{Client, SpeechConfig};
+    /// use genai_rs::{Client, Content, InteractionInput, SpeechConfig};
     ///
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -1119,7 +1118,10 @@ impl<'a> InteractionBuilder<'a> {
     /// let response = client
     ///     .interaction()
     ///     .with_model(genai_rs::DEFAULT_TTS_MODEL)
-    ///     .with_text("Alice: Hi Bob!\nBob: Hey Alice, how are you?")
+    ///     .with_input(InteractionInput::Content(vec![
+    ///         Content::speaker_text("Alice", "Hi Bob!"),
+    ///         Content::speaker_text("Bob", "Hey Alice, how are you?"),
+    ///     ]))
     ///     .with_audio_output()
     ///     .with_speech_configs(vec![
     ///         SpeechConfig { voice: Some("Kore".into()), language: Some("en-US".into()), speaker: Some("Alice".into()) },

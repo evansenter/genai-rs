@@ -851,6 +851,28 @@ impl SpeechConfig {
             ..Default::default()
         }
     }
+
+    /// Creates the config for one speaker of a multi-speaker request; pair
+    /// it with [`Content::speaker_text`](crate::Content::speaker_text).
+    ///
+    /// ```
+    /// use genai_rs::SpeechConfig;
+    ///
+    /// let alice = SpeechConfig::for_speaker("Alice", "Kore", "en-US");
+    /// assert_eq!(alice.speaker.as_deref(), Some("Alice"));
+    /// ```
+    #[must_use]
+    pub fn for_speaker(
+        speaker: impl Into<String>,
+        voice: impl Into<String>,
+        language: impl Into<String>,
+    ) -> Self {
+        Self {
+            voice: Some(voice.into()),
+            language: Some(language.into()),
+            speaker: Some(speaker.into()),
+        }
+    }
 }
 
 /// Configuration for image generation output.
@@ -2290,6 +2312,15 @@ mod tests {
         assert_eq!(config.voice, Some("Puck".to_string()));
         assert_eq!(config.language, Some("en-GB".to_string()));
         assert_eq!(config.speaker, None);
+    }
+
+    #[test]
+    fn test_speech_config_for_speaker() {
+        let config = SpeechConfig::for_speaker("Bob", "Puck", "en-US");
+        assert_eq!(
+            serde_json::to_value(&config).unwrap(),
+            serde_json::json!({"voice": "Puck", "language": "en-US", "speaker": "Bob"})
+        );
     }
 
     #[test]

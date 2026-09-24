@@ -92,7 +92,11 @@ pub const MINIMAL_THINKING_MODEL: &str = "gemini-3.6-flash";
 pub const DEFAULT_IMAGE_MODEL: &str = "gemini-3.1-flash-image";
 
 /// The model to use for text-to-speech.
-pub const DEFAULT_TTS_MODEL: &str = "gemini-2.5-pro-preview-tts";
+///
+/// Returns `audio/wav` (a RIFF container, playable as-is) rather than raw
+/// L16 PCM. Multi-speaker requests need a speaker annotation on each text
+/// turn; see [`Content::speaker_text`].
+pub const DEFAULT_TTS_MODEL: &str = "gemini-3.8-flash-tts";
 
 /// The Deep Research agent id, for [`with_agent`](InteractionBuilder::with_agent).
 ///
