@@ -89,7 +89,13 @@ current-harness spelling. `STATE_IDLE` in, `STATE_FULLY_IDLE` out.
 **Consequences.** A deliberate departure from D-001's round-trip principle,
 and worth naming as such. It is safe here because these are inbound-only
 enums — the client never sends a `TrajectoryState` — so the asymmetry cannot
-reach the wire. What it buys is one build driving either harness revision.
+reach the wire. What it bought was one build driving either harness revision.
+
+*Update 2026-09-24:* 0.1.18 changed an **outbound** shape (the user message
+became a multi-part `UserInput`; the old plain string is rejected harness-side,
+visible only on its stderr). Outbound shapes cannot be aliased, so aliases now
+only let a build *read* older revisions; each build *drives* exactly
+`SUPPORTED_HARNESS_VERSION`. The 0.1.5 aliases are kept but unreachable.
 
 *Also stated as a rule in `docs/ENUM_WIRE_FORMATS.md` (Antigravity enums section).*
 

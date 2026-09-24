@@ -100,7 +100,7 @@ Located in [`examples/real_world/`](../examples/real_world/):
 
 Located in [`examples/antigravity/`](../examples/antigravity/), grouped the
 way `src/antigravity/` is. All seven need the `antigravity` feature **and**
-the `localharness` binary (`pip install google-antigravity==0.1.10`), and
+the `localharness` binary (`pip install google-antigravity==0.1.18`), and
 all seven are smoke-run in CI:
 
 | Example | Description | Difficulty |
@@ -119,6 +119,6 @@ all seven are smoke-run in CI:
 |---------|-------|
 | `deep_research` | Deep Research agent access; takes minutes (`DEEP_RESEARCH_MAX_WAIT_SECS` sets the budget) |
 | `computer_use` | Computer Use access on your key |
-| Antigravity examples | `localharness` binary (`pip install google-antigravity==0.1.10`) + `--features antigravity` |
+| Antigravity examples | `localharness` binary (`pip install google-antigravity==0.1.18`) + `--features antigravity` |
 
 Everything else runs on a standard API key.
