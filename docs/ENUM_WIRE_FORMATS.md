@@ -1,1230 +1,618 @@
 # Enum Wire Formats & Unknown Variants
 
-This document captures:
-1. **Wire formats** for enums in the Gemini Interactions API (the official docs are sometimes wrong)
-2. **Unknown variant types** that implement Evergreen soft-typing for forward compatibility
+The verified wire formats for this crate's enums and unions, and the
+Evergreen `Unknown` variant each one carries. The official docs are sometimes
+wrong, so this catalog records what the live API actually sent or accepted,
+and when.
 
-**API revision**: This catalog reflects **Interactions API revision 2026-05-20**. Every
-request sends the `Api-Revision: 2026-05-20` header (see `src/http/common.rs`). Entries
-marked **Pending live verification (2026-05-20 revision)** have wire formats derived from
-the API spec and unit-tested serialization, but have not yet been confirmed against the
-live API with `LOUD_WIRE=1`.
+**Revision.** Everything here is Interactions API revision **2026-05-20**.
+Every request sends `Api-Revision: 2026-05-20`. The server currently ignores
+the header and serves 2026-05-20 whatever value it carries.
 
-## Types with Unknown Variants
+**Status markers.** "Verified live *date*" means the value was observed on
+`generativelanguage.googleapis.com`, usually with `LOUD_WIRE=1`. "Pending
+live verification" means the value comes from the spec and unit-tested
+serialization only. "Pre-revision" means verified before 2026-05-20, when
+the shape was a `Content` block rather than a step.
 
-All types below implement graceful handling of unrecognized values via an `Unknown` variant. This ensures the library doesn't break when Google adds new enum values.
+## Types with Unknown variants
 
-| # | Type | Location | Context Field | Notes |
-|---|------|----------|---------------|-------|
-| 1 | `Content` | src/content.rs | `content_type` | Media-only: text/image/audio/video/document |
-| 2 | `Step` | src/steps.rs | `step_type` | Interaction steps (22 known types) |
-| 3 | `StepDelta` | src/steps.rs | `delta_type` | `step.delta` SSE payloads |
-| 4 | `Annotation` | src/content.rs | `annotation_type` | Citations (url/file/place) + `speech_metadata` + `word_info` |
-| 5 | `Resolution` | src/content.rs | `resolution_type` | Image/video quality |
-| 6 | `StreamChunk` | src/wire_streaming.rs | `chunk_type` | Low-level SSE chunks |
-| 7 | `AutoFunctionStreamChunk` | src/streaming.rs | `chunk_type` | High-level streaming |
-| 8 | `FileState` | src/files.rs | `state_type` | File upload states |
-| 9 | `Tool` | src/tools.rs | `tool_type` | Tool types |
-| 10 | `FunctionCallingMode` | src/tools.rs | `mode_type` | auto/any/none/validated (lowercase) |
-| 11 | `ToolChoice` | src/tools.rs | `choice_type` | Mode string OR `allowed_tools` object |
-| 12 | `ThinkingLevel` | src/request.rs | `level_type` | minimal/low/medium/high |
-| 13 | `ThinkingSummaries` | src/request.rs | `summaries_type` | Context-dependent format |
-| 14 | `ServiceTier` | src/request.rs | `tier_type` | flex/standard/priority |
-| 15 | `InteractionStatus` | src/response.rs | `status_type` | Response status (+`budget_exceeded`) |
-| 16 | `CodeExecutionLanguage` | src/content.rs | `language_type` | Programming language (lowercase) |
-| 17 | `ImageAspectRatio` | src/request.rs | `ratio_type` | Image aspect ratios (14 values) |
-| 18 | `ImageSize` | src/request.rs | `size_type` | Image resolution (512/1K/2K/4K) |
-| 19 | `SearchType` | src/tools.rs | `search_type` | web_search/image_search/enterprise_web_search |
-| 20 | `RetrievalType` | src/tools.rs | `retrieval_type` | vertex_ai_search/rag_store/exa_ai_search/parallel_ai_search |
-| 21 | `WebhookEvent` | src/webhooks.rs | `event_type` | batch.*/interaction.*/video.generated |
-| 22 | `WebhookState` | src/webhooks.rs | `state_type` | enabled/disabled/disabled_due_to_failed_deliveries |
-| 23 | `RevocationBehavior` | src/webhooks.rs | `behavior_type` | Signing-secret rotation behavior |
-| 24 | `SourceType` | src/environments/spec.rs | `source_type` | gcs/inline/repository/skill_registry |
-| 25 | `NetworkConfig` | src/environments/spec.rs | `network_type` | `"disabled"` string OR `{allowlist}` object |
-| 26 | `EnvironmentSpec` | src/environments/spec.rs | `environment_type` | Env-ID string OR `{type:"remote"}` object |
-| 27 | `ResponseDelivery` | src/response_format.rs | `delivery_type` | inline/uri |
-| 28 | `ResponseFormat` | src/response_format.rs | `format_type` | text/audio/image/video union |
-| 29 | `VideoTask` | src/request.rs | `task_type` | text_to_video/image_to_video/reference_to_video/edit |
-| 30 | `Visualization` | src/request.rs | `visualization_type` | off/auto (Deep Research agent_config) |
-| 31 | `HarmCategory` | src/safety.rs | `category_type` | Ten harm categories (Vertex-gated parameter) |
-| 32 | `SafetyThreshold` | src/safety.rs | `threshold_type` | Block thresholds (Vertex-gated parameter) |
-| 33 | `SafetyMethod` | src/safety.rs | `method_type` | severity/probability (Vertex-gated parameter) |
-| 34 | `EnvironmentStatus` | src/environments/mod.rs | `status_type` | active/expired |
-| 35 | `TriggerStatus` | src/triggers.rs | `status_type` | active/paused/error (SDK-spec, pending live) |
-| 36 | `TriggerExecutionStatus` | src/triggers.rs | `status_type` | Execution outcomes (SDK-spec, pending live) |
-| 37 | `VideoProcessing` | src/content.rs | `processing_type` | Mode string OR `{type:"static", ...}` object (verified live 2026-08-16) |
-| 38 | `DocumentState` | src/file_search_stores.rs | `state_type` | File search document indexing state (verified live 2026-08-16) |
-| 39 | `VoiceType` | src/voices.rs | `voice_type` | prebuilt/prompted/replicated (`/v1beta/voices`) |
-| 40 | `VoicePitch` | src/voices.rs | `pitch_type` | low/medium/high |
-| 41 | `CredentialType` | src/credentials.rs | `credential_type` | bearer_token/environment_variable/oauth2 |
-| 42 | `CredentialStatus` | src/credentials.rs | `status_type` | active/revoked |
-| 43 | `InjectionLocation` | src/credentials.rs | `location_type` | header/query/body |
-| 44 | `EnvironmentFileType` | src/environments/files.rs | `file_type` | FILE/DIRECTORY (uppercase on the wire) |
-| 45 | `VideoResolution` | src/response_format.rs | `resolution_type` | 360p/720p/1080p/4k |
-| 46 | `TranscriptionMode` | src/request.rs | `mode_type` | smart/verbatim, string OR tagged object |
+| # | Type | Context field | Notes |
+|---|------|---------------|-------|
+| 1 | `Content` | `content_type` | Media only: text/image/audio/video/document |
+| 2 | `Step` | `step_type` | Interaction steps |
+| 3 | `StepDelta` | `delta_type` | `step.delta` SSE payloads |
+| 4 | `Annotation` | `annotation_type` | Citations (url/file/place), `speech_metadata`, `word_info` |
+| 5 | `Resolution` | `resolution_type` | Image/video quality |
+| 6 | `StreamChunk` | `chunk_type` | Low-level SSE chunks |
+| 7 | `AutoFunctionStreamChunk` | `chunk_type` | Auto-function streaming |
+| 8 | `FileState` | `state_type` | Files API states |
+| 9 | `Tool` | `tool_type` | Tool types |
+| 10 | `FunctionCallingMode` | `mode_type` | auto/any/none/validated |
+| 11 | `ToolChoice` | `choice_type` | Mode string or `allowed_tools` object |
+| 12 | `ThinkingLevel` | `level_type` | minimal/low/medium/high |
+| 13 | `ThinkingSummaries` | `summaries_type` | auto/none |
+| 14 | `ServiceTier` | `tier_type` | flex/standard/priority |
+| 15 | `InteractionStatus` | `status_type` | Response status |
+| 16 | `CodeExecutionLanguage` | `language_type` | python |
+| 17 | `ImageAspectRatio` | `ratio_type` | 14 aspect ratios |
+| 18 | `ImageSize` | `size_type` | 512/1K/2K/4K |
+| 19 | `SearchType` | `search_type` | web_search/image_search/enterprise_web_search |
+| 20 | `RetrievalType` | `retrieval_type` | vertex_ai_search/rag_store/exa_ai_search/parallel_ai_search |
+| 21 | `WebhookEvent` | `event_type` | batch.*/interaction.*/video.generated |
+| 22 | `WebhookState` | `state_type` | enabled/disabled/disabled_due_to_failed_deliveries |
+| 23 | `RevocationBehavior` | `behavior_type` | Signing-secret rotation |
+| 24 | `SourceType` | `source_type` | gcs/inline/repository/skill_registry |
+| 25 | `NetworkConfig` | `network_type` | `"disabled"` or `{allowlist}` |
+| 26 | `EnvironmentSpec` | `environment_type` | Environment id string or `{type: "remote"}` |
+| 27 | `ResponseDelivery` | `delivery_type` | inline/uri |
+| 28 | `ResponseFormat` | `format_type` | text/audio/image/video union |
+| 29 | `VideoTask` | `task_type` | text_to_video/image_to_video/reference_to_video/edit/extend |
+| 30 | `Visualization` | `visualization_type` | off/auto |
+| 31 | `HarmCategory` | `category_type` | Ten harm categories (Vertex-only parameter) |
+| 32 | `SafetyThreshold` | `threshold_type` | Block thresholds (Vertex-only parameter) |
+| 33 | `SafetyMethod` | `method_type` | severity/probability (Vertex-only parameter) |
+| 34 | `EnvironmentStatus` | `status_type` | active/expired |
+| 35 | `TriggerStatus` | `status_type` | active/paused/error |
+| 36 | `TriggerExecutionStatus` | `status_type` | Execution outcomes |
+| 37 | `VideoProcessing` | `processing_type` | Mode string or `{type: "static", ...}` |
+| 38 | `DocumentState` | `state_type` | File Search document indexing |
+| 39 | `VoiceType` | `voice_type` | prebuilt/prompted/replicated |
+| 40 | `VoicePitch` | `pitch_type` | low/medium/high |
+| 41 | `CredentialType` | `credential_type` | bearer_token/environment_variable/oauth2 |
+| 42 | `CredentialStatus` | `status_type` | active/revoked |
+| 43 | `InjectionLocation` | `location_type` | header/query/body |
+| 44 | `EnvironmentFileType` | `file_type` | FILE/DIRECTORY (uppercase on the wire) |
+| 45 | `VideoResolution` | `resolution_type` | 360p/720p/1080p/4k |
+| 46 | `TranscriptionMode` | `mode_type` | smart/verbatim, string or tagged object |
 
-**Removed in revision 2026-05-20** (no longer exist in this library or on the wire):
-`UrlRetrievalStatus`, `GroundingMetadata`, `UrlContextMetadata`, `Turn`, and all tool-related
-`Content` variants (`Thought`, `FunctionCall`, `FunctionResult`, `CodeExecutionCall/Result`,
-`GoogleSearchCall/Result`, `UrlContextCall/Result`, `FileSearchResult`, `GoogleMapsCall/Result`,
-`ComputerUseCall/Result`). Tool activity now flows through the `Step` enum; computer-use
-actions flow through plain `function_call` steps.
+The Antigravity harness enums are listed in their
+[own section](#antigravity-harness-protocol-feature-antigravity).
 
-### Unknown Variant Pattern
+**Removed in revision 2026-05-20**: `UrlRetrievalStatus`, `GroundingMetadata`,
+`UrlContextMetadata`, `Turn`, and all tool-related `Content` variants
+(`Thought`, `FunctionCall`, `FunctionResult`, `CodeExecutionCall/Result`,
+`GoogleSearchCall/Result`, `UrlContextCall/Result`, `FileSearchResult`,
+`GoogleMapsCall/Result`, `ComputerUseCall/Result`). Tool activity is now a
+`Step`, and computer-use actions arrive as plain `function_call` steps.
 
-All Unknown variants follow this naming convention:
+### The Unknown variant pattern
 
 ```rust,ignore
 Unknown {
-    <context>_type: String,      // The unrecognized type from API
-    data: serde_json::Value,     // Full JSON preserved for roundtrip
+    <context>_type: String,   // the unrecognized wire value
+    data: serde_json::Value,  // full JSON, re-serialized unchanged
 }
 ```
 
-Helper methods on each type:
-- `is_unknown()` - Check if this is an Unknown variant
-- `unknown_<context>_type()` - Get the unrecognized type string
-- `unknown_data()` - Get the preserved JSON data
+Every type above also has `is_unknown()`, `unknown_<context>_type()` and
+`unknown_data()`. With the `strict-unknown` feature, unknown `Content` and
+`Step` types and unknown values of any string enum (all generated by
+`wire_enum!`) fail to deserialize instead; other tagged unions (`Tool`,
+`StepDelta`, `StreamChunk`, ...) are unaffected. The CI `test-strict-unknown`
+job runs this configuration.
 
-### `strict-unknown` Feature Flag
+## Quick reference
 
-- **Default (disabled)**: Unknown values deserialize into `Unknown` variant, logs warning
-- **Strict mode (enabled)**: Unknown `Content` and `Step` types, and unknown values of any string enum (all generated by `wire_enum!`), cause a deserialization error (fail-fast). Other tagged unions (`Tool`, `StepDelta`, `StreamChunk`, ...) are unaffected.
-- Enable: `cargo test --features strict-unknown`
-- CI runs dedicated `test-strict-unknown` job
-
-## Quick Reference
-
-| Enum / Type | Wire Format | Example | Notes |
-|------|-------------|---------|-------|
-| `InteractionInput` | string OR `[Step]` OR `[Content]` OR `Content` | `"hi"` / `[{"type": "user_input", "content": [...]}]` | Requests send *content* input as the step form; `Text` stays a bare string — see details. ✅ Verified live 2026-08-16 |
-| `Step` | tagged by `"type"`, snake_case | `"user_input"`, `"model_output"`, `"function_call"`, ... | Pending live verification (2026-05-20 revision) |
-| `StepDelta` | tagged by `"type"` | `"text"`, `"arguments_delta"`, `"text_annotation_delta"` | Two tags differ from variant names — see details. Pending live verification (2026-05-20 revision) |
-| `Annotation` | tagged by `"type"` | `"url_citation"`, `"file_citation"`, `"place_citation"` | Pending live verification (2026-05-20 revision) |
-| `FunctionResultPayload` | untagged union | `"ok"` / `{...}` / `[{"type": "text", ...}]` | String, JSON, or content-block list — see details |
-| `ToolChoice` | string OR object | `"any"` / `{"allowed_tools": {...}}` | Pending live verification (2026-05-20 revision) |
-| `FunctionCallingMode` | lowercase | `"auto"`, `"any"`, `"none"`, `"validated"` | **Changed** from SCREAMING_CASE; legacy uppercase accepted on deserialize. Pending live verification (2026-05-20 revision) |
-| `CodeExecutionLanguage` | lowercase | `"python"` | **Changed** from `"PYTHON"`; legacy uppercase accepted on deserialize. Pending live verification (2026-05-20 revision) |
-| `ServiceTier` | lowercase | `"flex"`, `"standard"`, `"priority"` | New in 2026-05-20. Pending live verification (2026-05-20 revision) |
-| `HarmCategory` | snake_case | `"hate_speech"`, `"jailbreak"` | `safety_settings`; parameter itself Gemini-API-rejected (Vertex-only), verified live 2026-08-08 |
-| `SafetyThreshold` | snake_case | `"block_only_high"`, `"off"` | Same Vertex-only constraint as `HarmCategory` |
-| `SafetyMethod` | lowercase | `"severity"`, `"probability"` | Same Vertex-only constraint as `HarmCategory` |
-| `EnvironmentStatus` | lowercase | `"active"`, `"expired"` | `/v1beta/environments`; `"active"` verified live 2026-08-08 |
-| `TriggerStatus` | lowercase | `"active"`, `"paused"`, `"error"` | `/v1beta/triggers`; from SDK spec, creation agent-gated so pending live verification |
-| `TriggerExecutionStatus` | snake_case | `"in_progress"`, `"timed_out"` | From SDK spec, pending live verification |
-| `InteractionStatus` | snake_case | `"in_progress"`, `"requires_action"`, `"budget_exceeded"` | `budget_exceeded` new; pending live verification (2026-05-20 revision). `Default` is `InProgress` |
-| `SearchType` | snake_case string | `"web_search"`, `"image_search"`, `"enterprise_web_search"` | `enterprise_web_search` new; pending live verification (2026-05-20 revision) |
-| `GroundingToolCount` | `{"type": ..., "count": n}` | `{"type": "google_search", "count": 2}` | In `usage.grounding_tool_count`. Pending live verification (2026-05-20 revision) |
-| `ThinkingSummaries` | lowercase | `"auto"`, `"none"` | Send side. Was `THINKING_SUMMARIES_*` until the API reversed it (see below); both accepted on deserialize |
-| `ThinkingLevel` | lowercase | `"low"`, `"medium"`, `"high"` | Docs are correct |
-| `Resolution` | snake_case | `"low"`, `"medium"`, `"high"`, `"ultra_high"` | Image/video content |
-| `VideoProcessing` | string OR object | `"static"` / `"agentic"` / `{"type": "static", "start_offset": "5s", "fps": 1}` | Video content `processing`. Segment window is the cost lever among the `static` forms (16,198 vs 57,778 tokens; `"agentic"` bills as `image`, not video). Only valid inside a `user_input` step. Re-measured live 2026-08-18 |
-| `Tool::FileSearch` | snake_case object | `{"type": "file_search", ...}` | Rust: `store_names`, Wire: `file_search_store_names` |
-| `Tool::GoogleSearch` | snake_case + optional array | `{"type": "google_search", "search_types": ["web_search"]}` | |
-| `Tool::GoogleMaps` | snake_case + optional fields | `{"type": "google_maps", "enable_widget": true, "latitude": ..., "longitude": ...}` | `latitude`/`longitude` pending live verification (2026-05-20 revision) |
-| `Tool::ComputerUse` | snake_case | `{"type": "computer_use", "environment": "browser", ...}` | **Changed**: fields now snake_case. Pending live verification (2026-05-20 revision) |
-| `SpeechConfig` | **list** of flat objects | `[{"voice": "Kore", "language": "en-US", "speaker": "Alice"}]` | The crate sends the list. Three forms accepted on deserialize (list, bare object, `{"speakers": [...]}`). On send, `{"speakers": [...]}` is now accepted too and a bare object is rejected (live 2026-09-24; see [speech_config wire forms](#speech_config-wire-forms)) |
-| `Tool::Retrieval` | snake_case object | `{"type": "retrieval", "retrieval_types": [...], "vertex_ai_search_config": {...}}` | New. ⚠️ Live 2026-07: the Gemini API rejects `type: "retrieval"` (Vertex-only — "allowed on the Gemini Enterprise Agent Platform"); Gemini tool types are `google_maps`, `mcp_server`, `function`, `google_search`, `file_search`, `computer_use`, `code_execution`, `url_context` |
-| `RetrievalType` | snake_case string | `"vertex_ai_search"`, `"rag_store"`, `"exa_ai_search"`, `"parallel_ai_search"` | Not verifiable live on the Gemini API (the retrieval tool itself is rejected as Vertex-only, 2026-07) |
-| `WebhookEvent` | dotted lowercase | `"batch.succeeded"`, `"interaction.completed"`, `"video.generated"` | ✅ Verified live 2026-07: the API's own validation error lists exactly our 7 values |
-| `WebhookState` | snake_case | `"enabled"`, `"disabled"`, `"disabled_due_to_failed_deliveries"` | Output only. ✅ Verified live 2026-07 (`enabled`/`disabled` observed; failed-deliveries state documented but not triggered) |
-| `RevocationBehavior` | snake_case | `"revoke_previous_secrets_after_h24"`, `"revoke_previous_secrets_immediately"` | Request only (`:rotateSigningSecret`). ✅ Verified live 2026-07: the API's validation error lists exactly these two values; camelCase key rejected |
-| `SourceType` | snake_case | `"gcs"`, `"inline"`, `"repository"`, `"skill_registry"` | Environment source `type`. ✅ `inline` verified live 2026-07 (accepted, `environment_id` returned); other source types not exercised |
-| `NetworkConfig` | string OR object | `"disabled"` / `{"allowlist": [{"domain": "*.googleapis.com"}]}` | Omit field to allow all traffic. ✅ Verified live 2026-07: both `"disabled"` and `{allowlist: [{domain, transform}]}` accepted |
-| `EnvironmentSpec` | string OR object | `"env-123"` / `{"type": "remote", "sources": [...], "network": ...}` | Request `environment` + agent `base_environment`. ✅ Verified live 2026-07 on requests: both the string-ID form and the typed remote object accepted (agent `base_environment` not verifiable — agent creation gated) |
-| `ResponseFormat` | tagged by `"type"` OR raw schema dict | `{"type": "text", "mime_type": "application/json", "schema": {...}}` | Single object or list; raw schema dicts preserved via `Unknown`. ✅ Verified live 2026-07: single + list forms accepted (list errors index as `response_format[i]`); text schema enforced; image works inline-only with `image/jpeg` only; audio works with `sample_rate` but rejects `mime_type`/`delivery`; video `gcs_uri` is Vertex-only |
-| `ResponseDelivery` | lowercase | `"inline"`, `"uri"` | Audio/image/video formats. ✅ Verified live 2026-07: the API's validation error lists exactly `inline`/`uri` — but `delivery` itself is currently rejected for audio and image on the Gemini API (inline-only) |
-| `VideoTask` | snake_case | `"text_to_video"`, `"image_to_video"`, `"reference_to_video"`, `"edit"`, `"extend"` | `generation_config.video_config.task`. ✅ Verified live 2026-07 via the API's validation error — which also revealed `"extend"` (added to the enum) |
-| `Visualization` | lowercase | `"off"`, `"auto"` | Deep Research `agent_config.visualization`. ✅ Verified live 2026-07: the API's validation error lists exactly `off`/`auto`; accepted with `collaborative_planning` (`enable_bigquery_tool` is Vertex-only) |
-| Audio MIME type (TTS response) | plain | `"audio/wav"` / `"audio/L16;codec=pcm;rate=24000"` | Model-dependent — see [Audio Response](#audio-response-tts-output). Live 2026-09-24 |
-| `VoiceType` | lowercase | `"prebuilt"`, `"prompted"`, `"replicated"` | `/v1beta/voices` `type` and list filter. `prebuilt`/`prompted` verified live 2026-09-24 |
-| `VoicePitch` | lowercase | `"low"`, `"medium"`, `"high"` | Voice metadata and list filter; verified live 2026-09-24 |
-| `CredentialType` | snake_case | `"bearer_token"`, `"environment_variable"`, `"oauth2"` | `/v1beta/credentials` `type`; create bodies are tagged by it. `bearer_token`/`environment_variable` verified live 2026-09-24 (`oauth2` create validates `token_url` reachability) |
+| Type | Wire format | Example | Status and notes |
+|------|-------------|---------|------------------|
+| `InteractionInput` | string, `[Step]`, `[Content]` or `Content` | `"hi"` / `[{"type": "user_input", "content": [...]}]` | Requests send `Content` input as one `user_input` step; see [InteractionInput](#interactioninput-request-input). Verified live 2026-08-16 |
+| `Step` | tagged by `"type"`, snake_case | `"user_input"`, `"model_output"`, `"function_call"` | Core shapes verified live 2026-07; see [Step](#step) |
+| `StepDelta` | tagged by `"type"` | `"text"`, `"arguments_delta"`, `"text_annotation_delta"` | Two tags differ from the variant names. Pending live verification |
+| `Annotation` | tagged by `"type"` | `"url_citation"`, `"speech_metadata"` | `url_citation` observed live 2026-07; `speech_metadata` verified 2026-09-24 |
+| `FunctionResultPayload` | untagged | `"ok"` / `{...}` / `[{"type": "text", ...}]` | String, JSON, or content-block list |
+| `ToolChoice` | string or object | `"any"` / `{"allowed_tools": {...}}` | Pending live verification |
+| `FunctionCallingMode` | lowercase | `"auto"`, `"any"`, `"none"`, `"validated"` | Uppercase spellings (pre-revision) now deserialize to `Unknown`. Pending live verification |
+| `CodeExecutionLanguage` | lowercase | `"python"` | `"PYTHON"` (pre-revision) now deserializes to `Unknown`. Pending live verification |
+| `ServiceTier` | lowercase | `"flex"`, `"standard"`, `"priority"` | Response echo `"standard"` verified live 2026-07 |
+| `HarmCategory` | snake_case | `"hate_speech"`, `"jailbreak"` | `safety_settings` is rejected by the Gemini API as Vertex-only (live 2026-08-08) |
+| `SafetyThreshold` | snake_case | `"block_only_high"`, `"off"` | Same Vertex-only constraint |
+| `SafetyMethod` | lowercase | `"severity"`, `"probability"` | Same Vertex-only constraint |
+| `EnvironmentStatus` | lowercase | `"active"`, `"expired"` | `"active"` verified live 2026-08-08 |
+| `TriggerStatus` | lowercase | `"active"`, `"paused"`, `"error"` | From the SDK spec; creation is agent-gated, so pending live verification |
+| `TriggerExecutionStatus` | snake_case | `"in_progress"`, `"timed_out"` | From the SDK spec; pending live verification |
+| `InteractionStatus` | snake_case | `"in_progress"`, `"requires_action"`, `"budget_exceeded"` | `budget_exceeded` pending live verification. `Default` is `InProgress` |
+| `SearchType` | snake_case | `"web_search"`, `"image_search"`, `"enterprise_web_search"` | `enterprise_web_search` pending live verification |
+| `GroundingToolCount` | `{"type": ..., "count": n}` | `{"type": "google_search", "count": 1}` | In `usage.grounding_tool_count`; observed live 2026-07 |
+| `ThinkingSummaries` | lowercase | `"auto"`, `"none"` | Sent lowercase in both contexts; `THINKING_SUMMARIES_*` also accepted on deserialize. See [ThinkingSummaries](#thinkingsummaries) |
+| `ThinkingLevel` | lowercase | `"low"`, `"medium"`, `"high"` | `DEFAULT_MODEL` rejects `"minimal"` (live 2026-09-24) |
+| `Resolution` | snake_case | `"low"`, `"medium"`, `"high"`, `"ultra_high"` | Verified 2026-01-05 (pre-revision) |
+| `VideoProcessing` | string or object | `"static"` / `"agentic"` / `{"type": "static", "start_offset": "5s", "fps": 1}` | The window is the cost lever among the `static` forms. Only valid inside a `user_input` step. Measured live 2026-08-18 |
+| `Tool::FileSearch` | object | `{"type": "file_search", "file_search_store_names": [...]}` | Rust `store_names` → wire `file_search_store_names`. Verified live 2026-08-16 |
+| `Tool::GoogleSearch` | object + optional array | `{"type": "google_search", "search_types": ["web_search"]}` | |
+| `Tool::GoogleMaps` | object + optional fields | `{"type": "google_maps", "enable_widget": true, "latitude": ..., "longitude": ...}` | `latitude`/`longitude` pending live verification |
+| `Tool::ComputerUse` | snake_case object | `{"type": "computer_use", "environment": "browser", ...}` | Pending live verification |
+| `Tool::Retrieval` | object | `{"type": "retrieval", "retrieval_types": [...], ...}` | **Rejected by the Gemini API** as Vertex-only (live 2026-07) |
+| `RetrievalType` | snake_case | `"vertex_ai_search"`, `"rag_store"` | Not verifiable on the Gemini API |
+| `SpeechConfig` | **list** of flat objects | `[{"voice": "Kore", "language": "en-US", "speaker": "Alice"}]` | The crate sends the list. See [speech_config wire forms](#speech_config-wire-forms) (live 2026-09-24) |
+| `WebhookEvent` | dotted lowercase | `"batch.succeeded"`, `"interaction.completed"`, `"video.generated"` | Verified live 2026-07: the API's validation error lists exactly our 7 values |
+| `WebhookState` | snake_case | `"enabled"`, `"disabled"`, `"disabled_due_to_failed_deliveries"` | Output only. `enabled`/`disabled` observed live 2026-07 |
+| `RevocationBehavior` | snake_case | `"revoke_previous_secrets_after_h24"`, `"revoke_previous_secrets_immediately"` | Request only. Verified live 2026-07 (the validation error lists exactly these) |
+| `SourceType` | snake_case | `"gcs"`, `"inline"`, `"repository"`, `"skill_registry"` | `inline` verified live 2026-07 |
+| `NetworkConfig` | string or object | `"disabled"` / `{"allowlist": [{"domain": "*.googleapis.com"}]}` | Omit to allow all traffic. Both forms verified live 2026-07 |
+| `EnvironmentSpec` | string or object | `"env-123"` / `{"type": "remote", "sources": [...]}` | Both forms verified live 2026-07 on requests |
+| `ResponseFormat` | tagged by `"type"`, or a raw schema dict | `{"type": "text", "mime_type": "application/json", "schema": {...}}` | Single object or list. Verified live 2026-07; see [ResponseFormat](#responseformat) |
+| `ResponseDelivery` | lowercase | `"inline"`, `"uri"` | The validation error lists exactly these (2026-07), but `delivery` is rejected for audio and image |
+| `VideoTask` | snake_case | `"text_to_video"`, ..., `"extend"` | Verified live 2026-07 via the validation error |
+| `Visualization` | lowercase | `"off"`, `"auto"` | Verified live 2026-07 via the validation error |
+| Audio MIME type (TTS) | plain | `"audio/wav"` / `"audio/L16;codec=pcm;rate=24000"` | Model-dependent; see [Audio response](#audio-response-tts-output). Live 2026-09-24 |
+| `VoiceType` | lowercase | `"prebuilt"`, `"prompted"`, `"replicated"` | `prebuilt`/`prompted` verified live 2026-09-24 |
+| `VoicePitch` | lowercase | `"low"`, `"medium"`, `"high"` | Verified live 2026-09-24 |
+| `CredentialType` | snake_case | `"bearer_token"`, `"environment_variable"`, `"oauth2"` | Create bodies are tagged by it. The first two verified live 2026-09-24 (`oauth2` create validates that `token_url` is reachable) |
 | `CredentialStatus` | lowercase | `"active"`, `"revoked"` | Output only; `active` observed 2026-09-24 |
 | `InjectionLocation` | lowercase | `"header"`, `"query"`, `"body"` | Sent as a list; the API also accepts a single string (2026-09-24) |
-| `VideoResolution` | lowercase | `"360p"`, `"720p"`, `"1080p"`, `"4k"` | Video `response_format` `resolution`. Server-validated (the error lists exactly these, 2026-09-24); no Interactions model outputs video to exercise it |
-| `TranscriptionMode` | string OR object | `"smart"` / `{"type": "verbatim", "diarization_mode": "speaker"}` | `transcription_config.mode`; see [TranscriptionConfig](#transcriptionconfig-open-string-values) |
-| `EnvironmentFileType` | **uppercase** | `"FILE"`, `"DIRECTORY"` | `/v1beta/environments/{id}/files` entries. The bindings say lowercase; the API sends uppercase (live 2026-09-24). Both accepted; serializes uppercase |
-| `GoogleSearchResultItem` | snake_case | `{"title": "...", "url": "...", "rendered_content": "..."}` | Optional `search_suggestions` added in 2026-05-20. Verified live 2026-07: items may carry **only** `search_suggestions` (an HTML rendering payload) with no `title`/`url`; empty `title`/`url` are skipped on serialize for wire fidelity |
-| `UrlContextResultItem` | snake_case | `{"url": "...", "status": "success"}` | Verified 2026-01-13 - no paywall field |
-| `ImageAspectRatio` | ratio string | `"1:1"`, `"16:9"`, `"9:16"` | 14 aspect ratios |
-| `ImageSize` | size string | `"512"`, `"1K"`, `"2K"`, `"4K"` | Image resolution |
+| `VideoResolution` | lowercase | `"360p"`, `"720p"`, `"1080p"`, `"4k"` | Server-validated (2026-09-24); no Interactions model outputs video to exercise it |
+| `TranscriptionMode` | string or object | `"smart"` / `{"type": "verbatim", "diarization_mode": "speaker"}` | See [TranscriptionConfig](#transcriptionconfig) |
+| `EnvironmentFileType` | **uppercase** | `"FILE"`, `"DIRECTORY"` | The bindings say lowercase; the API sends uppercase (live 2026-09-24). Both accepted; serializes uppercase |
+| `GoogleSearchResultItem` | snake_case | `{"title": "...", "url": "...", "rendered_content": "..."}` | Live 2026-07: items may carry **only** `search_suggestions` |
+| `UrlContextResultItem` | snake_case | `{"url": "...", "status": "success"}` | `status` is `success`/`error`/`paywall`/`unsafe`; no separate paywall field (2026-01-13) |
+| `FileState` | uppercase | `"PROCESSING"`, `"ACTIVE"`, `"FAILED"` | Files API |
+| `DocumentState` | prefixed uppercase | `"STATE_PENDING"`, `"STATE_ACTIVE"`, `"STATE_FAILED"` | File Search documents; verified live 2026-08-16 |
+| `ImageAspectRatio` | ratio string | `"1:1"`, `"16:9"`, `"9:16"` | 14 values |
+| `ImageSize` | size string | `"512"`, `"1K"`, `"2K"`, `"4K"` | |
 
 ## Details
 
-### InteractionInput (request/response `input`)
+### InteractionInput (request `input`)
 
-The spec's input union is `str | [Step] | [Content] | Content`. All four
-deserialize. On requests, **the bare `[Content]` form is never sent**:
-`InteractionInput::Content` is wrapped in a single `user_input` step (#427).
-`Text` is unaffected and still goes out as a bare JSON string, and `Steps`
-is already the step form.
+The spec's input union is `str | [Step] | [Content] | Content`, and all four
+deserialize. Requests never send the bare `[Content]` form:
+`InteractionInput::Content` goes out as a single `user_input` step (#427).
+`Text` stays a bare string, and `Steps` is already the step form.
 
-Both array arms are accepted by the API, but they are not equivalent: video
-`processing` is rejected outside a step. Probed live 2026-08-16 against
-`gemini-3.7-flash` at revision `2026-05-20`, sending identical content each
-way:
+The two array forms are not equivalent. Probed live 2026-08-16
+(`gemini-3.7-flash`), with identical content sent each way:
 
 | Input | bare `[Content]` | `[{"type": "user_input", "content": [...]}]` |
 |---|---|---|
-| text | completed | completed |
-| text + image (inline base64) | completed | completed |
-| text + audio (inline base64) | completed | completed |
-| text + document (inline base64 PDF) | completed | completed |
-| text + video (URI) | completed | completed |
+| text; text + inline image, audio or PDF; text + video by URI | completed | completed |
 | text + video + `"processing": "static"` | **400** `Unknown parameter 'processing' at 'input[1]'` | completed |
 | follow-up turn via `previous_interaction_id` | completed | completed |
 | *empty* content | 400 `Missing input.` | 400 `Request has empty input.` |
 
-So the step form is accepted everywhere the bare form is, and in one place the
-bare form is not. It is also the canonical shape under this revision — the one
-`Turn` was removed in favour of.
+The wrap applies only to `InteractionRequest::input`.
+`InteractionResponse::input` re-serializes in the shape the server sent. A
+request's `Content` input therefore deserializes back as
+`Steps(vec![Step::user_input(..)])`, since the two are identical on the wire.
 
-The wrap is scoped to `InteractionRequest::input`, not to `InteractionInput`'s
-own `Serialize`: `InteractionResponse::input` echoes back what the server sent,
-and re-serializing that into a shape the server did not send would work against
-the Evergreen roundtrip principle. A request's `Content` input therefore
-deserializes back as `Steps(vec![Step::user_input(..)])` — the two are
-indistinguishable once serialized.
+### Step
 
-The empty row matters because that is the shape whose wire form changed
-most — a bare `[]` before, a step with an empty content array now. Both are
-rejected, differing only in the message, so an accidental
-`with_content(vec![])` does not trade a clear 400 for a response to an empty
-prompt. (It still reaches the wire where the text path errors locally, which
-is a builder-validation gap rather than a wire one.)
+Steps replace the launch-era `outputs: [Content]`. They are tagged by
+`"type"` with snake_case values. Core shapes (the steps model, snake_case
+fields, and the `function_call` `signature`) were verified live 2026-07.
 
-`processing` itself is not modeled by this crate yet (#419).
+| Wire `type` | Variant | Payload |
+|-------------|---------|---------|
+| `user_input` | `UserInput` | `{"content": [Content]}` |
+| `model_output` | `ModelOutput` | `{"content": [Content], "error"?: {code, message, details}}` |
+| `thought` | `Thought` | `{"signature"?: "...", "summary"?: [Content]}`. `signature` is opaque, not text (verified pre-revision). `summary` appears only when summaries are requested (live 2026-09-24) |
+| `function_call` | `FunctionCall` | `{"id", "name", "arguments": {...}, "signature"?}`, **top-level** arguments. The API returns `signature` and **rejects stateless replay without it** (live 2026-07); the generated bindings omit it |
+| `function_result` | `FunctionResult` | `{"call_id", "name"?, "result": <payload>, "is_error"?: bool, "signature"?}` |
+| `code_execution_call` | `CodeExecutionCall` | `{"id", "arguments": {"language": "python", "code": "..."}, "signature"?}`, **nested** arguments |
+| `code_execution_result` | `CodeExecutionResult` | `{"call_id", "result": "...", "is_error": bool, "signature"?}` |
+| `url_context_call` | `UrlContextCall` | `{"id", "arguments": {"urls": [...]}, "signature"?}` |
+| `url_context_result` | `UrlContextResult` | `{"call_id", "result": [UrlContextResultItem], "is_error"?, "signature"?}` |
+| `google_search_call` | `GoogleSearchCall` | `{"id", "arguments": {"queries": [...]}, "search_type"?, "signature"?}` |
+| `google_search_result` | `GoogleSearchResult` | `{"call_id", "result": [GoogleSearchResultItem], "is_error"?, "signature"?}` |
+| `tool_call` | `ToolCall` | `{"id", "signature"?}`. **What MCP calls actually arrive as** (live 2026-08-16) |
+| `mcp_server_tool_call` | `McpServerToolCall` | `{"id", "name", "server_name", "arguments"}`. Spec-only, never observed |
+| `mcp_server_tool_result` | `McpServerToolResult` | `{"call_id", "name"?, "server_name"?, "result"}`. Spec-only, never observed |
+| `file_search_call` | `FileSearchCall` | `{"id", "signature"?}` |
+| `file_search_result` | `FileSearchResult` | `{"call_id", "result": [FileSearchResultItem], "signature"?}`. `result` (items with `title`, `text`, `file_search_store`) is spec-only and never populated (see [File Search](#file-search)) |
+| `google_maps_call` | `GoogleMapsCall` | `{"id", "arguments": {"queries": [...]}, "signature"?}` |
+| `google_maps_result` | `GoogleMapsResult` | `{"call_id", "result": [GoogleMapsResultItem], "signature"?}` |
+| `processing_call` | `ProcessingCall` | `{"id", "signature"?}`. Emitted for video with `processing: "agentic"`, one or more per turn (live 2026-09-24, `gemini-3.8-flash`). The ~36KB signature is **required** on stateless replay (`400 Processing call step is missing signature`) |
+| `processing_result` | `ProcessingResult` | `{"call_id", "signature"?}`. Same replay requirement |
+| `retrieval_call` | `RetrievalCall` | `{"id", "arguments": {"queries": [...]}, "retrieval_type"?, "signature"?}`. Vertex-only |
+| `retrieval_result` | `RetrievalResult` | `{"call_id", "is_error"?, "signature"?}`. Vertex-only |
+| anything else | `Unknown { step_type, data }` | Round-trips losslessly |
 
-This probe exercised exactly one step tag, `user_input`. The `Step` row
-above stays "pending live verification" because the other tags are still
-unexercised — it is not stale.
+`function_call` (and, per spec, `mcp_server_tool_call`) keep arguments at the
+top level. The built-in tool calls nest theirs in `arguments`, and the crate
+flattens them into `urls`, `queries`, `language` and `code`.
 
-### Step (response `steps` / stateless history)
+**MCP arrives as `tool_call`.** Verified live 2026-08-16 (`gemini-3.7-flash`,
+a real MCP server, successful call). The response carried a `tool_call`
+step with only `id`, `signature` and `type`, plus `total_tool_use_tokens:
+1962`. There was no `mcp_server_tool_call` step, and no server name, tool
+name or arguments anywhere. So `step_summary().mcp_server_tool_call_count`
+reads 0 on a successful call. Count with `step_summary().tool_call_count` or
+`tool_calls()`. The MCP variants are kept because nothing rejects them (unlike
+`cached_content`, D-005) (#459).
 
-Revision 2026-05-20 replaces the launch-era `outputs: [Content]` array with
-`steps: [Step]`. Steps are a discriminated union tagged by `"type"` with
-snake_case values. All tool call/result steps (including `function_call` /
-`function_result`) carry an optional opaque `signature` used for validation
-on replay.
+### StepDelta
 
-**Status**: Core shapes verified live 2026-07 against
-`generativelanguage.googleapis.com` (Api-Revision 2026-05-20): the steps
-model, snake_case field naming, and the `function_call` `signature` field
-were all confirmed on the wire. Serialization covered by unit and proptest
-roundtrip tests.
+Deltas build up the step that the matching `step.start` announced.
 
-| Wire `type` | Rust Variant | Payload shape |
-|-------------|--------------|---------------|
-| `user_input` | `Step::UserInput` | `{"content": [Content, ...]}` |
-| `model_output` | `Step::ModelOutput` | `{"content": [Content, ...], "error"?: {code, message, details}}` |
-| `thought` | `Step::Thought` | `{"signature"?: "...", "summary"?: [Content, ...]}` |
-| `function_call` | `Step::FunctionCall` | `{"id": "...", "name": "...", "arguments": {...}, "signature"?: "..."}` — **top-level**, no nesting. `signature` VERIFIED LIVE 2026-07: the API returns it and rejects stateless replay without it (the generated SDK bindings omit it) |
-| `function_result` | `Step::FunctionResult` | `{"call_id": "...", "name"?: "...", "result": <payload>, "is_error"?: bool, "signature"?: "..."}` — optional signature hash for backend validation |
-| `code_execution_call` | `Step::CodeExecutionCall` | `{"id": "...", "arguments": {"language": "python", "code": "..."}, "signature"?: "..."}` — **nested** arguments |
-| `code_execution_result` | `Step::CodeExecutionResult` | `{"call_id": "...", "result": "...", "is_error": bool, "signature"?: "..."}` |
-| `url_context_call` | `Step::UrlContextCall` | `{"id": "...", "arguments": {"urls": [...]}, "signature"?: "..."}` |
-| `url_context_result` | `Step::UrlContextResult` | `{"call_id": "...", "result": [UrlContextResultItem], "is_error"?: bool, "signature"?: "..."}` |
-| `google_search_call` | `Step::GoogleSearchCall` | `{"id": "...", "arguments": {"queries": [...]}, "search_type"?: "...", "signature"?: "..."}` |
-| `google_search_result` | `Step::GoogleSearchResult` | `{"call_id": "...", "result": [GoogleSearchResultItem], "is_error"?: bool, "signature"?: "..."}` |
-| `tool_call` | `Step::ToolCall` | `{"id": "...", "signature"?: "..."}` — **what MCP calls actually look like** (live 2026-08-16). `signature` was present on every observed step but is spec-optional, so it is modeled `Option<String>` |
-| `mcp_server_tool_call` | `Step::McpServerToolCall` | `{"id": "...", "name": "...", "server_name": "...", "arguments": {...}}` — spec-present, never observed |
-| `mcp_server_tool_result` | `Step::McpServerToolResult` | `{"call_id": "...", "name"?: "...", "server_name"?: "...", "result": <payload>}` — spec-present, never observed |
-| `file_search_call` | `Step::FileSearchCall` | `{"id": "...", "signature"?: "..."}` |
-| `file_search_result` | `Step::FileSearchResult` | `{"call_id": "...", "result": [FileSearchResultItem], "signature"?: "..."}` |
-| `google_maps_call` | `Step::GoogleMapsCall` | `{"id": "...", "arguments": {"queries": [...]}, "signature"?: "..."}` |
-| `google_maps_result` | `Step::GoogleMapsResult` | `{"call_id": "...", "result": [GoogleMapsResultItem], "signature"?: "..."}` |
-| `processing_call` | `Step::ProcessingCall` | `{"id": "...", "signature"?: "..."}` — emitted for video with `processing: "agentic"` (live 2026-09-24, `gemini-3.8-flash`; one or more per turn). The ~36KB signature is **required** on stateless replay (`400 Processing call step is missing signature`) |
-| `processing_result` | `Step::ProcessingResult` | `{"call_id": "...", "signature"?: "..."}` — same replay requirement |
-| `retrieval_call` | `Step::RetrievalCall` | `{"id": "...", "arguments": {"queries": [...]}, "retrieval_type"?: RetrievalType, "signature"?: "..."}` — Vertex-only (the `retrieval` tool is rejected on the Gemini API); spec parity |
-| `retrieval_result` | `Step::RetrievalResult` | `{"call_id": "...", "is_error"?: bool, "signature"?: "..."}` — Vertex-only |
-| (anything else) | `Step::Unknown { step_type, data }` | Full JSON preserved for roundtrip |
-
-> **MCP is not on the wire in that shape.** Verified live 2026-08-16: an MCP
-> interaction returns generic `tool_call` steps carrying only
-> `{id, signature, type}` — never `mcp_server_tool_call` /
-> `mcp_server_tool_result`. Those two rows describe the spec, and the
-> variants exist for when the API starts emitting them; today a match on
-> `Step::McpServerToolCall` never fires and
-> `step_summary().mcp_server_tool_call_count` reads 0 on a successful call.
-> Check `step_summary().tool_call_count` instead, or
-> `InteractionResponse::tool_calls()` for the per-call ids —
-> `response.tool_use_tokens()` is the *other* signal, a single aggregate with
-> no per-tool breakdown, so it isolates the MCP server only when MCP is the
-> sole declared tool (see the fuller note in `docs/BUILT_IN_TOOLS.md` under
-> MCP Servers). The "MCP tool calls arrive as generic `tool_call` steps"
-> section below has the wire detail. Tracked in
-> [#459](https://github.com/evansenter/genai-rs/issues/459).
-
-Note the asymmetry: `function_call` and `mcp_server_tool_call` keep their
-arguments at the **top level** (the latter per spec, unobserved), while the
-built-in tool calls
-(`code_execution_call`, `url_context_call`, `google_search_call`,
-`google_maps_call`) nest theirs inside an `arguments` object. The library
-flattens the nested forms into ergonomic fields (`urls: Vec<String>`,
-`queries: Vec<String>`, `language` + `code`).
-
-```rust
-use genai_rs::Step;
-use serde_json::json;
-
-// function_call: id/name/arguments at top level
-let step = Step::function_call("call_1", "get_weather", json!({"city": "Paris"}));
-let wire = serde_json::to_value(&step).unwrap();
-assert_eq!(wire["type"], "function_call");
-assert_eq!(wire["id"], "call_1");
-assert_eq!(wire["arguments"]["city"], "Paris");
-```
-
-Example `code_execution_call` wire format (nested `arguments`):
-
-```json
-{
-  "type": "code_execution_call",
-  "id": "exec_123",
-  "arguments": { "language": "python", "code": "print('Hello')" },
-  "signature": "ErIE..."
-}
-```
-
-`Step::Unknown` serializes back with the original `type` and all sibling
-fields intact (lossless roundtrip).
-
-#### MCP tool calls arrive as generic `tool_call` steps
-
-Verified live 2026-08-16 (`gemini-3.7-flash`, a real MCP server at
-`mcp.deepwiki.com`, successful call). The response carries:
-
-```text
-tool_call     ['id', 'signature', 'type']
-model_output  ['content', 'type']
-thought       ['signature', 'type']
-model_output  ['content', 'type']
-total_tool_use_tokens: 1962
-```
-
-No `mcp_server_tool_call` step, and no server name, tool name, or arguments
-anywhere — so **which** MCP server or tool ran is not recoverable from the
-response. The call did happen and its cost is real, which
-`total_tool_use_tokens` shows.
-
-`Step::McpServerToolCall` / `Step::McpServerToolResult` are therefore
-spec-present and unobserved, the same status as `Tool::Retrieval`. They are
-kept rather than removed because nothing *rejects* them — unlike
-`cached_content` (D-005), which the API actively 400s — so the endpoint may
-begin emitting them. Tracked in #459.
-
-For callers: check `step_summary().tool_call_count`, not
-`.mcp_server_tool_call_count`. The latter reads 0 on a successful MCP
-interaction.
-
-### Thought (step)
-
-Thoughts are now a **step** (`type: "thought"`), not a content block.
-
-```json
-{
-  "type": "thought",
-  "signature": "Eq0JCqoJAXLI2nyuo7yupoglxIQxc5h0...",
-  "summary": [{"type": "text", "text": "Considering the options..."}]
-}
-```
-
-| Rust Field | Wire Name | Notes |
-|------------|-----------|-------|
-| `signature` | `signature` | Cryptographic signature for verification, NOT readable text |
-| `summary` | `summary` | Optional content blocks summarizing the reasoning |
-
-Use `response.has_thoughts()`, `response.thought_signatures()`, and
-`response.thought_summaries()`.
-
-**Status**: Pending live verification (2026-05-20 revision). The signature-not-text
-behavior was verified 2026-01-09 on the pre-revision API; the `summary` field is new.
-
-### StepDelta (SSE `step.delta` payload)
-
-Deltas incrementally build the step announced by the matching `step.start`
-event. Tagged by `"type"` (snake_case of the variant name), with **two
-exceptions** where the wire tag differs from the variant name:
-
-| Wire `type` | Rust Variant | Notes |
-|-------------|--------------|-------|
-| `text` | `StepDelta::Text` | Text fragment |
-| `image` / `audio` / `video` / `document` | media variants | Same field shapes as `Content` (audio also accepts legacy `rate`) |
-| `thought_summary` | `StepDelta::ThoughtSummary` | `{"content": Content}` |
-| `thought_signature` | `StepDelta::ThoughtSignature` | `{"signature": "..."}` |
-| `text_annotation_delta` | `StepDelta::TextAnnotation` | **Tag differs from variant name.** `{"annotations": [Annotation]}` |
-| `arguments_delta` | `StepDelta::ArgumentsDelta` | `{"arguments": "<raw JSON fragment>"}` — function-call arguments stream as string fragments; concatenate and parse at `step.stop` |
-| `function_result` | `StepDelta::FunctionResult` | Same shape as the step, but `call_id` is optional (dropped from the 2.25 bindings); the accumulator keeps the `call_id` from `step.start` |
-| `code_execution_call` / `code_execution_result` | code execution variants | Call delta carries flattened `language`/`code` |
-| `url_context_call` / `url_context_result` | URL context variants | |
-| `google_search_call` / `google_search_result` | Google Search variants | |
-| `tool_call` | *(no delta variant)* | Step type only — arrives whole on `step.start`, which carries the full `Step`. A `step.delta` tagged `tool_call` has not been observed; it would land in `StepDelta::Unknown` and be skipped — logged at `debug`, so `RUST_LOG=genai_rs=debug` is what would surface it. |
-| `mcp_server_tool_call` / `mcp_server_tool_result` | MCP variants | Spec-only; see below |
-| `file_search_call` / `file_search_result` | file search variants | |
-| `google_maps_call` / `google_maps_result` | Google Maps variants | |
+| Wire `type` | Variant | Notes |
+|-------------|---------|-------|
+| `text` | `Text` | Text fragment |
+| `image` / `audio` / `video` / `document` | media variants | `Content` field shapes (audio also accepts legacy `rate`) |
+| `thought_summary` | `ThoughtSummary` | `{"content": Content}` |
+| `thought_signature` | `ThoughtSignature` | `{"signature": "..."}` |
+| `text_annotation_delta` | `TextAnnotation` | **Tag differs from the variant name.** `{"annotations": [Annotation]}` |
+| `arguments_delta` | `ArgumentsDelta` | `{"arguments": "<raw JSON fragment>"}`, concatenated and parsed at `step.stop` |
+| `function_result` | `FunctionResult` | `call_id` is optional (dropped from the 2.25 bindings); the accumulator keeps the one from `step.start` |
+| `code_execution_*`, `url_context_*`, `google_search_*`, `file_search_*`, `google_maps_*`, `mcp_server_tool_*` | matching variants | Call deltas carry the flattened fields |
 | `processing_call` / `processing_result` | processing variants | `{"signature": "..."}`. `step.start` announces `signature: ""`; the value arrives only here (live 2026-09-24) |
 | `retrieval_call` / `retrieval_result` | retrieval variants | Vertex-only |
-| (anything else) | `StepDelta::Unknown { delta_type, data }` | Preserved. If it carries a `signature` and the step at that index is a same-typed `Step::Unknown`, the signature is merged onto the step so replay does not lose it |
+| `tool_call` | *(none)* | Never observed as a delta: `tool_call` arrives whole on `step.start` |
+| anything else | `Unknown { delta_type, data }` | Preserved. A `signature` on it is merged onto a same-typed `Step::Unknown` at that index, so replay keeps it |
 
-Helpers: `as_text()`, `as_arguments_delta()`, `is_unknown()`, `unknown_delta_type()`, `unknown_data()`.
+SSE event types in this revision: `interaction.created`,
+`interaction.status_update`, `step.start`, `step.delta`, `step.stop` (with
+`usage` and `step_usage`), `interaction.completed`, `error`. The pre-revision
+`interaction.start`, `content.start` / `delta` / `stop` and
+`interaction.complete` are gone. Unknown event types become
+`StreamChunk::Unknown { chunk_type, data }`.
 
-The HTTP layer accumulates `step.start`/`step.delta`/`step.stop` into the final
-`Completed` response's `steps` — including assembling `arguments_delta`
-fragments into `Step::FunctionCall.arguments` — so `response.function_calls()`
-works after streaming.
+### Annotation
 
-**Status**: Pending live verification (2026-05-20 revision).
+A union tagged by `"type"` (previously a single struct):
 
-Example SSE payloads (new event names — `interaction.start`, `content.start/delta/stop`,
-and `interaction.complete` are **gone** from the protocol):
+| Wire `type` | Variant | Fields |
+|-------------|---------|--------|
+| `url_citation` | `UrlCitation` | `url`, `title` |
+| `file_citation` | `FileCitation` | `document_uri`, `file_name`, `source`, `custom_metadata`, `page_number`, `media_id` |
+| `place_citation` | `PlaceCitation` | `place_id`, `name`, `url`, `review_snippets: [ReviewSnippet { title, url, review_id }]` |
+| `speech_metadata` | `SpeechMetadata` | `speaker`, `style`; indices optional. A TTS **input** annotation: required per turn for multi-speaker on `gemini-3.8-flash-tts`, rejected by older TTS models. Spanned annotations must tile the text without gaps (live 2026-09-24) |
+| `word_info` | `WordInfo` | `text`, `speaker`, `start_offset` / `end_offset` (duration strings), optional indices. Transcription output; not yet observed |
+| anything else | `Unknown { annotation_type, data }` | The server's enum also lists `in_context_file_citation` and `reference_metadata`, which are absent from the 2.25 bindings (2026-09-24) |
 
-```json
-{"event_type": "interaction.created", "interaction": {"id": "...", "status": "in_progress"}}
-{"event_type": "step.start", "index": 0, "step": {"type": "model_output", "content": []}}
-{"event_type": "step.delta", "index": 0, "delta": {"type": "text", "text": "Hello"}, "event_id": "..."}
-{"event_type": "step.stop", "index": 0, "usage": {"total_tokens": 42}, "step_usage": {"total_tokens": 12}}
-{"event_type": "interaction.completed", "interaction": {"id": "...", "status": "completed", "steps": [...]}}
-{"event_type": "error", "error": {"message": "...", "code": "..."}}
-```
+Citations carry `start_index` / `end_index` as **UTF-8 byte offsets** into
+the annotated text. On `speech_metadata` and `word_info` they are optional,
+so `start_index()` / `end_index()` return `None` when they are absent.
+`extract_span(&text)` slices the text by those offsets.
 
-The corresponding `StreamChunk` variants are `Created`, `StatusUpdate`,
-`StepStart`, `StepDelta`, `StepStop`, `Completed`, `Error`, and
-`Unknown { chunk_type, data }`.
+### FunctionResultPayload
 
-### Annotation (citation union)
+The `result` of `function_result` and `mcp_server_tool_result` serializes
+**untagged**, exactly as the inner value:
 
-Old revision: a single struct `{start_index, end_index, source}`. Revision
-2026-05-20: a discriminated union tagged by `"type"`.
+| Variant | Serializes as | Deserialized when |
+|---------|---------------|-------------------|
+| `Text(String)` | JSON string | The value is a string |
+| `Contents(Vec<Content>)` | Array of content blocks | A non-empty array whose every element is an object with a string `"type"` |
+| `Json(Value)` | The raw value | Anything else; this doubles as the Evergreen catch-all |
 
-```json
-{
-  "type": "url_citation",
-  "url": "https://example.com",
-  "title": "Example Domain",
-  "start_index": 0,
-  "end_index": 42
-}
-```
+`From` exists for `serde_json::Value`, `&str`, `String` and `Vec<Content>`.
+From a `Value`, strings become `Text` and objects `Json`; any other value
+(array, number, bool, null) is wrapped as `{"result": value}`, because the
+API rejects a top-level array. Deserializing never wraps.
 
-| Wire `type` | Rust Variant | Extra fields |
-|-------------|--------------|--------------|
-| `url_citation` | `Annotation::UrlCitation` | `url`, `title` |
-| `file_citation` | `Annotation::FileCitation` | `document_uri`, `file_name`, `source`, `custom_metadata`, `page_number`, `media_id` |
-| `place_citation` | `Annotation::PlaceCitation` | `place_id`, `name`, `url`, `review_snippets: [ReviewSnippet]` |
-| `speech_metadata` | `Annotation::SpeechMetadata` | `speaker`, `style`; `start_index`/`end_index` **optional**. TTS **input** annotation: required per turn for multi-speaker on `gemini-3.8-flash-tts`; rejected by older TTS models. Spanned annotations must tile the text without gaps (live 2026-09-24) |
-| `word_info` | `Annotation::WordInfo` | `text`, `speaker`, `start_offset`/`end_offset` (duration strings), optional indices. Transcription output; not yet observed |
-| (anything else) | `Annotation::Unknown { annotation_type, data }` | Preserved. The server's enum also lists `in_context_file_citation` and `reference_metadata`, absent from the 2.25 bindings (2026-09-24) |
+### ToolChoice and FunctionCallingMode
 
-All citation variants carry `start_index`/`end_index` (UTF-8 byte offsets into
-the annotated text); on `speech_metadata` and `word_info` they are optional, so
-`start_index()`/`end_index()` return `None` when absent. `ReviewSnippet { title, url, review_id }` (all optional)
-is exported. Helpers: `start_index()`, `end_index()`, `source()`,
-`extract_span(&text)`, plus the standard Unknown trio.
-
-**Status**: Pending live verification (2026-05-20 revision).
-
-### FunctionResultPayload (untagged union)
-
-The `result` field of `function_result` and `mcp_server_tool_result` steps is a
-union of three wire shapes. It serializes **untagged** — exactly as the inner
-value:
-
-| Rust Variant | Serializes as | Deserialized when |
-|--------------|---------------|-------------------|
-| `Text(String)` | JSON string | Wire value is a string |
-| `Contents(Vec<Content>)` | JSON array of content blocks | Wire value is a non-empty array where **every** element is an object with a string `"type"` field |
-| `Json(Value)` | The raw JSON value | Anything else (objects, numbers, booleans, mixed arrays) — doubles as the Evergreen catch-all |
-
-```rust
-use genai_rs::FunctionResultPayload;
-
-let text = FunctionResultPayload::from("done");
-assert_eq!(serde_json::to_string(&text).unwrap(), "\"done\"");
-
-let json = FunctionResultPayload::from(serde_json::json!({"temp": 22}));
-assert_eq!(serde_json::to_string(&json).unwrap(), "{\"temp\":22}");
-```
-
-`From` impls exist for `serde_json::Value`, `&str`, `String`, and
-`Vec<Content>`. From a `Value`, strings become `Text` and objects `Json`; any
-other value (array, number, bool, null) is wrapped as `{"result": value}`,
-because the API rejects a top-level array. Deserializing never wraps.
-Helpers: `as_text()`, `as_json()`, `as_contents()`, `to_value()`.
-
-**Status**: Pending live verification (2026-05-20 revision).
-
-### ToolChoice (generation_config)
-
-`generation_config.tool_choice` is a union: a plain mode string or an object
-restricting the model to a named tool set.
+`generation_config.tool_choice` is a plain mode string or an
+`allowed_tools` object:
 
 ```json
-{ "generation_config": { "tool_choice": "any" } }
+{"tool_choice": "any"}
+{"tool_choice": {"allowed_tools": {"mode": "any", "tools": ["get_weather"]}}}
 ```
 
-```json
-{
-  "generation_config": {
-    "tool_choice": {
-      "allowed_tools": { "mode": "any", "tools": ["get_weather"] }
-    }
-  }
-}
-```
+| Variant | Wire shape |
+|---------|-----------|
+| `ToolChoice::Mode(FunctionCallingMode)` | `"auto"` / `"any"` / `"none"` / `"validated"` |
+| `ToolChoice::AllowedTools(AllowedTools)` | `{"allowed_tools": {"mode"?, "tools": [...]}}` |
+| `ToolChoice::Unknown { choice_type, data }` | Unrecognized shapes |
 
-| Rust Variant | Wire shape |
-|--------------|-----------|
-| `ToolChoice::Mode(FunctionCallingMode)` | Plain string: `"auto"` / `"any"` / `"none"` / `"validated"` |
-| `ToolChoice::AllowedTools(AllowedTools)` | `{"allowed_tools": {"mode"?: ..., "tools": [...]}}` |
-| `ToolChoice::Unknown { choice_type, data }` | Unrecognized strings/shapes, preserved for roundtrip |
+An unknown mode **string** becomes `ToolChoice::Mode(FunctionCallingMode::Unknown)`;
+an unknown **shape** becomes `ToolChoice::Unknown`. `AllowedTools` is also the
+element type of an MCP server's `allowed_tools`. The pre-revision uppercase
+modes (`"AUTO"`) deserialize to `Unknown`. Pending live verification.
 
-```rust
-use genai_rs::{FunctionCallingMode, ToolChoice};
+### ServiceTier
 
-let choice = ToolChoice::Mode(FunctionCallingMode::Any);
-assert_eq!(serde_json::to_string(&choice).unwrap(), "\"any\"");
+`service_tier` on the request: `"flex"` / `"standard"` / `"priority"`. Every
+response echoes the effective tier (`"standard"`) along with
+`object: "interaction"`; both were verified live 2026-07 and are modeled on
+`InteractionResponse`. Sending `flex` / `priority` is pending live
+verification.
 
-let choice = ToolChoice::allowed_tools(
-    Some(FunctionCallingMode::Any),
-    vec!["get_weather".to_string()],
-);
-let wire = serde_json::to_value(&choice).unwrap();
-assert_eq!(wire["allowed_tools"]["mode"], "any");
-```
+### Safety settings
 
-`AllowedTools { mode, tools }` is also the element type of the MCP server
-tool's `allowed_tools` list. Unknown mode **strings** delegate to
-`FunctionCallingMode::Unknown` (wrapped in `ToolChoice::Mode`); unknown
-**shapes** land in `ToolChoice::Unknown`.
+| Enum | Wire values |
+|------|-------------|
+| `HarmCategory` | `hate_speech`, `dangerous_content`, `harassment`, `sexually_explicit`, `civic_integrity`, `image_hate`, `image_dangerous_content`, `image_harassment`, `image_sexually_explicit`, `jailbreak` |
+| `SafetyThreshold` | `block_low_and_above`, `block_medium_and_above`, `block_only_high`, `block_none`, `off` |
+| `SafetyMethod` | `severity`, `probability` |
 
-**Status**: Pending live verification (2026-05-20 revision).
+The values come from the SDK spec. The `safety_settings` parameter itself is
+rejected by the Gemini API (live 2026-08-08: 400 "not available on the
+Gemini API but it is available on the Gemini Enterprise Agent Platform").
 
-### FunctionCallingMode (generation_config)
+### EnvironmentStatus
 
-Used as the string form of `generation_config.tool_choice` and as
-`AllowedTools.mode`.
+`"active"` (verified live 2026-08-08) and `"expired"` (spec). In the same
+probe, int64 counts arrived as protobuf-JSON strings and timestamps as ISO 8601
+with an offset.
 
-| Rust Enum | Wire Value | Legacy (accepted on deserialize) |
-|-----------|------------|----------------------------------|
-| `FunctionCallingMode::Auto` | `"auto"` | `"AUTO"` |
-| `FunctionCallingMode::Any` | `"any"` | `"ANY"` |
-| `FunctionCallingMode::None` | `"none"` | `"NONE"` |
-| `FunctionCallingMode::Validated` | `"validated"` | `"VALIDATED"` |
+### TriggerStatus and TriggerExecutionStatus
 
-**Changed in 2026-05-20**: wire values are now **lowercase** (previously
-SCREAMING_CASE). Serialization always emits lowercase; deserialization accepts
-both. **Pending live verification (2026-05-20 revision).**
+| Enum | Wire values |
+|------|-------------|
+| `TriggerStatus` | `active`, `paused`, `error` |
+| `TriggerExecutionStatus` | `in_progress`, `completed`, `failed`, `skipped`, `timed_out` |
 
-### ServiceTier (request)
+The values come from the SDK spec. Live verification is blocked because
+creation needs a custom agent, which is gated. Verified live 2026-08-08: a
+model-only trigger interaction is rejected ("Agent '' is invalid or not
+found"), and an empty `GET /v1beta/triggers` returns `{}`. The unverified
+shapes are hedged:
 
-New in revision 2026-05-20: `service_tier` on the interaction request
-(builder: `with_service_tier(ServiceTier::Flex)`).
+- `create_time` / `update_time` (the spec) also accept the Environments
+  spelling `created` / `updated`.
+- The executions list reads `trigger_executions` (the spec) or `executions`
+  (the path segment).
+- All trigger-family timestamps go through a lenient RFC 3339
+  deserializer. An unexpected shape degrades to `None` with a `warn!`, rather
+  than failing the list.
 
-| Rust Enum | Wire Value |
-|-----------|------------|
-| `ServiceTier::Flex` | `"flex"` |
-| `ServiceTier::Standard` | `"standard"` |
-| `ServiceTier::Priority` | `"priority"` |
-| `ServiceTier::Unknown { tier_type, data }` | preserved |
+### ThinkingSummaries
 
-**Status**: Response side verified live 2026-07 (Api-Revision 2026-05-20): every
-interaction response echoes the effective tier as `service_tier: "standard"`,
-alongside an `object: "interaction"` resource discriminator — both now modeled
-on `InteractionResponse` (`service_tier`, `object`). The request-side values
-(`flex`/`priority`) are still pending live verification.
+Sent as `"auto"` / `"none"` in both `generation_config.thinking_summaries`
+and `agent_config.thinking_summaries`. `THINKING_SUMMARIES_AUTO` /
+`_NONE` are still accepted on deserialize.
 
-### Safety settings enums (request `safety_settings`)
+The agent-config spelling reversed. On 2026-01-04 the API rejected `"auto"`
+(`unknown enum value: 'auto'`), so the crate sent `THINKING_SUMMARIES_*`
+there. On 2026-08-10, verified live, the reverse:
+`The value 'THINKING_SUMMARIES_AUTO' is not supported for 'agent_config.thinking_summaries'. Supported values: 'auto', 'none'.`
 
-`HarmCategory` / `SafetyThreshold` (snake_case) and `SafetyMethod`
-(lowercase — its values are single words, matching the summary table's
-classification), all with the standard Unknown pattern (`category_type` /
-`threshold_type` / `method_type`).
+### ThinkingLevel
 
-| Rust Enum | Wire Values |
-|-----------|-------------|
-| `HarmCategory` | `"hate_speech"`, `"dangerous_content"`, `"harassment"`, `"sexually_explicit"`, `"civic_integrity"`, `"image_hate"`, `"image_dangerous_content"`, `"image_harassment"`, `"image_sexually_explicit"`, `"jailbreak"` |
-| `SafetyThreshold` | `"block_low_and_above"`, `"block_medium_and_above"`, `"block_only_high"`, `"block_none"`, `"off"` |
-| `SafetyMethod` | `"severity"`, `"probability"` |
+`"minimal"`, `"low"`, `"medium"`, `"high"` in
+`generation_config.thinking_level`. Live 2026-09-24: `gemini-3.8-flash`
+rejects `"minimal"` (`Allowed values are: high, low, medium`), and omitting the
+field does not disable thinking (see [Thinking Mode](THINKING_MODE.md)).
 
-**Status**: Enum values come from the official SDK spec. The
-`safety_settings` request parameter itself is rejected by the Gemini API
-(verified live 2026-08-08: 400 `invalid_request`, "not available on the
-Gemini API but it is available on the Gemini Enterprise Agent Platform") —
-modeled for spec parity and forward compatibility.
+### InteractionStatus
 
-### EnvironmentStatus (`/v1beta/environments`)
+| Variant | Wire value | Notes |
+|---------|------------|-------|
+| `Completed` | `completed` | |
+| `InProgress` | `in_progress` | `Default` |
+| `RequiresAction` | `requires_action` | |
+| `Failed` | `failed` | |
+| `Cancelled` | `cancelled` | |
+| `Incomplete` | `incomplete` | From the SDK |
+| `BudgetExceeded` | `budget_exceeded` | Pending live verification |
 
-| Rust Enum | Wire Value |
-|-----------|------------|
-| `EnvironmentStatus::Active` | `"active"` |
-| `EnvironmentStatus::Expired` | `"expired"` |
-| `EnvironmentStatus::Unknown { status_type, data }` | preserved |
+### Resolution
 
-**Status**: `"active"` verified live 2026-08-08 (full environments CRUD
-works on a standard key; int64 counts arrive as protobuf-JSON strings and
-timestamps as ISO 8601 with offset — both verified in the same probe).
-`"expired"` comes from the SDK spec.
+`resolution` on image and video content: `"low"`, `"medium"`, `"high"`,
+`"ultra_high"`. Verified 2026-01-05 (pre-revision) with `LOUD_WIRE=1`.
 
-### TriggerStatus / TriggerExecutionStatus (`/v1beta/triggers`)
+### VideoProcessing
 
-| Rust Enum | Wire Values |
-|-----------|-------------|
-| `TriggerStatus` | `"active"`, `"paused"`, `"error"` |
-| `TriggerStatus::Unknown { status_type, data }` | preserved |
-| `TriggerExecutionStatus` | `"in_progress"`, `"completed"`, `"failed"`, `"skipped"`, `"timed_out"` |
-| `TriggerExecutionStatus::Unknown { status_type, data }` | preserved |
+`processing` on video content:
 
-**Status**: From the official SDK spec. Live verification is pending:
-trigger creation requires a custom agent, which is gated/allowlisted on
-standard API keys (verified live 2026-08-08 — a model-only trigger
-interaction is rejected with "Agent '' is invalid or not found", and
-`GET /v1beta/triggers` returns `{}` when empty). The `Trigger` resource's
-*field names* are equally unverified — note it uses `create_time`/
-`update_time` per the SDK spec while the live-verified Environments
-resource uses `created`/`updated`; both spellings are accepted on
-deserialize (`serde(alias)` hedges the bet; serialization keeps the
-spec spelling). The timestamp *encoding* is the same class of bet —
-this family already diverged once on encoding (int64s arrive as
-protobuf-JSON strings), so the nine
-trigger-family timestamps route through a lenient RFC 3339 deserializer
-that degrades an unexpected shape (epoch number, proto-style object,
-garbage string) to `None` with a `warn!` instead of failing the whole
-list response. The list
-envelope keys are in the same boat: `triggers` matches its path segment
-but `GET .../executions` is modeled with a `trigger_executions` key per
-the SDK spec — `executions` (the path-segment spelling) is likewise
-accepted on deserialize as an alias. The aliases hedge only the
-spellings something actually demonstrates (the environments resource's
-`created`/`updated`, the path segment); the other seven trigger-family
-timestamps have no observed alternative to alias against and would
-still degrade to `None` under a wholesale rename, so a `LOUD_WIRE=1`
-confirmation once the agent gate opens remains worthwhile.
+| Variant | Wire value |
+|---------|------------|
+| `Static` | `"static"` |
+| `Agentic` | `"agentic"` |
+| `StaticSegment { start_offset, end_offset, fps }` | `{"type": "static", "start_offset": "10.5s", "end_offset": "30s", "fps": 1.0}` |
+| `Unknown { processing_type, data }` | The original string or object |
 
-### ThinkingSummaries (agent_config)
+`Static` and `StaticSegment` stay distinct, so each form round-trips as it
+arrived.
 
-Used in `agent_config.thinking_summaries` for Deep Research agent.
-
-```json
-{
-  "agent_config": {
-    "type": "deep-research",
-    "thinking_summaries": "auto"
-  }
-}
-```
-
-| Rust Enum | Wire Value (send) | Also accepted (deserialize) |
-|-----------|-------------------|-----------------------------|
-| `ThinkingSummaries::Auto` | `"auto"` | `"THINKING_SUMMARIES_AUTO"` |
-| `ThinkingSummaries::None` | `"none"` | `"THINKING_SUMMARIES_NONE"` |
-
-**This reversed.** History, because the reversal is the point:
-
-- **2026-01-04** — the API rejected `"auto"` with `unknown enum value: 'auto'`,
-  so `to_agent_config_value()` was written to emit `THINKING_SUMMARIES_*`
-  while `generation_config` kept lowercase. Two spellings, two contexts.
-- **2026-08-10** — verified live, exactly inverted:
-  `The value 'THINKING_SUMMARIES_AUTO' is not supported for
-  'agent_config.thinking_summaries'. Supported values: 'auto', 'none'.`
-  Deep-research requests carrying thinking summaries failed outright.
-
-Both contexts now emit lowercase. Deserialization accepts either spelling,
-so config files written against the old format still load.
-
-### ThinkingLevel (generation_config)
-
-Used in `generation_config.thinking_level`.
-
-```json
-{
-  "generation_config": {
-    "thinking_level": "low"
-  }
-}
-```
-
-| Rust Enum | Wire Value |
-|-----------|------------|
-| `ThinkingLevel::Minimal` | `"minimal"` |
-| `ThinkingLevel::Low` | `"low"` |
-| `ThinkingLevel::Medium` | `"medium"` |
-| `ThinkingLevel::High` | `"high"` |
-
-### InteractionStatus (response)
-
-Returned in API responses - we only deserialize, never serialize (to the API;
-local serialization exists for fixtures/roundtrip). Implements `Default`
-(`InProgress`) since revision 2026-05-20.
-
-| Rust Enum | Wire Value | Notes |
-|-----------|------------|-------|
-| `InteractionStatus::Completed` | `"completed"` | |
-| `InteractionStatus::InProgress` | `"in_progress"` | `Default` |
-| `InteractionStatus::RequiresAction` | `"requires_action"` | |
-| `InteractionStatus::Failed` | `"failed"` | |
-| `InteractionStatus::Cancelled` | `"cancelled"` | |
-| `InteractionStatus::Incomplete` | `"incomplete"` | SDK-sourced, not yet in official API docs |
-| `InteractionStatus::BudgetExceeded` | `"budget_exceeded"` | New in 2026-05-20; pending live verification (2026-05-20 revision) |
-
-### Resolution (content)
-
-Used in image and video content for quality vs. token cost trade-off.
-
-```json
-{
-  "input": [{
-    "type": "user_input",
-    "content": [{
-      "type": "image",
-      "data": "base64...",
-      "mime_type": "image/png",
-      "resolution": "low"
-    }]
-  }]
-}
-```
-
-(`resolution` sits on the content block; the surrounding `user_input` step
-is the shape requests send — see [InteractionInput](#interactioninput-requestresponse-input).)
-
-| Rust Enum | Wire Value |
-|-----------|------------|
-| `Resolution::Low` | `"low"` |
-| `Resolution::Medium` | `"medium"` |
-| `Resolution::High` | `"high"` |
-| `Resolution::UltraHigh` | `"ultra_high"` |
-
-**Verified**: 2026-01-05 - Tested with `LOUD_WIRE=1 cargo run --example multimodal_image`.
-
-### VideoProcessing (content `processing`)
-
-Controls how the model ingests a video. A union of a bare mode string and a
-`{"type": "static", ...}` object.
-
-```json
-{
-  "input": [{
-    "type": "user_input",
-    "content": [{
-      "type": "video",
-      "uri": "https://www.youtube.com/watch?v=...",
-      "processing": {"type": "static", "start_offset": "5s", "end_offset": "10s", "fps": 1}
-    }]
-  }]
-}
-```
-
-| Rust Enum | Wire Value |
-|-----------|------------|
-| `VideoProcessing::Static` | `"static"` |
-| `VideoProcessing::Agentic` | `"agentic"` |
-| `VideoProcessing::StaticSegment { .. }` | `{"type": "static", "start_offset": "10.5s", "end_offset": "30s", "fps": 1.0}` |
-| `VideoProcessing::Unknown { .. }` | original string or object, preserved verbatim |
-
-`Static` and `StaticSegment` are distinct variants so each wire form
-round-trips to the form it arrived in; a bare `"static"` is never normalized
-into an empty object, nor the reverse.
-
-**Among the `static` forms, the segment window is the cost lever.** Measured
-video input tokens, same source video, `gemini-3.7-flash`:
+Video input tokens, re-measured 2026-08-18 on one source video
+(`gemini-3.7-flash`):
 
 | `processing` | Video input tokens |
 |--------------|--------------------|
-| *(omitted)* | 57,778 |
-| `"static"` | 57,778 |
-| `{"type": "static"}` | 57,778 |
-| `{"type": "static", "fps": 1}` | 57,778 |
+| *(omitted)*, `"static"`, `{"type": "static"}`, `{"type": "static", "fps": 1}` | 57,778 |
 | `{"type": "static", "start_offset": "5s", "end_offset": "10s", "fps": 1}` | **16,198** |
-| `"agentic"` | *no video modality* — billed as `image`: 2,112 and 4,158 on two runs |
+| `"agentic"` | No video modality; billed as `image` (2,112 and 4,158 on two runs) |
 
-Re-measured 2026-08-18 on the same video and model. Both figures moved from
-the 2026-08-16 reading: the window's saving was ~127x (455 vs 57,775) and is
-~3.6x now, with the unclipped side essentially unchanged — so the service
-revised the clipped accounting. `"agentic"` also stopped reporting video
-tokens entirely, billing `image` instead in a run-to-run varying quantity,
-which makes it the cheapest mode rather than one equivalent to `static`.
+On 2026-08-16 the window's saving was ~127x (455 vs 57,775); the clipped
+accounting has since been revised. What has held across both measurements:
+a window reduces ingestion among the `static` forms, and `fps` alone does
+not.
 
-What has held across both measurements is that a window reduces ingestion
-among the `static` forms. What has not: the magnitudes, and the earlier
-conclusion that mode selection is never a lever — `"agentic"` is now the
-cheapest option of all, below even the clipped window.
+- **Position.** `processing` is accepted only inside a `user_input` step. A
+  bare content array gets `400 Unknown parameter 'processing' at 'input[1]'`.
+  The crate always sends `Content` input as a `user_input` step, so
+  `with_content()` and `with_history()` both work.
+- **Validation.** Unknown values are rejected by field path:
+  `400 Invalid enum value 'bogus_nonsense' at 'input[0].content[1].processing'`.
+- `"agentic"` produces `processing_call` / `processing_result` steps whose
+  signatures are required on replay (see [Step](#step)).
 
-**Position constraint**: the API accepts `processing` only when the video
-content is inside a `user_input` step. The bare-content-array input form is
-rejected:
+Verified 2026-08-16 and re-measured 2026-08-18, including by
+`test_video_processing_segment_reduces_token_cost`.
 
-```text
-400 Unknown parameter 'processing' at 'input[1]'.
-```
+### File Search
 
-The crate sends content input (`with_content`, `InteractionInput::Content`)
-as a single `user_input` step for this reason, so no wrapping is needed by
-hand. Both input forms are otherwise valid, so this is an API-side asymmetry.
-
-Unknown enum values are rejected server-side by field path, confirming the
-field is validated rather than passed through:
-
-```text
-400 Invalid enum value 'bogus_nonsense' at 'input[0].content[1].processing'.
-```
-
-**Verified**: 2026-08-16, re-measured 2026-08-18 - live against `gemini-3.7-flash`, Api-Revision
-`2026-05-20`, and through the crate itself via
-`tests/multimodal_tests.rs::test_video_processing_segment_reduces_token_cost`.
-
-### File Search Stores (`/v1beta/fileSearchStores`)
-
-**This resource is camelCase**, unlike the Interactions API's snake_case.
-The types in `src/file_search_stores.rs` carry an explicit
-`rename_all = "camelCase"` for exactly this reason.
+**The store and document resources are camelCase**, unlike the
+Interactions API.
 
 ```json
-{
-  "name": "fileSearchStores/my-docs-4kws71n2ybpr",
-  "displayName": "my-docs",
-  "createTime": "2026-08-16T15:13:13.783782Z",
-  "updateTime": "2026-08-16T15:13:13.783782Z",
-  "embeddingModel": "models/gemini-embedding-001"
-}
+{"name": "fileSearchStores/my-docs-4kws71n2ybpr", "displayName": "my-docs",
+ "createTime": "2026-08-16T15:13:13.783782Z", "updateTime": "2026-08-16T15:13:13.783782Z",
+ "embeddingModel": "models/gemini-embedding-001"}
 ```
 
-List envelopes are `{"fileSearchStores": [...]}` and `{"documents": [...]}`;
-an empty store list comes back as a bare `{}`. Both `page_size` and
-`pageSize` paging spellings are accepted.
+- List envelopes are `{"fileSearchStores": [...]}` and `{"documents": [...]}`.
+  An empty store list is a bare `{}`. `page_size` and `pageSize` are both
+  accepted.
+- Document `sizeBytes` is a JSON **string** (`"27"`).
+- `DocumentState` is `STATE_PENDING` / `STATE_ACTIVE` / `STATE_FAILED`,
+  prefixed, unlike the Files API's bare `PROCESSING` / `ACTIVE` / `FAILED`.
 
-Document `sizeBytes` is a JSON **string** (`"27"`), protobuf-JSON style, and
-is parsed to a number via the shared `deserialize_string_i64` helper.
+The request tool:
 
-| `DocumentState` | Wire Value |
-|-----------------|------------|
-| `Pending` | `"STATE_PENDING"` |
-| `Active` | `"STATE_ACTIVE"` |
-| `Failed` | `"STATE_FAILED"` |
+```json
+{"type": "file_search", "file_search_store_names": ["fileSearchStores/my-store-123"],
+ "top_k": 10, "metadata_filter": "category = 'technical'"}
+```
 
-Note the `STATE_` prefix — this differs from the Files API's `FileState`,
-which uses bare `"PROCESSING"` / `"ACTIVE"` / `"FAILED"`.
+Rust `store_names` maps to `file_search_store_names`: full store resource
+names, not file ids.
 
-**Behavioral constraints** (all verified live 2026-08-16):
+Behavior, all verified live 2026-08-16:
 
-- **Indexing is asynchronous.** A fresh upload is `STATE_PENDING` and file
-  search will not match it until `STATE_ACTIVE` (observed ~1-2s for a small
-  text file). Use `Client::wait_for_document_active()`.
-- **Deleting an indexed document requires `force=true`** — otherwise
-  `400 Cannot delete non-empty Document` (`FAILED_PRECONDITION`). Same for a
-  store holding documents: `400 Cannot delete non-empty FileSearchStore`.
-- **Uploads accept both `raw` and `multipart` protocols.** The crate uses
-  `raw` (bytes as body, `display_name` as a query param) to avoid enabling
-  reqwest's `multipart` feature for a single endpoint.
-- **The upload response is an operation wrapper**, not a document:
+- **Indexing is asynchronous.** A fresh upload is `STATE_PENDING` and does
+  not match until `STATE_ACTIVE` (about 1-2 s for a small text file). Use
+  `wait_for_document_active()`.
+- **Deleting a non-empty document or store needs `force=true`**. Otherwise:
+  `400 Cannot delete non-empty Document` / `... FileSearchStore`
+  (`FAILED_PRECONDITION`).
+- **Uploads accept `raw` and `multipart`.** The crate uses `raw`, with
+  `display_name` as a query parameter.
+- **The upload response is an operation wrapper**:
   `{"name": ".../upload/operations/...", "response": {"documentName": ...}}`.
-  The crate resolves `documentName` into a full document via a follow-up GET.
-- **`file_search_result` steps carry no chunks.** The step contains only
-  `call_id`, `signature`, and `type` — there is no `result` field, so
-  `has_file_search_results()` is `true` while `file_search_results()` is
-  empty. The retrieved content is visible only through the model's answer.
-- **`file_search` cannot be combined with either web-retrieval tool.** Both
-  `google_search` and `url_context` are rejected alongside it with a 400
-  naming the pair: `'<other>' and 'file_search' cannot be combined in the
-  same request. Please choose one to continue.` `code_execution` is
-  accepted. See the tool section below for the full table.
+  The crate resolves it with a follow-up GET.
+- **`file_search_result` steps carry no chunks.** Only `call_id`,
+  `signature` and `type` arrive, so `has_file_search_results()` is true
+  while `file_search_results()` is empty. The retrieved content shows only
+  in the answer (#429).
+- **`file_search` can't be combined with `google_search` or
+  `url_context`**: 400 `'<other>' and 'file_search' cannot be combined in the
+  same request. Please choose one to continue.` `code_execution` is accepted.
 
-**Verified**: 2026-08-16 - full lifecycle plus end-to-end retrieval in
-`tests/file_search_stores_tests.rs` and `examples/file_search.rs`.
+Covered by `tests/file_search_stores_tests.rs` and `examples/file_search.rs`.
 
-### Tool::FileSearch (request)
+### Google Search steps
 
-Used to enable semantic document retrieval from file search stores.
+Verified live 2026-07 with `LOUD_WIRE=1`:
 
-```json
-{
-  "tools": [{
-    "type": "file_search",
-    "file_search_store_names": ["fileSearchStores/my-store-123"],
-    "top_k": 10,
-    "metadata_filter": "category = 'technical'"
-  }]
-}
-```
+- `google_search_call` carried `id`, nested `arguments.queries`,
+  `search_type: "web_search"` and `signature`.
+- The `google_search_result` items carried **only** `search_suggestions`
+  (an HTML rendering payload), with no `title` / `url` / `rendered_content`.
+  Those then deserialize empty and are skipped on re-serialize.
+- Citations arrived as `url_citation` annotations on the `model_output`
+  text, and `usage.grounding_tool_count` was `[{"type": "google_search",
+  "count": 1}]`.
 
-| Rust Field | Wire Name | Required | Notes |
-|------------|-----------|----------|-------|
-| `store_names` | `file_search_store_names` | Yes | Full store resource names (`fileSearchStores/<id>`), as returned by `Client::create_file_search_store` |
-| `top_k` | `top_k` | No | Number of results to return |
-| `metadata_filter` | `metadata_filter` | No | Filter expression |
+### Google Maps steps
 
-**Note**: The RFC proposed `file_ids` but the actual API uses `file_search_store_names` (stores, not individual files).
+- `google_maps_call`: `id`, `arguments.queries`, `signature`.
+- `google_maps_result`: `call_id`, `result: [GoogleMapsResultItem]`,
+  `signature`. Each item has `places: [Place]` (`name`,
+  `formatted_address`, `place_id`, `lat`, `lng`, plus `url` and
+  `review_snippets` in this revision) and `widget_context_token`.
 
-**Verified**: 2026-08-16 — request format tested with `LOUD_WIRE=1 cargo run --example file_search`
-against a store the example provisions itself. The earlier 2026-01-05 stamp
-predated `Client::create_file_search_store`, so the example it names could not
-have run against a real store.
+Verified pre-revision as `Content`. The step form and the new `Place` fields
+are pending live verification.
 
-**Rejected combinations** (400, verified live 2026-08-16): `file_search` with
-`google_search`, and `file_search` with `url_context` — "cannot be combined in
-the same request. Please choose one to continue." `file_search` with
-`code_execution` is accepted.
-
-### FileSearchCall / FileSearchResult (steps)
-
-Returned when the model retrieves documents from file search stores. Revision
-2026-05-20 adds the paired `file_search_call` step.
+### Computer Use
 
 ```json
-{ "type": "file_search_call", "id": "call_abc123" }
+{"type": "computer_use", "environment": "browser",
+ "excluded_predefined_functions": ["submit_form", "download"],
+ "enable_prompt_injection_detection": true,
+ "disabled_safety_policies": ["financial_transactions"]}
 ```
 
-```json
-{ "type": "file_search_result", "call_id": "call_abc123" }
-```
+- `environment`: `"browser"`, `"mobile"` or `"desktop"`.
+- Known `disabled_safety_policies`: `financial_transactions`,
+  `sensitive_data_modification`, `communication_tool`, `account_creation`,
+  `data_modification`, `user_consent_management`,
+  `legal_terms_and_agreements`.
+- Fields are snake_case (legacy `excludedPredefinedFunctions` is accepted on
+  deserialize).
+- There is no `computer_use_call` / `computer_use_result` any more. Actions
+  arrive as plain `function_call` steps (`navigate`, `click_at`, ...).
 
-> **`result` is never populated on this API.** Verified live 2026-08-16
-> against a store with indexed, `STATE_ACTIVE` documents that demonstrably
-> grounded the answer: `has_file_search_results()` is true and
-> `file_search_results()` is empty. Retrieved chunks are folded into the
-> response text rather than surfaced separately. The `result` array below is
-> the spec's shape, modeled for forward compatibility — treat an empty set as
-> expected, not as "the search found nothing". Tracked in #429.
-
-| Rust Field | Wire Name | Notes |
-|------------|-----------|-------|
-| `call_id` | `call_id` | snake_case in JSON |
-| `result` | `result` | Array of FileSearchResultItem — spec-present, never observed |
-| `result[].title` | `title` | Document title (unobserved) |
-| `result[].text` | `text` | Retrieved text snippet (unobserved) |
-| `result[].store` | `file_search_store` | snake_case in JSON (unobserved) |
-
-**Status**: Step form verified live 2026-08-16 — the `file_search_call` and
-`file_search_result` steps arrive, the latter with no `result` payload.
-
-### GoogleSearchCall / GoogleSearchResult (steps)
-
-Wire types: `"google_search_call"` / `"google_search_result"`.
-
-```json
-{
-  "type": "google_search_call",
-  "id": "qs19a0jm",
-  "arguments": { "queries": ["rust language news"] },
-  "search_type": "web_search",
-  "signature": "ErIE..."
-}
-```
-
-`GoogleSearchResultItem` is snake_case:
-`{"title": "...", "url": "...", "rendered_content": "...", "search_suggestions"?: ...}` —
-`search_suggestions` is new in 2026-05-20.
-
-**Status**: Step form verified live 2026-07 (Api-Revision 2026-05-20) via `LOUD_WIRE=1`:
-the `google_search_call` step carried `id`, nested `arguments.queries`,
-`search_type: "web_search"`, and `signature`. The paired `google_search_result` items
-on the live wire carried **only** `search_suggestions` (an HTML `<style>...` rendering
-payload as a string) — no `title`/`url`/`rendered_content`. `title`/`url` deserialize
-to empty strings in that case and are skipped on re-serialize. Grounding citations
-arrived as `url_citation` annotations on the `model_output` text
-(`{"type": "url_citation", "url": ..., "title": ..., "start_index": ..., "end_index": ...}`),
-and `usage.grounding_tool_count` reported `[{"type": "google_search", "count": 1}]`.
-
-### GoogleMapsCall (step)
-
-Wire type: `"google_maps_call"`
-
-| Rust field | Wire field | Notes |
-|-----------|-----------|-------|
-| `id` | `id` | Unique call identifier |
-| `queries` | `arguments.queries` | Nested inside `arguments` object |
-| `signature` | `signature` | Optional, opaque backend validation |
-
-Example wire format:
-```json
-{
-  "type": "google_maps_call",
-  "id": "qs19a0jm",
-  "arguments": { "queries": ["coffee shops near Times Square"] },
-  "signature": "ErIE..."
-}
-```
-
-**Status**: Verified pre-revision via `LOUD_WIRE=1` (as `Content`); step form pending live verification (2026-05-20 revision).
-
-### GoogleMapsResult (step)
-
-Wire type: `"google_maps_result"`
-
-| Rust field | Wire field | Notes |
-|-----------|-----------|-------|
-| `call_id` | `call_id` | Maps call ID |
-| `result` | `result` | Array of `GoogleMapsResultItem` |
-| `signature` | `signature` | Optional, opaque backend validation |
-
-Each `GoogleMapsResultItem` contains:
-- `places`: Optional array of `Place` objects (with `name`, `formatted_address`, `place_id`, `lat`, `lng`, plus `url` and `review_snippets` added in 2026-05-20)
-- `widget_context_token`: Optional string for widget rendering
-
-**Status**: Verified pre-revision via `LOUD_WIRE=1` (as `Content`); step form and new `Place` fields pending live verification (2026-05-20 revision).
-
-### Computer Use (tool)
-
-**Status**: Pending live verification (2026-05-20 revision) — wire format derived
-from the [Interactions API docs](https://ai.google.dev/static/api/interactions.md.txt).
-
-Tool request format:
-```json
-{
-  "tools": [{
-    "type": "computer_use",
-    "environment": "browser",
-    "excluded_predefined_functions": ["submit_form", "download"],
-    "enable_prompt_injection_detection": true,
-    "disabled_safety_policies": ["financial_transactions"]
-  }]
-}
-```
-
-| Rust Field | Wire Name | Notes |
-|------------|-----------|-------|
-| `environment` | `environment` | Known values: `"browser"`, `"mobile"`, `"desktop"` |
-| `excluded_predefined_functions` | `excluded_predefined_functions` | **Changed**: snake_case (legacy `excludedPredefinedFunctions` accepted on deserialize) |
-| `enable_prompt_injection_detection` | `enable_prompt_injection_detection` | Optional bool |
-| `disabled_safety_policies` | `disabled_safety_policies` | Known values: `financial_transactions`, `sensitive_data_modification`, `communication_tool`, `account_creation`, `data_modification`, `user_consent_management`, `legal_terms_and_agreements` |
-
-**Important**: The old `computer_use_call` / `computer_use_result` content types
-are **gone**. Computer-use actions flow through plain `function_call` /
-`function_result` steps (predefined function names like `navigate`, `click_at`).
-
-**TODO**: Verify with `LOUD_WIRE=1 cargo run --example computer_use` when API access is available.
+Derived from the API docs; pending live verification (the tool is
+allowlisted).
 
 ### SpeechConfig (generation_config)
 
-Used in `generation_config.speech_config` for text-to-speech audio output.
-Per the 2026-05-20 spec the wire format is a **list** of speaker
-configurations — one entry for single-voice TTS, multiple entries (each with
-a distinct `speaker` matching the prompt) for multi-speaker TTS:
+`generation_config.speech_config` is a **list** of flat speaker configs:
+one entry for a single voice, one per `speaker` for multi-speaker TTS.
 
 ```json
 {
   "model": "gemini-3.8-flash-tts",
-  "input": [
-    {"type": "text", "text": "Hi Bob!",
-     "annotations": [{"type": "speech_metadata", "speaker": "Alice"}]},
-    {"type": "text", "text": "Hey Alice!",
-     "annotations": [{"type": "speech_metadata", "speaker": "Bob"}]}
-  ],
+  "input": [{"type": "user_input", "content": [
+    {"type": "text", "text": "Hi Bob!", "annotations": [{"type": "speech_metadata", "speaker": "Alice"}]},
+    {"type": "text", "text": "Hey Alice!", "annotations": [{"type": "speech_metadata", "speaker": "Bob"}]}
+  ]}],
   "response_modalities": ["audio"],
-  "generation_config": {
-    "speech_config": [
-      {"voice": "Kore", "language": "en-US", "speaker": "Alice"},
-      {"voice": "Puck", "language": "en-US", "speaker": "Bob"}
-    ]
-  }
+  "generation_config": {"speech_config": [
+    {"voice": "Kore", "language": "en-US", "speaker": "Alice"},
+    {"voice": "Puck", "language": "en-US", "speaker": "Bob"}
+  ]}
 }
 ```
 
-On `gemini-3.8-flash-tts` each text turn must name its speaker with a
-`speech_metadata` annotation (see [Annotation](#annotation-citation-union));
-2.5-pro and 3.1-flash TTS models take the `Alice: ...` transcript form instead
-and reject the annotation (verified live 2026-09-24).
+| Field | Notes |
+|-------|-------|
+| `voice` | Voice name (`"Kore"`, `"Puck"`, ...); a system voice if omitted |
+| `language` | Required when `voice` is set |
+| `speaker` | Multi-speaker only: the name each turn's `speech_metadata` annotation (or transcript label) refers to |
 
-| Rust Field | Wire Name | Required | Notes |
-|------------|-----------|----------|-------|
-| `voice` | `voice` | No* | Voice name (e.g., "Kore", "Puck", "Charon") |
-| `language` | `language` | Yes** | Language code (e.g., "en-US", "es-ES") |
-| `speaker` | `speaker` | No | Multi-speaker only: the name each turn's `speech_metadata` annotation (or transcript label) refers to |
-
-*Voice defaults to a system voice if not specified.
-**Language is required by the API when voice is specified.
-
-**Important**: The Google docs suggest a nested structure (`voiceConfig.prebuiltVoiceConfig.voiceName`) but **that format returns 400 error**. Only the flat structure shown above works with the Interactions API.
-
-**Status**: ✅ Verified live 2026-07. The two-speaker list form above was
-accepted verbatim and returned a single combined `audio/l16` content block
-(`sample_rate: 24000`) covering both voices. The API does not echo
-`speech_config` (or any `generation_config`) back on reads — the
-`include_input=true` GET parameter was observed to be a no-op — so the echo
-shape (list vs. single object) is unobservable.
-
-**Verified**: 2026-01-10 (nested vs. flat voice fields, both sent as a list) - `test_speech_config_nested_format_fails_flat_succeeds` shows the nested form failing with `no such field: 'voiceConfig'`. Note that its "flat" case builds `Some(vec![SpeechConfig::…])`, which serializes as a one-element **list** — that test varies where the voice fields sit, not object-vs-list, and never sent a bare object.
-
-The crate sends the **list** form. See [speech_config wire forms](#speech_config-wire-forms) just below for which object forms the API accepts — kept in one place so a later verification stamp has a single site to update.
+- On `gemini-3.8-flash-tts` each text turn names its speaker with a
+  `speech_metadata` annotation. The 2.5-pro and 3.1-flash TTS models take the
+  `Alice: ...` transcript form instead, and reject the annotation (live
+  2026-09-24).
+- The nested `voiceConfig.prebuiltVoiceConfig.voiceName` form from Google's
+  docs returns 400 (`no such field: 'voiceConfig'`, 2026-01-10).
+- The API does not echo `speech_config` (or any `generation_config`) on
+  reads, and `include_input=true` was a no-op for it (live 2026-07).
 
 #### speech_config wire forms
 
-`google-genai` 2.18.x widened `generation_config.speech_config` from a plain
-list to `SpeakerConfig | List[SpeechConfig]`. What the API accepts on send
-changed between sweeps:
-
-| Form | 2026-08-16 (`gemini-2.5-pro-preview-tts`) | 2026-09-24 (all TTS models) |
+| Form sent | 2026-08-16 (`gemini-2.5-pro-preview-tts`) | 2026-09-24 (all TTS models) |
 |------|------|------|
 | `[{voice, language, speaker}, ...]` | accepted | accepted |
-| `{"speakers": [...]}` | `400 ... Expected an array, got object.` | accepted (server maps it to `structured_speech_config`) |
+| `{"speakers": [...]}` | `400 ... Expected an array, got object.` | accepted (mapped to `structured_speech_config`) |
 | bare `{voice, language}` | `400 ... Expected an array, got object.` | `400 Unknown parameter 'voice' at 'generation_config.structured_speech_config'` |
 
-The crate **always sends the list** (valid in both sweeps), and accepts all three forms on
-deserialize:
+The crate always **sends the list**. On deserialize it accepts all three
+forms and normalizes them to a list, since a `GenerationConfig` nested in a
+`Trigger` may have been written by another SDK. For maintainers: the
+untagged `{"speakers": [...]}` arm must be tried before the single-object
+arm. Every `SpeechConfig` field is optional, so the single arm would match
+it and silently drop the speakers.
 
-| Wire | Normalized to |
-|------|---------------|
-| `[{voice, ...}, ...]` | itself |
-| `{"speakers": [...]}` | the inner list |
-| `{voice, language, speaker}` | a one-element list |
+### Audio response (TTS output)
 
-Deserialize leniency is not academic: a `GenerationConfig` also arrives
-nested inside a `Trigger`'s stored interaction, which may have been created
-by another SDK using an object form.
+TTS audio arrives as an `audio` content block in a `model_output` step:
 
-**Ordering caveat for maintainers**: `SpeechConfig`'s fields are all optional
-and serde ignores unknown keys, so `{"speakers": [...]}` matches an untagged
-single-`SpeechConfig` arm perfectly well — producing an all-`None` config and
-silently discarding the speakers. The `Speakers` arm must be tried before
-`Single`, and its field must stay required.
-
-### Audio Response (TTS output)
-
-TTS responses return audio content (inside a `model_output` step) with a
-specific MIME type:
-
-```json
-{
-  "steps": [{
-    "type": "model_output",
-    "content": [{
-      "type": "audio",
-      "data": "base64-encoded-pcm-data...",
-      "mime_type": "audio/L16;codec=pcm;rate=24000"
-    }]
-  }]
-}
-```
-
-| MIME Type | Models | Format | `extension()` |
+| MIME type | Models | Format | `extension()` |
 |-----------|--------|--------|---------------|
-| `audio/wav` | `gemini-3.8-flash-tts`, `gemini-3.8-flash-lite-tts` | RIFF/WAV, 24 kHz mono s16; no `sample_rate`/`channels` fields | `wav` |
+| `audio/wav` | `gemini-3.8-flash-tts`, `gemini-3.8-flash-lite-tts` | RIFF/WAV, 24 kHz mono s16; no `sample_rate` / `channels` fields | `wav` |
 | `audio/L16;codec=pcm;rate=24000` | `gemini-2.5-pro-preview-tts` | Raw 16-bit PCM | `pcm` |
-| `audio/l16; rate=24000; channels=1` | `gemini-3.1-flash-tts-preview` | Raw 16-bit PCM, with `sample_rate`/`channels` | `pcm` |
+| `audio/l16; rate=24000; channels=1` | `gemini-3.1-flash-tts-preview` | Raw 16-bit PCM, with `sample_rate` / `channels` | `pcm` |
 
-**Status**: all three verified live 2026-09-24 (steps envelope, revision 2026-05-20).
+All three verified live 2026-09-24.
 
-### UrlContextCall (step)
+### URL context steps
 
-Emitted when the model requests URL content for context.
+- `url_context_call`: `{"id", "arguments": {"urls": [...]}}`, flattened to
+  `urls: Vec<String>`.
+- `url_context_result`: `{"call_id", "result": [{"url", "status"}]}`.
+  `UrlContextResultItem` has `is_success()`, `is_error()`, `is_unsafe()`
+  and `is_paywall()`.
 
-```json
-{
-  "type": "url_context_call",
-  "id": "fpo8xd3s",
-  "arguments": {
-    "urls": ["https://example.com", "https://example.org"]
-  }
-}
-```
+Shapes verified 2026-01-09 pre-revision; the step form is pending live
+verification.
 
-| Rust Field | Wire Name | Notes |
-|------------|-----------|-------|
-| `id` | `id` | Call identifier for matching results |
-| `urls` | `arguments.urls` | Array of URLs, nested inside `arguments` |
+### Code execution
 
-**Note**: The `urls` are nested inside an `arguments` object in the wire format. The library extracts them to a flat `urls: Vec<String>` field for convenience.
+`code_execution_result` is `{"call_id", "is_error": bool, "result": "...",
+"signature"?}`. The official docs describe an `outcome` enum
+(`OUTCOME_OK`), but the wire uses `is_error` + `result` (found with
+`LOUD_WIRE=1`, 2026-01-12, pre-revision). `call_id` is required since
+2026-05-20.
 
-**Status**: Shape verified 2026-01-09 pre-revision (as `Content`); step form pending live verification (2026-05-20 revision).
+`CodeExecutionLanguage` is lowercase `"python"` in
+`code_execution_call.arguments.language`. `"PYTHON"` (pre-revision) now
+deserializes to `Unknown`, and `Display` prints `"python"`. Pending live
+verification.
 
-### UrlContextResult (step)
+### SearchType
 
-Returned with the results of URL fetching.
+`Tool::GoogleSearch.search_types` and `google_search_call.search_type`:
+`web_search` (verified pre-revision), `image_search` (model-restricted),
+`enterprise_web_search` (pending live verification).
 
-```json
-{
-  "type": "url_context_result",
-  "call_id": "fpo8xd3s",
-  "result": [
-    {
-      "url": "https://example.com",
-      "status": "success"
-    },
-    {
-      "url": "https://example.org",
-      "status": "error"
-    }
-  ]
-}
-```
-
-| Rust Field | Wire Name | Notes |
-|------------|-----------|-------|
-| `call_id` | `call_id` | Matches the corresponding UrlContextCall |
-| `result` | `result` | Array of UrlContextResultItem |
-| `result[].url` | `url` | The URL that was fetched |
-| `result[].status` | `status` | "success", "error", or "unsafe" |
-
-**Note**: Each item in `result` is a `UrlContextResultItem` with helper methods `is_success()`, `is_error()`, and `is_unsafe()`. The old
-`url_context_metadata` response block and its `UrlRetrievalStatus` enum were removed in revision 2026-05-20.
-
-**Status**: Shape verified 2026-01-09 pre-revision (as `Content`); step form pending live verification (2026-05-20 revision).
-
-### CodeExecutionResult (step)
-
-Returned when code execution completes. Uses simple `is_error` boolean and `result` string fields.
-
-```json
-{
-  "type": "code_execution_result",
-  "call_id": "exec_123",
-  "is_error": false,
-  "result": "Hello, World!\n"
-}
-```
-
-| Rust Field | Wire Name | Type | Notes |
-|------------|-----------|------|-------|
-| `call_id` | `call_id` | `String` | Matches the CodeExecutionCall id (required since 2026-05-20) |
-| `is_error` | `is_error` | `bool` | `false` = success, `true` = error |
-| `result` | `result` | `String` | Output text (stdout) or error message |
-| `signature` | `signature` | `Option<String>` | Optional opaque signature (new in 2026-05-20) |
-
-**Important**: The official API documentation mentions `outcome` enum with values like `OUTCOME_OK`, but the **actual wire format** uses `is_error: bool` and `result: String`. This was discovered via `LOUD_WIRE=1` testing.
-
-**Status**: `is_error`/`result` shape verified 2026-01-12 pre-revision (as `Content`); step form and `signature` field pending live verification (2026-05-20 revision).
-
-### CodeExecutionLanguage (step field)
-
-Specifies the programming language inside `code_execution_call.arguments`.
-
-```json
-{
-  "type": "code_execution_call",
-  "id": "exec_123",
-  "arguments": { "language": "python", "code": "print('Hello')" }
-}
-```
-
-| Rust Enum | Wire Value | Legacy (accepted on deserialize) |
-|-----------|------------|----------------------------------|
-| `CodeExecutionLanguage::Python` | `"python"` | `"PYTHON"` |
-| `CodeExecutionLanguage::Unknown { ... }` | `"*"` | Future languages preserved |
-
-**Changed in 2026-05-20**: wire value is now **lowercase** `"python"`
-(previously `"PYTHON"`). Serialization always emits lowercase; deserialization
-accepts both. `Display` prints `"python"`.
-
-Helper methods: `is_unknown()`, `unknown_language_type()`, `unknown_data()`
-
-**Status**: Pending live verification (2026-05-20 revision).
-
-### SearchType (Google Search tool)
-
-Configures `Tool::GoogleSearch.search_types` and appears on
-`google_search_call.search_type`.
-
-| Rust Enum | Wire Value | Notes |
-|-----------|------------|-------|
-| `SearchType::WebSearch` | `"web_search"` | Verified 2026-01 pre-revision |
-| `SearchType::ImageSearch` | `"image_search"` | Model-restricted |
-| `SearchType::EnterpriseWebSearch` | `"enterprise_web_search"` | New in 2026-05-20; pending live verification (2026-05-20 revision) |
-| `SearchType::Unknown { search_type, data }` | preserved | |
-
-### Tool::Retrieval (request)
-
-Grounds responses in external retrieval backends. `retrieval_types` selects
-the backends; per-backend configs supply their parameters.
+### Tool::Retrieval
 
 ```json
 {
@@ -1245,96 +633,60 @@ the backends; per-backend configs supply their parameters.
 }
 ```
 
-Notes:
-- `RetrievalType`: `vertex_ai_search` | `rag_store` | `exa_ai_search` |
-  `parallel_ai_search` + `Unknown { retrieval_type, data }` with the standard
-  helpers.
 - `rag_store_config.similarity_top_k` / `vector_distance_threshold` are
-  deprecated by the API in favor of `rag_retrieval_config`.
-- The RAG filter field is `filter` on the wire (the generated Python bindings
-  alias it as `filter_`).
-- `ranking.ranking_config` is always the literal `"rank_service"`.
-- Exa/Parallel `api_key` values are sent on the wire — treat request logs as
-  sensitive.
+  deprecated in favor of `rag_retrieval_config`.
+- The RAG filter is `filter` on the wire (the Python bindings alias it as
+  `filter_`).
+- `ranking.ranking_config` is always `"rank_service"`.
+- Exa / Parallel `api_key` values are sent on the wire.
 
-**Status**: ⚠️ Verified live 2026-07 — **rejected on the Gemini API**. The
-request parses, but the API returns 400: "The value 'retrieval' is not
+**Rejected by the Gemini API** (live 2026-07): "The value 'retrieval' is not
 supported for 'tools[0].type' on the Gemini API, it is allowed on the Gemini
-Enterprise Agent Platform." (i.e. the retrieval tool is Vertex-only). The
-same error enumerates the Gemini API's supported tool types: `google_maps`,
-`mcp_server`, `function`, `google_search`, `file_search`, `computer_use`,
-`code_execution`, `url_context`.
+Enterprise Agent Platform." The same error lists the supported tool types:
+`google_maps`, `mcp_server`, `function`, `google_search`, `file_search`,
+`computer_use`, `code_execution`, `url_context`.
 
-### Webhooks (`/v1beta/webhooks` resource + `webhook_config`)
-
-Webhook resource (snake_case, RFC3339 timestamps):
+### Webhooks
 
 ```json
 {
-  "id": "wh123bare0pq",
-  "name": "my-hook",
-  "uri": "https://example.com/hook",
+  "id": "wh123bare0pq", "name": "my-hook", "uri": "https://example.com/hook",
   "subscribed_events": ["batch.succeeded", "interaction.completed", "video.generated"],
   "state": "enabled",
   "signing_secrets": [{"truncated_secret": "whsec_...abcd", "expire_time": "2026-08-01T00:00:00Z"}],
-  "new_signing_secret": "whsec_full",
-  "create_time": "2026-07-01T12:00:00Z",
-  "update_time": "2026-07-02T12:00:00Z"
+  "new_signing_secret": "whsec_full"
 }
 ```
 
-- `WebhookEvent` wire values: `batch.succeeded`, `batch.expired`,
-  `batch.failed`, `interaction.requires_action`, `interaction.completed`,
-  `interaction.failed`, `video.generated` (+ `Unknown`).
-- `WebhookState`: `enabled`, `disabled`,
-  `disabled_due_to_failed_deliveries` (+ `Unknown`). Output only.
-- `new_signing_secret` is only populated on create.
-- `:rotateSigningSecret` takes `{"revocation_behavior":
-  "revoke_previous_secrets_after_h24" | "revoke_previous_secrets_immediately"}`
-  and returns `{"secret": "..."}`; `:ping` takes/returns empty objects.
-- List/update query params are snake_case: `page_size`, `page_token`,
-  `update_mask`.
-- Per-request routing: `webhook_config: {"uris": [...], "user_metadata": {...}}`
-  on the interaction request.
-- Webhook and agent endpoints send the same `Api-Revision: 2026-05-20`
-  header as interactions (the generated google-genai bindings apply the
-  revision header globally).
+- `WebhookEvent`: `batch.succeeded`, `batch.expired`, `batch.failed`,
+  `interaction.requires_action`, `interaction.completed`,
+  `interaction.failed`, `video.generated`.
+- `:rotateSigningSecret` takes `{"revocation_behavior": ...}` and returns
+  `{"secret": "..."}`. `:ping` takes and returns `{}`.
+- Per-request routing: `webhook_config: {"uris": [...], "user_metadata": {...}}`.
 
-**Status**: ✅ Verified live 2026-07 (full CRUD + `:ping` +
-`:rotateSigningSecret` round-trip). Live findings:
+Verified live 2026-07 (full CRUD, `:ping`, `:rotateSigningSecret`):
 
-- Get/list echo exactly what create sent (`uri`, `subscribed_events`,
-  `name`); `new_signing_secret` appears only on create; IDs are bare opaque
-  strings (no `webhooks/` prefix observed).
-- `create_time` / `update_time` were **not** returned by any endpoint (the
-  crate keeps them as optional fields).
-- `:ping` accepts an empty JSON body (`{}` — what this crate sends) *and* a
-  bodiless POST; returns `{}` even for unreachable URIs.
-- `update_mask` on PATCH is **not required and observed to be ignored** —
-  the PATCH applies exactly the fields present in the body (fields outside
-  a supplied mask still updated). Unknown query params are silently
-  ignored, so `update_mask` vs. `updateMask` casing cannot be
-  distinguished; body field casing IS enforced (camelCase body keys get
-  "Unknown parameter ... Did you mean ...").
-- `:rotateSigningSecret` returns a fresh `{"secret": ...}` each call;
-  the previous secrets gain a 24h `expire_time` by default. The
-  `revocation_behavior` enum is validated server-side (exactly our two
-  values).
-- Invalid `subscribed_events` values are rejected with an error listing
-  exactly our seven `WebhookEvent` values.
-- `webhook_config` on an interaction request requires `background=true`
-  and is echoed back verbatim (`uris` + `user_metadata`) in the create
-  response. `InteractionResponse` models the echo (`webhook_config`),
-  alongside the `object`/`service_tier` response fields discovered in the
-  same verification pass.
+- Get and list echo exactly what create sent. `new_signing_secret` appears
+  only on create. Ids are bare strings (no `webhooks/` prefix).
+- `create_time` / `update_time` were not returned by any endpoint; the crate
+  keeps them optional.
+- `:ping` accepts `{}` or no body, and returns `{}` even for unreachable URIs.
+- PATCH applies the fields present in the body. `update_mask` is not required
+  and was observed to be ignored. Unknown query parameters are ignored too,
+  but camelCase **body** keys get "Unknown parameter ... Did you mean ...".
+- Each rotation returns a fresh secret. By default the previous secrets get a
+  24 h `expire_time`.
+- Invalid `subscribed_events` are rejected with a list of exactly our seven
+  values.
+- `webhook_config` on an interaction requires `background=true`, and is
+  echoed verbatim in the create response (modeled as
+  `InteractionResponse::webhook_config`).
 
-### Environment (request `environment` / agent `base_environment`)
+### Environment
 
-Union: a string environment ID, or a typed remote environment object.
-
-```json
-"env-123"
-```
+`environment` (request) and `base_environment` (agent) take an environment id
+string or a remote environment object:
 
 ```json
 {
@@ -1350,39 +702,30 @@ Union: a string environment ID, or a typed remote environment object.
     {"domain": "api.example.com", "transform": [{"Authorization": "Bearer ..."}]},
     {"domain": "api.github.com", "credential": "github-token"}
   ]},
-  "env": {
-    "PLAIN_VAR": {"value": "hello"},
-    "SECRET_VAR": {"credential": "my-env-credential"}
-  }
+  "env": {"PLAIN_VAR": {"value": "hello"}, "SECRET_VAR": {"credential": "my-env-credential"}}
 }
 ```
 
-- `network` is a union: the string `"disabled"` (all network off), an
-  `{"allowlist": [...]}` object, or omitted entirely (all traffic allowed).
-- `env` (`RemoteEnvironment::env`) and `AllowlistEntry::credential` reference
-  the `/v1beta/credentials` resource. Live 2026-09-24: both are validated
-  (unknown sibling keys rejected; an unknown credential ID is a 404) and
-  echoed, but **no runtime effect was observed** — the sandbox saw neither
-  variable, and no header reached the allowlisted host. The echo spells `env`
-  as a list of single-key maps (`[{"PLAIN_VAR": {...}}, ...]`); both forms
-  deserialize. The bindings' string arm of `env` is rejected
-  (`Invalid input at 'environment'`) and is preserved in `extra` if read.
-- The response echoes the server-assigned environment as `environment_id`,
-  which can be passed back as the string form on later turns.
+- `network`: the string `"disabled"`, an `{"allowlist": [...]}` object, or
+  omitted (all traffic allowed).
+- `env` and `AllowlistEntry::credential` reference `/v1beta/credentials`.
+  Live 2026-09-24: both are validated (unknown sibling keys rejected; an
+  unknown credential id is a 404) and echoed, but **no runtime effect was
+  observed**. The sandbox saw neither the variable nor an injected header.
+  The echo spells `env` as a list of single-key maps; both forms
+  deserialize. The bindings' string form of `env` is rejected
+  (`Invalid input at 'environment'`) and lands in `extra` if read.
+- The response echoes the assigned `environment_id`, which works as the
+  string form on later turns.
 
-**Status**: ✅ Verified live 2026-07 (with `agent:
-"antigravity-preview-05-2026"`, `background: true`): inline source,
-`network: "disabled"`, `network: {allowlist: [{domain, transform}]}`, and
-the plain string environment-ID form were all accepted; accepted typed
-requests returned `environment_id`. `gcs`/`repository`/`skill_registry`
-sources and agent `base_environment` were not exercised (the latter needs
-agent creation, which is gated — see Agents notes in
-`docs/INTERACTIONS_API_GAP.md`).
+Verified live 2026-07 (Antigravity agent, `background: true`): the inline
+source, `"disabled"`, an allowlist with `transform`, and the id string form.
+`gcs`, `repository` and `skill_registry` sources and `base_environment` were
+not exercised.
 
-### ResponseFormat (request `response_format`)
+### ResponseFormat
 
-Typed union tagged by `"type"`; the request field accepts one object or a
-list (one per output modality).
+`response_format` takes one object or a list (one per output modality):
 
 ```json
 {"type": "text", "mime_type": "application/json", "schema": {"type": "object"}}
@@ -1391,315 +734,167 @@ list (one per output modality).
 {"type": "video", "delivery": "uri", "gcs_uri": "gs://bucket/out", "aspect_ratio": "9:16", "duration": "8s"}
 ```
 
-- `delivery` (`ResponseDelivery`): `"inline"` | `"uri"` (+ `Unknown`).
-- Known text MIME types: `application/json`, `text/plain`. Known audio MIME
-  types: `audio/mp3`, `audio/ogg_opus`, `audio/l16`, `audio/wav`,
-  `audio/alaw`, `audio/mulaw`. Known image MIME type: `image/jpeg`.
-- The API also accepts a raw JSON-schema dict here (the pre-revision form);
-  such dicts have no recognized `"type"` tag and roundtrip through
-  `ResponseFormat::Unknown` with the data preserved. When *building*
-  requests, a raw `serde_json::Value` passed to `with_response_format()`
-  converts to the typed `text`/`application/json` form.
-- `video.gcs_uri` is required on Vertex when `delivery` is `"uri"`.
+- Known MIME types: text `application/json`, `text/plain`; audio `audio/mp3`,
+  `audio/ogg_opus`, `audio/l16`, `audio/wav`, `audio/alaw`, `audio/mulaw`;
+  image `image/jpeg`.
+- A raw JSON-schema dict (the pre-revision form) is accepted too. It has no
+  known `"type"`, so it round-trips through `ResponseFormat::Unknown`. When
+  building a request, a raw `serde_json::Value` given to
+  `with_response_format()` becomes the typed `text` / `application/json`
+  form.
 
-**Status**: ✅ Verified live 2026-07 (single object and list forms; list
-validation errors index entries as `response_format[i]`). Server-side
-constraints observed on the Gemini API:
+Verified live 2026-07, single and list forms (list errors index as
+`response_format[i]`). Constraints observed on the Gemini API:
 
-- text: schema-bearing `application/json` form works end-to-end (output
-  validated against the schema).
-- image: works inline; `mime_type` only accepts `image/jpeg` (the API's
-  validation error lists it as the sole supported value); any `delivery`
-  value → 400 "Image delivery mode is not supported."
-- audio: works with `sample_rate`; any `mime_type` → 400 "Audio mime_type
-  is not supported in response_format." and any `delivery` → 400 "Audio
-  delivery mode is not supported." (output arrives inline as `audio/l16`).
-- video: `delivery`/`duration`/`aspect_ratio` are schema-recognized, but
-  `gcs_uri` → 400 "not available on the Gemini API but it is available on
-  the Gemini Enterprise Agent Platform" (Vertex-only), and no
-  Interactions-served model currently supports the video modality.
-- `ResponseDelivery` values confirmed via the API's validation error:
-  exactly `inline` | `uri`.
+| Modality | Behavior |
+|----------|----------|
+| text | The `application/json` schema form works end to end; output is validated against the schema |
+| image | Inline only. `mime_type` accepts only `image/jpeg`. Any `delivery` → 400 "Image delivery mode is not supported." |
+| audio | Works with `sample_rate`. Any `mime_type` → 400 "Audio mime_type is not supported in response_format."; any `delivery` → 400 "Audio delivery mode is not supported." |
+| video | `gcs_uri` is Vertex-only. No Interactions-served model supports video output |
 
-### VideoConfig / VideoTask (generation_config)
+### VideoConfig and VideoTask
 
-```json
-{"generation_config": {"video_config": {"task": "text_to_video"}}}
-```
+`generation_config.video_config.task`: `text_to_video`, `image_to_video`,
+`reference_to_video`, `edit`, `extend`. Omit it to let the model infer the
+task. Verified live 2026-07 via the validation error, which is how `extend`
+was found. Video generation itself is not reachable through the Interactions
+API: Veo models return 404 (they list only `predictLongRunning`), Gemini
+models reject `response_modalities: ["video"]`, and `video_config` is
+accepted but ignored on non-video models.
 
-`VideoTask`: `text_to_video` | `image_to_video` | `reference_to_video` |
-`edit` | `extend` (+ `Unknown { task_type, data }`). Omit to let the model
-pick the mode from the prompt and input media. Pair with
-`response_modalities: ["video"]` and (optionally) a `video` response format.
+### AntigravityConfig
 
-**Status**: ✅ Verified live 2026-07 via the API's own validation error for
-`generation_config.video_config.task`, which lists exactly
-`text_to_video`, `image_to_video`, `reference_to_video`, `edit`, `extend` —
-the previously unmodeled `extend` was added to the enum. Note: video
-generation itself is not currently reachable through the Interactions API —
-Veo models (e.g. `veo-3.1-generate-preview`) return 404 "Model not found"
-(they are listed by `/v1beta/models` with only the legacy
-`predictLongRunning` method), and Gemini models reject
-`response_modalities: ["video"]`. `video_config` is accepted (ignored) on
-non-video models.
+`{"agent_config": {"type": "antigravity", "max_total_tokens": 200000}}`.
+Verified live 2026-08-09 on `antigravity-preview-05-2026`, which requires an
+`environment`. The validation error lists the `agent_config.type` values
+`dynamic`, `deep-research`, `code-mender` and `antigravity`. `model` is
+validated per agent: an unavailable value returns 404 (observed with
+`gemini-3.6-flash`; the agent's model catalog can't be listed on a standard
+key).
 
-### AntigravityConfig (agent_config type "antigravity")
+### Deep Research agent_config
 
-```json
-{"agent_config": {"type": "antigravity", "max_total_tokens": 200000}}
-```
+`{"type": "deep-research", "visualization": "auto", "collaborative_planning": true}`.
+`Visualization` is `"off"` / `"auto"`, verified live 2026-07 via the
+validation error. `visualization` and `collaborative_planning` were accepted
+on a background run. `enable_bigquery_tool` is rejected on the Gemini API as
+Vertex-only.
 
-**Status**: ✅ Verified live 2026-08-09 on `agent("antigravity-preview-05-2026")`
-(which requires an `environment`): the `type` discriminant and
-`max_total_tokens` are accepted; the server's validation error enumerates
-the supported `agent_config.type` values as `dynamic`, `deep-research`,
-`code-mender`, `antigravity`. `model` is server-validated per agent — an
-unavailable value returns 404 `not_found` (observed with
-`gemini-3.6-flash`, and not re-checked since — the agent's model catalog
-is not enumerable on a standard key, so there is no way to).
+### GroundingToolCount
 
-### Visualization (Deep Research agent_config)
+`usage.grounding_tool_count` is a list of `{"type": ..., "count": n}`. The
+Rust field `tool_type` stays a plain string (known values: `google_search`,
+`google_maps`, `retrieval`). `usage.grounding_count_for_tool("google_search")`
+reads one entry.
 
-```json
-{"agent_config": {"type": "deep-research", "visualization": "auto", "collaborative_planning": true, "enable_bigquery_tool": true}}
-```
+### TranscriptionConfig
 
-`Visualization`: `"off"` | `"auto"` (+ `Unknown { visualization_type, data }`).
-`visualization` is lowercase per the spec — as is `thinking_summaries`,
-which the API reversed (it previously took `THINKING_SUMMARIES_*` here and
-now rejects it; see the `ThinkingSummaries` entry above).
-
-**Status**: ✅ Verified live 2026-07: the API's validation error for
-`agent_config.visualization` lists exactly `off` | `auto`;
-`visualization` + `collaborative_planning` were accepted on a
-`deep-research-preview-04-2026` background run (cancelled after creation).
-⚠️ `enable_bigquery_tool` is rejected on the Gemini API — "not available on
-the Gemini API but it is available on the Gemini Enterprise Agent Platform"
-(Vertex-only).
-
-### GroundingToolCount (usage metadata)
-
-New in revision 2026-05-20: `usage.grounding_tool_count` reports per-tool
-grounding invocation counts.
-
-```json
-{
-  "usage": {
-    "total_tokens": 123,
-    "grounding_tool_count": [
-      { "type": "google_search", "count": 2 },
-      { "type": "google_maps", "count": 1 }
-    ]
-  }
-}
-```
-
-| Rust Field | Wire Name | Notes |
-|------------|-----------|-------|
-| `tool_type` | `type` | Plain string for Evergreen forward compatibility. Known values: `google_search`, `google_maps`, `retrieval` |
-| `count` | `count` | Number of invocations |
-
-Helper: `usage.grounding_count_for_tool("google_search")`.
-
-**Status**: Pending live verification (2026-05-20 revision).
-
-### TranscriptionConfig open-string values
-
-`generation_config.transcription_config` (`TranscriptionConfig` in
-`src/request.rs`) keeps its constrained fields as open strings (Evergreen),
-with the SDK-documented value sets:
+`generation_config.transcription_config` keeps its constrained fields as
+open strings:
 
 | Field | Documented values | Notes |
 |-------|-------------------|-------|
-| `diarization_mode` | `"speaker"` | Only supported value per SDK 2.17.0 spec. Deprecated in 2.25 in favor of `mode` |
-| `timestamp_granularities` | `"word"` | Only supported value per spec; empty list = no timestamps. Deprecated in 2.25 in favor of `mode` |
-| `language_codes` | BCP-47 codes | Empty/omitted = automatic language detection |
+| `diarization_mode` | `"speaker"` | Deprecated in 2.25 in favor of `mode` |
+| `timestamp_granularities` | `"word"` | An empty list means no timestamps. Deprecated in 2.25 in favor of `mode` |
+| `language_codes` | BCP-47 codes | Empty or omitted means auto-detect |
 
-`mode` (`TranscriptionMode`, 2.20+) is a union: the strings `"smart"` /
-`"verbatim"`, or `{"type": "smart"}` / `{"type": "verbatim",
-"diarization_mode"?, "timestamp_granularities"?}`. The crate sends the object
-form and reads both; unknown types land in `TranscriptionMode::Unknown
-{ mode_type, data }`. The bindings' `language_hints` (added already
-deprecated) is **not** modeled: the API returns `400 Unknown parameter
-'language_hints'` (2026-09-24).
+`mode` (`TranscriptionMode`) is `"smart"` / `"verbatim"` or
+`{"type": "smart"}` / `{"type": "verbatim", "diarization_mode"?,
+"timestamp_granularities"?}`. The crate sends the object form and reads both.
+The bindings' `language_hints` is not modeled: `400 Unknown parameter
+'language_hints'`. Verified live 2026-09-24 with audio input (the enum is
+server-validated: `Invalid enum value 'zzz'`); no output difference, and no
+`word_info` annotation, was observed on general models.
 
-**Status**: every form above was accepted live with audio input and the enum
-is server-validated (`Invalid enum value 'zzz'`), 2026-09-24. No output
-difference (and no `word_info` annotation) was observed on general models.
+## Probing a new enum
 
-## Testing New Enums
-
-When adding new enums, always test the actual wire format with `curl`:
+Send candidates with curl and read the error. Validation errors usually list
+the accepted values.
 
 ```bash
-# Test what the API actually accepts
-curl -s "https://generativelanguage.googleapis.com/v1beta/interactions?key=$GEMINI_API_KEY" \
-  -H "Content-Type: application/json" \
-  -H "Api-Revision: 2026-05-20" \
-  -d '{"model": "gemini-3.8-flash", "input": "test", ...}'
+curl -s https://generativelanguage.googleapis.com/v1beta/interactions \
+  -H "X-Goog-Api-Key: $GEMINI_API_KEY" -H "Content-Type: application/json" \
+  -d '{"model": "gemini-3.8-flash", "input": "test", "generation_config": {"thinking_level": "zzz"}}'
 ```
 
-Common patterns to try:
-1. lowercase: `"auto"`
-2. SCREAMING_CASE: `"AUTO"`
-3. Fully-qualified: `"ENUM_NAME_VALUE"` (e.g., `"THINKING_SUMMARIES_AUTO"`)
+Try lowercase (`"auto"`), SCREAMING_CASE (`"AUTO"`) and fully qualified
+(`"THINKING_SUMMARIES_AUTO"`) spellings. This revision is mostly
+lowercase/snake_case, but check with `LOUD_WIRE=1` before assuming.
 
-Revision 2026-05-20 standardized most enum wire values on **lowercase/snake_case**
-(`FunctionCallingMode`, `CodeExecutionLanguage`, `ServiceTier`, `InteractionStatus`,
-`SearchType`), but always verify with `LOUD_WIRE=1` before assuming.
+## Structs and `#[non_exhaustive]`
 
-## Evergreen Pattern
+Response and resource structs are `#[non_exhaustive]`, so the crate can add
+fields without a breaking change (D-002). `tests/non_exhaustive_responses.rs`
+fails the build when a deserializable public struct lacks the attribute and
+isn't in its `REQUEST_SIDE` exemption list. The rule:
 
-All enums implement the Evergreen pattern with an `Unknown` variant that preserves unrecognized values:
+- **Closed**: anything the API returns (`InteractionResponse`,
+  `UsageMetadata`, the `*ListResponse` wrappers, result items). That includes
+  read-write resources (`Agent`, `Environment`, `Trigger`, `Webhook`), where
+  constructors like `Agent::new(id)` cover the sending side. Create bodies
+  that ship builders (`CreateFileSearchStoreRequest`) are closed too.
+- **Open**: request types the user assembles and the API never returns
+  (`GenerationConfig`, `FunctionDeclaration`, the tool configs).
 
-```rust,ignore
-#[non_exhaustive]
-pub enum ThinkingSummaries {
-    Auto,
-    None,
-    Unknown {
-        summaries_type: String,
-        data: serde_json::Value,
-    },
-}
-```
-
-This ensures forward compatibility when Google adds new enum values.
-
-### Structs and `#[non_exhaustive]`
-
-Response structs (e.g., `AutoFunctionResult`) also use `#[non_exhaustive]` so we can add fields without breaking user code. This has a trade-off:
-
-**No struct-literal or `..Default::default()` syntax outside the crate** — see
-**Constructing fixtures** below for what remains available. This is intentional:
-- Response types represent API responses, not user-constructed data
-- Mocking them in unit tests would give false confidence
-- We can add fields (like `executions` was added to `AutoFunctionResult`) without breaking changes
-
-**For testing**, users should:
-1. Use integration tests with real API calls (recommended)
-2. Mock at the HTTP layer, not the response type layer
-3. Test their own logic separately from API response handling
-
-**Which structs get it.** The test is not "does the API return it" but *does
-closing it take away the caller's only way to build it*. `#[non_exhaustive]`
-removes struct-literal construction — including the `..Default::default()`
-functional-update form, though not `T::default()` followed by field assignment,
-which still works on the many of these that derive `Default` (see
-**Constructing fixtures** below). On a type the user assembles and the API
-never returns, that costs construction syntax and buys the crate nothing: it
-gains no freedom to add required fields to something only the user builds. So
-`GenerationConfig`, `FunctionDeclaration` and the tool configs stay open.
-
-Everything else carries it, and the two cases that look like exceptions are
-not. A **read-write resource** — one the API both returns and accepts — is
-closed, because the returning half is what the attribute is for and a
-constructor covers the sending half: `Agent`, `Environment`, `Trigger` and
-`Webhook` are all closed, and `Agent::new(id)` and
-`Webhook::new(uri, events)` are why that costs nothing. A **create body that
-ships builders** is closed for the same reason:
-`CreateFileSearchStoreRequest` carries the attribute because `new()` /
-`with_display_name()` / `with_extra()` already are the construction path.
-
-So: `InteractionResponse`, `UsageMetadata`, the `*ListResponse` wrappers, the
-result-item types and the resource shapes carry it; a request type stays open
-only while it has no constructor of its own.
-
-**Enforced, not reviewed.** `tests/non_exhaustive_responses.rs` scans `src/`
-and fails on any deserializable public struct missing the attribute that is
-not listed in its `REQUEST_SIDE` exemption list. Review is a poor detector for
-an attribute being *absent* — that is how the five structs in #430 diverged —
-so adding a new response type without it now fails the build, and exempting
-one requires saying so in a list that explains why.
-
-**Constructing fixtures.** `#[non_exhaustive]` removes struct-literal and
-functional-update (`..Default::default()`) syntax outside the crate. It does
-*not* remove `T::default()` followed by field assignment, and most of these
-types derive `Default`:
+Outside the crate the attribute blocks struct literals and
+`..Default::default()`, but not `T::default()` plus field assignment:
 
 ```text
-// In-crate, still fine:
-InteractionResponse { status: InteractionStatus::Completed, ..Default::default() }
-
-// From an integration test or a downstream crate:
 let mut response = InteractionResponse::default();
 response.status = InteractionStatus::Completed;
 ```
 
-Only the types with neither `Default` nor a constructor need a JSON fixture:
+Types with neither `Default` nor a constructor need a JSON fixture:
 `FileMetadata`, `FileError`, `VideoMetadata`, `ListFilesResponse`,
-`FileUploadResponse`, and `AutoFunctionResult`.
+`FileUploadResponse` and `AutoFunctionResult`.
+(`ModalityTokens::new()`, `StreamEvent::new()` and
+`FunctionCallInfo::to_owned()` cover the others without `Default`.)
 
-`AutoFunctionResult` is on that list rather than off it despite predating
-this sweep, because it is the type the section above opens with — so a
-reader who follows the pointer from that example arrives here asking about
-exactly it. It derives `Clone, Debug, Serialize, Deserialize` and no
-`Default`, and its inherent methods are `all_executions_succeeded()` and
-`failed_executions()`; the nearby `new()` belongs to
-`AutoFunctionResultAccumulator`.
+## Antigravity harness protocol (feature `antigravity`)
 
-Not in that list, despite having no `Default`: `ModalityTokens` gained a
-`new()`, `StreamEvent` already had one, and `OwnedFunctionCallInfo` is
-produced by the public `FunctionCallInfo::to_owned()`.
-
-If a `test-support` feature for constructing mock instances becomes commonly requested, we'll consider adding it.
-
-## Antigravity Harness Protocol (feature `antigravity`)
-
-The `genai_rs::antigravity::protocol` module speaks the localharness
-proto-JSON protocol (see `docs/ANTIGRAVITY.md`). Wire formats were verified
-against the descriptor set and a live harness from the
-`google-antigravity` 0.1.18 wheel (`LOUD_WIRE=1` on real sessions, plus a
-descriptor diff against 0.1.10), and earlier against 0.1.10 and 0.1.5:
-
-### Alias spellings — a documented exception to Preserve Data Roundtrip
-
-These enums accept **alias** wire values: a value renamed between harness
-revisions deserializes to one variant, and `as_wire_str` re-emits the
-*canonical* (current-harness) spelling. So `STATE_IDLE` in, `STATE_FULLY_IDLE`
-out — deliberately **not** a faithful roundtrip, which is a departure from
-the Preserve Data Roundtrip principle in CLAUDE.md.
-
-The trade is worth naming. These are inbound-only enums (the client never
-sends a `TrajectoryState`), so the asymmetry cannot reach the wire; what it
-buys is one build that *reads* either harness revision. (It no longer buys
-driving either: 0.1.18 changed the outbound `userInput` shape, which no
-alias can cover, so this build drives 0.1.18 only.) The alternative —
-preserving the old spelling as an `Unknown` variant — is what caused the
-0.1.5 → 0.1.10 breakage in the first place: `STATE_IDLE` became
-`STATE_FULLY_IDLE`, only `Idle` ends a turn, and every turn silently ran to
-its timeout. Preservation without recognition is not compatibility.
+`genai_rs::antigravity::protocol` speaks the localharness proto-JSON
+protocol (see [ANTIGRAVITY.md](ANTIGRAVITY.md)). It was verified against the
+descriptor set and a live harness from the `google-antigravity` 0.1.18 wheel
+(`LOUD_WIRE=1` sessions, plus a descriptor diff against 0.1.10), and earlier
+against 0.1.10 and 0.1.5.
 
 - Field names are **camelCase**; enums are **SCREAMING_SNAKE_CASE** strings.
-- 64-bit integers (`seqNum`, token counts) arrive as JSON **strings**; the
-  crate accepts both strings and numbers.
-- Harness 0.1.18 emits many unset strings explicitly as `""` (`thinking`,
-  `serverName`, `unavailableReason`); where presence carries meaning (an
-  error that fails the turn, a parent trajectory id) blank reads as absent.
-- A user message is `{"userInput": {"parts": [{"text": ...}]}}` on 0.1.18;
-  the pre-0.1.18 `{"userInput": "..."}` string form is rejected.
+- 64-bit integers (`seqNum`, token counts) arrive as JSON strings; both
+  strings and numbers are accepted.
+- 0.1.18 sends many unset strings as `""` (`thinking`, `serverName`,
+  `unavailableReason`). Where presence carries meaning (an error that fails
+  the turn, a parent trajectory id), blank reads as absent.
+- A user message is `{"userInput": {"parts": [{"text": ...}]}}` on 0.1.18.
+  The pre-0.1.18 `{"userInput": "..."}` string form is rejected.
 
-Enums with Unknown variants (same pattern and helper methods as above):
+| Type | Context field | Wire values |
+|------|---------------|-------------|
+| `StepState` | `state_type` | `STATE_ACTIVE`, `STATE_DONE`, `STATE_WAITING_FOR_USER`, `STATE_ERROR` |
+| `StepSource` | `source_type` | `SOURCE_SYSTEM`, `SOURCE_USER`, `SOURCE_MODEL` |
+| `StepTarget` | `target_type` | `TARGET_USER`, `TARGET_MODEL`, `TARGET_ENVIRONMENT` |
+| `TrajectoryState` | `state_type` | `STATE_RUNNING`, `STATE_FULLY_IDLE` (terminal; alias `STATE_IDLE`), `STATE_WAITING_FOR_TASKS`, `STATE_CANCELLED` |
+| `StopReason` | `reason_type` | `STOP_REASON_MAX_MODEL_CALLS_EXCEEDED`, `..._MAX_TOOL_CALLS_...`, `..._MAX_{INPUT,OUTPUT,TOTAL}_TOKENS_EXCEEDED`, `STOP_REASON_QUOTA_EXHAUSTED` (0.1.18) |
+| `ModelType` | `model_type` | `MODEL_TYPE_TEXT`, `MODEL_TYPE_IMAGE` |
+| `Modality` | `modality_type` | `TEXT`, `IMAGE`, `VIDEO`, `AUDIO`, `DOCUMENT`: bare, unlike `MODALITY_UNSPECIFIED` (0.1.18) |
+| `AgentBehavior` | `behavior_type` | `AGENT_BEHAVIOR_AUTONOMOUS`, `AGENT_BEHAVIOR_INTERACTIVE`, `AGENT_BEHAVIOR_MINIMAL` (0.1.18; client → harness) |
+| `LifecycleHook` | `hook_type` | `LIFECYCLE_HOOK_PRE_TOOL`, `LIFECYCLE_HOOK_POST_TOOL`, ..., `LIFECYCLE_HOOK_ON_COMPACTION`, `LIFECYCLE_HOOK_STOP` (0.1.18) |
+| `HookDecision` | `decision_type` | `ALLOW`, `DENY` |
+| `LineAction` | `action_type` | `LINE_ACTION_INSERT`, `LINE_ACTION_DELETE`, `LINE_ACTION_NONE` |
 
-| Type | Location | Context Field | Wire Values |
-|------|----------|---------------|-------------|
-| `StepState` | src/antigravity/protocol.rs | `state_type` | `STATE_ACTIVE`, `STATE_DONE`, `STATE_WAITING_FOR_USER`, `STATE_ERROR` |
-| `StepSource` | src/antigravity/protocol.rs | `source_type` | `SOURCE_SYSTEM`, `SOURCE_USER`, `SOURCE_MODEL` |
-| `StepTarget` | src/antigravity/protocol.rs | `target_type` | `TARGET_USER`, `TARGET_MODEL`, `TARGET_ENVIRONMENT` |
-| `TrajectoryState` | src/antigravity/protocol.rs | `state_type` | `STATE_RUNNING`, `STATE_FULLY_IDLE` (terminal; alias `STATE_IDLE`), `STATE_WAITING_FOR_TASKS`, `STATE_CANCELLED` |
-| `StopReason` | src/antigravity/protocol.rs | `reason_type` | `STOP_REASON_MAX_MODEL_CALLS_EXCEEDED`, `..._MAX_TOOL_CALLS_...`, `..._MAX_{INPUT,OUTPUT,TOTAL}_TOKENS_EXCEEDED`, `STOP_REASON_QUOTA_EXHAUSTED` (0.1.18) |
-| `ModelType` | src/antigravity/protocol.rs | `model_type` | `MODEL_TYPE_TEXT`, `MODEL_TYPE_IMAGE` |
-| `Modality` | src/antigravity/protocol.rs | `modality_type` | `TEXT`, `IMAGE`, `VIDEO`, `AUDIO`, `DOCUMENT` — bare, unlike `MODALITY_UNSPECIFIED` (0.1.18) |
-| `AgentBehavior` | src/antigravity/protocol.rs | `behavior_type` | `AGENT_BEHAVIOR_AUTONOMOUS`, `AGENT_BEHAVIOR_INTERACTIVE`, `AGENT_BEHAVIOR_MINIMAL` (0.1.18; client → harness) |
-| `LifecycleHook` | src/antigravity/protocol.rs | `hook_type` | `LIFECYCLE_HOOK_PRE_TOOL`, `LIFECYCLE_HOOK_POST_TOOL`, ..., `LIFECYCLE_HOOK_ON_COMPACTION`, `LIFECYCLE_HOOK_STOP` (0.1.18) |
-| `HookDecision` | src/antigravity/protocol.rs | `decision_type` | `ALLOW`, `DENY` |
-| `LineAction` | src/antigravity/protocol.rs | `action_type` | `LINE_ACTION_INSERT`, `LINE_ACTION_DELETE`, `LINE_ACTION_NONE` |
+The envelope oneofs have Unknown variants too (`InputEvent::Unknown` and
+`OutputPayload::Unknown`, with `event_type` + `data`). Harness-emitted
+structs (`StepUpdate`, `ToolCall`, `UsageMetadata`, action submessages, ...)
+keep unrecognized fields in a flattened `extra` map. `strict-unknown` does
+not apply here: the harness protocol is internal and unstable, so soft
+typing is always on.
 
-Envelope oneofs also carry Unknown variants (`event_type` + `data`):
-`InputEvent::Unknown` and `OutputPayload::Unknown`. Harness-emitted structs
-(`StepUpdate`, `ToolCall`, `UsageMetadata`, action submessages, ...)
-preserve unrecognized fields in a flattened `extra` map for roundtrip.
-
-Note: `strict-unknown` does not apply to the Antigravity protocol — the
-harness protocol is explicitly internal/unstable, so soft-typing is always
-on there.
+**Alias spellings are a deliberate exception to round-trip fidelity (D-003).**
+These enums accept a value renamed between harness revisions, and
+`as_wire_str` re-emits the current spelling: `STATE_IDLE` in,
+`STATE_FULLY_IDLE` out. They are inbound-only (the client never sends a
+`TrajectoryState`), so the asymmetry never reaches the wire. What it buys is
+one build that *reads* either revision. Preserving the old spelling as
+`Unknown` instead is what broke 0.1.5 → 0.1.10: only `Idle` ends a turn, so
+every turn ran to its timeout. (0.1.18 changed the outbound `userInput` shape,
+which no alias can cover, so this build *drives* 0.1.18 only.)

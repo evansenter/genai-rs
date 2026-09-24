@@ -1,21 +1,5 @@
 # Built-in Tools Guide
 
-Gemini provides several server-side tools that execute automatically without requiring client-side code. This guide covers all built-in tools and when to use each.
-
-## Table of Contents
-
-- [Overview](#overview)
-- [Google Search](#google-search)
-- [Code Execution](#code-execution)
-- [URL Context](#url-context)
-- [Computer Use](#computer-use)
-- [File Search](#file-search)
-- [Retrieval](#retrieval)
-- [Google Maps](#google-maps)
-- [MCP Servers](#mcp-servers)
-- [Combining Tools](#combining-tools)
-
-## Overview
 
 | Tool | Purpose | Who executes |
 |------|---------|--------------|
@@ -32,7 +16,18 @@ Apart from Computer Use, these run on Google's side, unlike
 [function calling](FUNCTION_CALLING.md), where your code executes the
 functions.
 
-**Where tool activity appears**: Under API revision 2026-05-20, server-side tool activity is reported as dedicated step variants in `response.steps` (e.g., `Step::GoogleSearchCall`, `Step::GoogleSearchResult`, `Step::CodeExecutionCall`, `Step::UrlContextResult`, `Step::ToolCall`, ...). One exception, measured rather than assumed: MCP does **not** arrive as its dedicated variants — see the note under [MCP Servers](#mcp-servers). The response helpers shown below (`google_search_results()`, `code_execution_calls()`, ...) iterate those steps for you. The old `grounding_metadata` and `url_context_metadata` response fields no longer exist — grounding information comes from the steps themselves plus inline `Annotation` citations, and `usage.grounding_tool_count` reports per-tool grounding counts.
+Enable a tool with its shortcut (`with_google_search()`, `with_code_execution()`,
+`with_url_context()`, `with_google_maps()`) or, for tools with options, with
+`add_tool(<Config>)`. Calling a shortcut again replaces that tool's earlier
+entry.
+
+**Where tool activity appears.** Tool activity arrives as step variants in
+`response.steps`: `Step::GoogleSearchCall` / `GoogleSearchResult`,
+`CodeExecutionCall` / `CodeExecutionResult`, `UrlContextCall` /
+`UrlContextResult`, `GoogleMapsCall` / `GoogleMapsResult`, and so on. MCP is
+the exception (see [MCP Servers](#mcp-servers)). The response helpers below
+iterate those steps for you. Grounding shows up as inline `Annotation`
+citations, and `usage.grounding_tool_count` counts it per tool.
 
 ## Google Search
 
@@ -110,33 +105,11 @@ if response.has_annotations() {
 }
 ```
 
-### Streaming
-
-```rust,ignore
-use futures_util::StreamExt;
-
-let mut stream = client
-    .interaction()
-    .with_model(genai_rs::DEFAULT_MODEL)
-    .with_text("Latest AI news?")
-    .with_google_search()
-    .create_stream();
-
-while let Some(Ok(event)) = stream.next().await {
-    // delta_text() extracts text from StepDelta chunks
-    if let Some(text) = event.chunk.delta_text() {
-        print!("{}", text);
-    }
-}
-```
-
-**When to use**: Current events, real-time data, fact verification, research tasks.
-
-**Example**: `cargo run --example google_search`
+**Example**: `cargo run --example google_search` (also streams).
 
 ## Code Execution
 
-Execute Python code in a secure sandbox.
+Runs Python in a sandbox.
 
 ### Basic Usage
 
@@ -170,29 +143,13 @@ if response.has_code_execution_calls() {
 
 Code execution appears in `response.steps` as `Step::CodeExecutionCall { id, language, code, .. }` followed by `Step::CodeExecutionResult { call_id, result, is_error, .. }`. The `CodeExecutionLanguage` wire format is lowercase (`"python"`).
 
-### Convenience Methods
-
-```rust,ignore
-// Get successful output directly
-if let Some(output) = response.successful_code_output() {
-    println!("Result: {}", output);
-}
-
-// Check execution activity
-if response.has_code_execution_results() {
-    println!("Code was executed");
-}
-```
-
-The only language is Python (`CodeExecutionLanguage::Python`).
+`response.successful_code_output()` returns the first non-error result. Python is the only language (`CodeExecutionLanguage::Python`).
 
 **Example**: `cargo run --example code_execution`
 
 ## URL Context
 
-Fetch and analyze web pages.
-
-### Basic Usage
+Fetches the URLs in the prompt.
 
 ```rust,ignore
 let response = client
@@ -216,56 +173,18 @@ for result in response.url_context_results() {
 }
 ```
 
-### Multiple URLs
+Each `UrlContextResultItem` has a `status` string. The known values are
+`"success"`, `"error"`, `"paywall"` and `"unsafe"`, and `item.is_success()`
+checks for the first. A page the tool could not fetch shows up as a
+non-success `status`, not as an error.
 
-```rust,ignore
-let response = client
-    .interaction()
-    .with_model(genai_rs::DEFAULT_MODEL)
-    .with_text("Compare https://example.com/page1 and https://example.com/page2")
-    .with_url_context()
-    .create()
-    .await?;
-```
-
-### Handling Retrieval Errors
-
-Each `UrlContextResultItem` carries a `status` string. Known values under revision 2026-05-20 are `"success"`, `"error"`, `"paywall"`, and `"unsafe"`:
-
-```rust,ignore
-for result in response.url_context_results() {
-    for item in result.items {
-        if item.is_success() {
-            println!("Retrieved: {}", item.url);
-        } else {
-            println!("Failed to retrieve {} ({})", item.url, item.status);
-        }
-    }
-}
-```
-
-A page the tool could not fetch shows up as a non-`"success"` `status`, not
-as an error.
+**Example**: `cargo run --example url_context`
 
 ## Computer Use
 
-Browser automation for web interactions. Configure via `ComputerUseConfig` and `add_tool()`. Computer-use actions flow through `function_call` steps that your agent loop executes against a browser.
-
-### Basic Usage
-
-```rust,ignore
-use genai_rs::ComputerUseConfig;
-
-let response = client
-    .interaction()
-    .with_model(genai_rs::DEFAULT_MODEL)
-    .with_text("Go to example.com and describe what you see")
-    .add_tool(ComputerUseConfig::new())  // defaults to the "browser" environment
-    .create()
-    .await?;
-```
-
-### Configuration
+Browser, mobile or desktop automation, configured with `ComputerUseConfig`.
+The model emits its actions as `function_call` steps, and **your** loop
+performs them against a browser or device and returns the results.
 
 ```rust,ignore
 use genai_rs::ComputerUseConfig;
@@ -289,21 +208,22 @@ let response = client
     .await?;
 ```
 
-Computer use is allowlisted: most API keys can't enable it. Use
-`excluding()` to disable actions a task doesn't need, and turn on prompt
-injection detection when browsing untrusted pages.
+`ComputerUseConfig::new()` defaults to the `"browser"` environment. Computer
+use is allowlisted, and most API keys can't enable it. Exclude actions a task
+doesn't need, and turn on prompt-injection detection when browsing untrusted
+pages.
 
 **Example**: `cargo run --example computer_use`
 
 ## File Search
 
-Semantic search across documents in pre-configured file search stores.
-
-### Setup: Create a Store First
-
-File Search operates on *file search stores* (resource names like `fileSearchStores/my-store-123`), not on ad-hoc Files API uploads. Create a store, upload documents into it, and wait for indexing before searching:
+Semantic search over *file search stores* (resource names like
+`fileSearchStores/my-store-123`), not over Files API uploads. Create a store,
+upload documents into it, and wait for indexing before searching:
 
 ```rust,ignore
+use genai_rs::CreateFileSearchStoreRequest;
+
 let store = client
     .create_file_search_store(&CreateFileSearchStoreRequest::new().with_display_name("my-docs"))
     .await?;
@@ -318,9 +238,8 @@ let document = client
 client.wait_for_document_active(&document.name, None, None).await?;
 ```
 
-The store can also be created in Google AI Studio; pass its resource name either way. See `examples/file_search.rs` for the full lifecycle including cleanup.
-
-### Basic Search
+A store created in Google AI Studio works the same way; pass its resource
+name. `examples/file_search.rs` shows the full lifecycle, including cleanup.
 
 ```rust,ignore
 use genai_rs::FileSearchConfig;
@@ -337,38 +256,20 @@ let response = client
 println!("{}", response.as_text().unwrap_or_default());
 ```
 
-> **`file_search_results()` returns nothing on this API.** The accessor exists
-> and compiles, but the live API never emits the step it reads — verified
-> against a store with indexed, `STATE_ACTIVE` documents that demonstrably
-> grounded the answer. Retrieved chunks are not surfaced separately; they are
-> folded into the response text. Treat an empty result set as expected, not as
-> "the search found nothing." Tracked in #429.
+`FileSearchConfig` also takes `.with_top_k(n)` (maximum retrieved chunks) and
+`.with_metadata_filter("category:technical")`.
 
-### With Configuration
-
-```rust,ignore
-use genai_rs::FileSearchConfig;
-
-let config = FileSearchConfig::new(vec![store.name.clone()])
-    .with_top_k(10)                            // max retrieval chunks
-    .with_metadata_filter("category:technical"); // filter by document metadata
-
-let response = client
-    .interaction()
-    .with_model(genai_rs::DEFAULT_MODEL)
-    .with_text("Find all mentions of 'performance optimization'")
-    .add_tool(config)
-    .create()
-    .await?;
-```
-
-**Example**: `cargo run --example file_search`
+> **`file_search_results()` returns nothing on this API.** The live API never
+> emits the step it reads. This was verified against a store whose indexed,
+> `STATE_ACTIVE` documents demonstrably grounded the answer. Retrieved chunks
+> are folded into the response text, so an empty result set is expected
+> (#429).
 
 ## Retrieval
 
 Ground responses in external retrieval backends: Vertex AI Search engines and
 datastores, Vertex RAG Store corpora, or third-party search APIs (Exa.ai,
-Parallel.ai). Configure via [`RetrievalConfig`], which keeps the enabled
+Parallel.ai). Configure via `RetrievalConfig`, which keeps the enabled
 `retrieval_types` in sync with the per-backend configs.
 
 > **Vertex-only.** The Gemini API rejects the `retrieval` tool: live probing
@@ -401,81 +302,21 @@ let response = client
 # }
 ```
 
-### RAG Store
+The other backends are configured the same way, through
+`RetrievalConfig::with_*`:
 
-```rust,no_run
-use genai_rs::{
-    Client, RagFilter, RagRanking, RagResource, RagRetrievalConfig, RagStoreConfig,
-    RetrievalConfig,
-};
+| Backend | Config | Notes |
+|---------|--------|-------|
+| Vertex RAG Store | `RagStoreConfig::new(vec![RagResource::new(corpus)])`, `.with_rag_retrieval_config(RagRetrievalConfig::new().with_top_k(..).with_hybrid_search_alpha(..).with_filter(..).with_ranking(..))` | Hybrid search, filters, ranking |
+| Exa.ai | `ExaAiSearchConfig::new(api_key)`, `.with_custom_config(json)` | The `api_key` is sent on the wire in the tool config |
+| Parallel.ai | `ParallelAiSearchConfig::new()` (with its `api_key`) | As above |
 
-# async fn example() -> Result<(), Box<dyn std::error::Error>> {
-# let client = Client::new("api-key".to_string());
-let response = client
-    .interaction()
-    .with_model(genai_rs::DEFAULT_MODEL)
-    .with_text("Summarize the design documents about caching")
-    .add_tool(RetrievalConfig::new().with_rag_store(
-        RagStoreConfig::new(vec![
-            RagResource::new("projects/p/locations/us/ragCorpora/docs"),
-        ])
-        .with_rag_retrieval_config(
-            RagRetrievalConfig::new()
-                .with_top_k(8)
-                .with_hybrid_search_alpha(0.5)
-                .with_filter(RagFilter {
-                    vector_distance_threshold: Some(0.7),
-                    vector_similarity_threshold: None,
-                    metadata_filter: Some("category = \"design\"".to_string()),
-                })
-                .with_ranking(RagRanking::rank_service().with_model_name("ranker-v2")),
-        ),
-    ))
-    .create()
-    .await?;
-# Ok(())
-# }
-```
-
-### Third-Party Search (Exa.ai / Parallel.ai)
-
-```rust,no_run
-use genai_rs::{Client, ExaAiSearchConfig, ParallelAiSearchConfig, RetrievalConfig};
-
-# async fn example() -> Result<(), Box<dyn std::error::Error>> {
-# let client = Client::new("api-key".to_string());
-let exa_key = std::env::var("EXA_API_KEY")?;
-let response = client
-    .interaction()
-    .with_model(genai_rs::DEFAULT_MODEL)
-    .with_text("Find recent papers on speculative decoding")
-    .add_tool(RetrievalConfig::new().with_exa_ai_search(
-        ExaAiSearchConfig::new(exa_key)
-            .with_custom_config(serde_json::json!({"num_results": 5})),
-    ))
-    .create()
-    .await?;
-# Ok(())
-# }
-```
-
-**Security**: Exa.ai / Parallel.ai `api_key` values are sent on the wire in
-the tool config — load them from secrets management and treat request logs as
-sensitive.
-
-**When to use**: Enterprise search over provisioned Vertex resources, RAG
-corpora with fine-grained retrieval control, or third-party web-search APIs.
-For Google-hosted document stores prefer [File Search](#file-search); for
-general web grounding prefer [Google Search](#google-search).
-
-The Gemini API rejects `type: "retrieval"` (it is accepted on Vertex AI;
-see `Tool::Retrieval`), so there is no runnable example for it.
+Each `with_*` backend method also enables the matching `RetrievalType`.
+Treat request logs as sensitive when a third-party key is configured.
 
 ## Google Maps
 
-Ground responses in place and location data.
-
-### Basic Usage
+Grounds responses in place data.
 
 ```rust,ignore
 let response = client
@@ -502,31 +343,17 @@ for result in response.google_maps_results() {
 }
 ```
 
-### Location Biasing and Widgets
-
-```rust,ignore
-use genai_rs::GoogleMapsConfig;
-
-let response = client
-    .interaction()
-    .with_model(genai_rs::DEFAULT_MODEL)
-    .with_text("What are the best lunch spots nearby?")
-    .add_tool(
-        GoogleMapsConfig::new()
-            .with_location(37.7955, -122.3937)  // bias results toward lat/lng
-            .with_widget(),                      // request a widget context token
-    )
-    .create()
-    .await?;
-```
-
-Maps grounding can also surface `Annotation::PlaceCitation` annotations (place id, name, URL, and review snippets) attached to the response text.
+`add_tool(GoogleMapsConfig::new().with_location(lat, lng).with_widget())`
+biases results toward a location and requests a widget context token. Maps
+grounding can also attach `Annotation::PlaceCitation` annotations (place id,
+name, URL, review snippets) to the text.
 
 **Example**: `cargo run --example google_maps`
 
 ## MCP Servers
 
-Let the API call tools on a remote MCP (Model Context Protocol) server on the model's behalf.
+The API calls tools on a remote MCP (Model Context Protocol) server for the
+model.
 
 ```rust,ignore
 use genai_rs::McpServerConfig;
@@ -549,16 +376,9 @@ let response = client
     .await?;
 ```
 
-For per-mode restrictions use `with_allowed_tools_config()` with explicit `AllowedTools` entries:
-
-```rust,ignore
-use genai_rs::{AllowedTools, FunctionCallingMode, McpServerConfig};
-
-let config = McpServerConfig::new("filesystem", "https://mcp.example.com/fs")
-    .with_allowed_tools_config(vec![
-        AllowedTools::new(vec!["read_file".to_string()]).with_mode(FunctionCallingMode::Auto),
-    ]);
-```
+For a restriction with a mode, pass `AllowedTools` entries to
+`with_allowed_tools_config()`:
+`AllowedTools::new(vec!["read_file".into()]).with_mode(FunctionCallingMode::Auto)`.
 
 **MCP calls arrive as generic `Step::ToolCall { id, signature }` steps**,
 not as `Step::McpServerToolCall` (verified live 2026-08-16 against a real MCP
@@ -571,71 +391,31 @@ spec (#459).
 
 ## Combining Tools
 
-Multiple built-in tools can be enabled simultaneously.
-
-### Research Assistant
-
-```rust,ignore
-let response = client
-    .interaction()
-    .with_model(genai_rs::DEFAULT_MODEL)
-    .with_text("Research the latest Rust async features and write example code")
-    .with_google_search()      // Find current information
-    .with_code_execution()     // Write and test code
-    .create()
-    .await?;
-```
-
-### Document Analysis with Code Execution
-
-```rust,ignore
-use genai_rs::FileSearchConfig;
-
-let response = client
-    .interaction()
-    .with_model(genai_rs::DEFAULT_MODEL)
-    .with_text("Total the quarterly figures in our internal report")
-    .add_tool(FileSearchConfig::new(vec![store.name.clone()]))
-    .with_code_execution()
-    .create()
-    .await?;
-```
-
-#### File Search cannot be combined with the other retrieval tools
-
-The API rejects File Search alongside either web-retrieval tool, with a 400
-naming the pair (verified live 2026-08-16 against `gemini-3.7-flash`):
+Tools can be combined in one request, with two exceptions (verified live
+2026-08-16 against `gemini-3.7-flash`):
 
 | Combination | Result |
 |-------------|--------|
-| `file_search` + `google_search` | **400** — "`'google_search'` and `'file_search'` cannot be combined in the same request. Please choose one to continue." |
-| `file_search` + `url_context` | **400** — same message, naming `url_context` |
+| `file_search` + `google_search` | **400**: "`'google_search'` and `'file_search'` cannot be combined in the same request. Please choose one to continue." |
+| `file_search` + `url_context` | **400**, the same message naming `url_context` |
 | `file_search` + `code_execution` | Accepted |
 
 To ground on both internal documents and the web, run two interactions and
-combine the results yourself.
+combine the results.
 
-### With Client-Side Functions
-
-Built-in tools can also combine with your own functions:
+Built-in tools also combine with your own functions. With
+`create_with_auto_functions()`, add your `#[tool]` declarations explicitly,
+because setting any tool switches off registry discovery (see
+[Function Calling](FUNCTION_CALLING.md#automatic-execution-create_with_auto_functions)):
 
 ```rust,ignore
-use genai_rs::CallableFunction;
-use genai_rs_macros::tool;
-
-/// Get current user's preferences
-#[tool]
-fn get_user_prefs() -> String {
-    // Your implementation
-    r#"{"theme": "dark", "language": "en"}"#.to_string()
-}
-
-let response = client
+// get_user_prefs is a #[tool] function
+let result = client
     .interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Personalize search results based on my preferences")
     .with_google_search()
-    .add_function(GetUserPrefsCallable.declaration())
+    .add_function(get_user_prefs_declaration())
     .create_with_auto_functions()
     .await?;
 ```
@@ -673,12 +453,7 @@ let response = client
 |---------|-------------------|
 | `google_search` | Google Search with streaming |
 | `code_execution` | Python execution and result handling |
+| `url_context` | URL fetching |
 | `computer_use` | Browser automation |
 | `file_search` | Document search over file search stores |
 | `google_maps` | Place grounding |
-| `deep_research` | Multi-tool research agent |
-
-Run examples with:
-```bash
-cargo run --example <name>
-```

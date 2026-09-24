@@ -91,13 +91,15 @@ println!("{}", result.response.as_text().unwrap_or_default());
 
 How the loop behaves:
 
-- **Discovery.** If the request has no tools set, every registered `#[tool]`
-  function and every `ToolService` function is declared; a service function
-  shadows a registry function with the same name. If *any* tool is set
-  (`add_function()`, `with_google_search()`, ...), discovery is skipped and
-  only what you set is declared. Registered functions are still executed
-  when called, so `add_function(get_weather_declaration())` is how you
-  restrict the model to a subset.
+- **Discovery.** `ToolService` functions are always declared, alongside any
+  tools you set (a name already declared is not added twice). The global
+  `#[tool]` registry is consulted only when **no** tools are set. Then every
+  registered function is declared, and a service function shadows a registry
+  function with the same name. So once you set any tool (`add_function()`,
+  `with_google_search()`, ...), registry functions are declared only if you
+  add them. Registered functions are still executed when called, so
+  `add_function(get_weather_declaration())` is how you restrict the model to
+  a subset.
 - **Rounds.** Each round sends the request, executes the function calls it
   gets back, and sends the results, chained by `previous_interaction_id`. The
   whole request, including tools, system instruction and generation config,
@@ -246,10 +248,62 @@ println!("{}", response.as_text().unwrap());
 For a failed execution, `Step::function_result_error(name, call_id, result)`
 sets `is_error: true` on the step. A real loop should also cap its iterations.
 
-**Parallel calls.** The model may return several calls in one response. Run
-them concurrently if you like, and send one `function_result` step per call
-in a single request. Results are matched to calls by `call_id`, not by
-position.
+- **Tools on result turns.** Tools are not inherited across turns (see
+  [Conversations](CONVERSATIONS.md#what-carries-over-between-turns)). A turn
+  that only sends function results may omit them; the API accepts that
+  (`test_parallel_function_calls`). Resending them is fine too.
+- **Parallel calls.** The model may return several calls in one response
+  (each with a distinct `id`). Run them concurrently if you like, and send one
+  `function_result` step per call in a single request. Results are matched by
+  `call_id`, not position: the parallel-call test sends them back reversed.
+- **Chained calls.** When one call's output feeds another, the model makes
+  the second call in a later round, after seeing the first result. The loop
+  above handles that with no extra code.
+
+### Without server storage
+
+With `with_store_disabled()` there is no `previous_interaction_id` to chain
+on, so you resend the whole conversation each round. Extend it with
+`output_steps()`, which keeps the `signature` on each `function_call` step
+that the API requires on replay, then append your results:
+
+```rust,no_run
+use genai_rs::{FunctionDeclaration, Step};
+use serde_json::json;
+
+# async fn run(client: genai_rs::Client, tools: Vec<FunctionDeclaration>) -> Result<(), genai_rs::GenaiError> {
+# fn execute(_name: &str, _args: &serde_json::Value) -> serde_json::Value { json!({"ok": true}) }
+let mut history = vec![Step::user_text("What's the weather in Tokyo?")];
+
+for _round in 0..5 {
+    let response = client
+        .interaction()
+        .with_model(genai_rs::DEFAULT_MODEL)
+        .with_history(history.clone())
+        .add_functions(tools.clone())
+        .with_store_disabled()
+        .create()
+        .await?;
+
+    // Replay the model's steps verbatim (thoughts and function calls, with signatures)
+    history.extend(response.output_steps());
+
+    let calls = response.function_calls();
+    if calls.is_empty() {
+        println!("{}", response.as_text().unwrap_or_default());
+        break;
+    }
+    for call in calls {
+        history.push(Step::function_result(call.name, call.id, execute(call.name, call.args)));
+    }
+}
+# Ok(())
+# }
+```
+
+`examples/real_world/multi_turn_agent_manual_stateless` is a complete agent
+built this way. [Conversations](CONVERSATIONS.md#replay-model-output-verbatim)
+covers replaying history in general.
 
 ## `FunctionDeclaration` builder
 
@@ -345,6 +399,6 @@ cargo run --example <name>
 
 ## Related
 
-- [Multi-Turn Function Calling](MULTI_TURN_FUNCTION_CALLING.md): functions across turns, stateless history
+- [Conversations](CONVERSATIONS.md): multi-turn state, what carries over between turns, replaying history
 - [Error Handling](ERROR_HANDLING.md#function-calling-errors): what the model receives when a function fails
 - [Streaming API](STREAMING_API.md): streaming with functions

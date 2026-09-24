@@ -228,7 +228,7 @@ testing function calling.
 "what is this test primarily verifying?" The payoff is that every test for a
 feature is in one place.
 
-*Also stated as a rule in `docs/TESTING.md` ("Test Organization Philosophy" → "Tests Organized by Feature, Not Pattern").*
+*Also stated as a rule in `docs/TESTING.md` ("Live tests" → "Rules").*
 
 ---
 

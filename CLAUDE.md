@@ -121,7 +121,7 @@ reaches the wire must use a real id.
 - `with_*` configures a setting (calling twice replaces); `add_*` appends to a
   collection. See `docs/BUILDER_API.md`.
 - `*_with_auto_functions()` runs the function-calling loop
-  (`docs/MULTI_TURN_FUNCTION_CALLING.md`).
+  (`docs/FUNCTION_CALLING.md`).
 - `#[must_use]` on getters, handles and boolean checks.
 - Errors: `GenaiError` (`src/errors.rs`) for API/transport, `FunctionError`
   for tool execution.

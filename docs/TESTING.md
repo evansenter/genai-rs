@@ -1,319 +1,98 @@
 # Testing Guide
 
-This guide explains the testing infrastructure, philosophy, and how to write tests for `genai-rs`.
+How the test suite is laid out, how to run each part, and the rules new tests
+follow.
 
-## Table of Contents
+## Test kinds
 
-- [Test Categories](#test-categories)
-- [Running Tests](#running-tests)
-- [CI Pipeline](#ci-pipeline)
-- [Test Utilities](#test-utilities)
-- [Writing New Tests](#writing-new-tests)
-- [Assertion Strategies](#assertion-strategies)
-- [Test Data](#test-data)
-- [Debugging Tests](#debugging-tests)
-- [Test Organization Philosophy](#test-organization-philosophy)
-
-## Test Categories
-
-### Unit Tests
-
-Inline tests in source files covering serialization, builders, and internal logic.
+| Kind | Where | Needs a key | Run with |
+|------|-------|-------------|----------|
+| Unit | `#[cfg(test)]` modules and `src/*_tests.rs` | No | `make test` |
+| Property (proptest) | `src/proptest_tests.rs` | No | `make test` (or `cargo test proptest`) |
+| Offline HTTP | `tests/http_mock_tests.rs`, `tests/http_mock_resources.rs` | No | `make test` |
+| Guards | `tests/ci_coverage.rs`, `tests/model_literals.rs`, `tests/non_exhaustive_responses.rs` | No | `make test` |
+| Compile-time (trybuild) | `tests/ui/` via `tests/ui_tests.rs` | No | `cargo test --test ui_tests` |
+| Live integration | The other `tests/*.rs` files; each test is `#[ignore = "Requires API key"]` | Yes | `make test-all` |
+| Doctests | Rustdoc examples and the markdown guides (`doc_comment!` in `src/lib.rs`) | No | `cargo test --workspace --doc --all-features` (CI only; `make` skips them) |
+| Harness | `tests/antigravity_harness.rs` | Yes, plus `localharness` | See [ANTIGRAVITY.md](ANTIGRAVITY.md) |
 
 ```bash
-make test                                 # Run all unit tests (uses cargo-nextest)
-cargo nextest run -E 'test(/test_name/)'  # Run specific test by pattern
-```
-
-**Location**: `src/*_tests.rs` files and `#[cfg(test)]` modules
-
-**What they test**:
-- Serialization/deserialization roundtrips
-- Builder pattern validation
-- Helper method behavior
-- Error type formatting
-
-### Integration Tests
-
-End-to-end tests that call the real Gemini API. Require `GEMINI_API_KEY`.
-
-```bash
-make test-all                                        # Run all tests including integration
-cargo nextest run --test interactions_api_tests --run-ignored all  # Single file
-```
-
-**Location**: `tests/*.rs`
-
-**Key test files**:
-
-| File | Coverage |
-|------|----------|
-| `interactions_api_tests.rs` | CRUD, background mode, streaming, generation config, errors |
-| `multiturn_tests.rs` | Conversation mechanics, system-instruction inheritance, usage |
-| `streaming_multiturn_tests.rs` | Streaming in multi-turn conversations |
-| `streaming_resume_tests.rs` | `get_interaction_stream` and `last_event_id` resume |
-| `tools_and_config_tests.rs` | Built-in tools, structured output, generation config |
-| `function_calling_tests.rs` | `#[tool]` macro, auto-execution, multi-turn |
-| `tool_service_tests.rs` | `ToolService` registration and precedence |
-| `webhooks_and_agents_tests.rs` | Webhooks, agents, environments, triggers, Vertex-gated params |
-| `multimodal_tests.rs` | Images, audio, video, documents |
-
-### Property-Based Tests (proptest)
-
-Automatic generation of test cases for serialization roundtrips.
-
-```bash
-cargo test proptest                       # Run proptest tests
-```
-
-**Location**: `src/proptest_tests.rs` holds every strategy and roundtrip
-property. It is in-crate so there is one set of strategies to keep current;
-an integration-test copy drifts, because crate-private strategies cannot be
-shared with it.
-
-**What they verify**:
-- Any valid type serializes and deserializes to the same value
-- Unknown variants preserve data through roundtrips
-- Edge cases humans wouldn't think to test
-
-### UI/Compile-Time Tests (trybuild)
-
-Verify that invalid code fails to compile with helpful error messages.
-
-```bash
-cargo test --test ui_tests
-```
-
-**Location**: `tests/ui/*.rs`
-
-**What they test**:
-- `#[tool]` macro error messages (`fail_*.rs`)
-- What the macro must *not* require of a consumer, and the `StepSummary`
-  migration path (`pass_*.rs`)
-
-### Canary Tests
-
-Early-warning tests that detect when the API returns new step or content types.
-
-```bash
-cargo nextest run --test api_canary_tests --run-ignored all
-```
-
-**Purpose**: When Google adds new step or content types, these tests fail to alert us to add support.
-
-**Note**: Skipped when `--features strict-unknown` is enabled.
-
-### Wire Format Tests
-
-Verify actual API wire formats match our expectations.
-
-| File | Purpose |
-|------|---------|
-| `wire_format_verification_tests.rs` | Offline format verification |
-| `unknown_variant_tests.rs` | Unknown variant handling |
-
-Live drift detection is the canaries' job (`api_canary_tests.rs`).
-
-### Strict Mode Tests
-
-Test behavior with `--features strict-unknown`, which makes unknown `Content` and `Step` types and unknown string-enum values error instead of degrading gracefully (other tagged unions are unaffected). Tests that exercise an `Unknown` value carry `#[cfg(not(feature = "strict-unknown"))]`.
-
-```bash
-cargo test --features strict-unknown
-```
-
-## Running Tests
-
-### Quick Development Cycle
-
-```bash
-make test                                 # Unit tests only (~5s)
-```
-
-### Full Test Suite
-
-```bash
-make test-all                             # All tests (~2-5 min with API)
-```
-
-### Specific Categories
-
-```bash
-# By file
-cargo nextest run --test multiturn_tests --run-ignored all
-
-# By name pattern
+make test                                             # everything offline
+make test-all                                         # + live tests (GEMINI_API_KEY)
+cargo nextest run --test multiturn_tests --run-ignored all   # one live file
 cargo nextest run -E 'test(/function_calling/)' --run-ignored all
-
-# With output
-cargo nextest run --run-ignored all --no-capture
+LOUD_WIRE=1 cargo nextest run -E 'test(/name/)' --run-ignored all --no-capture -j 1
+cargo test --features strict-unknown                  # unknown Content/Step/string-enum values become errors
 ```
 
-### Environment Variables
+Tests that exercise an `Unknown` value carry
+`#[cfg(not(feature = "strict-unknown"))]`, since strict mode rejects it.
 
 | Variable | Purpose |
 |----------|---------|
-| `GEMINI_API_KEY` | Required for integration tests |
-| `RUST_LOG=genai_rs=debug` | Enable debug logging |
-| `LOUD_WIRE=1` | Show raw HTTP request/response |
-| `TEST_TIMEOUT_SECS` | Override default test timeout (default: 60) |
-| `EXTENDED_TEST_TIMEOUT_SECS` | Override extended test timeout (default: 120) |
+| `GEMINI_API_KEY` | Required for live tests |
+| `TEST_TIMEOUT_SECS` | Per-test budget (default 60) |
+| `EXTENDED_TEST_TIMEOUT_SECS` | Budget for multi-turn tests (default 120) |
+| `LOUD_WIRE=1`, `RUST_LOG=genai_rs=debug` | Wire and debug logging |
 
-## CI Pipeline
+## Offline HTTP tests
 
-The GitHub Actions workflow runs these jobs:
+`ClientBuilder::with_base_url` points a real `Client` at a local stub
+(`tests/common/http_stub.rs`, a small tokio server). The stub records every
+request (`Recorded`: method, path and query, headers, body) and replays
+canned `Reply`s: JSON, text, SSE chunks, extra headers, or a delay.
 
-| Job | What it does |
-|-----|--------------|
-| `check` | `cargo check --workspace --all-targets --all-features` |
-| `test` | Unit tests without API key |
-| `test-strict-unknown` | Unit tests with `--features strict-unknown` |
-| `test-integration` | 5 matrix groups with API key (see below) |
-| `fmt` | Format check |
-| `clippy` | Lint check |
-| `doc` | Documentation build |
-| `security` | `cargo audit` (runs in separate `audit.yml` workflow) |
-| `msrv` | Minimum supported Rust version check |
-| `cross-platform` | macOS and Windows builds |
-| `coverage` | Code coverage with `cargo llvm-cov` |
-| `build-metrics` | Clean build time measurement |
-| `ci-flakiness-report` | Daily flakiness analysis (creates `ci-health` issues) |
+- **`http_mock_tests.rs`** covers client behavior that only shows on the
+  wire: request shapes, error mapping, SSE framing, and the auto-function
+  loop.
+- **`http_mock_resources.rs`** pins every resource endpoint on method, path
+  (percent-encoding included), query and JSON body. It parses a realistic
+  response, preserving `Unknown` and `extra`, and covers the wait helpers'
+  success, failure and timeout paths. Files API uploads are left out.
+- **Known bugs** are failing tests in `tests/http_mock_resources/known_bugs.rs`,
+  ignored with a `known bug: ...` reason until fixed. They sit in a
+  subdirectory because `ci_coverage.rs` scans only top-level files. Run them
+  with `cargo nextest run --test http_mock_resources --run-ignored only`.
 
-### Integration Test Matrix
+Prefer an offline test for anything that doesn't depend on model behavior;
+it's fast and runs on every PR.
 
-Tests are split into 5 groups to parallelize and isolate failures:
+## Live tests
 
-| Group | Tests |
-|-------|-------|
-| `core` | interactions_api, multiturn, streaming_multiturn, streaming_resume, error_handling |
-| `tools` | tools_and_config, webhooks_and_agents |
-| `functions` | function_calling, tool_service |
-| `multimodal` | multimodal, api_canary, temp_file |
-| `files-and-wire` | files_api, file_search_stores |
+### Rules
 
-Every binary with a live test must appear in exactly one group;
-`tests/ci_coverage.rs` fails the unit suite otherwise.
+- **Ignore reason.** A live test is `#[ignore = "Requires API key"]`, that
+  exact string. `tests/ci_coverage.rs` fails if any top-level `tests/*.rs`
+  file uses another reason (`antigravity_harness` is exempt).
+- **CI matrix.** Every top-level file with a live test must be listed in
+  exactly one `test-integration` group in `.github/workflows/rust.yml`.
+  `ci_coverage.rs` fails on a missing binary, a binary listed twice, or a
+  listed binary with no file.
+- **Fail, don't skip.** The only early return is the no-key skip. A request
+  that fails must fail the test (D-010). If a turn must call a function, set
+  `FunctionCallingMode::Any`; don't return when the model answers directly.
+  CI fails the job outright on an empty `GEMINI_API_KEY`, so the no-key
+  skip never turns a CI run green.
+- **Assert the effect.** A structural check pins the wire shape, not that a
+  feature works. Where the feature has an observable effect, assert that too.
 
-## Test Utilities
+| Group | Binaries |
+|-------|----------|
+| `core` | `interactions_api_tests`, `multiturn_tests`, `streaming_multiturn_tests`, `streaming_resume_tests`, `error_handling_tests` |
+| `tools` | `tools_and_config_tests`, `webhooks_and_agents_tests`, `credentials_tests`, `environment_files_tests` |
+| `functions` | `function_calling_tests`, `tool_service_tests` |
+| `multimodal` | `multimodal_tests`, `api_canary_tests`, `temp_file_tests`, `processing_steps_tests`, `voices_tests`, `binding_parity_tests` |
+| `files-and-wire` | `files_api_tests`, `file_search_stores_tests` |
 
-The `tests/common/mod.rs` module provides shared utilities:
+Tests live with the feature they verify, not the mechanics they use (D-008).
+A function-calling test that happens to be multi-turn belongs in
+`function_calling_tests.rs`. `api_canary_tests` fail when the API returns a
+step, delta or status type the crate doesn't model. They are compiled out
+under `strict-unknown`.
 
-### Client Setup
-
-```rust,ignore
-mod common;
-use common::*;
-
-let client = get_client().expect("GEMINI_API_KEY must be set");
-let response = interaction_builder(&client)
-    .with_text("Hello")
-    .create()
-    .await?;
-```
-
-### Retry for Transient Errors
-
-```rust,ignore
-// Retry on known transient errors (Spanner UTF-8, etc.)
-let response = retry_on_transient(3, || async {
-    interaction_builder(&client)
-        .with_text("Hello")
-        .create()
-        .await
-}).await?;
-
-// Or use the macro for cleaner syntax
-let response = retry_request!([client] => {
-    interaction_builder(&client).with_text("Hello").create().await
-})?;
-```
-
-### Timeouts
+### Template
 
 ```rust,ignore
-use common::{test_timeout, with_timeout};
-
-with_timeout(test_timeout(), async {
-    // Test logic that might hang
-}).await;
-```
-
-**Environment variables** for timeout configuration:
-- `TEST_TIMEOUT_SECS` - Default test timeout (default: 60 seconds)
-- `EXTENDED_TEST_TIMEOUT_SECS` - Extended timeout for multi-turn tests (default: 120 seconds)
-
-### Stream Consumption
-
-```rust,ignore
-let stream = interaction_builder(&client)
-    .with_text("Hello")
-    .create_stream();
-
-let result = consume_stream(stream).await;
-assert!(!result.collected_text.is_empty());
-assert!(result.final_response.is_some());
-```
-
-Both stream helpers panic on the first stream error. A test that expects an
-error should iterate the stream itself and match on the item.
-
-### Semantic Validation
-
-For behavioral tests where exact output varies, use the suite-wide helper
-(it retries the validator on transient errors and tolerates only what
-survives the retries — see the retry-and-tolerance policy note under
-[Minimal Test Assets](#minimal-test-assets)):
-
-```rust,ignore
-assert_response_semantic(
-    &client,
-    "User asked about weather in Tokyo",
-    response.as_text().unwrap(),
-    "Does the response mention Tokyo's weather?"
-).await;
-```
-
-### Function Execution Error Detection
-
-When testing `create_with_auto_functions()`, always verify executions succeeded:
-
-```rust,ignore
-let result = client
-    .interaction()
-    .with_text("What's the weather?")
-    .add_functions(vec![get_weather_function()])
-    .create_with_auto_functions()
-    .await?;
-
-// ✓ Check function was called AND succeeded
-assert!(result.all_executions_succeeded(),
-    "Executions failed: {:?}", result.failed_executions());
-
-// ✗ Don't just check if function was called (misses missing implementations)
-assert!(result.executions.iter().any(|e| e.name == "get_weather"));
-```
-
-**Why this matters**: If you declare a `FunctionDeclaration` but forget to register
-the implementation via `#[tool]` or `ToolService`, the library sends an error to
-the model instead of failing. The old assertion pattern passes silently!
-
-**Available helpers**:
-
-| Method | Description |
-|--------|-------------|
-| `result.all_executions_succeeded()` | Returns `true` if no executions have errors |
-| `result.failed_executions()` | Returns vec of failed `FunctionExecutionResult`s |
-| `execution.is_error()` | Returns `true` if this execution resulted in an error |
-| `execution.is_success()` | Returns `true` if this execution succeeded |
-| `execution.error_message()` | Returns the error message if any |
-
-## Writing New Tests
-
-### Integration Test Template
-
-```rust,ignore
-//! Description of what this test file covers.
-
 mod common;
 use common::*;
 
@@ -326,321 +105,107 @@ async fn test_feature_name() {
     };
 
     with_timeout(test_timeout(), async {
-        let response = interaction_builder(&client)
-            .with_text("Test prompt")
-            .create()
-            .await
-            .expect("Request should succeed");
+        let response = retry_request!([client] => {
+            interaction_builder(&client).with_text("Test prompt").create().await
+        })
+        .expect("request should succeed");
 
         assert_eq!(response.status, InteractionStatus::Completed);
-        let text = response.as_text().expect("Should have text");
+        let text = response.as_text().expect("should have text");
         assert_response_semantic(&client, "Asked X", text, "Does this answer X?").await;
-    }).await;
+    })
+    .await;
 }
 ```
 
-The only early return is the no-key skip. A request that fails must fail
-the test (D-010), and a turn that must call a function sets
-`FunctionCallingMode::Any` rather than returning when the model answers
-directly.
+### Helpers (`tests/common/mod.rs`)
 
-### Property Test Template
+| Helper | Purpose |
+|--------|---------|
+| `get_client()` | `Some(Client)` when `GEMINI_API_KEY` is set |
+| `get_inspecting_client()` | A client plus the last raw response body, for asserting on unmodeled fields |
+| `interaction_builder(&client)`, `stateful_builder(&client)` | Builders preset with `DEFAULT_MODEL` (the latter with storage on) |
+| `retry_request!([vars] => { ... })`, `retry_on_transient(n, ..)` | Retry transport errors (`is_retryable()`) and the model-side flakes in `is_transient_error` |
+| `with_timeout(test_timeout(), ..)`, `extended_test_timeout()` | Bound a test |
+| `consume_stream(..)`, `consume_auto_function_stream(..)` | Collect a stream's text and final response; they panic on the first stream error |
+| `poll_until_done(..)` | Poll a background interaction |
+| `assert_response_semantic(..)`, `validate_response_semantically(..)` | Semantic checks (below) |
+| `get_weather_function()`, `get_time_function()` | Shared declarations |
+| `TINY_RED_PNG_BASE64`, `TINY_BLUE_PNG_BASE64`, `TINY_WAV_BASE64`, `TINY_MP4_BASE64`, `TINY_PDF_BASE64` | Minimal valid media. The MP4 is one second: shorter clips yield no sampled frame and are rejected |
 
-```rust,ignore
-use proptest::prelude::*;
-use crate::proptest_tests::*;
+`is_transient_error` matches Spanner UTF-8 errors and two 400s (`invalid json
+syntax`, `there was a problem processing your request`); see
+[Error Handling](ERROR_HANDLING.md#known-transient-errors). A validation
+rejection still fails on the first attempt.
 
-proptest! {
-    #[test]
-    fn roundtrip_my_type(value in my_type_strategy()) {
-        let json = serde_json::to_string(&value).unwrap();
-        let parsed: MyType = serde_json::from_str(&json).unwrap();
-        prop_assert_eq!(value, parsed);
-    }
-}
-```
+For the auto-function loop, assert that executions **succeeded**, not just
+that they happened: `result.all_executions_succeeded()`, with
+`result.failed_executions()` in the message. A declared function with no
+implementation is answered with an error result, not a failure, so a
+"was it called" assertion passes on that bug.
 
-## Assertion Strategies
-
-### Decision Flowchart
-
-Use this to choose the right assertion type:
+## Assertions on model output
 
 ```text
-Is it checking LLM-generated text content?
-├── NO → Use structural assertions
-└── YES → Is the expected value deterministic?
-          ├── YES (error message, code execution result) → .contains() is OK
-          └── NO (natural language response) → Use semantic validation
+Is it checking LLM-generated text?
+├── No  → structural assertion (status, field presence, counts)
+└── Yes → is the expected value deterministic?
+          ├── Yes (an error message, a computed value) → .contains() is fine
+          └── No  (natural language)                  → assert_response_semantic
 ```
 
-### Structural Assertions
-
-Check API mechanics without depending on LLM output. A structural check pins
-the wire shape, not that a feature works (D-010): where the feature has an
-observable effect, assert the effect as well.
-
 ```rust,ignore
-// Good - structural
-assert!(response.as_text().is_some());
-assert_eq!(response.status, InteractionStatus::Completed);
-assert!(response.function_calls().len() > 0);
-```
-
-### Semantic Assertions (For LLM Output)
-
-For behavioral tests where the LLM's response content matters:
-
-```rust,ignore
-assert_response_semantic(
-    &client,
-    "Context: user asked X, function returned Y",
-    response.as_text().unwrap(),
-    "Does the response incorporate Y?"
-).await;
-```
-
-Use `assert_response_semantic` rather than calling
-`validate_response_semantically` directly — the helper retries the validator
-call on transient errors and asserts on the verdict, so a 503 on the
-validation round-trip doesn't hard-fail the test. Reach for the lower-level
-`validate_response_semantically` only when you need the verdict as a
-`Result` (e.g. inside a retry closure).
-
-**When to use semantic validation**:
-- Multi-turn context preservation ("Does this recall the user's name?")
-- Function result incorporation ("Does this use the weather data?")
-- Factual correctness ("Does this identify Paris as the capital?")
-- Content understanding ("Does this describe the image colors?")
-
-**When NOT to use**:
-- Status code verification
-- Field presence checks
-- Error message validation (deterministic strings)
-
-### Anti-Patterns to Avoid
-
-These patterns cause flaky tests because LLM output varies:
-
-```rust,ignore
-// BAD - Single keyword that may be rephrased
+// Flaky: the model may rephrase
 assert!(text.contains("paris"));
-// Model might say "The capital is Paris", "Paris, France", or "It's Paris"
+assert!(text.contains("red") || text.contains("crimson"));
 
-// BAD - OR chains trying to handle variability
-assert!(text.contains("red") || text.contains("crimson") || text.contains("scarlet"));
-// Still misses "reddish", "ruby", "a shade of red", etc.
+// Robust
+assert_response_semantic(&client, "Asked for the capital of France", text,
+    "Does this identify Paris as the capital of France?").await;
 
-// BAD - Partial match that's too specific
-assert!(text.contains("hik"));  // Trying to catch "hiking"
-// Misses "outdoor activities", "trekking", "walks"
+// Fine: deterministic
+assert!(text.contains("3628800"));                 // factorial(10) from code execution
+assert!(error.to_string().contains("Invalid input"));      // GenaiError::InvalidInput Display
 ```
 
-**Correct approach**:
+`assert_response_semantic` asks the model, through structured output, whether
+the text answers the question. It gives the validator call one transient
+retry. A transient failure that survives the retry is tolerated and printed as
+`SEMANTIC_VALIDATION_SKIPPED`; any other validator error panics. Call
+`validate_response_semantically` directly only when you need the verdict as a
+`Result`, for example inside a retry closure.
 
-```rust,ignore
-// GOOD - Semantic validation handles natural language variability
-assert_response_semantic(
-    &client,
-    "Asked about the capital of France",
-    text,
-    "Does this response correctly identify Paris as the capital of France?"
-).await;
+For forward compatibility, `response.has_unknown()`,
+`response.unknown_steps()` and `response.step_summary().unknown_types` report
+types the crate doesn't model.
 
-// GOOD - For color identification
-assert_response_semantic(
-    &client,
-    "Showed a red image",
-    text,
-    "Does this response identify the color as red or a shade of red?"
-).await;
-```
+### Skip markers
 
-### Acceptable `.contains()` Usage
+Two printed markers mean "passed without verifying":
 
-These patterns ARE appropriate because the values are deterministic:
+| Marker | Meaning |
+|--------|---------|
+| `SEMANTIC_VALIDATION_SKIPPED` | The validator failed transiently (or returned no usable verdict), so the verdict was never obtained |
+| `LIVE_TOOL_EVIDENCE_SKIPPED` | The interaction produced no evidence the tool ran, for a reason the test can't tell apart from a regression |
 
-```rust,ignore
-// OK - Error messages from the library (deterministic strings)
-assert!(error.to_string().contains("invalid API key"));
+The `test-integration` job keeps passing-test output
+(`--success-output=final`) and counts both markers per binary. Any marker
+gives a warning; more than 3 fails the step (`release.yml` does the same).
 
-// OK - Code execution results (exact computed values)
-assert!(text.contains("3628800"));  // factorial(10)
-assert!(text.contains("24133"));    // sum of primes
+A skip gets a marker when it can't tell a benign cause from a regression.
+For example, an MCP call that returns no tool evidence looks the same whether
+the model chose not to call the tool or the tool is broken. A skip whose
+guard names the specific cause stays unmarked, so it doesn't annotate every
+run. Examples are no API key, or a key that isn't allowlisted for computer
+use: that guard needs both the tool name and an unavailability phrase.
 
-// OK - JSON/schema structure checks
-assert!(schema.contains("\"type\": \"string\""));
+## Serialization tests
 
-// OK - Format validation
-assert!(email.contains("@"));
-```
+Serialization is tested twice, on purpose:
 
-### Unknown Step Checks
+| Layer | Where | Purpose |
+|-------|-------|---------|
+| Property | `src/proptest_tests.rs` | Random values round-trip, and Unknown variants keep their data. The strategies are in-crate so there is only one set to maintain |
+| Example | `src/*_tests.rs`, `tests/wire_format_verification_tests.rs`, `tests/unknown_variant_tests.rs` | Documents specific wire shapes and catches regressions quickly |
 
-For forward-compatibility testing:
-
-```rust,ignore
-// Verify no unknown steps or content (canary test)
-assert!(!response.has_unknown(),
-    "API returned unknown types: {:?}",
-    response.step_summary().unknown_types);
-
-// Or handle gracefully
-if response.has_unknown() {
-    for (type_name, data) in response.unknown_steps() {
-        log::warn!("Unknown step type: {} = {:?}", type_name, data);
-    }
-}
-```
-
-## Test Data
-
-### Minimal Test Assets
-
-`tests/common/mod.rs` provides minimal valid test data:
-
-| Constant | Description |
-|----------|-------------|
-| `TINY_RED_PNG_BASE64` | 1x1 red PNG |
-| `TINY_BLUE_PNG_BASE64` | 1x1 blue PNG |
-| `TINY_WAV_BASE64` | 100 frames of 16-bit mono silence (valid WAV) |
-| `TINY_MP4_BASE64` | 1-second 64x64 red H.264 clip (valid MP4; shorter clips yield no sampled frame and are rejected) |
-| `TINY_PDF_BASE64` | "Hello World" PDF |
-
-All fixtures are complete, well-formed files the API accepts. Tests
-exercising them on the non-streaming `create()` path retry transient
-transport errors on the primary call
-(`retry_request!`, keyed on `GenaiError::is_retryable` plus the module's
-`is_transient_error` model-side-flake cases) and then assert strictly —
-a validation rejection (e.g. 400 `invalid_request`) fails loudly on the
-first attempt, while a 503 blip does not redden the suite. (Exceptions:
-the streaming path, where the primary call is not a single `create()`,
-and the canary tests, kept out of scope for this pass.) Semantic
-validation via `assert_response_semantic` (the suite-wide helper; one
-deliberate direct `validate_response_semantically` call remains, inside a
-retry closure that needs the verdict as a `Result`) applies the same
-policy: the validator call is itself retried on transient errors, then
-the helper asserts on the verdict, panics on non-transient validator
-errors, and tolerates transients that survive the retries with a
-`SEMANTIC_VALIDATION_SKIPPED` marker.
-
-There are two such markers, and the distinction is why the second exists
-rather than reusing the first:
-
-| Marker | Means |
-|--------|-------|
-| `SEMANTIC_VALIDATION_SKIPPED` | The validator call itself failed transiently, so the verdict was never obtained. |
-| `LIVE_TOOL_EVIDENCE_SKIPPED` | The interaction succeeded, or failed in a way the test's triage guard did not recognise, but produced no evidence the tool actually ran. |
-
-Both are counted together. The CI integration step captures passing-test
-output via `--success-output=final` and greps for either: a `::warning::`
-annotation when any appear, and a **failed step** past a per-run threshold
-(see the marker-counting blocks in `rust.yml` and `release.yml` for the
-current numbers) — the escape hatch stays available for transient blips
-without being able to quietly become the normal path.
-
-The rule for whether a skip gets a marker is **distinguishability, not
-stability**. A skip whose guard names the specific thing
-being skipped is left unmarked: no `GEMINI_API_KEY`, or a key not
-allowlisted for computer use — that guard requires the tool name *and* an
-unavailability phrase, so only a rejection about computer use reaches it,
-not an unrelated 4xx. Marking those would annotate every run forever,
-which is noise.
-
-That scoping is deliberately not airtight, and the test says so: a
-model-level "computer use is not supported for this model" satisfies both
-halves too, so a regression of that kind would land in the unmarked
-branch. Leaving it unmarked is a recorded call, not an oversight — the
-alternative annotates every run on an un-allowlisted key indefinitely.
-
-A skip that cannot tell a benign cause from a regression is marked,
-however stable its cause may turn out to be. The two MCP skips are the
-examples, and they get there differently. The `Err`-arm one is a
-catch-all: it fires on any error the triage guard did not recognise, so it
-cannot separate a third-party outage from a rejection phrased in words the
-guard misses. The Ok-path one fires on a fully-recognised condition — the
-interaction completed with no tool evidence — but a model that simply
-chose not to call the tool and a silently broken tool produce the
-identical response, so it cannot separate those either.
-
-A permanently unreachable server is every bit as stable as an
-un-allowlisted key. What separates them is not stability but whether the
-branch could be hiding a real regression.
-
-### Test Fixtures
-
-```rust,ignore
-use common::{interaction_builder, stateful_builder};
-
-// Pre-configured with default model
-let builder = interaction_builder(&client);
-
-// Pre-configured for stateful conversations
-let builder = stateful_builder(&client);
-```
-
-## Debugging Tests
-
-### Enable Logging
-
-```bash
-RUST_LOG=genai_rs=debug cargo nextest run -E 'test(/test_name/)' --no-capture
-```
-
-### See Wire Traffic
-
-```bash
-LOUD_WIRE=1 cargo nextest run -E 'test(/test_name/)' --run-ignored all --no-capture
-```
-
-### Run Single Test with Full Output
-
-```bash
-cargo nextest run -E 'test(/test_specific_feature/)' --run-ignored all --no-capture -j 1
-```
-
-## Test Organization Philosophy
-
-This section documents intentional design decisions about test organization.
-
-### Tests Organized by Feature, Not Pattern
-
-Multi-turn conversation patterns appear in multiple test files:
-- `multiturn_tests.rs` - Core conversation mechanics (branching, long conversations, explicit turns)
-- `streaming_multiturn_tests.rs` - Streaming behavior in multi-turn contexts
-- `function_calling_tests.rs` - Function calling behavior (some tests use multi-turn)
-- `interactions_api_tests.rs` - Interaction features like thinking mode
-
-**This is intentional.** Tests are organized by **what they primarily test**, not by whether they happen to use multi-turn patterns. A function calling test that uses multi-turn is testing function calling, not conversation mechanics. This organization makes it easy to find all tests for a specific feature.
-
-**Don't consolidate** tests just because they share a pattern like multi-turn. Ask: "What is this test primarily verifying?"
-
-### Dual-Layer Serialization Testing
-
-Serialization is tested at two layers:
-
-| Layer | Location | Purpose |
-|-------|----------|---------|
-| **Proptest** | `src/proptest_tests.rs` | Fuzzing with random inputs to find edge cases |
-| **Manual** | `*_tests.rs` files | Document expected behavior, verify specific scenarios |
-
-**Both are valuable:**
-- Proptest finds unexpected edge cases automatically
-- Manual tests serve as documentation and catch regressions quickly
-- Manual tests run faster (no property generation overhead)
-
-**Don't remove** manual roundtrip tests just because proptest exists. They're complementary, not redundant. For serialization (which is critical for API compatibility), belt-and-suspenders testing is appropriate.
-
-### Integration Test Matrix Groups
-
-Integration tests are split into 5 CI matrix groups for parallelization:
-
-| Group | Tests | Rationale |
-|-------|-------|-----------|
-| `core` | interactions_api, multiturn, streaming_multiturn, streaming_resume, error_handling | Core API functionality |
-| `tools` | tools_and_config, webhooks_and_agents | Tools and resources |
-| `functions` | function_calling, tool_service | Function calling (isolated for flakiness) |
-| `multimodal` | multimodal, api_canary, temp_file | Media handling and drift canaries |
-| `files-and-wire` | files_api, file_search_stores | File and store resources |
-
-Tests are grouped by feature similarity and failure correlation. If one test in a group fails, related tests likely fail too, so grouping them reduces redundant CI runs.
+Keep both: the examples are documentation, and they run fast.
