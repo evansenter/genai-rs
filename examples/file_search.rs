@@ -7,7 +7,7 @@
 //!
 //! Run with: cargo run --example file_search
 
-use genai_rs::{Client, FileSearchConfig};
+use genai_rs::{Client, FileSearchConfig, GenaiError};
 use std::env;
 use std::error::Error;
 use std::io::Write;
@@ -94,7 +94,6 @@ async fn run_example(
         .with_model(model_name)
         .with_text(prompt)
         .add_tool(FileSearchConfig::new(vec![store_name.to_string()]))
-        .with_store_enabled()
         .create()
         .await?;
 
@@ -136,7 +135,6 @@ async fn run_example(
         .with_model(model_name)
         .with_text("What is the error handling policy?")
         .add_tool(FileSearchConfig::new(vec![store_name.to_string()]).with_top_k(3))
-        .with_store_enabled()
         .create()
         .await?;
 
@@ -164,43 +162,21 @@ async fn run_example(
         .with_text("Compare my async runtime policy with current Rust community practice.")
         .add_tool(FileSearchConfig::new(vec![store_name.to_string()]))
         .with_google_search()
-        .with_store_enabled()
         .create()
         .await;
 
     match combined {
+        Err(GenaiError::Api {
+            status_code: 400,
+            message,
+            ..
+        }) => println!("Rejected as expected: {message}"),
+        Err(e) => return Err(e.into()),
         Ok(response) => println!(
-            "Unexpectedly accepted (status {:?}) — the API may have lifted this restriction.",
+            "Accepted (status {:?}): the API may have lifted this restriction.",
             response.status
         ),
-        Err(e) => println!("Rejected as expected: {e}"),
     }
-
-    println!("\n=== Example Complete ===\n");
-
-    println!("--- What You'll See with LOUD_WIRE=1 ---");
-    println!("  [REQ#1] POST /fileSearchStores with display_name");
-    println!("  [RES#1] 200: store with name + embeddingModel\n");
-    println!("  [REQ#2] POST /upload/.../:uploadToFileSearchStore (raw protocol)");
-    println!("  [RES#2] 200: operation wrapper carrying response.documentName\n");
-    println!("  [REQ#3] GET .../documents/<id> (polled until STATE_ACTIVE)");
-    println!("  [RES#3] 200: document with state + sizeBytes (a JSON string)\n");
-    println!("  [REQ#4] POST /interactions with input + tools=[file_search]");
-    println!("  [RES#4] completed: file_search_call, file_search_result, model_output\n");
-
-    println!("--- Production Considerations ---");
-    println!("• Store identifiers are `fileSearchStores/<id>` — use the full");
-    println!("  resource name the create response returns, not the display name");
-    println!("• Indexing is async: a fresh upload is STATE_PENDING and matches");
-    println!("  nothing until STATE_ACTIVE — always wait_for_document_active()");
-    println!("• Deleting an indexed document or a non-empty store needs force=true");
-    println!("• Use metadata_filter for targeted queries across large document sets");
-    println!("• Set top_k to balance result quality vs. token usage");
-    println!("• file_search cannot be combined with google_search OR url_context —");
-    println!("  run two interactions and merge the results yourself");
-    println!("  (code_execution alongside file_search is accepted)");
-    println!("• file_search_result steps carry no chunk contents today, so the");
-    println!("  grounded material is visible only through the model's answer");
 
     Ok(())
 }

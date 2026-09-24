@@ -283,7 +283,7 @@ transports feed one canonical debugging surface:
 - CI: a new integration matrix group `antigravity`; a pipeline step
   `pip install google-antigravity==<pinned>`.
 
-## Example projects (tracked in docs/EXAMPLE_PROJECTS.md)
+## Example projects
 
 Flagship examples demonstrating the dual-mode value:
 

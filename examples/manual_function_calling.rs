@@ -1,248 +1,139 @@
-//! Manual Function Calling Example
+//! Manual function calling: you run the loop and execute the calls.
 //!
-//! This example demonstrates how to handle function calls manually, giving you
-//! full control over the execution loop. Use this approach when you need:
+//! Use this instead of `create_with_auto_functions()` when execution needs
+//! your own control: rate limits, caching, approval, or running calls
+//! concurrently as done here. The loop:
 //!
-//! - Custom execution logic (rate limiting, caching, circuit breakers)
-//! - Complex error handling and recovery
-//! - Integration with external systems that require special handling
-//! - Logging, metrics, or tracing around function execution
+//! 1. `create()` with function declarations
+//! 2. read `response.function_calls()` (several may arrive at once)
+//! 3. execute them, here concurrently with `join_all`
+//! 4. send a `Step::function_result` per call, chained with `with_previous_interaction`
+//! 5. repeat until the model answers in text
 //!
-//! # How It Works
+//! The prompt needs both shapes: independent calls in one round (weather
+//! for three cities) and a dependent call in a later round (converting a
+//! temperature the first round returned). Weather is stub data.
 //!
-//! 1. Send a request with function declarations using `create()` (not `create_with_auto_functions()`)
-//! 2. Check if the response contains function calls with `response.has_function_calls()`
-//! 3. Execute the functions yourself
-//! 4. Send results back using `Step::function_result()` and `with_previous_interaction()`
-//! 5. Repeat until the model returns a text response
-//!
-//! # Comparison with Auto Function Calling
-//!
-//! | Aspect | Manual | Auto |
-//! |--------|--------|------|
-//! | Control | Full - you handle everything | Library handles the loop |
-//! | Complexity | More code | Less code |
-//! | Use case | Custom logic needed | Simple execution |
-//! | Method | `create()` / `create_stream()` | `create_with_auto_functions()` |
-//!
-//! # Running
-//!
-//! ```bash
-//! cargo run --example manual_function_calling
-//! ```
-//!
-//! # Prerequisites
-//!
-//! Set the `GEMINI_API_KEY` environment variable with your API key.
+//! Run with: `cargo run --example manual_function_calling`
 
+use futures_util::future::join_all;
 use genai_rs::{Client, FunctionDeclaration, Step};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::env;
+use std::error::Error;
+
+const MAX_ROUNDS: usize = 5;
+
+fn declarations() -> Vec<FunctionDeclaration> {
+    vec![
+        FunctionDeclaration::builder("get_weather")
+            .description("Get the current weather for a city")
+            .parameter(
+                "city",
+                json!({"type": "string", "description": "City name"}),
+            )
+            .required(vec!["city".to_string()])
+            .build(),
+        FunctionDeclaration::builder("convert_temperature")
+            .description("Convert a temperature between celsius and fahrenheit")
+            .parameter("value", json!({"type": "number"}))
+            .parameter(
+                "to_unit",
+                json!({"type": "string", "enum": ["celsius", "fahrenheit"]}),
+            )
+            .required(vec!["value".to_string(), "to_unit".to_string()])
+            .build(),
+    ]
+}
+
+/// Your execution logic. Bad arguments go back to the model as an error
+/// result it can react to, rather than being papered over with defaults.
+async fn execute(name: &str, args: &Value) -> Result<Value, String> {
+    match name {
+        "get_weather" => {
+            let city = args["city"]
+                .as_str()
+                .ok_or("missing string argument 'city'")?;
+            let temperature_c = match city.to_lowercase().as_str() {
+                "tokyo" => 22.0,
+                "london" => 15.0,
+                "new york" => 18.0,
+                _ => 20.0,
+            };
+            Ok(json!({"city": city, "temperature_c": temperature_c, "conditions": "clear"}))
+        }
+        "convert_temperature" => {
+            let value = args["value"]
+                .as_f64()
+                .ok_or("missing numeric argument 'value'")?;
+            match args["to_unit"].as_str() {
+                Some("fahrenheit") => {
+                    Ok(json!({"value": value * 9.0 / 5.0 + 32.0, "unit": "fahrenheit"}))
+                }
+                Some("celsius") => {
+                    Ok(json!({"value": (value - 32.0) * 5.0 / 9.0, "unit": "celsius"}))
+                }
+                _ => Err("'to_unit' must be celsius or fahrenheit".to_string()),
+            }
+        }
+        _ => Err(format!("unknown function: {name}")),
+    }
+}
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let api_key = env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY environment variable not set");
+async fn main() -> Result<(), Box<dyn Error>> {
+    let api_key = env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY must be set");
     let client = Client::builder(api_key).build()?;
 
-    println!("=== MANUAL FUNCTION CALLING EXAMPLE ===\n");
+    let prompt = "What's the weather in Tokyo, London and New York? \
+                  Then convert the warmest city's temperature to fahrenheit.";
+    println!("User: {prompt}\n");
 
-    // Define function declarations (schemas only - no execution logic here)
-    let get_weather = FunctionDeclaration::builder("get_weather")
-        .description("Get the current weather for a city")
-        .parameter(
-            "city",
-            json!({
-                "type": "string",
-                "description": "The city to get weather for"
-            }),
-        )
-        .required(vec!["city".to_string()])
-        .build();
-
-    let convert_temperature = FunctionDeclaration::builder("convert_temperature")
-        .description("Convert temperature between Celsius and Fahrenheit")
-        .parameter(
-            "value",
-            json!({
-                "type": "number",
-                "description": "The temperature value to convert"
-            }),
-        )
-        .parameter(
-            "from_unit",
-            json!({
-                "type": "string",
-                "enum": ["celsius", "fahrenheit"]
-            }),
-        )
-        .parameter(
-            "to_unit",
-            json!({
-                "type": "string",
-                "enum": ["celsius", "fahrenheit"]
-            }),
-        )
-        .required(vec![
-            "value".to_string(),
-            "from_unit".to_string(),
-            "to_unit".to_string(),
-        ])
-        .build();
-
-    let functions = vec![get_weather, convert_temperature];
-
-    // ==========================================================================
-    // Manual Function Calling Loop
-    // ==========================================================================
-
-    let prompt = "What's the weather in Tokyo? Tell me the temperature in Fahrenheit.";
-    println!("User: {}\n", prompt);
-
-    // Step 1: Initial request with function declarations
     let mut response = client
         .interaction()
         .with_model(genai_rs::DEFAULT_MODEL)
         .with_text(prompt)
-        .add_functions(functions.clone())
-        .create() // NOT create_with_auto_functions() - we handle execution
+        .add_functions(declarations())
+        .create()
         .await?;
 
-    let mut loop_count = 0;
-    const MAX_LOOPS: usize = 5;
-
-    // Manual execution loop
-    while response.has_function_calls() && loop_count < MAX_LOOPS {
-        loop_count += 1;
-        println!("--- Loop {} ---", loop_count);
-
-        let function_calls = response.function_calls();
-        println!("Model requested {} function(s):", function_calls.len());
-
-        // Execute each requested function
-        let mut results = Vec::new();
-        for call in &function_calls {
-            println!("  - {}({})", call.name, call.args);
-
-            // Execute the function (YOUR custom logic here)
-            let result = execute_function(call.name, call.args);
-            println!("    Result: {}", result);
-
-            // Build a function result step (call.id links the result to the call)
-            results.push(Step::function_result(call.name, call.id, result));
+    for round in 1..=MAX_ROUNDS {
+        let calls = response.function_calls();
+        if calls.is_empty() {
+            println!("\n{}", response.as_text().ok_or("no text in response")?);
+            return Ok(());
         }
 
-        // Send results back to the model
-        // Note: previous_interaction_id requires stored interactions (store=true, the default)
-        let prev_id = response
-            .id
-            .as_ref()
-            .ok_or("Response missing ID. Multi-turn requires store=true (the default).")?;
+        println!("Round {round}: {} call(s)", calls.len());
+        let results = join_all(calls.iter().map(|call| execute(call.name, call.args))).await;
+
+        // Each result carries its call's ID; that is what the API matches on.
+        let mut steps = Vec::with_capacity(calls.len());
+        for (call, result) in calls.iter().zip(results) {
+            steps.push(match result {
+                Ok(value) => {
+                    println!("  {}({}) -> {value}", call.name, call.args);
+                    Step::function_result(call.name, call.id, value)
+                }
+                Err(message) => {
+                    println!("  {}({}) -> error: {message}", call.name, call.args);
+                    Step::function_result_error(call.name, call.id, json!({"error": message}))
+                }
+            });
+        }
+
+        let previous = response.id.clone().ok_or("stored interaction has no ID")?;
         response = client
             .interaction()
             .with_model(genai_rs::DEFAULT_MODEL)
-            .with_previous_interaction(prev_id) // Continue the conversation
-            .with_history(results) // function_result steps as input
-            .add_functions(functions.clone()) // Keep functions available
+            .with_previous_interaction(&previous)
+            .with_history(steps)
+            // Tools are not inherited across turns. The API tolerates omitting
+            // them on a function-result turn, but resending keeps one code path.
+            .add_functions(declarations())
             .create()
             .await?;
     }
 
-    // Final response
-    println!("\n--- Final Response ---");
-    println!("Loops executed: {}", loop_count);
-    println!("Status: {:?}", response.status);
-
-    if let Some(text) = response.as_text() {
-        println!("\nAssistant: {}", text);
-    }
-
-    if loop_count >= MAX_LOOPS && response.has_function_calls() {
-        println!("\n(Warning: Max loops reached, model may still want to call functions)");
-    }
-
-    // =========================================================================
-    // Summary
-    // =========================================================================
-    println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("✅ Manual Function Calling Demo Complete\n");
-
-    println!("--- Key Takeaways ---");
-    println!("• Use create() (not create_with_auto_functions()) for manual control");
-    println!("• Check response.has_function_calls() to detect pending calls");
-    println!("• Execute functions yourself, then send results with Step::function_result()");
-    println!("• Use with_previous_interaction() to maintain conversation context\n");
-
-    println!("--- What You'll See with LOUD_WIRE=1 ---");
-    println!("  [REQ#1] POST with input + 2 function declarations");
-    println!("  [RES#1] requires_action: get_weather(Tokyo)");
-    println!("  [REQ#2] POST with function_result + previousInteractionId + tools");
-    println!("  [RES#2] requires_action: convert_temperature(22, celsius, fahrenheit)");
-    println!("  [REQ#3] POST with function_result + previousInteractionId + tools");
-    println!("  [RES#3] completed: text response with converted temperature\n");
-
-    println!("--- Production Considerations ---");
-    println!("• Implement MAX_LOOPS to prevent infinite function call chains");
-    println!("• Add custom error handling, logging, and metrics in execute_function()");
-    println!("• Consider rate limiting and circuit breakers for external API calls");
-    println!("• Validate function arguments before execution");
-
-    Ok(())
-}
-
-/// Execute a function by name with the given arguments.
-///
-/// This is where YOU implement your custom logic. In a real application,
-/// this might:
-/// - Call external APIs
-/// - Query databases
-/// - Apply rate limiting
-/// - Log/trace execution
-/// - Handle errors with custom recovery
-fn execute_function(name: &str, args: &serde_json::Value) -> serde_json::Value {
-    match name {
-        "get_weather" => {
-            let city = args
-                .get("city")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Unknown");
-
-            // Simulated weather data
-            json!({
-                "city": city,
-                "temperature": 22.0,
-                "unit": "celsius",
-                "conditions": "partly cloudy",
-                "humidity": "65%"
-            })
-        }
-        "convert_temperature" => {
-            let value = args.get("value").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let from = args
-                .get("from_unit")
-                .and_then(|v| v.as_str())
-                .unwrap_or("celsius");
-            let to = args
-                .get("to_unit")
-                .and_then(|v| v.as_str())
-                .unwrap_or("fahrenheit");
-
-            let converted = if from == "celsius" && to == "fahrenheit" {
-                value * 9.0 / 5.0 + 32.0
-            } else if from == "fahrenheit" && to == "celsius" {
-                (value - 32.0) * 5.0 / 9.0
-            } else {
-                value
-            };
-
-            json!({
-                "value": converted,
-                "unit": to
-            })
-        }
-        _ => {
-            json!({
-                "error": format!("Unknown function: {}", name)
-            })
-        }
-    }
+    Err(format!("model was still calling functions after {MAX_ROUNDS} rounds").into())
 }

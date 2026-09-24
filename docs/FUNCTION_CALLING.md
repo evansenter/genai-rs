@@ -333,10 +333,9 @@ exactly as it does after `create()`. See [Streaming API](STREAMING_API.md).
 
 | Example | Demonstrates |
 |---------|-------------|
-| `auto_function_calling` | `#[tool]`, auto-discovery, the auto loop |
-| `tool_service` | Stateful functions via `ToolService` |
-| `manual_function_calling` | The manual loop |
-| `parallel_and_compositional_functions` | Parallel and chained calls |
+| `auto_function_calling` | `#[tool]` macro, auto-discovery, modes |
+| `tool_service` | Stateful functions, dependency injection |
+| `manual_function_calling` | Manual loop, parallel calls via `join_all`, dependent calls across rounds |
 | `streaming_auto_functions` | Streaming with auto execution |
 
 ```bash

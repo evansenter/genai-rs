@@ -132,7 +132,7 @@ cargo run --example simple_interaction
 | Text to speech | `text_to_speech` |
 | Get structured JSON | `structured_output` |
 | Route results to webhooks | `webhooks_and_background` |
-| Ground answers in my documents | `retrieval_grounding` |
+| Ground answers in my documents | `file_search` |
 | Run a local agent on my repo | `repo_auditor` (requires `--features antigravity`) |
 | Implement retry logic | `retry_with_backoff` |
 
@@ -325,7 +325,7 @@ agentic code-review application with subagents and a structured report.
 |----------|-------------|
 | [Builder API](docs/BUILDER_API.md) | Method naming conventions, validation |
 | [Error Handling](docs/ERROR_HANDLING.md) | Error types, recovery patterns |
-| [Reliability Patterns](docs/RELIABILITY_PATTERNS.md) | Retries, timeouts, resilience |
+| [Reliability](docs/RELIABILITY.md) | Retries, timeouts, cancellation, service tiers |
 | [Logging Strategy](docs/LOGGING_STRATEGY.md) | Log levels, `LOUD_WIRE` debugging |
 | [Enum Wire Formats](docs/ENUM_WIRE_FORMATS.md) | Verified wire formats, Unknown variants |
 | [API Gap Analysis](docs/INTERACTIONS_API_GAP.md) | Coverage tracker, Vertex-only findings |

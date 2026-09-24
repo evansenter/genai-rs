@@ -367,6 +367,57 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
+  example-smoke:
+    name: Example Smoke Run
+    needs: check
+    runs-on: ubuntu-latest
+    # Same gating as test-integration: the examples need the key, and forks
+    # (including a fork's own push to main) must not go red for a secret
+    # they never had.
+    if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: example-smoke
+      - uses: ./.github/actions/setup-mold
+      # Compile outside the per-example timeout, so a slow build is never
+      # reported as a hung example.
+      - name: Build examples
+        run: cargo build --examples
+      - name: Run examples
+        run: |
+          set -eo pipefail
+          # Trimmed, to match the `Ok(key) if !key.trim().is_empty()` the
+          # tests and examples gate on.
+          if [ -z "${GEMINI_API_KEY//[[:space:]]/}" ]; then
+            echo "::error::GEMINI_API_KEY is empty or unset — the examples cannot run"
+            exit 1
+          fi
+          # A cheap subset: a few calls each, no agents or long polls. Each
+          # exits non-zero when what it demonstrates didn't happen. One retry
+          # absorbs a transient 429 or an unlucky model turn; a retried pass
+          # still shows as a warning.
+          for ex in simple_interaction streaming stateful_interaction explicit_turns \
+                    auto_function_calling manual_function_calling structured_output \
+                    pdf_input files_api multi_turn_agent_manual_stateless; do
+            echo "::group::cargo run --example $ex"
+            if ! timeout --kill-after=30s 300s cargo run --example "$ex"; then
+              echo "::warning::$ex failed, retrying once"
+              sleep 5
+              if ! timeout --kill-after=30s 300s cargo run --example "$ex"; then
+                echo "::error::$ex failed twice"
+                echo "::endgroup::"
+                exit 1
+              fi
+            fi
+            echo "::endgroup::"
+          done
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
   fmt:
     name: Format
     runs-on: ubuntu-latest

@@ -1,77 +1,29 @@
-# Multi-Turn Agent (Manual + Stateless)
+# Multi-Turn Support Agent (manual loop, stateless)
 
-Customer support agent demonstrating **stateless** multi-turn conversations with manual function calling.
-
-## Key Concept
-
-When `store: false`, the server keeps no conversation state. You must:
-- Manually build and maintain conversation history
-- Send full history with each request
-- Cannot use `previous_interaction_id`
-
-## Stateful vs Stateless
-
-| Aspect | Stateful (`store: true`) | Stateless (`store: false`) |
-|--------|--------------------------|----------------------------|
-| Server state | Yes | No |
-| `previous_interaction_id` | Available | Cannot use |
-| History management | Automatic | Manual |
-| Auto functions | Available | Blocked at runtime |
-
-## When to Use Stateless
-
-- **Privacy**: No server-side conversation storage
-- **Custom persistence**: Store conversations in your own database
-- **History modification**: Filter or transform history between turns
-- **Testing**: Full control for reproducible test scenarios
-
-## Running
+The support agent with `with_store_disabled()`: the server keeps nothing, so
+the client holds the conversation and sends all of it on every request.
 
 ```bash
-export GEMINI_API_KEY=your_key
 cargo run --example multi_turn_agent_manual_stateless
-
-# With wire debugging
-LOUD_WIRE=1 cargo run --example multi_turn_agent_manual_stateless
 ```
 
-## Core Pattern
+## What it shows
 
-```rust
-struct StatelessSession {
-    client: Client,
-    conversation_history: Vec<Content>,  // Manual history
-}
+- **Client-held history** as a `Vec<Step>`, sent with `with_history()`.
+- **A manual function-calling loop.** `create_with_auto_functions()` needs
+  stored interactions and refuses to run with storage disabled.
+- **Replaying the model's steps verbatim.** Each round appends
+  `response.output_steps()` (thoughts, function calls, their signatures)
+  before the `Step::function_result`s. Rebuilding calls with
+  `Step::function_call(..)` drops the signatures the API needs to accept the
+  history.
+- **System instruction and tools on every request**, since nothing is
+  inherited.
 
-impl StatelessSession {
-    async fn process_message(&mut self, message: &str) -> Result<String> {
-        // Add user message to history
-        self.conversation_history.push(Content::text(message));
+| | `multi_turn_agent_auto` | this example |
+|--|--|--|
+| History | server (`previous_interaction_id`) | client (`Vec<Step>`) |
+| Functions | `#[tool]`, automatic | `FunctionDeclaration`, manual loop |
+| Storage | on (default) | `with_store_disabled()` |
 
-        // Send FULL history each time
-        let response = self.client.interaction()
-            .with_input(InteractionInput::Content(self.conversation_history.clone()))
-            .with_store_disabled()  // <-- Key difference
-            .create()
-            .await?;
-
-        // Manual function loop, add results to history...
-
-        // Add final response to history
-        self.conversation_history.push(Content::text(response.as_text()));
-        Ok(response.as_text().to_string())
-    }
-}
-```
-
-## Comparison with Other Examples
-
-| Example | State | Functions | Best For |
-|---------|-------|-----------|----------|
-| `multi_turn_agent_auto` | Server | Automatic | Quick prototyping |
-| `multi_turn_agent_manual` | Server | Manual | Custom execution logic |
-| `multi_turn_agent_manual_stateless` | Client | Manual | Privacy, custom storage |
-
-## See Also
-
-- [Multi-Turn Function Calling Guide](../../../docs/MULTI_TURN_FUNCTION_CALLING.md)
+See `docs/MULTI_TURN_FUNCTION_CALLING.md` for the full guide.

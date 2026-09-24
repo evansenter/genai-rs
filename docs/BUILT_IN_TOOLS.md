@@ -461,8 +461,13 @@ let response = client
 the tool config — load them from secrets management and treat request logs as
 sensitive.
 
-**Example**: `cargo run --example retrieval_grounding` prints the request
-wire shapes. It only calls the API when `VERTEX_AI_SEARCH_ENGINE` is set.
+**When to use**: Enterprise search over provisioned Vertex resources, RAG
+corpora with fine-grained retrieval control, or third-party web-search APIs.
+For Google-hosted document stores prefer [File Search](#file-search); for
+general web grounding prefer [Google Search](#google-search).
+
+The Gemini API rejects `type: "retrieval"` (it is accepted on Vertex AI;
+see `Tool::Retrieval`), so there is no runnable example for it.
 
 ## Google Maps
 

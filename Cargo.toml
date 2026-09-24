@@ -167,36 +167,12 @@ required-features = ["antigravity"]
 
 # Real-world example applications
 [[example]]
-name = "rag_system"
-path = "examples/real_world/rag_system/main.rs"
-
-[[example]]
 name = "multi_turn_agent_auto"
 path = "examples/real_world/multi_turn_agent_auto/main.rs"
 
 [[example]]
-name = "multi_turn_agent_manual"
-path = "examples/real_world/multi_turn_agent_manual/main.rs"
-
-[[example]]
 name = "multi_turn_agent_manual_stateless"
 path = "examples/real_world/multi_turn_agent_manual_stateless/main.rs"
-
-[[example]]
-name = "code_assistant"
-path = "examples/real_world/code_assistant/main.rs"
-
-[[example]]
-name = "data_analysis"
-path = "examples/real_world/data_analysis/main.rs"
-
-[[example]]
-name = "web_scraper_agent"
-path = "examples/real_world/web_scraper_agent/main.rs"
-
-[[example]]
-name = "testing_assistant"
-path = "examples/real_world/testing_assistant/main.rs"
 
 # Workspace-level metadata
 
