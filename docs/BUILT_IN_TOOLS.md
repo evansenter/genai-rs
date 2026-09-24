@@ -382,9 +382,11 @@ datastores, Vertex RAG Store corpora, or third-party search APIs (Exa.ai,
 Parallel.ai). Configure via [`RetrievalConfig`], which keeps the enabled
 `retrieval_types` in sync with the per-backend configs.
 
-> **Note**: These backends require pre-provisioned resources (search engines,
-> RAG corpora) or third-party API keys. Pending live verification against the
-> 2026-05-20 revision.
+> **Note**: The Gemini API rejects this tool (`type: "retrieval"` is "not
+> supported ... on the Gemini API"; verified live 2026-07, see
+> `Tool::Retrieval`). It is accepted on Vertex AI, where these backends also
+> need pre-provisioned resources (search engines, RAG corpora) or third-party
+> API keys.
 
 ### Vertex AI Search
 
@@ -474,7 +476,8 @@ corpora with fine-grained retrieval control, or third-party web-search APIs.
 For Google-hosted document stores prefer [File Search](#file-search); for
 general web grounding prefer [Google Search](#google-search).
 
-**Example**: `cargo run --example retrieval_grounding`
+The Gemini API rejects `type: "retrieval"` (it is accepted on Vertex AI;
+see `Tool::Retrieval`), so there is no runnable example for it.
 
 ## Google Maps
 

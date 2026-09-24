@@ -658,8 +658,7 @@ let result = client
 |---------|-------------|
 | `auto_function_calling` | `#[tool]` macro, auto-discovery, modes |
 | `tool_service` | Stateful functions, dependency injection |
-| `manual_function_calling` | Manual loop, full control |
-| `parallel_and_compositional_functions` | Parallel execution, chaining |
+| `manual_function_calling` | Manual loop, parallel calls via `join_all`, dependent calls across rounds |
 | `streaming_auto_functions` | Streaming with auto execution |
 
 Run with:

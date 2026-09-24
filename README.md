@@ -132,7 +132,7 @@ cargo run --example simple_interaction
 | Text to speech | `text_to_speech` |
 | Get structured JSON | `structured_output` |
 | Route results to webhooks | `webhooks_and_background` |
-| Ground answers in my documents | `retrieval_grounding` |
+| Ground answers in my documents | `file_search` |
 | Run a local agent on my repo | `repo_auditor` (requires `--features antigravity`) |
 | Implement retry logic | `retry_with_backoff` |
 

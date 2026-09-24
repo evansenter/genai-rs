@@ -242,7 +242,11 @@ Additionally, **the API rejects thought blocks in user input** with: `"User turn
 **Recommendation**: Document the Interactions API signature behavior separately from `generateContent`.
 
 - [`docs/MULTI_TURN_FUNCTION_CALLING.md`](./MULTI_TURN_FUNCTION_CALLING.md#thought-signatures) - Documents our findings
-- [`examples/thought_echo.rs`](../examples/thought_echo.rs) - Demonstrates the API limitation
+- [`examples/explicit_turns.rs`](../examples/explicit_turns.rs) - Stateless history built from `output_steps()`
+
+**Update (2026-09-24, revision 2026-05-20):** replaying `output_steps()`,
+signed `thought` steps included, as stateless history is now accepted;
+`examples/explicit_turns.rs` does this and checks the signed step is present.
 
 ---
 

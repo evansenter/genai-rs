@@ -681,16 +681,13 @@ Examples are ordered from simple to complex:
 |---------|-------|-----------|-----------|
 | **Single-Turn (Getting Started)** |
 | `auto_function_calling` | Single-turn | `#[tool]` | Auto |
-| `manual_function_calling` | Single-turn | `FunctionDeclaration` | Manual |
+| `manual_function_calling` | Single-turn | `FunctionDeclaration` | Manual + parallel |
 | `streaming_auto_functions` | Single-turn | `#[tool]` | Auto + Streaming |
 | **Multi-Turn Stateful** |
 | `multi_turn_agent_auto` | Stateful | `#[tool]` | Auto |
-| `multi_turn_agent_manual` | Stateful | `FunctionDeclaration` | Manual |
 | `tool_service` | Stateful | `ToolService` | Auto |
 | **Multi-Turn Stateless** |
 | `multi_turn_agent_manual_stateless` | Stateless | `FunctionDeclaration` | Manual |
-| **Advanced Patterns** |
-| `parallel_and_compositional_functions` | Stateful | `FunctionDeclaration` | Manual + Parallel |
 
 Run any example:
 
