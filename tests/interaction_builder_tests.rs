@@ -71,59 +71,68 @@ mod basic {
         assert!(err.contains("Cannot specify both model"));
     }
 
+    fn text_input(request: &genai_rs::InteractionRequest) -> &str {
+        match &request.input {
+            InteractionInput::Text(text) => text,
+            other => panic!("expected text input, got {other:?}"),
+        }
+    }
+
     #[test]
     fn test_interaction_builder_with_very_long_text() {
-        // Test with very long input text (10KB)
+        // No client-side size limit: 12KB goes through unchanged.
         let client = Client::new("test-api-key".to_string());
-        let long_text = "Lorem ipsum ".repeat(1000); // ~12KB
+        let long_text = "Lorem ipsum ".repeat(1000);
 
-        let _builder = client
+        let request = client
             .interaction()
             .with_model(genai_rs::DEFAULT_MODEL)
-            .with_text(&long_text);
+            .with_text(&long_text)
+            .build()
+            .expect("long text should build");
 
-        // Builder accepts large text inputs without size validation
+        assert_eq!(text_input(&request), long_text);
     }
 
     #[test]
     fn test_interaction_builder_with_unicode_and_emojis() {
-        // Test with unicode, emojis, and special characters
         let client = Client::new("test-api-key".to_string());
-
         let unicode_text = "Hello 世界 🌍 مرحبا Здравствуй \u{1F600} \u{1F44D}";
 
-        let _builder = client
+        let request = client
             .interaction()
             .with_model(genai_rs::DEFAULT_MODEL)
-            .with_text(unicode_text);
+            .with_text(unicode_text)
+            .build()
+            .expect("unicode text should build");
 
-        // Builder handles Unicode and multi-byte characters correctly
+        let wire = serde_json::to_value(&request).expect("serialize");
+        assert_eq!(wire["input"], unicode_text);
     }
 
     #[test]
     fn test_interaction_builder_with_empty_text() {
-        // Test with empty string input
+        // An empty string is still input; rejecting it is left to the API.
         let client = Client::new("test-api-key".to_string());
 
-        let _builder = client
+        let request = client
             .interaction()
             .with_model(genai_rs::DEFAULT_MODEL)
-            .with_text("");
+            .with_text("")
+            .build()
+            .expect("empty text should build");
 
-        // Builder allows empty string inputs without validation
+        assert_eq!(text_input(&request), "");
     }
 
     #[test]
     fn test_interaction_builder_with_multiple_functions() {
-        // Test adding many functions
         let client = Client::new("test-api-key".to_string());
 
         let mut builder = client
             .interaction()
             .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Test");
-
-        // Add 10 functions
         for i in 0..10 {
             let func = FunctionDeclaration::builder(format!("function_{}", i))
                 .description(format!("Function number {}", i))
@@ -133,36 +142,49 @@ mod basic {
             builder = builder.add_function(func);
         }
 
-        // Builder accepts many function declarations without validation
+        let wire = serde_json::to_value(builder.build().expect("build")).expect("serialize");
+        let names: Vec<&str> = wire["tools"]
+            .as_array()
+            .expect("tools array")
+            .iter()
+            .map(|t| t["name"].as_str().expect("function name"))
+            .collect();
+        let expected: Vec<String> = (0..10).map(|i| format!("function_{i}")).collect();
+        assert_eq!(names, expected, "add_function accumulates in order");
     }
 
     #[test]
     fn test_interaction_builder_with_complex_generation_config() {
-        // Test with generation config at boundary values
         let client = Client::new("test-api-key".to_string());
 
         let config = GenerationConfig {
-            temperature: Some(2.0),        // Max value
-            max_output_tokens: Some(8192), // High value
-            top_p: Some(1.0),              // Max value
-            presence_penalty: Some(2.0),   // Max value
-            frequency_penalty: Some(-2.0), // Min value
-            thinking_level: None,
+            temperature: Some(2.0),
+            max_output_tokens: Some(8192),
+            top_p: Some(1.0),
+            presence_penalty: Some(2.0),
+            frequency_penalty: Some(-2.0),
             ..Default::default()
         };
 
-        let _builder = client
+        let request = client
             .interaction()
             .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Test")
-            .with_generation_config(config);
+            .with_generation_config(config)
+            .build()
+            .expect("boundary values should build");
 
-        // Builder accepts generation config with boundary values
+        let wire = serde_json::to_value(&request).expect("serialize");
+        let config = &wire["generation_config"];
+        assert_eq!(config["temperature"], json!(2.0));
+        assert_eq!(config["max_output_tokens"], json!(8192));
+        assert_eq!(config["top_p"], json!(1.0));
+        assert_eq!(config["presence_penalty"], json!(2.0));
+        assert_eq!(config["frequency_penalty"], json!(-2.0));
     }
 
     #[test]
     fn test_interaction_builder_with_response_format_json_schema() {
-        // Test with complex JSON schema for structured output
         let client = Client::new("test-api-key".to_string());
 
         let complex_schema = json!({
@@ -186,24 +208,29 @@ mod basic {
             "required": ["name", "age"]
         });
 
-        let _builder = client
+        let request = client
             .interaction()
             .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Generate a person")
-            .with_response_format(complex_schema);
+            .with_response_format(complex_schema.clone())
+            .build()
+            .expect("schema should build");
 
-        // Builder accepts complex nested JSON schemas without validation
+        // A raw schema is wrapped in the typed JSON text format.
+        let wire = serde_json::to_value(&request).expect("serialize");
+        assert_eq!(
+            wire["response_format"],
+            json!({"type": "text", "mime_type": "application/json", "schema": complex_schema})
+        );
     }
 
     #[test]
     fn test_interaction_builder_with_all_features_combined() {
-        // Test combining many features simultaneously
         let client = Client::new("test-api-key".to_string());
 
         let func = FunctionDeclaration::builder("get_weather")
             .description("Get weather")
             .build();
-
         let config = GenerationConfig {
             temperature: Some(0.7),
             max_output_tokens: Some(1024),
@@ -212,7 +239,7 @@ mod basic {
             ..Default::default()
         };
 
-        let _builder = client
+        let request = client
             .interaction()
             .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Complex query")
@@ -221,27 +248,62 @@ mod basic {
             .with_generation_config(config)
             .with_response_modalities(vec!["text".to_string()])
             .with_background(true)
-            .with_store_disabled();
+            .with_store_enabled()
+            .build()
+            .expect("compatible features should build together");
 
-        // Builder supports combining all features without conflicts
+        assert_eq!(request.system_instruction.as_deref(), Some("Be helpful"));
+        assert_eq!(request.tools.as_ref().map(Vec::len), Some(1));
+        assert_eq!(request.background, Some(true));
+        assert_eq!(request.store, Some(true));
+        assert_eq!(request.response_modalities, Some(vec!["text".to_string()]));
+        let config = request.generation_config.expect("generation config");
+        assert_eq!(config.temperature, Some(0.7));
+        assert_eq!(config.thinking_level, Some(ThinkingLevel::Low));
     }
 
     #[test]
     fn test_interaction_builder_method_chaining() {
-        // Verify fluent API / method chaining works correctly
+        // `with_*` replaces: the last call wins.
         let client = Client::new("test-api-key".to_string());
 
-        let _builder = client
+        let request = client
             .interaction()
             .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Test 1")
-            .with_text("Test 2") // Overwrites previous text
+            .with_text("Test 2")
             .with_system_instruction("Instruction 1")
-            .with_system_instruction("Instruction 2") // Overwrites
+            .with_system_instruction("Instruction 2")
             .with_background(false)
-            .with_background(true); // Overwrites
+            .with_background(true)
+            .with_store_enabled()
+            .build()
+            .expect("build");
 
-        // All methods should be chainable and later calls overwrite earlier values
+        assert_eq!(text_input(&request), "Test 2");
+        assert_eq!(request.system_instruction.as_deref(), Some("Instruction 2"));
+        assert_eq!(request.background, Some(true));
+    }
+
+    #[test]
+    fn test_with_deep_research_config_sets_agent_config() {
+        let client = Client::new("test-api-key".to_string());
+
+        let request = client
+            .interaction()
+            .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
+            .with_text("Research")
+            .with_deep_research_config(genai_rs::ThinkingSummaries::Auto)
+            .with_background(true)
+            .with_store_enabled()
+            .build()
+            .expect("build");
+
+        let wire = serde_json::to_value(&request).expect("serialize");
+        assert_eq!(
+            wire["agent_config"],
+            json!({"type": "deep-research", "thinking_summaries": "auto"})
+        );
     }
 
     #[test]
