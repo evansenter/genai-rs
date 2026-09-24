@@ -38,7 +38,7 @@ let response = client.execute(request.clone()).await?;
 | `Api { status_code: 500..=599, .. }` | Yes |
 | `Timeout(_)` (request-level timeout) | Yes |
 | Any other `Api` status (400, 401, 403, 404, ...) | No |
-| `Parse`, `Json`, `Utf8`, `Internal`, `InvalidInput`, `MalformedResponse`, `ClientBuild` | No |
+| `Parse`, `Json`, `Utf8`, `Internal`, `InvalidInput`, `MalformedResponse`, `Stream`, `ClientBuild` | No |
 
 A few 400s are transient in practice but are **not** covered by
 `is_retryable()`; see

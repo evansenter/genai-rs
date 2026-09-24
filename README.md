@@ -78,8 +78,8 @@ point-in-time claim, not a completeness guarantee — see
 [the gap analysis](docs/INTERACTIONS_API_GAP.md) for what the most recent
 sweep found and what is still open. A few knobs are **modeled but
 gated to Vertex AI** and rejected by the Gemini API today: the Retrieval
-tool, `DeepResearchConfig::with_bigquery_tool()`, `safety_settings`,
-request `labels`, and video `gcs_uri` delivery. Details and per-feature
+tool, `DeepResearchConfig::with_bigquery_tool()`, `safety_settings`, and
+video `gcs_uri` delivery. Details and per-feature
 live-verification notes are in
 [docs/INTERACTIONS_API_GAP.md](docs/INTERACTIONS_API_GAP.md).
 

@@ -15,11 +15,12 @@ wildcard arm.
 | `Api { status_code, message, request_id, retry_after }` | The API returned a non-2xx status | 429 and 5xx only |
 | `Http(reqwest::Error)` | Network, connect, TLS, or client-level timeout | Yes |
 | `Timeout(Duration)` | The request-level timeout (`InteractionBuilder::with_timeout`) elapsed | Yes |
-| `Json(serde_json::Error)` | A response body failed to deserialize | No |
+| `Json(serde_json::Error)` | JSON (de)serialization failed outside response parsing, e.g. inside a stream event | No |
 | `Parse(String)` | An SSE stream could not be parsed | No |
 | `Utf8(Utf8Error)` | A response was not valid UTF-8 | No |
 | `InvalidInput(String)` | The builder rejected the request before sending (for example: no input, neither or both of model and agent, or `with_store_disabled()` combined with chaining or background) | No |
-| `MalformedResponse(String)` | A 2xx response did not have the expected shape | No |
+| `MalformedResponse(String)` | A 2xx response did not parse or did not have the expected shape | No |
+| `Stream { message, code }` | The server sent an in-stream `error` event (auto-function streaming loop only; plain streams yield `StreamChunk::Error`) | No |
 | `Internal(String)` | A client-side invariant failed | No |
 | `ClientBuild(String)` | The HTTP client could not be built (TLS backend init) | No |
 
@@ -40,7 +41,9 @@ fn describe(err: &GenaiError) -> String {
 # let _ = describe;
 ```
 
-`Api.message` holds the error response body, truncated. The full body is
+`Api.message` is the message from Google's error envelope, prefixed with its
+status or code (`"INVALID_ARGUMENT: ..."`, `"invalid_request: ..."`). A body
+that is not an error envelope is kept as a truncated preview. The full body is
 visible with `LOUD_WIRE=1` (see [Logging](LOGGING_STRATEGY.md)).
 
 ## API status codes

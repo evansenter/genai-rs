@@ -146,9 +146,10 @@ distinguishes them.
 | *"not available on the Gemini API but ... available on the Gemini Enterprise Agent Platform"* | Vertex-only, real feature elsewhere | **Keep**, documented as Vertex-only |
 | *"Unknown parameter 'x'"* | Absent from the schema entirely | **Remove** |
 
-Kept for parity: `safety_settings`, `labels`, `Tool::Retrieval`,
+Kept for parity: `safety_settings`, `Tool::Retrieval`,
 `enable_bigquery_tool`. Removed: `response_mime_type` and `cached_content`
-(#439).
+(#439). Request `labels` were kept on the same grounds and became accepted
+on the Gemini API by 2026-09-24, which is the case for keeping.
 
 **Consequences.** Modeling a field the endpoint rejects is only justified when
 the field is real somewhere. `cached_content` shipped as a public builder
