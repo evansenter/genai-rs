@@ -43,7 +43,9 @@ mod streaming;
 mod tools;
 pub mod triggers;
 
-pub use config::{BuiltinTool, Capabilities, McpServer, SUPPORTED_HARNESS_VERSION, Subagent};
+pub use config::{
+    AgentBehavior, BuiltinTool, Capabilities, McpServer, SUPPORTED_HARNESS_VERSION, Subagent,
+};
 pub use hooks::{
     AgentQuestion, Policy, PolicyDecision, PostToolHook, PreToolDecision, PreToolHook,
     QuestionAnswer, QuestionHook, QuestionReply, ToolInvocation, ToolOutcome, policy,
@@ -180,6 +182,7 @@ pub struct ChatResponse {
     usage: Option<protocol::UsageMetadata>,
     structured_output: Option<Value>,
     errors: Vec<String>,
+    stop_reason: Option<protocol::StopReason>,
 }
 
 impl ChatResponse {
@@ -213,6 +216,18 @@ impl ChatResponse {
     #[must_use]
     pub fn errors(&self) -> &[String] {
         &self.errors
+    }
+
+    /// Why the harness stopped the turn early, when it did — e.g.
+    /// [`StopReason::QuotaExhausted`](protocol::StopReason::QuotaExhausted).
+    /// `None` for a normal completion.
+    ///
+    /// A stopped turn still *finishes*: it ends in the same terminal state
+    /// as a completed one, so without this the only symptom is a short or
+    /// empty [`text`](Self::text). New in harness 0.1.18.
+    #[must_use]
+    pub fn stop_reason(&self) -> Option<&protocol::StopReason> {
+        self.stop_reason.as_ref()
     }
 }
 
@@ -285,6 +300,8 @@ pub struct AgentBuilder {
     /// instructions. `None` means the default (on); see
     /// [`Self::with_workspace_announcement`].
     workspace_announcement: Option<bool>,
+    /// `None` leaves the harness default (autonomous).
+    agent_behavior: Option<AgentBehavior>,
 }
 
 impl std::fmt::Debug for AgentBuilder {
@@ -446,15 +463,16 @@ impl AgentBuilder {
     /// `Capabilities::read_only().enable(BuiltinTool::AskQuestion)`, which
     /// as a write-capable capability also needs a policy or
     /// [`on_pre_tool`](Self::on_pre_tool) hook to pass the spawn-time
-    /// gate.
+    /// gate — and set
+    /// [`with_agent_behavior(AgentBehavior::Interactive)`](Self::with_agent_behavior),
+    /// without which the model is told nobody will answer.
     ///
-    /// Questions then arrive on their own `questions_request` path and
-    /// **bypass the policy engine entirely** — a `policy::deny` naming
-    /// `ask_question` (or a blanket `deny_all()`) has no effect on them.
-    /// The capability gate is the only gate: leave
-    /// [`BuiltinTool::AskQuestion`] disabled to prevent questions, and
-    /// this hook (or the "unanswered" fallback) is the only control once
-    /// they are enabled.
+    /// On harness 0.1.18 the `ask_question` call passes through the
+    /// pre-tool hook *before* its `questions_request` arrives, so policies
+    /// govern it like any other tool: `deny_all()` needs an
+    /// `allow("ask_question")` beside it, and `deny("ask_question")`
+    /// prevents questions. (On 0.1.10 question requests bypassed the policy
+    /// engine.)
     #[must_use]
     pub fn on_questions(
         mut self,
@@ -493,6 +511,20 @@ impl AgentBuilder {
     #[must_use]
     pub fn with_capabilities(mut self, capabilities: Capabilities) -> Self {
         self.capabilities = capabilities;
+        self
+    }
+
+    /// Sets how the harness frames the agent's task (default: the
+    /// harness's, which is [`AgentBehavior::Autonomous`]).
+    ///
+    /// [`BuiltinTool::AskQuestion`] needs [`AgentBehavior::Interactive`]:
+    /// the default autonomous prompt tells the model the user will not
+    /// answer, so it asks in prose rather than calling the tool, and an
+    /// [`on_questions`](Self::on_questions) hook never fires. `spawn()`
+    /// warns about that combination.
+    #[must_use]
+    pub fn with_agent_behavior(mut self, behavior: AgentBehavior) -> Self {
+        self.agent_behavior = Some(behavior);
         self
     }
 
@@ -635,6 +667,19 @@ impl AgentBuilder {
                 "on_questions hook set but BuiltinTool::AskQuestion is not enabled - the agent \
                  will never ask questions and the hook will never run. Enable it with \
                  Capabilities::read_only().enable(BuiltinTool::AskQuestion)."
+            );
+        }
+        // Same failure shape one layer down (reference-SDK parity): the
+        // tool is declared, but the default autonomous prompt tells the
+        // model nobody will answer, so it asks in prose instead.
+        if self.capabilities.is_enabled(BuiltinTool::AskQuestion)
+            && self.agent_behavior != Some(AgentBehavior::Interactive)
+        {
+            tracing::warn!(
+                "BuiltinTool::AskQuestion is enabled but agent behavior is not Interactive - \
+                 the harness's autonomous prompt tells the model the user will not respond, \
+                 so it rarely calls ask_question. Add \
+                 .with_agent_behavior(AgentBehavior::Interactive)."
             );
         }
 
@@ -848,6 +893,7 @@ impl AgentBuilder {
             models,
             enabled_hooks,
             custom_subagents,
+            agent_behavior: self.agent_behavior.map(AgentBehavior::to_wire),
         }
     }
 }
@@ -911,7 +957,7 @@ impl std::fmt::Debug for AntigravityAgent {
 ///
 /// # What a cancelled turn returns
 ///
-/// Harness 0.1.10 answers a halt by taking the trajectory to
+/// Harness 0.1.10 (and still 0.1.18) answers a halt by taking the trajectory to
 /// `STATE_FULLY_IDLE` — the same terminal state as a natural completion,
 /// not `STATE_CANCELLED`. So the in-flight `chat`/stream **resolves
 /// normally**, returning whatever partial output the turn had produced;
@@ -980,9 +1026,7 @@ impl AntigravityAgent {
     ) -> Result<ChatResponse, AntigravityError> {
         // Mark busy before sending so a trigger cannot slip in between.
         let guard = self.begin_turn().await;
-        self.session
-            .send(&InputEvent::UserInput(prompt.into()))
-            .await?;
+        self.session.send(&InputEvent::user_text(prompt)).await?;
         let mut turn = TurnState::new(self.turn_timeout, Some(guard));
         loop {
             match self.next_turn_event(&mut turn).await? {
@@ -1011,9 +1055,7 @@ impl AntigravityAgent {
         // The guard moves into the stream's turn state: dropping the
         // stream mid-turn marks the agent idle again.
         let guard = self.begin_turn().await;
-        self.session
-            .send(&InputEvent::UserInput(prompt.into()))
-            .await?;
+        self.session.send(&InputEvent::user_text(prompt)).await?;
         let timeout = self.turn_timeout;
         let stream = async_stream::try_stream! {
             let mut turn = TurnState::new(timeout, Some(guard));
@@ -1132,8 +1174,9 @@ impl AntigravityAgent {
                         // trajectory-idle) would be consumed by the *next*
                         // turn and desync every turn after it.
                         self.halt_and_drain("recovering from a turn timeout").await;
+                        let stderr = self.harness.stderr_tail().await;
                         return Err(AntigravityError::Timeout {
-                            operation: turn.stall_diagnosis(),
+                            operation: turn.stall_diagnosis(&stderr),
                             timeout: turn.timeout.unwrap_or_default(),
                         });
                     }
@@ -1257,7 +1300,7 @@ impl AntigravityAgent {
             }
             Some(OutputPayload::ToolCall(call)) => self.process_tool_call(call, turn).await?,
             Some(OutputPayload::CallHookRequest(request)) => {
-                self.process_hook_request(request).await?;
+                self.process_hook_request(request, turn).await?;
             }
             Some(OutputPayload::SessionEndResponse(_)) => {}
             Some(OutputPayload::InitializeConversationResponse(_)) => {
@@ -1286,12 +1329,10 @@ impl AntigravityAgent {
             step.trajectory_id.clone().unwrap_or_default(),
             step.step_index.unwrap_or_default(),
         );
-        if turn.main_trajectory.is_none()
-            && let Some(trajectory_id) = &step.trajectory_id
-        {
-            turn.main_trajectory = Some(trajectory_id.clone());
-        }
-        let is_main = turn.main_trajectory.as_deref() == step.trajectory_id.as_deref();
+        let is_subagent_step = non_blank(step.parent_trajectory_id.as_deref()).is_some();
+        turn.observe_trajectory(step.trajectory_id.as_deref(), is_subagent_step);
+        let is_main =
+            !is_subagent_step && turn.main_trajectory.as_deref() == step.trajectory_id.as_deref();
 
         // Debounce bookkeeping: leaving the waiting state clears the
         // handled-request markers for the step.
@@ -1299,32 +1340,32 @@ impl AntigravityAgent {
             turn.handled_waits.remove(&step_key);
         }
 
-        // Deltas stream through from every trajectory (subagents included).
-        if let Some(delta) = &step.thinking_delta
-            && !delta.is_empty()
-        {
+        // Deltas stream through from every trajectory (subagents
+        // included), but only the model's own output — see `stream_deltas`.
+        let (thinking_delta, text_delta) = stream_deltas(&step);
+        if let Some(delta) = thinking_delta {
             turn.queue
-                .push_back(AgentEvent::ThinkingDelta(delta.clone()));
+                .push_back(AgentEvent::ThinkingDelta(delta.to_string()));
         }
-        if let Some(delta) = &step.text_delta
-            && !delta.is_empty()
-        {
-            turn.queue.push_back(AgentEvent::TextDelta(delta.clone()));
+        if let Some(delta) = text_delta {
+            turn.queue
+                .push_back(AgentEvent::TextDelta(delta.to_string()));
         }
 
         let is_terminal = matches!(step.state, Some(StepState::Done) | Some(StepState::Error));
 
         // Completed tool actions surface once. A denied action was already
         // announced (with its `Denied` decision) at its confirmation step,
-        // so `announced_actions` dedups it here; anything reaching a
-        // terminal state executed, so its decision is `Allowed`.
+        // so `announced_actions` dedups it here. A call the pre-tool *hook*
+        // denied has no confirmation step: the harness turns it into an
+        // error step carrying the hook's reason, which `take_hook_denial`
+        // recognizes. Anything else reaching a terminal state executed.
         if is_terminal && let Some(action) = streaming::ToolAction::from_step(&step) {
-            turn.announce_tool_action(
-                &step_key,
-                action,
-                ToolDecision::Allowed,
-                step.trajectory_id.clone(),
-            );
+            let decision = match turn.take_hook_denial(&step) {
+                Some(reason) => ToolDecision::Denied { reason },
+                None => ToolDecision::Allowed,
+            };
+            turn.announce_tool_action(&step_key, action, decision, step.trajectory_id.clone());
         }
 
         // Structured output from the finish action.
@@ -1342,13 +1383,11 @@ impl AntigravityAgent {
         // is surfaced as an event and recorded (the harness retries or the
         // model reacts).
         if step.state == Some(StepState::Error) || step.error.is_some() {
-            let message = step
-                .error
-                .as_ref()
-                .and_then(|e| e.error_message.clone())
-                .or_else(|| step.error_message.clone())
-                .or_else(|| step.text.clone())
-                .unwrap_or_else(|| "unknown harness error".to_string());
+            let message = non_blank(step.error.as_ref().and_then(|e| e.error_message.as_deref()))
+                .or_else(|| non_blank(step.error_message.as_deref()))
+                .or_else(|| non_blank(step.text.as_deref()))
+                .unwrap_or("unknown harness error")
+                .to_string();
             let http_code = step.error.as_ref().and_then(|e| e.http_code);
             if step.source == Some(StepSource::System)
                 && http_code.is_some_and(|code| FATAL_HTTP_CODES.contains(&code))
@@ -1497,12 +1536,22 @@ impl AntigravityAgent {
         update: &protocol::TrajectoryStateUpdate,
         turn: &mut TurnState,
     ) -> Result<(), AntigravityError> {
-        let is_main = turn.main_trajectory.is_none()
-            || turn.main_trajectory.as_deref() == update.trajectory_id.as_deref();
+        // A trajectory with a parent is a subagent's, whatever its id —
+        // the positive signal harness 0.1.18 added. Without it (0.1.10, or
+        // the root), fall back to "the first trajectory seen this turn".
+        let is_subagent = non_blank(update.parent_trajectory_id.as_deref()).is_some();
+        turn.observe_trajectory(update.trajectory_id.as_deref(), is_subagent);
+        let is_main = !is_subagent
+            && (turn.main_trajectory.is_none()
+                || turn.main_trajectory.as_deref() == update.trajectory_id.as_deref());
+        if is_main && let Some(reason) = &update.stop_reason {
+            turn.stop_reason = Some(reason.clone());
+        }
+        let error = non_blank(update.error.as_deref());
         match update.state {
             Some(TrajectoryState::Idle) if is_main => {
-                if let Some(error) = &update.error {
-                    return Err(AntigravityError::Turn(error.clone()));
+                if let Some(error) = error {
+                    return Err(AntigravityError::Turn(error.to_string()));
                 }
                 let response = turn.take_response();
                 turn.finished = true;
@@ -1510,10 +1559,7 @@ impl AntigravityAgent {
                     .push_back(AgentEvent::Finished(Box::new(response)));
             }
             Some(TrajectoryState::Cancelled) if is_main => {
-                let message = update
-                    .error
-                    .clone()
-                    .unwrap_or_else(|| "turn cancelled".to_string());
+                let message = error.unwrap_or("turn cancelled").to_string();
                 return Err(AntigravityError::Turn(message));
             }
             _ => {
@@ -1556,13 +1602,21 @@ impl AntigravityAgent {
             .map(serde_json::from_str)
         {
             Some(Ok(value)) => value,
+            // `arguments` is the harness's `genai.Struct` encoding, not
+            // plain JSON: handing it over raw gave the tool
+            // `{"fields": [{"name": .., "value": {"stringValue": ..}}]}`
+            // instead of its arguments.
             Some(Err(e)) => {
                 tracing::warn!("Unparseable arguments for tool '{name}': {e}");
-                call.arguments.clone().unwrap_or(Value::Null)
+                call.arguments
+                    .as_ref()
+                    .and_then(protocol::decode_genai_struct)
+                    .unwrap_or(Value::Null)
             }
             None => call
                 .arguments
-                .clone()
+                .as_ref()
+                .and_then(protocol::decode_genai_struct)
                 .unwrap_or_else(|| Value::Object(Default::default())),
         };
 
@@ -1597,6 +1651,7 @@ impl AntigravityAgent {
                         error,
                     };
                     post_tool(&outcome);
+                    turn.reported_calls.insert(id.clone());
                 }
                 turn.queue.push_back(AgentEvent::ToolCallDispatched {
                     name: name.clone(),
@@ -1609,7 +1664,7 @@ impl AntigravityAgent {
             .send(&InputEvent::ToolResponse(protocol::ToolResponse {
                 id,
                 response_json: Some(result.to_string()),
-                supplemental_media: Vec::new(),
+                ..Default::default()
             }))
             .await
     }
@@ -1619,6 +1674,7 @@ impl AntigravityAgent {
     async fn process_hook_request(
         &mut self,
         request: protocol::CallHookRequest,
+        turn: &mut TurnState,
     ) -> Result<(), AntigravityError> {
         let request_id = request.request_id.clone().unwrap_or_default();
         let mut response = protocol::CallHookResponse {
@@ -1626,33 +1682,38 @@ impl AntigravityAgent {
             ..Default::default()
         };
         if let Some(pre_tool_args) = &request.pre_tool_args {
-            let name = pre_tool_args.tool_name.clone().unwrap_or_default();
-            let args = pre_tool_args
-                .arguments_json
-                .as_deref()
-                .and_then(|s| serde_json::from_str(s).ok())
-                .unwrap_or_else(|| Value::Object(Default::default()));
-            let invocation = ToolInvocation {
-                name,
-                args,
-                id: None,
-            };
+            let invocation = pre_tool_invocation(pre_tool_args);
             let verdict =
                 match hooks::decide(&self.policy_engine, self.pre_tool.as_ref(), &invocation) {
                     PreToolDecision::Allow => HookVerdict {
                         decision: Some(HookDecision::Allow),
                         reason: None,
                     },
-                    PreToolDecision::Deny { reason } => HookVerdict {
-                        decision: Some(HookDecision::Deny),
-                        reason: Some(reason),
-                    },
+                    PreToolDecision::Deny { reason } => {
+                        turn.hook_denials.push(HookDenial {
+                            trajectory_id: pre_tool_args.trajectory_id.clone(),
+                            reason: reason.clone(),
+                        });
+                        HookVerdict {
+                            decision: Some(HookDecision::Deny),
+                            reason: Some(reason),
+                        }
+                    }
                 };
             response.pre_tool_result = Some(verdict);
         } else if let Some(post_tool_args) = &request.post_tool_args {
-            if let Some(post_tool) = &self.post_tool {
+            // Harness 0.1.18 also fires its post-tool callback for custom
+            // tools, which the dispatch path has already reported — once
+            // per call is the contract.
+            let already_reported = turn.take_reported_call(post_tool_args.call_id.as_deref());
+            if let Some(post_tool) = &self.post_tool
+                && !already_reported
+            {
                 post_tool(&ToolOutcome {
-                    name: post_tool_args.tool_name.clone().unwrap_or_default(),
+                    name: protocol::hook_tool_name(
+                        post_tool_args.tool_name.as_deref().unwrap_or_default(),
+                        post_tool_args.server_name.as_deref(),
+                    ),
                     // Unwrap the `{"result": ...}` envelope for consistency
                     // with the custom-tool dispatch path.
                     result: post_tool_args.result.as_deref().map(unwrap_result_string),
@@ -1666,6 +1727,50 @@ impl AntigravityAgent {
         self.session
             .send(&InputEvent::CallHookResponse(response))
             .await
+    }
+}
+
+// =============================================================================
+// Pre-tool hook mapping
+// =============================================================================
+
+/// Builds the policy-facing [`ToolInvocation`] for a harness pre-tool hook
+/// callback. Pure, for unit testing.
+///
+/// Two normalizations, both observed on the 0.1.18 wire, so that one
+/// policy rule matches the same call on every path it can arrive by:
+///
+/// - **Name**: the harness sends a builtin's `StepUpdate` field name
+///   (`invoke_subagent`) and an MCP tool's bare name beside its
+///   `server_name`; policies target `start_subagent` and
+///   `mcp_<server>_<tool>` (see [`protocol::PreToolArgs`]).
+/// - **MCP arguments**: the harness wraps them as
+///   `{"Arguments": {..}, "ServerName": .., "ToolName": ..}`. The inner
+///   object is what the model passed, and what [`ToolAction::args`]
+///   reports for the same call, so a predicate like `args["repo"]` sees
+///   one shape.
+fn pre_tool_invocation(args: &protocol::PreToolArgs) -> ToolInvocation {
+    let server = args.server_name.as_deref().filter(|s| !s.is_empty());
+    let name = protocol::hook_tool_name(args.tool_name.as_deref().unwrap_or_default(), server);
+    let mut value = args
+        .arguments_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_else(|| Value::Object(Default::default()));
+    // Keyed on the wrapper's own `ToolName` sibling as well as the server,
+    // so an unwrapped payload whose tool happens to take an `Arguments`
+    // parameter is left alone.
+    if server.is_some()
+        && let Value::Object(map) = &value
+        && map.contains_key("ToolName")
+        && let Some(inner @ Value::Object(_)) = map.get("Arguments")
+    {
+        value = inner.clone();
+    }
+    ToolInvocation {
+        name,
+        args: value,
+        id: args.call_id.clone().filter(|id| !id.is_empty()),
     }
 }
 
@@ -1692,13 +1797,20 @@ fn insert_request_text(step: &StepUpdate, args: &mut Value) {
 ///
 /// Three cases (the request itself is an empty marker on the wire — the
 /// step's action fields are the only discriminator, verified against the
-/// harness 0.1.5 proto):
+/// harness 0.1.5 and 0.1.18 protos):
 ///
 /// 1. **Recognized action** — the normal policy/hook decision.
 /// 2. **No action and no unrecognized step fields** — a pre-request
-///    notification for a host-side (client-executed) tool. Auto-approved,
+///    notification for a host-side (client-executed) tool; a step carrying
+///    only a `customTool` record is the same case. Auto-approved,
 ///    mirroring the reference SDK: the concrete call follows as a
 ///    `tool_call` with its own policy check, so nothing is bypassed.
+///
+/// On harness 0.1.18 no observed flow — builtins, custom tools, MCP,
+/// subagents — waits on a confirmation at all: every call is gated by the
+/// pre-tool hook instead (see `pre_tool_invocation`). This path is kept
+/// because the protocol still defines it, and the reference SDK still
+/// answers it.
 /// 3. **No recognized action but unrecognized step fields** — most likely a
 ///    harness builtin newer than this client, whose confirmation is its
 ///    *only* gate. Fails closed unless a policy rule (wildcard `allow_all`
@@ -1873,6 +1985,40 @@ fn normalize_tool_error(error: Option<String>) -> Option<String> {
     error.filter(|e| !e.trim().is_empty())
 }
 
+/// The `(thinking, text)` deltas of a step that belong on the event stream.
+///
+/// Every step carries a `textDelta`, not just the model's answer: the echo
+/// of the user's own input arrives as a `SOURCE_USER` step, and each tool
+/// step's one-line summary (`"Weather check"`, `"Invoke haiku-writer
+/// subagent"`) streams as the delta of a `TARGET_ENVIRONMENT` step.
+/// Forwarding them all put the user's prompt and tool labels into
+/// [`AgentEvent::TextDelta`]. Text therefore needs `SOURCE_MODEL` *and*
+/// `TARGET_USER` — the reference SDK's `receive_chunks` filter. Thinking
+/// needs only `SOURCE_MODEL`: reasoning ahead of a tool call is still the
+/// model's (the reference SDK drops it; keeping it loses nothing).
+fn stream_deltas(step: &StepUpdate) -> (Option<&str>, Option<&str>) {
+    if step.source != Some(StepSource::Model) {
+        return (None, None);
+    }
+    let thinking = step.thinking_delta.as_deref().filter(|d| !d.is_empty());
+    let text = (step.target == Some(StepTarget::User))
+        .then_some(step.text_delta.as_deref())
+        .flatten()
+        .filter(|d| !d.is_empty());
+    (thinking, text)
+}
+
+/// Treats a blank wire string as absent.
+///
+/// Proto3 JSON is *allowed* to omit a default-valued string, but harness
+/// 0.1.18 often emits it explicitly (`"thinking": ""`, `"serverName": ""`,
+/// `"unavailableReason": ""`). Wherever presence carries meaning — an
+/// error string that fails the turn, a parent id that marks a subagent —
+/// `Some("")` must read as `None`.
+fn non_blank(value: Option<&str>) -> Option<&str> {
+    value.filter(|v| !v.trim().is_empty())
+}
+
 /// Like [`unwrap_result_value`], for a harness-supplied result *string*
 /// (the `PostToolArgs.result` wire field). Only a lone-`result` JSON object
 /// envelope is unwrapped; any other payload (plain text, a multi-key object)
@@ -1915,6 +2061,13 @@ impl Drop for TurnGuard {
     }
 }
 
+/// A pre-tool hook denial this client sent, awaiting the error step the
+/// harness turns it into (see [`TurnState::take_hook_denial`]).
+struct HookDenial {
+    trajectory_id: Option<String>,
+    reason: String,
+}
+
 struct TurnState {
     queue: VecDeque<AgentEvent>,
     finished: bool,
@@ -1932,6 +2085,11 @@ struct TurnState {
     usage: Option<protocol::UsageMetadata>,
     structured_output: Option<Value>,
     errors: Vec<String>,
+    stop_reason: Option<protocol::StopReason>,
+    hook_denials: Vec<HookDenial>,
+    /// Custom tool calls (by call id) whose outcome `on_post_tool` has
+    /// already seen via the dispatch path.
+    reported_calls: HashSet<String>,
     timeout: Option<Duration>,
     deadline: Option<tokio::time::Instant>,
     /// Held for the turn's lifetime; dropping the state marks the agent
@@ -1957,6 +2115,9 @@ impl TurnState {
             usage: None,
             structured_output: None,
             errors: Vec::new(),
+            stop_reason: None,
+            hook_denials: Vec::new(),
+            reported_calls: HashSet::new(),
             timeout,
             deadline: timeout.map(|t| tokio::time::Instant::now() + t),
             _turn_guard: turn_guard,
@@ -1974,22 +2135,91 @@ impl TurnState {
     /// main-trajectory states were seen, name them and the likely cause,
     /// so the failure points at the version mismatch instead of looking
     /// like latency.
-    fn stall_diagnosis(&self) -> String {
-        if self.unknown_trajectory_states.is_empty() {
+    ///
+    /// The other version-mismatch shape is the harness *rejecting* a
+    /// message this build sent. It reports that only on stderr (the 0.1.18
+    /// `userInput` change: `failed to unmarshal InputEvent`), never on the
+    /// socket, so the turn simply never starts; `stderr` is the harness's
+    /// retained stderr tail, searched for that line.
+    fn stall_diagnosis(&self, stderr: &str) -> String {
+        let mut causes = Vec::new();
+        if !self.unknown_trajectory_states.is_empty() {
+            let states: Vec<_> = self
+                .unknown_trajectory_states
+                .iter()
+                .map(String::as_str)
+                .collect();
+            causes.push(format!(
+                "never saw a terminal trajectory state; the harness sent \
+                 unrecognized state(s) [{}] that this build does not treat as \
+                 terminal",
+                states.join(", ")
+            ));
+        }
+        if let Some(line) = stderr
+            .lines()
+            .rev()
+            .find(|line| line.contains("failed to unmarshal"))
+        {
+            causes.push(format!(
+                "the harness rejected a message this session sent, reporting on \
+                 its stderr: {:?}",
+                line.trim()
+            ));
+        }
+        if causes.is_empty() {
             return "agent turn".to_string();
         }
-        let states: Vec<_> = self
-            .unknown_trajectory_states
-            .iter()
-            .map(String::as_str)
-            .collect();
         format!(
-            "agent turn (never saw a terminal trajectory state; the harness \
-             sent unrecognized state(s) [{}] that this build does not treat \
-             as terminal — most likely a harness/bridge version mismatch, \
+            "agent turn ({} — most likely a harness/bridge version mismatch, \
              see antigravity::SUPPORTED_HARNESS_VERSION)",
-            states.join(", ")
+            causes.join("; ")
         )
+    }
+
+    /// Records the turn's main (root) trajectory the first time a
+    /// root-level trajectory id is seen. `is_subagent` — the event carried
+    /// a parent trajectory id — never establishes it, so a subagent event
+    /// arriving first cannot claim the turn.
+    fn observe_trajectory(&mut self, trajectory_id: Option<&str>, is_subagent: bool) {
+        if self.main_trajectory.is_none()
+            && !is_subagent
+            && let Some(id) = non_blank(trajectory_id)
+        {
+            self.main_trajectory = Some(id.to_string());
+        }
+    }
+
+    /// Claims the pending hook denial a terminal error step reports, if
+    /// any, returning its reason.
+    ///
+    /// Harness 0.1.18 gates every observed tool call through the pre-tool
+    /// hook rather than a confirmation step, and answers a denial with a
+    /// `STATE_ERROR` step whose `errorMessage` is the verdict's reason
+    /// verbatim (and no action payload). The match is on that exact string
+    /// — the one this client itself sent — in the same trajectory, so it is
+    /// structural rather than message-sniffing: nothing the model or a tool
+    /// wrote can produce it by accident.
+    fn take_hook_denial(&mut self, step: &StepUpdate) -> Option<String> {
+        if step.state != Some(StepState::Error) {
+            return None;
+        }
+        let message = non_blank(step.error_message.as_deref())?;
+        let index = self.hook_denials.iter().position(|denial| {
+            denial.reason == message
+                && (denial.trajectory_id.is_none()
+                    || denial.trajectory_id.as_deref() == step.trajectory_id.as_deref())
+        })?;
+        Some(self.hook_denials.remove(index).reason)
+    }
+
+    /// Whether the harness post-tool callback for `call_id` duplicates an
+    /// outcome the custom-tool dispatch path already reported (consuming
+    /// the record). The harness echoes the tool call's own id as the
+    /// callback's `callId`, so the match is exact; a callback with no id
+    /// is never treated as a duplicate.
+    fn take_reported_call(&mut self, call_id: Option<&str>) -> bool {
+        non_blank(call_id).is_some_and(|id| self.reported_calls.remove(id))
     }
 
     /// Marks a waiting-state request as handled for the step; returns
@@ -2034,6 +2264,12 @@ impl TurnState {
             usage: self.usage.take(),
             structured_output: self.structured_output.take(),
             errors: std::mem::take(&mut self.errors),
+            // UNSPECIFIED is the wire's "normal completion"; only a real
+            // reason is worth surfacing.
+            stop_reason: self
+                .stop_reason
+                .take()
+                .filter(|r| *r != protocol::StopReason::Unspecified),
         }
     }
 }
@@ -2463,7 +2699,7 @@ mod agent_tests {
         AntigravityAgent::process_trajectory_update(&update, &mut turn).unwrap();
 
         assert!(!turn.finished, "an unknown state must not end the turn");
-        let diagnosis = turn.stall_diagnosis();
+        let diagnosis = turn.stall_diagnosis("");
         assert!(
             diagnosis.contains("STATE_SUPER_IDLE"),
             "diagnosis must name the state, got: {diagnosis}"
@@ -2478,7 +2714,7 @@ mod agent_tests {
     fn stall_diagnosis_ignores_subagent_states_and_clean_turns() {
         // A clean turn keeps the plain operation name...
         let turn = TurnState::new(None, None);
-        assert_eq!(turn.stall_diagnosis(), "agent turn");
+        assert_eq!(turn.stall_diagnosis(""), "agent turn");
 
         // ...and a *subagent* trajectory going somewhere unrecognized is
         // not the parent's problem, so it must not pollute the parent's
@@ -2489,7 +2725,27 @@ mod agent_tests {
         turn.main_trajectory = Some("main".to_string());
         let update = trajectory_update(Some("subagent-1"), unknown, None);
         AntigravityAgent::process_trajectory_update(&update, &mut turn).unwrap();
-        assert_eq!(turn.stall_diagnosis(), "agent turn");
+        assert_eq!(turn.stall_diagnosis(""), "agent turn");
+    }
+
+    #[test]
+    fn stall_diagnosis_names_a_harness_side_input_rejection() {
+        // What every turn against 0.1.18 looked like before the userInput
+        // fix: no trajectory events at all, and the only evidence on the
+        // harness's stderr. Verbatim from that run.
+        let stderr = "some earlier line\n\
+             Failed to send InputEvent: failed to unmarshal InputEvent: proto: syntax \
+             error (line 1:14): unexpected token \"hello\"\n\
+             another line";
+        let turn = TurnState::new(None, None);
+        let diagnosis = turn.stall_diagnosis(stderr);
+        assert!(
+            diagnosis.contains("failed to unmarshal InputEvent"),
+            "diagnosis must quote the harness's own line, got: {diagnosis}"
+        );
+        assert!(diagnosis.contains("version mismatch"), "got: {diagnosis}");
+        // Unrelated stderr noise does not produce a diagnosis.
+        assert_eq!(turn.stall_diagnosis("Stdin closed"), "agent turn");
     }
 
     #[test]
@@ -2547,6 +2803,269 @@ mod agent_tests {
         AntigravityAgent::process_trajectory_update(&update, &mut turn).unwrap();
         assert!(!turn.finished);
         assert!(turn.queue.is_empty());
+    }
+
+    #[test]
+    fn test_subagent_trajectory_with_parent_never_claims_the_turn() {
+        // 0.1.18 marks subagent trajectories with a parent id. Even when a
+        // subagent event is the *first* one this turn sees (so the
+        // first-seen fallback would have crowned it), it must not become
+        // the main trajectory, and its idle must not finish the turn.
+        let mut turn = TurnState::new(None, None);
+        let mut sub = trajectory_update(Some("sub"), TrajectoryState::Idle, None);
+        sub.parent_trajectory_id = Some("root".to_string());
+        sub.depth = Some(1);
+        AntigravityAgent::process_trajectory_update(&sub, &mut turn).unwrap();
+        assert!(!turn.finished, "a subagent's idle ended the parent turn");
+        assert_eq!(turn.main_trajectory, None);
+
+        // The root's own update (no parent) establishes and finishes it.
+        let root = trajectory_update(Some("root"), TrajectoryState::Idle, None);
+        AntigravityAgent::process_trajectory_update(&root, &mut turn).unwrap();
+        assert!(turn.finished);
+        assert_eq!(turn.main_trajectory.as_deref(), Some("root"));
+    }
+
+    #[test]
+    fn test_blank_trajectory_error_does_not_fail_the_turn() {
+        // 0.1.18 emits unpopulated strings explicitly; an `"error": ""` on
+        // the terminal update is a normal completion, not a failure.
+        let mut turn = TurnState::new(None, None);
+        let update = trajectory_update(Some("root"), TrajectoryState::Idle, Some(""));
+        AntigravityAgent::process_trajectory_update(&update, &mut turn)
+            .expect("a blank error string is no error");
+        assert!(turn.finished);
+    }
+
+    #[test]
+    fn test_stop_reason_surfaces_on_the_finished_response() {
+        let mut turn = TurnState::new(None, None);
+        let mut update = trajectory_update(Some("root"), TrajectoryState::Idle, None);
+        update.stop_reason = Some(protocol::StopReason::QuotaExhausted);
+        AntigravityAgent::process_trajectory_update(&update, &mut turn).unwrap();
+        let Some(AgentEvent::Finished(response)) = turn.queue.pop_front() else {
+            panic!("expected Finished");
+        };
+        assert_eq!(
+            response.stop_reason(),
+            Some(&protocol::StopReason::QuotaExhausted)
+        );
+
+        // UNSPECIFIED is the wire's "normal completion": not surfaced.
+        let mut turn = TurnState::new(None, None);
+        let mut update = trajectory_update(Some("root"), TrajectoryState::Idle, None);
+        update.stop_reason = Some(protocol::StopReason::Unspecified);
+        AntigravityAgent::process_trajectory_update(&update, &mut turn).unwrap();
+        let Some(AgentEvent::Finished(response)) = turn.queue.pop_front() else {
+            panic!("expected Finished");
+        };
+        assert_eq!(response.stop_reason(), None);
+
+        // A subagent's stop reason is not the parent turn's.
+        let mut turn = TurnState::new(None, None);
+        turn.main_trajectory = Some("root".to_string());
+        let mut sub = trajectory_update(Some("sub"), TrajectoryState::Idle, None);
+        sub.parent_trajectory_id = Some("root".to_string());
+        sub.stop_reason = Some(protocol::StopReason::MaxToolCallsExceeded);
+        AntigravityAgent::process_trajectory_update(&sub, &mut turn).unwrap();
+        assert_eq!(turn.stop_reason, None);
+    }
+
+    /// `PreToolArgs` exactly as harness 0.1.18 sends them (from a
+    /// `LOUD_WIRE` capture), minus ids.
+    fn pre_tool_args(tool: &str, server: &str, arguments_json: &str) -> protocol::PreToolArgs {
+        protocol::PreToolArgs {
+            tool_name: Some(tool.to_string()),
+            server_name: Some(server.to_string()),
+            arguments_json: Some(arguments_json.to_string()),
+            call_id: Some("call_1".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_pre_tool_hook_names_mcp_tools_by_policy_target() {
+        // Regression: the harness sends the bare MCP tool name with the
+        // server beside it, so `deny("mcp_widgets_lookup_widget_code")`
+        // never matched on the hook path — the only gate MCP calls get.
+        let invocation = pre_tool_invocation(&pre_tool_args(
+            "lookup_widget_code",
+            "widgets",
+            r#"{"Arguments":{"name":"flange"},"ServerName":"widgets","ToolName":"lookup_widget_code"}"#,
+        ));
+        assert_eq!(invocation.name, "mcp_widgets_lookup_widget_code");
+        // The wrapper is peeled: hooks see what the model passed, the
+        // same shape `ToolAction::args` reports for the MCP step.
+        assert_eq!(invocation.args, serde_json::json!({"name": "flange"}));
+        assert_eq!(invocation.id.as_deref(), Some("call_1"));
+
+        let denied = hooks::decide(
+            &engine(vec![
+                policy::allow_all(),
+                policy::deny("mcp_widgets_lookup_widget_code"),
+            ]),
+            None,
+            &invocation,
+        );
+        assert!(matches!(denied, PreToolDecision::Deny { .. }));
+    }
+
+    #[test]
+    fn test_pre_tool_hook_maps_the_subagent_builtin_to_its_public_name() {
+        // Regression: the subagent builtin arrives as its step field name.
+        let invocation = pre_tool_invocation(&pre_tool_args(
+            "invoke_subagent",
+            "",
+            r#"{"Subagents":[{"TypeName":"haiku-writer"}]}"#,
+        ));
+        assert_eq!(invocation.name, "start_subagent");
+        // Not an MCP call (blank server), so args are left as sent.
+        assert_eq!(invocation.args["Subagents"][0]["TypeName"], "haiku-writer");
+
+        // Every other builtin and custom tool passes through untouched.
+        for name in ["view_file", "run_command", "antigravity_test_weather"] {
+            assert_eq!(
+                pre_tool_invocation(&pre_tool_args(name, "", "{}")).name,
+                name
+            );
+        }
+    }
+
+    /// The error step harness 0.1.18 sends for a hook-denied call (from a
+    /// `LOUD_WIRE` capture): the verdict's reason verbatim in
+    /// `errorMessage`, a decorated copy in the error action, no tool action.
+    fn hook_denied_step(trajectory: &str, index: u32, reason: &str) -> StepUpdate {
+        StepUpdate {
+            trajectory_id: Some(trajectory.to_string()),
+            step_index: Some(index),
+            state: Some(StepState::Error),
+            source: Some(StepSource::Model),
+            error_message: Some(reason.to_string()),
+            error: Some(protocol::ActionError {
+                error_message: Some(format!("{reason} (\"denied by pre-tool hook: {reason}\")")),
+                http_code: Some(0),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_stream_deltas_carry_only_the_models_own_output() {
+        // Shapes verbatim from a 0.1.18 capture of one custom-tool turn.
+        let step = |source, target, text: &str, thinking: &str| StepUpdate {
+            source: Some(source),
+            target: Some(target),
+            text_delta: Some(text.to_string()),
+            thinking_delta: Some(thinking.to_string()),
+            ..Default::default()
+        };
+        // The user's own prompt, echoed back as step 0.
+        let echo = step(
+            StepSource::User,
+            StepTarget::Model,
+            "What's the weather?",
+            "",
+        );
+        assert_eq!(stream_deltas(&echo), (None, None));
+        // A tool step's summary label, with the model's reasoning before it.
+        let tool = step(
+            StepSource::Model,
+            StepTarget::Environment,
+            "Weather check",
+            "I should call the tool",
+        );
+        assert_eq!(stream_deltas(&tool), (Some("I should call the tool"), None));
+        // The answer itself.
+        let answer = step(StepSource::Model, StepTarget::User, "It is 17C.", "");
+        assert_eq!(stream_deltas(&answer), (None, Some("It is 17C.")));
+    }
+
+    #[test]
+    fn test_post_tool_callback_for_a_dispatched_call_is_not_reported_twice() {
+        // 0.1.18 sends a PostTool callback for custom tools too; the
+        // dispatch path already fed on_post_tool, and every call doubled.
+        let mut turn = TurnState::new(None, None);
+        turn.reported_calls.insert("call_101866".to_string());
+        assert!(
+            turn.take_reported_call(Some("call_101866")),
+            "the echo is a duplicate"
+        );
+        assert!(
+            !turn.take_reported_call(Some("call_101866")),
+            "consumed once"
+        );
+        // Builtins were never dispatched here, so their callbacks report.
+        assert!(!turn.take_reported_call(Some("call_999")));
+        assert!(!turn.take_reported_call(Some("")));
+        assert!(!turn.take_reported_call(None));
+    }
+
+    #[test]
+    fn test_hook_denial_marks_its_error_step_denied() {
+        let mut turn = TurnState::new(None, None);
+        turn.hook_denials.push(HookDenial {
+            trajectory_id: Some("root".to_string()),
+            reason: "no widgets".to_string(),
+        });
+
+        // A different trajectory's error with the same text is not ours.
+        assert_eq!(
+            turn.take_hook_denial(&hook_denied_step("sub", 1, "no widgets")),
+            None
+        );
+        // An unrelated error in the right trajectory is not ours either.
+        assert_eq!(
+            turn.take_hook_denial(&hook_denied_step("root", 1, "quota")),
+            None
+        );
+        // The matching step claims it, exactly once.
+        let step = hook_denied_step("root", 1, "no widgets");
+        assert_eq!(turn.take_hook_denial(&step).as_deref(), Some("no widgets"));
+        assert_eq!(turn.take_hook_denial(&step), None, "claimed once");
+    }
+
+    #[test]
+    fn test_hook_denied_step_surfaces_as_a_denied_tool_action() {
+        // End to end through process_step's announce logic, minus the
+        // socket: without the denial marker, a blocked call reads as an
+        // executed one (`decision: Allowed`).
+        let mut turn = TurnState::new(None, None);
+        turn.hook_denials.push(HookDenial {
+            trajectory_id: Some("root".to_string()),
+            reason: "no widgets".to_string(),
+        });
+        let step = hook_denied_step("root", 1, "no widgets");
+        let decision = match turn.take_hook_denial(&step) {
+            Some(reason) => ToolDecision::Denied { reason },
+            None => ToolDecision::Allowed,
+        };
+        let action = streaming::ToolAction::from_step(&step).expect("error action");
+        assert!(turn.announce_tool_action(&("root".to_string(), 1), action, decision, None));
+        let Some(AgentEvent::ToolAction {
+            action, decision, ..
+        }) = turn.queue.pop_front()
+        else {
+            panic!("expected a ToolAction");
+        };
+        assert_eq!(action.tool_name(), "error");
+        assert_eq!(decision.denial_reason(), Some("no widgets"));
+    }
+
+    #[test]
+    fn test_pre_tool_hook_leaves_unwrapped_mcp_arguments_alone() {
+        // Only the harness's wrapper (recognized by its ToolName sibling)
+        // is peeled; a tool whose own parameter is called `Arguments` is
+        // not mangled.
+        let invocation = pre_tool_invocation(&pre_tool_args(
+            "t",
+            "srv",
+            r#"{"Arguments":{"x":1},"other":2}"#,
+        ));
+        assert_eq!(
+            invocation.args,
+            serde_json::json!({"Arguments": {"x": 1}, "other": 2})
+        );
     }
 
     #[tokio::test]
