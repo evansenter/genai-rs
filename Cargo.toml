@@ -91,6 +91,8 @@ chrono = { workspace = true }
 doc-comment = "0.3"
 regex = "1"
 backon = "1.6"
+# tests/non_exhaustive_responses.rs parses src/ to check struct attributes.
+syn = { workspace = true, features = ["full", "visit"] }
 
 [features]
 default = ["wire-color"]
