@@ -10,19 +10,8 @@ permissions:
   issues: write
   actions: read  # Required for artifact access
 
-# The update branch is idempotent — two runs that both find the rolling issue
-# just edit it twice — but the create branch is not. If two runs overlap while
-# no rolling issue exists (the first run after this lands, or any run after
-# someone closes it), both lookups return empty and both create, leaving two
-# identically-titled issues that later runs alternate between. That is the
-# accumulation this workflow was changed to stop, in miniature, established at
-# the exact moment the rolling invariant is supposed to be.
-#
-# `cancel-in-progress: false` protects the *executing* run — a cancelled one
-# would skip its escalation step, and losing a report is worse than waiting
-# for one. It is not a promise that nothing is ever dropped: GitHub keeps at
-# most one pending run per group, so a third overlapping trigger cancels the
-# queued second. Not reachable with a daily cron plus the odd manual run.
+# Serialized: two overlapping runs with no rolling issue would both create one.
+# No cancel-in-progress, so a running report is never cut short.
 concurrency:
   group: ci-flakiness-report
   cancel-in-progress: false
@@ -41,11 +30,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Configuration
           DAYS_BACK=7
           WORKFLOW_NAME="Rust"
 
-          # Calculate date range
           END_DATE=$(date -u +"%Y-%m-%d")
           START_DATE=$(date -u -d "$DAYS_BACK days ago" +"%Y-%m-%d")
 
@@ -53,24 +40,20 @@ jobs:
           echo "start_date=$START_DATE" >> $GITHUB_OUTPUT
           echo "end_date=$END_DATE" >> $GITHUB_OUTPUT
 
-          # Initialize counters
           TOTAL_RUNS=0
           FAILED_RUNS=0
-          # Initialize with =() — under `set -u`, bash treats a declared but
-          # never-assigned array as unset, so ${#TEST_FAILURES[@]} aborts the
-          # report on any week with zero CI failures.
+          # `=()`: under `set -u` a never-assigned array is unset, and `${#...}`
+          # would abort on a week with no failures.
           declare -A TEST_FAILURES=()
           declare -A TEST_FILES=()
           declare -A TEST_CATEGORIES=()
 
-          # Category totals
           API_ERRORS=0
           RATE_LIMIT=0
           ASSERTION_FAILURES=0
           PANIC=0
           UNKNOWN=0
 
-          # Get all workflow runs from the past week
           echo "Fetching workflow runs..."
           RUNS_JSON=$(gh run list \
             --workflow "$WORKFLOW_NAME" \
@@ -78,16 +61,13 @@ jobs:
             --json databaseId,conclusion,createdAt,headBranch,event \
             2>/dev/null || echo "[]")
 
-          # Filter runs from the past week
           WEEK_AGO=$(date -u -d "$DAYS_BACK days ago" +%s)
 
-          # Process runs
           while IFS= read -r run; do
             RUN_ID=$(echo "$run" | jq -r '.databaseId')
             CONCLUSION=$(echo "$run" | jq -r '.conclusion')
             CREATED_AT=$(echo "$run" | jq -r '.createdAt')
 
-            # Convert to timestamp and check if within range
             RUN_TS=$(date -d "$CREATED_AT" +%s 2>/dev/null || echo "0")
             if [ "$RUN_TS" -lt "$WEEK_AGO" ]; then
               continue
@@ -100,17 +80,14 @@ jobs:
 
               echo "Analyzing failed run $RUN_ID..."
 
-              # Categorize failures using the script
               CATEGORIZED=$(.github/scripts/categorize_failures.sh "$RUN_ID" 2>/dev/null || echo '{"totals":{}}')
 
-              # Accumulate category totals
               API_ERRORS=$((API_ERRORS + $(echo "$CATEGORIZED" | jq -r '.totals.api_errors // 0')))
               RATE_LIMIT=$((RATE_LIMIT + $(echo "$CATEGORIZED" | jq -r '.totals.rate_limit // 0')))
               ASSERTION_FAILURES=$((ASSERTION_FAILURES + $(echo "$CATEGORIZED" | jq -r '.totals.assertion_failures // 0')))
               PANIC=$((PANIC + $(echo "$CATEGORIZED" | jq -r '.totals.panic // 0')))
               UNKNOWN=$((UNKNOWN + $(echo "$CATEGORIZED" | jq -r '.totals.unknown // 0')))
 
-              # Extract test names with categories
               for category in api_errors rate_limit assertion_failures panic unknown; do
                 while IFS= read -r test_name; do
                   if [ -n "$test_name" ] && [ "$test_name" != "null" ]; then
@@ -126,7 +103,6 @@ jobs:
             fi
           done < <(echo "$RUNS_JSON" | jq -c '.[]')
 
-          # Count unique flaky tests
           UNIQUE_FLAKY=${#TEST_FAILURES[@]}
 
           echo "total_runs=$TOTAL_RUNS" >> $GITHUB_OUTPUT
@@ -137,7 +113,6 @@ jobs:
           echo "assertion_failures=$ASSERTION_FAILURES" >> $GITHUB_OUTPUT
           echo "panic=$PANIC" >> $GITHUB_OUTPUT
 
-          # Find test file locations
           echo "Locating test files..."
           for test_name in "${!TEST_FAILURES[@]}"; do
             FILE=$(grep -rlE "fn $test_name|fn ${test_name#*::}" tests/ src/ 2>/dev/null | head -1 || echo "unknown")
@@ -148,7 +123,6 @@ jobs:
             fi
           done
 
-          # Write summary JSON for artifact (using jq for safe construction)
           jq -n \
             --argjson total_runs "$TOTAL_RUNS" \
             --argjson failed_runs "$FAILED_RUNS" \
@@ -171,7 +145,6 @@ jobs:
               date: $date
             }' > summary.json
 
-          # Write tests JSON for report generation (using jq for safe construction)
           echo "[]" > tests.json
           for test_name in "${!TEST_FAILURES[@]}"; do
             ITEM_JSON=$(jq -n \
@@ -194,14 +167,8 @@ jobs:
       - name: Generate report
         id: report
         run: |
-          # `set -euo pipefail`, matching the collect and rolling-issue steps.
-          # Actions' default shell is `bash -e {0}`, so `-u` and `-o pipefail`
-          # are off — and this step gained its first pipeline below, whose
-          # output becomes persistent state. A `jq` failure there would be
-          # swallowed by the successful `sort -u`, the marker would be written
-          # empty, and an empty marker is indistinguishable from an absent one
-          # — which the update branch deliberately reads as "report
-          # everything", so the next run announces the full set.
+          # pipefail: a swallowed jq failure below would write an empty
+          # baseline, which the next run reads as "report everything".
           set -euo pipefail
           .github/scripts/generate_flakiness_report.sh \
             --trends trends.json \
@@ -211,13 +178,8 @@ jobs:
             --repo-url "${{ github.server_url }}/${{ github.repository }}" \
             > flakiness_report.md
 
-          # The rendered table is capped at the top 10 by failure count, so
-          # it cannot serve as the baseline for "what is newly flaky" — every
-          # test ranked 11+ would read as new on every run, forever. This
-          # marker carries the complete set, invisible in the rendered issue,
-          # and is what the diff below actually reads. Emitted even when
-          # empty, so "no failures this window" is distinguishable from "no
-          # baseline recorded".
+          # The table is capped at 10, so the full set goes in a hidden marker
+          # for the next run's diff. Emitted even when empty.
           {
             echo
             echo "<!-- flaky-baseline"
@@ -242,49 +204,17 @@ jobs:
         run: |
           set -euo pipefail
 
-          # One rolling issue, updated in place — NOT one issue per run.
-          #
-          # This job runs daily over a rolling 7-day window (DAYS_BACK=7), so
-          # consecutive runs share 6 of their 7 days of data. The title used
-          # to be date-stamped ("Week of $(date)") while the dedupe check
-          # matched only on *today's* date, so the update branch could fire
-          # only if the job ran twice in one day. Every ordinary day fell
-          # through to create, and nothing ever closed the previous issue —
-          # which is how 15 open reports accumulated, the oldest 4.5 months
-          # old (#425).
-          #
-          # A fixed title makes the dedupe exact and the issue self-updating.
-          # The window dates belong in the body, which the report already
-          # includes; history lives in the issue's edit history and in the
-          # uploaded summary.json artifacts.
+          # One rolling issue with a fixed title, updated in place, not one per
+          # run (#425).
           TITLE="CI Flakiness Report (rolling 7-day window)"
-          # Legacy date-stamped title, matched so the first run after this
-          # lands *adopts* the most recent existing report instead of filing
-          # a 16th alongside it. An equality-only selector could never match
-          # one (they are all titled "... - Week of <date>"), which would
-          # have reproduced the accumulation this change exists to stop, and
-          # would have made the `--title` retitle below permanently
-          # unreachable. `gh issue list` returns newest-first, so `first`
-          # picks the most recent.
-          #
-          # Single-use scaffolding: it fires once, on the first run after this
-          # lands, and is inert forever after. Once that adoption run is
-          # confirmed green this branch (and the concatenation below) can be
-          # deleted — leaving it live means anyone hand-filing an issue titled
-          # "CI Flakiness Report - Week of ..." would have it silently
-          # adopted and retitled.
+          # Legacy date-stamped title, so the first run adopts the newest old
+          # report. Single-use: delete once that run has gone green.
           LEGACY_PREFIX="CI Flakiness Report - Week of"
 
-          # Exact matches are concatenated *ahead* of legacy ones, so the
-          # rolling issue always wins when both exist and legacy adoption
-          # happens only when there is no rolling issue at all.
-          #
-          # No error suppression here on purpose: a failed lookup that read as
-          # "no issue exists" would fall through to create and fork the
-          # rolling issue. `set -e` is on, so it fails the job instead.
-          #
-          # --limit 100: the default is 30 and `ci-health` is shared with
-          # hand-filed issues.
+          # Exact matches first, so the rolling issue beats a legacy one. No
+          # error suppression: a failed lookup must not read as "none" and fork
+          # the issue. --limit 100: `ci-health` is shared with hand-filed
+          # issues.
           EXISTING_ISSUE=$(gh issue list \
             --label "ci-health" \
             --state open \
@@ -295,37 +225,10 @@ jobs:
           if [ -n "$EXISTING_ISSUE" ]; then
             echo "Updating existing issue #$EXISTING_ISSUE"
 
-            # Rolling in place costs the daily ping: `gh issue edit` notifies
-            # nobody and does not resurface the issue in a timeline, so the
-            # report becomes a pull-only artifact. Churn was worth removing;
-            # the signal was not. A test that has *started* failing is the one
-            # change worth interrupting someone for, so that case — and only
-            # that case — posts a comment.
-            #
-            # The baseline is the `flaky-baseline` marker written above, not
-            # the rendered table: the table shows only the top 10 by failure
-            # count, so diffing against it would report every test ranked 11+
-            # as newly flaky on every single run.
-            #
-            # The issue body is the only state this job has, which is why the
-            # full set is smuggled into it. A first run — or an issue adopted
-            # from before this marker existed — has no baseline and reports
-            # everything as new; that is correct, since it is also the first
-            # time anyone is being told.
-            #
-            # What that state can mean is bounded by what it holds: every
-            # test that failed somewhere in the rolling 7-day window. So this
-            # detects "newly flaky in this window", not "never seen before" —
-            # a test that goes quiet for eight days and fails once is
-            # announced again. Worth a ping, and worth not overstating, since
-            # the two readings diverge exactly for the long-tail intermittent
-            # tests this report exists to surface.
-            #
-            # `tr -d "\r"` because a body edited through the web UI comes back
-            # CRLF-normalized, which would break the `$`-anchored marker
-            # match. That failure is silent in the worst direction: an
-            # unparseable marker is indistinguishable from an absent one, and
-            # absent means "report everything".
+            # `gh issue edit` notifies nobody, so newly flaky tests (vs the
+            # baseline marker, within the 7-day window) get a comment.
+            # `tr -d "\r"`: web-UI edits come back CRLF, which breaks the
+            # anchored marker match.
             PREVIOUS_NAMES=$(gh issue view "$EXISTING_ISSUE" --json body --jq .body \
               | tr -d '\r' \
               | sed -n '/^<!-- flaky-baseline$/,/^-->$/p' \
@@ -333,16 +236,8 @@ jobs:
             CURRENT_NAMES=$(jq -r '.[].name' tests.json | sort -u)
             NEW_NAMES=$(comm -13 <(echo "$PREVIOUS_NAMES") <(echo "$CURRENT_NAMES") | sed '/^$/d')
 
-            # Comment first, then edit. The edit commits the new baseline, so
-            # doing it first means a failed comment — a secondary rate limit
-            # on the adoption run, which posts ~48 entries at once, is the
-            # realistic case — advances the baseline past tests that were
-            # never announced, and nothing announces them tomorrow either.
-            # This order makes that retryable: a failed comment leaves the old
-            # baseline, so the next run recomputes the same set. The
-            # mirror-image risk is re-announcing once after a failed edit,
-            # which is the cheaper way to be wrong for a path that exists to
-            # avoid missing signal rather than to avoid repeating it.
+            # Comment before edit: the edit commits the new baseline, so this
+            # order keeps a failed comment retryable.
             if [ -n "$NEW_NAMES" ]; then
               gh issue comment "$EXISTING_ISSUE" --body "$(
                 echo "**Newly flaky since the last report:**"
@@ -359,12 +254,7 @@ jobs:
               echo "Commented: $(wc -l <<<"$NEW_NAMES") newly flaky test(s)"
             fi
 
-            # After the comment, per the ordering rationale above. `--title`
-            # is what retitles an adopted legacy issue in place, and the body
-            # is what commits the new `flaky-baseline`; without this the
-            # issue is never touched, `$TITLE` never starts matching, and
-            # every run recomputes an empty baseline and re-announces the
-            # full set.
+            # Retitles an adopted legacy issue and commits the new baseline.
             gh issue edit "$EXISTING_ISSUE" \
               --title "$TITLE" \
               --body-file "flakiness_report.md"
@@ -372,7 +262,6 @@ jobs:
             echo "Updated issue: ${{ github.server_url }}/${{ github.repository }}/issues/$EXISTING_ISSUE"
           else
             echo "Creating new issue"
-            # First ensure the ci-health label exists
             gh label create "ci-health" \
               --description "CI health and flakiness tracking" \
               --color "fbca04" \
@@ -385,42 +274,20 @@ jobs:
             echo "Created issue: $NEW_ISSUE"
           fi
 
-      # Scheduled runs fail quietly (#431): the only built-in signal is an
-      # email to whoever last committed this file. Gated on `schedule`
-      # because a push/PR failure is already visible as a red check.
-      #
-      # Boundary: `failure()` covers a step exiting non-zero, but not a
-      # cancelled job or one that exceeds its execution limit — in both the
-      # runner stops and this step never runs. The 98-minute apt stall noted
-      # in `.github/actions/setup-mold` is that shape. Catching it needs a
-      # `workflow_run`-triggered watcher keyed on conclusion != success,
-      # which would also cover the die-before-checkout case the escalation
-      # script's header names; both belong with the deferred liveness work.
+      # Scheduled failures otherwise only email the last committer of this file
+      # (#431). Does not fire for a cancelled or timed-out job.
       - name: Escalate a failing scheduled run
         if: failure() && github.event_name == 'schedule'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          # From context rather than a literal — see the note in
-          # `audit.yml`: this is the join key between reporter and
-          # resolver, and it was hand-copied with nothing checking it.
-          #
-          # `SELF_` because the collect step above has its own
-          # `WORKFLOW_NAME="Rust"`, meaning the workflow being *analyzed*.
-          # Different steps, so different shells and no real collision — but
-          # the same name for two opposite things is a trap for the reader.
+          # From context, not a literal: it is the join key with the resolver.
+          # `SELF_` to keep it apart from the collect step's WORKFLOW_NAME.
           SELF_WORKFLOW_NAME: ${{ github.workflow }}
         run: .github/scripts/report_scheduled_failure.sh "$SELF_WORKFLOW_NAME" "$RUN_URL"
 
-      # `workflow_dispatch` too, unlike `audit.yml`'s resolve step — and the
-      # asymmetry is deliberate, not an oversight. The rule both files follow
-      # is that a run may close the issue only if it exercises the same path
-      # as the run that opened it. `audit-check` branches on the event, so a
-      # push cannot vouch for the scheduled path there. This job has no
-      # event-dependent branching, so a manual dispatch runs exactly what the
-      # cron runs — and a maintainer who fixes the report and dispatches it
-      # to confirm should not then watch the issue insist it is still failing
-      # until 09:00 the next day.
+      # Also on dispatch, unlike audit.yml: this job doesn't branch on the
+      # event, so a manual run exercises the scheduled path.
       - name: Clear the failure issue once the run recovers
         if: success() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         env:

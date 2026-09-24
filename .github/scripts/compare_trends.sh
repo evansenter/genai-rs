@@ -10,20 +10,16 @@ set -euo pipefail
 ARTIFACT_PREFIX="${1:?Usage: compare_trends.sh <artifact_prefix> <current_summary_file>}"
 CURRENT_FILE="${2:?Usage: compare_trends.sh <artifact_prefix> <current_summary_file>}"
 
-# Read current data
 CURRENT_JSON=$(cat "$CURRENT_FILE")
 
-# Calculate dates for comparison
 ONE_DAY_AGO=$(date -u -d "1 day ago" +"%Y-%m-%d")
 SEVEN_DAYS_AGO=$(date -u -d "7 days ago" +"%Y-%m-%d")
 
-# Function to download artifact by date
 download_artifact() {
   local target_date="$1"
   local output_file="$2"
   local artifact_name="${ARTIFACT_PREFIX}-${target_date}"
 
-  # Search for artifact by name
   local artifact_info
   artifact_info=$(gh api \
     "/repos/{owner}/{repo}/actions/artifacts" \
@@ -57,7 +53,6 @@ download_artifact() {
   return 1
 }
 
-# Helper to calculate trend indicator
 # Returns: "↑" (>20% increase), "↓" (>20% decrease), "→" (stable), "new" (no previous)
 calculate_trend() {
   local current="$1"
@@ -78,11 +73,9 @@ calculate_trend() {
     return
   fi
 
-  # Calculate percentage change
   local change
   change=$(awk "BEGIN {printf \"%.1f\", (($current - $previous) / $previous) * 100}")
 
-  # Determine trend
   if awk "BEGIN {exit !($change > 20)}"; then
     echo "↑"
   elif awk "BEGIN {exit !($change < -20)}"; then
@@ -92,7 +85,6 @@ calculate_trend() {
   fi
 }
 
-# Helper to calculate delta
 calculate_delta() {
   local current="$1"
   local previous="$2"
@@ -105,18 +97,11 @@ calculate_delta() {
   echo $((current - previous))
 }
 
-# Try to download previous artifacts
 PREV_24H_FILE=$(mktemp)
 PREV_7D_FILE=$(mktemp)
 ARTIFACT_ZIP="/tmp/artifact_$$.zip"
-# Single-quoted so the paths are read when the trap fires rather than baked in
-# now (SC2064). No behavioural difference today — all three are set above and
-# never reassigned — but a later edit that reassigns one would otherwise leave
-# the original temp file behind.
-# Insurance for a bare `shellcheck` run, not for this repo's gate: SC2317 is
-# info-severity and `make test-scripts` runs `-S warning`, so it is filtered
-# out before this directive is consulted. Kept so a contributor linting this
-# file directly does not see a false positive on the trap body.
+# Single-quoted so the paths are read when the trap fires (SC2064). The
+# directive is for a bare `shellcheck` run; `-S warning` filters SC2317 anyway.
 # shellcheck disable=SC2317
 trap 'rm -f "$PREV_24H_FILE" "$PREV_7D_FILE" "$ARTIFACT_ZIP"' EXIT
 
@@ -131,7 +116,6 @@ if download_artifact "$SEVEN_DAYS_AGO" "$PREV_7D_FILE"; then
   HAS_7D=true
 fi
 
-# Extract current metrics
 CURRENT_TOTAL=$(echo "$CURRENT_JSON" | jq -r '.total_runs // 0')
 CURRENT_FAILED=$(echo "$CURRENT_JSON" | jq -r '.failed_runs // 0')
 CURRENT_FLAKY=$(echo "$CURRENT_JSON" | jq -r '.unique_flaky // 0')
@@ -141,7 +125,6 @@ CURRENT_ASSERT=$(echo "$CURRENT_JSON" | jq -r '.assertion_failures // 0')
 CURRENT_PANIC=$(echo "$CURRENT_JSON" | jq -r '.panic // 0')
 CURRENT_UNKNOWN=$(echo "$CURRENT_JSON" | jq -r '.unknown // 0')
 
-# Extract 24hr metrics (if available)
 if [ "$HAS_24H" = true ]; then
   PREV_24H_TOTAL=$(jq -r '.total_runs // 0' "$PREV_24H_FILE")
   PREV_24H_FAILED=$(jq -r '.failed_runs // 0' "$PREV_24H_FILE")
@@ -156,7 +139,6 @@ else
   PREV_24H_API="" PREV_24H_RATE="" PREV_24H_ASSERT="" PREV_24H_PANIC="" PREV_24H_UNKNOWN=""
 fi
 
-# Extract 7-day metrics (if available)
 if [ "$HAS_7D" = true ]; then
   PREV_7D_TOTAL=$(jq -r '.total_runs // 0' "$PREV_7D_FILE")
   PREV_7D_FAILED=$(jq -r '.failed_runs // 0' "$PREV_7D_FILE")
@@ -171,7 +153,6 @@ else
   PREV_7D_API="" PREV_7D_RATE="" PREV_7D_ASSERT="" PREV_7D_PANIC="" PREV_7D_UNKNOWN=""
 fi
 
-# Build trend output
 cat <<EOF
 {
   "current": {
