@@ -1,59 +1,18 @@
 # Function Calling Guide
 
-This guide covers function calling fundamentals in `genai-rs`, including the `#[tool]` macro, `ToolService` for stateful functions, and manual handling patterns.
+Function calling lets the model ask your code to run. `genai-rs` offers three
+ways to provide functions:
 
-## Table of Contents
-
-- [Overview](#overview)
-- [Choosing an Approach](#choosing-an-approach)
-- [The #[tool] Macro](#the-tool-macro)
-- [ToolService for Stateful Functions](#toolservice-for-stateful-functions)
-- [Manual Function Handling](#manual-function-handling)
-- [FunctionDeclaration Builder](#functiondeclaration-builder)
-- [Function Calling Modes](#function-calling-modes)
-- [Streaming Function Call Arguments](#streaming-function-call-arguments)
-- [Parallel and Compositional Calls](#parallel-and-compositional-calls)
-- [Best Practices](#best-practices)
-
-## Overview
-
-Function calling lets the model invoke your code to get real-time data or perform actions. There are three approaches:
-
-| Approach | Registration | State | Execution | Best For |
+| Approach | Registration | State | Execution | Best for |
 |----------|-------------|-------|-----------|----------|
-| `#[tool]` macro | Compile-time | Stateless | Auto or manual | Simple, clean code |
-| `ToolService` | Runtime | Stateful | Auto or manual | DB pools, API clients |
-| Manual | Runtime | Flexible | Manual only | Custom execution logic |
+| `#[tool]` macro | Compile-time, global registry | Stateless | Auto or manual | Simple functions |
+| `ToolService` | Runtime, per request | Stateful (DB pools, clients, config) | Auto or manual | Dependency injection |
+| `FunctionDeclaration` + your own loop | Runtime | Anything | Manual | Custom execution: rate limits, caching, per-call timeouts |
 
-## Choosing an Approach
+Server-side tools (Google Search, code execution, URL context, ...) are a
+different mechanism; see [Built-in Tools](BUILT_IN_TOOLS.md).
 
-```text
-Need shared state (DB, API clients, config)?
-├── Yes → Use ToolService
-└── No
-    ├── Simple function, want minimal code?
-    │   └── Yes → Use #[tool] macro
-    └── Need custom execution logic?
-        └── Yes → Use manual handling
-```
-
-### Decision Matrix
-
-| Need | Recommended Approach |
-|------|---------------------|
-| Quick prototype | `#[tool]` + `create_with_auto_functions()` |
-| Production stateless | `#[tool]` + `create_with_auto_functions()` |
-| Database access | `ToolService` |
-| Per-request context | `ToolService` |
-| Rate limiting | Manual handling |
-| Circuit breakers | Manual handling |
-| Custom logging/metrics | Manual handling |
-
-## The #[tool] Macro
-
-The simplest approach - define functions with the `#[tool]` attribute.
-
-### Basic Usage
+## The `#[tool]` macro
 
 ```rust,no_run
 use genai_rs_macros::tool;
@@ -83,177 +42,149 @@ fn get_time(timezone: String) -> String {
 let _declaration = get_weather_declaration();
 ```
 
-### Auto-Discovery and Execution
+For `fn get_weather`, the macro generates:
+
+1. A `FunctionDeclaration`. The doc comment becomes the function description,
+   and `name(description = "...")` attributes describe the parameters.
+2. A callable type, `GetWeatherCallable`, registered in the global function
+   registry (via `inventory`).
+3. `get_weather_declaration()`, a free function returning the declaration.
+
+**Parameters.** `String` maps to a JSON-schema `string`; integer types to
+`integer`; `f32`/`f64` to `number`; `bool` to `boolean`; `Vec<T>` to `array`;
+anything else to `object`. `Option<T>` parameters are optional; all others are
+required. Constrain values with `enum_values`:
 
 ```rust,ignore
-// Functions are auto-discovered from the global registry
-let result = client
-    .interaction()
-    .with_model(genai_rs::DEFAULT_MODEL)
-    .with_text("What's the weather in Tokyo?")
-    .create_with_auto_functions()  // Auto-discovers and executes
-    .await?;
-
-println!("{}", result.response.as_text().unwrap());
+#[tool(
+    city(description = "City name"),
+    unit(description = "Temperature unit", enum_values = ["celsius", "fahrenheit"])
+)]
+fn get_weather(city: String, unit: Option<String>) -> serde_json::Value { /* ... */ }
 ```
 
-### Limiting Available Functions
+`async fn` works too; the generated callable awaits it.
+
+**Return values.** The return value is serialized with `serde_json`. A JSON
+object is sent as-is; anything else is wrapped as `{"result": <value>}`. So a
+`String` containing JSON reaches the model as a string, and a `Result` arrives
+as `{"Ok": ...}` / `{"Err": ...}`. For structured data, return a
+`serde_json::Value` or a `Serialize` type. For errors, return an object with an
+`error` key. Details and the other error cases are in
+[Error Handling](ERROR_HANDLING.md#function-calling-errors).
+
+## Automatic execution: `create_with_auto_functions()`
 
 ```rust,ignore
-use genai_rs::CallableFunction;
-
-// Only expose specific functions (not all registered ones)
 let result = client
     .interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("What's the weather in Tokyo?")
-    .add_function(GetWeatherCallable.declaration())  // Only weather
     .create_with_auto_functions()
     .await?;
-```
 
-### Multiple Parameters
-
-```rust,ignore
-use genai_rs_macros::tool;
-
-#[tool(
-    city(description = "The city name"),
-    unit(description = "Temperature unit: celsius or fahrenheit")
-)]
-fn get_weather_detailed(city: String, unit: String) -> String {
-    // Implementation
+for exec in &result.executions {
+    println!("{}({}) -> {} in {:?}", exec.name, exec.args, exec.result, exec.duration);
 }
+println!("{}", result.response.as_text().unwrap_or_default());
 ```
 
-### Async Functions
+How the loop behaves:
 
-```rust,ignore
-use genai_rs_macros::tool;
+- **Discovery.** If the request has no tools set, every registered `#[tool]`
+  function and every `ToolService` function is declared; a service function
+  shadows a registry function with the same name. If *any* tool is set
+  (`add_function()`, `with_google_search()`, ...), discovery is skipped and
+  only what you set is declared. Registered functions are still executed
+  when called, so `add_function(get_weather_declaration())` is how you
+  restrict the model to a subset.
+- **Rounds.** Each round sends the request, executes the function calls it
+  gets back, and sends the results, chained by `previous_interaction_id`. The
+  whole request, including tools, system instruction and generation config,
+  is reused every round. That is why the loop requires storage: it returns
+  `InvalidInput` with `with_store_disabled()`.
+- **Limit.** The default is 5 rounds (`with_max_function_call_loops(n)` to
+  change it). On hitting the limit the loop returns the partial
+  `AutoFunctionResult` with `reached_max_loops: true` rather than an error.
+- **Errors.** Function failures are sent to the model as results (see
+  [Error Handling](ERROR_HANDLING.md#function-calling-errors)). An API error
+  ends the loop with that error; nothing is retried (see
+  [Reliability](RELIABILITY.md#the-auto-function-loop)).
+- **Timeouts.** `with_timeout()` applies to each API call, not to the whole
+  run or to function execution.
 
-#[tool(url(description = "URL to fetch"))]
-async fn fetch_url(url: String) -> String {
-    // Async operations supported
-    reqwest::get(&url).await
-        .map(|r| r.text().await.unwrap_or_default())
-        .unwrap_or_else(|e| format!(r#"{{"error": "{}"}}"#, e))
-}
-```
+The streaming variant, `create_stream_with_auto_functions()`, is covered in
+[Streaming API](STREAMING_API.md#auto-function-streaming).
 
-### What the Macro Generates
+## `ToolService` for stateful functions
 
-The `#[tool]` macro generates:
-1. A `FunctionDeclaration` from the signature
-2. A callable type (e.g., `GetWeatherCallable`)
-3. Registration in the global function registry
-4. A free function returning the declaration (e.g. `get_weather_declaration()`),
-   requiring no `CallableFunction` import
+Implement `CallableFunction` for each tool that needs state, and return them
+from a `ToolService`. Implementing the trait by hand needs `async-trait` and
+`serde_json` as direct dependencies.
 
-```rust,ignore
-use genai_rs::CallableFunction;
-
-// You can access the generated declaration:
-let declaration = GetWeatherCallable.declaration();
-println!("Name: {}", declaration.name());
-println!("Description: {}", declaration.description());
-```
-
-## ToolService for Stateful Functions
-
-Use `ToolService` when functions need shared state like database connections or configuration.
-
-### Implementing ToolService
-
-```rust,ignore
+```rust,no_run
 use async_trait::async_trait;
 use genai_rs::{CallableFunction, FunctionDeclaration, FunctionError, ToolService};
+use serde_json::{json, Value};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-// Your tool with state
-struct WeatherTool {
-    api_client: Arc<WeatherApiClient>,
+struct NextTicket {
+    counter: Arc<AtomicU64>,
 }
 
 #[async_trait]
-impl CallableFunction for WeatherTool {
+impl CallableFunction for NextTicket {
     fn declaration(&self) -> FunctionDeclaration {
-        FunctionDeclaration::builder("get_weather")
-            .description("Get current weather")
-            .parameter("city", json!({"type": "string"}))
-            .required(vec!["city".to_string()])
+        FunctionDeclaration::builder("next_ticket")
+            .description("Allocate the next support ticket number")
             .build()
     }
 
-    async fn call(&self, args: serde_json::Value) -> Result<serde_json::Value, FunctionError> {
-        let city = args["city"].as_str().unwrap_or("unknown");
-        let weather = self.api_client.get_weather(city).await?;
-        Ok(json!({"city": city, "temp": weather.temp}))
+    async fn call(&self, _args: Value) -> Result<Value, FunctionError> {
+        Ok(json!({"ticket": self.counter.fetch_add(1, Ordering::SeqCst)}))
     }
 }
 
-// The service that provides tools
-struct MyToolService {
-    api_client: Arc<WeatherApiClient>,
+struct Tickets {
+    counter: Arc<AtomicU64>,
 }
 
-impl ToolService for MyToolService {
+impl ToolService for Tickets {
     fn tools(&self) -> Vec<Arc<dyn CallableFunction>> {
-        vec![Arc::new(WeatherTool {
-            api_client: self.api_client.clone(),
-        })]
+        vec![Arc::new(NextTicket { counter: self.counter.clone() })]
     }
 }
-```
 
-### Using the Service
-
-```rust,ignore
-let service = Arc::new(MyToolService {
-    api_client: Arc::new(WeatherApiClient::new()),
-});
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+let service = Arc::new(Tickets { counter: Arc::new(AtomicU64::new(1)) });
 
 let result = client
     .interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
-    .with_text("What's the weather in Tokyo?")
-    .with_tool_service(service.clone())  // Inject the service
+    .with_text("Open a support ticket for me")
+    .with_tool_service(service.clone()) // share one instance across requests
     .create_with_auto_functions()
     .await?;
+println!("{}", result.response.as_text().unwrap_or_default());
+# Ok(())
+# }
 ```
 
-### Dynamic Configuration
+For a failure the model should see, return
+`Err(FunctionError::ExecutionError(Box::new(e)))`. The loop sends it as
+`{"error": "Function execution error: ..."}`.
 
-```rust,ignore
-use std::sync::RwLock;
+## Manual function handling
 
-struct ConfigurableService {
-    precision: Arc<RwLock<u32>>,
-}
+Use `create()` and run the loop yourself when you need control over
+execution, or when storage is disabled.
 
-impl ConfigurableService {
-    fn set_precision(&self, value: u32) {
-        *self.precision.write().unwrap() = value;
-    }
-}
-
-// Change config between requests
-service.set_precision(8);
-let result = client.interaction()
-    .with_tool_service(service.clone())
-    .create_with_auto_functions()
-    .await?;
-```
-
-## Manual Function Handling
-
-For full control over execution, handle function calls manually.
-
-### Manual Loop Pattern
-
-Function calls arrive as `Step::FunctionCall { id, name, arguments }` steps. Send
-results back as `Step::FunctionResult` steps built with `Step::function_result()`,
-which accepts any `Into<FunctionResultPayload>` (a `serde_json::Value`, `&str`,
-`String`, or `Vec<Content>`):
+Function calls arrive as `Step::FunctionCall { id, name, arguments, .. }` steps,
+and `response.function_calls()` returns them as `FunctionCallInfo { id, name,
+args }`. Send results back as `Step::function_result(name, call_id, result)`,
+where `result` is any `Into<FunctionResultPayload>` (a `serde_json::Value`,
+`&str`, `String`, or `Vec<Content>`):
 
 ```rust,no_run
 use genai_rs::{Client, FunctionDeclaration, Step};
@@ -311,160 +242,42 @@ println!("{}", response.as_text().unwrap());
 # }
 ```
 
-For failed executions, use `Step::function_result_error(name, call_id, result)`
-which sets `is_error: true` on the step.
+For a failed execution, `Step::function_result_error(name, call_id, result)`
+sets `is_error: true` on the step. A real loop should also cap its iterations.
 
-### When to Use Manual Handling
+**Parallel calls.** The model may return several calls in one response. Run
+them concurrently if you like, and send one `function_result` step per call
+in a single request. Results are matched to calls by `call_id`, not by
+position.
 
-| Use Case | Implementation |
-|----------|----------------|
-| Rate limiting | Add delays between calls |
-| Circuit breakers | Track failures, skip calls |
-| Caching | Check cache before execution |
-| Logging/metrics | Wrap execution with instrumentation |
-| Timeouts | Add per-function timeouts |
+## `FunctionDeclaration` builder
 
-```rust,ignore
-// Example: Rate limiting
-for call in response.function_calls() {
-    rate_limiter.acquire().await;  // Wait for rate limit
-    let result = execute_function(call.name, call.args);
-    // ...
-}
-
-// Example: Circuit breaker
-for call in response.function_calls() {
-    if circuit_breaker.is_open(call.name) {
-        results.push(Step::function_result_error(call.name, call.id, "circuit open"));
-        continue;
-    }
-    let result = execute_function(call.name, call.args);
-    // ...
-}
-```
-
-## FunctionDeclaration Builder
-
-Build function schemas programmatically.
-
-### Basic Builder
-
-```rust,ignore
+```rust
 use genai_rs::FunctionDeclaration;
 use serde_json::json;
 
 let declaration = FunctionDeclaration::builder("search_products")
     .description("Search for products by query")
-    .parameter("query", json!({
-        "type": "string",
-        "description": "Search query"
-    }))
-    .parameter("limit", json!({
-        "type": "integer",
-        "description": "Max results (1-100)"
-    }))
+    .parameter("query", json!({"type": "string", "description": "Search query"}))
+    .parameter("limit", json!({"type": "integer", "description": "Max results (1-100)"}))
+    .parameter("category", json!({"type": "string", "enum": ["books", "music", "games"]}))
     .required(vec!["query".to_string()])
     .build();
+
+assert_eq!(declaration.name(), "search_products");
 ```
 
-### Complex Parameter Types
+Each `parameter()` value is a JSON-schema fragment, so nested objects and
+arrays work as in JSON Schema.
 
-```rust,ignore
-// Enum parameter
-let declaration = FunctionDeclaration::builder("convert_temp")
-    .description("Convert temperature")
-    .parameter("value", json!({"type": "number"}))
-    .parameter("from_unit", json!({
-        "type": "string",
-        "enum": ["celsius", "fahrenheit", "kelvin"]
-    }))
-    .parameter("to_unit", json!({
-        "type": "string",
-        "enum": ["celsius", "fahrenheit", "kelvin"]
-    }))
-    .required(vec!["value", "from_unit", "to_unit"])
-    .build();
+## Function calling modes
 
-// Object parameter
-let declaration = FunctionDeclaration::builder("create_user")
-    .description("Create a new user")
-    .parameter("user", json!({
-        "type": "object",
-        "properties": {
-            "name": {"type": "string"},
-            "email": {"type": "string"},
-            "age": {"type": "integer"}
-        },
-        "required": ["name", "email"]
-    }))
-    .required(vec!["user".to_string()])
-    .build();
-
-// Array parameter
-let declaration = FunctionDeclaration::builder("process_items")
-    .description("Process a list of items")
-    .parameter("items", json!({
-        "type": "array",
-        "items": {"type": "string"}
-    }))
-    .build();
-```
-
-### Accessing Declaration Properties
-
-```rust,ignore
-use genai_rs::CallableFunction;
-
-let decl = GetWeatherCallable.declaration();
-
-println!("Name: {}", decl.name());
-println!("Description: {}", decl.description());
-println!("Parameters: {:?}", decl.parameters());
-```
-
-## Function Calling Modes
-
-Control how the model uses functions.
-
-### Available Modes
-
-```rust,ignore
-use genai_rs::FunctionCallingMode;
-
-// Auto (default): Model decides whether to call
-client.interaction()
-    .add_function(decl)
-    .with_function_calling_mode(FunctionCallingMode::Auto)
-
-// Any: Model MUST call a function
-client.interaction()
-    .add_function(decl)
-    .with_function_calling_mode(FunctionCallingMode::Any)
-
-// None: Disable function calling
-client.interaction()
-    .add_function(decl)
-    .with_function_calling_mode(FunctionCallingMode::None)
-
-// Validated: Schema adherence for both calls and text
-client.interaction()
-    .add_function(decl)
-    .with_function_calling_mode(FunctionCallingMode::Validated)
-```
-
-### Mode Comparison
-
-| Mode | Model Behavior | Use Case |
-|------|---------------|----------|
-| `Auto` | Decides whether to call | General use |
-| `Any` | Must call a function | Guarantee function execution |
-| `None` | Cannot call functions | Disable temporarily |
-| `Validated` | Schema-strict output | High reliability needs |
-
-On the wire, modes serialize as lowercase strings (`"auto"`, `"any"`, `"none"`,
-`"validated"`) in `generation_config.tool_choice`.
-
-### Tool Choice
+| Mode | Model behavior | Wire value |
+|------|---------------|------------|
+| `FunctionCallingMode::Auto` (default) | Decides whether to call | `"auto"` |
+| `FunctionCallingMode::Any` | Must call a function | `"any"` |
+| `FunctionCallingMode::None` | Cannot call functions | `"none"` |
+| `FunctionCallingMode::Validated` | Schema adherence for both calls and text | `"validated"` |
 
 `with_function_calling_mode()` is a convenience over the underlying
 `generation_config.tool_choice` union, which is `Option<ToolChoice>`:
@@ -506,169 +319,32 @@ let builder = client.interaction()
 # }
 ```
 
-Note: `with_allowed_tools(Vec<String>)` sets the `AllowedTools` form of
-`tool_choice` (preserving any previously set mode).
+`with_allowed_tools(Vec<String>)` sets the `AllowedTools` form of
+`tool_choice`, keeping any mode set before it.
 
-## Streaming Function Call Arguments
+## Streaming function-call arguments
 
-When streaming, function-call arguments arrive incrementally as
-`StepDelta::ArgumentsDelta` chunks (JSON fragments). The HTTP layer assembles
-the streamed `step.start`/`step.delta`/`step.stop` events into the final
-`StreamChunk::Completed(response)`, including parsing the accumulated argument
-fragments into `Step::FunctionCall { arguments, .. }` — so
-`response.function_calls()` works on the completed response after streaming,
-exactly as in the non-streaming case. See [Streaming API](STREAMING_API.md).
-
-## Parallel and Compositional Calls
-
-### Parallel Execution
-
-The model may request multiple functions at once:
-
-```rust,ignore
-// Model might request: get_weather("Tokyo"), get_weather("London")
-for call in response.function_calls() {
-    // Execute in parallel using tokio::spawn or futures::join!
-}
-```
-
-```rust,ignore
-use futures::future::join_all;
-
-let futures: Vec<_> = response.function_calls()
-    .iter()
-    .map(|call| async {
-        let result = execute_function(call.name, call.args).await;
-        (call.id.to_string(), call.name.to_string(), result)
-    })
-    .collect();
-
-let results = join_all(futures).await;
-
-// Build one Step::function_result per call and send them back together
-let result_steps: Vec<_> = results.into_iter()
-    .map(|(id, name, result)| Step::function_result(name, id, result))
-    .collect();
-```
-
-### Compositional (Chained) Calls
-
-The model chains function outputs:
-
-```text
-User: "Convert the temperature in Tokyo to Fahrenheit"
-→ Model: get_weather("Tokyo") → {"temp": "22°C"}
-→ Model: convert_temp(22, "celsius", "fahrenheit") → {"temp": "71.6°F"}
-→ Model: "The temperature in Tokyo is 71.6°F"
-```
-
-This happens automatically across multiple loop iterations.
-
-## Best Practices
-
-### 1. Return JSON from Functions
-
-```rust,ignore
-use genai_rs_macros::tool;
-
-#[tool(city(description = "City name"))]
-fn get_weather(city: String) -> String {
-    // Return JSON for structured data
-    format!(r#"{{"city": "{}", "temp": "22°C", "conditions": "sunny"}}"#, city)
-}
-```
-
-### 2. Handle Errors Gracefully
-
-```rust,ignore
-use genai_rs_macros::tool;
-
-#[tool(id(description = "User ID"))]
-fn get_user(id: i32) -> String {
-    if id <= 0 {
-        return r#"{"error": "Invalid user ID"}"#.to_string();
-    }
-
-    match database.find_user(id) {
-        Some(user) => serde_json::to_string(&user).unwrap(),
-        None => format!(r#"{{"error": "User {} not found"}}"#, id),
-    }
-}
-```
-
-### 3. Validate Inputs
-
-```rust,ignore
-use genai_rs_macros::tool;
-
-#[tool(query(description = "Search query"))]
-fn search(query: String) -> String {
-    if query.len() > 1000 {
-        return r#"{"error": "Query too long"}"#.to_string();
-    }
-
-    if query.trim().is_empty() {
-        return r#"{"error": "Query cannot be empty"}"#.to_string();
-    }
-
-    // Proceed with search...
-}
-```
-
-### 4. Use Descriptive Names and Descriptions
-
-```rust,ignore
-// Good: Clear, specific
-#[tool(city(description = "City name (e.g., 'Tokyo', 'New York')"))]
-fn get_current_weather(city: String) -> String
-
-// Bad: Vague
-#[tool(x(description = "input"))]
-fn do_thing(x: String) -> String
-```
-
-### 5. Limit Function Count
-
-```rust,ignore
-// Provide only relevant functions to reduce model confusion
-let result = client
-    .interaction()
-    .with_text("What's the weather?")
-    .add_function(weather_func)  // Only weather, not all 20 functions
-    .create_with_auto_functions()
-    .await?;
-```
-
-### 6. Set Max Loops for Auto Execution
-
-```rust,ignore
-// Prevent infinite loops
-let result = client
-    .interaction()
-    .with_text(prompt)
-    .add_function(func)
-    .with_max_function_call_loops(5)  // Default is 10
-    .create_with_auto_functions()
-    .await?;
-```
+When streaming, arguments arrive incrementally as `StepDelta::ArgumentsDelta`
+JSON fragments. The completed `StreamChunk::Completed(response)` has them
+assembled and parsed, so `response.function_calls()` works after streaming
+exactly as it does after `create()`. See [Streaming API](STREAMING_API.md).
 
 ## Examples
 
 | Example | Demonstrates |
 |---------|-------------|
-| `auto_function_calling` | `#[tool]` macro, auto-discovery, modes |
-| `tool_service` | Stateful functions, dependency injection |
-| `manual_function_calling` | Manual loop, full control |
-| `parallel_and_compositional_functions` | Parallel execution, chaining |
+| `auto_function_calling` | `#[tool]`, auto-discovery, the auto loop |
+| `tool_service` | Stateful functions via `ToolService` |
+| `manual_function_calling` | The manual loop |
+| `parallel_and_compositional_functions` | Parallel and chained calls |
 | `streaming_auto_functions` | Streaming with auto execution |
 
-Run with:
 ```bash
 cargo run --example <name>
 ```
 
-## Related Documentation
+## Related
 
-- [Multi-Turn Function Calling](MULTI_TURN_FUNCTION_CALLING.md) - Multi-turn patterns
-- [Streaming API](STREAMING_API.md) - Streaming with functions
-- [Error Handling](ERROR_HANDLING.md) - Function errors
+- [Multi-Turn Function Calling](MULTI_TURN_FUNCTION_CALLING.md): functions across turns, stateless history
+- [Error Handling](ERROR_HANDLING.md#function-calling-errors): what the model receives when a function fails
+- [Streaming API](STREAMING_API.md): streaming with functions
