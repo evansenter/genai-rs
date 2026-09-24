@@ -1015,16 +1015,17 @@ wire_enum! {
 /// 400 Unknown parameter 'processing' at 'input[1]'.
 /// ```
 ///
-/// So use [`InteractionInput::Steps`](crate::InteractionInput::Steps), not
-/// [`InteractionInput::Content`](crate::InteractionInput::Content), when any
-/// video carries `processing`. This is an API-side asymmetry, not a crate
-/// limitation — both input forms are otherwise valid.
+/// The crate always sends content input in the step form, so
+/// [`with_content`](crate::InteractionBuilder::with_content) and
+/// [`InteractionInput::Content`](crate::InteractionInput::Content) both work;
+/// nothing needs wrapping by hand.
 ///
 /// # Example
 ///
 /// ```
-/// use genai_rs::{Content, InteractionInput, Step, VideoProcessing};
+/// use genai_rs::{Client, Content, VideoProcessing};
 ///
+/// # fn example(client: &Client) {
 /// // Clip a 5-second window and sample one frame per second.
 /// let clipped = VideoProcessing::segment()
 ///     .start_offset("5s")
@@ -1034,10 +1035,12 @@ wire_enum! {
 ///
 /// let video = Content::video_uri("files/abc123", "video/mp4").with_processing(clipped);
 ///
-/// // Must be wrapped in a user_input step — see above.
-/// let input = InteractionInput::Steps(vec![Step::UserInput {
-///     content: vec![Content::text("Describe this clip."), video],
-/// }]);
+/// let builder = client
+///     .interaction()
+///     .with_model(genai_rs::DEFAULT_MODEL)
+///     .with_content(vec![Content::text("Describe this clip."), video]);
+/// # let _ = builder;
+/// # }
 /// ```
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]

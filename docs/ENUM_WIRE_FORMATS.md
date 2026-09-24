@@ -27,42 +27,41 @@ All types below implement graceful handling of unrecognized values via an `Unkno
 | 9 | `Tool` | src/tools.rs | `tool_type` | Tool types |
 | 10 | `FunctionCallingMode` | src/tools.rs | `mode_type` | auto/any/none/validated (lowercase) |
 | 11 | `ToolChoice` | src/tools.rs | `choice_type` | Mode string OR `allowed_tools` object |
-| 12 | `Role` | src/request.rs | `role_type` | `ConversationBuilder` only — not an API wire enum |
-| 13 | `ThinkingLevel` | src/request.rs | `level_type` | minimal/low/medium/high |
-| 14 | `ThinkingSummaries` | src/request.rs | `summaries_type` | Context-dependent format |
-| 15 | `ServiceTier` | src/request.rs | `tier_type` | flex/standard/priority |
-| 16 | `InteractionStatus` | src/response.rs | `status_type` | Response status (+`budget_exceeded`) |
-| 17 | `CodeExecutionLanguage` | src/content.rs | `language_type` | Programming language (lowercase) |
-| 18 | `ImageAspectRatio` | src/request.rs | `ratio_type` | Image aspect ratios (14 values) |
-| 19 | `ImageSize` | src/request.rs | `size_type` | Image resolution (512/1K/2K/4K) |
-| 20 | `SearchType` | src/tools.rs | `search_type` | web_search/image_search/enterprise_web_search |
-| 21 | `RetrievalType` | src/tools.rs | `retrieval_type` | vertex_ai_search/rag_store/exa_ai_search/parallel_ai_search |
-| 22 | `WebhookEvent` | src/webhooks.rs | `event_type` | batch.*/interaction.*/video.generated |
-| 23 | `WebhookState` | src/webhooks.rs | `state_type` | enabled/disabled/disabled_due_to_failed_deliveries |
-| 24 | `RevocationBehavior` | src/webhooks.rs | `behavior_type` | Signing-secret rotation behavior |
-| 25 | `SourceType` | src/environments/spec.rs | `source_type` | gcs/inline/repository/skill_registry |
-| 26 | `NetworkConfig` | src/environments/spec.rs | `network_type` | `"disabled"` string OR `{allowlist}` object |
-| 27 | `EnvironmentSpec` | src/environments/spec.rs | `environment_type` | Env-ID string OR `{type:"remote"}` object |
-| 28 | `ResponseDelivery` | src/response_format.rs | `delivery_type` | inline/uri |
-| 29 | `ResponseFormat` | src/response_format.rs | `format_type` | text/audio/image/video union |
-| 30 | `VideoTask` | src/request.rs | `task_type` | text_to_video/image_to_video/reference_to_video/edit |
-| 31 | `Visualization` | src/request.rs | `visualization_type` | off/auto (Deep Research agent_config) |
-| 32 | `HarmCategory` | src/safety.rs | `category_type` | Ten harm categories (Vertex-gated parameter) |
-| 33 | `SafetyThreshold` | src/safety.rs | `threshold_type` | Block thresholds (Vertex-gated parameter) |
-| 34 | `SafetyMethod` | src/safety.rs | `method_type` | severity/probability (Vertex-gated parameter) |
-| 35 | `EnvironmentStatus` | src/environments/mod.rs | `status_type` | active/expired |
-| 36 | `TriggerStatus` | src/triggers.rs | `status_type` | active/paused/error (SDK-spec, pending live) |
-| 37 | `TriggerExecutionStatus` | src/triggers.rs | `status_type` | Execution outcomes (SDK-spec, pending live) |
-| 38 | `VideoProcessing` | src/content.rs | `processing_type` | Mode string OR `{type:"static", ...}` object (verified live 2026-08-16) |
-| 39 | `DocumentState` | src/file_search_stores.rs | `state_type` | File search document indexing state (verified live 2026-08-16) |
-| 40 | `VoiceType` | src/voices.rs | `voice_type` | prebuilt/prompted/replicated (`/v1beta/voices`) |
-| 41 | `VoicePitch` | src/voices.rs | `pitch_type` | low/medium/high |
-| 42 | `CredentialType` | src/credentials.rs | `credential_type` | bearer_token/environment_variable/oauth2 |
-| 43 | `CredentialStatus` | src/credentials.rs | `status_type` | active/revoked |
-| 44 | `InjectionLocation` | src/credentials.rs | `location_type` | header/query/body |
-| 45 | `EnvironmentFileType` | src/environments/files.rs | `file_type` | FILE/DIRECTORY (uppercase on the wire) |
-| 46 | `VideoResolution` | src/response_format.rs | `resolution_type` | 360p/720p/1080p/4k |
-| 47 | `TranscriptionMode` | src/request.rs | `mode_type` | smart/verbatim, string OR tagged object |
+| 12 | `ThinkingLevel` | src/request.rs | `level_type` | minimal/low/medium/high |
+| 13 | `ThinkingSummaries` | src/request.rs | `summaries_type` | Context-dependent format |
+| 14 | `ServiceTier` | src/request.rs | `tier_type` | flex/standard/priority |
+| 15 | `InteractionStatus` | src/response.rs | `status_type` | Response status (+`budget_exceeded`) |
+| 16 | `CodeExecutionLanguage` | src/content.rs | `language_type` | Programming language (lowercase) |
+| 17 | `ImageAspectRatio` | src/request.rs | `ratio_type` | Image aspect ratios (14 values) |
+| 18 | `ImageSize` | src/request.rs | `size_type` | Image resolution (512/1K/2K/4K) |
+| 19 | `SearchType` | src/tools.rs | `search_type` | web_search/image_search/enterprise_web_search |
+| 20 | `RetrievalType` | src/tools.rs | `retrieval_type` | vertex_ai_search/rag_store/exa_ai_search/parallel_ai_search |
+| 21 | `WebhookEvent` | src/webhooks.rs | `event_type` | batch.*/interaction.*/video.generated |
+| 22 | `WebhookState` | src/webhooks.rs | `state_type` | enabled/disabled/disabled_due_to_failed_deliveries |
+| 23 | `RevocationBehavior` | src/webhooks.rs | `behavior_type` | Signing-secret rotation behavior |
+| 24 | `SourceType` | src/environments/spec.rs | `source_type` | gcs/inline/repository/skill_registry |
+| 25 | `NetworkConfig` | src/environments/spec.rs | `network_type` | `"disabled"` string OR `{allowlist}` object |
+| 26 | `EnvironmentSpec` | src/environments/spec.rs | `environment_type` | Env-ID string OR `{type:"remote"}` object |
+| 27 | `ResponseDelivery` | src/response_format.rs | `delivery_type` | inline/uri |
+| 28 | `ResponseFormat` | src/response_format.rs | `format_type` | text/audio/image/video union |
+| 29 | `VideoTask` | src/request.rs | `task_type` | text_to_video/image_to_video/reference_to_video/edit |
+| 30 | `Visualization` | src/request.rs | `visualization_type` | off/auto (Deep Research agent_config) |
+| 31 | `HarmCategory` | src/safety.rs | `category_type` | Ten harm categories (Vertex-gated parameter) |
+| 32 | `SafetyThreshold` | src/safety.rs | `threshold_type` | Block thresholds (Vertex-gated parameter) |
+| 33 | `SafetyMethod` | src/safety.rs | `method_type` | severity/probability (Vertex-gated parameter) |
+| 34 | `EnvironmentStatus` | src/environments/mod.rs | `status_type` | active/expired |
+| 35 | `TriggerStatus` | src/triggers.rs | `status_type` | active/paused/error (SDK-spec, pending live) |
+| 36 | `TriggerExecutionStatus` | src/triggers.rs | `status_type` | Execution outcomes (SDK-spec, pending live) |
+| 37 | `VideoProcessing` | src/content.rs | `processing_type` | Mode string OR `{type:"static", ...}` object (verified live 2026-08-16) |
+| 38 | `DocumentState` | src/file_search_stores.rs | `state_type` | File search document indexing state (verified live 2026-08-16) |
+| 39 | `VoiceType` | src/voices.rs | `voice_type` | prebuilt/prompted/replicated (`/v1beta/voices`) |
+| 40 | `VoicePitch` | src/voices.rs | `pitch_type` | low/medium/high |
+| 41 | `CredentialType` | src/credentials.rs | `credential_type` | bearer_token/environment_variable/oauth2 |
+| 42 | `CredentialStatus` | src/credentials.rs | `status_type` | active/revoked |
+| 43 | `InjectionLocation` | src/credentials.rs | `location_type` | header/query/body |
+| 44 | `EnvironmentFileType` | src/environments/files.rs | `file_type` | FILE/DIRECTORY (uppercase on the wire) |
+| 45 | `VideoResolution` | src/response_format.rs | `resolution_type` | 360p/720p/1080p/4k |
+| 46 | `TranscriptionMode` | src/request.rs | `mode_type` | smart/verbatim, string OR tagged object |
 
 **Removed in revision 2026-05-20** (no longer exist in this library or on the wire):
 `UrlRetrievalStatus`, `GroundingMetadata`, `UrlContextMetadata`, `Turn`, and all tool-related
@@ -759,9 +758,9 @@ rejected:
 400 Unknown parameter 'processing' at 'input[1]'.
 ```
 
-Use `InteractionInput::Steps`, not `InteractionInput::Content`, for video
-carrying `processing`. Both input forms are otherwise valid, so this is an
-API-side asymmetry.
+The crate sends content input (`with_content`, `InteractionInput::Content`)
+as a single `user_input` step for this reason, so no wrapping is needed by
+hand. Both input forms are otherwise valid, so this is an API-side asymmetry.
 
 Unknown enum values are rejected server-side by field path, confirming the
 field is validated rather than passed through:
