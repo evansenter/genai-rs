@@ -151,6 +151,46 @@ pub fn get_client() -> Option<Client> {
     )
 }
 
+/// A client that also keeps the raw JSON of the last successful response, for
+/// fields the API returns but `InteractionResponse` does not model.
+#[allow(dead_code)]
+pub fn get_inspecting_client() -> Option<(Client, std::sync::Arc<LastResponseBody>)> {
+    let api_key = env::var("GEMINI_API_KEY")
+        .ok()
+        .filter(|k| !k.trim().is_empty())?;
+    let body = std::sync::Arc::new(LastResponseBody::default());
+    let client = Client::builder(api_key)
+        .add_wire_inspector(body.clone())
+        .build()
+        .expect("GEMINI_API_KEY is set but the client failed to build");
+    Some((client, body))
+}
+
+/// Wire inspector holding the most recent successful response body.
+#[derive(Default)]
+#[allow(dead_code)]
+pub struct LastResponseBody(std::sync::Mutex<Option<serde_json::Value>>);
+
+impl LastResponseBody {
+    /// Takes the captured body, panicking if none arrived since the last take.
+    #[allow(dead_code)]
+    pub fn take(&self) -> serde_json::Value {
+        self.0
+            .lock()
+            .unwrap()
+            .take()
+            .expect("no response body was captured")
+    }
+}
+
+impl genai_rs::wire::WireInspector for LastResponseBody {
+    fn on_event(&self, event: &genai_rs::wire::WireEvent) {
+        if let genai_rs::wire::WireEvent::ResponseBody { body, .. } = event {
+            *self.0.lock().unwrap() = Some(body.clone());
+        }
+    }
+}
+
 // =============================================================================
 // Timeout Utilities
 // =============================================================================

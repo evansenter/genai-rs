@@ -8,8 +8,8 @@
 mod common;
 
 use common::{
-    assert_response_semantic, extended_test_timeout, get_client, interaction_builder,
-    stateful_builder, with_timeout,
+    assert_response_semantic, extended_test_timeout, get_client, get_inspecting_client,
+    interaction_builder, stateful_builder, with_timeout,
 };
 use genai_rs::{FunctionCallingMode, FunctionDeclaration, InteractionStatus, Step};
 use serde_json::json;
@@ -259,43 +259,19 @@ async fn test_conversation_branch() {
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_system_instruction_not_inherited() {
-    use genai_rs::wire::{WireEvent, WireInspector};
-    use std::sync::{Arc, Mutex};
-
-    #[derive(Default)]
-    struct LastBody(Mutex<Option<serde_json::Value>>);
-    impl WireInspector for LastBody {
-        fn on_event(&self, event: &WireEvent) {
-            if let WireEvent::ResponseBody { body, .. } = event {
-                *self.0.lock().unwrap() = Some(body.clone());
-            }
-        }
-    }
-
     let Some(client) = get_client() else {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
     };
-    let bodies = Arc::new(LastBody::default());
-    let inspecting = genai_rs::Client::builder(std::env::var("GEMINI_API_KEY").unwrap())
-        .add_wire_inspector(bodies.clone())
-        .build()
-        .expect("client build");
+    let (inspecting, bodies) = get_inspecting_client().expect("key checked above");
     let stored_instruction = |id: String| {
-        let inspecting = &inspecting;
-        let bodies = &bodies;
+        let (inspecting, bodies) = (&inspecting, &bodies);
         async move {
             inspecting
                 .get_interaction(&id)
                 .await
                 .expect("get_interaction");
-            let body = bodies
-                .0
-                .lock()
-                .unwrap()
-                .take()
-                .expect("GET body not captured");
-            body.get("system_instruction").cloned()
+            bodies.take().get("system_instruction").cloned()
         }
     };
 

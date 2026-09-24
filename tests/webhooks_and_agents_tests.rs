@@ -481,12 +481,13 @@ async fn test_safety_settings_vertex_gated() {
     }
 }
 
-/// `labels` was Vertex-only until at least 2026-08-08 and is accepted on the
-/// Gemini API as of 2026-09-24.
+/// `labels` was Vertex-only until at least 2026-08-08; as of 2026-09-24 the
+/// Gemini API accepts them and echoes them back. `InteractionResponse` does
+/// not model the echo yet, so it is read from the raw response body.
 #[tokio::test]
 #[ignore = "Requires API key"]
-async fn test_labels_accepted() {
-    let Some(client) = get_client() else {
+async fn test_labels_accepted_and_echoed() {
+    let Some((client, body)) = common::get_inspecting_client() else {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
     };
@@ -501,7 +502,12 @@ async fn test_labels_accepted() {
             .await
     })
     .expect("labels should be accepted (verified live 2026-09-24)");
+
     assert_eq!(response.status, genai_rs::InteractionStatus::Completed);
+    assert_eq!(
+        body.take()["labels"],
+        serde_json::json!({"team": "genai-rs-ci"})
+    );
 }
 
 #[tokio::test]
