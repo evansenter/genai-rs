@@ -1,31 +1,20 @@
-//! Integration tests for the Webhooks and Agents resources, environments,
-//! per-request webhook routing, retrieval grounding, typed response formats,
-//! multi-speaker TTS, and video config.
+//! Webhooks, agents, environments and triggers resources; per-request webhook
+//! routing; typed response formats; multi-speaker TTS; and the request
+//! parameters the Gemini API gates to Vertex.
 //!
-//! These tests require the GEMINI_API_KEY environment variable to be set.
-//!
-//! # Running Tests
+//! Gated capabilities are pinned by their specific rejection, so a schema
+//! regression or an unrelated failure cannot read as "not available".
 //!
 //! ```bash
-//! cargo test --test webhooks_and_agents_tests -- --include-ignored --nocapture
+//! cargo nextest run --test webhooks_and_agents_tests --run-ignored all
 //! ```
-//!
-//! # Notes
-//!
-//! - Webhook tests use `https://example.com` endpoints; deliveries will fail
-//!   but resource CRUD is exercised end-to-end. Created resources are cleaned
-//!   up at the end of each test.
-//! - Some resources (agents, environments, retrieval backends) may not be
-//!   available in all accounts; tests report and tolerate `not found` /
-//!   `permission` errors rather than failing hard on capability gaps.
 
 mod common;
 
 use common::{TINY_WAV_BASE64, get_client};
 use genai_rs::{
-    Agent, DeepResearchConfig, EnvironmentSource, RemoteEnvironment, ResponseFormat,
-    RetrievalConfig, SpeechConfig, Tool, VideoConfig, VideoTask, Visualization, Webhook,
-    WebhookConfig, WebhookEvent, WebhookState, WebhookUpdate,
+    Agent, DeepResearchConfig, ResponseFormat, RetrievalConfig, SpeechConfig, Tool, Visualization,
+    Webhook, WebhookConfig, WebhookEvent, WebhookState, WebhookUpdate,
 };
 
 /// A test webhook endpoint. Deliveries fail (no listener), which is fine for
@@ -44,8 +33,9 @@ async fn test_webhook_crud_lifecycle() {
         return;
     };
 
-    // Create
-    let created = match client
+    // Not retried: a retry after a lost response would leak a webhook with no
+    // id to delete it by.
+    let created = client
         .create_webhook(
             &Webhook::new(
                 TEST_WEBHOOK_URI,
@@ -57,96 +47,85 @@ async fn test_webhook_crud_lifecycle() {
             .with_name("genai-rs-integration-test"),
         )
         .await
-    {
-        Ok(webhook) => webhook,
-        Err(e) => {
-            println!("Webhook create not available for this account: {e}");
-            return;
-        }
-    };
-
-    println!("Created webhook: id={:?}", created.id);
-    assert_eq!(created.uri, TEST_WEBHOOK_URI);
-    assert!(
-        created.new_signing_secret.is_some(),
-        "create should return new_signing_secret"
-    );
-    assert_eq!(created.name.as_deref(), Some("genai-rs-integration-test"));
-    assert_eq!(created.state, Some(WebhookState::Enabled));
+        .expect("create_webhook");
     let id = created.id.clone().expect("created webhook has an id");
 
-    // Get: must echo exactly what create sent (verified live 2026-07).
-    let fetched = client.get_webhook(&id).await.expect("get_webhook");
-    assert_eq!(fetched.uri, TEST_WEBHOOK_URI);
-    assert_eq!(fetched.subscribed_events, created.subscribed_events);
-    assert_eq!(fetched.name, created.name);
-    assert!(
-        fetched.new_signing_secret.is_none(),
-        "the full secret is only returned on create"
-    );
+    // Run the checks under catch_unwind so a failed assertion still deletes
+    // the webhook.
+    let checks = async {
+        assert_eq!(created.uri, TEST_WEBHOOK_URI);
+        assert!(
+            created.new_signing_secret.is_some(),
+            "create should return new_signing_secret"
+        );
+        assert_eq!(created.name.as_deref(), Some("genai-rs-integration-test"));
+        assert_eq!(created.state, Some(WebhookState::Enabled));
 
-    // List (should contain our webhook)
-    let list = client
-        .list_webhooks(Some(50), None)
-        .await
-        .expect("list_webhooks");
-    assert!(
-        list.webhooks
-            .iter()
-            .any(|w| w.id.as_deref() == Some(id.as_str())),
-        "created webhook should appear in list"
-    );
+        // Get echoes what create sent; the full secret is create-only.
+        let fetched = client.get_webhook(&id).await.expect("get_webhook");
+        assert_eq!(fetched.uri, TEST_WEBHOOK_URI);
+        assert_eq!(fetched.subscribed_events, created.subscribed_events);
+        assert_eq!(fetched.name, created.name);
+        assert!(fetched.new_signing_secret.is_none());
 
-    // Update: disable it. Verified live (2026-07): update_mask is optional
-    // and observed to be *ignored* by the API — the PATCH applies exactly
-    // the fields present in the body. Passing None exercises the real
-    // partial-update contract.
-    let updated = client
-        .update_webhook(
-            &id,
-            &WebhookUpdate::new().with_state(WebhookState::Disabled),
-            None,
-        )
-        .await
-        .expect("update_webhook");
-    assert_eq!(updated.state, Some(WebhookState::Disabled));
-    assert_eq!(
-        updated.uri, TEST_WEBHOOK_URI,
-        "unset fields must not change"
-    );
+        let list = client
+            .list_webhooks(Some(50), None)
+            .await
+            .expect("list_webhooks");
+        assert!(
+            list.webhooks
+                .iter()
+                .any(|w| w.id.as_deref() == Some(id.as_str())),
+            "created webhook should appear in list"
+        );
 
-    // Ping. Verified live (2026-07): the RPC accepts our empty `{}` body and
-    // returns 200 + `{}` even though the destination URI is unreachable
-    // (delivery failure is asynchronous, not surfaced by the RPC).
-    client
-        .ping_webhook(&id)
-        .await
-        .expect("ping_webhook should be accepted with an empty JSON body");
+        // The PATCH applies exactly the fields in the body; update_mask is
+        // optional and observed to be ignored (verified live 2026-07).
+        let updated = client
+            .update_webhook(
+                &id,
+                &WebhookUpdate::new().with_state(WebhookState::Disabled),
+                None,
+            )
+            .await
+            .expect("update_webhook");
+        assert_eq!(updated.state, Some(WebhookState::Disabled));
+        assert_eq!(
+            updated.uri, TEST_WEBHOOK_URI,
+            "unset fields must not change"
+        );
 
-    // Rotate signing secret: must return a fresh full secret, distinct from
-    // the one issued at create (verified live 2026-07).
-    let rotated = client
-        .rotate_webhook_signing_secret(&id, None)
-        .await
-        .expect("rotate_webhook_signing_secret");
-    let rotated_secret = rotated.secret.expect("rotate returns the new secret");
-    assert_ne!(
-        Some(rotated_secret.as_str()),
-        created.new_signing_secret.as_deref(),
-        "rotated secret must differ from the create-time secret"
-    );
+        // Accepted even though the URI is unreachable: delivery fails later.
+        client
+            .ping_webhook(&id)
+            .await
+            .expect("ping_webhook should be accepted with an empty JSON body");
 
-    // After rotation the resource lists multiple signing secrets (the old
-    // one gets a 24h expire_time by default).
-    let after_rotate = client.get_webhook(&id).await.expect("get after rotate");
-    assert!(
-        after_rotate.signing_secrets.map_or(0, |s| s.len()) >= 2,
-        "expected old + new signing secrets after rotation"
-    );
+        let rotated = client
+            .rotate_webhook_signing_secret(&id, None)
+            .await
+            .expect("rotate_webhook_signing_secret");
+        let rotated_secret = rotated.secret.expect("rotate returns the new secret");
+        assert_ne!(
+            Some(rotated_secret.as_str()),
+            created.new_signing_secret.as_deref(),
+            "rotated secret must differ from the create-time secret"
+        );
 
-    // Delete (cleanup)
-    client.delete_webhook(&id).await.expect("delete_webhook");
-    println!("Deleted webhook {id}");
+        // The old secret stays listed with a 24h expiry.
+        let after_rotate = client.get_webhook(&id).await.expect("get after rotate");
+        assert!(
+            after_rotate.signing_secrets.map_or(0, |s| s.len()) >= 2,
+            "expected old + new signing secrets after rotation"
+        );
+    };
+    let outcome = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(checks)).await;
+
+    let deleted = client.delete_webhook(&id).await;
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    deleted.expect("delete_webhook");
 }
 
 // =============================================================================
@@ -218,13 +197,10 @@ async fn test_agent_crud_lifecycle() {
     };
 
     let agent_id = "genai-rs-test-agent";
-    // Verified live (2026-07): the API validates the payload schema first
-    // (snake_case fields; agent `tools` only accept `code_execution`,
-    // `google_search`, `url_context`), but creation itself is rejected with
-    // a generic 400 "Request contains an invalid argument." for every
-    // schema-valid payload tried on a standard API key — the resource
-    // appears gated/allowlisted. The tolerant early-return below covers
-    // that case; the CRUD assertions run where creation is available.
+    // Verified live (2026-07): the payload schema is validated first (agent
+    // `tools` accept only code_execution, google_search and url_context),
+    // then creation is refused with a generic 400 on a standard key. The
+    // CRUD assertions run where creation is allowlisted.
     let agent = Agent::new(agent_id)
         .with_system_instruction("You are a test agent that answers briefly.")
         .with_description("Integration-test agent created by genai-rs")
@@ -232,15 +208,17 @@ async fn test_agent_crud_lifecycle() {
 
     let created = match client.create_agent(&agent).await {
         Ok(agent) => agent,
-        Err(e) => {
-            println!("Agent create not available for this account: {e}");
-            let message = e.to_string();
-            assert!(
-                !message.contains("Unknown parameter"),
-                "agent payload schema itself was rejected: {message}"
-            );
+        // The gate: a generic 400 for a schema-valid payload. A schema
+        // rejection names the field, so it does not match.
+        Err(genai_rs::GenaiError::Api {
+            status_code: 400,
+            message,
+            ..
+        }) if message.contains("Request contains an invalid argument") => {
+            println!("Agent create gated for this key: {message}");
             return;
         }
+        Err(e) => panic!("expected the agent-create gate (400 invalid argument), got: {e}"),
     };
     println!("Created agent: id={:?}", created.id);
 
@@ -276,123 +254,50 @@ async fn test_agent_crud_lifecycle() {
 }
 
 // =============================================================================
-// Environments
-// =============================================================================
-
-#[tokio::test]
-#[ignore = "Requires API key"]
-async fn test_interaction_with_inline_environment() {
-    let Some(client) = get_client() else {
-        println!("Skipping: GEMINI_API_KEY not set");
-        return;
-    };
-
-    // Typed remote environment with an inline source. Environment support is
-    // agent-dependent; tolerate capability errors but require a structured
-    // API response (i.e., the request shape itself must be valid).
-    let result = client
-        .interaction()
-        .with_agent(genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
-        .with_text("Print the contents of /etc/motd")
-        .with_background(true)
-        .with_store_enabled()
-        .with_environment(
-            RemoteEnvironment::new().add_source(EnvironmentSource::inline(
-                "/etc/motd",
-                "hello from genai-rs",
-            )),
-        )
-        .create()
-        .await;
-
-    match result {
-        Ok(response) => {
-            println!(
-                "Environment interaction accepted: status={:?}, environment_id={:?}",
-                response.status, response.environment_id
-            );
-            // Verified live (2026-07): the create response *can* carry the
-            // provisioned environment's ID, but it is not guaranteed at
-            // accept-time — CI observed status=InProgress with
-            // environment_id=None (the ID appears once provisioning
-            // completes). Assert shape when present, tolerate absence.
-            if let Some(env_id) = &response.environment_id {
-                assert!(!env_id.is_empty(), "environment_id should be non-empty");
-            } else {
-                println!("environment_id not yet assigned at accept-time (provisioning)");
-            }
-            // Clean up background interaction if possible
-            if let Some(id) = &response.id {
-                let _ = client.cancel_interaction(id).await;
-            }
-            // Best-effort: delete the implicitly provisioned environment
-            // when its ID is known (they expire on their own, but each CI
-            // run otherwise leaves one behind until then). Every
-            // live-observed ID in this API is bare (no collection prefix);
-            // environment_id is the one field not yet observed non-None at
-            // accept-time, so defensively strip a possible resource-name
-            // prefix and print the outcome rather than swallowing a
-            // silent 404.
-            if let Some(env_id) = &response.environment_id {
-                let bare_id = env_id.strip_prefix("environments/").unwrap_or(env_id);
-                match client.delete_environment(bare_id).await {
-                    Ok(()) => println!("Deleted implicit environment {bare_id}"),
-                    Err(e) => println!(
-                        "delete of implicit environment {bare_id} failed (expires on \
-                         its own): {e}"
-                    ),
-                }
-            }
-        }
-        Err(e) => println!("Environment not available for this account/agent: {e}"),
-    }
-}
-
-// =============================================================================
 // Retrieval tool
 // =============================================================================
 
 #[tokio::test]
 #[ignore = "Requires API key"]
-async fn test_retrieval_tool_request_accepted() {
+async fn test_retrieval_tool_vertex_gated() {
     let Some(client) = get_client() else {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
     };
 
-    // Verified live (2026-07): the Gemini API rejects `type: "retrieval"`
-    // outright — "The value 'retrieval' is not supported for 'tools[0].type'
-    // on the Gemini API, it is allowed on the Gemini Enterprise Agent
-    // Platform." (i.e. the tool is Vertex-only). This test pins that the
-    // rejection stays a *capability* error, not a schema-level
-    // unknown-field error — if it starts succeeding, the tool has launched
-    // on the Gemini API and this test should be upgraded.
-    let result = client
-        .interaction()
-        .with_model(genai_rs::DEFAULT_MODEL)
-        .with_text("What does our internal handbook say about PTO?")
-        .add_tool(
-            RetrievalConfig::new().with_vertex_ai_search(
-                genai_rs::VertexAiSearchConfig::new()
-                    .with_engine("projects/invalid/locations/global/engines/does-not-exist"),
-            ),
-        )
-        .create()
-        .await;
+    // Vertex-only (verified live 2026-07): a 400 carrying the stable
+    // "Gemini Enterprise" fragment of the gate message. Acceptance means the
+    // tool launched and this should be upgraded; any other error is a
+    // regression.
+    let result = retry_request!([client] => {
+        client
+            .interaction()
+            .with_model(genai_rs::DEFAULT_MODEL)
+            .with_text("What does our internal handbook say about PTO?")
+            .add_tool(
+                RetrievalConfig::new().with_vertex_ai_search(
+                    genai_rs::VertexAiSearchConfig::new()
+                        .with_engine("projects/invalid/locations/global/engines/does-not-exist"),
+                ),
+            )
+            .create()
+            .await
+    });
 
     match result {
-        Ok(response) => println!(
-            "Retrieval request accepted (tool now live on the Gemini API?): {:?}",
+        Ok(response) => panic!(
+            "retrieval was accepted (status={:?}); it has launched on the Gemini API — \
+             upgrade this probe to assert acceptance",
             response.status
         ),
-        Err(e) => {
-            let message = e.to_string();
-            println!("Retrieval request returned error: {message}");
-            assert!(
-                !message.contains("Unknown parameter") && !message.contains("Unknown name"),
-                "API rejected the retrieval tool schema itself: {message}"
-            );
+        Err(genai_rs::GenaiError::Api {
+            status_code: 400,
+            message,
+            ..
+        }) if message.contains("Gemini Enterprise") => {
+            println!("retrieval Vertex-gated as expected: {message}");
         }
+        Err(e) => panic!("expected the Vertex-gate 400 for retrieval, got: {e}"),
     }
 }
 
@@ -488,56 +393,6 @@ async fn test_multi_speaker_tts_with_audio_response_format() {
 }
 
 // =============================================================================
-// Video generation config (request shape)
-// =============================================================================
-
-#[tokio::test]
-#[ignore = "Requires API key"]
-async fn test_video_generation_request_shape() {
-    let Some(client) = get_client() else {
-        println!("Skipping: GEMINI_API_KEY not set");
-        return;
-    };
-
-    // Verified live (2026-07): Veo models are not served by the Interactions
-    // API — `veo-3.1-generate-preview` returns 404 "Model ... not found"
-    // (the `/v1beta/models` list exposes it with only the legacy
-    // `predictLongRunning` method), and no Interactions-served model
-    // supported the `video` response modality. The `video_config` schema
-    // itself is validated server-side (its `task` enum lists
-    // text_to_video/image_to_video/reference_to_video/edit/extend). If this
-    // request starts succeeding, video generation has launched on the
-    // Interactions API and this test should be upgraded.
-    let result = client
-        .interaction()
-        .with_model("veo-3.1-generate-preview")
-        .with_text("A hummingbird hovering over a red flower, slow motion")
-        .with_video_output()
-        .with_video_config(VideoConfig::new().with_task(VideoTask::TextToVideo))
-        .with_background(true)
-        .with_store_enabled()
-        .create()
-        .await;
-
-    match result {
-        Ok(response) => {
-            println!("Video generation accepted: status={:?}", response.status);
-            if let Some(id) = &response.id {
-                let _ = client.cancel_interaction(id).await;
-            }
-        }
-        Err(e) => {
-            let message = e.to_string();
-            println!("Video generation not available for this account/model: {message}");
-            assert!(
-                !message.contains("Unknown parameter"),
-                "video request schema itself was rejected: {message}"
-            );
-        }
-    }
-}
-
-// =============================================================================
 // TranscriptionConfig + Vertex-gated request params (request acceptance)
 // =============================================================================
 
@@ -582,9 +437,13 @@ async fn test_transcription_config_accepted() {
     );
 }
 
+/// `safety_settings` is Vertex-only (verified live 2026-09-24): the 400 must
+/// carry the gate's stable "Gemini Enterprise" fragment, so a schema
+/// rejection, a mis-scoped key or a transport failure cannot pass. Acceptance
+/// means the knob launched and this probe should be upgraded.
 #[tokio::test]
 #[ignore = "Requires API key"]
-async fn test_safety_settings_and_labels_vertex_gated() {
+async fn test_safety_settings_vertex_gated() {
     let Some(client) = get_client() else {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
@@ -592,66 +451,57 @@ async fn test_safety_settings_and_labels_vertex_gated() {
 
     use genai_rs::{HarmCategory, SafetySetting, SafetyThreshold};
 
-    // Verified live (2026-08-08): both `safety_settings` and `labels` are
-    // rejected as Vertex-only ("not available on the Gemini API but it is
-    // available on the Gemini Enterprise Agent Platform"). The two gates
-    // are independent spec parameters that merely share that status today,
-    // so probe each on its own request — one launching while the other
-    // stays gated remains legible. This pins that each rejection stays a
-    // *capability* error, not a schema-level unknown-field error — if one
-    // starts succeeding, that knob has launched and this test should be
-    // upgraded.
-    for knob in ["safety_settings", "labels"] {
-        // Retry transients (429/5xx) so the strict match below only ever
-        // sees a settled outcome.
-        let result = crate::retry_request!([client, knob] => {
-            let builder = client
-                .interaction()
-                .with_model(genai_rs::DEFAULT_MODEL)
-                .with_text("Say OK.");
-            let builder = match knob {
-                "safety_settings" => builder.add_safety_setting(SafetySetting::new(
-                    HarmCategory::Harassment,
-                    SafetyThreshold::BlockOnlyHigh,
-                )),
-                "labels" => builder.add_label("team", "genai-rs-ci"),
-                // Exhaustive on purpose: a catch-all would let a typo (or a
-                // third entry) silently probe labels under the wrong name.
-                other => panic!("unhandled knob {other}"),
-            };
-            builder.create().await
-        });
+    let result = crate::retry_request!([client] => {
+        client
+            .interaction()
+            .with_model(genai_rs::DEFAULT_MODEL)
+            .with_text("Say OK.")
+            .add_safety_setting(SafetySetting::new(
+                HarmCategory::Harassment,
+                SafetyThreshold::BlockOnlyHigh,
+            ))
+            .create()
+            .await
+    });
 
-        match result {
-            // Probes pin current reality: a launch is a loud signal to
-            // upgrade this test, exactly like the transcription probe's
-            // strict expect above.
-            Ok(response) => panic!(
-                "{knob} was accepted (status={:?}) — the knob has launched on \
-                 the Gemini API; upgrade this probe to assert acceptance",
-                response.status
-            ),
-            // The positive pin: a 400 carrying the gate's stable fragment
-            // ("Gemini Enterprise" appears in every observed wording of
-            // the Vertex-only rejection; deliberately shorter than the
-            // full sentence so a benign rewording doesn't read as a crate
-            // regression). This alone proves the schema was accepted and
-            // only the capability gate refused it — a schema rejection
-            // ("Unknown parameter"/"Unknown name"), a 403 on a mis-scoped
-            // key, or a transport failure all fall through to the panic
-            // arm.
-            Err(genai_rs::GenaiError::Api {
-                status_code: 400,
-                message,
-                ..
-            }) if message.contains("Gemini Enterprise") => {
-                println!("{knob} Vertex-gated as expected: {message}");
-            }
-            Err(e) => {
-                panic!("{knob}: expected the documented Vertex-gate 400, got: {e}")
-            }
+    match result {
+        Ok(response) => panic!(
+            "safety_settings was accepted (status={:?}) — the knob has launched on \
+             the Gemini API; upgrade this probe to assert acceptance",
+            response.status
+        ),
+        Err(genai_rs::GenaiError::Api {
+            status_code: 400,
+            message,
+            ..
+        }) if message.contains("Gemini Enterprise") => {
+            println!("safety_settings Vertex-gated as expected: {message}");
         }
+        Err(e) => panic!("expected the documented Vertex-gate 400, got: {e}"),
     }
+}
+
+/// `labels` was Vertex-only until at least 2026-08-08 and is accepted on the
+/// Gemini API as of 2026-09-24.
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_labels_accepted() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    let response = crate::retry_request!([client] => {
+        client
+            .interaction()
+            .with_model(genai_rs::DEFAULT_MODEL)
+            .with_text("Say OK.")
+            .add_label("team", "genai-rs-ci")
+            .create()
+            .await
+    })
+    .expect("labels should be accepted (verified live 2026-09-24)");
+    assert_eq!(response.status, genai_rs::InteractionStatus::Completed);
 }
 
 #[tokio::test]
@@ -726,8 +576,9 @@ async fn test_deep_research_config_knobs_accepted() {
     };
 
     // Verified live (2026-07): `agent_config.visualization` (enum "off" |
-    // "auto", validated server-side) and `collaborative_planning` are
-    // accepted on the Gemini API. `enable_bigquery_tool` is rejected as
+    // "auto", validated server-side), `collaborative_planning` and
+    // `thinking_summaries` are accepted on the Gemini API.
+    // `enable_bigquery_tool` is rejected as
     // Vertex-only ("not available on the Gemini API but it is available on
     // the Gemini Enterprise Agent Platform") and is deliberately not sent
     // here. Deep-research runs are long, so this only checks request
@@ -744,6 +595,7 @@ async fn test_deep_research_config_knobs_accepted() {
             .with_store_enabled()
             .with_agent_config(
                 DeepResearchConfig::new()
+                    .with_thinking_summaries(genai_rs::ThinkingSummaries::Auto)
                     .with_visualization(Visualization::Auto)
                     .with_collaborative_planning(true),
             )
@@ -947,8 +799,7 @@ async fn test_triggers_list_and_gated_create() {
             );
             // "Unknown parameter" covers top-level params; a bad field
             // inside the JSON body (incl. the nested interaction) comes
-            // back as protobuf-JSON "Unknown name" — check both, like the
-            // nested-body probe in test_retrieval_tool_vertex_only.
+            // back as protobuf-JSON "Unknown name" — check both.
             assert!(
                 !message.contains("Unknown parameter") && !message.contains("Unknown name"),
                 "trigger payload schema itself was rejected: {message}"
