@@ -97,8 +97,14 @@ pub struct FileSearchStore {
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
 pub struct FileSearchStoreListResponse {
-    /// The stores on this page (wire: `fileSearchStores`).
-    #[serde(default, rename = "fileSearchStores")]
+    /// The stores on this page (wire: `fileSearchStores`). A null or
+    /// malformed list degrades to empty; malformed elements drop
+    /// individually.
+    #[serde(
+        default,
+        rename = "fileSearchStores",
+        deserialize_with = "crate::serde_util::deserialize_lenient_vec"
+    )]
     pub stores: Vec<FileSearchStore>,
 
     /// Token for the next page, absent on the final page.
@@ -166,8 +172,12 @@ pub struct FileSearchDocument {
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
 pub struct DocumentListResponse {
-    /// The documents on this page.
-    #[serde(default)]
+    /// The documents on this page. A null or malformed list degrades to
+    /// empty; malformed elements drop individually.
+    #[serde(
+        default,
+        deserialize_with = "crate::serde_util::deserialize_lenient_vec"
+    )]
     pub documents: Vec<FileSearchDocument>,
 
     /// Token for the next page, absent on the final page.
@@ -329,6 +339,35 @@ mod tests {
         let list: FileSearchStoreListResponse =
             serde_json::from_value(serde_json::json!({})).unwrap();
         assert!(list.stores.is_empty());
+    }
+
+    #[test]
+    fn list_responses_drop_only_the_undeserializable_entry() {
+        // `name` is required on both element types; a number in its place
+        // costs that element, not the page.
+        let stores: FileSearchStoreListResponse = serde_json::from_value(serde_json::json!({
+            "fileSearchStores": [store_wire(), {"name": 7}],
+            "nextPageToken": "p2"
+        }))
+        .unwrap();
+        assert_eq!(stores.stores.len(), 1);
+        assert_eq!(stores.next_page_token.as_deref(), Some("p2"));
+
+        let docs: DocumentListResponse = serde_json::from_value(serde_json::json!({
+            "documents": [{"name": 7}, document_wire()]
+        }))
+        .unwrap();
+        assert_eq!(docs.documents.len(), 1);
+    }
+
+    #[test]
+    fn list_responses_treat_an_explicit_null_list_as_empty() {
+        let stores: FileSearchStoreListResponse =
+            serde_json::from_value(serde_json::json!({"fileSearchStores": null})).unwrap();
+        assert!(stores.stores.is_empty());
+        let docs: DocumentListResponse =
+            serde_json::from_value(serde_json::json!({"documents": null})).unwrap();
+        assert!(docs.documents.is_empty());
     }
 
     /// Exact document payload observed live 2026-08-16.

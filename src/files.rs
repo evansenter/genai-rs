@@ -180,9 +180,12 @@ pub struct VideoMetadata {
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
 pub struct ListFilesResponse {
-    /// List of files. Strict, unlike the Interactions list envelopes: a
-    /// malformed element here is a real protocol break worth failing on.
-    #[serde(default)]
+    /// The files on this page. A null or malformed list degrades to empty;
+    /// malformed elements drop individually.
+    #[serde(
+        default,
+        deserialize_with = "crate::serde_util::deserialize_lenient_vec"
+    )]
     pub files: Vec<FileMetadata>,
 
     /// Token for retrieving the next page of results
@@ -254,6 +257,28 @@ mod tests {
         let response: ListFilesResponse = serde_json::from_str(json).unwrap();
         assert_eq!(response.files.len(), 2);
         assert_eq!(response.next_page_token.as_deref(), Some("token123"));
+    }
+
+    #[test]
+    fn test_list_files_response_drops_only_the_undeserializable_entry() {
+        // `mimeType` is required; the second entry lacks it.
+        let json = r#"{
+            "files": [
+                {"name": "files/a", "mimeType": "text/plain", "uri": "u"},
+                {"name": "files/b", "uri": "u"}
+            ],
+            "nextPageToken": "p2"
+        }"#;
+        let list: ListFilesResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(list.files.len(), 1);
+        assert_eq!(list.files[0].name, "files/a");
+        assert_eq!(list.next_page_token.as_deref(), Some("p2"));
+    }
+
+    #[test]
+    fn test_list_files_response_explicit_null_list_is_empty() {
+        let list: ListFilesResponse = serde_json::from_str(r#"{"files": null}"#).unwrap();
+        assert!(list.files.is_empty());
     }
 
     #[test]
