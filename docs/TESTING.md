@@ -22,8 +22,11 @@ make test-all                                         # + live tests (GEMINI_API
 cargo nextest run --test multiturn_tests --run-ignored all   # one live file
 cargo nextest run -E 'test(/function_calling/)' --run-ignored all
 LOUD_WIRE=1 cargo nextest run -E 'test(/name/)' --run-ignored all --no-capture -j 1
-cargo test --features strict-unknown                  # unknown Content/Step types become errors
+cargo test --features strict-unknown                  # unknown Content/Step/string-enum values become errors
 ```
+
+Tests that exercise an `Unknown` value carry
+`#[cfg(not(feature = "strict-unknown"))]`, since strict mode rejects it.
 
 | Variable | Purpose |
 |----------|---------|

@@ -701,6 +701,22 @@ fn test_function_result_payload_conversions() {
     assert_eq!(payload.as_json().unwrap()["temp"], 72);
     assert_eq!(payload.to_value(), serde_json::json!({"temp": 72}));
 
+    // Any other value is wrapped: the API rejects a top-level array
+    for value in [
+        serde_json::json!([1, 2, 3]),
+        serde_json::json!([{"type": "text", "text": "not converted to Contents"}]),
+        serde_json::json!(42),
+        serde_json::json!(true),
+        serde_json::Value::Null,
+    ] {
+        let payload: FunctionResultPayload = value.clone().into();
+        assert_eq!(
+            payload.to_value(),
+            serde_json::json!({"result": value}),
+            "{value}"
+        );
+    }
+
     // From Vec<Content> -> Contents
     let payload: FunctionResultPayload = vec![Content::text("block")].into();
     let contents = payload.as_contents().expect("Should be Contents");
@@ -1106,6 +1122,7 @@ fn test_code_execution_language_known_variants_serde() {
     assert_eq!(format!("{}", CodeExecutionLanguage::Python), "python");
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
 fn test_code_execution_language_uppercase_is_unknown() {
     // The pre-revision spelling is not the wire format any more.
@@ -1945,6 +1962,7 @@ fn test_video_with_resolution_roundtrip() {
 
 // --- Resolution Unknown Tests ---
 
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
 fn test_resolution_unknown_deserialization() {
     // Test that unrecognized resolution strings deserialize to Unknown
@@ -1955,6 +1973,7 @@ fn test_resolution_unknown_deserialization() {
     assert_eq!(resolution.unknown_resolution_type(), Some("super_high"));
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
 fn test_resolution_unknown_roundtrip() {
     // Test that Unknown variant roundtrips correctly
@@ -1988,6 +2007,7 @@ fn test_resolution_unknown_helper_methods() {
     assert_eq!(data.get("extra").unwrap(), true);
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
 fn test_resolution_unknown_in_image_content() {
     // Test that unknown resolution works within Image content
@@ -2005,6 +2025,7 @@ fn test_resolution_unknown_in_image_content() {
     }
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
 fn test_resolution_unknown_object_form() {
     // Test that object-form resolution values are handled (future API compatibility)

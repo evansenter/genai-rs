@@ -5,16 +5,12 @@
 //! included), query, and JSON body, and a realistic response is parsed into
 //! the typed result with Evergreen `Unknown` and `extra` preservation. Error
 //! mapping and the wait helpers' success, failure and timeout paths are
-//! covered too. Files API uploads (`upload_file*`) are left out: that API is
-//! being redesigned.
+//! covered too.
 //!
-//! Known bugs live in `http_mock_resources/known_bugs.rs`, outside the
-//! top-level files `ci_coverage.rs` scans for live-test ignore reasons.
+//! Tests whose replies carry unknown enum values are compiled out under
+//! `strict-unknown`, which rejects those values by design.
 
 mod common;
-
-#[path = "http_mock_resources/known_bugs.rs"]
-mod known_bugs;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -24,14 +20,15 @@ use common::http_stub::{Reply, Stub};
 use futures_util::StreamExt;
 use genai_rs::{
     Agent, AllowlistEntry, CreateCredentialRequest, CreateEnvironmentRequest,
-    CreateFileSearchStoreRequest, CreateVoiceRequest, CredentialConfig, CredentialStatus,
-    CredentialType, CredentialUpdate, DocumentState, EnvironmentFileType, EnvironmentFileUpload,
-    EnvironmentSource, EnvironmentSpec, EnvironmentStatus, FileMetadata, FileSearchDocument,
-    GenaiError, InjectionLocation, InteractionInput, InteractionRequest, InteractionStatus,
-    ListVoicesParams, NetworkConfig, RevocationBehavior, StreamChunk, Tool, TriggerCreateParams,
-    TriggerExecutionStatus, TriggerStatus, TriggerUpdate, VoiceAudio, VoicePitch, VoiceType,
-    Webhook, WebhookEvent, WebhookState, WebhookUpdate,
+    CreateFileSearchStoreRequest, CreateVoiceRequest, CredentialConfig, CredentialType,
+    CredentialUpdate, DocumentState, EnvironmentFileUpload, EnvironmentSource, EnvironmentSpec,
+    EnvironmentStatus, FileMetadata, FileSearchDocument, GenaiError, InjectionLocation,
+    InteractionInput, InteractionRequest, ListVoicesParams, NetworkConfig, RevocationBehavior,
+    StreamChunk, Tool, TriggerCreateParams, TriggerStatus, TriggerUpdate, VoiceAudio, VoicePitch,
+    VoiceType, Webhook, WebhookEvent, WebhookState, WebhookUpdate,
 };
+#[cfg(not(feature = "strict-unknown"))]
+use genai_rs::{CredentialStatus, EnvironmentFileType, InteractionStatus, TriggerExecutionStatus};
 use serde_json::{Value, json};
 
 /// The `Api-Revision` every Interactions-family request carries.
@@ -486,6 +483,7 @@ async fn webhook_endpoints_send_the_documented_requests() {
     .await;
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
 async fn webhook_create_response_parses_the_secret_and_preserves_unknowns() {
     let wire = json!({
@@ -531,6 +529,7 @@ async fn webhook_create_response_parses_the_secret_and_preserves_unknowns() {
     assert_eq!(back["delivery_stats"], wire["delivery_stats"]);
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
 async fn webhook_list_keeps_the_page_token_and_drops_only_undeserializable_entries() {
     let stub = Stub::replying(vec![Reply::json(
@@ -569,6 +568,7 @@ async fn webhook_list_keeps_the_page_token_and_drops_only_undeserializable_entri
     assert_eq!(list.next_page_token.as_deref(), Some("page-2"));
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
 async fn rotate_signing_secret_sends_unknown_behaviors_verbatim_and_returns_the_secret() {
     let stub = Stub::replying(vec![Reply::json(200, json!({"secret": "whsec_rotated"}))]).await;
@@ -594,6 +594,7 @@ async fn rotate_signing_secret_sends_unknown_behaviors_verbatim_and_returns_the_
 // Triggers
 // =============================================================================
 
+#[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
 async fn trigger_endpoints_send_the_documented_requests() {
     let stub = ok_stub().await;
@@ -728,6 +729,7 @@ async fn trigger_response_parses_string_counts_timestamp_aliases_and_sparse_inte
     assert_eq!(back["max_consecutive_failures"], "3");
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
 async fn trigger_list_preserves_unknown_statuses() {
     let stub = Stub::replying(vec![
@@ -761,6 +763,7 @@ async fn trigger_list_preserves_unknown_statuses() {
     assert!(empty.triggers.is_empty() && empty.next_page_token.is_none());
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
 async fn trigger_execution_responses_parse_under_both_list_keys() {
     let stub = Stub::replying(vec![
@@ -1029,6 +1032,7 @@ async fn environment_endpoints_send_the_documented_requests() {
     .await;
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
 async fn environment_response_parses_string_counts_and_preserves_unknowns() {
     let network =
@@ -1115,6 +1119,7 @@ async fn environment_list_parses_pages_and_the_empty_object() {
     assert!(empty.environments.is_empty());
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
 async fn environment_file_list_parses_uppercase_types_and_preserves_unknowns() {
     let stub = Stub::replying(vec![Reply::json(
@@ -1287,6 +1292,45 @@ async fn upload_environment_file_start_rejection_stops_before_the_bytes() {
     assert_eq!(stub.requests().len(), 1);
 }
 
+/// `RequestBuilder::header` would defer an unheaderable value to `send()`
+/// as `GenaiError::Http`, which `is_retryable()` calls transient, so a retry
+/// loop would spin on input that can never succeed.
+#[tokio::test]
+async fn upload_environment_file_rejects_an_unheaderable_mime_type_as_invalid_input() {
+    let stub = Stub::replying(vec![]).await;
+
+    let err = stub
+        .client()
+        .upload_environment_file(
+            "env-1",
+            "a.txt",
+            b"x".to_vec(),
+            "text/plain\nX-Injected: 1",
+            EnvironmentFileUpload::default(),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, GenaiError::InvalidInput(_)), "{err:?}");
+    assert!(!err.is_retryable(), "{err:?}");
+    assert!(stub.requests().is_empty());
+}
+
+/// The Files API upload validates its MIME type the same way.
+#[tokio::test]
+async fn upload_file_bytes_rejects_an_unheaderable_mime_type_as_invalid_input() {
+    let stub = Stub::replying(vec![]).await;
+
+    let err = stub
+        .client()
+        .upload_file_bytes(b"x".to_vec(), "text/plain\nX-Injected: 1", None)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, GenaiError::InvalidInput(_)), "{err:?}");
+    assert!(stub.requests().is_empty());
+}
+
 // =============================================================================
 // File search stores and documents
 // =============================================================================
@@ -1403,6 +1447,7 @@ async fn file_search_store_responses_are_camel_case_and_keep_extras() {
     assert_eq!(list.next_page_token.as_deref(), Some("p2"));
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
 async fn document_list_parses_states_sizes_and_unknown_states() {
     let stub = Stub::replying(vec![Reply::json(
@@ -1691,6 +1736,7 @@ async fn wait_for_document_active_times_out_with_the_last_state() {
     );
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
 async fn wait_for_document_active_keeps_polling_through_unknown_and_missing_states() {
     let (result, targets) = wait_for_document(
@@ -1824,6 +1870,7 @@ async fn voice_endpoints_send_the_documented_requests() {
     .await;
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
 async fn voice_list_parses_prebuilt_voices_and_preserves_unknowns() {
     let stub = Stub::replying(vec![Reply::json(
@@ -2013,6 +2060,7 @@ async fn credential_endpoints_send_the_documented_requests() {
     .await;
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
 async fn credential_responses_parse_and_preserve_unknowns() {
     let stub = Stub::replying(vec![Reply::json(
@@ -2048,6 +2096,78 @@ async fn credential_responses_parse_and_preserve_unknowns() {
     );
     assert_eq!(ssh.extra["fingerprint"], "SHA256:abc");
     assert_eq!(list.next_page_token.as_deref(), Some("n"));
+}
+
+/// Set in the child process `loud_wire_redacts_credential_secrets` spawns.
+const LOUD_WIRE_CHILD_ENV: &str = "GENAI_RS_LOUD_WIRE_SECRETS_CHILD";
+
+/// Every request body reaches the `LOUD_WIRE` printer, and a credential
+/// create or update body carries its secret as `token`, `value`,
+/// `client_secret` or `refresh_token`.
+///
+/// `LOUD_WIRE` is read when a client is built, so the test re-runs itself
+/// as a child process with it set and inspects the child's stderr.
+#[tokio::test]
+async fn loud_wire_redacts_credential_secrets() {
+    const SECRETS: [&str; 5] = [
+        "tok-8f3a1c",
+        "val-2d9e4b",
+        "csec-5b2e9d",
+        "rtok-7c4d0a",
+        "val-upd-6e1f",
+    ];
+
+    if std::env::var_os(LOUD_WIRE_CHILD_ENV).is_some() {
+        let stub = Stub::start(|_, _| Reply::json(200, json!({"id": "cred-1"}))).await;
+        let client = stub.client();
+        let requests = [
+            CreateCredentialRequest::bearer_token(SECRETS[0]),
+            CreateCredentialRequest::environment_variable(SECRETS[1], vec![]),
+            CreateCredentialRequest::new(CredentialConfig::OAuth2 {
+                client_id: "cid".into(),
+                client_secret: SECRETS[2].into(),
+                refresh_token: SECRETS[3].into(),
+                token_url: "https://oauth.example/token".into(),
+                scopes: None,
+            }),
+        ];
+        for request in &requests {
+            client.create_credential(request).await.unwrap();
+        }
+        let update = CredentialUpdate {
+            value: Some(SECRETS[4].into()),
+            ..CredentialUpdate::new(CredentialType::EnvironmentVariable)
+        };
+        client
+            .update_credential("cred-1", &update, None)
+            .await
+            .unwrap();
+        return;
+    }
+
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "loud_wire_redacts_credential_secrets",
+            "--exact",
+            "--nocapture",
+        ])
+        .env(LOUD_WIRE_CHILD_ENV, "1")
+        .env("LOUD_WIRE", "1")
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "child failed:\n{stderr}");
+    assert!(
+        stderr.contains("/v1beta/credentials"),
+        "the child printed its requests:\n{stderr}"
+    );
+    for secret in SECRETS {
+        assert!(
+            !stderr.contains(secret),
+            "LOUD_WIRE printed the secret {secret:?}:\n{stderr}"
+        );
+    }
 }
 
 // =============================================================================
@@ -2091,6 +2211,7 @@ async fn interaction_endpoints_send_the_documented_requests() {
     .await;
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
 async fn interaction_response_preserves_unknown_status_input_and_extras() {
     let stub = Stub::replying(vec![
@@ -2212,6 +2333,57 @@ async fn get_interaction_stream_http_error_is_the_only_item() {
 // Files API: metadata, list, delete, wait
 // =============================================================================
 
+/// A path upload streams the file as the finalize body, byte for byte.
+#[tokio::test]
+async fn upload_file_streams_the_file_from_disk_then_finalizes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("notes.txt");
+    // Under one 8 MB read buffer, but it spans many TCP writes, and the
+    // pattern catches reordering or truncation.
+    let data: Vec<u8> = (0..200_003u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&path, &data).unwrap();
+    let size = data.len().to_string();
+
+    let stub = Stub::replying(vec![
+        Reply::json(200, json!({})).header("x-goog-upload-url", "{base}/upload-session/f1"),
+        Reply::json(
+            200,
+            json!({"file": {"name": "files/f1", "mimeType": "text/plain", "uri": "u", "sizeBytes": size}}),
+        ),
+    ])
+    .await;
+
+    let file = stub.client().upload_file(&path).await.unwrap();
+    assert_eq!(file.name, "files/f1");
+    assert_eq!(file.size_bytes_as_u64(), Some(data.len() as u64));
+
+    let [start, finish] = stub.requests().try_into().unwrap();
+    assert_eq!(start.method, "POST");
+    assert_eq!(start.target, "/upload/v1beta/files");
+    assert_eq!(start.header("x-goog-api-key"), Some("test-key"));
+    assert_eq!(start.header("x-goog-upload-protocol"), Some("resumable"));
+    assert_eq!(start.header("x-goog-upload-command"), Some("start"));
+    assert_eq!(
+        start.header("x-goog-upload-header-content-length"),
+        Some(size.as_str())
+    );
+    assert_eq!(
+        start.header("x-goog-upload-header-content-type"),
+        Some("text/plain")
+    );
+    assert_eq!(start.json(), json!({"file": {"displayName": "notes.txt"}}));
+
+    assert_eq!(finish.method, "POST");
+    assert_eq!(finish.target, "/upload-session/f1");
+    assert_eq!(
+        finish.header("x-goog-upload-command"),
+        Some("upload, finalize")
+    );
+    assert_eq!(finish.header("x-goog-upload-offset"), Some("0"));
+    assert_eq!(finish.header("content-length"), Some(size.as_str()));
+    assert!(finish.body == data, "the finalize body is the file");
+}
+
 #[tokio::test]
 async fn files_endpoints_send_the_documented_requests() {
     let stub = ok_stub().await;
@@ -2240,6 +2412,7 @@ async fn files_endpoints_send_the_documented_requests() {
     .await;
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
 async fn list_files_parses_metadata_and_preserves_unknown_states() {
     let stub = Stub::replying(vec![Reply::json(
@@ -2300,6 +2473,7 @@ async fn wait_for_file_ready_times_out_with_the_last_state() {
     assert!(stub.requests().len() >= 2, "it polled before giving up");
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
 async fn wait_for_file_ready_keeps_polling_through_unknown_states() {
     let stub = Stub::replying(vec![

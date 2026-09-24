@@ -164,6 +164,9 @@ It rejects other text formats (CSV, JSON, HTML, XML) with a pointer to
 
 Upload once, then reference by URI across requests.
 
+Path uploads stream from disk with about 8 MB of buffer, so file size (up to
+the 2 GB limit) does not drive memory use.
+
 ```rust,ignore
 // Upload (MIME type from the extension)
 let file = client.upload_file("large_video.mp4").await?;

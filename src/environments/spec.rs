@@ -1,130 +1,28 @@
-//! Environment types for the `environment` request field and the Agents
-//! resource's `base_environment`.
-//!
-//! An environment describes the sandbox an agent runs in: which sources are
-//! mounted (GCS buckets, inline files, repositories, skill registries) and
-//! what outbound network access is allowed.
-//!
-//! The wire union accepts either a string environment ID — an environment
-//! created explicitly via
-//! [`Client::create_environment()`](crate::Client::create_environment) (see
-//! [`environments`](crate::environments)) or by a previous interaction,
-//! echoed as
-//! [`InteractionResponse::environment_id`](crate::InteractionResponse) — or
-//! a typed remote environment object, modeled here as [`EnvironmentSpec`].
+//! The environment description: the `environment` request field and the
+//! Agents resource's `base_environment`. See the [parent module](super).
 
+use crate::wire_enum::wire_enum;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{BTreeMap, HashMap};
 
-/// The type of a source mounted into an environment.
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-///
-/// # Wire Format
-///
-/// Serializes as lowercase snake_case strings: `"gcs"`, `"inline"`,
-/// `"repository"`, `"skill_registry"`.
-///
-/// # Evergreen Pattern
-///
-/// Unknown values from the API deserialize into the `Unknown` variant,
-/// preserving the original data for debugging and roundtrip serialization.
-#[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum SourceType {
-    /// Google Cloud Storage path.
-    Gcs,
-    /// Inline content provided in the request.
-    Inline,
-    /// A source-code repository (e.g., GitHub path).
-    Repository,
-    /// A skill registry entry.
-    SkillRegistry,
-    /// Unknown variant for forward compatibility (Evergreen pattern)
-    Unknown {
-        /// The unrecognized source type from the API
-        source_type: String,
-        /// The raw JSON value, preserved for debugging and roundtrip
-        data: serde_json::Value,
-    },
-}
-
-impl SourceType {
-    /// Returns true if this is an unknown source type.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
+wire_enum! {
+    /// The type of a source mounted into an environment.
+    ///
+    /// # Wire Format
+    ///
+    /// Serializes as lowercase snake_case strings: `"gcs"`, `"inline"`,
+    /// `"repository"`, `"skill_registry"`.
+    pub enum SourceType {
+        /// Google Cloud Storage path.
+        Gcs = "gcs",
+        /// Inline content provided in the request.
+        Inline = "inline",
+        /// A source-code repository (e.g., GitHub path).
+        Repository = "repository",
+        /// A skill registry entry.
+        SkillRegistry = "skill_registry",
     }
-
-    /// Returns the source type name if this is an unknown source type.
-    #[must_use]
-    pub fn unknown_source_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { source_type, .. } => Some(source_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the preserved data if this is an unknown source type.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl Serialize for SourceType {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            Self::Gcs => serializer.serialize_str("gcs"),
-            Self::Inline => serializer.serialize_str("inline"),
-            Self::Repository => serializer.serialize_str("repository"),
-            Self::SkillRegistry => serializer.serialize_str("skill_registry"),
-            Self::Unknown { source_type, .. } => serializer.serialize_str(source_type),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for SourceType {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value.as_str() {
-            Some("gcs") => Ok(Self::Gcs),
-            Some("inline") => Ok(Self::Inline),
-            Some("repository") => Ok(Self::Repository),
-            Some("skill_registry") => Ok(Self::SkillRegistry),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown SourceType '{}' - using Unknown variant (Evergreen)",
-                    other
-                );
-                Ok(Self::Unknown {
-                    source_type: other.to_string(),
-                    data: value,
-                })
-            }
-            None => {
-                let source_type = format!("<non-string: {}>", value);
-                tracing::warn!(
-                    "SourceType received non-string value: {}. \
-                     Preserving in Unknown variant.",
-                    value
-                );
-                Ok(Self::Unknown {
-                    source_type,
-                    data: value,
-                })
-            }
-        }
-    }
+    unknown(source_type, unknown_source_type)
 }
 
 /// A source to be mounted into an environment.
@@ -753,6 +651,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "strict-unknown"))]
     #[test]
     fn test_source_type_unknown_roundtrip() {
         let unknown: SourceType = serde_json::from_str("\"s3\"").unwrap();

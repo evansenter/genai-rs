@@ -4,15 +4,25 @@
 //! environment under a reusable ID. Once created, run them with
 //! [`InteractionBuilder::with_agent()`](crate::InteractionBuilder::with_agent).
 //!
-//! Manage agents with the [`Client`](crate::Client) methods `create_agent`,
+//! Manage agents with the [`Client`] methods `create_agent`,
 //! `get_agent`, `list_agents`, and `delete_agent`.
 //!
 //! See `docs/AGENTS_AND_BACKGROUND.md` for the full agents flow and the list
 //! of managed agent IDs.
+//!
+//! # IDs
+//!
+//! Methods take the bare ID ([`Agent::id`]), not a `agents/...` resource name:
+//! the ID is percent-encoded into a single path segment, so a resource name
+//! addresses nothing and 404s. An empty or dot-segment ID fails
+//! locally with [`GenaiError::InvalidInput`]
+//! before any request.
 
+use crate::client::Client;
+use crate::errors::GenaiError;
 use serde::{Deserialize, Serialize};
 
-use crate::environment::EnvironmentSpec;
+use crate::environments::EnvironmentSpec;
 use crate::tools::Tool;
 
 /// An agent definition for the `/v1beta/agents` resource.
@@ -145,10 +155,102 @@ pub struct AgentListResponse {
     pub next_page_token: Option<String>,
 }
 
+/// Agents resource methods; see [IDs](crate::agents#ids).
+impl Client {
+    /// Creates a custom agent.
+    ///
+    /// Once created, run the agent with
+    /// [`InteractionBuilder::with_agent()`](crate::InteractionBuilder::with_agent)
+    /// using its ID.
+    ///
+    /// Live behavior notes (2026-07):
+    /// - Agent creation was rejected with a generic
+    ///   `400 "Request contains an invalid argument."` for every payload
+    ///   tried on a standard Gemini API key (even schema-valid ones), which
+    ///   suggests the resource is allowlisted/gated. Field names are still
+    ///   validated first (snake_case: `id`, `base_agent`,
+    ///   `system_instruction`, `description`, `tools`, `base_environment`).
+    /// - `tools` on an agent only accepts `code_execution`, `google_search`,
+    ///   and `url_context` (per the API's own validation error).
+    /// - Managed agent IDs (e.g. `deep-research-preview-04-2026`) are not
+    ///   retrievable through `GET /v1beta/agents/{id}` (404).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails, the API returns an error,
+    /// or response parsing fails.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{Agent, Client, Tool};
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::new("api-key".to_string());
+    ///
+    /// let agent = client.create_agent(
+    ///     &Agent::new("customer-sentinel")
+    ///         .with_system_instruction("You monitor customer feedback.")
+    ///         .add_tool(Tool::CodeExecution),
+    /// ).await?;
+    ///
+    /// // Run it
+    /// let response = client.interaction()
+    ///     .with_agent(agent.id.as_deref().unwrap_or("customer-sentinel"))
+    ///     .with_text("Summarize this week's feedback")
+    ///     .create()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn create_agent(&self, agent: &crate::Agent) -> Result<crate::Agent, GenaiError> {
+        crate::http::agents::create_agent(&self.http, agent).await
+    }
+
+    /// Retrieves an agent by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the agent doesn't exist, the HTTP request fails,
+    /// or response parsing fails.
+    pub async fn get_agent(&self, agent_id: &str) -> Result<crate::Agent, GenaiError> {
+        crate::http::agents::get_agent(&self.http, agent_id).await
+    }
+
+    /// Lists agents.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_size` - Optional maximum number of agents per page.
+    /// * `page_token` - Optional token from a previous list call.
+    /// * `parent` - Optional parent resource filter.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails or response parsing fails.
+    pub async fn list_agents(
+        &self,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+        parent: Option<&str>,
+    ) -> Result<crate::AgentListResponse, GenaiError> {
+        crate::http::agents::list_agents(&self.http, page_size, page_token, parent).await
+    }
+
+    /// Deletes an agent by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the agent doesn't exist or the HTTP request fails.
+    pub async fn delete_agent(&self, agent_id: &str) -> Result<(), GenaiError> {
+        crate::http::agents::delete_agent(&self.http, agent_id).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::environment::{EnvironmentSource, RemoteEnvironment};
+    use crate::environments::{EnvironmentSource, RemoteEnvironment};
     use serde_json::json;
 
     #[test]

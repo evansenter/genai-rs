@@ -1,17 +1,15 @@
 //! Request types for creating interactions.
 
-use serde::de::{self, Visitor};
-use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::fmt;
 
 use crate::content::Content;
-use crate::environment::EnvironmentSpec;
+use crate::environments::EnvironmentSpec;
 use crate::response_format::ResponseFormatSpec;
 use crate::safety::SafetySetting;
 use crate::steps::Step;
 use crate::tools::{Tool, ToolChoice};
 use crate::webhooks::WebhookConfig;
+use crate::wire_enum::wire_enum;
 
 /// Who a conversation turn comes from, for
 /// [`ConversationBuilder::turn`](crate::ConversationBuilder::turn).
@@ -306,157 +304,27 @@ pub(crate) fn input_from_value(value: serde_json::Value) -> Result<InteractionIn
     }
 }
 
-/// Thinking level for chain-of-thought reasoning.
-///
-/// Controls the depth of reasoning the model performs before generating a response.
-/// Higher levels produce more detailed reasoning but consume more tokens.
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-/// New thinking levels may be added in future versions.
-///
-/// # Evergreen Pattern
-///
-/// Unknown values from the API deserialize into the `Unknown` variant, preserving
-/// the original data for debugging and roundtrip serialization.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum ThinkingLevel {
-    /// Minimal reasoning, fastest responses.
+wire_enum! {
+    /// Thinking level for chain-of-thought reasoning.
     ///
-    /// Not supported by every model: [`DEFAULT_MODEL`](crate::DEFAULT_MODEL)
-    /// rejects it with a 400 (verified live 2026-08-15). Use
-    /// [`MINIMAL_THINKING_MODEL`](crate::MINIMAL_THINKING_MODEL), which is
-    /// pinned to a model that accepts it.
-    Minimal,
-    /// Light reasoning for simple problems
-    Low,
-    /// Balanced reasoning for moderate complexity
-    Medium,
-    /// Extensive reasoning for complex problems
-    High,
-    /// Unknown variant for forward compatibility (Evergreen pattern)
-    Unknown {
-        /// The unrecognized level type from the API
-        level_type: String,
-        /// The full JSON data, preserved for debugging and roundtrip serialization
-        data: serde_json::Value,
-    },
-}
-
-impl ThinkingLevel {
-    /// Returns true if this is an unknown thinking level.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
+    /// Controls the depth of reasoning the model performs before generating a response.
+    /// Higher levels produce more detailed reasoning but consume more tokens.
+    pub enum ThinkingLevel {
+        /// Minimal reasoning, fastest responses.
+        ///
+        /// Not supported by every model: [`DEFAULT_MODEL`](crate::DEFAULT_MODEL)
+        /// rejects it with a 400 (verified live 2026-08-15). Use
+        /// [`MINIMAL_THINKING_MODEL`](crate::MINIMAL_THINKING_MODEL), which is
+        /// pinned to a model that accepts it.
+        Minimal = "minimal",
+        /// Light reasoning for simple problems
+        Low = "low",
+        /// Balanced reasoning for moderate complexity
+        Medium = "medium",
+        /// Extensive reasoning for complex problems
+        High = "high",
     }
-
-    /// Returns the level type name if this is an unknown thinking level.
-    #[must_use]
-    pub fn unknown_level_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { level_type, .. } => Some(level_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the preserved data if this is an unknown thinking level.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl Serialize for ThinkingLevel {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            ThinkingLevel::Minimal => serializer.serialize_str("minimal"),
-            ThinkingLevel::Low => serializer.serialize_str("low"),
-            ThinkingLevel::Medium => serializer.serialize_str("medium"),
-            ThinkingLevel::High => serializer.serialize_str("high"),
-            ThinkingLevel::Unknown { level_type, data } => {
-                // If data is a simple string, serialize just the level_type
-                if data.is_string() || data.is_null() {
-                    serializer.serialize_str(level_type)
-                } else {
-                    // For complex data, serialize as an object
-                    let mut map = serializer.serialize_map(None)?;
-                    map.serialize_entry("level", level_type)?;
-                    map.serialize_entry("data", data)?;
-                    map.end()
-                }
-            }
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for ThinkingLevel {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserializer.deserialize_any(ThinkingLevelVisitor)
-    }
-}
-
-struct ThinkingLevelVisitor;
-
-impl<'de> Visitor<'de> for ThinkingLevelVisitor {
-    type Value = ThinkingLevel;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("a thinking level string or object")
-    }
-
-    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-    where
-        E: de::Error,
-    {
-        match value {
-            "minimal" => Ok(ThinkingLevel::Minimal),
-            "low" => Ok(ThinkingLevel::Low),
-            "medium" => Ok(ThinkingLevel::Medium),
-            "high" => Ok(ThinkingLevel::High),
-            other => {
-                tracing::warn!(
-                    "Encountered unknown ThinkingLevel '{}' - using Unknown variant (Evergreen)",
-                    other
-                );
-                Ok(ThinkingLevel::Unknown {
-                    level_type: other.to_string(),
-                    data: serde_json::Value::String(other.to_string()),
-                })
-            }
-        }
-    }
-
-    fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
-    where
-        A: de::MapAccess<'de>,
-    {
-        // For object-based thinking levels (future API compatibility)
-        let value: serde_json::Value =
-            Deserialize::deserialize(de::value::MapAccessDeserializer::new(map))?;
-        let level_type = value
-            .get("level")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string();
-
-        tracing::warn!(
-            "Encountered unknown ThinkingLevel object '{}' - using Unknown variant (Evergreen)",
-            level_type
-        );
-        Ok(ThinkingLevel::Unknown {
-            level_type,
-            data: value,
-        })
-    }
+    unknown(level_type, unknown_level_type)
 }
 
 /// Generation configuration for model behavior
@@ -940,388 +808,89 @@ pub struct ImageConfig {
     pub image_size: Option<ImageSize>,
 }
 
-/// Aspect ratio for image generation output.
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-/// New aspect ratios may be added in future API versions.
-///
-/// # Evergreen Pattern
-///
-/// Unknown values from the API deserialize into the `Unknown` variant, preserving
-/// the original data for debugging and roundtrip serialization.
-///
-/// # Wire Format
-///
-/// Values serialize as string ratios: `"1:1"`, `"16:9"`, etc.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum ImageAspectRatio {
-    /// 1:1 square
-    Square,
-    /// 2:3 portrait
-    Portrait2x3,
-    /// 3:2 landscape
-    Landscape3x2,
-    /// 3:4 portrait
-    Portrait3x4,
-    /// 4:3 landscape
-    Landscape4x3,
-    /// 4:5 portrait
-    Portrait4x5,
-    /// 5:4 landscape
-    Landscape5x4,
-    /// 9:16 tall portrait
-    Portrait9x16,
-    /// 16:9 widescreen
-    Widescreen16x9,
-    /// 21:9 ultrawide
-    Ultrawide21x9,
-    /// 1:8 very tall
-    Tall1x8,
-    /// 8:1 very wide
-    Wide8x1,
-    /// 1:4 tall
-    Tall1x4,
-    /// 4:1 wide
-    Wide4x1,
-    /// Unknown variant for forward compatibility (Evergreen pattern)
-    Unknown {
-        /// The unrecognized ratio type from the API
-        ratio_type: String,
-        /// The full JSON data, preserved for debugging and roundtrip serialization
-        data: serde_json::Value,
-    },
+wire_enum! {
+    /// Aspect ratio for image generation output.
+    ///
+    /// # Wire Format
+    ///
+    /// Values serialize as string ratios: `"1:1"`, `"16:9"`, etc.
+    pub enum ImageAspectRatio {
+        /// 1:1 square
+        Square = "1:1",
+        /// 2:3 portrait
+        Portrait2x3 = "2:3",
+        /// 3:2 landscape
+        Landscape3x2 = "3:2",
+        /// 3:4 portrait
+        Portrait3x4 = "3:4",
+        /// 4:3 landscape
+        Landscape4x3 = "4:3",
+        /// 4:5 portrait
+        Portrait4x5 = "4:5",
+        /// 5:4 landscape
+        Landscape5x4 = "5:4",
+        /// 9:16 tall portrait
+        Portrait9x16 = "9:16",
+        /// 16:9 widescreen
+        Widescreen16x9 = "16:9",
+        /// 21:9 ultrawide
+        Ultrawide21x9 = "21:9",
+        /// 1:8 very tall
+        Tall1x8 = "1:8",
+        /// 8:1 very wide
+        Wide8x1 = "8:1",
+        /// 1:4 tall
+        Tall1x4 = "1:4",
+        /// 4:1 wide
+        Wide4x1 = "4:1",
+    }
+    unknown(ratio_type, unknown_ratio_type)
 }
 
-impl ImageAspectRatio {
-    /// Returns true if this is an unknown aspect ratio.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
+wire_enum! {
+    /// Image size/resolution for image generation output.
+    ///
+    /// # Wire Format
+    ///
+    /// Values serialize as strings: `"512"`, `"1K"`, `"2K"`, `"4K"`.
+    pub enum ImageSize {
+        /// 512px resolution
+        Sd512 = "512",
+        /// 1K resolution
+        Hd1k = "1K",
+        /// 2K resolution
+        Hd2k = "2K",
+        /// 4K resolution
+        Uhd4k = "4K",
     }
-
-    /// Returns the ratio type name if this is an unknown aspect ratio.
-    #[must_use]
-    pub fn unknown_ratio_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { ratio_type, .. } => Some(ratio_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the preserved data if this is an unknown aspect ratio.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
+    unknown(size_type, unknown_size_type)
 }
 
-impl Serialize for ImageAspectRatio {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            Self::Square => serializer.serialize_str("1:1"),
-            Self::Portrait2x3 => serializer.serialize_str("2:3"),
-            Self::Landscape3x2 => serializer.serialize_str("3:2"),
-            Self::Portrait3x4 => serializer.serialize_str("3:4"),
-            Self::Landscape4x3 => serializer.serialize_str("4:3"),
-            Self::Portrait4x5 => serializer.serialize_str("4:5"),
-            Self::Landscape5x4 => serializer.serialize_str("5:4"),
-            Self::Portrait9x16 => serializer.serialize_str("9:16"),
-            Self::Widescreen16x9 => serializer.serialize_str("16:9"),
-            Self::Ultrawide21x9 => serializer.serialize_str("21:9"),
-            Self::Tall1x8 => serializer.serialize_str("1:8"),
-            Self::Wide8x1 => serializer.serialize_str("8:1"),
-            Self::Tall1x4 => serializer.serialize_str("1:4"),
-            Self::Wide4x1 => serializer.serialize_str("4:1"),
-            Self::Unknown { ratio_type, .. } => serializer.serialize_str(ratio_type),
-        }
+wire_enum! {
+    /// Task mode for video generation.
+    ///
+    /// If not specified, the model automatically determines the appropriate mode
+    /// based on the provided text prompt and input media.
+    ///
+    /// # Wire Format
+    ///
+    /// Serializes as lowercase snake_case strings: `"text_to_video"`,
+    /// `"image_to_video"`, `"reference_to_video"`, `"edit"`, `"extend"`.
+    /// The full value list was confirmed live (2026-07) via the API's own
+    /// validation error for `generation_config.video_config.task`.
+    pub enum VideoTask {
+        /// Generate a video from a text prompt.
+        TextToVideo = "text_to_video",
+        /// Generate a video from an input image.
+        ImageToVideo = "image_to_video",
+        /// Generate a video from reference media.
+        ReferenceToVideo = "reference_to_video",
+        /// Edit an existing video.
+        Edit = "edit",
+        /// Extend an existing video.
+        Extend = "extend",
     }
-}
-
-impl<'de> Deserialize<'de> for ImageAspectRatio {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value.as_str() {
-            Some("1:1") => Ok(Self::Square),
-            Some("2:3") => Ok(Self::Portrait2x3),
-            Some("3:2") => Ok(Self::Landscape3x2),
-            Some("3:4") => Ok(Self::Portrait3x4),
-            Some("4:3") => Ok(Self::Landscape4x3),
-            Some("4:5") => Ok(Self::Portrait4x5),
-            Some("5:4") => Ok(Self::Landscape5x4),
-            Some("9:16") => Ok(Self::Portrait9x16),
-            Some("16:9") => Ok(Self::Widescreen16x9),
-            Some("21:9") => Ok(Self::Ultrawide21x9),
-            Some("1:8") => Ok(Self::Tall1x8),
-            Some("8:1") => Ok(Self::Wide8x1),
-            Some("1:4") => Ok(Self::Tall1x4),
-            Some("4:1") => Ok(Self::Wide4x1),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown ImageAspectRatio '{}'. \
-                     Preserving in Unknown variant.",
-                    other
-                );
-                Ok(Self::Unknown {
-                    ratio_type: other.to_string(),
-                    data: value,
-                })
-            }
-            None => {
-                let ratio_type = format!("<non-string: {}>", value);
-                tracing::warn!(
-                    "ImageAspectRatio received non-string value: {}. \
-                     Preserving in Unknown variant.",
-                    value
-                );
-                Ok(Self::Unknown {
-                    ratio_type,
-                    data: value,
-                })
-            }
-        }
-    }
-}
-
-/// Image size/resolution for image generation output.
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-/// New sizes may be added in future API versions.
-///
-/// # Evergreen Pattern
-///
-/// Unknown values from the API deserialize into the `Unknown` variant, preserving
-/// the original data for debugging and roundtrip serialization.
-///
-/// # Wire Format
-///
-/// Values serialize as strings: `"512"`, `"1K"`, `"2K"`, `"4K"`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum ImageSize {
-    /// 512px resolution
-    Sd512,
-    /// 1K resolution
-    Hd1k,
-    /// 2K resolution
-    Hd2k,
-    /// 4K resolution
-    Uhd4k,
-    /// Unknown variant for forward compatibility (Evergreen pattern)
-    Unknown {
-        /// The unrecognized size type from the API
-        size_type: String,
-        /// The full JSON data, preserved for debugging and roundtrip serialization
-        data: serde_json::Value,
-    },
-}
-
-impl ImageSize {
-    /// Returns true if this is an unknown image size.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
-    }
-
-    /// Returns the size type name if this is an unknown image size.
-    #[must_use]
-    pub fn unknown_size_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { size_type, .. } => Some(size_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the preserved data if this is an unknown image size.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl Serialize for ImageSize {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            Self::Sd512 => serializer.serialize_str("512"),
-            Self::Hd1k => serializer.serialize_str("1K"),
-            Self::Hd2k => serializer.serialize_str("2K"),
-            Self::Uhd4k => serializer.serialize_str("4K"),
-            Self::Unknown { size_type, .. } => serializer.serialize_str(size_type),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for ImageSize {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value.as_str() {
-            Some("512") => Ok(Self::Sd512),
-            Some("1K") => Ok(Self::Hd1k),
-            Some("2K") => Ok(Self::Hd2k),
-            Some("4K") => Ok(Self::Uhd4k),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown ImageSize '{}'. \
-                     Preserving in Unknown variant.",
-                    other
-                );
-                Ok(Self::Unknown {
-                    size_type: other.to_string(),
-                    data: value,
-                })
-            }
-            None => {
-                let size_type = format!("<non-string: {}>", value);
-                tracing::warn!(
-                    "ImageSize received non-string value: {}. \
-                     Preserving in Unknown variant.",
-                    value
-                );
-                Ok(Self::Unknown {
-                    size_type,
-                    data: value,
-                })
-            }
-        }
-    }
-}
-
-/// Task mode for video generation.
-///
-/// If not specified, the model automatically determines the appropriate mode
-/// based on the provided text prompt and input media.
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-///
-/// # Wire Format
-///
-/// Serializes as lowercase snake_case strings: `"text_to_video"`,
-/// `"image_to_video"`, `"reference_to_video"`, `"edit"`, `"extend"`.
-/// The full value list was confirmed live (2026-07) via the API's own
-/// validation error for `generation_config.video_config.task`.
-///
-/// # Evergreen Pattern
-///
-/// Unknown values from the API deserialize into the `Unknown` variant,
-/// preserving the original data for debugging and roundtrip serialization.
-#[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum VideoTask {
-    /// Generate a video from a text prompt.
-    TextToVideo,
-    /// Generate a video from an input image.
-    ImageToVideo,
-    /// Generate a video from reference media.
-    ReferenceToVideo,
-    /// Edit an existing video.
-    Edit,
-    /// Extend an existing video.
-    Extend,
-    /// Unknown variant for forward compatibility (Evergreen pattern)
-    Unknown {
-        /// The unrecognized task type from the API
-        task_type: String,
-        /// The full JSON data, preserved for debugging and roundtrip serialization
-        data: serde_json::Value,
-    },
-}
-
-impl VideoTask {
-    /// Returns true if this is an unknown video task.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
-    }
-
-    /// Returns the task type name if this is an unknown video task.
-    #[must_use]
-    pub fn unknown_task_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { task_type, .. } => Some(task_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the preserved data if this is an unknown video task.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl Serialize for VideoTask {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            Self::TextToVideo => serializer.serialize_str("text_to_video"),
-            Self::ImageToVideo => serializer.serialize_str("image_to_video"),
-            Self::ReferenceToVideo => serializer.serialize_str("reference_to_video"),
-            Self::Edit => serializer.serialize_str("edit"),
-            Self::Extend => serializer.serialize_str("extend"),
-            Self::Unknown { task_type, .. } => serializer.serialize_str(task_type),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for VideoTask {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value.as_str() {
-            Some("text_to_video") => Ok(Self::TextToVideo),
-            Some("image_to_video") => Ok(Self::ImageToVideo),
-            Some("reference_to_video") => Ok(Self::ReferenceToVideo),
-            Some("edit") => Ok(Self::Edit),
-            Some("extend") => Ok(Self::Extend),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown VideoTask '{}' - using Unknown variant (Evergreen)",
-                    other
-                );
-                Ok(Self::Unknown {
-                    task_type: other.to_string(),
-                    data: value,
-                })
-            }
-            None => {
-                let task_type = format!("<non-string: {}>", value);
-                tracing::warn!(
-                    "VideoTask received non-string value: {}. \
-                     Preserving in Unknown variant.",
-                    value
-                );
-                Ok(Self::Unknown {
-                    task_type,
-                    data: value,
-                })
-            }
-        }
-    }
+    unknown(task_type, unknown_task_type)
 }
 
 /// Configuration for video generation output
@@ -1533,180 +1102,42 @@ pub struct InteractionRequest {
     pub labels: Option<std::collections::BTreeMap<String, String>>,
 }
 
-/// Latency/priority service tier for a request.
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-///
-/// # Wire Format
-///
-/// Serializes as lowercase strings: `"flex"`, `"standard"`, `"priority"`.
-///
-/// # Evergreen Pattern
-///
-/// Unknown values from the API deserialize into the `Unknown` variant,
-/// preserving the original data for debugging and roundtrip serialization.
-#[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum ServiceTier {
-    /// Flexible latency, lower cost.
-    Flex,
-    /// Standard processing.
-    Standard,
-    /// Prioritized processing.
-    Priority,
-    /// Unknown variant for forward compatibility (Evergreen pattern)
-    Unknown {
-        /// The unrecognized tier type from the API
-        tier_type: String,
-        /// The raw JSON value, preserved for debugging and roundtrip
-        data: serde_json::Value,
-    },
-}
-
-impl ServiceTier {
-    /// Returns true if this is an unknown service tier.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
+wire_enum! {
+    /// Latency/priority service tier for a request.
+    ///
+    /// # Wire Format
+    ///
+    /// Serializes as lowercase strings: `"flex"`, `"standard"`, `"priority"`.
+    pub enum ServiceTier {
+        /// Flexible latency, lower cost.
+        Flex = "flex",
+        /// Standard processing.
+        Standard = "standard",
+        /// Prioritized processing.
+        Priority = "priority",
     }
-
-    /// Returns the tier type name if this is an unknown service tier.
-    #[must_use]
-    pub fn unknown_tier_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { tier_type, .. } => Some(tier_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the preserved data if this is an unknown service tier.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Display for ServiceTier {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Flex => write!(f, "flex"),
-            Self::Standard => write!(f, "standard"),
-            Self::Priority => write!(f, "priority"),
-            Self::Unknown { tier_type, .. } => write!(f, "{}", tier_type),
-        }
-    }
-}
-
-impl Serialize for ServiceTier {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            Self::Flex => serializer.serialize_str("flex"),
-            Self::Standard => serializer.serialize_str("standard"),
-            Self::Priority => serializer.serialize_str("priority"),
-            Self::Unknown { tier_type, .. } => serializer.serialize_str(tier_type),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for ServiceTier {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value.as_str() {
-            Some("flex") => Ok(Self::Flex),
-            Some("standard") => Ok(Self::Standard),
-            Some("priority") => Ok(Self::Priority),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown ServiceTier '{}' - using Unknown variant (Evergreen)",
-                    other
-                );
-                Ok(Self::Unknown {
-                    tier_type: other.to_string(),
-                    data: value,
-                })
-            }
-            None => {
-                let tier_type = format!("<non-string: {}>", value);
-                tracing::warn!(
-                    "ServiceTier received non-string value: {}. \
-                     Preserving in Unknown variant.",
-                    value
-                );
-                Ok(Self::Unknown {
-                    tier_type,
-                    data: value,
-                })
-            }
-        }
-    }
+    unknown(tier_type, unknown_tier_type)
 }
 
 // =============================================================================
 // Agent Configuration Types
 // =============================================================================
 
-/// Thinking summaries configuration for agent output.
-///
-/// When using thinking mode (via `with_thinking_level`), you can control
-/// whether the model's reasoning process is summarized in the output.
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-/// New summary modes may be added in future versions.
-///
-/// # Evergreen Pattern
-///
-/// Unknown values from the API deserialize into the `Unknown` variant, preserving
-/// the original data for debugging and roundtrip serialization.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum ThinkingSummaries {
-    /// Automatically include thinking summaries (default when thinking is enabled)
-    Auto,
-    /// Do not include thinking summaries
-    None,
-    /// Unknown variant for forward compatibility (Evergreen pattern)
-    Unknown {
-        /// The unrecognized summaries type from the API
-        summaries_type: String,
-        /// The full JSON data, preserved for debugging and roundtrip serialization
-        data: serde_json::Value,
-    },
+wire_enum! {
+    /// Thinking summaries configuration for agent output.
+    ///
+    /// When using thinking mode (via `with_thinking_level`), you can control
+    /// whether the model's reasoning process is summarized in the output.
+    pub enum ThinkingSummaries {
+        /// Automatically include thinking summaries (default when thinking is enabled)
+        Auto = "auto" | "THINKING_SUMMARIES_AUTO",
+        /// Do not include thinking summaries
+        None = "none" | "THINKING_SUMMARIES_NONE",
+    }
+    unknown(summaries_type, unknown_summaries_type)
 }
 
 impl ThinkingSummaries {
-    /// Returns true if this is an unknown thinking summaries value.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
-    }
-
-    /// Returns the summaries type name if this is an unknown value.
-    #[must_use]
-    pub fn unknown_summaries_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { summaries_type, .. } => Some(summaries_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the preserved data if this is an unknown value.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-
     /// Convert to the `agent_config` wire format (`"auto"` / `"none"`).
     ///
     /// This used to emit the SCREAMING_CASE `THINKING_SUMMARIES_*` form,
@@ -1732,98 +1163,6 @@ impl ThinkingSummaries {
                 serde_json::Value::String(summaries_type.clone())
             }
         }
-    }
-}
-
-impl Serialize for ThinkingSummaries {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        // Note: GenerationConfig uses lowercase ("auto"/"none")
-        // For AgentConfig, use to_agent_config_value() instead
-        match self {
-            ThinkingSummaries::Auto => serializer.serialize_str("auto"),
-            ThinkingSummaries::None => serializer.serialize_str("none"),
-            ThinkingSummaries::Unknown {
-                summaries_type,
-                data,
-            } => {
-                // If data is a simple string, serialize just the summaries_type
-                if data.is_string() || data.is_null() {
-                    serializer.serialize_str(summaries_type)
-                } else {
-                    // For complex data, serialize as an object
-                    let mut map = serializer.serialize_map(None)?;
-                    map.serialize_entry("summaries", summaries_type)?;
-                    map.serialize_entry("data", data)?;
-                    map.end()
-                }
-            }
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for ThinkingSummaries {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserializer.deserialize_any(ThinkingSummariesVisitor)
-    }
-}
-
-struct ThinkingSummariesVisitor;
-
-impl<'de> Visitor<'de> for ThinkingSummariesVisitor {
-    type Value = ThinkingSummaries;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("a thinking summaries string or object")
-    }
-
-    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-    where
-        E: de::Error,
-    {
-        match value {
-            // Wire format is THINKING_SUMMARIES_*, but also accept lowercase for flexibility
-            "THINKING_SUMMARIES_AUTO" | "auto" => Ok(ThinkingSummaries::Auto),
-            "THINKING_SUMMARIES_NONE" | "none" => Ok(ThinkingSummaries::None),
-            other => {
-                tracing::warn!(
-                    "Encountered unknown ThinkingSummaries '{}' - using Unknown variant (Evergreen)",
-                    other
-                );
-                Ok(ThinkingSummaries::Unknown {
-                    summaries_type: other.to_string(),
-                    data: serde_json::Value::String(other.to_string()),
-                })
-            }
-        }
-    }
-
-    fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
-    where
-        A: de::MapAccess<'de>,
-    {
-        // For object-based thinking summaries (future API compatibility)
-        let value: serde_json::Value =
-            Deserialize::deserialize(de::value::MapAccessDeserializer::new(map))?;
-        let summaries_type = value
-            .get("summaries")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string();
-
-        tracing::warn!(
-            "Encountered unknown ThinkingSummaries object '{}' - using Unknown variant (Evergreen)",
-            summaries_type
-        );
-        Ok(ThinkingSummaries::Unknown {
-            summaries_type,
-            data: value,
-        })
     }
 }
 
@@ -1879,112 +1218,21 @@ impl AgentConfig {
     }
 }
 
-/// Visualization mode for the Deep Research agent.
-///
-/// Controls whether the agent includes visualizations in its response.
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-///
-/// # Wire Format
-///
-/// Serializes as lowercase strings: `"off"`, `"auto"`.
-///
-/// # Evergreen Pattern
-///
-/// Unknown values from the API deserialize into the `Unknown` variant,
-/// preserving the original data for debugging and roundtrip serialization.
-#[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum Visualization {
-    /// No visualizations in the response.
-    Off,
-    /// The agent decides when to include visualizations.
-    Auto,
-    /// Unknown variant for forward compatibility (Evergreen pattern)
-    Unknown {
-        /// The unrecognized visualization type from the API
-        visualization_type: String,
-        /// The raw JSON value, preserved for debugging and roundtrip
-        data: serde_json::Value,
-    },
-}
-
-impl Visualization {
-    /// Returns true if this is an unknown visualization mode.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
+wire_enum! {
+    /// Visualization mode for the Deep Research agent.
+    ///
+    /// Controls whether the agent includes visualizations in its response.
+    ///
+    /// # Wire Format
+    ///
+    /// Serializes as lowercase strings: `"off"`, `"auto"`.
+    pub enum Visualization {
+        /// No visualizations in the response.
+        Off = "off",
+        /// The agent decides when to include visualizations.
+        Auto = "auto",
     }
-
-    /// Returns the visualization type name if this is an unknown mode.
-    #[must_use]
-    pub fn unknown_visualization_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown {
-                visualization_type, ..
-            } => Some(visualization_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the preserved data if this is an unknown mode.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl Serialize for Visualization {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            Self::Off => serializer.serialize_str("off"),
-            Self::Auto => serializer.serialize_str("auto"),
-            Self::Unknown {
-                visualization_type, ..
-            } => serializer.serialize_str(visualization_type),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for Visualization {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value.as_str() {
-            Some("off") => Ok(Self::Off),
-            Some("auto") => Ok(Self::Auto),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown Visualization '{}' - using Unknown variant (Evergreen)",
-                    other
-                );
-                Ok(Self::Unknown {
-                    visualization_type: other.to_string(),
-                    data: value,
-                })
-            }
-            None => {
-                let visualization_type = format!("<non-string: {}>", value);
-                tracing::warn!(
-                    "Visualization received non-string value: {}. \
-                     Preserving in Unknown variant.",
-                    value
-                );
-                Ok(Self::Unknown {
-                    visualization_type,
-                    data: value,
-                })
-            }
-        }
-    }
+    unknown(visualization_type, unknown_visualization_type)
 }
 
 /// Configuration for Deep Research agent.
@@ -2264,6 +1512,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "strict-unknown"))]
     #[test]
     fn test_thinking_summaries_unknown_roundtrip() {
         let unknown: ThinkingSummaries = serde_json::from_str("\"future_variant\"").unwrap();
@@ -2550,6 +1799,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "strict-unknown"))]
     #[test]
     fn test_image_aspect_ratio_unknown_roundtrip() {
         let unknown: ImageAspectRatio = serde_json::from_str("\"7:3\"").unwrap();
@@ -2599,6 +1849,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "strict-unknown"))]
     #[test]
     fn test_image_size_unknown_roundtrip() {
         let unknown: ImageSize = serde_json::from_str("\"8K\"").unwrap();
@@ -2756,6 +2007,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "strict-unknown"))]
     #[test]
     fn test_service_tier_unknown_roundtrip() {
         let unknown: ServiceTier = serde_json::from_str("\"turbo\"").unwrap();

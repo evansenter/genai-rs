@@ -3,12 +3,12 @@
 //! `PUT /upload/v1beta/environments/{id}/files/{path}`.
 
 use super::common::{
-    NO_BODY, api_request, path_segment, require_id, send_and_read, send_checked, with_paging,
-    with_query,
+    NO_BODY, api_request, mime_type_header, path_segment, require_id, send_and_read, send_checked,
+    with_paging, with_query,
 };
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
-use crate::environment_files::{EnvironmentFileList, EnvironmentFileUpload};
+use crate::environments::{EnvironmentFileList, EnvironmentFileUpload};
 use crate::errors::GenaiError;
 
 /// Percent-encodes each segment of a relative file path, keeping the `/`
@@ -101,6 +101,7 @@ pub async fn upload_file(
             "Cannot upload an empty environment file".to_string(),
         ));
     }
+    let mime_type = mime_type_header(mime_type)?;
     let size = data.len().to_string();
     let start_url = upload_start_url(ctx, environment_id, path, options)?;
     tracing::debug!(

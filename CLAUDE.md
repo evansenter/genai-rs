@@ -53,11 +53,11 @@ prints the wire; `RUST_LOG=genai_rs=debug` enables debug logs.
 
 | Path | Contents |
 |------|----------|
-| `src/client.rs`, `src/request_builder/` | `Client`, `ClientBuilder`, `InteractionBuilder`, the auto-function loop (`auto_functions.rs`) |
+| `src/client.rs`, `src/request_builder/` | `Client`, `ClientBuilder`, the interaction methods, `InteractionBuilder`, the auto-function loop (`auto_functions.rs`) |
 | `src/request.rs`, `src/content.rs`, `src/tools.rs` | Request types, `Content`, tool configs |
 | `src/steps.rs`, `src/response.rs` | The steps response model, `InteractionResponse` and its accessors |
 | `src/wire_streaming.rs`, `src/streaming.rs` | Stream chunk/event types; auto-function stream types |
-| `src/webhooks.rs`, `triggers.rs`, `agents.rs`, `environments.rs`, `environment.rs`, `file_search_stores.rs` | Resource types (`/v1beta/...`) |
+| `src/webhooks.rs`, `triggers.rs`, `agents.rs`, `environments/`, `files.rs`, `file_search_stores.rs`, `credentials.rs`, `voices.rs` | Resource types (`/v1beta/...`) and each resource's `impl Client` methods |
 | `src/http/` | `pub(crate)` HTTP layer: one request path (`common.rs`), SSE parser, error mapping |
 | `src/wire.rs` | `WireInspector`, `LOUD_WIRE` printer |
 | `src/function_calling.rs`, `genai-rs-macros/` | Function registry, `#[tool]` macro (`inventory` registration) |
@@ -84,7 +84,9 @@ with helpers `is_unknown()`, `unknown_<context>_type()`, `unknown_data()`
 `#[non_exhaustive]` (D-002, guarded by `tests/non_exhaustive_responses.rs`)
 and keep unmodeled fields in a `#[serde(flatten)] extra` map. Polling
 continues on unknown statuses, bounded by timeouts. The `strict-unknown`
-feature makes `Content` and `Step` fail on unknown types instead.
+feature makes `Content`, `Step` and every string enum fail on unknown values
+instead. New string enums use the crate-private `wire_enum!` macro
+(`src/wire_enum.rs`), which supplies all of the above.
 
 When adding or changing an enum, record its verified wire format in
 `docs/ENUM_WIRE_FORMATS.md`.

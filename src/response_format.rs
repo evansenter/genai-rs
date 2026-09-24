@@ -14,107 +14,21 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::request::{ImageAspectRatio, ImageSize};
+use crate::wire_enum::wire_enum;
 
-/// Delivery mode for generated media output.
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-///
-/// # Wire Format
-///
-/// Serializes as lowercase strings: `"inline"`, `"uri"`.
-///
-/// # Evergreen Pattern
-///
-/// Unknown values from the API deserialize into the `Unknown` variant,
-/// preserving the original data for debugging and roundtrip serialization.
-#[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum ResponseDelivery {
-    /// Media bytes are returned inline (base64) in the response.
-    Inline,
-    /// Media is delivered by URI (e.g., a GCS object).
-    Uri,
-    /// Unknown variant for forward compatibility (Evergreen pattern)
-    Unknown {
-        /// The unrecognized delivery type from the API
-        delivery_type: String,
-        /// The raw JSON value, preserved for debugging and roundtrip
-        data: serde_json::Value,
-    },
-}
-
-impl ResponseDelivery {
-    /// Returns true if this is an unknown delivery mode.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
+wire_enum! {
+    /// Delivery mode for generated media output.
+    ///
+    /// # Wire Format
+    ///
+    /// Serializes as lowercase strings: `"inline"`, `"uri"`.
+    pub enum ResponseDelivery {
+        /// Media bytes are returned inline (base64) in the response.
+        Inline = "inline",
+        /// Media is delivered by URI (e.g., a GCS object).
+        Uri = "uri",
     }
-
-    /// Returns the delivery type name if this is an unknown delivery mode.
-    #[must_use]
-    pub fn unknown_delivery_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { delivery_type, .. } => Some(delivery_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the preserved data if this is an unknown delivery mode.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl Serialize for ResponseDelivery {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            Self::Inline => serializer.serialize_str("inline"),
-            Self::Uri => serializer.serialize_str("uri"),
-            Self::Unknown { delivery_type, .. } => serializer.serialize_str(delivery_type),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for ResponseDelivery {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value.as_str() {
-            Some("inline") => Ok(Self::Inline),
-            Some("uri") => Ok(Self::Uri),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown ResponseDelivery '{}' - using Unknown variant (Evergreen)",
-                    other
-                );
-                Ok(Self::Unknown {
-                    delivery_type: other.to_string(),
-                    data: value,
-                })
-            }
-            None => {
-                let delivery_type = format!("<non-string: {}>", value);
-                tracing::warn!(
-                    "ResponseDelivery received non-string value: {}. \
-                     Preserving in Unknown variant.",
-                    value
-                );
-                Ok(Self::Unknown {
-                    delivery_type,
-                    data: value,
-                })
-            }
-        }
-    }
+    unknown(delivery_type, unknown_delivery_type)
 }
 
 /// A typed response format, tagged by `type` on the wire.
@@ -217,7 +131,7 @@ pub enum ResponseFormat {
     },
 }
 
-crate::wire_enum::wire_enum! {
+wire_enum! {
     /// Output resolution of generated video (`response_format` `resolution`).
     pub enum VideoResolution {
         /// 360p.
@@ -601,6 +515,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "strict-unknown"))]
     #[test]
     fn test_response_delivery_unknown_roundtrip() {
         let unknown: ResponseDelivery = serde_json::from_str("\"multipart\"").unwrap();

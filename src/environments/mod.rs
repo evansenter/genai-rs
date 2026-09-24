@@ -1,135 +1,89 @@
-//! Environments resource (`/v1beta/environments`).
+//! Environments: the sandbox an agent runs in, the `/v1beta/environments`
+//! resource that stores one, and the files inside it.
+//!
+//! # Describing an environment
+//!
+//! An environment describes which sources are mounted (GCS buckets, inline
+//! files, repositories, skill registries) and what outbound network access
+//! is allowed. The `environment` request field and the Agents resource's
+//! `base_environment` accept either a string environment ID — one created
+//! explicitly via [`Client::create_environment()`](crate::Client::create_environment)
+//! or by a previous interaction, echoed as
+//! [`InteractionResponse::environment_id`](crate::InteractionResponse) — or
+//! a typed remote environment object. [`EnvironmentSpec`] models that union.
+//!
+//! # The Environments resource
 //!
 //! An [`Environment`] is a server-side container of files (and network
 //! configuration) that agent interactions can execute against. Requests
 //! reference one via
 //! [`InteractionRequest::environment`](crate::request::InteractionRequest::environment)
-//! — either inline (the API creates one implicitly) or by ID. This module
-//! models the explicit CRUD surface: create an environment once, reference
-//! it from many interactions, list what exists, and delete what's stale.
+//! — either inline (the API creates one implicitly) or by ID. The CRUD
+//! surface creates an environment once, references it from many
+//! interactions, lists what exists, and deletes what's stale.
 //!
 //! Wire format verified live 2026-08-08: the resource uses `created` /
 //! `updated` / `last_accessed` ISO-8601 timestamps, and `file_count` /
 //! `size_bytes` are int64s serialized as JSON *strings* (protobuf JSON
 //! convention); both are accepted here as numbers too.
+//!
+//! # Files inside an environment
+//!
+//! [`Client::list_environment_files()`](crate::Client::list_environment_files)
+//! lists what an agent left in an environment and
+//! [`Client::upload_environment_file()`](crate::Client::upload_environment_file)
+//! uploads a file into one before an interaction runs. Paths are relative to
+//! the environment root; `""` lists the root.
+//!
+//! Verified live 2026-09-24: listing (root, a directory, one file,
+//! recursive) and a resumable single-shot upload. The API reports entry
+//! types in uppercase (`FILE`, `DIRECTORY`) although the bindings spell them
+//! lowercase; both are accepted. Environments are forked with
+//! [`CreateEnvironmentRequest::from_environment`].
+//!
+//! # IDs
+//!
+//! Methods take the bare ID (the form [`Environment::id`] returns), not an
+//! `environments/...` resource name: the ID is percent-encoded into a single
+//! path segment, so a resource name addresses nothing and 404s (verified
+//! live). The one unobserved source is
+//! [`InteractionResponse::environment_id`](crate::InteractionResponse::environment_id):
+//! strip a leading `environments/` prefix before passing it. An empty or
+//! dot-segment ID fails locally with
+//! [`GenaiError::InvalidInput`] before any
+//! request.
 
-use crate::environment::{EnvironmentSource, NetworkConfig};
+mod files;
+mod spec;
+
+pub use files::{EnvironmentFile, EnvironmentFileList, EnvironmentFileType, EnvironmentFileUpload};
+pub use spec::{
+    AllowlistEntry, EnvVar, EnvironmentSource, EnvironmentSpec, NetworkConfig, RemoteEnvironment,
+    SourceType,
+};
+
+use crate::client::Client;
+use crate::errors::GenaiError;
 use crate::serde_util::{
     ForEnvironment, deserialize_lenient_timestamp, deserialize_string_i64, serialize_string_i64,
 };
+use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
-use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
-/// Status of an environment container.
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-///
-/// # Wire Format
-///
-/// Serializes as lowercase strings: `"active"`, `"expired"`.
-///
-/// # Evergreen Pattern
-///
-/// Unknown values from the API deserialize into the `Unknown` variant,
-/// preserving the original data for debugging and roundtrip serialization.
-#[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum EnvironmentStatus {
-    /// The environment is available for use.
-    Active,
-    /// The environment has expired and can no longer be used.
-    Expired,
-    /// Unknown variant for forward compatibility (Evergreen pattern)
-    Unknown {
-        /// The unrecognized status type from the API
-        status_type: String,
-        /// The raw JSON value, preserved for debugging and roundtrip
-        data: serde_json::Value,
-    },
-}
-
-impl EnvironmentStatus {
-    /// The wire string for this status — the single source both `Display`
-    /// and `Serialize` render, so the two can never disagree.
-    fn as_wire(&self) -> &str {
-        match self {
-            Self::Active => "active",
-            Self::Expired => "expired",
-            Self::Unknown { status_type, .. } => status_type,
-        }
+wire_enum! {
+    /// Status of an environment container.
+    ///
+    /// # Wire Format
+    ///
+    /// Serializes as lowercase strings: `"active"`, `"expired"`.
+    pub enum EnvironmentStatus {
+        /// The environment is available for use.
+        Active = "active",
+        /// The environment has expired and can no longer be used.
+        Expired = "expired",
     }
-
-    /// Returns true if this is an unknown status.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
-    }
-
-    /// Returns the status type name if this is an unknown status.
-    #[must_use]
-    pub fn unknown_status_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { status_type, .. } => Some(status_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the preserved data if this is an unknown status.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Display for EnvironmentStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_wire())
-    }
-}
-
-impl Serialize for EnvironmentStatus {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(self.as_wire())
-    }
-}
-
-impl<'de> Deserialize<'de> for EnvironmentStatus {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value.as_str() {
-            Some("active") => Ok(Self::Active),
-            Some("expired") => Ok(Self::Expired),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown EnvironmentStatus '{other}' - using Unknown variant (Evergreen)"
-                );
-                Ok(Self::Unknown {
-                    status_type: other.to_string(),
-                    data: value.clone(),
-                })
-            }
-            None => {
-                tracing::warn!(
-                    "EnvironmentStatus received non-string value: {value}. Preserving in Unknown variant."
-                );
-                Ok(Self::Unknown {
-                    status_type: format!("<non-string: {value}>"),
-                    data: value,
-                })
-            }
-        }
-    }
+    unknown(status_type, unknown_status_type)
 }
 
 /// An execution environment for an agent, as returned by the
@@ -206,9 +160,9 @@ pub struct Environment {
 /// Request body for creating an environment explicitly.
 ///
 /// For the *inline* per-request form (the `environment` field on an
-/// interaction), use [`RemoteEnvironment`](crate::RemoteEnvironment) /
-/// [`EnvironmentSpec`](crate::EnvironmentSpec) instead — same fields, but
-/// carrying the `remote` type discriminator the inline union requires.
+/// interaction), use [`RemoteEnvironment`] / [`EnvironmentSpec`] instead —
+/// same fields, but carrying the `remote` type discriminator the inline union
+/// requires.
 ///
 /// # Example
 ///
@@ -300,6 +254,67 @@ pub struct EnvironmentListResponse {
     pub next_page_token: Option<String>,
 }
 
+/// Environments resource methods; see [IDs](crate::environments#ids).
+impl Client {
+    /// Creates an environment explicitly, for reuse across interactions.
+    ///
+    /// Requests can also create environments implicitly by passing a typed
+    /// [`EnvironmentSpec`] inline; explicit creation
+    /// returns the ID so many interactions can share one container.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the definition is
+    /// rejected.
+    pub async fn create_environment(
+        &self,
+        request: &crate::CreateEnvironmentRequest,
+    ) -> Result<crate::Environment, GenaiError> {
+        crate::http::environments::create_environment(&self.http, request).await
+    }
+
+    /// Retrieves an environment by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the environment doesn't
+    /// exist.
+    pub async fn get_environment(
+        &self,
+        environment_id: &str,
+    ) -> Result<crate::Environment, GenaiError> {
+        crate::http::environments::get_environment(&self.http, environment_id).await
+    }
+
+    /// Lists environments, paged.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_size` - Optional maximum number of environments per page.
+    /// * `page_token` - Optional token from a previous list call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or an invalid page token.
+    pub async fn list_environments(
+        &self,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+    ) -> Result<crate::EnvironmentListResponse, GenaiError> {
+        crate::http::environments::list_environments(&self.http, page_size, page_token).await
+    }
+
+    /// Deletes an environment.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the environment doesn't
+    /// exist.
+    pub async fn delete_environment(&self, environment_id: &str) -> Result<(), GenaiError> {
+        crate::http::environments::delete_environment(&self.http, environment_id).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -367,6 +382,7 @@ mod tests {
         assert_eq!(env.size_bytes, Some(42));
     }
 
+    #[cfg(not(feature = "strict-unknown"))]
     #[test]
     fn unknown_status_roundtrips() {
         let json = serde_json::json!({"id": "x", "status": "hibernating"});
@@ -437,7 +453,7 @@ mod tests {
 
     #[test]
     fn create_request_network_serializes_without_discriminator() {
-        use crate::environment::NetworkConfig;
+        use super::NetworkConfig;
 
         let request = CreateEnvironmentRequest::new().with_network(NetworkConfig::Disabled);
         let json = serde_json::to_value(&request).unwrap();

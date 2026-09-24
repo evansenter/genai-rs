@@ -183,11 +183,9 @@ where
 /// drops alone — each with a `warn!` — instead of failing the enclosing
 /// envelope.
 ///
-/// Used by the Interactions resource list envelopes (agents, webhooks,
-/// triggers, trigger executions, environments), so one malformed resource
-/// costs itself rather than the whole page. Lists *inside* a resource stay
-/// strict. `ListFilesResponse::files` stays strict too: that surface is
-/// stable, so a malformed element there is a real protocol break.
+/// Used by every resource list envelope, so one malformed resource costs
+/// itself rather than the whole page. Lists *inside* a resource stay
+/// strict.
 pub(crate) fn deserialize_lenient_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
 where
     D: Deserializer<'de>,
