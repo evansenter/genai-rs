@@ -1588,7 +1588,7 @@ fn test_builder_deep_research_config_new_fields() {
     let client = create_test_client();
     let request = client
         .interaction()
-        .with_agent("deep-research-preview-04-2026")
+        .with_agent(crate::DEFAULT_DEEP_RESEARCH_AGENT)
         .with_text("Research something")
         .with_agent_config(
             DeepResearchConfig::new()

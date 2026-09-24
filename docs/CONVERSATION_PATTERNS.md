@@ -430,7 +430,7 @@ Both ConversationBuilder and `with_history()` produce the same wire format — a
 
 ```json
 {
-  "model": "gemini-3.7-flash",
+  "model": "gemini-3.8-flash",
   "input": [
     { "type": "user_input", "content": [{ "type": "text", "text": "Hello" }] },
     { "type": "model_output", "content": [{ "type": "text", "text": "Hi!" }] },

@@ -14,19 +14,13 @@ use std::error::Error;
 // A tiny valid MP4 (one 64x64 red H.264 frame, ~1.5KB) - for demonstration
 // purposes only. The API requires real media data; in real usage, load actual
 // video files with content.
-const DEMO_MP4_BASE64: &str = "AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAMWbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAAMgAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAkB0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAAMgAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAEAAAABAAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAADIAAAAAAABAAAAAAG4bWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAAAoAAAACABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABY21pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAASNzdGJsAAAAv3N0c2QAAAAAAAAAAQAAAK9hdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAEAAQABIAAAASAAAAAAAAAABFUxhdmM2MC4zMS4xMDIgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAANWF2Y0MBZAAK/+EAGGdkAAqs2UQmwEQAAAMABAAAAwAoPEiWWAEABmjr48siwP34+AAAAAAQcGFzcAAAAAEAAAABAAAAFGJ0cnQAAAAAAAByOAAAcjgAAAAYc3R0cwAAAAAAAAABAAAAAQAACAAAAAAcc3RzYwAAAAAAAAABAAAAAQAAAAEAAAABAAAAFHN0c3oAAAAAAAAC2wAAAAEAAAAUc3RjbwAAAAAAAAABAAADRgAAAGJ1ZHRhAAAAWm1ldGEAAAAAAAAAIWhkbHIAAAAAAAAAAG1kaXJhcHBsAAAAAAAAAAAAAAAALWlsc3QAAAAlqXRvbwAAAB1kYXRhAAAAAQAAAABMYXZmNjAuMTYuMTAwAAAACGZyZWUAAALjbWRhdAAAAq0GBf//qdxF6b3m2Ui3lizYINkj7u94MjY0IC0gY29yZSAxNjQgcjMxMDggMzFlMTlmOSAtIEguMjY0L01QRUctNCBBVkMgY29kZWMgLSBDb3B5bGVmdCAyMDAzLTIwMjMgLSBodHRwOi8vd3d3LnZpZGVvbGFuLm9yZy94MjY0Lmh0bWwgLSBvcHRpb25zOiBjYWJhYz0xIHJlZj0zIGRlYmxvY2s9MTowOjAgYW5hbHlzZT0weDM6MHgxMTMgbWU9aGV4IHN1Ym1lPTcgcHN5PTEgcHN5X3JkPTEuMDA6MC4wMCBtaXhlZF9yZWY9MSBtZV9yYW5nZT0xNiBjaHJvbWFfbWU9MSB0cmVsbGlzPTEgOHg4ZGN0PTEgY3FtPTAgZGVhZHpvbmU9MjEsMTEgZmFzdF9wc2tpcD0xIGNocm9tYV9xcF9vZmZzZXQ9LTIgdGhyZWFkcz0yIGxvb2thaGVhZF90aHJlYWRzPTEgc2xpY2VkX3RocmVhZHM9MCBucj0wIGRlY2ltYXRlPTEgaW50ZXJsYWNlZD0wIGJsdXJheV9jb21wYXQ9MCBjb25zdHJhaW5lZF9pbnRyYT0wIGJmcmFtZXM9MyBiX3B5cmFtaWQ9MiBiX2FkYXB0PTEgYl9iaWFzPTAgZGlyZWN0PTEgd2VpZ2h0Yj0xIG9wZW5fZ29wPTAgd2VpZ2h0cD0yIGtleWludD0yNTAga2V5aW50X21pbj01IHNjZW5lY3V0PTQwIGludHJhX3JlZnJlc2g9MCByY19sb29rYWhlYWQ9NDAgcmM9Y3JmIG1idHJlZT0xIGNyZj0yMy4wIHFjb21wPTAuNjAgcXBtaW49MCBxcG1heD02OSBxcHN0ZXA9NCBpcF9yYXRpbz0xLjQwIGFxPTE6MS4wMACAAAAAJmWIhAA///7mdfgU0wgaSTL8Q84/MVcp5wFs500OH1UoDGdRcGNv";
+const DEMO_MP4_BASE64: &str = "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";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let api_key = env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY not found in environment");
     let client = Client::builder(api_key).build()?;
-    // This example is about **inline** (base64) video bytes, and
-    // DEFAULT_MODEL rejects those with a 400 while accepting video by URI
-    // (verified live on gemini-3.6-flash 2026-08-10 and again on
-    // gemini-3.7-flash 2026-08-15). Hence INLINE_VIDEO_MODEL, which exists
-    // for exactly this gap. If you only need video by URI, the default
-    // model is fine; see the Files API section below.
-    let model_name = genai_rs::INLINE_VIDEO_MODEL;
+    let model_name = genai_rs::DEFAULT_MODEL;
 
     // =========================================================================
     // Example 1: Basic Video Analysis (Fluent Builder Pattern)
@@ -73,7 +67,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    // Using with_content() for multimodal input
    let response = client
        .interaction()
-       .with_model(genai_rs::INLINE_VIDEO_MODEL)
+       .with_model(genai_rs::DEFAULT_MODEL)
        .with_content(vec![
            Content::text("Describe the key scenes in this video. What's happening?"),
            Content::video_data(&base64_video, "video/mp4"),
@@ -86,7 +80,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    let video = video_from_file("video.mp4").await?;
    let response = client
        .interaction()
-       .with_model(genai_rs::INLINE_VIDEO_MODEL)
+       .with_model(genai_rs::DEFAULT_MODEL)
        .with_content(vec![
            Content::text("Describe the key scenes in this video."),
            video,
@@ -101,7 +95,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         r#"
    let response = client
        .interaction()
-       .with_model(genai_rs::INLINE_VIDEO_MODEL)
+       .with_model(genai_rs::DEFAULT_MODEL)
        .with_content(vec![
            Content::text("List all the objects and people visible in this video.
                For each, note when they first appear (approximate timestamp)."),
@@ -117,7 +111,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         r#"
    let response = client
        .interaction()
-       .with_model(genai_rs::INLINE_VIDEO_MODEL)
+       .with_model(genai_rs::DEFAULT_MODEL)
        .with_content(vec![
            Content::text("What actions or activities are being performed in this video?
                Describe the sequence of events."),
@@ -133,7 +127,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         r#"
    let response = client
        .interaction()
-       .with_model(genai_rs::INLINE_VIDEO_MODEL)
+       .with_model(genai_rs::DEFAULT_MODEL)
        .with_content(vec![
            Content::text("How many people are in this video? What are they wearing?"),
            Content::video_data(&base64_video, "video/mp4"),
@@ -154,7 +148,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    // First turn: Send video and get initial analysis
    let first = client
        .interaction()
-       .with_model(genai_rs::INLINE_VIDEO_MODEL)
+       .with_model(genai_rs::DEFAULT_MODEL)
        .with_content(vec![
            Content::text("Describe what's happening in this video."),
            Content::video_data(&base64_video, "video/mp4"),
@@ -166,7 +160,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    // Second turn: Ask follow-up (video is remembered)
    let second = client
        .interaction()
-       .with_model(genai_rs::INLINE_VIDEO_MODEL)
+       .with_model(genai_rs::DEFAULT_MODEL)
        .with_text("What happens at the 30-second mark?")
        .with_previous_interaction(&first.id)
        .create()
@@ -175,7 +169,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    // Third turn: More specific questions
    let third = client
        .interaction()
-       .with_model(genai_rs::INLINE_VIDEO_MODEL)
+       .with_model(genai_rs::DEFAULT_MODEL)
        .with_text("What color is the car in the background?")
        .with_previous_interaction(&second.id)
        .create()
@@ -193,7 +187,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         r#"
    let response = client
        .interaction()
-       .with_model(genai_rs::INLINE_VIDEO_MODEL)
+       .with_model(genai_rs::DEFAULT_MODEL)
        .with_content(vec![
            Content::text("Analyze this video:
                1. What is shown visually?
@@ -277,7 +271,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    // Build the request using with_content
    let response = client
        .interaction()
-       .with_model(genai_rs::INLINE_VIDEO_MODEL)
+       .with_model(genai_rs::DEFAULT_MODEL)
        .with_content(vec![
            Content::text("Describe what's happening in this video."),
            video_content,
@@ -300,7 +294,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
    // Send with with_content
    let response = client
        .interaction()
-       .with_model(genai_rs::INLINE_VIDEO_MODEL)
+       .with_model(genai_rs::DEFAULT_MODEL)
        .with_content(vec![
            Content::text("Describe what's happening in this video."),
            Content::video_data(&base64_video, "video/mp4"),

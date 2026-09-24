@@ -68,11 +68,9 @@ inventory = { workspace = true }
 bytes = { workspace = true }
 chrono = { workspace = true }
 base64 = "0.22"
-# Dependencies from genai-client
 tokio-util = { version = "0.7", features = ["io"] }
 colored = { version = "3", optional = true }
 colored_json = { version = "5", optional = true }
-regex = "1"
 urlencoding = "2"
 # Antigravity harness client (feature = "antigravity"). The harness WebSocket
 # is localhost-only (ws://), so no TLS features are needed.
@@ -91,7 +89,7 @@ futures-util = { workspace = true }
 proptest = "1.11"
 chrono = { workspace = true }
 doc-comment = "0.3"
-rand = "0.9"
+regex = "1"
 backon = "1.6"
 
 [features]

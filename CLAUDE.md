@@ -265,8 +265,7 @@ override is only ever needed for the PR that introduces the growth.
   | Constant | Use for |
   |----------|---------|
   | `DEFAULT_MODEL` | Everything, unless a row below applies |
-  | `INLINE_VIDEO_MODEL` | **Inline base64 video** — `DEFAULT_MODEL` returns 400 on inline video bytes while accepting video by URI (verified live on `gemini-3.6-flash` 2026-08-10, `gemini-3.7-flash` 2026-08-15) |
-  | `MINIMAL_THINKING_MODEL` | `ThinkingLevel::Minimal` — `DEFAULT_MODEL` rejects it as unsupported (verified live 2026-08-15) |
+  | `MINIMAL_THINKING_MODEL` | `ThinkingLevel::Minimal` — `DEFAULT_MODEL` rejects it as unsupported (re-verified 2026-09-24) |
   | `DEFAULT_IMAGE_MODEL` | Image generation |
   | `DEFAULT_TTS_MODEL` | Text-to-speech |
 

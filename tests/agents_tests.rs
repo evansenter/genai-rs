@@ -40,7 +40,7 @@ async fn test_deep_research_agent() {
 
     let result = client
         .interaction()
-        .with_agent("deep-research-pro-preview-12-2025")
+        .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
         .with_text("What are the main differences between Rust and Go programming languages?")
         .with_background(true) // Required for agent interactions
         .with_store_enabled() // Required to retrieve results by interaction ID
@@ -137,7 +137,7 @@ async fn test_background_mode_polling() {
     // Start background task
     let result = client
         .interaction()
-        .with_agent("deep-research-pro-preview-12-2025")
+        .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
         .with_text("Briefly explain what machine learning is.")
         .with_background(true)
         .with_store_enabled()
@@ -218,7 +218,7 @@ async fn test_deep_research_with_agent_config() {
 
     let result = client
         .interaction()
-        .with_agent("deep-research-pro-preview-12-2025")
+        .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
         .with_text("What is Rust programming language?")
         .with_agent_config(
             DeepResearchConfig::new().with_thinking_summaries(ThinkingSummaries::Auto),
@@ -302,7 +302,7 @@ async fn test_deep_research_config_convenience_method() {
 
     let result = client
         .interaction()
-        .with_agent("deep-research-pro-preview-12-2025")
+        .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
         .with_text("What is Rust?")
         .with_deep_research_config(ThinkingSummaries::Auto) // Convenience method
         .with_background(true)

@@ -223,7 +223,7 @@ mod basic {
         let response = retry_request!([client] => {
             client
                 .interaction()
-                .with_agent("deep-research-pro-preview-12-2025")
+                .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
                 .with_text("What are the current trends in quantum computing research?")
                 .with_background(true)
                 .with_store_enabled()
@@ -1793,7 +1793,7 @@ mod deep_research {
             return;
         };
 
-        let agent_name = "deep-research-pro-preview-12-2025";
+        let agent_name = genai_rs::DEFAULT_DEEP_RESEARCH_AGENT;
         let prompt = "What are the key differences between REST and GraphQL APIs?";
 
         println!("Starting deep research with agent: {}", agent_name);

@@ -414,7 +414,7 @@ Common issues and solutions are documented in [TROUBLESHOOTING.md](TROUBLESHOOTI
 
 **Quick fixes:**
 - **"API key not valid"** - Check `GEMINI_API_KEY` is set
-- **"Model not found"** - Use `gemini-3.7-flash`
+- **"Model not found"** - Use `genai_rs::DEFAULT_MODEL` rather than a hand-typed id
 - **Functions not executing** - Use `create_with_auto_functions()`
 - **TLS errors in minimal containers** - Install a CA bundle (OS trust store is used since reqwest 0.13)
 

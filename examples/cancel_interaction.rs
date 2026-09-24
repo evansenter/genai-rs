@@ -30,7 +30,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // 2. Start a long-running background interaction
     // We use the deep research agent since it takes a while to complete,
     // giving us time to cancel it.
-    let agent_name = "deep-research-pro-preview-12-2025";
+    let agent_name = genai_rs::DEFAULT_DEEP_RESEARCH_AGENT;
     let prompt = "Analyze the history and future of renewable energy technologies";
 
     println!("Starting background research task...");

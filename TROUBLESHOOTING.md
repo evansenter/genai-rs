@@ -27,7 +27,7 @@ Output shows:
 ```text
 [REQ#1] POST https://generativelanguage.googleapis.com/v1beta/interactions
 {
-  "model": "gemini-3.7-flash",
+  "model": "gemini-3.8-flash",
   "input": "Hello!",
   ...
 }
@@ -105,7 +105,7 @@ GenaiError::Api { status_code: 404, message: "Model not found..." }
 ```
 
 **Solutions:**
-1. Check model name spelling: `gemini-3.7-flash` (not `gemini-flash`)
+1. Use `genai_rs::DEFAULT_MODEL` (or another constant from `src/lib.rs`) instead of a hand-typed id
 2. Verify model availability in your region
 3. Check if model requires special access
 
@@ -493,7 +493,7 @@ let mut stream = client.interaction().create_stream();
 
 3. **Use appropriate model:**
 ```rust,ignore
-// gemini-3.7-flash is faster than gemini-3.1-pro-preview
+// Flash models (genai_rs::DEFAULT_MODEL) are faster than Pro models
 ```
 
 ### High Token Usage

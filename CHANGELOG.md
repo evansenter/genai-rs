@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `regex` is no longer a runtime dependency (it was only used by a test), and
+  the unused `rand` dev-dependency is gone.
+
 - **The mold linker is now opt-in** (#428). `.cargo/config.toml` was checked
   in and set `-fuse-ld=mold` unconditionally, so a clone on a machine without
   mold failed every build before compiling anything:
@@ -53,6 +56,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reporting, inert until now for want of the permission.
 
 ### Changed (breaking)
+
+- **BREAKING**: **`DEFAULT_MODEL` is now `gemini-3.8-flash`** (was
+  `gemini-3.7-flash`). Like 3.7, it rejects `ThinkingLevel::Minimal`; use
+  `MINIMAL_THINKING_MODEL` (still `gemini-3.6-flash`) for that level.
+
+- **BREAKING**: **`INLINE_VIDEO_MODEL` removed.** It existed because
+  `DEFAULT_MODEL` appeared to reject inline base64 video, but the 400 came
+  from the test fixture: a 0.2-second clip yields no sampled frame at the
+  default ~1 fps. Any clip of 1 second or longer works inline on 3.6/3.7/3.8
+  flash. Use `DEFAULT_MODEL`; for sub-second clips raise `VideoProcessing`'s
+  `fps`. See DECISIONS.md D-012.
 
 - **BREAKING**: **`InteractionInput::Content` is now sent as a single
   `user_input` step**
@@ -225,6 +239,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   No public type changed — `speech_config` is still `Option<Vec<SpeechConfig>>`.
 
 ### Added
+
+- **`DEFAULT_DEEP_RESEARCH_AGENT` and `DEFAULT_ANTIGRAVITY_AGENT`** constants
+  for `with_agent()`, so agent ids get the same single-source treatment as
+  model ids. `tests/model_literals.rs` now also rejects dated agent-id
+  literals outside `src/lib.rs`.
 
 - **Video `processing` — segment clipping, frame-rate sampling, and agentic
   mode.** `Content::Video` gained a `processing` field, modeled as the new

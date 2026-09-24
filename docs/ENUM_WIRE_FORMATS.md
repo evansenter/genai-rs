@@ -1487,7 +1487,7 @@ When adding new enums, always test the actual wire format with `curl`:
 curl -s "https://generativelanguage.googleapis.com/v1beta/interactions?key=$GEMINI_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Api-Revision: 2026-05-20" \
-  -d '{"model": "gemini-3.7-flash", "input": "test", ...}'
+  -d '{"model": "gemini-3.8-flash", "input": "test", ...}'
 ```
 
 Common patterns to try:

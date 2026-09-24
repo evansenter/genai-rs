@@ -685,7 +685,7 @@ impl Client {
     ///
     /// // Start a background agent interaction
     /// let response = client.interaction()
-    ///     .with_agent("deep-research-pro-preview-12-2025")
+    ///     .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
     ///     .with_text("Research AI safety")
     ///     .with_background(true)
     ///     .with_store_enabled()

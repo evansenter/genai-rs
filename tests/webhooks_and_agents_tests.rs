@@ -292,7 +292,7 @@ async fn test_interaction_with_inline_environment() {
     // API response (i.e., the request shape itself must be valid).
     let result = client
         .interaction()
-        .with_agent("antigravity-preview-05-2026")
+        .with_agent(genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
         .with_text("Print the contents of /etc/motd")
         .with_background(true)
         .with_store_enabled()
@@ -678,7 +678,7 @@ async fn test_antigravity_config_accepted() {
     let response = crate::retry_request!([client] => {
         client
             .interaction()
-            .with_agent("antigravity-preview-05-2026")
+            .with_agent(genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
             .with_text("Print the contents of /etc/motd")
             .with_background(true)
             .with_store_enabled()
@@ -738,7 +738,7 @@ async fn test_deep_research_config_knobs_accepted() {
     let result = crate::retry_request!([client] => {
         client
             .interaction()
-            .with_agent("deep-research-preview-04-2026")
+            .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
             .with_text("One-paragraph overview of Rust async runtimes")
             .with_background(true)
             .with_store_enabled()

@@ -198,10 +198,10 @@ using.
 
 **Decision.** `DEFAULT_MODEL` and friends are public constants and the single
 source of truth. `tests/model_literals.rs` fails the build on any hardcoded
-`"gemini-<digit>"` outside them.
+`"gemini-<digit>"` — or dated agent id such as `"deep-research-preview-04-2026"`
+— outside them.
 
-Capability-specific constants (`INLINE_VIDEO_MODEL`, `MINIMAL_THINKING_MODEL`)
-are re-pinned *independently* of the default: they track whichever model has
+Capability-specific constants (`MINIMAL_THINKING_MODEL`) are re-pinned *independently* of the default: they track whichever model has
 the capability, so they go stale when that model retires, not when the default
 moves.
 
@@ -318,3 +318,26 @@ references it silently wrong is not.
 
 **Consequences.** One more step on refactors that relocate code. Skippable for
 moves within a file.
+
+---
+
+## D-012 — `INLINE_VIDEO_MODEL` was a fixture bug, not a model gap (2026-09-24)
+
+**Context.** From 2026-08 the crate shipped `INLINE_VIDEO_MODEL`, documented
+as "`DEFAULT_MODEL` rejects inline base64 video with 400 while accepting it by
+URI", verified on two model generations. The 2026-09 sweep found the 400 came
+from the test fixture: `TINY_MP4_BASE64` was a 0.2-second clip, which yields no
+sampled frame at the default ~1 fps. Any clip of 1 second or longer is accepted
+inline by 3.6, 3.7 and 3.8 flash; the 0.2s clip is accepted too once
+`processing.fps` is raised. The "passes by URI" control used a different, longer
+video, so it could not tell the two causes apart.
+
+**Decision.** Removed the constant and replaced the fixture with a 1-second
+clip. A capability constant must be backed by a probe that varies only the
+capability under test.
+
+**Consequences.** Breaking for anyone who named `INLINE_VIDEO_MODEL`; the
+replacement is `DEFAULT_MODEL`. The generic error text (`Request contains an
+invalid argument`) is the only symptom of a too-short clip, which is now noted
+in `docs/MULTIMODAL.md`.
+

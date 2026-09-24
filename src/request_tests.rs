@@ -538,7 +538,7 @@ fn test_create_interaction_request_with_agent_config() {
 
     let request = InteractionRequest {
         model: None,
-        agent: Some("deep-research-pro-preview-12-2025".to_string()),
+        agent: Some(crate::DEFAULT_DEEP_RESEARCH_AGENT.to_string()),
         agent_config: Some(config),
         input: InteractionInput::Text("Research question".to_string()),
         previous_interaction_id: None,
@@ -560,7 +560,7 @@ fn test_create_interaction_request_with_agent_config() {
     let json = serde_json::to_string(&request).expect("Serialization failed");
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-    assert_eq!(value["agent"], "deep-research-pro-preview-12-2025");
+    assert_eq!(value["agent"], crate::DEFAULT_DEEP_RESEARCH_AGENT);
     assert_eq!(value["agent_config"]["type"], "deep-research");
     assert_eq!(value["agent_config"]["thinking_summaries"], "auto");
     assert_eq!(value["background"], true);

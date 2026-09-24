@@ -466,8 +466,7 @@ async fn test_audio_from_temp_file() {
 
 /// Tests loading a video file from a temp file using video_from_file().
 ///
-/// Uses the TINY_MP4_BASE64 fixture (a real one-frame 64x64 H.264 clip, ~1.5KB),
-/// so the API accepts it as valid video data.
+/// Uses the TINY_MP4_BASE64 fixture (a 1-second 64x64 H.264 clip, ~1.7KB).
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_video_from_temp_file() {
@@ -495,10 +494,7 @@ async fn test_video_from_temp_file() {
 
     let response = crate::retry_request!([client, contents] => {
         stateful_builder(&client)
-            // Inline video bytes — see INLINE_VIDEO_MODEL. `video_from_file`
-            // reads the file into base64 inline data, so this is the same
-            // path the multimodal inline-video tests pin.
-            .with_model(genai_rs::INLINE_VIDEO_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_input(InteractionInput::Content(contents))
             .create()
             .await

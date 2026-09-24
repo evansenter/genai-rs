@@ -180,14 +180,9 @@ let config = GenerationConfig {
 };
 ```
 
-### Typical Limits by Model
-
-| Model | Default Max | Absolute Max |
-|-------|-------------|--------------|
-| gemini-3.7-flash | 8192 | 8192 |
-| gemini-3.1-pro-preview | 8192 | 8192 |
-
-Note: Actual limits vary by model version. Check [Google's documentation](https://ai.google.dev/models/gemini) for current values.
+Per-model ceilings are published by the Models API rather than hardcoded
+here — `GET /v1beta/models/{model}` returns `outputTokenLimit` (65,536 for
+`gemini-3.8-flash` as of 2026-09).
 
 ## Seeds for Reproducibility
 

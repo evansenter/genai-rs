@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let request = client
         .interaction()
-        .with_agent("deep-research-preview-04-2026")
+        .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
         .with_text("Research the history of the Antikythera mechanism")
         .with_background(true)
         .with_store_enabled()

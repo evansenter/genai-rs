@@ -1380,7 +1380,7 @@ pub struct InteractionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
 
-    /// Agent name (e.g., "deep-research-pro-preview-12-2025") - mutually exclusive with model
+    /// Agent name (e.g. [`DEFAULT_DEEP_RESEARCH_AGENT`](crate::DEFAULT_DEEP_RESEARCH_AGENT)) - mutually exclusive with model
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
 
@@ -2097,7 +2097,7 @@ impl From<DynamicConfig> for AgentConfig {
 
 /// Configuration for the server-side Antigravity coding agent.
 ///
-/// This configures `agent("antigravity-preview-05-2026")` interactions that
+/// This configures [`DEFAULT_ANTIGRAVITY_AGENT`](crate::DEFAULT_ANTIGRAVITY_AGENT) interactions that
 /// run in Google's sandbox (an
 /// [`environment`](InteractionRequest::environment) is **required** for that
 /// agent) — distinct from the local-harness bridge in the `antigravity`

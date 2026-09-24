@@ -68,7 +68,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let client = Client::builder(api_key).build()?;
 
     // The Deep Research agent identifier
-    let agent_name = "deep-research-pro-preview-12-2025";
+    let agent_name = genai_rs::DEFAULT_DEEP_RESEARCH_AGENT;
 
     println!("=== Deep Research Agent Example ===\n");
 
@@ -319,7 +319,7 @@ fn handle_research_error(e: &GenaiError) {
 // ✅ Deep Research Demo Complete
 //
 // --- Key Takeaways ---
-// • with_agent("deep-research-pro-preview-12-2025") uses the research agent
+// • with_agent(DEFAULT_DEEP_RESEARCH_AGENT) uses the research agent
 // • with_agent_config(DeepResearchConfig::new()...) for agent-specific settings
 // • with_background(true) is required for agent interactions
 // • Poll for completion using client.get_interaction(id)

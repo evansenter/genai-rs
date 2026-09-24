@@ -954,7 +954,7 @@ With `LOUD_WIRE=1`, you'll see the raw SSE events:
 
 ```text
 [REQ#1] POST /v1beta/interactions?alt=sse
-  model: gemini-3.7-flash
+  model: gemini-3.8-flash
   input: "Write a poem"
 
 [RES#1] SSE stream:

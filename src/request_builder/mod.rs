@@ -285,7 +285,7 @@ impl<'a> InteractionBuilder<'a> {
         self
     }
 
-    /// Sets the agent to use for this interaction (e.g., "deep-research-pro-preview-12-2025").
+    /// Sets the agent to use for this interaction (e.g. [`DEFAULT_DEEP_RESEARCH_AGENT`](crate::DEFAULT_DEEP_RESEARCH_AGENT)).
     ///
     /// Note: Mutually exclusive with `with_model()`.
     #[must_use]
@@ -312,7 +312,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// let response = client
     ///     .interaction()
-    ///     .with_agent("deep-research-pro-preview-12-2025")
+    ///     .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
     ///     .with_text("Research the history of quantum computing")
     ///     .with_agent_config(DeepResearchConfig::new()
     ///         .with_thinking_summaries(ThinkingSummaries::Auto))
@@ -359,7 +359,7 @@ impl<'a> InteractionBuilder<'a> {
     ///     .with_thinking_summaries(summaries))
     /// ```
     ///
-    /// Only applicable when using `with_agent("deep-research-pro-preview-12-2025")`.
+    /// Only applicable to Deep Research agents (e.g. [`DEFAULT_DEEP_RESEARCH_AGENT`](crate::DEFAULT_DEEP_RESEARCH_AGENT)).
     ///
     /// # Example
     ///
@@ -372,7 +372,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// let response = client
     ///     .interaction()
-    ///     .with_agent("deep-research-pro-preview-12-2025")
+    ///     .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
     ///     .with_text("Research the history of quantum computing")
     ///     .with_deep_research_config(ThinkingSummaries::Auto)
     ///     .with_background(true)
@@ -1298,7 +1298,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// let response = client
     ///     .interaction()
-    ///     .with_agent("deep-research-preview-04-2026")
+    ///     .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
     ///     .with_text("Research the history of quantum computing")
     ///     .with_background(true)
     ///     .with_webhook_config(
@@ -1336,7 +1336,7 @@ impl<'a> InteractionBuilder<'a> {
     /// // Typed remote environment
     /// let response = client
     ///     .interaction()
-    ///     .with_agent("antigravity-preview-05-2026")
+    ///     .with_agent(genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
     ///     .with_text("Run the test suite")
     ///     .with_environment(
     ///         RemoteEnvironment::new()
@@ -1349,7 +1349,7 @@ impl<'a> InteractionBuilder<'a> {
     /// let env_id = response.environment_id.clone().unwrap_or_default();
     /// let follow_up = client
     ///     .interaction()
-    ///     .with_agent("antigravity-preview-05-2026")
+    ///     .with_agent(genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
     ///     .with_previous_interaction(response.id.clone().unwrap_or_default())
     ///     .with_text("Now fix the failing test")
     ///     .with_environment(env_id)

@@ -445,7 +445,6 @@ dependencies = [
  "inventory",
  "libc",
  "proptest",
- "rand",
  "regex",
  "reqwest",
  "serde",
