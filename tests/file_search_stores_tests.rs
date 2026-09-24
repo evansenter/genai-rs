@@ -25,7 +25,8 @@ mod common;
 use common::{get_client, stateful_builder};
 use futures_util::FutureExt;
 use genai_rs::{
-    Client, Content, DocumentState, GenaiError, InteractionInput, InteractionStatus, Tool,
+    Client, Content, CreateFileSearchStoreRequest, DocumentState, GenaiError, InteractionInput,
+    InteractionStatus, Tool,
 };
 use std::panic::AssertUnwindSafe;
 
@@ -39,7 +40,10 @@ async fn create_test_store(client: &Client, label: &str) -> genai_rs::FileSearch
         .subsec_nanos();
 
     client
-        .create_file_search_store(Some(&format!("genai-rs-test-{label}-{unique}")))
+        .create_file_search_store(
+            &CreateFileSearchStoreRequest::new()
+                .with_display_name(format!("genai-rs-test-{label}-{unique}")),
+        )
         .await
         .expect("failed to create file search store")
 }

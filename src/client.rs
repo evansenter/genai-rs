@@ -1762,9 +1762,11 @@ impl Client {
     /// what [`Tool::FileSearch`](crate::Tool::FileSearch) takes in
     /// `store_names`.
     ///
-    /// `display_name` is a human-readable label; the API derives the resource
-    /// name from it by stripping non-alphanumeric characters and appending a
-    /// unique suffix, so the two are related but not interchangeable.
+    /// The request's display name is a human-readable label; the API derives
+    /// the resource name from it by stripping non-alphanumeric characters and
+    /// appending a unique suffix, so the two are related but not
+    /// interchangeable. Fields the crate does not model yet go in
+    /// [`CreateFileSearchStoreRequest::extra`](crate::CreateFileSearchStoreRequest::extra).
     ///
     /// # Errors
     ///
@@ -1773,37 +1775,19 @@ impl Client {
     /// # Example
     ///
     /// ```no_run
-    /// use genai_rs::Client;
+    /// use genai_rs::{Client, CreateFileSearchStoreRequest};
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::new("api-key".to_string());
     ///
-    /// let store = client.create_file_search_store(Some("my-docs")).await?;
+    /// let store = client
+    ///     .create_file_search_store(&CreateFileSearchStoreRequest::new().with_display_name("my-docs"))
+    ///     .await?;
     /// println!("created {}", store.name);
     /// # Ok(())
     /// # }
     /// ```
     pub async fn create_file_search_store(
-        &self,
-        display_name: Option<&str>,
-    ) -> Result<crate::FileSearchStore, GenaiError> {
-        let mut request = crate::CreateFileSearchStoreRequest::new();
-        if let Some(name) = display_name {
-            request = request.with_display_name(name);
-        }
-        crate::http::file_search_stores::create_file_search_store(&self.http, &request).await
-    }
-
-    /// Creates a file search store from an explicit request body.
-    ///
-    /// Use this over [`create_file_search_store`](Self::create_file_search_store)
-    /// to set fields the crate does not model yet, via
-    /// [`CreateFileSearchStoreRequest::extra`](crate::CreateFileSearchStoreRequest::extra).
-    ///
-    /// # Errors
-    ///
-    /// Returns an API or network error if the request fails.
-    pub async fn create_file_search_store_with_request(
         &self,
         request: &crate::CreateFileSearchStoreRequest,
     ) -> Result<crate::FileSearchStore, GenaiError> {
@@ -1898,11 +1882,13 @@ impl Client {
     /// # Example
     ///
     /// ```no_run
-    /// use genai_rs::Client;
+    /// use genai_rs::{Client, CreateFileSearchStoreRequest};
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::new("api-key".to_string());
-    /// let store = client.create_file_search_store(Some("my-docs")).await?;
+    /// let store = client
+    ///     .create_file_search_store(&CreateFileSearchStoreRequest::new().with_display_name("my-docs"))
+    ///     .await?;
     ///
     /// let doc = client
     ///     .upload_to_file_search_store(&store.name, "handbook.pdf", Some("handbook"))

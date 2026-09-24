@@ -304,7 +304,9 @@ Semantic search across documents in pre-configured file search stores.
 File Search operates on *file search stores* (resource names like `fileSearchStores/my-store-123`), not on ad-hoc Files API uploads. Create a store, upload documents into it, and wait for indexing before searching:
 
 ```rust,ignore
-let store = client.create_file_search_store(Some("my-docs")).await?;
+let store = client
+    .create_file_search_store(&CreateFileSearchStoreRequest::new().with_display_name("my-docs"))
+    .await?;
 
 let document = client
     .upload_to_file_search_store(&store.name, "handbook.pdf", Some("handbook"))

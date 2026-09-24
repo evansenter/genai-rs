@@ -7,7 +7,7 @@
 //!
 //! Run with: cargo run --example file_search
 
-use genai_rs::{Client, FileSearchConfig, GenaiError};
+use genai_rs::{Client, CreateFileSearchStoreRequest, FileSearchConfig, GenaiError};
 use std::env;
 use std::error::Error;
 use std::io::Write;
@@ -37,7 +37,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //    (e.g. "fileSearchStores/my-docs-4kws71n2ybpr") — that is what the
     //    File Search tool takes, not the display name.
     let store = client
-        .create_file_search_store(Some("genai-rs-example"))
+        .create_file_search_store(
+            &CreateFileSearchStoreRequest::new().with_display_name("genai-rs-example"),
+        )
         .await?;
     println!("Created store: {}", store.name);
 
