@@ -216,10 +216,11 @@ client.update_trigger(&id, &TriggerUpdate::new().with_status(TriggerStatus::Paus
 client.delete_trigger(&id).await?;
 ```
 
+The nested request must not set `store`: the API rejects it there.
 `TriggerUpdate` omits unset fields from the PATCH body. The endpoint takes no
 `update_mask`, so partial-update behavior rests on that omission, and it is
-unverified until trigger updates can be live-tested. The `genai_rs::triggers`
-docs cover the execution-status lifecycle.
+unverified until trigger updates can be live-tested. `TriggerExecutionStatus`
+lists the execution outcomes.
 
 ## Background execution
 

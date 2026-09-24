@@ -174,12 +174,6 @@ let file = client.upload_file_with_mime("data.bin", "application/octet-stream").
 // From bytes, with an optional display name
 let file = client.upload_file_bytes(csv_bytes, "text/csv", Some("Q4 Sales Data")).await?;
 
-// Chunked upload for very large files; returns a resume handle too
-let (file, _resume) = client.upload_file_chunked("huge_video.mp4").await?;
-let (file, _resume) = client
-    .upload_file_chunked_with_options("huge_video.mp4", "video/mp4", 16 * 1024 * 1024) // default chunk: 8 MB
-    .await?;
-
 // Wait until processing finishes (poll every 2 s, give up after 2 min)
 let file = client
     .wait_for_file_ready(&file, Duration::from_secs(2), Duration::from_secs(120))
