@@ -26,4 +26,4 @@ cargo run --example multi_turn_agent_manual_stateless
 | Functions | `#[tool]`, automatic | `FunctionDeclaration`, manual loop |
 | Storage | on (default) | `with_store_disabled()` |
 
-See `docs/MULTI_TURN_FUNCTION_CALLING.md` for the full guide.
+See `docs/CONVERSATIONS.md` for the full guide.

@@ -22,4 +22,4 @@ cargo run --example multi_turn_agent_auto
 
 See [`multi_turn_agent_manual_stateless`](../multi_turn_agent_manual_stateless/)
 for the same agent with no server-side state, and
-`docs/MULTI_TURN_FUNCTION_CALLING.md` for the full guide.
+`docs/CONVERSATIONS.md` for the full guide.

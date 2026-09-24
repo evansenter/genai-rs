@@ -308,14 +308,13 @@ agentic code-review application with subagents and a structured report.
 |-------|-------------|
 | [Examples Index](docs/EXAMPLES_INDEX.md) | All examples, categorized |
 | [Function Calling](docs/FUNCTION_CALLING.md) | `#[tool]` macro, ToolService, manual execution |
-| [Multi-Turn Patterns](docs/MULTI_TURN_FUNCTION_CALLING.md) | Stateful/stateless, signature replay, inheritance rules |
+| [Conversations](docs/CONVERSATIONS.md) | Stateful/stateless, what carries over between turns, replaying history |
 | [Streaming API](docs/STREAMING_API.md) | Stream types, resume, auto-functions |
 | [Multimodal](docs/MULTIMODAL.md) | Images, audio, video, PDFs |
 | [Output Modalities](docs/OUTPUT_MODALITIES.md) | Image generation, text-to-speech |
 | [Thinking Mode](docs/THINKING_MODE.md) | Reasoning depth, thought signatures |
 | [Built-in Tools](docs/BUILT_IN_TOOLS.md) | Google Search, code execution, URL context, Maps |
 | [Configuration](docs/CONFIGURATION.md) | Client options, generation config |
-| [Conversation Patterns](docs/CONVERSATION_PATTERNS.md) | Multi-turn, context management |
 | [Antigravity](docs/ANTIGRAVITY.md) | Local agent harness: setup, policies, subagents |
 | [Agents & Background](docs/AGENTS_AND_BACKGROUND.md) | Hosted agents, long-running tasks, polling |
 
