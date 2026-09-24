@@ -218,7 +218,7 @@ pub use tools::{
 
 // Wire streaming types (from API)
 pub mod wire_streaming;
-pub use wire_streaming::{InteractionStreamEvent, StreamChunk, StreamEvent, StreamMetadata};
+pub use wire_streaming::{StreamChunk, StreamEvent};
 
 // Wire-level inspection (WireEvent, WireInspector, built-in inspectors)
 pub mod wire;

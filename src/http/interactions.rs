@@ -6,9 +6,8 @@ use super::error_helpers::deserialize_with_context;
 use super::sse_parser::parse_sse_stream;
 use crate::errors::GenaiError;
 use crate::steps::StepAccumulator;
-use crate::{
-    InteractionRequest, InteractionResponse, InteractionStreamEvent, StreamChunk, StreamEvent,
-};
+use crate::wire_streaming::InteractionStreamEvent;
+use crate::{InteractionRequest, InteractionResponse, StreamChunk, StreamEvent};
 use async_stream::try_stream;
 use futures_util::{Stream, StreamExt};
 use tracing::{debug, warn};

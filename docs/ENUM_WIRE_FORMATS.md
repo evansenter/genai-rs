@@ -1627,8 +1627,7 @@ response.status = InteractionStatus::Completed;
 
 Only the types with neither `Default` nor a constructor need a JSON fixture:
 `FileMetadata`, `FileError`, `VideoMetadata`, `ListFilesResponse`,
-`FileUploadResponse`, `StreamError`, `InteractionStreamEvent`, and
-`AutoFunctionResult`.
+`FileUploadResponse`, and `AutoFunctionResult`.
 
 `AutoFunctionResult` is on that list rather than off it despite predating
 this sweep, because it is the type the section above opens with — so a
