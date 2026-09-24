@@ -2504,6 +2504,7 @@ impl StepAccumulator {
                             mime_type: mime_type.clone(),
                             resolution: resolution.clone(),
                             processing: None,
+                            name: None,
                         });
                     }
                 }

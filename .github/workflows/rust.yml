@@ -289,7 +289,7 @@ jobs:
           - group: functions
             tests: "function_calling_tests tool_service_tests"
           - group: multimodal
-            tests: "multimodal_tests api_canary_tests temp_file_tests processing_steps_tests voices_tests"
+            tests: "multimodal_tests api_canary_tests temp_file_tests processing_steps_tests voices_tests binding_parity_tests"
           - group: files-and-wire
             tests: "files_api_tests file_search_stores_tests"
     steps:

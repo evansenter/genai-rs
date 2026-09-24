@@ -137,13 +137,13 @@ pub mod request;
 pub use request::{
     AgentConfig, AntigravityConfig, DeepResearchConfig, DynamicConfig, GenerationConfig,
     ImageAspectRatio, ImageConfig, ImageSize, InteractionInput, InteractionRequest, Role,
-    ServiceTier, SpeechConfig, ThinkingLevel, ThinkingSummaries, TranscriptionConfig, TurnContent,
-    VideoConfig, VideoTask, Visualization,
+    ServiceTier, SpeechConfig, ThinkingLevel, ThinkingSummaries, TranscriptionConfig,
+    TranscriptionMode, TurnContent, VideoConfig, VideoTask, Visualization,
 };
 
 // Typed response_format union (text/audio/image/video + list form)
 pub mod response_format;
-pub use response_format::{ResponseDelivery, ResponseFormat, ResponseFormatSpec};
+pub use response_format::{ResponseDelivery, ResponseFormat, ResponseFormatSpec, VideoResolution};
 
 // Environment types (environment request field, agent base_environment)
 pub mod environment;
@@ -220,8 +220,8 @@ pub use tools::{
     AllowedTools, ComputerUseConfig, ExaAiSearchConfig, FileSearchConfig, FunctionCallingMode,
     FunctionDeclaration, FunctionDeclarationBuilder, FunctionParameters, GoogleMapsConfig,
     GoogleSearchConfig, HybridSearchConfig, McpServerConfig, ParallelAiSearchConfig, RagFilter,
-    RagRanking, RagResource, RagRetrievalConfig, RagStoreConfig, RetrievalConfig, RetrievalType,
-    SearchType, Tool, ToolChoice, VertexAiSearchConfig,
+    RagRanking, RagResource, RagRetrievalConfig, RagStoreConfig, RankService, RetrievalConfig,
+    RetrievalType, SearchType, Tool, ToolChoice, VertexAiSearchConfig,
 };
 
 // Wire streaming types (from API)

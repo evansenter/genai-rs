@@ -1827,6 +1827,7 @@ fn test_video_with_resolution_serialization() {
         mime_type: Some("video/mp4".to_string()),
         resolution: Some(Resolution::Low),
         processing: None,
+        name: None,
     };
 
     let json = serde_json::to_string(&video).unwrap();
@@ -1871,6 +1872,7 @@ fn test_video_with_resolution_deserialization() {
             mime_type,
             resolution,
             processing,
+            ..
         } => {
             assert_eq!(data, None);
             assert_eq!(uri, Some("https://example.com/video.mp4".to_string()));
@@ -1932,6 +1934,7 @@ fn test_video_with_resolution_roundtrip() {
         mime_type: Some("video/mp4".to_string()),
         resolution: Some(Resolution::High),
         processing: None,
+        name: None,
     };
 
     let json = serde_json::to_string(&original).unwrap();
@@ -1944,6 +1947,7 @@ fn test_video_with_resolution_roundtrip() {
             mime_type,
             resolution,
             processing,
+            ..
         } => {
             assert_eq!(data, None);
             assert_eq!(uri, Some("gs://bucket/video.mp4".to_string()));
@@ -2346,6 +2350,7 @@ fn test_new_video_data_creates_correct_variant() {
             mime_type,
             resolution,
             processing,
+            ..
         } => {
             assert_eq!(data, Some("base64videodata".to_string()));
             assert!(uri.is_none());
@@ -2382,6 +2387,7 @@ fn test_new_video_uri_creates_correct_variant() {
             mime_type,
             resolution,
             processing,
+            ..
         } => {
             assert!(data.is_none());
             assert_eq!(uri, Some("https://example.com/video.mp4".to_string()));

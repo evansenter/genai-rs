@@ -639,7 +639,8 @@ fn arb_known_content() -> impl Strategy<Value = Content> {
                     uri,
                     mime_type,
                     resolution,
-                    processing
+                    processing,
+                    name: None,
                 }
             ),
         // Document content
@@ -1232,6 +1233,7 @@ fn arb_transcription_config() -> impl Strategy<Value = TranscriptionConfig> {
                 diarization_mode,
                 language_codes,
                 timestamp_granularities,
+                mode: None,
             },
         )
 }
@@ -1661,6 +1663,7 @@ fn arb_rag_retrieval_config() -> impl Strategy<Value = RagRetrievalConfig> {
             proptest::option::of(arb_identifier()).prop_map(|model_name| RagRanking {
                 ranking_config: "rank_service".to_string(),
                 model_name,
+                rank_service: None,
             }),
         ),
     )
@@ -1953,6 +1956,7 @@ fn arb_response_format() -> impl Strategy<Value = ResponseFormat> {
                     gcs_uri,
                     aspect_ratio,
                     duration,
+                    resolution: None,
                 }
             }),
     ]

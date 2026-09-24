@@ -1598,6 +1598,9 @@ pub enum Content {
         /// agentic processing. Has a large effect on token cost — see
         /// [`VideoProcessing`].
         processing: Option<VideoProcessing>,
+        /// Optional label for the video. Accepted on input (verified live
+        /// 2026-09-24); no effect on the output was observed.
+        name: Option<String>,
     },
     /// Document content for file-based inputs.
     ///
@@ -1709,6 +1712,7 @@ impl Serialize for Content {
                 mime_type,
                 resolution,
                 processing,
+                name,
             } => {
                 let mut map = serializer.serialize_map(None)?;
                 map.serialize_entry("type", "video")?;
@@ -1726,6 +1730,9 @@ impl Serialize for Content {
                 }
                 if let Some(p) = processing {
                     map.serialize_entry("processing", p)?;
+                }
+                if let Some(n) = name {
+                    map.serialize_entry("name", n)?;
                 }
                 map.end()
             }
@@ -2055,6 +2062,7 @@ impl Content {
             mime_type: Some(mime_type.into()),
             resolution: None,
             processing: None,
+            name: None,
         }
     }
 
@@ -2071,6 +2079,7 @@ impl Content {
             mime_type: Some(mime_type.into()),
             resolution: Some(resolution),
             processing: None,
+            name: None,
         }
     }
 
@@ -2091,6 +2100,7 @@ impl Content {
             mime_type: Some(mime_type.into()),
             resolution: None,
             processing: None,
+            name: None,
         }
     }
 
@@ -2107,6 +2117,7 @@ impl Content {
             mime_type: Some(mime_type.into()),
             resolution: Some(resolution),
             processing: None,
+            name: None,
         }
     }
 
@@ -2205,6 +2216,7 @@ impl Content {
                 mime_type: Some(mime_str),
                 resolution: None,
                 processing: None,
+                name: None,
             }
         } else {
             // Default to document for PDFs, text files, and other types
@@ -2289,6 +2301,7 @@ impl Content {
                 uri,
                 mime_type,
                 processing,
+                name,
                 ..
             } => Self::Video {
                 data,
@@ -2296,6 +2309,7 @@ impl Content {
                 mime_type,
                 resolution: Some(resolution),
                 processing,
+                name,
             },
             other => {
                 tracing::warn!(
@@ -2337,6 +2351,7 @@ impl Content {
                 uri,
                 mime_type,
                 resolution,
+                name,
                 ..
             } => Self::Video {
                 data,
@@ -2344,12 +2359,40 @@ impl Content {
                 mime_type,
                 resolution,
                 processing: Some(processing),
+                name,
             },
             other => {
                 tracing::warn!(
                     "with_processing() called on content type that doesn't support processing. \
                      Processing is only applicable to Video content."
                 );
+                other
+            }
+        }
+    }
+
+    /// Sets a label on video content; other content is returned unchanged
+    /// with a warning. Accepted by the API (verified live 2026-09-24).
+    #[must_use]
+    pub fn with_video_name(self, name: impl Into<String>) -> Self {
+        match self {
+            Self::Video {
+                data,
+                uri,
+                mime_type,
+                resolution,
+                processing,
+                ..
+            } => Self::Video {
+                data,
+                uri,
+                mime_type,
+                resolution,
+                processing,
+                name: Some(name.into()),
+            },
+            other => {
+                tracing::warn!("with_video_name() called on non-video content; ignoring.");
                 other
             }
         }
@@ -2403,6 +2446,8 @@ impl<'de> Deserialize<'de> for Content {
                 resolution: Option<Resolution>,
                 #[serde(default)]
                 processing: Option<VideoProcessing>,
+                #[serde(default)]
+                name: Option<String>,
             },
             Document {
                 data: Option<String>,
@@ -2445,12 +2490,14 @@ impl<'de> Deserialize<'de> for Content {
                     mime_type,
                     resolution,
                     processing,
+                    name,
                 } => Content::Video {
                     data,
                     uri,
                     mime_type,
                     resolution,
                     processing,
+                    name,
                 },
                 KnownContent::Document {
                     data,
@@ -2504,7 +2551,7 @@ impl<'de> Deserialize<'de> for Content {
 }
 
 #[cfg(test)]
-mod speech_annotation_tests {
+mod binding_2_25_tests {
     use super::*;
     use serde_json::json;
 
@@ -2564,5 +2611,20 @@ mod speech_annotation_tests {
         }
         assert_eq!(annotation.end_index(), Some(5));
         assert_eq!(serde_json::to_value(&annotation).unwrap(), wire);
+    }
+
+    #[test]
+    fn video_name_roundtrips() {
+        let wire = json!({"type": "video", "uri": "files/abc", "mime_type": "video/mp4", "name": "clip.mp4"});
+        let content: Content = serde_json::from_value(wire.clone()).unwrap();
+        assert!(matches!(&content, Content::Video { name: Some(n), .. } if n == "clip.mp4"));
+        assert_eq!(serde_json::to_value(&content).unwrap(), wire);
+        // Builders preserve it.
+        let content = content.with_resolution(Resolution::Low);
+        assert!(matches!(&content, Content::Video { name: Some(_), .. }));
+        let named = Content::video_uri("files/x", "video/mp4").with_video_name("n");
+        assert!(matches!(&named, Content::Video { name: Some(n), .. } if n == "n"));
+        let text = Content::text("hi").with_video_name("n");
+        assert_eq!(text.as_text(), Some("hi"));
     }
 }

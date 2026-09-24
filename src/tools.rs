@@ -1387,6 +1387,30 @@ pub struct RagRanking {
     /// The model name of the rank service.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub model_name: Option<String>,
+    /// Rank Service settings in the nested form added in google-genai 2.24.
+    /// Like the whole retrieval tool, Vertex-only on the Gemini API.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub rank_service: Option<RankService>,
+}
+
+/// Rank Service settings (`rank_service` inside [`RagRanking`]).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct RankService {
+    /// The rank service model.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_name: Option<String>,
+}
+
+impl RankService {
+    /// Rank Service settings using `model_name`.
+    #[must_use]
+    pub fn new(model_name: impl Into<String>) -> Self {
+        Self {
+            model_name: Some(model_name.into()),
+        }
+    }
 }
 
 impl RagRanking {
@@ -1406,6 +1430,13 @@ impl RagRanking {
         self.model_name = Some(model_name.into());
         self
     }
+
+    /// Sets the nested `rank_service` settings.
+    #[must_use]
+    pub fn with_rank_service(mut self, rank_service: RankService) -> Self {
+        self.rank_service = Some(rank_service);
+        self
+    }
 }
 
 impl Default for RagRanking {
@@ -1413,6 +1444,7 @@ impl Default for RagRanking {
         Self {
             ranking_config: Self::default_ranking_config(),
             model_name: None,
+            rank_service: None,
         }
     }
 }
@@ -2754,5 +2786,16 @@ mod tests {
             .into();
         let value = serde_json::to_value(&tool).unwrap();
         assert_eq!(value["retrieval_types"][0], "future_backend");
+    }
+
+    #[test]
+    fn test_rag_ranking_nested_rank_service() {
+        let ranking = RagRanking::rank_service().with_rank_service(RankService::new("ranker-v3"));
+        let wire = serde_json::json!({
+            "ranking_config": "rank_service",
+            "rank_service": {"model_name": "ranker-v3"}
+        });
+        assert_eq!(serde_json::to_value(&ranking).unwrap(), wire);
+        assert_eq!(serde_json::from_value::<RagRanking>(wire).unwrap(), ranking);
     }
 }

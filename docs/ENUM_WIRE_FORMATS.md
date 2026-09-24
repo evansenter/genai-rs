@@ -61,6 +61,8 @@ All types below implement graceful handling of unrecognized values via an `Unkno
 | 43 | `CredentialStatus` | src/credentials.rs | `status_type` | active/revoked |
 | 44 | `InjectionLocation` | src/credentials.rs | `location_type` | header/query/body |
 | 45 | `EnvironmentFileType` | src/environment_files.rs | `file_type` | FILE/DIRECTORY (uppercase on the wire) |
+| 46 | `VideoResolution` | src/response_format.rs | `resolution_type` | 360p/720p/1080p/4k |
+| 47 | `TranscriptionMode` | src/request.rs | `mode_type` | smart/verbatim, string OR tagged object |
 
 **Removed in revision 2026-05-20** (no longer exist in this library or on the wire):
 `UrlRetrievalStatus`, `GroundingMetadata`, `UrlContextMetadata`, `Turn`, and all tool-related
@@ -141,6 +143,8 @@ Helper methods on each type:
 | `CredentialType` | snake_case | `"bearer_token"`, `"environment_variable"`, `"oauth2"` | `/v1beta/credentials` `type`; create bodies are tagged by it. `bearer_token`/`environment_variable` verified live 2026-09-24 (`oauth2` create validates `token_url` reachability) |
 | `CredentialStatus` | lowercase | `"active"`, `"revoked"` | Output only; `active` observed 2026-09-24 |
 | `InjectionLocation` | lowercase | `"header"`, `"query"`, `"body"` | Sent as a list; the API also accepts a single string (2026-09-24) |
+| `VideoResolution` | lowercase | `"360p"`, `"720p"`, `"1080p"`, `"4k"` | Video `response_format` `resolution`. Server-validated (the error lists exactly these, 2026-09-24); no Interactions model outputs video to exercise it |
+| `TranscriptionMode` | string OR object | `"smart"` / `{"type": "verbatim", "diarization_mode": "speaker"}` | `transcription_config.mode`; see [TranscriptionConfig](#transcriptionconfig-open-string-values) |
 | `EnvironmentFileType` | **uppercase** | `"FILE"`, `"DIRECTORY"` | `/v1beta/environments/{id}/files` entries. The bindings say lowercase; the API sends uppercase (live 2026-09-24). Both accepted; serializes uppercase |
 | `GoogleSearchResultItem` | snake_case | `{"title": "...", "url": "...", "rendered_content": "..."}` | Optional `search_suggestions` added in 2026-05-20. Verified live 2026-07: items may carry **only** `search_suggestions` (an HTML rendering payload) with no `title`/`url`; empty `title`/`url` are skipped on serialize for wire fidelity |
 | `UrlContextResultItem` | snake_case | `{"url": "...", "status": "success"}` | Verified 2026-01-13 - no paywall field |
@@ -1506,14 +1510,21 @@ with the SDK-documented value sets:
 
 | Field | Documented values | Notes |
 |-------|-------------------|-------|
-| `diarization_mode` | `"speaker"` | Only supported value per SDK 2.17.0 spec |
-| `timestamp_granularities` | `"word"` | Only supported value per spec; empty list = no timestamps |
+| `diarization_mode` | `"speaker"` | Only supported value per SDK 2.17.0 spec. Deprecated in 2.25 in favor of `mode` |
+| `timestamp_granularities` | `"word"` | Only supported value per spec; empty list = no timestamps. Deprecated in 2.25 in favor of `mode` |
 | `language_codes` | BCP-47 codes | Empty/omitted = automatic language detection |
 
-**Status**: The config object itself was accepted live (200, 2026-08-08);
-the documented value sets are from the SDK spec and their output effects
-(`WordInfo` timing/speaker fields) are pending live verification with an
-audio input.
+`mode` (`TranscriptionMode`, 2.20+) is a union: the strings `"smart"` /
+`"verbatim"`, or `{"type": "smart"}` / `{"type": "verbatim",
+"diarization_mode"?, "timestamp_granularities"?}`. The crate sends the object
+form and reads both; unknown types land in `TranscriptionMode::Unknown
+{ mode_type, data }`. The bindings' `language_hints` (added already
+deprecated) is **not** modeled: the API returns `400 Unknown parameter
+'language_hints'` (2026-09-24).
+
+**Status**: every form above was accepted live with audio input and the enum
+is server-validated (`Invalid enum value 'zzz'`), 2026-09-24. No output
+difference (and no `word_info` annotation) was observed on general models.
 
 ## Testing New Enums
 

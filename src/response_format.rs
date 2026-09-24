@@ -188,6 +188,10 @@ pub enum ResponseFormat {
         image_size: Option<ImageSize>,
     },
     /// Video output configuration.
+    ///
+    /// No model reachable through the Interactions API produces video as of
+    /// 2026-09-24 (Veo models 404 there), so none of these fields is
+    /// live-verified beyond server-side validation.
     Video {
         /// Delivery mode for the video output.
         delivery: Option<ResponseDelivery>,
@@ -200,6 +204,9 @@ pub enum ResponseFormat {
         aspect_ratio: Option<ImageAspectRatio>,
         /// Duration for the video output (e.g., `"8s"`).
         duration: Option<String>,
+        /// Output resolution; the server validates the value
+        /// (`360p`, `720p`, `1080p`, `4k`).
+        resolution: Option<VideoResolution>,
     },
     /// Unknown variant for forward compatibility (Evergreen pattern)
     Unknown {
@@ -208,6 +215,21 @@ pub enum ResponseFormat {
         /// The raw JSON value, preserved for debugging and roundtrip
         data: serde_json::Value,
     },
+}
+
+crate::wire_enum::wire_enum! {
+    /// Output resolution of generated video (`response_format` `resolution`).
+    pub enum VideoResolution {
+        /// 360p.
+        Sd360p = "360p",
+        /// 720p.
+        Hd720p = "720p",
+        /// 1080p.
+        Fhd1080p = "1080p",
+        /// 4K.
+        Uhd4k = "4k",
+    }
+    unknown(resolution_type, unknown_resolution_type)
 }
 
 impl ResponseFormat {
@@ -344,6 +366,7 @@ impl Serialize for ResponseFormat {
                 gcs_uri,
                 aspect_ratio,
                 duration,
+                resolution,
             } => {
                 let mut map = serializer.serialize_map(None)?;
                 map.serialize_entry("type", "video")?;
@@ -358,6 +381,9 @@ impl Serialize for ResponseFormat {
                 }
                 if let Some(duration) = duration {
                     map.serialize_entry("duration", duration)?;
+                }
+                if let Some(resolution) = resolution {
+                    map.serialize_entry("resolution", resolution)?;
                 }
                 map.end()
             }
@@ -415,6 +441,8 @@ impl<'de> Deserialize<'de> for ResponseFormat {
                 aspect_ratio: Option<ImageAspectRatio>,
                 #[serde(default)]
                 duration: Option<String>,
+                #[serde(default)]
+                resolution: Option<VideoResolution>,
             },
         }
 
@@ -448,11 +476,13 @@ impl<'de> Deserialize<'de> for ResponseFormat {
                     gcs_uri,
                     aspect_ratio,
                     duration,
+                    resolution,
                 } => Self::Video {
                     delivery,
                     gcs_uri,
                     aspect_ratio,
                     duration,
+                    resolution,
                 },
             }),
             Err(parse_error) => {
@@ -649,6 +679,7 @@ mod tests {
             gcs_uri: Some("gs://bucket/out".to_string()),
             aspect_ratio: Some(ImageAspectRatio::Portrait9x16),
             duration: Some("8s".to_string()),
+            resolution: Some(VideoResolution::Hd720p),
         };
         let value = serde_json::to_value(&format).unwrap();
         assert_eq!(
@@ -658,7 +689,8 @@ mod tests {
                 "delivery": "uri",
                 "gcs_uri": "gs://bucket/out",
                 "aspect_ratio": "9:16",
-                "duration": "8s"
+                "duration": "8s",
+                "resolution": "720p"
             })
         );
     }
@@ -685,6 +717,7 @@ mod tests {
                 gcs_uri: None,
                 aspect_ratio: None,
                 duration: Some("4s".to_string()),
+                resolution: None,
             },
         ];
         for format in formats {
@@ -767,6 +800,7 @@ mod tests {
             gcs_uri: Some("gs://b/o".to_string()),
             aspect_ratio: None,
             duration: None,
+            resolution: None,
         }]
         .into();
         let json = serde_json::to_string(&list).unwrap();
