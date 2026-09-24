@@ -319,6 +319,7 @@ mod doc_tests {
     doc_comment!(include_str!("../TROUBLESHOOTING.md"));
     doc_comment!(include_str!("../CONTRIBUTING.md"));
     doc_comment!(include_str!("../DECISIONS.md"));
+    doc_comment!(include_str!("../SECURITY.md"));
 
     // Detailed guides in docs/
     doc_comment!(include_str!("../docs/AGENTS_AND_BACKGROUND.md"));
