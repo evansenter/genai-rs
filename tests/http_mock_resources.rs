@@ -2066,6 +2066,78 @@ async fn credential_responses_parse_and_preserve_unknowns() {
     assert_eq!(list.next_page_token.as_deref(), Some("n"));
 }
 
+/// Set in the child process `loud_wire_redacts_credential_secrets` spawns.
+const LOUD_WIRE_CHILD_ENV: &str = "GENAI_RS_LOUD_WIRE_SECRETS_CHILD";
+
+/// Every request body reaches the `LOUD_WIRE` printer, and a credential
+/// create or update body carries its secret as `token`, `value`,
+/// `client_secret` or `refresh_token`.
+///
+/// `LOUD_WIRE` is read when a client is built, so the test re-runs itself
+/// as a child process with it set and inspects the child's stderr.
+#[tokio::test]
+async fn loud_wire_redacts_credential_secrets() {
+    const SECRETS: [&str; 5] = [
+        "tok-8f3a1c",
+        "val-2d9e4b",
+        "csec-5b2e9d",
+        "rtok-7c4d0a",
+        "val-upd-6e1f",
+    ];
+
+    if std::env::var_os(LOUD_WIRE_CHILD_ENV).is_some() {
+        let stub = Stub::start(|_, _| Reply::json(200, json!({"id": "cred-1"}))).await;
+        let client = stub.client();
+        let requests = [
+            CreateCredentialRequest::bearer_token(SECRETS[0]),
+            CreateCredentialRequest::environment_variable(SECRETS[1], vec![]),
+            CreateCredentialRequest::new(CredentialConfig::OAuth2 {
+                client_id: "cid".into(),
+                client_secret: SECRETS[2].into(),
+                refresh_token: SECRETS[3].into(),
+                token_url: "https://oauth.example/token".into(),
+                scopes: None,
+            }),
+        ];
+        for request in &requests {
+            client.create_credential(request).await.unwrap();
+        }
+        let update = CredentialUpdate {
+            value: Some(SECRETS[4].into()),
+            ..CredentialUpdate::new(CredentialType::EnvironmentVariable)
+        };
+        client
+            .update_credential("cred-1", &update, None)
+            .await
+            .unwrap();
+        return;
+    }
+
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "loud_wire_redacts_credential_secrets",
+            "--exact",
+            "--nocapture",
+        ])
+        .env(LOUD_WIRE_CHILD_ENV, "1")
+        .env("LOUD_WIRE", "1")
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "child failed:\n{stderr}");
+    assert!(
+        stderr.contains("/v1beta/credentials"),
+        "the child printed its requests:\n{stderr}"
+    );
+    for secret in SECRETS {
+        assert!(
+            !stderr.contains(secret),
+            "LOUD_WIRE printed the secret {secret:?}:\n{stderr}"
+        );
+    }
+}
+
 // =============================================================================
 // Interactions: get, delete, cancel, stream
 // =============================================================================

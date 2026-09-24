@@ -89,8 +89,10 @@ frame.
 - **Error responses** print a `<<< <status> ERROR` line, then `Error (<status>)`
   with the body (JSON pretty-printed; a non-JSON body is cut at 1,000 bytes).
 - **Base64 fields** (`data`, `signature`) are truncated to about 100 bytes.
-  **Secret fields** (for example third-party retrieval `api_key`s) are
-  redacted.
+  **Secret fields** are redacted: `api_key`, `secret`, `new_signing_secret`,
+  `token`, `client_secret` and `refresh_token` anywhere, and `value` inside
+  an `environment_variable` credential or an `env` map. The `wire` tracing
+  target redacts the same fields.
 - **Uploads** print as `>>> UPLOAD "video.mp4" (video/mp4, 150.25 MB)`.
 
 ### Wire Inspection API
