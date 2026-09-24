@@ -710,8 +710,8 @@ string or a remote environment object:
   omitted (all traffic allowed).
 - `env` and `AllowlistEntry::credential` reference `/v1beta/credentials`.
   Live 2026-09-24: both are validated (unknown sibling keys rejected; an
-  unknown credential id is a 404) and echoed, but **no runtime effect was
-  observed**. The sandbox saw neither the variable nor an injected header.
+  unknown credential id is a 404), echoed, and applied at runtime; see
+  `src/credentials.rs` for what the sandbox and the egress proxy see.
   The echo spells `env` as a list of single-key maps; both forms
   deserialize. The bindings' string form of `env` is rejected
   (`Invalid input at 'environment'`) and lands in `extra` if read.

@@ -129,8 +129,8 @@ pub struct AllowlistEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transform: Option<Vec<HashMap<String, String>>>,
     /// ID of a [`Credential`](crate::Credential) to inject on requests to
-    /// this domain. Accepted and echoed (an unknown ID is a 404), but no
-    /// injected header was observed at runtime (2026-09-24).
+    /// this domain (an unknown ID is a 404). A bearer credential arrives as
+    /// `Authorization: Bearer <token>` (verified live 2026-09-24).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub credential: Option<String>,
     /// Additional fields not yet modeled (Evergreen forward compatibility)
@@ -166,8 +166,9 @@ impl AllowlistEntry {
 /// An environment variable set in a remote environment's sandbox: a plain
 /// value, or a reference to a stored [`Credential`](crate::Credential).
 ///
-/// Accepted and echoed by the API, but the variable was not visible in an
-/// antigravity sandbox when probed (2026-09-24).
+/// A plain value is visible in the sandbox as-is. A credential-backed variable
+/// holds only a placeholder there; the egress proxy substitutes the secret
+/// into outbound requests the credential trusts (verified live 2026-09-24).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 #[non_exhaustive]

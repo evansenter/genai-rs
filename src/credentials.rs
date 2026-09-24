@@ -9,9 +9,15 @@
 //! Verified live 2026-09-24: create (bearer token, environment variable),
 //! get, list, patch (with and without `update_mask`), delete; the ID is
 //! optional on create (a UUID is assigned). OAuth2 creation validates that
-//! `token_url` is reachable. Both references are accepted and echoed by the
-//! API, but **no effect was observed at runtime**: an antigravity sandbox saw
-//! neither the variable nor an injected header.
+//! `token_url` is reachable.
+//!
+//! Both references take effect at runtime (verified live 2026-09-24 in a
+//! `DEFAULT_ANTIGRAVITY_AGENT` sandbox, pinned by
+//! `tests/credentials_tests.rs`). An `environment_variable` credential is
+//! never visible inside the sandbox: the variable holds a placeholder, and the
+//! egress proxy substitutes the secret into requests to its `trusted_domains`
+//! at its `injection_location`s. A bearer credential on an allowlist entry is
+//! injected into requests to that domain.
 
 use crate::client::Client;
 use crate::errors::GenaiError;
@@ -118,10 +124,15 @@ pub enum CredentialConfig {
         /// The token (write-only).
         token: String,
         /// Header to inject into; the API defaults to `Authorization`.
+        ///
+        /// Accepted but not applied as of 2026-09-24: a custom header name
+        /// still arrived as `Authorization` in two live probes.
         #[serde(skip_serializing_if = "Option::is_none")]
         header_name: Option<String>,
         /// Prefix before the token; the API defaults to `Bearer`. `""` for
         /// none.
+        ///
+        /// Accepted but not applied as of 2026-09-24, like `header_name`.
         #[serde(skip_serializing_if = "Option::is_none")]
         prefix: Option<String>,
     },

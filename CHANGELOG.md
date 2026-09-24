@@ -17,8 +17,10 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
   works as `SpeechConfig::voice` on 3.8 TTS models.
 - **Credentials API**: `Client::{create, get, list, update,
   delete}_credential(s)`, plus `RemoteEnvironment::add_env_var` / `EnvVar` and
-  `AllowlistEntry::with_credential` references. The API validates and echoes
-  the references, but no runtime effect has been observed yet.
+  `AllowlistEntry::with_credential` references, verified end to end: the
+  sandbox never sees a credential's secret, and the egress proxy injects it
+  into requests to trusted domains. Bearer `header_name`/`prefix` are
+  accepted but not applied by the API yet.
 - **Environment files and forking**: `Client::list_environment_files`,
   `Client::upload_environment_file`, `CreateEnvironmentRequest::from_environment`
   (bare environment id only).

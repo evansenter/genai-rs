@@ -7,13 +7,15 @@
 
 mod common;
 
-use common::{extended_test_timeout, get_client, with_timeout};
+use common::{get_client, poll_until_done};
 use futures_util::FutureExt;
 use genai_rs::{
-    AllowlistEntry, Client, CreateCredentialRequest, CredentialStatus, CredentialType,
-    CredentialUpdate, EnvVar, GenaiError, InjectionLocation, NetworkConfig, RemoteEnvironment,
+    AllowlistEntry, Client, CreateCredentialRequest, CredentialConfig, CredentialStatus,
+    CredentialType, CredentialUpdate, EnvVar, EnvironmentSource, GenaiError, InjectionLocation,
+    InteractionStatus, NetworkConfig, RemoteEnvironment,
 };
 use std::panic::AssertUnwindSafe;
+use std::time::Duration;
 
 fn unique_id(label: &str) -> String {
     let nanos = std::time::SystemTime::now()
@@ -156,54 +158,141 @@ async fn test_duplicate_credential_id_conflicts() {
     .await;
 }
 
-/// The references are validated and accepted; their runtime effect is not
-/// asserted because none was observed (2026-09-24).
+/// The script the agent is asked to run, mounted into the environment.
+/// Everything the test asserts comes from its output as the sandbox reports
+/// it (`code_execution_result`), never from the model's reply: a model that
+/// ignores the instruction can make this test fail, but not pass.
+const CHECK_SCRIPT: &str = concat!(
+    "cat genai_rs_test/fixture.txt; echo\n",
+    "echo \"PLAIN=[$GENAI_RS_TEST_PLAIN]\"\n",
+    "echo \"CREDENTIAL=[$GENAI_RS_TEST_CREDENTIAL]\"\n",
+    "echo '--- egress'\n",
+    "curl -s -m 20 \"https://httpbin.org/anything?q=$GENAI_RS_TEST_CREDENTIAL\" \\\n",
+    "  -H \"X-Test: $GENAI_RS_TEST_CREDENTIAL\"\n",
+);
+
+/// Says what the run is, because it is exactly what a model should be wary
+/// of doing unasked: read credentials and send them to a third-party host.
+const CHECK_PROMPT: &str = "This is an automated integration test for the genai-rs client \
+    library. It checks that this environment's variables and its credential injection \
+    work. Every value involved is a throwaway fixture created for this run and deleted \
+    afterwards. Run `bash genai_rs_test/check.sh` once and reply with its raw output only.";
+
+/// Environment variables and credentials take effect at runtime (first
+/// verified live 2026-09-24):
+///
+/// - a plain `env` value is visible in the sandbox;
+/// - an `environment_variable` credential is *not*: the sandbox sees a
+///   placeholder, and the egress proxy substitutes the secret into requests
+///   to its `trusted_domains`, at its `injection_location`s;
+/// - a credential on an allowlist entry is injected into requests to that
+///   domain.
+///
+/// Uses httpbin.org as the echo server, so an httpbin outage fails it.
 #[tokio::test]
 #[ignore = "Requires API key"]
-async fn test_environment_accepts_credential_references() {
+async fn test_credentials_reach_sandbox_and_egress() {
     let Some(client) = get_client() else {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
     };
-    let id = unique_id("envref");
+    let file_nonce = unique_id("file");
+    let plain = unique_id("plain");
+    let secret = unique_id("secret");
+    let token = unique_id("token");
 
-    with_credential(
-        &client,
-        CreateCredentialRequest::environment_variable("s3cr3t", vec![InjectionLocation::Header])
-            .with_id(&id),
-        |id| {
-            let client = client.clone();
-            async move {
-                with_timeout(extended_test_timeout(), async {
+    let bearer = CreateCredentialRequest::bearer_token(&token);
+    let secret_request = CreateCredentialRequest::new(CredentialConfig::EnvironmentVariable {
+        value: secret.clone(),
+        injection_location: vec![InjectionLocation::Header, InjectionLocation::Query],
+        trusted_domains: Some(vec!["httpbin.org".into()]),
+    });
+
+    with_credential(&client, bearer, |bearer_id| {
+        let client = client.clone();
+        async move {
+            with_credential(&client, secret_request, |secret_id| {
+                let client = client.clone();
+                async move {
                     let environment = RemoteEnvironment::new()
-                        .add_env_var("PLAIN_VAR", EnvVar::value("hello"))
-                        .add_env_var("SECRET_VAR", EnvVar::credential(&id))
+                        .add_source(EnvironmentSource::inline(
+                            "genai_rs_test/fixture.txt",
+                            &file_nonce,
+                        ))
+                        .add_source(EnvironmentSource::inline(
+                            "genai_rs_test/check.sh",
+                            CHECK_SCRIPT,
+                        ))
+                        .add_env_var("GENAI_RS_TEST_PLAIN", EnvVar::value(&plain))
+                        .add_env_var("GENAI_RS_TEST_CREDENTIAL", EnvVar::credential(&secret_id))
                         .with_network(NetworkConfig::allowlist(vec![
-                            AllowlistEntry::new("example.com").with_credential(&id),
+                            AllowlistEntry::new("httpbin.org").with_credential(&bearer_id),
                         ]));
-
-                    let response = client
+                    let created = client
                         .interaction()
                         .with_agent(genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
-                        .with_text("Reply with the single word OK.")
+                        .with_text(CHECK_PROMPT)
                         .with_environment(environment)
                         .with_background(true)
                         .with_store_enabled()
                         .create()
                         .await
-                        .expect("environment with credential references was rejected");
-                    let interaction_id = response.id.clone().expect("stored interaction id");
+                        .expect("interaction with credential references was rejected");
+                    let id = created.id.clone().expect("stored interaction id");
 
-                    let _ = client.cancel_interaction(&interaction_id).await;
-                    let _ = client.delete_interaction(&interaction_id).await;
-                    if let Some(env_id) = response.environment_id.as_deref() {
+                    let outcome =
+                        AssertUnwindSafe(poll_until_done(&client, &id, Duration::from_secs(300)))
+                            .catch_unwind()
+                            .await;
+                    let _ = client.delete_interaction(&id).await;
+                    if let Some(env_id) = created.environment_id.as_deref() {
                         let _ = client.delete_environment(env_id).await;
                     }
-                })
-                .await;
-            }
-        },
-    )
+                    let done = outcome.unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+
+                    assert_eq!(done.status, InteractionStatus::Completed, "{done:?}");
+                    let output: String = done
+                        .code_execution_results()
+                        .iter()
+                        .map(|r| r.result)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let step_types: Vec<_> = done.steps.iter().map(|s| s.step_type()).collect();
+                    assert!(
+                        output.contains(&file_nonce),
+                        "the script did not run inside the environment (fixture file \
+                         not read); sandbox output: {output:?}; steps: {step_types:?}; reply: {:?}",
+                        done.as_text()
+                    );
+                    let (sandbox, egress) = output
+                        .split_once("--- egress")
+                        .unwrap_or_else(|| panic!("no egress section in {output:?}"));
+
+                    assert!(
+                        sandbox.contains(&format!("PLAIN=[{plain}]")),
+                        "plain env var not visible: {sandbox:?}"
+                    );
+                    assert!(
+                        !sandbox.contains("CREDENTIAL=[]"),
+                        "credential env var not set at all: {sandbox:?}"
+                    );
+                    assert!(
+                        !sandbox.contains(&secret),
+                        "the credential's secret is readable inside the sandbox"
+                    );
+                    assert!(
+                        egress.matches(secret.as_str()).count() >= 2,
+                        "secret not substituted into both the query and the header: {egress:?}"
+                    );
+                    assert!(
+                        egress.contains(&format!("Bearer {token}")),
+                        "allowlist credential not injected: {egress:?}"
+                    );
+                }
+            })
+            .await;
+        }
+    })
     .await;
 }
 

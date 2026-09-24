@@ -64,7 +64,7 @@ the bindings is modeled until it is probed. From the 2.25.0 sweep:
 | `speech_metadata` and `word_info` annotations | `Annotation::SpeechMetadata` / `WordInfo`, `Content::speaker_text` | Required for multi-speaker on 3.8 TTS; rejected by older TTS models |
 | Voices resource `/v1beta/voices` | `src/voices.rs` | List with filters and paging, prompted create, get, synthesize with the custom ID, delete |
 | Credentials resource `/v1beta/credentials` | `src/credentials.rs` | Create, get, list, patch, delete. OAuth2 create checks that `token_url` is reachable. The ID is optional on create. |
-| `environment.env` and `AllowlistEntry.credential` | `RemoteEnvironment::env`, `EnvVar` | Validated (unknown ID → 404) and echoed; the echo spells `env` as a list of single-key maps. **No runtime effect observed**: the sandbox saw no variable and no header was injected. |
+| `environment.env` and `AllowlistEntry.credential` | `RemoteEnvironment::env`, `EnvVar` | Validated (unknown ID → 404) and echoed; the echo spells `env` as a list of single-key maps. Works at runtime (`tests/credentials_tests.rs`): plain values are visible in the sandbox; credential-backed variables hold a placeholder and the egress proxy substitutes the secret; allowlist bearer credentials are injected. Bearer `header_name`/`prefix` are accepted but not applied. |
 | Environment files (list and resumable upload) | `src/environments/files.rs` | Works; entry `type` is uppercase `FILE`/`DIRECTORY` on the wire |
 | `from_environment` (fork) | `CreateEnvironmentRequest::from_environment` | Works with a bare ID; `environments/{id}` returns 404 |
 | `Video.name` | `Content::with_video_name` | Accepted |
