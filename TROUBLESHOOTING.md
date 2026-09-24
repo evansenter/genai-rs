@@ -37,10 +37,10 @@ changing it changes nothing.
 
 **The model answers in text instead of calling your function.**
 - Check that the request has a `tools` array (`LOUD_WIRE=1`).
-- `create_with_auto_functions()` auto-discovers `#[tool]` and `ToolService`
-  functions only when no tools are set on the request. Any explicit tool
-  (`add_function()`, `with_google_search()`, ...) switches discovery off, so
-  add every function you want declared.
+- `create_with_auto_functions()` always declares `ToolService` functions,
+  but it declares registered `#[tool]` functions only when no tools are set on
+  the request. Once you set any tool (`add_function()`,
+  `with_google_search()`, ...), add the `#[tool]` declarations you want too.
 - Tools are not inherited across turns: resend them on every new user turn
   that should be able to call them.
 - To force a call, use `.with_function_calling_mode(FunctionCallingMode::Any)`.
