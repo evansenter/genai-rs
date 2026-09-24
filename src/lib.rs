@@ -148,7 +148,7 @@ pub use response_format::{ResponseDelivery, ResponseFormat, ResponseFormatSpec};
 // Environment types (environment request field, agent base_environment)
 pub mod environment;
 pub use environment::{
-    AllowlistEntry, EnvironmentSource, EnvironmentSpec, NetworkConfig, RemoteEnvironment,
+    AllowlistEntry, EnvVar, EnvironmentSource, EnvironmentSpec, NetworkConfig, RemoteEnvironment,
     SourceType,
 };
 
@@ -182,6 +182,12 @@ pub mod agents;
 pub use agents::{Agent, AgentListResponse};
 
 // Webhooks resource (/v1beta/webhooks) and per-request webhook_config
+pub mod credentials;
+pub use credentials::{
+    CreateCredentialRequest, Credential, CredentialConfig, CredentialListResponse,
+    CredentialStatus, CredentialType, CredentialUpdate, InjectionLocation,
+};
+
 pub mod voices;
 pub use voices::{
     CreateVoiceRequest, ListVoicesParams, PromptedVoice, ReplicatedVoice, Voice, VoiceAudio,

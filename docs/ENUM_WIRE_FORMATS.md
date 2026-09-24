@@ -57,6 +57,9 @@ All types below implement graceful handling of unrecognized values via an `Unkno
 | 39 | `DocumentState` | src/file_search_stores.rs | `state_type` | File search document indexing state (verified live 2026-08-16) |
 | 40 | `VoiceType` | src/voices.rs | `voice_type` | prebuilt/prompted/replicated (`/v1beta/voices`) |
 | 41 | `VoicePitch` | src/voices.rs | `pitch_type` | low/medium/high |
+| 42 | `CredentialType` | src/credentials.rs | `credential_type` | bearer_token/environment_variable/oauth2 |
+| 43 | `CredentialStatus` | src/credentials.rs | `status_type` | active/revoked |
+| 44 | `InjectionLocation` | src/credentials.rs | `location_type` | header/query/body |
 
 **Removed in revision 2026-05-20** (no longer exist in this library or on the wire):
 `UrlRetrievalStatus`, `GroundingMetadata`, `UrlContextMetadata`, `Turn`, and all tool-related
@@ -134,6 +137,9 @@ Helper methods on each type:
 | Audio MIME type (TTS response) | plain | `"audio/wav"` / `"audio/L16;codec=pcm;rate=24000"` | Model-dependent — see [Audio Response](#audio-response-tts-output). Live 2026-09-24 |
 | `VoiceType` | lowercase | `"prebuilt"`, `"prompted"`, `"replicated"` | `/v1beta/voices` `type` and list filter. `prebuilt`/`prompted` verified live 2026-09-24 |
 | `VoicePitch` | lowercase | `"low"`, `"medium"`, `"high"` | Voice metadata and list filter; verified live 2026-09-24 |
+| `CredentialType` | snake_case | `"bearer_token"`, `"environment_variable"`, `"oauth2"` | `/v1beta/credentials` `type`; create bodies are tagged by it. `bearer_token`/`environment_variable` verified live 2026-09-24 (`oauth2` create validates `token_url` reachability) |
+| `CredentialStatus` | lowercase | `"active"`, `"revoked"` | Output only; `active` observed 2026-09-24 |
+| `InjectionLocation` | lowercase | `"header"`, `"query"`, `"body"` | Sent as a list; the API also accepts a single string (2026-09-24) |
 | `GoogleSearchResultItem` | snake_case | `{"title": "...", "url": "...", "rendered_content": "..."}` | Optional `search_suggestions` added in 2026-05-20. Verified live 2026-07: items may carry **only** `search_suggestions` (an HTML rendering payload) with no `title`/`url`; empty `title`/`url` are skipped on serialize for wire fidelity |
 | `UrlContextResultItem` | snake_case | `{"url": "...", "status": "success"}` | Verified 2026-01-13 - no paywall field |
 | `ImageAspectRatio` | ratio string | `"1:1"`, `"16:9"`, `"9:16"` | 14 aspect ratios |
@@ -1334,13 +1340,26 @@ Union: a string environment ID, or a typed remote environment object.
   ],
   "network": {"allowlist": [
     {"domain": "*.googleapis.com"},
-    {"domain": "api.example.com", "transform": [{"Authorization": "Bearer ..."}]}
-  ]}
+    {"domain": "api.example.com", "transform": [{"Authorization": "Bearer ..."}]},
+    {"domain": "api.github.com", "credential": "github-token"}
+  ]},
+  "env": {
+    "PLAIN_VAR": {"value": "hello"},
+    "SECRET_VAR": {"credential": "my-env-credential"}
+  }
 }
 ```
 
 - `network` is a union: the string `"disabled"` (all network off), an
   `{"allowlist": [...]}` object, or omitted entirely (all traffic allowed).
+- `env` (`RemoteEnvironment::env`) and `AllowlistEntry::credential` reference
+  the `/v1beta/credentials` resource. Live 2026-09-24: both are validated
+  (unknown sibling keys rejected; an unknown credential ID is a 404) and
+  echoed, but **no runtime effect was observed** — the sandbox saw neither
+  variable, and no header reached the allowlisted host. The echo spells `env`
+  as a list of single-key maps (`[{"PLAIN_VAR": {...}}, ...]`); both forms
+  deserialize. The bindings' string arm of `env` is rejected
+  (`Invalid input at 'environment'`) and is preserved in `extra` if read.
 - The response echoes the server-assigned environment as `environment_id`,
   which can be passed back as the string form on later turns.
 
