@@ -27,7 +27,7 @@
 //! ## Requirements
 //!
 //! ```bash
-//! pip install google-antigravity==0.1.10   # or set ANTIGRAVITY_HARNESS_PATH
+//! pip install google-antigravity==0.1.18   # or set ANTIGRAVITY_HARNESS_PATH
 //! export GEMINI_API_KEY=...
 //! cargo run --example session_resume --features antigravity
 //! LOUD_WIRE=1 cargo run --example session_resume --features antigravity

@@ -1608,8 +1608,8 @@ If a `test-support` feature for constructing mock instances becomes commonly req
 The `genai_rs::antigravity::protocol` module speaks the localharness
 proto-JSON protocol (see `docs/ANTIGRAVITY.md`). Wire formats were verified
 against the descriptor set and a live harness from the
-`google-antigravity` 0.1.10 wheel, and re-verified against 0.1.5
-(`LOUD_WIRE=1` on a real session, plus a descriptor diff between the two):
+`google-antigravity` 0.1.18 wheel (`LOUD_WIRE=1` on real sessions, plus a
+descriptor diff against 0.1.10), and earlier against 0.1.10 and 0.1.5:
 
 ### Alias spellings — a documented exception to Preserve Data Roundtrip
 
@@ -1621,7 +1621,9 @@ the Preserve Data Roundtrip principle in CLAUDE.md.
 
 The trade is worth naming. These are inbound-only enums (the client never
 sends a `TrajectoryState`), so the asymmetry cannot reach the wire; what it
-buys is one build that drives either harness revision. The alternative —
+buys is one build that *reads* either harness revision. (It no longer buys
+driving either: 0.1.18 changed the outbound `userInput` shape, which no
+alias can cover, so this build drives 0.1.18 only.) The alternative —
 preserving the old spelling as an `Unknown` variant — is what caused the
 0.1.5 → 0.1.10 breakage in the first place: `STATE_IDLE` became
 `STATE_FULLY_IDLE`, only `Idle` ends a turn, and every turn silently ran to
@@ -1630,6 +1632,11 @@ its timeout. Preservation without recognition is not compatibility.
 - Field names are **camelCase**; enums are **SCREAMING_SNAKE_CASE** strings.
 - 64-bit integers (`seqNum`, token counts) arrive as JSON **strings**; the
   crate accepts both strings and numbers.
+- Harness 0.1.18 emits many unset strings explicitly as `""` (`thinking`,
+  `serverName`, `unavailableReason`); where presence carries meaning (an
+  error that fails the turn, a parent trajectory id) blank reads as absent.
+- A user message is `{"userInput": {"parts": [{"text": ...}]}}` on 0.1.18;
+  the pre-0.1.18 `{"userInput": "..."}` string form is rejected.
 
 Enums with Unknown variants (same pattern and helper methods as above):
 
@@ -1639,8 +1646,11 @@ Enums with Unknown variants (same pattern and helper methods as above):
 | `StepSource` | src/antigravity/protocol.rs | `source_type` | `SOURCE_SYSTEM`, `SOURCE_USER`, `SOURCE_MODEL` |
 | `StepTarget` | src/antigravity/protocol.rs | `target_type` | `TARGET_USER`, `TARGET_MODEL`, `TARGET_ENVIRONMENT` |
 | `TrajectoryState` | src/antigravity/protocol.rs | `state_type` | `STATE_RUNNING`, `STATE_FULLY_IDLE` (terminal; alias `STATE_IDLE`), `STATE_WAITING_FOR_TASKS`, `STATE_CANCELLED` |
+| `StopReason` | src/antigravity/protocol.rs | `reason_type` | `STOP_REASON_MAX_MODEL_CALLS_EXCEEDED`, `..._MAX_TOOL_CALLS_...`, `..._MAX_{INPUT,OUTPUT,TOTAL}_TOKENS_EXCEEDED`, `STOP_REASON_QUOTA_EXHAUSTED` (0.1.18) |
 | `ModelType` | src/antigravity/protocol.rs | `model_type` | `MODEL_TYPE_TEXT`, `MODEL_TYPE_IMAGE` |
-| `LifecycleHook` | src/antigravity/protocol.rs | `hook_type` | `LIFECYCLE_HOOK_PRE_TOOL`, `LIFECYCLE_HOOK_POST_TOOL`, ... |
+| `Modality` | src/antigravity/protocol.rs | `modality_type` | `TEXT`, `IMAGE`, `VIDEO`, `AUDIO`, `DOCUMENT` — bare, unlike `MODALITY_UNSPECIFIED` (0.1.18) |
+| `AgentBehavior` | src/antigravity/protocol.rs | `behavior_type` | `AGENT_BEHAVIOR_AUTONOMOUS`, `AGENT_BEHAVIOR_INTERACTIVE`, `AGENT_BEHAVIOR_MINIMAL` (0.1.18; client → harness) |
+| `LifecycleHook` | src/antigravity/protocol.rs | `hook_type` | `LIFECYCLE_HOOK_PRE_TOOL`, `LIFECYCLE_HOOK_POST_TOOL`, ..., `LIFECYCLE_HOOK_ON_COMPACTION`, `LIFECYCLE_HOOK_STOP` (0.1.18) |
 | `HookDecision` | src/antigravity/protocol.rs | `decision_type` | `ALLOW`, `DENY` |
 | `LineAction` | src/antigravity/protocol.rs | `action_type` | `LINE_ACTION_INSERT`, `LINE_ACTION_DELETE`, `LINE_ACTION_NONE` |
 

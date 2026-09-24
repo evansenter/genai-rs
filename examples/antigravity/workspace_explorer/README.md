@@ -55,7 +55,7 @@ watched an agent work.
 ## Running
 
 ```bash
-pip install google-antigravity==0.1.10   # ships the localharness binary
+pip install google-antigravity==0.1.18   # ships the localharness binary
 export GEMINI_API_KEY=...
 
 cargo run --example workspace_explorer --features antigravity

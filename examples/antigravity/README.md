@@ -7,7 +7,7 @@ story the rest of `examples/` does not: every one needs the `antigravity`
 cargo feature **and** the harness binary on your machine.
 
 ```bash
-pip install google-antigravity==0.1.10   # version must match SUPPORTED_HARNESS_VERSION
+pip install google-antigravity==0.1.18   # version must match SUPPORTED_HARNESS_VERSION
 export GEMINI_API_KEY=your_api_key
 cargo run --example antigravity_agent --features antigravity
 ```

@@ -25,7 +25,7 @@ genai-rs = { version = "0.10", features = ["antigravity"] }
 Install the harness binary (it ships inside the platform-specific wheel):
 
 ```bash
-pip install google-antigravity==0.1.10
+pip install google-antigravity==0.1.18
 ```
 
 ### Version pinning
@@ -33,7 +33,8 @@ pip install google-antigravity==0.1.10
 The harness wire protocol is internal to Google's SDK and changes across
 0.1.x releases. Each genai-rs release is verified against exactly one wheel
 version, exposed as `antigravity::SUPPORTED_HARNESS_VERSION` (currently
-`0.1.10`) — pin that version.
+`0.1.18`) — pin that version. **This build cannot drive 0.1.10 or older**:
+see the second worked example below.
 
 **Unknown-value preservation is not the same as forward compatibility.**
 Unrecognized events, fields, and enum values are preserved in `Unknown`
@@ -47,12 +48,23 @@ The 0.1.5 → 0.1.10 upgrade is the worked example. `STATE_IDLE` became
 to its timeout with no error, no failed parse, and a single `warn!` as the
 only evidence. `usageMetadata` likewise became `usageUpdate`, silently
 zeroing token accounting. Both old spellings are now accepted as aliases,
-so one build drives either revision — but the lesson generalizes: when
-moving to an unverified harness, run the integration suite
+so the bridge still *reads* either spelling — but the lesson generalizes:
+when moving to an unverified harness, run the integration suite
 (`--run-ignored all -E 'binary(antigravity_harness)'`) rather than
 trusting that a clean parse means a working bridge, and see
 [Debugging](#debugging) for the drift diagnostics that surface this class
 of mismatch.
+
+The 0.1.10 → 0.1.18 upgrade broke the other direction. The harness dropped
+the plain-string `userInput` arm and renamed the multi-part
+`complexUserInput` arm to `userInput`, so a user message is now always
+`{"userInput": {"parts": [{"text": ...}]}}`. The old
+`{"userInput": "hello"}` is a harness-side *parse error* — reported on its
+stderr (`failed to unmarshal InputEvent`) and nowhere else — so every turn
+failed to start and ran to its timeout. An outbound shape cannot be
+aliased: the harness accepts exactly one, which is why this build drives
+0.1.18 only. The drift guard now checks field *types* as well as names,
+since `userInput` kept its name while changing shape.
 
 ### Binary discovery
 
@@ -127,8 +139,7 @@ governs *enforcement*, not disclosure), so this is prompt-level grounding.
 
 The harness executes its own tool suite; you choose which tools the agent
 sees. The default is the **read-only** set (`list_directory`,
-`search_directory`, `find_file`, `view_file`, `finish`), matching the Python
-SDK:
+`search_directory`, `find_file`, `view_file`, `finish`):
 
 ```rust,ignore
 use genai_rs::antigravity::{BuiltinTool, Capabilities};
@@ -145,14 +156,44 @@ let caps = Capabilities::none();
 let builder = AntigravityAgent::builder().with_capabilities(caps);
 ```
 
+That set deliberately differs from the Python SDK's 0.1.18 `read_only()`
+(`view_file`, `read_url_content`, `schedule`, `finish`). The Python SDK
+now calls the three local finders deprecated, but the harness still serves
+them and a read-only agent without them can only open files by guessing
+paths; `read_url_content` is network egress, so it is write-capable here
+(like `search_web`); and `schedule` is not offered at all:
+
+- **`schedule`** lets the agent schedule its own future turns. This client
+  drives one turn at a time and cannot observe a turn it did not start, so
+  a self-scheduled turn's events would be read as the next `chat`'s
+  response. It is always sent disabled.
+- **`manage_task`** (list/kill background tasks) is enabled exactly when
+  `run_command` is, as in the Python SDK.
+
+Every toggle is written explicitly, disabled ones included. Harness 0.1.18
+treats an omitted toggle as off, but 0.1.10 had no toggle for `manage_task`
+or `schedule` and exposed both to every agent — including the default
+read-only one — so what "omitted" means is not something to rely on.
+
 ### Safety gate
 
 Enabling any write-capable builtin (`run_command`, `edit_file`,
-`create_file`, `generate_image`, `search_web`, `start_subagent`,
-`ask_question` — everything outside the read-only set) or any MCP
-server **without a policy or pre-tool hook** is an error at `spawn()` time —
-the same guard the Python SDK enforces. Add `policy::allow_all()` for
-autonomous agents, or a deny-by-default rule set.
+`create_file`, `generate_image`, `search_web`, `read_url_content`,
+`start_subagent`, `ask_question` — everything outside the read-only set)
+or any MCP server **without a policy or pre-tool hook** is an error at
+`spawn()` time — the same guard the Python SDK enforces. Add
+`policy::allow_all()` for autonomous agents, or a deny-by-default rule set.
+
+### Agent behavior
+
+`with_agent_behavior(AgentBehavior::...)` (harness 0.1.18+) selects how the
+harness frames the task in its system prompt: `Autonomous` (the harness
+default when unset — verified byte-identical), `Interactive` (a human is
+in the loop: clarifying questions, artifacts), or `Minimal` (a pruned
+prompt for small-context models). `Subagent::with_agent_behavior` sets it
+per subagent. The autonomous prompt tells the model *"the user will not
+respond to questions"*, which is why [`ask_question`](#answering-agent-questions)
+needs `Interactive`.
 
 ## Policies
 
@@ -170,10 +211,12 @@ let agent = AntigravityAgent::builder()
     .add_policy(policy::allow("get_weather"))       // a custom tool
     .add_policy(policy::confirm("run_command"))     // defer to on_pre_tool
     .on_pre_tool(|call| {
-        if call.args["commandLine"].as_str().unwrap_or("").contains("rm ") {
-            genai_rs::antigravity::PreToolDecision::deny("no deletions")
-        } else {
-            genai_rs::antigravity::PreToolDecision::Allow
+        // The model's own argument names (see "What a hook is handed").
+        // A missing key must fail closed: `unwrap_or("")` here would
+        // wave every call through if the harness renamed the argument.
+        match call.args["CommandLine"].as_str() {
+            Some(cmd) if !cmd.contains("rm ") => genai_rs::antigravity::PreToolDecision::Allow,
+            _ => genai_rs::antigravity::PreToolDecision::deny("no deletions"),
         }
     })
     // ...
@@ -190,17 +233,53 @@ Rules:
 - `confirm(name)` defers to `on_pre_tool`; with no hook configured the call
   is **denied** (fail closed).
 - Targets: builtin wire names (`run_command`, `edit_file`, ...), custom tool
-  names, and MCP tools as `mcp_<server>_<tool>`.
+  names, and MCP tools as `mcp_<server>_<tool>`. The harness names calls
+  differently in its hook callbacks — the subagent builtin as
+  `invoke_subagent`, an MCP tool by its bare name beside a separate server
+  field — and the bridge maps both onto these targets. (Before 0.1.18
+  support it did not, so `deny("start_subagent")` and every MCP rule were
+  silently skipped on the hook path — which on 0.1.18 is the only path.)
+
+### What a hook is handed
+
+On harness 0.1.18 every tool call — builtin, custom, MCP, subagent — is
+gated by the harness's **pre-tool hook callback**; no observed flow pauses
+for a tool confirmation any more. `ToolInvocation.args` on that path is
+what the *model* passed, under the harness's own tool-schema names, which
+are **not** the `ToolAction::args()` spellings (those are the step's action
+record, `filePath`, `commandLine`, ...):
+
+| Builtin | Argument names (0.1.18) |
+|---------|-------------------------|
+| `view_file` | `AbsolutePath`, `StartLine`, `EndLine`, `ContentOffset` |
+| `list_directory` | `DirectoryPath` |
+| `find_file` | `SearchDirectory`, `Pattern`, `Extensions`, `Excludes`, ... |
+| `search_directory` | `SearchPath`, `Query`, `Includes`, `IsRegex`, ... |
+| `run_command` | `CommandLine`, `Cwd`, `WaitMsBeforeAsync`, ... |
+| `edit_file` | `TargetFile`, `TargetContent`, `ReplacementContent`, ... |
+| `create_file` | `TargetFile`, `CodeContent`, `Overwrite`, ... |
+| `start_subagent` | `Subagents` (each with `TypeName`, `Prompt`, `Role`) |
+
+Paths are plain absolute paths here, not `file://` URIs. For MCP tools the
+bridge unwraps the harness's `{"Arguments": .., "ServerName": ..,
+"ToolName": ..}` envelope, so the hook sees the tool's own arguments. The
+names are harness-internal and version-specific (read them off a
+`LOUD_WIRE=callHookRequest` trace), so **write gates that fail closed** on a
+missing key: a check that indexes a key which is not there sees `Null` and,
+written the obvious way, allows everything. Both path-gating examples in
+this repository shipped that bug against 0.1.18 before it was caught.
 
 ### Unrecognized tool confirmations
 
-Harness-side builtins pause in a *waiting* step until the client confirms
-them; the pending action's identity comes solely from which action field the
-step carries (the confirmation request itself is an empty marker on the
-wire — verified against the pinned harness proto). Two edge cases:
+Harness-side builtins can pause in a *waiting* step until the client
+confirms them (none observed doing so on 0.1.18 — see above); the pending
+action's identity comes solely from which action field the step carries
+(the confirmation request itself is an empty marker on the wire — verified
+against the pinned harness proto). Two edge cases:
 
-- **Pre-request notifications** (a step with *no* action payload at all)
-  announce an upcoming host-side custom tool call. They are auto-approved
+- **Pre-request notifications** (a step with *no* action payload at all,
+  or only a `customTool` record) announce an upcoming host-side custom tool
+  call. They are auto-approved
   regardless of policy, mirroring the reference SDK: the concrete call
   arrives separately and gets its own policy check, so nothing is bypassed.
 - **Unknown actions** (a step whose action landed in the Evergreen `extra`
@@ -222,29 +301,37 @@ populate `ToolOutcome.error` instead.
 ### Answering agent questions
 
 The `ask_question` builtin lets the agent pause a turn to ask the user
-questions (multiple-choice, optionally multi-select). It is **off in the
-default read-only capability set** — enable it explicitly, and note that
-it counts as write-capable for the [safety gate](#safety-gate), so a
-policy or pre-tool hook must also be registered. (The policy satisfies
-the gate but does not govern questions — question requests bypass the
-policy engine entirely; `on_questions`, or not enabling the builtin, is
-the only control.) Set an `on_questions` hook to answer the questions
-programmatically — route them to a CLI prompt, a chat message, or policy
-code:
+questions (multiple-choice, optionally multi-select). Three things must line
+up for a question to reach you:
+
+1. **The builtin is enabled.** It is off in the default read-only set.
+2. **The agent behavior is `Interactive`.** The harness default
+   (autonomous) prompt tells the model nobody will answer, so it asks in
+   prose instead of calling the tool; `spawn()` warns about this
+   combination.
+3. **Policy allows `ask_question`.** On harness 0.1.18 the call goes
+   through the pre-tool hook like any other tool *before* the question is
+   posed, so `deny_all()` alone blocks every question. (On 0.1.10 question
+   requests bypassed the policy engine; they no longer do.) `ask_question`
+   is also write-capable for the [safety gate](#safety-gate).
+
+Set an `on_questions` hook to answer the questions programmatically — route
+them to a CLI prompt, a chat message, or policy code:
 
 ```rust,ignore
-use genai_rs::antigravity::{BuiltinTool, Capabilities, QuestionAnswer, QuestionReply, policy};
+use genai_rs::antigravity::{
+    AgentBehavior, BuiltinTool, Capabilities, QuestionAnswer, QuestionReply, policy,
+};
 
 let agent = AntigravityAgent::builder()
     // ...
     // read_only() does not include AskQuestion — enable it explicitly.
     .with_capabilities(Capabilities::read_only().enable(BuiltinTool::AskQuestion))
-    // AskQuestion is write-capable, so the spawn-time safety gate requires
-    // a policy (or on_pre_tool hook) once it is enabled. Any rule
-    // satisfies the gate (questions bypass the policy engine), so prefer
-    // deny-by-default over allow_all() — it won't silently permit other
-    // builtins you enable later.
+    .with_agent_behavior(AgentBehavior::Interactive)
+    // Deny by default, and allow the question tool explicitly: the policy
+    // is consulted for it like any other call.
     .add_policy(policy::deny_all())
+    .add_policy(policy::allow("ask_question"))
     .on_questions(|questions| {
         // Answer each question: pick the first choice, but never guess on
         // an unmodeled question type or one with no rendered choices.
@@ -370,16 +457,24 @@ Rules (matching the reference SDK):
 - Subagent `with_system_instructions` are **appended** to the harness's
   default subagent instructions, not a full replacement (unlike the parent's
   `with_system_instructions`).
-- Subagent capabilities default to the read-only builtin set; nested
-  subagents are unsupported, so `start_subagent` is force-disabled inside a
-  subagent.
+- Subagent capabilities default to the read-only builtin set.
+  `start_subagent` is force-disabled inside a subagent: harness 0.1.18 can
+  nest subagents, but only to a `max_nesting_depth` this crate does not
+  configure yet (the harness default is flat).
 - Subagent activity surfaces in streams as `AgentEvent::ToolAction` with
   `ToolAction::InvokeSubagent`, plus the subagent trajectory's own deltas.
   The `ToolAction` event carries the subagent's `trajectory_id` so its
-  actions can be told apart from the parent's. `ToolAction::subagent_name()`
-  exposes the invoked subagent's name **if the harness reports it** —
-  harness 0.1.5 emits an empty `invokeSubagent` action (verified via
-  `LOUD_WIRE`), so it is `None` there; the typed field is future-proofing.
+  actions can be told apart from the parent's (0.1.18 also marks subagent
+  steps and trajectories with a `parentTrajectoryId`, which the bridge uses
+  to keep a subagent from ever being mistaken for the turn's own
+  trajectory). `ToolAction::subagent_name()` exposes the invoked subagent's
+  name **if the harness reports it** — harnesses 0.1.5 through 0.1.18 emit
+  an empty `invokeSubagent` action (verified via `LOUD_WIRE`), so it is
+  `None`; the name is visible only in the pre-tool hook's arguments
+  (`Subagents[].TypeName`).
+- Enabling the subagent builtin on 0.1.18 exposes four model tools, not
+  one: `invoke_subagent`, `define_subagent` (the model can define a
+  subagent at runtime), `manage_subagents`, and `send_message`.
 
 ## Streaming
 
@@ -416,8 +511,17 @@ while let Some(event) = stream.next().await {
 - **`ToolAction { action, decision, trajectory_id }`** — `decision` is a
   [`ToolDecision`] (`Allowed`, or `Denied { reason }`): a policy- or
   hook-blocked harness action is otherwise indistinguishable from an executed
-  one. `trajectory_id` identifies the (sub)trajectory the action ran in, so
-  parent and subagent actions can be told apart in the interleaved stream.
+  one. A call blocked at the pre-tool hook never ran, so there is no action
+  record for it: harness 0.1.18 reports it as an error step, which arrives
+  as `ToolAction::Error` marked `Denied` with the reason this client sent
+  (the bridge matches the step against its own verdict). `trajectory_id`
+  identifies the (sub)trajectory the action ran in, so parent and subagent
+  actions can be told apart in the interleaved stream.
+- **`TextDelta` / `ThinkingDelta`** carry the model's own output only.
+  Every step streams a `textDelta` — including the echo of your input and
+  each tool step's one-line label (`"Weather check"`) — so text deltas are
+  taken only from model steps directed at the user (the reference SDK's
+  filter), and thinking deltas from any model step.
 - **`Error { message, severity }`** — `severity` is an [`ErrorSeverity`].
   Transient errors are harness-internal noise (retried internally; the turn
   continues) — essentially every error event today. `Severe` marks a
@@ -434,9 +538,9 @@ let cancel = agent.cancel_handle();
 cancel.cancel().await?;   // the in-flight turn ends early, keeping partial output
 ```
 
-**What a cancelled turn returns**: harness 0.1.10 answers a halt by taking
-the trajectory to `STATE_FULLY_IDLE` — the same terminal state as a natural
-completion, not `STATE_CANCELLED`. The turn therefore resolves *normally*
+**What a cancelled turn returns**: harness 0.1.10 (and 0.1.18, re-verified)
+answers a halt by taking the trajectory to `STATE_FULLY_IDLE` — the same
+terminal state as a natural completion, not `STATE_CANCELLED`. The turn therefore resolves *normally*
 with whatever partial output it had produced, rather than failing with
 `AntigravityError::Turn`. Treat `cancel()` as "stop early and keep what you
 have", and record the cancellation on your side if you need to distinguish
@@ -462,9 +566,10 @@ at the harness, which is the wrong place to look.
 an error rather than a hang without opting in. An unbounded turn does not
 *fail* when the harness stops signalling completion; it hangs, which is
 strictly less diagnosable than an error and looks identical to latency from
-the outside. That is not hypothetical: harness 0.1.10 renamed the terminal
-trajectory state, and every turn ran on with no error, no failed parse and
-nothing in the logs.
+the outside. That is not hypothetical, and it has happened twice: harness
+0.1.10 renamed the terminal trajectory state, and 0.1.18 started rejecting
+the user-message shape this crate sent. Both times every turn ran on with
+no error, no failed parse, and nothing in this crate's logs.
 
 Raise it for agents that legitimately run long (deep subagent trees, many
 tool calls), lower it for interactive use where a stall should surface fast,
@@ -494,6 +599,17 @@ if let Some(value) = response.structured_output() {
 }
 ```
 
+## Early stops
+
+A turn the harness stops early — the model backend's quota exhausted, or a
+harness-side budget exceeded — still *finishes*: it ends in the same
+terminal state as a completed turn, so the only symptom would be a short or
+empty `text()`. Harness 0.1.18 attaches a reason, surfaced as
+`ChatResponse::stop_reason()` (`Some(StopReason::QuotaExhausted)`, ...;
+`None` for a normal completion). Setting a budget is not modeled yet (see
+[Current limitations](#current-limitations-follow-ups)), so in practice the
+reason you will see is quota exhaustion.
+
 ## Triggers
 
 Triggers inject a message into the conversation on a fixed interval —
@@ -521,8 +637,9 @@ Delivery semantics (see `antigravity::triggers` for details):
   harness 0.1.10, a trigger delivered into a conversation with no history
   crashes the harness *process* — its pre-invocation hook asks for "tokens
   since the last checkpoint", finds no steps, and aborts the agent run
-  (`earliest step index is out of bounds: 0 vs 0`). The session dies with
-  it, so the next send fails on a closed socket or a broken pipe. One
+  (`earliest step index is out of bounds: 0 vs 0`). 0.1.18 (re-verified)
+  aborts the run the same way and closes the WebSocket. The session dies
+  with it, so the next send fails on a closed socket or a broken pipe. One
   completed turn is enough. Reproduced by
   `examples/antigravity/proactive_agent`, which opens with a turn for
   exactly this reason.
@@ -573,7 +690,7 @@ didn't do anything":
 |--------|-------------------|
 | `protocol::drift_report()` | Every unrecognized wire value seen, as `"EnumName=WIRE_VALUE" -> count`. Empty is healthy. Process-wide and cumulative; `clear_drift_report()` resets it. |
 | The `warn!` on `shutdown()` | The same aggregate, logged once at the natural end of a session, so it does not scroll past like the per-value warns do. |
-| `AntigravityError::Timeout` | When a turn times out having seen unrecognized *main-trajectory* states, the `operation` field names them and points at `SUPPORTED_HARNESS_VERSION` instead of reporting an undifferentiated stall. |
+| `AntigravityError::Timeout` | When a turn times out having seen unrecognized *main-trajectory* states, or after the harness logged that it could not unmarshal something this session sent, the `operation` field names the cause and points at `SUPPORTED_HARNESS_VERSION` instead of reporting an undifferentiated stall. |
 
 Programmatic check, for anything long-running:
 
@@ -587,8 +704,15 @@ if !drift.is_empty() {
 CI runs a stronger version of this: `test_antigravity_protocol_enums_have_not_drifted`
 diffs the installed wheel's protobuf descriptor against the crate's wire
 enums and fails naming any value the harness can send that the crate does
-not model. That is the check that turns a renamed enum from a silent hang
-into a red test.
+not model. It also checks that every field the crate reads or writes by
+hand still exists, and still has the *type* the crate encodes — the check
+that catches a field keeping its name while changing shape, as
+`InputEvent.userInput` did in 0.1.18. That is what turns a renamed enum or
+a reshaped message from a silent hang into a red test.
+
+A turn that times out also names the harness-side cause when there is
+one: unrecognized main-trajectory states, or a line on the harness's
+stderr saying it failed to unmarshal a message this session sent.
 
 ### Wire inspection
 
@@ -626,6 +750,7 @@ oneof arm — `stepUpdate`, `toolCall`, `userInput`, `trajectoryStateUpdate`
 LOUD_WIRE=summary                  # the whole session, one line per message
 LOUD_WIRE=toolCall,summary         # just the tool traffic, one line each
 LOUD_WIRE=trajectoryStateUpdate    # why a turn will not finish
+LOUD_WIRE=callHookRequest          # what every tool gate is handed
 LOUD_WIRE=harness                  # spawn + stderr only, no protocol noise
 ```
 
@@ -675,3 +800,12 @@ variants, never on message text. Key variants: `HarnessNotFound{searched}`,
   consumer surfacing their events is a follow-up.
 - **Vertex endpoints**: wire types exist; the tested path is the Gemini API
   key endpoint.
+- **Harness 0.1.18 surface not modeled yet**: session budgets
+  (`BudgetConfig` — the stop reasons are modeled, the caps are not),
+  `CompactionConfig`, `RulesConfig`, `ToolOutputTruncation`, retry config,
+  the harness-side `PolicyConfig` rule evaluator (with its
+  `policyDecisionRequest` round trip), `run_command` options (timeout,
+  daemons, the OS sandbox and its `sandboxStatus`), subagent nesting depth
+  and allow-lists, per-subagent models and skills, the `schedule` builtin
+  (needs a background consumer), and the `ON_COMPACTION` / `STOP`
+  lifecycle hooks. Unmodeled fields are preserved in `extra` maps.

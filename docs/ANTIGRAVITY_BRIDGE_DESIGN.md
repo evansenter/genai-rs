@@ -102,8 +102,8 @@ The wire protocol is not publicly documented and changes across 0.1.x
 releases. Mitigations:
 
 1. **Pin a supported harness version per genai-rs release** (documented
-   constant, e.g. `SUPPORTED_HARNESS_VERSION = "0.1.5"`); integration tests
-   run against exactly that wheel.
+   constant `SUPPORTED_HARNESS_VERSION`, currently `"0.1.18"`); integration
+   tests run against exactly that wheel.
 2. **Evergreen at the wire layer**: every event envelope deserializes unknown
    oneof variants into `Unknown { event_type, data }` and continues; unknown
    fields are preserved for roundtrip. Protocol drift degrades gracefully
@@ -336,10 +336,52 @@ now implemented:
   (`Transient` / `Severe`); turn-ending failures still go through the
   `AntigravityError::Turn` path.
 
+### Harness upgrades
+
+| Move | What broke | Direction | Handling |
+|------|-----------|-----------|----------|
+| 0.1.5 → 0.1.10 | `STATE_IDLE` → `STATE_FULLY_IDLE`; `usageMetadata` → `usageUpdate` | inbound | Aliased (D-003); one build reads both |
+| 0.1.10 → 0.1.18 | `userInput` string arm removed, `complexUserInput` renamed to `userInput` (a `UserInput` message) | outbound | Cannot be aliased — the harness accepts one shape — so the build drives 0.1.18 only |
+
+Lessons from 0.1.18, each now encoded somewhere:
+
+- **An outbound break is invisible on the socket.** The harness logged
+  `failed to unmarshal InputEvent` to stderr and never started the turn;
+  the stall diagnosis now quotes that line.
+- **A field can keep its name and change type.** The drift guard checked
+  names only and caught this break by luck (`complexUserInput` vanished in
+  the same release); it now checks the types of hand-encoded fields too.
+- **The gate moved.** 0.1.18 gates every observed call through the
+  pre-tool hook, not tool confirmations, and names calls there by step
+  field (`invoke_subagent`) and bare MCP tool name. Policies are now mapped
+  onto their targets on that path, and hook-denied calls (which arrive as
+  error steps) are marked `ToolDecision::Denied`.
+- **Hook arguments are the model's.** On the hook path `args` are the
+  harness's tool-schema names (`AbsolutePath`, `CommandLine`), not the
+  action record's; two example gates keyed on the latter were silently
+  dead. Documented, with the examples fixed to fail closed.
+- **Defaults are not stable.** 0.1.10 exposed `manage_task`/`schedule` to
+  every agent with no toggle; 0.1.18 made them toggles defaulting off and
+  made the system prompt depend on `agent_behavior` (autonomous by
+  default, which suppresses `ask_question`). Every toggle is now written
+  explicitly, `schedule` stays off, and behavior is configurable.
+
+Probing technique worth reusing: point `GeminiApiEndpoint.base_url` at a
+local capture server and read the harness's model request. It gives the
+exact tool declarations (and parameter schemas) and system prompt a config
+produces, deterministically, with no API key.
+
 ### Still open
 
 - **Async hooks** + the `workspace_only` policy combinator.
 - **Background consumer for trigger turns** (surface trigger-turn output via
-  a documented channel/callback instead of halt-and-drain).
+  a documented channel/callback instead of halt-and-drain). The same
+  consumer is the prerequisite for offering the 0.1.18 `schedule` builtin,
+  whose self-scheduled turns this transport cannot observe.
+- **0.1.18 configuration surface** (budgets, compaction, rules, output
+  truncation, retry, `run_command` sandbox/timeouts, subagent depth and
+  allow-lists, per-subagent models, the harness-side `PolicyConfig`
+  evaluator, `ON_COMPACTION`/`STOP` hooks) — see the user guide's
+  limitations list.
 - **Mockable transport trait** (unit-test protocol logic without the binary).
 - **`harness fetch`** (download + extract the matching wheel binary).

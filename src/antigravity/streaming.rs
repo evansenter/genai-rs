@@ -8,7 +8,8 @@ use std::task::{Context, Poll};
 use super::protocol::{
     ActionCompaction, ActionCreateFile, ActionEditFile, ActionError, ActionFindFile, ActionFinish,
     ActionGenerateImage, ActionInvokeSubagent, ActionListDirectory, ActionMcpTool,
-    ActionRunCommand, ActionSearchDirectory, ActionSearchWeb, ActionViewFile, StepUpdate,
+    ActionReadUrlContent, ActionRunCommand, ActionSearchDirectory, ActionSearchWeb, ActionViewFile,
+    StepUpdate,
 };
 use super::{AntigravityError, ChatResponse};
 
@@ -184,6 +185,8 @@ pub enum ToolAction {
     McpTool(ActionMcpTool),
     /// `search_web`.
     SearchWeb(ActionSearchWeb),
+    /// `read_url_content`.
+    ReadUrlContent(ActionReadUrlContent),
     /// `generate_image`.
     GenerateImage(ActionGenerateImage),
     /// `start_subagent`.
@@ -226,6 +229,9 @@ impl ToolAction {
         if let Some(a) = &step.search_web {
             return Some(Self::SearchWeb(a.clone()));
         }
+        if let Some(a) = &step.read_url_content {
+            return Some(Self::ReadUrlContent(a.clone()));
+        }
         if let Some(a) = &step.generate_image {
             return Some(Self::GenerateImage(a.clone()));
         }
@@ -261,6 +267,7 @@ impl ToolAction {
                 a.tool_name.as_deref().unwrap_or_default(),
             ),
             Self::SearchWeb(_) => "search_web".to_string(),
+            Self::ReadUrlContent(_) => "read_url_content".to_string(),
             Self::GenerateImage(_) => "generate_image".to_string(),
             Self::InvokeSubagent(_) => "start_subagent".to_string(),
             Self::Compaction(_) => "compaction".to_string(),
@@ -298,6 +305,7 @@ impl ToolAction {
                 .map(serde_json::from_str)
                 .unwrap_or_else(|| Ok(Value::Object(serde_json::Map::new()))),
             Self::SearchWeb(a) => serde_json::to_value(a),
+            Self::ReadUrlContent(a) => serde_json::to_value(a),
             Self::GenerateImage(a) => serde_json::to_value(a),
             Self::InvokeSubagent(a) => serde_json::to_value(a),
             Self::Compaction(a) => serde_json::to_value(a),
@@ -386,7 +394,7 @@ mod tests {
 
     #[test]
     fn test_subagent_name_accessor_and_roundtrip() {
-        // 0.1.5 emits an empty invokeSubagent: name is None.
+        // 0.1.5 through 0.1.18 emit an empty invokeSubagent: name is None.
         let empty: ActionInvokeSubagent = serde_json::from_str("{}").unwrap();
         assert_eq!(empty.name, None);
         let action = ToolAction::InvokeSubagent(empty);

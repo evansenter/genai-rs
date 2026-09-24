@@ -7,7 +7,7 @@
 //! `cancel()`.
 //!
 //! **The part worth reading twice**: a cancelled turn does *not* fail. On
-//! harness 0.1.10 a halt takes the trajectory to the same terminal state a
+//! harness 0.1.10 and 0.1.18 a halt takes the trajectory to the same terminal state a
 //! natural completion does, so the turn resolves normally, carrying
 //! whatever text it had produced. Treat `cancel()` as "stop early and keep
 //! what you have" — and record the cancellation yourself, because nothing
@@ -30,7 +30,7 @@
 //! ## Requirements
 //!
 //! ```bash
-//! pip install google-antigravity==0.1.10   # or set ANTIGRAVITY_HARNESS_PATH
+//! pip install google-antigravity==0.1.18   # or set ANTIGRAVITY_HARNESS_PATH
 //! export GEMINI_API_KEY=...
 //! cargo run --example cancellable_turn --features antigravity
 //! LOUD_WIRE=haltRequest,trajectoryStateUpdate cargo run --example cancellable_turn --features antigravity

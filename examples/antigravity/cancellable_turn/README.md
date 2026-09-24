@@ -15,7 +15,7 @@ This example asks for a long essay and halts once 200 characters of
 
 ## The part worth reading twice
 
-**A cancelled turn does not fail.** On harness 0.1.10 a halt takes the
+**A cancelled turn does not fail.** On harness 0.1.10 and 0.1.18 a halt takes the
 trajectory to the same terminal state a natural completion does, so the
 turn resolves normally, carrying whatever text it had produced. Nothing in
 the response distinguishes a halted turn from a finished one — record that
@@ -36,7 +36,7 @@ a turn of its own accord. Different event.)
 ## Running
 
 ```bash
-pip install google-antigravity==0.1.10   # or set ANTIGRAVITY_HARNESS_PATH
+pip install google-antigravity==0.1.18   # or set ANTIGRAVITY_HARNESS_PATH
 export GEMINI_API_KEY=...
 cargo run --example cancellable_turn --features antigravity
 

@@ -16,17 +16,52 @@ use super::protocol;
 /// with:
 ///
 /// ```bash
-/// pip install google-antigravity==0.1.10
+/// pip install google-antigravity==0.1.18
 /// ```
 ///
 /// The 0.1.5 → 0.1.10 move renamed two wire spellings that the bridge
-/// depends on (`STATE_IDLE` → `STATE_FULLY_IDLE`, `usageMetadata` →
-/// `usageUpdate`); both old spellings are still accepted, so a single
-/// build drives either revision. "Degrades gracefully" is doing real
-/// work in that sentence above, though — a renamed value an
-/// `Unknown` variant absorbs is invisible until behavior that
-/// *matched* on it silently stops firing.
-pub const SUPPORTED_HARNESS_VERSION: &str = "0.1.10";
+/// *reads* (`STATE_IDLE` → `STATE_FULLY_IDLE`, `usageMetadata` →
+/// `usageUpdate`); both old spellings are still accepted. The 0.1.10 →
+/// 0.1.18 move changed one the bridge *sends*: a user message is now a
+/// multi-part `userInput` object, and the old plain-string form is a
+/// harness-side parse error. An outbound shape cannot be aliased, so this
+/// build drives 0.1.18 only — against 0.1.10 every turn fails to start.
+///
+/// "Degrades gracefully" is doing real work in the sentence above, too: a
+/// renamed value an `Unknown` variant absorbs is invisible until behavior
+/// that *matched* on it silently stops firing, and a rejected input is
+/// reported only on the harness's stderr.
+pub const SUPPORTED_HARNESS_VERSION: &str = "0.1.18";
+
+/// How the harness frames the agent's task in its system prompt.
+///
+/// New in harness 0.1.18. Unset, the harness defaults to
+/// [`Autonomous`](Self::Autonomous) — the same default as the reference
+/// SDK, and a byte-identical system prompt. That default is why
+/// [`BuiltinTool::AskQuestion`] needs [`Interactive`](Self::Interactive):
+/// the autonomous prompt tells the model *"the user will not respond to
+/// questions"*, so it asks in prose instead of calling the tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum AgentBehavior {
+    /// Work unattended from start to finish.
+    Autonomous,
+    /// Work with a human in the loop: clarifying questions via
+    /// `ask_question`, plus the harness's artifact conventions.
+    Interactive,
+    /// A pruned system prompt for small-context models.
+    Minimal,
+}
+
+impl AgentBehavior {
+    pub(crate) fn to_wire(self) -> protocol::AgentBehavior {
+        match self {
+            Self::Autonomous => protocol::AgentBehavior::Autonomous,
+            Self::Interactive => protocol::AgentBehavior::Interactive,
+            Self::Minimal => protocol::AgentBehavior::Minimal,
+        }
+    }
+}
 
 /// Harness-executed built-in tools.
 ///
@@ -58,6 +93,11 @@ pub enum BuiltinTool {
     GenerateImage,
     /// Search the web (`search_web`). Write-capable (network egress).
     SearchWeb,
+    /// Fetch the content of a URL (`read_url_content`). Write-capable
+    /// (network egress) — unlike the reference SDK, which counts it as
+    /// read-only and enables it by default: a fetched URL can carry data
+    /// out as easily as it brings data in.
+    ReadUrlContent,
     /// Finish with structured output (`finish`).
     Finish,
 }
@@ -78,6 +118,7 @@ impl BuiltinTool {
             Self::StartSubagent => "start_subagent",
             Self::GenerateImage => "generate_image",
             Self::SearchWeb => "search_web",
+            Self::ReadUrlContent => "read_url_content",
             Self::Finish => "finish",
         }
     }
@@ -97,12 +138,22 @@ impl BuiltinTool {
             Self::StartSubagent,
             Self::GenerateImage,
             Self::SearchWeb,
+            Self::ReadUrlContent,
             Self::Finish,
         ]
     }
 
-    /// Tools that only read state (no writes, deletes, or commands).
-    /// This is the default capability set, matching the reference SDK.
+    /// Tools that only read state (no writes, deletes, commands, or
+    /// network egress). This is the default capability set.
+    ///
+    /// It deliberately diverges from the reference SDK's 0.1.18
+    /// `read_only()`, which dropped `list_directory` / `search_directory`
+    /// / `find_file` as deprecated (the harness still serves all three)
+    /// and added `read_url_content` and `schedule`. Without the three
+    /// local-exploration tools a read-only agent can open a file only by
+    /// guessing its path; `read_url_content` is egress (see
+    /// [`BuiltinTool::ReadUrlContent`]); and `schedule` is not offered at
+    /// all (see [`Capabilities`]).
     #[must_use]
     pub fn read_only() -> Vec<Self> {
         vec![
@@ -124,9 +175,16 @@ impl BuiltinTool {
 
 /// Which built-in harness tools the agent may use.
 ///
-/// The default is the read-only set ([`BuiltinTool::read_only`]), matching
-/// the reference SDK. Enabling any write-capable tool requires a policy or
-/// pre-tool hook at spawn time (safety parity with the reference SDK).
+/// The default is the read-only set ([`BuiltinTool::read_only`]). Enabling
+/// any write-capable tool requires a policy or pre-tool hook at spawn time
+/// (safety parity with the reference SDK).
+///
+/// Two harness builtins are not selectable here. `schedule` lets the agent
+/// schedule its own future turns; this client drives one turn at a time
+/// and cannot observe a turn it did not start, so a self-scheduled turn's
+/// events would be read as the *next* `chat`'s response. It is always
+/// sent disabled. `manage_task` (list/kill background tasks) follows
+/// [`BuiltinTool::RunCommand`], as in the reference SDK.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Capabilities {
     enabled: HashSet<BuiltinTool>,
@@ -190,8 +248,11 @@ impl Capabilities {
     }
 
     /// Builds the harness `HarnessSideTools` flags. Every flag is written
-    /// explicitly (the harness defaults most tools to *enabled*, so omitting
-    /// a disabled tool would silently enable it).
+    /// explicitly, disabled ones included: what an omitted flag means is
+    /// the harness's call and has changed between revisions. Harness
+    /// 0.1.18 treats omitted as off, but 0.1.10 exposed `manage_task` and
+    /// `schedule` to every agent — including the default read-only one —
+    /// because it had no flag for them at all.
     pub(crate) fn to_harness_side_tools(&self) -> protocol::HarnessSideTools {
         let on = |tool: BuiltinTool| Some(protocol::ToolToggle::new(self.is_enabled(tool)));
         protocol::HarnessSideTools {
@@ -207,6 +268,13 @@ impl Capabilities {
             permissions: None,
             generate_image: on(BuiltinTool::GenerateImage),
             search_web: on(BuiltinTool::SearchWeb),
+            read_url_content: on(BuiltinTool::ReadUrlContent),
+            // Left to the harness default (off); tool search only applies
+            // to tools declared with deferred loading, which this crate
+            // never declares.
+            tool_search_config: None,
+            manage_task: on(BuiltinTool::RunCommand),
+            schedule: Some(protocol::ToolToggle::new(false)),
         }
     }
 }
@@ -250,6 +318,7 @@ pub struct Subagent {
     system_instructions: Option<String>,
     capabilities: Capabilities,
     tool_names: Vec<String>,
+    agent_behavior: Option<AgentBehavior>,
 }
 
 impl Subagent {
@@ -263,6 +332,7 @@ impl Subagent {
             system_instructions: None,
             capabilities: Capabilities::read_only(),
             tool_names: Vec::new(),
+            agent_behavior: None,
         }
     }
 
@@ -284,11 +354,21 @@ impl Subagent {
     }
 
     /// Configures which built-in harness tools the subagent may use
-    /// (default: the read-only set). `start_subagent` is force-disabled —
-    /// the harness does not support nested subagents.
+    /// (default: the read-only set). `start_subagent` is force-disabled:
+    /// harness 0.1.18 can nest subagents, but only up to a
+    /// `max_nesting_depth` this crate does not configure yet, and the
+    /// harness default is flat (depth 1).
     #[must_use]
     pub fn with_capabilities(mut self, capabilities: Capabilities) -> Self {
         self.capabilities = capabilities;
+        self
+    }
+
+    /// Sets how the harness frames the subagent's task (default: the
+    /// harness's, which is [`AgentBehavior::Autonomous`]).
+    #[must_use]
+    pub fn with_agent_behavior(mut self, behavior: AgentBehavior) -> Self {
+        self.agent_behavior = Some(behavior);
         self
     }
 
@@ -326,13 +406,14 @@ impl Subagent {
     ) -> protocol::CustomAgent {
         if self.capabilities.is_enabled(BuiltinTool::StartSubagent) {
             tracing::warn!(
-                "Subagent '{}' enables start_subagent, but nested subagents are not \
-                 supported by the harness; disabling it.",
+                "Subagent '{}' enables start_subagent, but this crate does not configure \
+                 subagent nesting depth (harness default: flat); disabling it.",
                 self.name
             );
         }
         let mut harness_side_tools = self.capabilities.to_harness_side_tools();
-        // Nested subagents are unsupported (parity with the reference SDK).
+        // Nesting needs `SubagentsConfig.max_nesting_depth`, which is not
+        // modeled; the harness default depth is 1 (flat).
         harness_side_tools.subagents = Some(protocol::ToolToggle::new(false));
 
         let tools = self
@@ -377,6 +458,7 @@ impl Subagent {
             system_instructions,
             harness_side_tools: Some(harness_side_tools),
             tools,
+            agent_behavior: self.agent_behavior.map(AgentBehavior::to_wire),
         }
     }
 }
@@ -601,6 +683,43 @@ mod tests {
         assert!(!flags.generate_image.unwrap().enabled);
         assert!(!flags.search_web.unwrap().enabled);
         assert!(!flags.user_questions.unwrap().enabled);
+        assert!(!flags.read_url_content.unwrap().enabled);
+        assert!(!flags.manage_task.unwrap().enabled);
+        // `schedule` is never offered: a self-scheduled turn is one this
+        // client cannot observe.
+        assert!(!flags.schedule.unwrap().enabled);
+        assert!(
+            !Capabilities::all()
+                .to_harness_side_tools()
+                .schedule
+                .unwrap()
+                .enabled
+        );
+    }
+
+    #[test]
+    fn test_manage_task_follows_run_command() {
+        // Reference-SDK parity: background tasks come from run_command, so
+        // the tool that lists/kills them comes with it.
+        let with = Capabilities::none().enable(BuiltinTool::RunCommand);
+        assert!(with.to_harness_side_tools().manage_task.unwrap().enabled);
+        let without = Capabilities::all().disable(BuiltinTool::RunCommand);
+        assert!(!without.to_harness_side_tools().manage_task.unwrap().enabled);
+    }
+
+    #[test]
+    fn test_read_url_content_is_write_capable() {
+        // Egress, like search_web — so enabling it trips the safety gate.
+        assert!(BuiltinTool::ReadUrlContent.is_write_capable());
+        assert!(!Capabilities::read_only().is_enabled(BuiltinTool::ReadUrlContent));
+        let caps = Capabilities::none().enable(BuiltinTool::ReadUrlContent);
+        assert!(caps.has_write_tools());
+        assert!(
+            caps.to_harness_side_tools()
+                .read_url_content
+                .unwrap()
+                .enabled
+        );
     }
 
     #[test]
@@ -618,6 +737,7 @@ mod tests {
             (BuiltinTool::StartSubagent, "start_subagent"),
             (BuiltinTool::GenerateImage, "generate_image"),
             (BuiltinTool::SearchWeb, "search_web"),
+            (BuiltinTool::ReadUrlContent, "read_url_content"),
             (BuiltinTool::Finish, "finish"),
         ];
         for (tool, name) in expected {
@@ -716,8 +836,8 @@ mod tests {
 
     #[test]
     fn test_subagent_start_subagent_forced_off() {
-        // Nested subagents are unsupported: even when explicitly enabled,
-        // the wire config disables the builtin.
+        // Nesting depth is not configurable yet: even when explicitly
+        // enabled, the wire config disables the builtin.
         let subagent = Subagent::new("nested")
             .with_capabilities(Capabilities::read_only().enable(BuiltinTool::StartSubagent));
         let wire = subagent.to_wire(&[], None);
@@ -744,6 +864,32 @@ mod tests {
         );
         assert_eq!(value["harnessSideTools"]["subagents"]["enabled"], false);
         assert_eq!(value["harnessSideTools"]["viewFile"]["enabled"], true);
+    }
+
+    #[test]
+    fn test_agent_behavior_reaches_the_wire_only_when_set() {
+        // Unset stays off the wire: the harness default is already
+        // Autonomous, so sending it would change nothing but the golden.
+        assert!(
+            Subagent::new("a")
+                .to_wire(&[], None)
+                .agent_behavior
+                .is_none()
+        );
+        let wire = Subagent::new("a")
+            .with_agent_behavior(AgentBehavior::Interactive)
+            .to_wire(&[], None);
+        assert_eq!(
+            serde_json::to_value(&wire).unwrap()["agentBehavior"],
+            "AGENT_BEHAVIOR_INTERACTIVE"
+        );
+        for (behavior, wire) in [
+            (AgentBehavior::Autonomous, "AGENT_BEHAVIOR_AUTONOMOUS"),
+            (AgentBehavior::Interactive, "AGENT_BEHAVIOR_INTERACTIVE"),
+            (AgentBehavior::Minimal, "AGENT_BEHAVIOR_MINIMAL"),
+        ] {
+            assert_eq!(behavior.to_wire().as_wire_str(), wire);
+        }
     }
 
     #[test]

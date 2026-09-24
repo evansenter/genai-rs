@@ -16,8 +16,10 @@
 //! captured in `extra` maps so they roundtrip.
 //!
 //! Message and field shapes are verified against the descriptor set shipped
-//! in the `google-antigravity` 0.1.5 wheel (`localharness.proto`, package
-//! `antigravity.localharness`).
+//! in the `google-antigravity` wheel pinned by
+//! [`SUPPORTED_HARNESS_VERSION`](super::SUPPORTED_HARNESS_VERSION)
+//! (`localharness.proto`, package `antigravity.localharness`). Fields the
+//! harness has but this module does not model land in the `extra` maps.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -318,6 +320,70 @@ wire_string_enum!(
 );
 
 wire_string_enum!(
+    /// `TrajectoryStateUpdate.StopReason` — why a trajectory stopped, when
+    /// it was not a normal completion (new in harness 0.1.18).
+    ///
+    /// Arrives alongside a terminal trajectory state. The budget reasons
+    /// only fire when a harness-side budget is configured; quota
+    /// exhaustion can arrive on any turn.
+    StopReason, reason_type, unknown_reason_type {
+        /// `STOP_REASON_UNSPECIFIED` — normal completion.
+        Unspecified => "STOP_REASON_UNSPECIFIED",
+        /// The session exceeded its model-call budget.
+        MaxModelCallsExceeded => "STOP_REASON_MAX_MODEL_CALLS_EXCEEDED",
+        /// The session exceeded its tool-call budget.
+        MaxToolCallsExceeded => "STOP_REASON_MAX_TOOL_CALLS_EXCEEDED",
+        /// The session exceeded its input-token budget.
+        MaxInputTokensExceeded => "STOP_REASON_MAX_INPUT_TOKENS_EXCEEDED",
+        /// The session exceeded its output-token budget.
+        MaxOutputTokensExceeded => "STOP_REASON_MAX_OUTPUT_TOKENS_EXCEEDED",
+        /// The session exceeded its total-token budget.
+        MaxTotalTokensExceeded => "STOP_REASON_MAX_TOTAL_TOKENS_EXCEEDED",
+        /// The model backend's quota was exhausted.
+        QuotaExhausted => "STOP_REASON_QUOTA_EXHAUSTED",
+    }
+);
+
+wire_string_enum!(
+    /// `Modality` — the content modality a token count applies to (new in
+    /// harness 0.1.18, on the per-modality usage breakdowns).
+    ///
+    /// Note the bare wire spellings (`TEXT`, not `MODALITY_TEXT`): only the
+    /// unspecified value carries the prefix.
+    Modality, modality_type, unknown_modality_type {
+        /// `MODALITY_UNSPECIFIED`.
+        Unspecified => "MODALITY_UNSPECIFIED",
+        /// Text.
+        Text => "TEXT",
+        /// Images.
+        Image => "IMAGE",
+        /// Video.
+        Video => "VIDEO",
+        /// Audio.
+        Audio => "AUDIO",
+        /// Documents (e.g. PDF).
+        Document => "DOCUMENT",
+    }
+);
+
+wire_string_enum!(
+    /// `AgentBehavior` — how the harness frames the agent's task in its
+    /// system prompt (new in harness 0.1.18). Client → harness only.
+    AgentBehavior, behavior_type, unknown_behavior_type {
+        /// `AGENT_BEHAVIOR_UNSPECIFIED` — the harness default, which on
+        /// 0.1.18 is identical to `Autonomous` (verified by diffing the
+        /// system prompt it sends the model).
+        Unspecified => "AGENT_BEHAVIOR_UNSPECIFIED",
+        /// "The user will not respond to questions" — work unattended.
+        Autonomous => "AGENT_BEHAVIOR_AUTONOMOUS",
+        /// Work with a human in the loop: clarifying questions, artifacts.
+        Interactive => "AGENT_BEHAVIOR_INTERACTIVE",
+        /// A pruned prompt for small-context models.
+        Minimal => "AGENT_BEHAVIOR_MINIMAL",
+    }
+);
+
+wire_string_enum!(
     /// `ModelType` — the roles a configured model can serve.
     ModelType, model_type, unknown_model_type {
         /// `MODEL_TYPE_UNSPECIFIED`.
@@ -348,6 +414,11 @@ wire_string_enum!(
         PostTool => "LIFECYCLE_HOOK_POST_TOOL",
         /// Fired when a tool call errors.
         OnToolError => "LIFECYCLE_HOOK_ON_TOOL_ERROR",
+        /// Fired after history compaction (new in harness 0.1.18).
+        OnCompaction => "LIFECYCLE_HOOK_ON_COMPACTION",
+        /// Fired when a turn is about to stop; the hook may ask the agent
+        /// to continue instead (new in harness 0.1.18).
+        Stop => "LIFECYCLE_HOOK_STOP",
     }
 );
 
@@ -436,6 +507,9 @@ pub struct HarnessConfig {
     /// Static subagent configurations.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub custom_subagents: Vec<CustomAgent>,
+    /// How the harness frames the task (new in harness 0.1.18).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_behavior: Option<AgentBehavior>,
 }
 
 /// `SystemInstructions` (oneof `type`): custom or appended instructions.
@@ -587,6 +661,21 @@ pub struct HarnessSideTools {
     /// `search_web` builtin.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub search_web: Option<ToolToggle>,
+    /// `read_url_content` builtin (fetches a URL).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_url_content: Option<ToolToggle>,
+    /// Deferred tool loading via a tool-search builtin. Never written by
+    /// this crate; modeled so a config roundtrips.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_search_config: Option<ToolToggle>,
+    /// `manage_task` builtin — lists and kills background tasks started by
+    /// `run_command` or `schedule` (new in harness 0.1.18).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manage_task: Option<ToolToggle>,
+    /// `schedule` builtin — the agent schedules its own future turns as a
+    /// timer or cron job (new in harness 0.1.18).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<ToolToggle>,
 }
 
 /// `PermissionsConfig`.
@@ -770,6 +859,9 @@ pub struct CustomAgent {
     /// the main agent).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub tools: Vec<Tool>,
+    /// How the harness frames the subagent's task (new in harness 0.1.18).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_behavior: Option<AgentBehavior>,
 }
 
 // =============================================================================
@@ -779,14 +871,20 @@ pub struct CustomAgent {
 /// `InputEvent` — the client-to-harness message envelope (oneof `event`).
 ///
 /// Serializes to a single-key proto-JSON object, e.g.
-/// `{"userInput": "hello"}` or `{"toolResponse": {...}}`.
+/// `{"userInput": {"parts": [{"text": "hello"}]}}` or
+/// `{"toolResponse": {...}}`.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum InputEvent {
-    /// Plain-text user message; starts a new turn.
-    UserInput(String),
-    /// Multi-part user message (text, media, slash commands).
-    ComplexUserInput(UserInput),
+    /// A user message (text, media, slash commands); starts a new turn.
+    ///
+    /// Harness 0.1.18 dropped the plain-string `user_input` arm and renamed
+    /// the multi-part `complex_user_input` arm to `user_input`, so every
+    /// user message is now a [`UserInput`]. The old string shape is a
+    /// *parse error* on the harness side, reported only on its stderr —
+    /// the turn silently never starts. Outbound-only, so no alias is kept:
+    /// this is the one wire shape 0.1.18 accepts.
+    UserInput(UserInput),
     /// Approve/reject a harness-side tool awaiting confirmation.
     ToolConfirmation(ToolConfirmation),
     /// Result of a client-executed custom tool call.
@@ -811,6 +909,12 @@ pub enum InputEvent {
 }
 
 impl InputEvent {
+    /// A plain-text user message: one text part.
+    #[must_use]
+    pub fn user_text(text: impl Into<String>) -> Self {
+        Self::UserInput(UserInput::text(text))
+    }
+
     /// Check if this is an unknown event.
     #[must_use]
     pub const fn is_unknown(&self) -> bool {
@@ -838,7 +942,6 @@ impl InputEvent {
     fn oneof_key(&self) -> &str {
         match self {
             Self::UserInput(_) => "userInput",
-            Self::ComplexUserInput(_) => "complexUserInput",
             Self::ToolConfirmation(_) => "toolConfirmation",
             Self::ToolResponse(_) => "toolResponse",
             Self::QuestionResponse(_) => "questionResponse",
@@ -852,8 +955,8 @@ impl InputEvent {
 
     fn oneof_value(&self) -> Result<Value, serde_json::Error> {
         match self {
-            Self::UserInput(s) | Self::AutomatedTrigger(s) => Ok(Value::String(s.clone())),
-            Self::ComplexUserInput(v) => serde_json::to_value(v),
+            Self::UserInput(v) => serde_json::to_value(v),
+            Self::AutomatedTrigger(s) => Ok(Value::String(s.clone())),
             Self::ToolConfirmation(v) => serde_json::to_value(v),
             Self::ToolResponse(v) => serde_json::to_value(v),
             Self::QuestionResponse(v) => serde_json::to_value(v),
@@ -883,14 +986,8 @@ impl<'de> Deserialize<'de> for InputEvent {
             .next()
             .ok_or_else(|| D::Error::custom("InputEvent must have exactly one field set"))?;
         let event = match key.as_str() {
-            "userInput" => Self::UserInput(
-                value
-                    .as_str()
-                    .ok_or_else(|| D::Error::custom("userInput must be a string"))?
-                    .to_string(),
-            ),
-            "complexUserInput" => {
-                Self::ComplexUserInput(serde_json::from_value(value).map_err(D::Error::custom)?)
+            "userInput" => {
+                Self::UserInput(serde_json::from_value(value).map_err(D::Error::custom)?)
             }
             "toolConfirmation" => {
                 Self::ToolConfirmation(serde_json::from_value(value).map_err(D::Error::custom)?)
@@ -928,6 +1025,16 @@ pub struct UserInput {
     /// The content parts, in order.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub parts: Vec<UserInputPart>,
+}
+
+impl UserInput {
+    /// User content consisting of a single text part.
+    #[must_use]
+    pub fn text(text: impl Into<String>) -> Self {
+        Self {
+            parts: vec![UserInputPart::text(text)],
+        }
+    }
 }
 
 /// `UserInput.Part` (oneof `part`): text, media, or a slash command.
@@ -993,8 +1100,12 @@ pub struct ToolConfirmation {
 }
 
 /// `ToolResponse` — the result of a client-executed custom tool call.
+///
+/// Sent by the client, but the harness also echoes it back inside a
+/// [`ActionCustomTool`] step, so it deserializes leniently: proto3 JSON
+/// omits an empty `id`, which must not fail the whole step.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ToolResponse {
     /// Correlates with [`ToolCall::id`].
     pub id: String,
@@ -1002,8 +1113,17 @@ pub struct ToolResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_json: Option<String>,
     /// Media attachments accompanying the result.
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub supplemental_media: Vec<Media>,
+    /// The result as a structured value (the harness's `genai.Struct`
+    /// encoding). Never written by this crate, which sends
+    /// `response_json`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response: Option<Value>,
+    /// A failed call's error, as an alternative to an `{"error": ...}`
+    /// `response_json`. Never written by this crate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
 }
 
 /// `UserQuestionsResponse` — answers to a `questions_request`.
@@ -1344,9 +1464,64 @@ pub struct InitializeConversationResponse {
     /// Restored steps when resuming a saved conversation.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub history: Vec<StepUpdate>,
+    /// Token usage accumulated by a resumed conversation so far.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cumulative_usage: Option<UsageMetadata>,
+    /// Per-trajectory breakdown of `cumulative_usage`.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub trajectory_usage: Vec<TrajectoryUsageEntry>,
+    /// Whether the OS command sandbox can be enforced (new in harness
+    /// 0.1.18). Only meaningful when `run_command` sandboxing was
+    /// requested, which this crate does not do yet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox_status: Option<SandboxStatus>,
     /// Unrecognized fields, preserved for roundtrip (Evergreen).
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+/// `TrajectoryUsageEntry` — token usage attributed to one trajectory.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TrajectoryUsageEntry {
+    /// The trajectory the usage belongs to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trajectory_id: Option<String>,
+    /// Its usage.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<UsageMetadata>,
+}
+
+/// `SandboxStatus` — whether the harness can enforce the OS command
+/// sandbox.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SandboxStatus {
+    /// Whether the sandbox actually enforces isolation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub available: Option<bool>,
+    /// Why not, when `available` is false.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unavailable_reason: Option<String>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen).
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+/// `ModalityTokenCount` — a token count for one content modality.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ModalityTokenCount {
+    /// The modality counted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modality: Option<Modality>,
+    /// Tokens of that modality.
+    #[serde(
+        default,
+        deserialize_with = "flex_num::opt_u64",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub token_count: Option<u64>,
 }
 
 /// `UsageMetadata` — token accounting for a step.
@@ -1388,6 +1563,22 @@ pub struct UsageMetadata {
         skip_serializing_if = "Option::is_none"
     )]
     pub total_token_count: Option<u64>,
+    /// The service tier the backend served the request on (a raw string:
+    /// the value set differs between the Gemini API and Vertex AI).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
+    /// Prompt tokens by modality (new in harness 0.1.18).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub prompt_tokens_details: Vec<ModalityTokenCount>,
+    /// Cached tokens by modality (new in harness 0.1.18).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub cache_tokens_details: Vec<ModalityTokenCount>,
+    /// Response tokens by modality (new in harness 0.1.18).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub candidates_tokens_details: Vec<ModalityTokenCount>,
+    /// Tool-use prompt tokens by modality (new in harness 0.1.18).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub tool_use_prompt_tokens_details: Vec<ModalityTokenCount>,
     /// Unrecognized fields, preserved for roundtrip (Evergreen).
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -1407,6 +1598,11 @@ pub struct StepUpdate {
     /// Trajectory this step belongs to (subagents get their own).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trajectory_id: Option<String>,
+    /// The trajectory that spawned this step's trajectory — set on
+    /// subagent steps, absent on the root conversation's (new in harness
+    /// 0.1.18).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_trajectory_id: Option<String>,
     /// Step index within the trajectory.
     #[serde(
         default,
@@ -1480,6 +1676,14 @@ pub struct StepUpdate {
     /// `search_web` action details.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub search_web: Option<ActionSearchWeb>,
+    /// `read_url_content` action details.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_url_content: Option<ActionReadUrlContent>,
+    /// A client-executed custom tool call, mirrored into the trajectory.
+    /// The call itself arrives separately as an
+    /// [`OutputPayload::ToolCall`]; this is the harness's record of it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_tool: Option<ActionCustomTool>,
     /// Free-text description of a pending request (confirmation prompts).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_text: Option<String>,
@@ -1560,6 +1764,22 @@ pub struct TrajectoryStateUpdate {
     /// Error message (e.g. why the turn was cancelled).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The trajectory that spawned this one — set for subagent
+    /// trajectories, absent for the root conversation (new in harness
+    /// 0.1.18).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_trajectory_id: Option<String>,
+    /// Subagent nesting depth (`0`/absent for the root conversation).
+    #[serde(
+        default,
+        deserialize_with = "flex_num::opt_i32",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub depth: Option<i32>,
+    /// Why the trajectory stopped, when it was not a normal completion
+    /// (new in harness 0.1.18).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<StopReason>,
     /// Unrecognized fields, preserved for roundtrip (Evergreen).
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -1581,6 +1801,10 @@ pub struct ToolCall {
     /// Arguments as a structured value (protobuf `Struct`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<Value>,
+    /// The trajectory that made the call — lets a subagent's custom tool
+    /// calls be told apart from the parent's (new in harness 0.1.18).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trajectory_id: Option<String>,
     /// Unrecognized fields, preserved for roundtrip (Evergreen).
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -1619,6 +1843,12 @@ pub struct CallHookRequest {
 }
 
 /// `PreToolArgs`.
+///
+/// `tool_name` is the harness's *step field* name for a builtin (so the
+/// subagent builtin arrives as `invoke_subagent`, not `start_subagent`)
+/// and the bare tool name for an MCP tool, whose server is in
+/// `server_name`. The bridge maps both onto policy targets before
+/// evaluating policies (`mcp_<server>_<tool>`, `start_subagent`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PreToolArgs {
@@ -1628,9 +1858,29 @@ pub struct PreToolArgs {
     /// Its arguments, serialized as a JSON string.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments_json: Option<String>,
+    /// The MCP server providing the tool, for MCP tools.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_name: Option<String>,
+    /// The harness's correlation id for the call.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
+    /// The trajectory making the call (new in harness 0.1.18).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trajectory_id: Option<String>,
+    /// The step making the call (new in harness 0.1.18).
+    #[serde(
+        default,
+        deserialize_with = "flex_num::opt_u32",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub step_index: Option<u32>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen).
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
-/// `PostToolArgs`.
+/// `PostToolArgs`. `tool_name` follows the same convention as
+/// [`PreToolArgs`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PostToolArgs {
@@ -1643,6 +1893,93 @@ pub struct PostToolArgs {
     /// The error, if it failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The MCP server providing the tool, for MCP tools.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_name: Option<String>,
+    /// The harness's correlation id for the call.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
+    /// The trajectory that made the call (new in harness 0.1.18).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trajectory_id: Option<String>,
+    /// The step that made the call (new in harness 0.1.18).
+    #[serde(
+        default,
+        deserialize_with = "flex_num::opt_u32",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub step_index: Option<u32>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen).
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+/// Decodes the harness's `genai.Struct` encoding into plain JSON.
+///
+/// `ToolCall.arguments` (and `ToolResponse.response`) are not
+/// `google.protobuf.Struct` — whose proto-JSON form *is* plain JSON — but
+/// the harness's own `genai.Struct`, which proto-JSON renders
+/// structurally: `{"fields": [{"name": "city", "value": {"stringValue":
+/// "SF"}}]}`. Returns `None` when `value` is not that shape. A value kind
+/// with no JSON equivalent (`contentValue`, `functionValue`) is kept as its
+/// raw object rather than dropped.
+pub(crate) fn decode_genai_struct(value: &Value) -> Option<Value> {
+    fn decode_value(value: &Value) -> Option<Value> {
+        let Value::Object(kind) = value else {
+            return None;
+        };
+        // Proto3 omits a oneof arm set to its default, so an empty object
+        // is an unset value.
+        let Some((arm, inner)) = kind.iter().next() else {
+            return Some(Value::Null);
+        };
+        Some(match arm.as_str() {
+            "nullValue" => Value::Null,
+            "numberValue" | "stringValue" | "boolValue" => inner.clone(),
+            "structValue" => decode_genai_struct(inner)?,
+            "listValue" => Value::Array(
+                inner
+                    .get("values")
+                    .and_then(Value::as_array)
+                    .map(|values| values.iter().map(decode_value).collect::<Option<_>>())
+                    .unwrap_or(Some(Vec::new()))?,
+            ),
+            _ => value.clone(),
+        })
+    }
+
+    let Value::Object(object) = value else {
+        return None;
+    };
+    let mut decoded = Map::new();
+    let Some(fields) = object.get("fields") else {
+        // An empty struct omits its only field.
+        return object.is_empty().then_some(Value::Object(decoded));
+    };
+    for field in fields.as_array()? {
+        let name = field.get("name")?.as_str()?;
+        let inner = field.get("value").map_or(Some(Value::Null), decode_value)?;
+        decoded.insert(name.to_string(), inner);
+    }
+    Some(Value::Object(decoded))
+}
+
+/// Maps a hook callback's `(tool_name, server_name)` onto the name
+/// policies target: `mcp_<server>_<tool>` for MCP tools, and the builtin's
+/// public wire name for builtins.
+///
+/// The harness names a builtin in hook args by its `StepUpdate` field, and
+/// exactly one differs from the public name: `invoke_subagent` is the
+/// `start_subagent` builtin (the reference SDK maps it the same way). Left
+/// unmapped, `policy::deny("start_subagent")` would never fire on the hook
+/// path, and an MCP rule would never match its bare tool name.
+#[must_use]
+pub(crate) fn hook_tool_name(tool_name: &str, server_name: Option<&str>) -> String {
+    match server_name.filter(|s| !s.is_empty()) {
+        Some(server) => super::hooks::mcp_tool_name(server, tool_name),
+        None if tool_name == "invoke_subagent" => "start_subagent".to_string(),
+        None => tool_name.to_string(),
+    }
 }
 
 /// `PreTurnArgs`.
@@ -1762,6 +2099,13 @@ pub struct ActionViewFile {
         skip_serializing_if = "Option::is_none"
     )]
     pub end_line: Option<u32>,
+    /// Offset into the file's content (new in harness 0.1.18).
+    #[serde(
+        default,
+        deserialize_with = "flex_num::opt_i32",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub content_offset: Option<i32>,
     /// Unrecognized fields, preserved for roundtrip (Evergreen).
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -1869,8 +2213,8 @@ pub struct ActionCompaction {
 /// `ActionInvokeSubagent` — subagent invocation marker.
 ///
 /// The invoked subagent's `name` is modeled as an optional typed field, but
-/// **the harness does not populate it** (verified live on 0.1.5 and again
-/// on 0.1.10 by `test_antigravity_subagent_is_actually_invoked`, which
+/// **the harness does not populate it** (verified live on 0.1.5, 0.1.10 and
+/// 0.1.18 by `test_antigravity_subagent_is_actually_invoked`, which
 /// delegates for real and reports the answer rather than asserting the old
 /// one): the `invokeSubagent` step action is an empty message on the wire,
 /// and the step only carries the generic text `"Invoke subagent"`. The
@@ -1881,7 +2225,7 @@ pub struct ActionCompaction {
 #[serde(rename_all = "camelCase")]
 pub struct ActionInvokeSubagent {
     /// The invoked subagent's name, when the harness reports it (see the
-    /// type docs — `None` on harness 0.1.5).
+    /// type docs — `None` on every harness so far).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Unrecognized fields, preserved for roundtrip (Evergreen).
@@ -1905,6 +2249,9 @@ pub struct ActionGenerateImage {
     /// Requested aspect ratio.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aspect_ratio: Option<String>,
+    /// Where the generated image was written (new in harness 0.1.18).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_path: Option<String>,
     /// Unrecognized fields, preserved for roundtrip (Evergreen).
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -1959,6 +2306,43 @@ pub struct ActionMcpTool {
     pub extra: Map<String, Value>,
 }
 
+/// `ActionReadUrlContent`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionReadUrlContent {
+    /// The fetched URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// The page title (populated when the step completes).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Content summary (populated when the step completes).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// Where the harness saved the full content.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_path: Option<String>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen).
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+/// `ActionCustomTool` — the trajectory's record of a client-executed
+/// custom tool call.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionCustomTool {
+    /// The call as the model made it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call: Option<ToolCall>,
+    /// The client's response, once sent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_response: Option<ToolResponse>,
+    /// Unrecognized fields, preserved for roundtrip (Evergreen).
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
 /// `ActionSearchWeb`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -1984,15 +2368,25 @@ mod tests {
 
     // -------------------------------------------------------------------
     // Golden proto-JSON fixtures generated with the reference
-    // implementation (google-antigravity 0.1.5, protobuf json_format).
+    // implementation (google-antigravity 0.1.5, protobuf json_format;
+    // user input re-derived against 0.1.18).
     // -------------------------------------------------------------------
 
     #[test]
     fn test_input_event_user_input_golden() {
-        let event = InputEvent::UserInput("hello".to_string());
+        // Harness 0.1.18 carries every user message as a multi-part
+        // object. The pre-0.1.18 `{"userInput": "hello"}` string form is a
+        // harness-side parse error that surfaces only on its stderr — the
+        // turn never starts and every chat ran to its timeout.
+        let event = InputEvent::user_text("hello");
         assert_eq!(
             serde_json::to_value(&event).unwrap(),
-            json!({"userInput": "hello"})
+            json!({"userInput": {"parts": [{"text": "hello"}]}})
+        );
+        assert_eq!(
+            event,
+            InputEvent::UserInput(UserInput::text("hello")),
+            "user_text is sugar for a single text part"
         );
     }
 
@@ -2001,7 +2395,7 @@ mod tests {
         let event = InputEvent::ToolResponse(ToolResponse {
             id: "1".to_string(),
             response_json: Some(r#"{"a":1}"#.to_string()),
-            supplemental_media: vec![],
+            ..Default::default()
         });
         assert_eq!(
             serde_json::to_value(&event).unwrap(),
@@ -2160,6 +2554,116 @@ mod tests {
         );
     }
 
+    // -------------------------------------------------------------------
+    // Harness 0.1.18 goldens, verbatim from LOUD_WIRE captures (ids
+    // shortened). Each exercises a shape new in, or first observed on,
+    // this revision.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_0_1_18_custom_tool_step_golden() {
+        // The trajectory's record of a client-executed tool. It must parse
+        // into the typed field rather than `extra` — an action that lands in
+        // `extra` is read as an unknown builtin, which fails closed at a
+        // confirmation. Note the echoed response's `id` is the tool *name*.
+        let raw = r#"{"stepUpdate":{"cascadeId":"c","customTool":{"toolCall":{"arguments":{"fields":[{"name":"city","value":{"stringValue":"Zurich"}}]},"argumentsJson":"{\"city\":\"Zurich\"}","id":"call_58372","name":"antigravity_test_weather"},"toolResponse":{"id":"antigravity_test_weather","responseJson":"{\"result\":\"ok\"}"}},"source":"SOURCE_MODEL","state":"STATE_DONE","stepIndex":1,"target":"TARGET_ENVIRONMENT","text":"Weather check","textDelta":"","thinking":"","thinkingDelta":"","trajectoryId":"t"},"seqNum":"9"}"#;
+        let event: OutputEvent = serde_json::from_str(raw).unwrap();
+        let Some(OutputPayload::StepUpdate(step)) = &event.payload else {
+            panic!("expected StepUpdate, got {:?}", event.payload);
+        };
+        assert!(step.extra.is_empty(), "unmodeled: {:?}", step.extra.keys());
+        let custom = step.custom_tool.as_ref().expect("customTool");
+        let call = custom.tool_call.as_ref().unwrap();
+        assert_eq!(call.name.as_deref(), Some("antigravity_test_weather"));
+        assert_eq!(call.arguments_json.as_deref(), Some(r#"{"city":"Zurich"}"#));
+        let response = custom.tool_response.as_ref().unwrap();
+        assert_eq!(
+            response.response_json.as_deref(),
+            Some(r#"{"result":"ok"}"#)
+        );
+
+        // And an in-flight record with no response and no id still parses:
+        // `ToolResponse` is lenient because proto3 may omit its `id`.
+        let partial: ActionCustomTool =
+            serde_json::from_value(json!({"toolResponse": {"responseJson": "{}"}})).unwrap();
+        assert_eq!(partial.tool_response.unwrap().id, "");
+    }
+
+    #[test]
+    fn test_0_1_18_subagent_trajectory_update_golden() {
+        let raw = r#"{"trajectoryStateUpdate":{"depth":1,"parentTrajectoryId":"root","state":"STATE_FULLY_IDLE","trajectoryId":"sub"}}"#;
+        let event: OutputEvent = serde_json::from_str(raw).unwrap();
+        let Some(OutputPayload::TrajectoryStateUpdate(update)) = &event.payload else {
+            panic!("expected TrajectoryStateUpdate");
+        };
+        assert!(
+            update.extra.is_empty(),
+            "unmodeled: {:?}",
+            update.extra.keys()
+        );
+        assert_eq!(update.parent_trajectory_id.as_deref(), Some("root"));
+        assert_eq!(update.depth, Some(1));
+        assert_eq!(update.state, Some(TrajectoryState::Idle));
+
+        let stopped: TrajectoryStateUpdate = serde_json::from_value(json!({
+            "trajectoryId": "root",
+            "state": "STATE_FULLY_IDLE",
+            "stopReason": "STOP_REASON_QUOTA_EXHAUSTED"
+        }))
+        .unwrap();
+        assert_eq!(stopped.stop_reason, Some(StopReason::QuotaExhausted));
+    }
+
+    #[test]
+    fn test_0_1_18_usage_update_with_modality_details_golden() {
+        let raw = r#"{"usageUpdate":{"agents":[{"trajectoryId":"t","usage":{"totalTokenCount":"407"}}],"total":{"cachedContentTokenCount":"0","candidatesTokenCount":"39","promptTokenCount":"287","promptTokensDetails":[{"modality":"TEXT","tokenCount":"287"}],"thoughtsTokenCount":"81","totalTokenCount":"407"}}}"#;
+        let event: OutputEvent = serde_json::from_str(raw).unwrap();
+        let usage = event.usage_metadata.expect("usage");
+        assert!(
+            usage.extra.is_empty(),
+            "unmodeled: {:?}",
+            usage.extra.keys()
+        );
+        assert_eq!(usage.total_token_count, Some(407));
+        assert_eq!(
+            usage.prompt_tokens_details,
+            vec![ModalityTokenCount {
+                modality: Some(Modality::Text),
+                token_count: Some(287),
+            }]
+        );
+    }
+
+    #[test]
+    fn test_0_1_18_init_response_and_hook_args_golden() {
+        let raw = r#"{"initializeConversationResponse":{"cascadeId":"c","sandboxStatus":{"available":true,"unavailableReason":""}},"seqNum":"1"}"#;
+        let event: OutputEvent = serde_json::from_str(raw).unwrap();
+        let Some(OutputPayload::InitializeConversationResponse(init)) = &event.payload else {
+            panic!("expected InitializeConversationResponse");
+        };
+        assert!(init.extra.is_empty(), "unmodeled: {:?}", init.extra.keys());
+        assert_eq!(init.sandbox_status.as_ref().unwrap().available, Some(true));
+
+        let raw = r#"{"callHookRequest":{"name":"PreTool","preToolArgs":{"argumentsJson":"{}","callId":"call_85755","serverName":"widgets","stepIndex":2,"toolName":"lookup_widget_code","trajectoryId":"t"},"requestId":"hook_request_0","type":"LIFECYCLE_HOOK_PRE_TOOL"}}"#;
+        let event: OutputEvent = serde_json::from_str(raw).unwrap();
+        let Some(OutputPayload::CallHookRequest(request)) = &event.payload else {
+            panic!("expected CallHookRequest");
+        };
+        let args = request.pre_tool_args.as_ref().unwrap();
+        assert!(args.extra.is_empty(), "unmodeled: {:?}", args.extra.keys());
+        assert_eq!(args.server_name.as_deref(), Some("widgets"));
+        assert_eq!(args.step_index, Some(2));
+        assert_eq!(
+            hook_tool_name("lookup_widget_code", args.server_name.as_deref()),
+            "mcp_widgets_lookup_widget_code"
+        );
+        assert_eq!(
+            hook_tool_name("invoke_subagent", Some("")),
+            "start_subagent"
+        );
+        assert_eq!(hook_tool_name("view_file", None), "view_file");
+    }
+
     #[test]
     fn test_output_event_step_update_golden() {
         // Verbatim harness-side encoding: int64/uint64 as strings.
@@ -2225,8 +2729,8 @@ mod tests {
     #[test]
     fn test_input_event_roundtrip_all_variants() {
         let events = vec![
-            InputEvent::UserInput("hi".to_string()),
-            InputEvent::ComplexUserInput(UserInput {
+            InputEvent::user_text("hi"),
+            InputEvent::UserInput(UserInput {
                 parts: vec![
                     UserInputPart::text("a"),
                     UserInputPart {
@@ -2254,6 +2758,7 @@ mod tests {
                 id: "id".to_string(),
                 response_json: Some("{}".to_string()),
                 supplemental_media: vec![Media::default()],
+                ..Default::default()
             }),
             InputEvent::QuestionResponse(UserQuestionsResponse {
                 trajectory_id: "t".to_string(),
@@ -2328,8 +2833,8 @@ mod tests {
                     TrajectoryStateUpdate {
                         trajectory_id: Some("t".to_string()),
                         state: Some(TrajectoryState::Idle),
-                        error: None,
-                        extra: Map::new(),
+                        stop_reason: Some(StopReason::QuotaExhausted),
+                        ..Default::default()
                     },
                 )),
                 ..Default::default()
@@ -2348,7 +2853,7 @@ mod tests {
                     InitializeConversationResponse {
                         cascade_id: Some("c".to_string()),
                         history: vec![StepUpdate::default()],
-                        extra: Map::new(),
+                        ..Default::default()
                     },
                 )),
                 ..Default::default()
@@ -2360,6 +2865,7 @@ mod tests {
                     pre_tool_args: Some(PreToolArgs {
                         tool_name: Some("run_command".to_string()),
                         arguments_json: Some("{}".to_string()),
+                        ..Default::default()
                     }),
                     ..Default::default()
                 })),
@@ -2473,6 +2979,37 @@ mod tests {
             action.diff_block[0].lines[0].action,
             Some(LineAction::Insert)
         );
+    }
+
+    #[test]
+    fn test_decode_genai_struct() {
+        // Verbatim `ToolCall.arguments` from a 0.1.18 capture.
+        let wire = json!({"fields": [{"name": "city", "value": {"stringValue": "Zurich"}}]});
+        assert_eq!(decode_genai_struct(&wire), Some(json!({"city": "Zurich"})));
+
+        let nested = json!({"fields": [
+            {"name": "n", "value": {"numberValue": 2.5}},
+            {"name": "b", "value": {"boolValue": true}},
+            {"name": "z", "value": {"nullValue": "NULL_VALUE"}},
+            {"name": "unset", "value": {}},
+            {"name": "o", "value": {"structValue": {"fields": [
+                {"name": "k", "value": {"stringValue": "v"}}
+            ]}}},
+            {"name": "l", "value": {"listValue": {"values": [
+                {"numberValue": 1}, {"stringValue": "two"}
+            ]}}},
+            {"name": "empty", "value": {"structValue": {}}},
+        ]});
+        assert_eq!(
+            decode_genai_struct(&nested),
+            Some(json!({
+                "n": 2.5, "b": true, "z": null, "unset": null,
+                "o": {"k": "v"}, "l": [1, "two"], "empty": {}
+            }))
+        );
+        // Not the struct shape: refuse rather than guess.
+        assert_eq!(decode_genai_struct(&json!({"city": "Zurich"})), None);
+        assert_eq!(decode_genai_struct(&json!("x")), None);
     }
 
     #[test]

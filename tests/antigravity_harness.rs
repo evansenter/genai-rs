@@ -1,19 +1,19 @@
 //! Integration tests against a real `localharness` binary.
 //!
 //! These tests need the binary from the `google-antigravity` wheel
-//! (`pip install google-antigravity==0.1.10`) discoverable via the standard
+//! (`pip install google-antigravity==0.1.18`) discoverable via the standard
 //! order (`ANTIGRAVITY_HARNESS_PATH`, python3 site-packages, `PATH`).
 //!
 //! Most tests do NOT need a Gemini API key: the harness completes its
 //! handshake and conversation init with a placeholder key (verified
-//! against harness 0.1.5 and 0.1.10). Chat tests need a real
+//! against harness 0.1.5, 0.1.10 and 0.1.18). Chat tests need a real
 //! `GEMINI_API_KEY` — CI supplies one, because these are the only tests
 //! that drive a real turn end to end and therefore the only guard
 //! against a harness protocol change breaking turn completion.
 //!
 //! Run with:
 //! ```bash
-//! cargo nextest run --features antigravity --run-ignored all -E 'test(/antigravity/)'
+//! cargo nextest run --features antigravity --run-ignored all -E 'binary(antigravity_harness)'
 //! ```
 
 #![cfg(feature = "antigravity")]
@@ -21,7 +21,8 @@
 use futures_util::StreamExt;
 use genai_rs::CallableFunction;
 use genai_rs::antigravity::{
-    AgentEvent, AntigravityAgent, AntigravityError, BuiltinTool, Capabilities, policy,
+    AgentBehavior, AgentEvent, AntigravityAgent, AntigravityError, BuiltinTool, Capabilities,
+    policy,
 };
 use genai_rs_macros::tool;
 
@@ -682,7 +683,8 @@ async fn test_antigravity_structured_output_follows_response_schema() {
 /// else.
 ///
 /// This test also pins *how* a cancelled turn ends, which is not what the
-/// crate documented before it was run: harness 0.1.10 answers a
+/// crate documented before it was run: harness 0.1.10 (and still 0.1.18)
+/// answers a
 /// `haltRequest` with `STATE_FULLY_IDLE`, not `STATE_CANCELLED`, so the
 /// turn resolves as a normal `Finished` carrying whatever partial output
 /// existed — it does **not** fail with `AntigravityError::Turn`. The
@@ -809,18 +811,18 @@ async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
     );
 
     match outcome {
-        // The documented-and-verified shape on 0.1.10.
+        // The documented-and-verified shape on 0.1.10 and 0.1.18.
         Ok(()) => assert!(
             finished,
             "the stream ended without a Finished event and without an error"
         ),
-        // Not what 0.1.10 does, but the turn loop still maps a harness
+        // Not what 0.1.10/0.1.18 do, but the turn loop still maps a harness
         // STATE_CANCELLED here; accept it rather than fail if the harness
         // changes its mind, and say so loudly.
         Err(AntigravityError::Turn(message)) => {
             println!(
                 "note: this harness reported cancellation as a Turn error \
-                 ({message:?}) — 0.1.10 ended the turn as Finished. Update the \
+                 ({message:?}) — 0.1.18 ended the turn as Finished. Update the \
                  CancelHandle docs if this is the new behavior."
             );
         }
@@ -869,6 +871,11 @@ async fn test_antigravity_on_questions_answers_reach_the_model() {
         // AskQuestion is write-capable, so it needs a policy to clear the
         // spawn-time gate even though questions bypass the policy engine.
         .with_capabilities(Capabilities::read_only().enable(BuiltinTool::AskQuestion))
+        // Required since 0.1.18: the default (autonomous) system prompt
+        // tells the model the user will not answer, and it then asks in
+        // prose instead of calling ask_question — observed on the first
+        // 0.1.18 run of this test.
+        .with_agent_behavior(AgentBehavior::Interactive)
         .add_policy(policy::allow_all())
         .on_questions(move |questions| {
             hook_asked.lock().unwrap().extend_from_slice(questions);
@@ -972,7 +979,7 @@ async fn test_antigravity_on_questions_answers_reach_the_model() {
 /// 0.1.5: `ActionInvokeSubagent::name` says the harness sends an empty
 /// message and the name is always `None`. That is exactly the kind of
 /// version-pinned claim that goes stale silently, so the test reports what
-/// 0.1.10 actually does rather than asserting the old answer.
+/// the pinned harness actually does rather than asserting the old answer.
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_antigravity_subagent_is_actually_invoked() {
@@ -1043,8 +1050,9 @@ async fn test_antigravity_subagent_is_actually_invoked() {
     if named.is_empty() {
         println!(
             "invokeSubagent carried no name ({} invocation(s)) — matches the \
-             documented 0.1.5 behavior, still true on 0.1.10",
-            invocations.len()
+             documented 0.1.5 behavior, still true on {}",
+            invocations.len(),
+            genai_rs::antigravity::SUPPORTED_HARNESS_VERSION,
         );
     } else {
         println!(
@@ -1149,6 +1157,126 @@ async fn test_antigravity_mcp_server_tool_is_called() {
     agent.shutdown().await.expect("shutdown");
 }
 
+/// A policy naming an MCP tool by its `mcp_<server>_<tool>` target must
+/// actually reach that tool's call — and be able to block it.
+///
+/// Regression: harness 0.1.18 gates MCP calls only through the pre-tool
+/// hook (no confirmation step), and names the tool there by its bare name
+/// with the server in a separate field. The bridge matched policies
+/// against the bare name, so a rule for `mcp_widgets_lookup_widget_code`
+/// never fired and the call ran. The hook records what it was asked about,
+/// which pins the name and argument shape; the fixture's token cannot be
+/// guessed, so its absence from the answer proves the server was never
+/// reached.
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_antigravity_policy_denies_mcp_tool_by_policy_target() {
+    use genai_rs::antigravity::{McpServer, PreToolDecision};
+
+    let Some(key) = api_key() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+    // Same token as tests/fixtures/mcp_echo_server.py.
+    const WIDGET_CODE: &str = "wibble-3317-quux";
+    const TARGET: &str = "mcp_widgets_lookup_widget_code";
+
+    let fixture =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mcp_echo_server.py");
+    /// (name, args) for every call the pre-tool hook was consulted on.
+    type Consulted = std::sync::Arc<std::sync::Mutex<Vec<(String, serde_json::Value)>>>;
+    let consulted: Consulted = std::sync::Arc::default();
+    let hook_consulted = std::sync::Arc::clone(&consulted);
+
+    let mut agent = AntigravityAgent::builder()
+        .with_turn_timeout(std::time::Duration::from_secs(120))
+        .with_api_key(key)
+        .with_model(genai_rs::DEFAULT_MODEL)
+        .with_system_instructions(
+            "Widget codes can only be obtained by calling the MCP tool named \
+             exactly `lookup_widget_code` on the `widgets` server. Call it \
+             once. If the call is denied, reply with the single word DENIED \
+             and stop — never guess a code.",
+        )
+        .add_mcp_server(
+            McpServer::stdio("python3", [fixture.to_string_lossy().to_string()])
+                .with_name("widgets"),
+        )
+        .with_capabilities(Capabilities::none())
+        .add_policy(policy::allow_all())
+        .add_policy(policy::confirm(TARGET))
+        .on_pre_tool(move |call| {
+            hook_consulted
+                .lock()
+                .unwrap()
+                .push((call.name.clone(), call.args.clone()));
+            PreToolDecision::deny("widget lookups are not allowed in this test")
+        })
+        .spawn()
+        .await
+        .expect("spawn with an MCP server");
+
+    let mut denials: Vec<String> = Vec::new();
+    let mut text = String::new();
+    {
+        let mut stream = agent
+            .send_streaming("What is the code for the widget named `flange`?")
+            .await
+            .expect("stream");
+        while let Some(event) = stream.next().await {
+            match event.expect("the turn completes; the model sees the denial") {
+                AgentEvent::ToolAction { decision, .. } => {
+                    if let Some(reason) = decision.denial_reason() {
+                        denials.push(reason.to_string());
+                    }
+                }
+                AgentEvent::Finished(response) => {
+                    text = response.text().to_string();
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+    let consulted = std::mem::take(&mut *consulted.lock().unwrap());
+    println!("hook consulted on: {consulted:?}");
+    println!("denied actions: {denials:?}");
+    println!("response: {text}");
+
+    // The confirm rule sends only its exact target to the hook, so a
+    // consultation at all proves the policy name matched.
+    let (_, args) = consulted
+        .iter()
+        .find(|(name, _)| name == TARGET)
+        .unwrap_or_else(|| {
+            panic!(
+                "the pre-tool hook was never consulted for {TARGET} — either the model never \
+             tried the tool, or the policy target no longer matches the harness's naming. \
+             Consulted: {consulted:?}"
+            )
+        });
+    // The harness's `{"Arguments": .., "ServerName": .., "ToolName": ..}`
+    // wrapper is peeled, so the hook sees what the model passed.
+    assert!(
+        args.get("ServerName").is_none() && args.get("ToolName").is_none(),
+        "hook args should be the tool's own arguments, got {args}"
+    );
+    assert!(
+        !text.contains(WIDGET_CODE),
+        "the denied MCP tool ran anyway — its token reached the model: {text}"
+    );
+    // And the stream says so: a hook-denied call must not read as an
+    // executed one (it arrives as an error step, marked Denied).
+    assert!(
+        denials
+            .iter()
+            .any(|reason| reason.contains("not allowed in this test")),
+        "no ToolAction carried ToolDecision::Denied for the blocked call; denials: {denials:?}"
+    );
+
+    agent.shutdown().await.expect("shutdown");
+}
+
 // =============================================================================
 // Protocol drift guard
 // =============================================================================
@@ -1199,6 +1327,14 @@ def walk(msgs, prefix=""):
             head, *rest = f.name.split("_")
             return head + "".join(w.capitalize() for w in rest)
         out["fields:" + full] = sorted(json_name(f) for f in mt.field)
+        # And each field's *type*: a field can keep its name and change
+        # shape, which the name list cannot see (0.1.18 turned
+        # InputEvent.userInput from a string into a UserInput message).
+        def type_of(f):
+            base = f.type_name.lstrip(".") if f.type_name else \
+                descriptor_pb2.FieldDescriptorProto.Type.Name(f.type)[5:].lower()
+            return ("repeated " if f.label == 3 else "") + base
+        out["ftypes:" + full] = {json_name(f): type_of(f) for f in mt.field}
         walk(mt.nested_type, full + ".")
 for e in fdp.enum_type:
     out[e.name] = sorted(v.name for v in e.value)
@@ -1428,6 +1564,70 @@ fn find_field_drift(harness: &serde_json::Value, modeled: &[(&str, &[&str])]) ->
     drift
 }
 
+/// Compares harness field *types* against what this crate hand-encodes,
+/// one line per mismatch.
+///
+/// The name check above is blind to a field that keeps its name and
+/// changes shape, which is exactly what 0.1.18 did to `InputEvent.userInput`
+/// (string -> `UserInput` message). That guard only fired because
+/// `complexUserInput` vanished in the same release; had the harness kept
+/// both arms, it would have passed while every turn failed to start.
+fn find_field_type_drift(
+    harness: &serde_json::Value,
+    modeled: &[(&str, &str, &str)],
+) -> Vec<String> {
+    let mut drift = Vec::new();
+    for (message, field, expected) in modeled {
+        let key = format!("ftypes:{message}");
+        let actual = harness
+            .get(&key)
+            .and_then(|types| types.get(field))
+            .and_then(serde_json::Value::as_str);
+        match actual {
+            Some(actual) if actual == *expected => {}
+            Some(actual) => drift.push(format!(
+                "{message}.{field}: this crate encodes it as {expected}, but the harness \
+                 declares {actual} (the harness will reject what we send, or we misread it)"
+            )),
+            None => drift.push(format!(
+                "{message}.{field}: no type in the harness descriptor — renamed or removed"
+            )),
+        }
+    }
+    drift
+}
+
+#[test]
+fn field_type_drift_detector_catches_the_0_1_18_user_input_change() {
+    // The 0.1.18 break, replayed: same field name, new shape.
+    let harness = serde_json::json!({
+        "ftypes:InputEvent": {
+            "userInput": "antigravity.localharness.UserInput",
+            "haltRequest": "bool",
+        },
+    });
+    let stale = find_field_type_drift(&harness, &[("InputEvent", "userInput", "string")]);
+    assert_eq!(stale.len(), 1, "expected one drift line, got {stale:?}");
+    assert!(stale[0].contains("UserInput"), "got: {}", stale[0]);
+
+    let current = find_field_type_drift(
+        &harness,
+        &[
+            (
+                "InputEvent",
+                "userInput",
+                "antigravity.localharness.UserInput",
+            ),
+            ("InputEvent", "haltRequest", "bool"),
+        ],
+    );
+    assert!(current.is_empty(), "got: {current:?}");
+
+    let gone = find_field_type_drift(&harness, &[("InputEvent", "complexUserInput", "x")]);
+    assert_eq!(gone.len(), 1);
+    assert!(gone[0].contains("renamed or removed"));
+}
+
 #[test]
 fn field_drift_detector_catches_the_usage_rename() {
     // The other half of the 0.1.10 break, replayed: the crate reads
@@ -1523,8 +1723,8 @@ fn drift_detector_flags_a_missing_enum_and_ignores_retired_values() {
 #[ignore = "Requires localharness binary"]
 async fn test_antigravity_protocol_enums_have_not_drifted() {
     use genai_rs::antigravity::protocol::{
-        HookDecision, LifecycleHook, LineAction, ModelType, StepSource, StepState, StepTarget,
-        TrajectoryState,
+        HookDecision, LifecycleHook, LineAction, Modality, ModelType, StepSource, StepState,
+        StepTarget, StopReason, TrajectoryState,
     };
 
     let Some(harness) = harness_proto_enums() else {
@@ -1543,7 +1743,12 @@ async fn test_antigravity_protocol_enums_have_not_drifted() {
             "TrajectoryStateUpdate.State",
             TrajectoryState::all_wire_values(),
         ),
+        (
+            "TrajectoryStateUpdate.StopReason",
+            StopReason::all_wire_values(),
+        ),
         ("ModelType", ModelType::all_wire_values()),
+        ("Modality", Modality::all_wire_values()),
         ("LifecycleHook", LifecycleHook::all_wire_values()),
         ("PreToolResult.Decision", HookDecision::all_wire_values()),
         (
@@ -1588,7 +1793,6 @@ async fn test_antigravity_protocol_enums_have_not_drifted() {
             "InputEvent",
             &[
                 "userInput",
-                "complexUserInput",
                 "toolConfirmation",
                 "toolResponse",
                 "questionResponse",
@@ -1600,6 +1804,24 @@ async fn test_antigravity_protocol_enums_have_not_drifted() {
         ),
     ];
     drift.extend(find_field_drift(&harness, &fields));
+
+    // Fields whose JSON *shape* the crate hand-encodes (the oneof arms in
+    // `InputEvent`/`OutputEvent`'s manual serde, and the usage envelope
+    // it unwraps) — a type change there is a silent break in one
+    // direction or the other.
+    const PKG: &str = "antigravity.localharness";
+    let user_input = format!("{PKG}.UserInput");
+    let usage_update = format!("{PKG}.UsageUpdate");
+    let types: Vec<(&str, &str, &str)> = vec![
+        ("InputEvent", "userInput", &user_input),
+        ("InputEvent", "haltRequest", "bool"),
+        ("InputEvent", "automatedTrigger", "string"),
+        ("InputEvent", "sessionEndRequest", "bool"),
+        ("OutputEvent", "sessionEndResponse", "bool"),
+        ("OutputEvent", "usageUpdate", &usage_update),
+        ("OutputEvent", "seqNum", "int64"),
+    ];
+    drift.extend(find_field_type_drift(&harness, &types));
 
     assert!(
         drift.is_empty(),
