@@ -855,7 +855,7 @@ mod text_to_speech {
     /// We use a flat format: `{"voice": "Kore", "language": "en-US"}`
     ///
     /// This test documents API behavior: nested format returns 400, flat format works.
-    /// See docs/INTERACTIONS_API_FEEDBACK.md Issue #7.
+    /// See docs/ENUM_WIRE_FORMATS.md ("SpeechConfig (generation_config)").
     #[tokio::test]
     #[ignore = "Requires API key and TTS model access"]
     async fn test_speech_config_nested_format_fails_flat_succeeds() {

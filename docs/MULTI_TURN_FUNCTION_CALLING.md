@@ -453,7 +453,7 @@ The model remembers available tools within the same interaction chain. Only new 
 
 ## Thought Signatures
 
-> **Key Finding**: Thought signatures ARE present in Interactions API responses, but in a **different location** than the `generateContent` docs describe. See [INTERACTIONS_API_FEEDBACK.md](./INTERACTIONS_API_FEEDBACK.md#1-thought-signatures-location-differs-from-generatecontent) for details.
+> **Key Finding**: Thought signatures ARE present in Interactions API responses, but in a **different location** than the `generateContent` docs describe.
 
 The Gemini API returns `thought` steps when thinking is enabled. Here's what we know:
 
