@@ -24,7 +24,7 @@ use super::environment::{
 use super::environments::EnvironmentStatus;
 use super::request::{
     AgentConfig, DeepResearchConfig, DynamicConfig, GenerationConfig, ImageAspectRatio,
-    ImageConfig, ImageSize, InteractionInput, Role, ServiceTier, SpeechConfig, ThinkingLevel,
+    ImageConfig, ImageSize, InteractionInput, ServiceTier, SpeechConfig, ThinkingLevel,
     ThinkingSummaries, TranscriptionConfig, TurnContent, VideoConfig, VideoTask, Visualization,
 };
 use super::response::{
@@ -512,19 +512,6 @@ fn arb_code_execution_language() -> impl Strategy<Value = CodeExecutionLanguage>
         arb_unknown_type().prop_map(|language_type| CodeExecutionLanguage::Unknown {
             language_type: language_type.clone(),
             data: serde_json::Value::String(language_type),
-        }),
-    ]
-}
-
-/// Strategy for Role.
-fn arb_role() -> impl Strategy<Value = Role> {
-    prop_oneof![
-        Just(Role::User),
-        Just(Role::Model),
-        // Unknown variant with preserved data (role_type and data fields per Evergreen pattern)
-        arb_unknown_type().prop_map(|role_type| Role::Unknown {
-            data: serde_json::Value::String(role_type.clone()),
-            role_type,
         }),
     ]
 }
@@ -2206,14 +2193,6 @@ proptest! {
         let json = serde_json::to_string(&config).expect("Serialization should succeed");
         let restored: ImageConfig = serde_json::from_str(&json).expect("Deserialization should succeed");
         prop_assert_eq!(config, restored);
-    }
-
-    /// Test that Role roundtrips correctly through JSON.
-    #[test]
-    fn role_roundtrip(role in arb_role()) {
-        let json = serde_json::to_string(&role).expect("Serialization should succeed");
-        let restored: Role = serde_json::from_str(&json).expect("Deserialization should succeed");
-        prop_assert_eq!(role, restored);
     }
 
     /// Test that Annotation roundtrips stably through JSON.

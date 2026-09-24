@@ -16,7 +16,7 @@
 
 use genai_rs::{
     Annotation, Content, EnvironmentStatus, FunctionCallingMode, HarmCategory, InteractionStatus,
-    Resolution, Role, SafetyMethod, SafetyThreshold, ServiceTier, Step, StepDelta, StreamChunk,
+    Resolution, SafetyMethod, SafetyThreshold, ServiceTier, Step, StepDelta, StreamChunk,
     ThinkingLevel, ThinkingSummaries, ToolChoice, TriggerExecutionStatus, TriggerStatus,
 };
 use serde_json::json;
@@ -432,30 +432,6 @@ mod service_tier {
 }
 
 // =============================================================================
-// Role Unknown Variant Tests
-// =============================================================================
-
-mod role {
-    use super::*;
-
-    #[test]
-    fn unknown_role_deserializes() {
-        let json = json!("assistant");
-        let value: Role = serde_json::from_value(json).unwrap();
-        assert!(value.is_unknown());
-        assert_eq!(value.unknown_role_type(), Some("assistant"));
-    }
-
-    #[test]
-    fn unknown_role_roundtrips() {
-        let json = json!("supervisor");
-        let value: Role = serde_json::from_value(json.clone()).unwrap();
-        let back = serde_json::to_value(&value).unwrap();
-        assert_eq!(back, "supervisor");
-    }
-}
-
-// =============================================================================
 // ThinkingLevel Unknown Variant Tests
 // =============================================================================
 
@@ -642,10 +618,6 @@ mod helper_methods {
         let tier: ServiceTier = serde_json::from_value(json!("future")).unwrap();
         assert!(tier.is_unknown());
 
-        // Role
-        let role: Role = serde_json::from_value(json!("future")).unwrap();
-        assert!(role.is_unknown());
-
         // ThinkingLevel
         let level: ThinkingLevel = serde_json::from_value(json!("future")).unwrap();
         assert!(level.is_unknown());
@@ -725,10 +697,6 @@ mod helper_methods {
         // ServiceTier
         let tier: ServiceTier = serde_json::from_value(json!("test_tier")).unwrap();
         assert_eq!(tier.unknown_tier_type(), Some("test_tier"));
-
-        // Role
-        let role: Role = serde_json::from_value(json!("test_role")).unwrap();
-        assert_eq!(role.unknown_role_type(), Some("test_role"));
 
         // ThinkingLevel
         let level: ThinkingLevel = serde_json::from_value(json!("test_level")).unwrap();
@@ -858,9 +826,9 @@ mod edge_cases {
     #[test]
     fn empty_type_string_becomes_unknown() {
         let json = json!("");
-        let role: Role = serde_json::from_value(json).unwrap();
-        assert!(role.is_unknown());
-        assert_eq!(role.unknown_role_type(), Some(""));
+        let tier: ServiceTier = serde_json::from_value(json).unwrap();
+        assert!(tier.is_unknown());
+        assert_eq!(tier.unknown_tier_type(), Some(""));
     }
 
     #[test]
@@ -873,20 +841,20 @@ mod edge_cases {
     #[test]
     fn special_characters_preserved() {
         let json = json!("type-with-dashes_and_underscores.and.dots");
-        let role: Role = serde_json::from_value(json.clone()).unwrap();
-        assert!(role.is_unknown());
+        let tier: ServiceTier = serde_json::from_value(json.clone()).unwrap();
+        assert!(tier.is_unknown());
 
-        let back = serde_json::to_value(&role).unwrap();
+        let back = serde_json::to_value(&tier).unwrap();
         assert_eq!(back, "type-with-dashes_and_underscores.and.dots");
     }
 
     #[test]
     fn unicode_type_string_preserved() {
         let json = json!("タイプ");
-        let role: Role = serde_json::from_value(json.clone()).unwrap();
-        assert!(role.is_unknown());
+        let tier: ServiceTier = serde_json::from_value(json.clone()).unwrap();
+        assert!(tier.is_unknown());
 
-        let back = serde_json::to_value(&role).unwrap();
+        let back = serde_json::to_value(&tier).unwrap();
         assert_eq!(back, "タイプ");
     }
 }
