@@ -60,6 +60,23 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
 
 ### Changed
 
+- **Breaking:** `genai_rs::environment` and `genai_rs::environment_files` are
+  merged into `genai_rs::environments`, and the Files API types moved to a
+  public `genai_rs::files` module (`FileUploadResponse` is now exported). Root
+  re-exports are unchanged.
+- **Breaking:** `upload_file` / `upload_file_with_mime` stream from disk with
+  bounded memory. `upload_file_chunked*`, `ResumableUpload` and
+  `DEFAULT_CHUNK_SIZE` are removed: the handle was only returned after a
+  successful upload, so it could never resume anything.
+- **Breaking:** `InteractionStreamEvent`, `StreamMetadata` and `StreamError` are
+  no longer public; no public API took or returned them.
+- **Breaking:** `strict-unknown` now rejects unknown values of every string
+  enum, not only `Content` and `Step` types. Every string enum implements `Eq`,
+  `Hash` and `Display`.
+- **Breaking:** `From<serde_json::Value> for FunctionResultPayload` wraps a
+  non-object value as `{"result": value}` (the API rejects a top-level array
+  as a function result).
+
 - **Breaking:** `DEFAULT_MODEL` is `gemini-3.8-flash` (was `gemini-3.7-flash`).
   It rejects `ThinkingLevel::Minimal`; use `MINIMAL_THINKING_MODEL`.
 - **Breaking:** `DEFAULT_TTS_MODEL` is `gemini-3.8-flash-tts` (was
@@ -129,7 +146,7 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
   `Content::{image,video}_{data,uri}_with_resolution` (use
   `.with_resolution()`); `InteractionResponse::{created, updated,
   code_execution_call, google_search_call, url_context_call_id}`;
-  `ResumableUpload::{query_offset, resume}`; `create_file_search_store_with_request`;
+  `create_file_search_store_with_request`;
   the `excludedPredefinedFunctions` alias.
 - Examples that demonstrated nothing real: `rag_system`, `web_scraper_agent`,
   `code_assistant`, `testing_assistant`, `multi_turn_agent_manual`,
@@ -138,6 +155,13 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
   `cancel_interaction`, `data_analysis`.
 
 ### Fixed
+
+- An upload MIME type that cannot be a header value returns `InvalidInput`
+  (not retryable) instead of a retryable `GenaiError::Http`, for every upload
+  path.
+- File search store, document and Files list responses drop only an
+  undeserializable entry (with a warning) and treat a `null` list as empty,
+  like every other resource list, instead of failing the whole page.
 
 - **Antigravity policies were bypassed on the pre-tool hook path** for MCP
   tools (`mcp_<server>_<tool>`) and `start_subagent`, because the harness names
@@ -168,6 +192,16 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
 - `document_from_file` rejected `.txt` / `.md`; they are sent as `text/plain`
   / `text/markdown`.
 - Unknown SSE event types are logged at `warn` (Evergreen), not `debug`.
+
+### Security
+
+- `LOUD_WIRE` and the `genai_rs::wire` tracing output printed credential
+  secrets in full. `token`, `client_secret` and `refresh_token` are now
+  redacted everywhere, and `value` inside `environment_variable` credentials
+  and environment `env` maps. Custom `WireInspector`s still receive raw bodies.
+- Antigravity policy bypass on the pre-tool hook path (see Fixed): `deny`
+  rules for MCP tools and `start_subagent` were not applied.
+
 
 ## [0.10.0] - 2026-08-16
 
