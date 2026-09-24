@@ -301,7 +301,7 @@ fn test_is_transient_error_message_pinned_400_arms() {
 // Retry Logic Tests
 // =============================================================================
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_retry_on_transient_success_first_try() {
     let call_count = Arc::new(AtomicU32::new(0));
     let count = call_count.clone();
@@ -324,7 +324,7 @@ async fn test_retry_on_transient_success_first_try() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_retry_on_transient_non_transient_error_no_retry() {
     let call_count = Arc::new(AtomicU32::new(0));
     let count = call_count.clone();
@@ -346,7 +346,7 @@ async fn test_retry_on_transient_non_transient_error_no_retry() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_retry_on_transient_success_after_retry() {
     let call_count = Arc::new(AtomicU32::new(0));
     let count = call_count.clone();
@@ -380,7 +380,7 @@ async fn test_retry_on_transient_success_after_retry() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_retry_on_transient_exhausted_retries() {
     let call_count = Arc::new(AtomicU32::new(0));
     let count = call_count.clone();
@@ -408,7 +408,7 @@ async fn test_retry_on_transient_exhausted_retries() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_retry_on_transient_zero_retries() {
     let call_count = Arc::new(AtomicU32::new(0));
     let count = call_count.clone();
@@ -439,7 +439,7 @@ async fn test_retry_on_transient_zero_retries() {
 /// `GenaiError::is_retryable` — the predicate widening the retry sweep
 /// relies on. Before that widening, only `is_transient_error` cases
 /// retried, so this test pins the new behavior.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_retry_on_transient_retries_plain_5xx() {
     let call_count = Arc::new(AtomicU32::new(0));
     let count = call_count.clone();
@@ -473,7 +473,7 @@ async fn test_retry_on_transient_retries_plain_5xx() {
 /// A 400 invalid_request (e.g. a rejected fixture) carries neither
 /// transient marker, so it must fail on the first attempt — the property
 /// the retry-then-assert-strictly sweep depends on.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_retry_on_transient_invalid_request_fails_first_attempt() {
     let call_count = Arc::new(AtomicU32::new(0));
     let count = call_count.clone();
@@ -504,7 +504,7 @@ async fn test_retry_on_transient_invalid_request_fails_first_attempt() {
 /// timeout budget can afford aborts the retry immediately, surfacing the
 /// real error instead of sleeping toward an opaque timeout. No wall clock
 /// is spent, so this also pins that the abort happens before the sleep.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_retry_on_transient_aborts_on_long_retry_after() {
     let call_count = Arc::new(AtomicU32::new(0));
     let count = call_count.clone();
@@ -677,15 +677,11 @@ fn test_interaction_builder_missing_content() {
 // API Error Integration Tests
 // =============================================================================
 
-/// Test that invalid API keys return appropriate 401/403 errors.
-///
-/// This test intentionally uses an invalid API key to verify that:
-/// - The library correctly propagates authentication errors
-/// - Error messages indicate the authentication failure
-/// - Status codes are captured correctly (400/401/403)
+/// An unrecognised key is rejected as 400 "API key not valid" (verified live
+/// 2026-09-24), surfaced as a structured `Api` error.
 #[tokio::test]
+#[ignore = "Requires API key"]
 async fn test_invalid_api_key_returns_auth_error() {
-    // Create client with intentionally invalid API key
     let client = genai_rs::Client::builder("invalid-api-key-12345".to_string())
         .build()
         .unwrap();
@@ -697,44 +693,25 @@ async fn test_invalid_api_key_returns_auth_error() {
         .create()
         .await;
 
-    // Should fail with an API error
-    assert!(result.is_err(), "Request with invalid API key should fail");
-
-    let error = result.unwrap_err();
-    println!("Error received: {:?}", error);
-
-    // Verify it's an API error with auth-related status code
-    match &error {
-        GenaiError::Api {
-            status_code,
+    match result {
+        Err(GenaiError::Api {
+            status_code: 400,
             message,
             ..
-        } => {
-            // Google API returns 400 for invalid API key format
-            // or 401/403 for invalid but properly formatted keys
-            assert!(
-                *status_code == 400 || *status_code == 401 || *status_code == 403,
-                "Expected auth error (400/401/403), got {}: {}",
-                status_code,
-                message
-            );
-            println!(
-                "✓ Correctly received {} error for invalid API key",
-                status_code
-            );
-        }
-        _ => panic!(
-            "Expected GenaiError::Api for auth failure, got: {:?}",
-            error
+        }) => assert!(
+            message.contains("API key not valid"),
+            "expected the invalid-key rejection, got: {message}"
         ),
+        other => panic!("expected a 400 invalid-key error, got: {other:?}"),
     }
 }
 
-/// Test that malformed API keys are rejected appropriately.
+/// An empty key reaches the API as an unidentified caller: 403 (verified live
+/// 2026-09-24).
 #[tokio::test]
-async fn test_malformed_api_key() {
-    // Create client with empty API key
-    let client = genai_rs::Client::builder("".to_string()).build().unwrap();
+#[ignore = "Requires API key"]
+async fn test_empty_api_key_is_rejected() {
+    let client = genai_rs::Client::builder(String::new()).build().unwrap();
 
     let result = client
         .interaction()
@@ -743,7 +720,14 @@ async fn test_malformed_api_key() {
         .create()
         .await;
 
-    // Should fail
-    assert!(result.is_err(), "Request with empty API key should fail");
-    println!("Empty key error: {:?}", result.unwrap_err());
+    assert!(
+        matches!(
+            result,
+            Err(GenaiError::Api {
+                status_code: 403,
+                ..
+            })
+        ),
+        "expected 403 for an empty key, got: {result:?}"
+    );
 }
