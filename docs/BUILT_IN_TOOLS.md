@@ -17,18 +17,20 @@ Gemini provides several server-side tools that execute automatically without req
 
 ## Overview
 
-| Tool | Purpose | Execution |
-|------|---------|-----------|
-| Google Search | Real-time web data | Server-side |
-| Code Execution | Run Python code | Server-side sandbox |
-| URL Context | Fetch and analyze URLs | Server-side |
-| Computer Use | Browser automation | Server-side |
-| File Search | Semantic document search | Server-side |
-| Retrieval | External retrieval backends (Vertex AI Search, RAG, Exa.ai, Parallel.ai) | Server-side |
-| Google Maps | Place and location data | Server-side |
-| MCP Servers | Remote MCP tool calls | Server-side |
+| Tool | Purpose | Who executes |
+|------|---------|--------------|
+| Google Search | Real-time web data | API |
+| Code Execution | Run Python code | API (sandbox) |
+| URL Context | Fetch and analyze URLs | API |
+| File Search | Semantic search over file search stores | API |
+| Google Maps | Place and location data | API |
+| MCP Servers | Calls to a remote MCP server | API |
+| Computer Use | Browser/desktop automation | **Your code**: the model emits `function_call` steps and your loop performs them |
+| Retrieval | Vertex AI Search, RAG Store, Exa.ai, Parallel.ai | **Vertex-only**: rejected by the Gemini API |
 
-**Key distinction**: These are *server-side* tools executed by Google's infrastructure, unlike *client-side* function calling where your code executes the functions.
+Apart from Computer Use, these run on Google's side, unlike
+[function calling](FUNCTION_CALLING.md), where your code executes the
+functions.
 
 **Where tool activity appears**: Under API revision 2026-05-20, server-side tool activity is reported as dedicated step variants in `response.steps` (e.g., `Step::GoogleSearchCall`, `Step::GoogleSearchResult`, `Step::CodeExecutionCall`, `Step::UrlContextResult`, `Step::ToolCall`, ...). One exception, measured rather than assumed: MCP does **not** arrive as its dedicated variants — see the note under [MCP Servers](#mcp-servers). The response helpers shown below (`google_search_results()`, `code_execution_calls()`, ...) iterate those steps for you. The old `grounding_metadata` and `url_context_metadata` response fields no longer exist — grounding information comes from the steps themselves plus inline `Annotation` citations, and `usage.grounding_tool_count` reports per-tool grounding counts.
 
@@ -182,12 +184,7 @@ if response.has_code_execution_results() {
 }
 ```
 
-**When to use**: Mathematical calculations, data processing, algorithm implementation, generating visualizations.
-
-**Limitations**:
-- Python only
-- Sandboxed environment (no network, limited filesystem)
-- Execution timeout limits
+The only language is Python (`CodeExecutionLanguage::Python`).
 
 **Example**: `cargo run --example code_execution`
 
@@ -247,12 +244,8 @@ for result in response.url_context_results() {
 }
 ```
 
-**When to use**: Summarizing articles, comparing pages, extracting structured data from websites.
-
-**Limitations**:
-- Some sites block automated access
-- Large pages may be truncated
-- Dynamic content may not render
+A page the tool could not fetch shows up as a non-`"success"` `status`, not
+as an error.
 
 ## Computer Use
 
@@ -296,13 +289,9 @@ let response = client
     .await?;
 ```
 
-**When to use**: Web scraping, form filling, interactive web tasks.
-
-**Safety considerations**:
-- Always review what actions are enabled
-- Use `excluding()` for read-only tasks
-- Enable prompt injection detection when browsing untrusted pages
-- Be cautious with authentication flows
+Computer use is allowlisted: most API keys can't enable it. Use
+`excluding()` to disable actions a task doesn't need, and turn on prompt
+injection detection when browsing untrusted pages.
 
 **Example**: `cargo run --example computer_use`
 
@@ -371,8 +360,6 @@ let response = client
     .await?;
 ```
 
-**When to use**: Document Q&A, research across multiple files, finding specific information in large documents.
-
 **Example**: `cargo run --example file_search`
 
 ## Retrieval
@@ -382,9 +369,14 @@ datastores, Vertex RAG Store corpora, or third-party search APIs (Exa.ai,
 Parallel.ai). Configure via [`RetrievalConfig`], which keeps the enabled
 `retrieval_types` in sync with the per-backend configs.
 
-> **Note**: These backends require pre-provisioned resources (search engines,
-> RAG corpora) or third-party API keys. Pending live verification against the
-> 2026-05-20 revision.
+> **Vertex-only.** The Gemini API rejects the `retrieval` tool: live probing
+> (2026-07) returned "allowed on the Gemini Enterprise Agent Platform", and
+> the Gemini tool types are `google_maps`, `mcp_server`, `function`,
+> `google_search`, `file_search`, `computer_use`, `code_execution` and
+> `url_context`. The types below are modeled for spec parity and compile, but
+> a request carrying them fails with a 400 on `generativelanguage.googleapis.com`.
+> On the Gemini API, use [File Search](#file-search) for your own documents
+> and [Google Search](#google-search) for the web.
 
 ### Vertex AI Search
 
@@ -469,12 +461,8 @@ let response = client
 the tool config — load them from secrets management and treat request logs as
 sensitive.
 
-**When to use**: Enterprise search over provisioned Vertex resources, RAG
-corpora with fine-grained retrieval control, or third-party web-search APIs.
-For Google-hosted document stores prefer [File Search](#file-search); for
-general web grounding prefer [Google Search](#google-search).
-
-**Example**: `cargo run --example retrieval_grounding`
+**Example**: `cargo run --example retrieval_grounding` prints the request
+wire shapes. It only calls the API when `VERTEX_AI_SEARCH_ENGINE` is set.
 
 ## Google Maps
 
@@ -565,31 +553,14 @@ let config = McpServerConfig::new("filesystem", "https://mcp.example.com/fs")
     ]);
 ```
 
-**MCP activity appears as generic `Step::ToolCall { id, signature }` steps** — *not* as `Step::McpServerToolCall`.
-
-> **Not what the API sends today.** Verified live on 2026-08-16 against a
-> real MCP server: MCP calls arrive as generic `tool_call` steps carrying
-> only `{id, signature, type}`, never `mcp_server_tool_call` /
-> `mcp_server_tool_result`. So an `if let Step::McpServerToolCall { .. }`
-> match never fires, and `step_summary().mcp_server_tool_call_count` reads
-> 0 even on a successful call. **Check `step_summary().tool_call_count`
-> instead**, which counts the generic steps these actually land in.
->
-> `response.tool_use_tokens()` is the other signal, non-zero only if a tool
-> was actually invoked — but it is a single aggregate with no per-tool
-> breakdown, so it isolates the MCP server only when MCP is the sole
-> declared tool. Combine it with another — see
-> [Combining Tools](#combining-tools) — and a search the model runs instead
-> of the MCP call makes it non-zero too. That it excludes *declaration*
-> overhead is measured, not inferred from the field's own doc ("tokens used
-> for tool/function calling overhead", which would admit it): declaring the
-> tool alongside a prompt the model answers from its own knowledge returns
-> `Some(0)`, identical to the same prompt with no tool declared.
->
-> Which server or tool ran is not recoverable from the response.
-> `Step::McpServerToolCall` / `McpServerToolResult` remain modeled from the
-> spec and kept for when the API starts emitting them. Tracked in
-> [#459](https://github.com/evansenter/genai-rs/issues/459).
+**MCP calls arrive as generic `Step::ToolCall { id, signature }` steps**,
+not as `Step::McpServerToolCall` (verified live 2026-08-16 against a real MCP
+server). So a match on `McpServerToolCall` never fires, and
+`step_summary().mcp_server_tool_call_count` reads 0 even on a successful call.
+Count calls with `step_summary().tool_call_count` or `response.tool_calls()`.
+Which server or tool ran can't be recovered from the response. The
+`McpServerToolCall` / `McpServerToolResult` variants remain modeled from the
+spec (#459).
 
 ## Combining Tools
 

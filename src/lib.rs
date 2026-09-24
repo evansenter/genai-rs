@@ -319,6 +319,7 @@ mod doc_tests {
     doc_comment!(include_str!("../TROUBLESHOOTING.md"));
     doc_comment!(include_str!("../CONTRIBUTING.md"));
     doc_comment!(include_str!("../DECISIONS.md"));
+    doc_comment!(include_str!("../SECURITY.md"));
 
     // Detailed guides in docs/
     doc_comment!(include_str!("../docs/AGENTS_AND_BACKGROUND.md"));
@@ -328,6 +329,7 @@ mod doc_tests {
     // compile them if promoted to `no_run` and made self-contained — a
     // possible future improvement.
     doc_comment!(include_str!("../docs/ANTIGRAVITY.md"));
+    doc_comment!(include_str!("../docs/BUILDER_API.md"));
     doc_comment!(include_str!("../docs/BUILT_IN_TOOLS.md"));
     doc_comment!(include_str!("../docs/CONFIGURATION.md"));
     doc_comment!(include_str!("../docs/CONVERSATION_PATTERNS.md"));
@@ -339,7 +341,7 @@ mod doc_tests {
     doc_comment!(include_str!("../docs/MULTI_TURN_FUNCTION_CALLING.md"));
     doc_comment!(include_str!("../docs/MULTIMODAL.md"));
     doc_comment!(include_str!("../docs/OUTPUT_MODALITIES.md"));
-    doc_comment!(include_str!("../docs/RELIABILITY_PATTERNS.md"));
+    doc_comment!(include_str!("../docs/RELIABILITY.md"));
     doc_comment!(include_str!("../docs/STREAMING_API.md"));
     doc_comment!(include_str!("../docs/TESTING.md"));
     doc_comment!(include_str!("../docs/THINKING_MODE.md"));
