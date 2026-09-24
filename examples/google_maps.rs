@@ -1,139 +1,73 @@
-//! Example demonstrating Google Maps tool for location-grounded responses.
+//! Google Maps grounding: location-aware answers with structured place data.
 //!
-//! This example shows how to use Gemini's Google Maps tool to find places
-//! and get location-grounded responses with structured place data.
+//! `with_google_maps()` enables the tool with defaults. `GoogleMapsConfig`
+//! adds options such as a widget context token for rendering an interactive
+//! map next to the answer.
 //!
-//! Run with: cargo run --example google_maps
+//! Every `Place` field is optional, and in practice results carry little
+//! more than a place ID, a name and a Maps URL — one entry for the place
+//! plus one per cited review, sharing the place ID. Fields this crate doesn't
+//! model yet are kept in `Place::extra`.
+//!
+//! Run with: `cargo run --example google_maps`
 
 use genai_rs::{Client, GoogleMapsConfig};
+use std::collections::HashSet;
 use std::env;
 use std::error::Error;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let api_key = env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY not found in environment");
+    let api_key = env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY must be set");
     let client = Client::builder(api_key).build()?;
+    let model = genai_rs::DEFAULT_MODEL;
 
-    let model_name = genai_rs::DEFAULT_MODEL;
-
-    // === Basic Google Maps usage ===
-    println!("=== Google Maps: Find Places ===\n");
-
-    let prompt = "Find the best-rated Italian restaurants near the Eiffel Tower in Paris";
-    println!("Prompt: {prompt}\n");
-
+    println!("--- Places ---");
     let response = client
         .interaction()
-        .with_model(model_name)
-        .with_text(prompt)
-        .with_google_maps() // Simple shorthand
-        .with_store_enabled()
+        .with_model(model)
+        .with_text("Find three well-rated Italian restaurants near the Eiffel Tower.")
+        .with_google_maps()
         .create()
         .await?;
-
-    println!("Status: {:?}", response.status);
-
-    // Access Google Maps results with place data
-    if response.has_google_maps_results() {
-        let results = response.google_maps_results();
-        println!("\nGoogle Maps Results ({} groups):", results.len());
-        for result in &results {
-            println!("  Call ID: {}", result.call_id);
-            for item in result.items {
-                if let Some(places) = &item.places {
-                    for place in places {
-                        println!(
-                            "    {} ({})",
-                            place.name.as_deref().unwrap_or("(unnamed)"),
-                            place.formatted_address.as_deref().unwrap_or("no address"),
-                        );
-                        if let Some(rating) = place.rating {
-                            println!("      Rating: {rating}");
-                        }
-                    }
-                }
+    let mut seen = HashSet::new();
+    for result in response.google_maps_results() {
+        for place in result.items.iter().flat_map(|i| i.places.iter().flatten()) {
+            // Review entries repeat the place ID; list each place once.
+            if place
+                .place_id
+                .as_ref()
+                .is_some_and(|id| !seen.insert(id.clone()))
+            {
+                continue;
             }
+            println!(
+                "{} <{}>",
+                place.name.as_deref().unwrap_or("(unnamed)"),
+                place.url.as_deref().unwrap_or("no URL")
+            );
         }
     }
+    println!("\n{}\n", response.as_text().ok_or("no text in response")?);
 
-    // Display the model's response
-    if let Some(text) = response.as_text() {
-        println!("\nModel Response:\n{text}");
-    }
-
-    // === Using GoogleMapsConfig with widget ===
-    println!("\n=== Google Maps: With Widget Token ===\n");
-
-    let prompt = "Find coffee shops in downtown Seattle";
-    println!("Prompt: {prompt}\n");
-
+    println!("--- Widget context token ---");
     let response = client
         .interaction()
-        .with_model(model_name)
-        .with_text(prompt)
-        .add_tool(GoogleMapsConfig::new().with_widget()) // Config with widget enabled
-        .with_store_enabled()
+        .with_model(model)
+        .with_text("Find a coffee shop in downtown Seattle.")
+        .add_tool(GoogleMapsConfig::new().with_widget())
         .create()
         .await?;
-
-    if response.has_google_maps_results() {
-        let results = response.google_maps_results();
-        for result in &results {
-            for item in result.items {
-                if let Some(token) = &item.widget_context_token {
-                    println!(
-                        "  Widget context token: {}...",
-                        &token[..30.min(token.len())]
-                    );
-                }
-                if let Some(places) = &item.places {
-                    println!("  Found {} places", places.len());
-                }
-            }
-        }
+    let token = response
+        .google_maps_results()
+        .iter()
+        .flat_map(|r| r.items)
+        .find_map(|i| i.widget_context_token.clone());
+    match token {
+        Some(token) => println!("Token for the Maps widget: {} chars", token.len()),
+        None => println!("No widget token returned for this answer"),
     }
-
-    if let Some(text) = response.as_text() {
-        println!("\nModel Response:\n{text}");
-    }
-
-    // Show step summary
-    let summary = response.step_summary();
-    println!("\nStep summary: {summary}");
-
-    // Show token usage
-    if let Some(usage) = response.usage {
-        println!("\nToken Usage:");
-        if let Some(input) = usage.total_input_tokens {
-            println!("  Input tokens: {input}");
-        }
-        if let Some(output) = usage.total_output_tokens {
-            println!("  Output tokens: {output}");
-        }
-    }
-
-    // =========================================================================
-    // Summary
-    // =========================================================================
-    println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("Google Maps Demo Complete\n");
-
-    println!("--- Key Takeaways ---");
-    println!("  with_google_maps() enables location-grounded responses");
-    println!("  add_tool(GoogleMapsConfig::new().with_widget()) enables widget tokens");
-    println!("  response.google_maps_results() returns structured place data");
-    println!("  Place struct includes name, address, coordinates, rating, and more");
-    println!("  Unknown Place fields are preserved via the `extra` field (Evergreen)\n");
-
-    println!("--- What You'll See with LOUD_WIRE=1 ---");
-    println!("  [REQ#1] POST with input + google_maps tool");
-    println!("  [RES#1] completed: google_maps_call + google_maps_result + text\n");
-
-    println!("--- Production Considerations ---");
-    println!("  Google Maps results may vary by region and query specificity");
-    println!("  Widget context tokens are for rendering interactive map widgets");
-    println!("  Place data fields are all optional - check before accessing");
-    println!("  The `extra` field on Place captures new API fields automatically");
+    println!("{}", response.as_text().ok_or("no text in response")?);
 
     Ok(())
 }
