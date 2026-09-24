@@ -37,6 +37,7 @@ use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
 use crate::errors::GenaiError;
 use crate::wire::WireEvent;
+use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -137,123 +138,17 @@ impl FileMetadata {
     }
 }
 
-/// Processing state of an uploaded file.
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-/// New state values may be added by the API in future versions.
-///
-/// # Unknown State Handling
-///
-/// When the API returns a state value that this library doesn't recognize,
-/// it will be captured in the `Unknown` variant with the original state
-/// string preserved. This follows the Evergreen philosophy of graceful
-/// degradation and data preservation.
-#[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum FileState {
-    /// File is being processed
-    Processing,
-    /// File is ready to use
-    Active,
-    /// File processing failed
-    Failed,
-    /// Unknown state (for forward compatibility).
-    ///
-    /// This variant captures any unrecognized state values from the API,
-    /// allowing the library to handle new states gracefully.
-    ///
-    /// The `state_type` field contains the unrecognized state string,
-    /// and `data` contains the JSON value (typically the same string).
-    Unknown {
-        /// The unrecognized state string from the API
-        state_type: String,
-        /// The raw JSON value, preserved for debugging
-        data: serde_json::Value,
-    },
-}
-
-impl FileState {
-    /// Check if this is an unknown state.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
+wire_enum! {
+    /// Processing state of an uploaded file.
+    pub enum FileState {
+        /// File is being processed
+        Processing = "PROCESSING",
+        /// File is ready to use
+        Active = "ACTIVE",
+        /// File processing failed
+        Failed = "FAILED",
     }
-
-    /// Returns the state type name if this is an unknown state.
-    ///
-    /// Returns `None` for known states.
-    #[must_use]
-    pub fn unknown_state_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { state_type, .. } => Some(state_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the raw JSON data if this is an unknown state.
-    ///
-    /// Returns `None` for known states.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl Serialize for FileState {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Self::Processing => serializer.serialize_str("PROCESSING"),
-            Self::Active => serializer.serialize_str("ACTIVE"),
-            Self::Failed => serializer.serialize_str("FAILED"),
-            Self::Unknown { state_type, .. } => serializer.serialize_str(state_type),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for FileState {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-
-        match value.as_str() {
-            Some("PROCESSING") => Ok(Self::Processing),
-            Some("ACTIVE") => Ok(Self::Active),
-            Some("FAILED") => Ok(Self::Failed),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown FileState '{}'. \
-                     This may indicate a new API feature. \
-                     The state will be preserved in the Unknown variant.",
-                    other
-                );
-                Ok(Self::Unknown {
-                    state_type: other.to_string(),
-                    data: value,
-                })
-            }
-            None => {
-                // Non-string value - preserve it in Unknown
-                let state_type = format!("<non-string: {}>", value);
-                tracing::warn!(
-                    "FileState received non-string value: {}. \
-                     Preserving in Unknown variant.",
-                    value
-                );
-                Ok(Self::Unknown {
-                    state_type,
-                    data: value,
-                })
-            }
-        }
-    }
+    unknown(state_type, unknown_state_type)
 }
 
 /// Error information for failed file operations.
@@ -741,6 +636,7 @@ mod tests {
         assert!(response.next_page_token.is_none());
     }
 
+    #[cfg(not(feature = "strict-unknown"))]
     #[test]
     fn test_file_state_unknown_preserves_data() {
         // Test that unknown states preserve the original value

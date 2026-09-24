@@ -1341,6 +1341,7 @@ fn test_interaction_response_complex_roundtrip() {
 
 // --- InteractionStatus Tests ---
 
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
 fn test_interaction_status_unknown_deserialize() {
     // Simulate a new API status that this library doesn't know about
@@ -1352,6 +1353,7 @@ fn test_interaction_status_unknown_deserialize() {
     assert!(status.unknown_data().is_some());
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
 fn test_interaction_status_unknown_roundtrip() {
     // Deserialize unknown status
@@ -1413,6 +1415,7 @@ fn test_interaction_status_default_is_in_progress() {
     assert_eq!(InteractionStatus::default(), InteractionStatus::InProgress);
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
 fn test_interaction_status_non_string_handled() {
     // Edge case: API returns non-string (shouldn't happen but code handles it)

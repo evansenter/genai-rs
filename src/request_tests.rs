@@ -183,6 +183,7 @@ fn test_thinking_summaries_serialization() {
     );
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
 fn test_thinking_summaries_deserialization() {
     // Deserialize accepts the legacy THINKING_SUMMARIES_* spelling.
@@ -215,6 +216,7 @@ fn test_thinking_summaries_deserialization() {
     );
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
 fn test_thinking_summaries_unknown_roundtrip() {
     // Test that unknown values roundtrip correctly
@@ -231,6 +233,7 @@ fn test_thinking_summaries_unknown_roundtrip() {
     assert_eq!(deserialized.unknown_summaries_type(), Some("new_mode"));
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
 fn test_thinking_level_deserialization() {
     // Test known values
@@ -282,6 +285,7 @@ fn test_thinking_level_serialization() {
     );
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
 fn test_thinking_level_unknown_roundtrip() {
     // Test that unknown values roundtrip correctly
@@ -326,31 +330,36 @@ fn test_generation_config_partial_fields() {
     assert!(value.get("thinking_level").is_none());
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
-fn test_thinking_level_object_form_deserialization() {
-    // Test that object-form thinking levels are handled (future API compatibility)
+fn test_thinking_level_object_form_is_preserved_as_unknown() {
+    // A non-string value keeps the whole JSON; its type is a marker.
     let json = r#"{"level": "ultra", "budget": 5000}"#;
     let parsed: ThinkingLevel = serde_json::from_str(json).expect("Deserialization should succeed");
 
-    assert!(parsed.is_unknown());
-    assert_eq!(parsed.unknown_level_type(), Some("ultra"));
-
-    // Verify the full object is preserved
+    assert!(
+        parsed
+            .unknown_level_type()
+            .unwrap()
+            .starts_with("<non-string:")
+    );
     let data = parsed.unknown_data().unwrap();
     assert_eq!(data.get("budget").unwrap(), 5000);
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
-fn test_thinking_summaries_object_form_deserialization() {
-    // Test that object-form thinking summaries are handled (future API compatibility)
+fn test_thinking_summaries_object_form_is_preserved_as_unknown() {
     let json = r#"{"summaries": "detailed", "format": "markdown"}"#;
     let parsed: ThinkingSummaries =
         serde_json::from_str(json).expect("Deserialization should succeed");
 
-    assert!(parsed.is_unknown());
-    assert_eq!(parsed.unknown_summaries_type(), Some("detailed"));
-
-    // Verify the full object is preserved
+    assert!(
+        parsed
+            .unknown_summaries_type()
+            .unwrap()
+            .starts_with("<non-string:")
+    );
     let data = parsed.unknown_data().unwrap();
     assert_eq!(data.get("format").unwrap(), "markdown");
 }
@@ -375,6 +384,7 @@ fn test_service_tier_serialization() {
     );
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
 fn test_service_tier_unknown_roundtrip() {
     // Unknown tiers deserialize to Unknown with data preserved (Evergreen principle)
@@ -829,6 +839,7 @@ fn test_video_config_wire_shape() {
     assert_eq!(value["video_config"]["task"], "image_to_video");
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
 fn test_video_task_roundtrip_and_unknown() {
     for (task, wire) in [
@@ -853,6 +864,7 @@ fn test_video_task_roundtrip_and_unknown() {
     );
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
 fn test_visualization_roundtrip_and_unknown() {
     for (visualization, wire) in [

@@ -14,263 +14,52 @@
 //! See `docs/AGENTS_AND_BACKGROUND.md` for the full background-execution +
 //! webhook flow.
 
+use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::fmt;
+use serde::{Deserialize, Serialize};
 
-/// An event type a webhook can subscribe to.
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-/// New event types may be added in future API versions.
-///
-/// # Wire Format
-///
-/// Serializes as dotted lowercase strings: `"batch.succeeded"`,
-/// `"interaction.completed"`, `"video.generated"`, etc.
-///
-/// # Evergreen Pattern
-///
-/// Unknown values from the API deserialize into the `Unknown` variant,
-/// preserving the original data for debugging and roundtrip serialization.
-#[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum WebhookEvent {
-    /// Batch processing finished successfully.
-    BatchSucceeded,
-    /// Batch was not processed within the 48h timeframe.
-    BatchExpired,
-    /// Batch job failed.
-    BatchFailed,
-    /// Interaction requires action (e.g., function calling).
-    InteractionRequiresAction,
-    /// Interaction completed successfully.
-    InteractionCompleted,
-    /// Interaction failed.
-    InteractionFailed,
-    /// Video generation completed.
-    VideoGenerated,
-    /// Unknown variant for forward compatibility (Evergreen pattern)
-    Unknown {
-        /// The unrecognized event type from the API
-        event_type: String,
-        /// The raw JSON value, preserved for debugging and roundtrip
-        data: serde_json::Value,
-    },
+wire_enum! {
+    /// An event type a webhook can subscribe to.
+    ///
+    /// # Wire Format
+    ///
+    /// Serializes as dotted lowercase strings: `"batch.succeeded"`,
+    /// `"interaction.completed"`, `"video.generated"`, etc.
+    pub enum WebhookEvent {
+        /// Batch processing finished successfully.
+        BatchSucceeded = "batch.succeeded",
+        /// Batch was not processed within the 48h timeframe.
+        BatchExpired = "batch.expired",
+        /// Batch job failed.
+        BatchFailed = "batch.failed",
+        /// Interaction requires action (e.g., function calling).
+        InteractionRequiresAction = "interaction.requires_action",
+        /// Interaction completed successfully.
+        InteractionCompleted = "interaction.completed",
+        /// Interaction failed.
+        InteractionFailed = "interaction.failed",
+        /// Video generation completed.
+        VideoGenerated = "video.generated",
+    }
+    unknown(event_type, unknown_event_type)
 }
 
-impl WebhookEvent {
-    /// Returns true if this is an unknown webhook event.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
+wire_enum! {
+    /// The state of a registered webhook (output only).
+    ///
+    /// # Wire Format
+    ///
+    /// Serializes as lowercase snake_case strings: `"enabled"`, `"disabled"`,
+    /// `"disabled_due_to_failed_deliveries"`.
+    pub enum WebhookState {
+        /// Webhook is active and receiving events.
+        Enabled = "enabled",
+        /// Webhook is disabled and receives no events.
+        Disabled = "disabled",
+        /// The API disabled the webhook after repeated delivery failures.
+        DisabledDueToFailedDeliveries = "disabled_due_to_failed_deliveries",
     }
-
-    /// Returns the event type name if this is an unknown webhook event.
-    #[must_use]
-    pub fn unknown_event_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { event_type, .. } => Some(event_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the preserved data if this is an unknown webhook event.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-
-    const fn as_wire(&self) -> Option<&'static str> {
-        match self {
-            Self::BatchSucceeded => Some("batch.succeeded"),
-            Self::BatchExpired => Some("batch.expired"),
-            Self::BatchFailed => Some("batch.failed"),
-            Self::InteractionRequiresAction => Some("interaction.requires_action"),
-            Self::InteractionCompleted => Some("interaction.completed"),
-            Self::InteractionFailed => Some("interaction.failed"),
-            Self::VideoGenerated => Some("video.generated"),
-            Self::Unknown { .. } => None,
-        }
-    }
-}
-
-impl fmt::Display for WebhookEvent {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.as_wire() {
-            Some(wire) => write!(f, "{}", wire),
-            None => match self {
-                Self::Unknown { event_type, .. } => write!(f, "{}", event_type),
-                _ => unreachable!("known events always have a wire form"),
-            },
-        }
-    }
-}
-
-impl Serialize for WebhookEvent {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self.as_wire() {
-            Some(wire) => serializer.serialize_str(wire),
-            None => match self {
-                Self::Unknown { event_type, .. } => serializer.serialize_str(event_type),
-                _ => unreachable!("known events always have a wire form"),
-            },
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for WebhookEvent {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value.as_str() {
-            Some("batch.succeeded") => Ok(Self::BatchSucceeded),
-            Some("batch.expired") => Ok(Self::BatchExpired),
-            Some("batch.failed") => Ok(Self::BatchFailed),
-            Some("interaction.requires_action") => Ok(Self::InteractionRequiresAction),
-            Some("interaction.completed") => Ok(Self::InteractionCompleted),
-            Some("interaction.failed") => Ok(Self::InteractionFailed),
-            Some("video.generated") => Ok(Self::VideoGenerated),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown WebhookEvent '{}' - using Unknown variant (Evergreen)",
-                    other
-                );
-                Ok(Self::Unknown {
-                    event_type: other.to_string(),
-                    data: value,
-                })
-            }
-            None => {
-                let event_type = format!("<non-string: {}>", value);
-                tracing::warn!(
-                    "WebhookEvent received non-string value: {}. \
-                     Preserving in Unknown variant.",
-                    value
-                );
-                Ok(Self::Unknown {
-                    event_type,
-                    data: value,
-                })
-            }
-        }
-    }
-}
-
-/// The state of a registered webhook (output only).
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-///
-/// # Wire Format
-///
-/// Serializes as lowercase snake_case strings: `"enabled"`, `"disabled"`,
-/// `"disabled_due_to_failed_deliveries"`.
-///
-/// # Evergreen Pattern
-///
-/// Unknown values from the API deserialize into the `Unknown` variant,
-/// preserving the original data for debugging and roundtrip serialization.
-#[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum WebhookState {
-    /// Webhook is active and receiving events.
-    Enabled,
-    /// Webhook is disabled and receives no events.
-    Disabled,
-    /// The API disabled the webhook after repeated delivery failures.
-    DisabledDueToFailedDeliveries,
-    /// Unknown variant for forward compatibility (Evergreen pattern)
-    Unknown {
-        /// The unrecognized state type from the API
-        state_type: String,
-        /// The raw JSON value, preserved for debugging and roundtrip
-        data: serde_json::Value,
-    },
-}
-
-impl WebhookState {
-    /// Returns true if this is an unknown webhook state.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
-    }
-
-    /// Returns the state type name if this is an unknown webhook state.
-    #[must_use]
-    pub fn unknown_state_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { state_type, .. } => Some(state_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the preserved data if this is an unknown webhook state.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl Serialize for WebhookState {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            Self::Enabled => serializer.serialize_str("enabled"),
-            Self::Disabled => serializer.serialize_str("disabled"),
-            Self::DisabledDueToFailedDeliveries => {
-                serializer.serialize_str("disabled_due_to_failed_deliveries")
-            }
-            Self::Unknown { state_type, .. } => serializer.serialize_str(state_type),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for WebhookState {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value.as_str() {
-            Some("enabled") => Ok(Self::Enabled),
-            Some("disabled") => Ok(Self::Disabled),
-            Some("disabled_due_to_failed_deliveries") => Ok(Self::DisabledDueToFailedDeliveries),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown WebhookState '{}' - using Unknown variant (Evergreen)",
-                    other
-                );
-                Ok(Self::Unknown {
-                    state_type: other.to_string(),
-                    data: value,
-                })
-            }
-            None => {
-                let state_type = format!("<non-string: {}>", value);
-                tracing::warn!(
-                    "WebhookState received non-string value: {}. \
-                     Preserving in Unknown variant.",
-                    value
-                );
-                Ok(Self::Unknown {
-                    state_type,
-                    data: value,
-                })
-            }
-        }
-    }
+    unknown(state_type, unknown_state_type)
 }
 
 /// A signing secret used to verify webhook payloads (output only).
@@ -475,108 +264,20 @@ impl WebhookUpdate {
     }
 }
 
-/// Revocation behavior for previous signing secrets when rotating.
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-///
-/// # Wire Format
-///
-/// Serializes as `"revoke_previous_secrets_after_h24"` or
-/// `"revoke_previous_secrets_immediately"`.
-#[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum RevocationBehavior {
-    /// Previous secrets stay valid for 24 hours (safe rollover).
-    RevokePreviousSecretsAfterH24,
-    /// Previous secrets are revoked immediately.
-    RevokePreviousSecretsImmediately,
-    /// Unknown variant for forward compatibility (Evergreen pattern)
-    Unknown {
-        /// The unrecognized behavior type from the API
-        behavior_type: String,
-        /// The raw JSON value, preserved for debugging and roundtrip
-        data: serde_json::Value,
-    },
-}
-
-impl RevocationBehavior {
-    /// Returns true if this is an unknown revocation behavior.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
+wire_enum! {
+    /// Revocation behavior for previous signing secrets when rotating.
+    ///
+    /// # Wire Format
+    ///
+    /// Serializes as `"revoke_previous_secrets_after_h24"` or
+    /// `"revoke_previous_secrets_immediately"`.
+    pub enum RevocationBehavior {
+        /// Previous secrets stay valid for 24 hours (safe rollover).
+        RevokePreviousSecretsAfterH24 = "revoke_previous_secrets_after_h24",
+        /// Previous secrets are revoked immediately.
+        RevokePreviousSecretsImmediately = "revoke_previous_secrets_immediately",
     }
-
-    /// Returns the behavior type name if this is an unknown revocation behavior.
-    #[must_use]
-    pub fn unknown_behavior_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { behavior_type, .. } => Some(behavior_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the preserved data if this is an unknown revocation behavior.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl Serialize for RevocationBehavior {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            Self::RevokePreviousSecretsAfterH24 => {
-                serializer.serialize_str("revoke_previous_secrets_after_h24")
-            }
-            Self::RevokePreviousSecretsImmediately => {
-                serializer.serialize_str("revoke_previous_secrets_immediately")
-            }
-            Self::Unknown { behavior_type, .. } => serializer.serialize_str(behavior_type),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for RevocationBehavior {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value.as_str() {
-            Some("revoke_previous_secrets_after_h24") => Ok(Self::RevokePreviousSecretsAfterH24),
-            Some("revoke_previous_secrets_immediately") => {
-                Ok(Self::RevokePreviousSecretsImmediately)
-            }
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown RevocationBehavior '{}' - using Unknown variant (Evergreen)",
-                    other
-                );
-                Ok(Self::Unknown {
-                    behavior_type: other.to_string(),
-                    data: value,
-                })
-            }
-            None => {
-                let behavior_type = format!("<non-string: {}>", value);
-                tracing::warn!(
-                    "RevocationBehavior received non-string value: {}. \
-                     Preserving in Unknown variant.",
-                    value
-                );
-                Ok(Self::Unknown {
-                    behavior_type,
-                    data: value,
-                })
-            }
-        }
-    }
+    unknown(behavior_type, unknown_behavior_type)
 }
 
 /// Response for `GET /v1beta/webhooks` (list).
@@ -691,6 +392,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "strict-unknown"))]
     #[test]
     fn test_webhook_event_unknown_roundtrip() {
         let unknown: WebhookEvent = serde_json::from_str("\"file.generated\"").unwrap();
@@ -719,6 +421,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "strict-unknown"))]
     #[test]
     fn test_webhook_state_unknown_roundtrip() {
         let unknown: WebhookState = serde_json::from_str("\"paused\"").unwrap();
@@ -746,6 +449,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "strict-unknown"))]
     #[test]
     fn test_revocation_behavior_unknown_roundtrip() {
         let unknown: RevocationBehavior = serde_json::from_str("\"revoke_after_week\"").unwrap();

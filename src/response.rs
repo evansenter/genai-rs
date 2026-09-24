@@ -17,6 +17,7 @@ use crate::errors::GenaiError;
 use crate::request::{InteractionInput, ServiceTier};
 use crate::steps::{FunctionResultPayload, Step};
 use crate::tools::Tool;
+use crate::wire_enum::wire_enum;
 
 // =============================================================================
 // Token Count Deserialization Helpers
@@ -71,143 +72,30 @@ where
     }
 }
 
-/// Status of an interaction.
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-/// New status values may be added by the API in future versions.
-///
-/// # Unknown Status Handling
-///
-/// When the API returns a status value that this library doesn't recognize,
-/// it will be captured in the `Unknown` variant with the original status
-/// string preserved. This follows the Evergreen philosophy of graceful
-/// degradation and data preservation.
-#[derive(Clone, Debug, Default, PartialEq)]
-#[non_exhaustive]
-pub enum InteractionStatus {
-    /// Interaction completed successfully.
-    Completed,
-    /// Interaction is still being processed.
-    ///
-    /// This is the `Default` (used when a hand-constructed response omits a
-    /// status; the wire always carries one).
-    #[default]
-    InProgress,
-    /// Interaction requires client action (e.g., function results).
-    RequiresAction,
-    /// Interaction failed.
-    Failed,
-    /// Interaction was cancelled.
-    Cancelled,
-    /// Interaction ended before completion (e.g., token limit reached).
-    Incomplete,
-    /// Interaction stopped because the configured budget was exceeded.
-    BudgetExceeded,
-    /// Unknown status (for forward compatibility).
-    ///
-    /// This variant captures any unrecognized status values from the API,
-    /// allowing the library to handle new statuses gracefully.
-    ///
-    /// The `status_type` field contains the unrecognized status string,
-    /// and `data` contains the JSON value (typically the same string).
-    Unknown {
-        /// The unrecognized status string from the API
-        status_type: String,
-        /// The raw JSON value, preserved for debugging
-        data: serde_json::Value,
-    },
-}
-
-impl InteractionStatus {
-    /// Check if this is an unknown status.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
+wire_enum! {
+    /// Status of an interaction.
+    #[derive(Default)]
+    pub enum InteractionStatus {
+        /// Interaction completed successfully.
+        Completed = "completed",
+        /// Interaction is still being processed.
+        ///
+        /// This is the `Default` (used when a hand-constructed response omits a
+        /// status; the wire always carries one).
+        #[default]
+        InProgress = "in_progress",
+        /// Interaction requires client action (e.g., function results).
+        RequiresAction = "requires_action",
+        /// Interaction failed.
+        Failed = "failed",
+        /// Interaction was cancelled.
+        Cancelled = "cancelled",
+        /// Interaction ended before completion (e.g., token limit reached).
+        Incomplete = "incomplete",
+        /// Interaction stopped because the configured budget was exceeded.
+        BudgetExceeded = "budget_exceeded",
     }
-
-    /// Returns the status type name if this is an unknown status.
-    ///
-    /// Returns `None` for known statuses.
-    #[must_use]
-    pub fn unknown_status_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { status_type, .. } => Some(status_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the raw JSON data if this is an unknown status.
-    ///
-    /// Returns `None` for known statuses.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl Serialize for InteractionStatus {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Self::Completed => serializer.serialize_str("completed"),
-            Self::InProgress => serializer.serialize_str("in_progress"),
-            Self::RequiresAction => serializer.serialize_str("requires_action"),
-            Self::Failed => serializer.serialize_str("failed"),
-            Self::Cancelled => serializer.serialize_str("cancelled"),
-            Self::Incomplete => serializer.serialize_str("incomplete"),
-            Self::BudgetExceeded => serializer.serialize_str("budget_exceeded"),
-            Self::Unknown { status_type, .. } => serializer.serialize_str(status_type),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for InteractionStatus {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-
-        match value.as_str() {
-            Some("completed") => Ok(Self::Completed),
-            Some("in_progress") => Ok(Self::InProgress),
-            Some("requires_action") => Ok(Self::RequiresAction),
-            Some("failed") => Ok(Self::Failed),
-            Some("cancelled") => Ok(Self::Cancelled),
-            Some("incomplete") => Ok(Self::Incomplete),
-            Some("budget_exceeded") => Ok(Self::BudgetExceeded),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown InteractionStatus '{}'. \
-                     This may indicate a new API feature. \
-                     The status will be preserved in the Unknown variant.",
-                    other
-                );
-                Ok(Self::Unknown {
-                    status_type: other.to_string(),
-                    data: value,
-                })
-            }
-            None => {
-                // Non-string value - preserve it in Unknown
-                let status_type = format!("<non-string: {}>", value);
-                tracing::warn!(
-                    "InteractionStatus received non-string value: {}. \
-                     Preserving in Unknown variant.",
-                    value
-                );
-                Ok(Self::Unknown {
-                    status_type,
-                    data: value,
-                })
-            }
-        }
-    }
+    unknown(status_type, unknown_status_type)
 }
 
 /// Token count for a specific modality.
@@ -2476,6 +2364,7 @@ mod tests {
         assert_eq!(serialized, r#""incomplete""#);
     }
 
+    #[cfg(not(feature = "strict-unknown"))]
     #[test]
     fn test_interaction_status_unknown_preserved() {
         let status: InteractionStatus = serde_json::from_str("\"hibernating\"").unwrap();

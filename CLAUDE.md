@@ -84,7 +84,9 @@ with helpers `is_unknown()`, `unknown_<context>_type()`, `unknown_data()`
 `#[non_exhaustive]` (D-002, guarded by `tests/non_exhaustive_responses.rs`)
 and keep unmodeled fields in a `#[serde(flatten)] extra` map. Polling
 continues on unknown statuses, bounded by timeouts. The `strict-unknown`
-feature makes `Content` and `Step` fail on unknown types instead.
+feature makes `Content`, `Step` and every string enum fail on unknown values
+instead. New string enums use the crate-private `wire_enum!` macro
+(`src/wire_enum.rs`), which supplies all of the above.
 
 When adding or changing an enum, record its verified wire format in
 `docs/ENUM_WIRE_FORMATS.md`.

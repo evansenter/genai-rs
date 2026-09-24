@@ -17,119 +17,23 @@ use crate::environment::{EnvironmentSource, NetworkConfig};
 use crate::serde_util::{
     ForEnvironment, deserialize_lenient_timestamp, deserialize_string_i64, serialize_string_i64,
 };
+use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
-use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
-/// Status of an environment container.
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-///
-/// # Wire Format
-///
-/// Serializes as lowercase strings: `"active"`, `"expired"`.
-///
-/// # Evergreen Pattern
-///
-/// Unknown values from the API deserialize into the `Unknown` variant,
-/// preserving the original data for debugging and roundtrip serialization.
-#[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum EnvironmentStatus {
-    /// The environment is available for use.
-    Active,
-    /// The environment has expired and can no longer be used.
-    Expired,
-    /// Unknown variant for forward compatibility (Evergreen pattern)
-    Unknown {
-        /// The unrecognized status type from the API
-        status_type: String,
-        /// The raw JSON value, preserved for debugging and roundtrip
-        data: serde_json::Value,
-    },
-}
-
-impl EnvironmentStatus {
-    /// The wire string for this status — the single source both `Display`
-    /// and `Serialize` render, so the two can never disagree.
-    fn as_wire(&self) -> &str {
-        match self {
-            Self::Active => "active",
-            Self::Expired => "expired",
-            Self::Unknown { status_type, .. } => status_type,
-        }
+wire_enum! {
+    /// Status of an environment container.
+    ///
+    /// # Wire Format
+    ///
+    /// Serializes as lowercase strings: `"active"`, `"expired"`.
+    pub enum EnvironmentStatus {
+        /// The environment is available for use.
+        Active = "active",
+        /// The environment has expired and can no longer be used.
+        Expired = "expired",
     }
-
-    /// Returns true if this is an unknown status.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
-    }
-
-    /// Returns the status type name if this is an unknown status.
-    #[must_use]
-    pub fn unknown_status_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { status_type, .. } => Some(status_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the preserved data if this is an unknown status.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Display for EnvironmentStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_wire())
-    }
-}
-
-impl Serialize for EnvironmentStatus {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(self.as_wire())
-    }
-}
-
-impl<'de> Deserialize<'de> for EnvironmentStatus {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value.as_str() {
-            Some("active") => Ok(Self::Active),
-            Some("expired") => Ok(Self::Expired),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown EnvironmentStatus '{other}' - using Unknown variant (Evergreen)"
-                );
-                Ok(Self::Unknown {
-                    status_type: other.to_string(),
-                    data: value.clone(),
-                })
-            }
-            None => {
-                tracing::warn!(
-                    "EnvironmentStatus received non-string value: {value}. Preserving in Unknown variant."
-                );
-                Ok(Self::Unknown {
-                    status_type: format!("<non-string: {value}>"),
-                    data: value,
-                })
-            }
-        }
-    }
+    unknown(status_type, unknown_status_type)
 }
 
 /// An execution environment for an agent, as returned by the
@@ -367,6 +271,7 @@ mod tests {
         assert_eq!(env.size_bytes, Some(42));
     }
 
+    #[cfg(not(feature = "strict-unknown"))]
     #[test]
     fn unknown_status_roundtrips() {
         let json = serde_json::json!({"id": "x", "status": "hibernating"});

@@ -43,6 +43,7 @@
 //! ```
 
 use crate::serde_util::{ForFileSearchDocument, deserialize_string_i64, serialize_string_i64};
+use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -174,32 +175,23 @@ pub struct DocumentListResponse {
     pub next_page_token: Option<String>,
 }
 
-/// Indexing state of a document in a file search store.
-///
-/// Wire values are SCREAMING_CASE with a `STATE_` prefix (`STATE_PENDING`,
-/// `STATE_ACTIVE`), which differs from the Files API's [`FileState`] —
-/// verified live 2026-08-16.
-///
-/// [`FileState`]: crate::FileState
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum DocumentState {
-    /// Uploaded but not yet indexed; file search will not match it yet.
-    Pending,
-    /// Indexed and queryable.
-    Active,
-    /// Indexing failed.
-    Failed,
-    /// Unknown state (for forward compatibility).
+wire_enum! {
+    /// Indexing state of a document in a file search store.
     ///
-    /// The `state_type` field contains the unrecognized state string, and
-    /// `data` contains the JSON value preserved for round-trip.
-    Unknown {
-        /// The unrecognized state string from the API.
-        state_type: String,
-        /// The raw JSON value, preserved for debugging and round-trip.
-        data: serde_json::Value,
-    },
+    /// Wire values are SCREAMING_CASE with a `STATE_` prefix (`STATE_PENDING`,
+    /// `STATE_ACTIVE`), which differs from the Files API's [`FileState`] —
+    /// verified live 2026-08-16.
+    ///
+    /// [`FileState`]: crate::FileState
+    pub enum DocumentState {
+        /// Uploaded but not yet indexed; file search will not match it yet.
+        Pending = "STATE_PENDING",
+        /// Indexed and queryable.
+        Active = "STATE_ACTIVE",
+        /// Indexing failed.
+        Failed = "STATE_FAILED",
+    }
+    unknown(state_type, unknown_state_type)
 }
 
 impl DocumentState {
@@ -207,98 +199,6 @@ impl DocumentState {
     #[must_use]
     pub const fn is_active(&self) -> bool {
         matches!(self, Self::Active)
-    }
-
-    /// Check if this is an unknown state.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
-    }
-
-    /// Returns the state type name if this is an unknown state.
-    ///
-    /// Returns `None` for known states.
-    #[must_use]
-    pub fn unknown_state_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { state_type, .. } => Some(state_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the raw JSON data if this is an unknown state.
-    ///
-    /// Returns `None` for known states.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl Serialize for DocumentState {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Self::Pending => serializer.serialize_str("STATE_PENDING"),
-            Self::Active => serializer.serialize_str("STATE_ACTIVE"),
-            Self::Failed => serializer.serialize_str("STATE_FAILED"),
-            Self::Unknown { state_type, .. } => serializer.serialize_str(state_type),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for DocumentState {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-
-        match value.as_str() {
-            Some("STATE_PENDING") => Ok(Self::Pending),
-            Some("STATE_ACTIVE") => Ok(Self::Active),
-            Some("STATE_FAILED") => Ok(Self::Failed),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown DocumentState '{}'. \
-                     This may indicate a new API feature. \
-                     The state will be preserved in the Unknown variant.",
-                    other
-                );
-                Ok(Self::Unknown {
-                    state_type: other.to_string(),
-                    data: value,
-                })
-            }
-            None => {
-                let state_type = format!("<non-string: {}>", value);
-                tracing::warn!(
-                    "DocumentState received non-string value: {}. \
-                     Preserving in Unknown variant.",
-                    value
-                );
-                Ok(Self::Unknown {
-                    state_type,
-                    data: value,
-                })
-            }
-        }
-    }
-}
-
-impl std::fmt::Display for DocumentState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pending => write!(f, "STATE_PENDING"),
-            Self::Active => write!(f, "STATE_ACTIVE"),
-            Self::Failed => write!(f, "STATE_FAILED"),
-            Self::Unknown { state_type, .. } => write!(f, "{}", state_type),
-        }
     }
 }
 
@@ -470,6 +370,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "strict-unknown"))]
     #[test]
     fn document_state_unknown_is_preserved() {
         let state: DocumentState = serde_json::from_value(serde_json::json!("STATE_QUARANTINED"))

@@ -116,7 +116,7 @@ Live drift detection is the canaries' job (`api_canary_tests.rs`).
 
 ### Strict Mode Tests
 
-Test behavior with `--features strict-unknown`, which makes unknown `Content` and `Step` types error instead of degrading gracefully (other enums are unaffected).
+Test behavior with `--features strict-unknown`, which makes unknown `Content` and `Step` types and unknown string-enum values error instead of degrading gracefully (other tagged unions are unaffected). Tests that exercise an `Unknown` value carry `#[cfg(not(feature = "strict-unknown"))]`.
 
 ```bash
 cargo test --features strict-unknown

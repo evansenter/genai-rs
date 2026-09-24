@@ -5,6 +5,7 @@
 //! video, and document. Tool calls, tool results, and thoughts are NOT
 //! content — they are typed [`Step`](crate::Step) variants.
 
+use crate::wire_enum::wire_enum;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -891,286 +892,66 @@ impl FileSearchResultItem {
     }
 }
 
-/// Programming language for code execution.
-///
-/// Currently only Python is supported by the Gemini API.
-///
-/// # Wire Format
-///
-/// Lowercase: `"python"`.
-///
-/// # Forward Compatibility (Evergreen Philosophy)
-///
-/// This enum is marked `#[non_exhaustive]`; unknown languages are captured as
-/// `CodeExecutionLanguage::Unknown` rather than causing a deserialization
-/// error.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum CodeExecutionLanguage {
-    /// Python programming language
-    #[default]
-    Python,
-    /// Unknown language (for forward compatibility).
+wire_enum! {
+    /// Programming language for code execution.
     ///
-    /// The `language_type` field contains the unrecognized language string,
-    /// and `data` contains the full JSON value for debugging.
-    Unknown {
-        /// The unrecognized language string from the API
-        language_type: String,
-        /// The raw JSON value, preserved for debugging
-        data: serde_json::Value,
-    },
-}
-
-impl CodeExecutionLanguage {
-    /// Check if this is an unknown language.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
-    }
-
-    /// Returns the language type name if this is an unknown language.
+    /// Currently only Python is supported by the Gemini API.
     ///
-    /// Returns `None` for known languages.
-    #[must_use]
-    pub fn unknown_language_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { language_type, .. } => Some(language_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the raw JSON data if this is an unknown language.
+    /// # Wire Format
     ///
-    /// Returns `None` for known languages.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
+    /// Lowercase: `"python"`.
+    #[derive(Default)]
+    pub enum CodeExecutionLanguage {
+        /// Python programming language
+        #[default]
+        Python = "python",
     }
+    unknown(language_type, unknown_language_type)
 }
 
-impl Serialize for CodeExecutionLanguage {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Self::Python => serializer.serialize_str("python"),
-            Self::Unknown { language_type, .. } => serializer.serialize_str(language_type),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for CodeExecutionLanguage {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-
-        match value.as_str() {
-            Some("python") => Ok(Self::Python),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown CodeExecutionLanguage '{}'. \
-                     This may indicate a new API feature. \
-                     The language will be preserved in the Unknown variant.",
-                    other
-                );
-                Ok(Self::Unknown {
-                    language_type: other.to_string(),
-                    data: value,
-                })
-            }
-            None => {
-                // Non-string value - preserve it in Unknown
-                let language_type = format!("<non-string: {}>", value);
-                tracing::warn!(
-                    "CodeExecutionLanguage received non-string value: {}. \
-                     Preserving in Unknown variant.",
-                    value
-                );
-                Ok(Self::Unknown {
-                    language_type,
-                    data: value,
-                })
-            }
-        }
-    }
-}
-
-impl fmt::Display for CodeExecutionLanguage {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Python => write!(f, "python"),
-            Self::Unknown { language_type, .. } => write!(f, "{}", language_type),
-        }
-    }
-}
-
-/// Resolution level for image and video content processing.
-///
-/// Controls the quality vs. token cost trade-off when processing images and videos.
-/// Lower resolution uses fewer tokens (lower cost), while higher resolution provides
-/// more detail for the model to analyze.
-///
-/// # Token Cost Trade-offs
-///
-/// | Resolution | Token Cost | Detail Level |
-/// |------------|------------|--------------|
-/// | Low | Lowest | Basic shapes and colors |
-/// | Medium | Moderate | Standard detail |
-/// | High | Higher | Fine details visible |
-/// | UltraHigh | Highest | Maximum fidelity |
-///
-/// # Forward Compatibility (Evergreen Philosophy)
-///
-/// This enum is marked `#[non_exhaustive]`; unknown values are captured as
-/// `Resolution::Unknown` rather than causing a deserialization error.
-///
-/// # Example
-///
-/// ```
-/// use genai_rs::Resolution;
-///
-/// // Use Low for cheap, basic analysis
-/// let low_cost = Resolution::Low;
-///
-/// // Use High for detailed analysis
-/// let detailed = Resolution::High;
-///
-/// // Default is Medium
-/// assert_eq!(Resolution::default(), Resolution::Medium);
-/// ```
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum Resolution {
-    /// Lowest token cost, basic shapes and colors
-    Low,
-    /// Moderate token cost, standard detail (default)
-    #[default]
-    Medium,
-    /// Higher token cost, fine details visible
-    High,
-    /// Highest token cost, maximum fidelity
-    UltraHigh,
-    /// Unknown resolution (for forward compatibility).
+wire_enum! {
+    /// Resolution level for image and video content processing.
     ///
-    /// The `resolution_type` field contains the unrecognized resolution string,
-    /// and `data` contains the JSON value (typically the same string).
-    Unknown {
-        /// The unrecognized resolution string from the API
-        resolution_type: String,
-        /// The raw JSON value, preserved for debugging
-        data: serde_json::Value,
-    },
-}
-
-impl Resolution {
-    /// Check if this is an unknown resolution.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
-    }
-
-    /// Returns the resolution type name if this is an unknown resolution.
+    /// Controls the quality vs. token cost trade-off when processing images and videos.
+    /// Lower resolution uses fewer tokens (lower cost), while higher resolution provides
+    /// more detail for the model to analyze.
     ///
-    /// Returns `None` for known resolutions.
-    #[must_use]
-    pub fn unknown_resolution_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown {
-                resolution_type, ..
-            } => Some(resolution_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the raw JSON data if this is an unknown resolution.
+    /// # Token Cost Trade-offs
     ///
-    /// Returns `None` for known resolutions.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
+    /// | Resolution | Token Cost | Detail Level |
+    /// |------------|------------|--------------|
+    /// | Low | Lowest | Basic shapes and colors |
+    /// | Medium | Moderate | Standard detail |
+    /// | High | Higher | Fine details visible |
+    /// | UltraHigh | Highest | Maximum fidelity |
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use genai_rs::Resolution;
+    ///
+    /// // Use Low for cheap, basic analysis
+    /// let low_cost = Resolution::Low;
+    ///
+    /// // Use High for detailed analysis
+    /// let detailed = Resolution::High;
+    ///
+    /// // Default is Medium
+    /// assert_eq!(Resolution::default(), Resolution::Medium);
+    /// ```
+    #[derive(Default)]
+    pub enum Resolution {
+        /// Lowest token cost, basic shapes and colors
+        Low = "low",
+        /// Moderate token cost, standard detail (default)
+        #[default]
+        Medium = "medium",
+        /// Higher token cost, fine details visible
+        High = "high",
+        /// Highest token cost, maximum fidelity
+        UltraHigh = "ultra_high",
     }
-}
-
-impl Serialize for Resolution {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Self::Low => serializer.serialize_str("low"),
-            Self::Medium => serializer.serialize_str("medium"),
-            Self::High => serializer.serialize_str("high"),
-            Self::UltraHigh => serializer.serialize_str("ultra_high"),
-            Self::Unknown {
-                resolution_type, ..
-            } => serializer.serialize_str(resolution_type),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for Resolution {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-
-        match value.as_str() {
-            Some("low") => Ok(Self::Low),
-            Some("medium") => Ok(Self::Medium),
-            Some("high") => Ok(Self::High),
-            Some("ultra_high") => Ok(Self::UltraHigh),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown Resolution '{}'. \
-                     This may indicate a new API feature. \
-                     The resolution will be preserved in the Unknown variant.",
-                    other
-                );
-                Ok(Self::Unknown {
-                    resolution_type: other.to_string(),
-                    data: value,
-                })
-            }
-            None => {
-                // Non-string value - preserve it in Unknown
-                let resolution_type = format!("<non-string: {}>", value);
-                tracing::warn!(
-                    "Resolution received non-string value: {}. \
-                     Preserving in Unknown variant.",
-                    value
-                );
-                Ok(Self::Unknown {
-                    resolution_type,
-                    data: value,
-                })
-            }
-        }
-    }
-}
-
-impl fmt::Display for Resolution {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Low => write!(f, "low"),
-            Self::Medium => write!(f, "medium"),
-            Self::High => write!(f, "high"),
-            Self::UltraHigh => write!(f, "ultra_high"),
-            Self::Unknown {
-                resolution_type, ..
-            } => write!(f, "{}", resolution_type),
-        }
-    }
+    unknown(resolution_type, unknown_resolution_type)
 }
 
 /// How the model processes a video for understanding

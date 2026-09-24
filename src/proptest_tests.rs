@@ -179,7 +179,7 @@ fn arb_resolution() -> impl Strategy<Value = Resolution> {
         Just(Resolution::High),
         Just(Resolution::UltraHigh),
         // Unknown variant with arbitrary string value
-        arb_unknown_type().prop_map(|s| Resolution::Unknown {
+        unknown_or(Resolution::Low, |s| Resolution::Unknown {
             resolution_type: s.clone(),
             data: serde_json::Value::String(s),
         }),
@@ -408,10 +408,25 @@ fn arb_url_context_result_item() -> impl Strategy<Value = UrlContextResultItem> 
 // String Enum Strategies
 // =============================================================================
 //
-// Note: the string enums below (InteractionStatus, FunctionCallingMode, ...)
-// deserialize unknown values into their Unknown variant even when the
-// `strict-unknown` feature is enabled — strict mode only affects Content,
-// Step, and FileState — so their Unknown branches are not feature-gated.
+// Their Unknown arms go through `unknown_or`: under `strict-unknown` an
+// unknown value fails to deserialize, so the arm yields a known value instead.
+
+/// The Unknown arm of a string-enum strategy (see above).
+fn unknown_or<T: Clone + std::fmt::Debug + 'static>(
+    known: T,
+    unknown: impl Fn(String) -> T + 'static,
+) -> BoxedStrategy<T> {
+    #[cfg(not(feature = "strict-unknown"))]
+    {
+        let _ = known;
+        arb_unknown_type().prop_map(unknown).boxed()
+    }
+    #[cfg(feature = "strict-unknown")]
+    {
+        let _ = unknown;
+        Just(known).boxed()
+    }
+}
 
 /// Strategy for InteractionStatus (all variants including Unknown).
 fn arb_interaction_status() -> impl Strategy<Value = InteractionStatus> {
@@ -424,9 +439,11 @@ fn arb_interaction_status() -> impl Strategy<Value = InteractionStatus> {
         Just(InteractionStatus::Incomplete),
         Just(InteractionStatus::BudgetExceeded),
         // Unknown variant with preserved data
-        arb_unknown_type().prop_map(|status_type| InteractionStatus::Unknown {
-            status_type: status_type.clone(),
-            data: serde_json::Value::String(status_type),
+        unknown_or(InteractionStatus::Completed, |status_type| {
+            InteractionStatus::Unknown {
+                status_type: status_type.clone(),
+                data: serde_json::Value::String(status_type),
+            }
         }),
     ]
 }
@@ -439,9 +456,11 @@ fn arb_function_calling_mode() -> impl Strategy<Value = FunctionCallingMode> {
         Just(FunctionCallingMode::None),
         Just(FunctionCallingMode::Validated),
         // Unknown variant with preserved data
-        arb_unknown_type().prop_map(|mode_type| FunctionCallingMode::Unknown {
-            mode_type: mode_type.clone(),
-            data: serde_json::Value::String(mode_type),
+        unknown_or(FunctionCallingMode::Auto, |mode_type| {
+            FunctionCallingMode::Unknown {
+                mode_type: mode_type.clone(),
+                data: serde_json::Value::String(mode_type),
+            }
         }),
     ]
 }
@@ -454,9 +473,11 @@ fn arb_thinking_level() -> impl Strategy<Value = ThinkingLevel> {
         Just(ThinkingLevel::Medium),
         Just(ThinkingLevel::High),
         // Unknown variant with preserved data
-        arb_unknown_type().prop_map(|level_type| ThinkingLevel::Unknown {
-            level_type: level_type.clone(),
-            data: serde_json::Value::String(level_type),
+        unknown_or(ThinkingLevel::Minimal, |level_type| {
+            ThinkingLevel::Unknown {
+                level_type: level_type.clone(),
+                data: serde_json::Value::String(level_type),
+            }
         }),
     ]
 }
@@ -467,9 +488,11 @@ fn arb_thinking_summaries() -> impl Strategy<Value = ThinkingSummaries> {
         Just(ThinkingSummaries::Auto),
         Just(ThinkingSummaries::None),
         // Unknown variant with preserved data
-        arb_unknown_type().prop_map(|summaries_type| ThinkingSummaries::Unknown {
-            summaries_type: summaries_type.clone(),
-            data: serde_json::Value::String(summaries_type),
+        unknown_or(ThinkingSummaries::Auto, |summaries_type| {
+            ThinkingSummaries::Unknown {
+                summaries_type: summaries_type.clone(),
+                data: serde_json::Value::String(summaries_type),
+            }
         }),
     ]
 }
@@ -481,7 +504,7 @@ fn arb_service_tier() -> impl Strategy<Value = ServiceTier> {
         Just(ServiceTier::Standard),
         Just(ServiceTier::Priority),
         // Unknown variant with preserved data
-        arb_unknown_type().prop_map(|tier_type| ServiceTier::Unknown {
+        unknown_or(ServiceTier::Flex, |tier_type| ServiceTier::Unknown {
             tier_type: tier_type.clone(),
             data: serde_json::Value::String(tier_type),
         }),
@@ -495,7 +518,7 @@ fn arb_search_type() -> impl Strategy<Value = SearchType> {
         Just(SearchType::ImageSearch),
         Just(SearchType::EnterpriseWebSearch),
         // Unknown variant with preserved data
-        arb_unknown_type().prop_map(|search_type| SearchType::Unknown {
+        unknown_or(SearchType::WebSearch, |search_type| SearchType::Unknown {
             search_type: search_type.clone(),
             data: serde_json::Value::String(search_type),
         }),
@@ -507,9 +530,11 @@ fn arb_code_execution_language() -> impl Strategy<Value = CodeExecutionLanguage>
     prop_oneof![
         Just(CodeExecutionLanguage::Python),
         // Unknown variant with preserved data
-        arb_unknown_type().prop_map(|language_type| CodeExecutionLanguage::Unknown {
-            language_type: language_type.clone(),
-            data: serde_json::Value::String(language_type),
+        unknown_or(CodeExecutionLanguage::Python, |language_type| {
+            CodeExecutionLanguage::Unknown {
+                language_type: language_type.clone(),
+                data: serde_json::Value::String(language_type),
+            }
         }),
     ]
 }
@@ -535,9 +560,11 @@ fn arb_image_aspect_ratio() -> impl Strategy<Value = ImageAspectRatio> {
         Just(ImageAspectRatio::Tall1x4),
         Just(ImageAspectRatio::Wide4x1),
         // Unknown variant with preserved data
-        arb_unknown_type().prop_map(|ratio_type| ImageAspectRatio::Unknown {
-            ratio_type: ratio_type.clone(),
-            data: serde_json::Value::String(ratio_type),
+        unknown_or(ImageAspectRatio::Square, |ratio_type| {
+            ImageAspectRatio::Unknown {
+                ratio_type: ratio_type.clone(),
+                data: serde_json::Value::String(ratio_type),
+            }
         }),
     ]
 }
@@ -549,7 +576,7 @@ fn arb_image_size() -> impl Strategy<Value = ImageSize> {
         Just(ImageSize::Hd2k),
         Just(ImageSize::Uhd4k),
         // Unknown variant with preserved data
-        arb_unknown_type().prop_map(|size_type| ImageSize::Unknown {
+        unknown_or(ImageSize::Sd512, |size_type| ImageSize::Unknown {
             size_type: size_type.clone(),
             data: serde_json::Value::String(size_type),
         }),
@@ -1291,7 +1318,7 @@ fn arb_video_task() -> impl Strategy<Value = VideoTask> {
         Just(VideoTask::ReferenceToVideo),
         Just(VideoTask::Edit),
         Just(VideoTask::Extend),
-        arb_unknown_type().prop_map(|task_type| VideoTask::Unknown {
+        unknown_or(VideoTask::TextToVideo, |task_type| VideoTask::Unknown {
             data: serde_json::Value::String(task_type.clone()),
             task_type,
         }),
@@ -1557,9 +1584,11 @@ fn arb_retrieval_type() -> impl Strategy<Value = RetrievalType> {
         Just(RetrievalType::RagStore),
         Just(RetrievalType::ExaAiSearch),
         Just(RetrievalType::ParallelAiSearch),
-        arb_unknown_type().prop_map(|retrieval_type| RetrievalType::Unknown {
-            data: serde_json::Value::String(retrieval_type.clone()),
-            retrieval_type,
+        unknown_or(RetrievalType::VertexAiSearch, |retrieval_type| {
+            RetrievalType::Unknown {
+                data: serde_json::Value::String(retrieval_type.clone()),
+                retrieval_type,
+            }
         }),
     ]
 }
@@ -1678,9 +1707,11 @@ fn arb_harm_category() -> impl Strategy<Value = HarmCategory> {
         Just(HarmCategory::ImageHarassment),
         Just(HarmCategory::ImageSexuallyExplicit),
         Just(HarmCategory::Jailbreak),
-        arb_unknown_type().prop_map(|category_type| HarmCategory::Unknown {
-            data: serde_json::Value::String(category_type.clone()),
-            category_type,
+        unknown_or(HarmCategory::HateSpeech, |category_type| {
+            HarmCategory::Unknown {
+                data: serde_json::Value::String(category_type.clone()),
+                category_type,
+            }
         }),
     ]
 }
@@ -1692,9 +1723,11 @@ fn arb_safety_threshold() -> impl Strategy<Value = SafetyThreshold> {
         Just(SafetyThreshold::BlockOnlyHigh),
         Just(SafetyThreshold::BlockNone),
         Just(SafetyThreshold::Off),
-        arb_unknown_type().prop_map(|threshold_type| SafetyThreshold::Unknown {
-            data: serde_json::Value::String(threshold_type.clone()),
-            threshold_type,
+        unknown_or(SafetyThreshold::BlockLowAndAbove, |threshold_type| {
+            SafetyThreshold::Unknown {
+                data: serde_json::Value::String(threshold_type.clone()),
+                threshold_type,
+            }
         }),
     ]
 }
@@ -1703,9 +1736,11 @@ fn arb_safety_method() -> impl Strategy<Value = SafetyMethod> {
     prop_oneof![
         Just(SafetyMethod::Severity),
         Just(SafetyMethod::Probability),
-        arb_unknown_type().prop_map(|method_type| SafetyMethod::Unknown {
-            data: serde_json::Value::String(method_type.clone()),
-            method_type,
+        unknown_or(SafetyMethod::Severity, |method_type| {
+            SafetyMethod::Unknown {
+                data: serde_json::Value::String(method_type.clone()),
+                method_type,
+            }
         }),
     ]
 }
@@ -1728,9 +1763,11 @@ fn arb_trigger_status() -> impl Strategy<Value = TriggerStatus> {
         Just(TriggerStatus::Active),
         Just(TriggerStatus::Paused),
         Just(TriggerStatus::Error),
-        arb_unknown_type().prop_map(|status_type| TriggerStatus::Unknown {
-            data: serde_json::Value::String(status_type.clone()),
-            status_type,
+        unknown_or(TriggerStatus::Active, |status_type| {
+            TriggerStatus::Unknown {
+                data: serde_json::Value::String(status_type.clone()),
+                status_type,
+            }
         }),
     ]
 }
@@ -1742,9 +1779,11 @@ fn arb_trigger_execution_status() -> impl Strategy<Value = TriggerExecutionStatu
         Just(TriggerExecutionStatus::Failed),
         Just(TriggerExecutionStatus::Skipped),
         Just(TriggerExecutionStatus::TimedOut),
-        arb_unknown_type().prop_map(|status_type| TriggerExecutionStatus::Unknown {
-            data: serde_json::Value::String(status_type.clone()),
-            status_type,
+        unknown_or(TriggerExecutionStatus::InProgress, |status_type| {
+            TriggerExecutionStatus::Unknown {
+                data: serde_json::Value::String(status_type.clone()),
+                status_type,
+            }
         }),
     ]
 }
@@ -1753,9 +1792,11 @@ fn arb_environment_status() -> impl Strategy<Value = EnvironmentStatus> {
     prop_oneof![
         Just(EnvironmentStatus::Active),
         Just(EnvironmentStatus::Expired),
-        arb_unknown_type().prop_map(|status_type| EnvironmentStatus::Unknown {
-            data: serde_json::Value::String(status_type.clone()),
-            status_type,
+        unknown_or(EnvironmentStatus::Active, |status_type| {
+            EnvironmentStatus::Unknown {
+                data: serde_json::Value::String(status_type.clone()),
+                status_type,
+            }
         }),
     ]
 }
@@ -1769,9 +1810,11 @@ fn arb_webhook_event() -> impl Strategy<Value = WebhookEvent> {
         Just(WebhookEvent::InteractionCompleted),
         Just(WebhookEvent::InteractionFailed),
         Just(WebhookEvent::VideoGenerated),
-        arb_unknown_type().prop_map(|event_type| WebhookEvent::Unknown {
-            data: serde_json::Value::String(event_type.clone()),
-            event_type,
+        unknown_or(WebhookEvent::BatchSucceeded, |event_type| {
+            WebhookEvent::Unknown {
+                data: serde_json::Value::String(event_type.clone()),
+                event_type,
+            }
         }),
     ]
 }
@@ -1781,7 +1824,7 @@ fn arb_webhook_state() -> impl Strategy<Value = WebhookState> {
         Just(WebhookState::Enabled),
         Just(WebhookState::Disabled),
         Just(WebhookState::DisabledDueToFailedDeliveries),
-        arb_unknown_type().prop_map(|state_type| WebhookState::Unknown {
+        unknown_or(WebhookState::Enabled, |state_type| WebhookState::Unknown {
             data: serde_json::Value::String(state_type.clone()),
             state_type,
         }),
@@ -1792,10 +1835,13 @@ fn arb_revocation_behavior() -> impl Strategy<Value = RevocationBehavior> {
     prop_oneof![
         Just(RevocationBehavior::RevokePreviousSecretsAfterH24),
         Just(RevocationBehavior::RevokePreviousSecretsImmediately),
-        arb_unknown_type().prop_map(|behavior_type| RevocationBehavior::Unknown {
-            data: serde_json::Value::String(behavior_type.clone()),
-            behavior_type,
-        }),
+        unknown_or(
+            RevocationBehavior::RevokePreviousSecretsAfterH24,
+            |behavior_type| RevocationBehavior::Unknown {
+                data: serde_json::Value::String(behavior_type.clone()),
+                behavior_type,
+            }
+        ),
     ]
 }
 
@@ -1816,7 +1862,7 @@ fn arb_source_type() -> impl Strategy<Value = SourceType> {
         Just(SourceType::Inline),
         Just(SourceType::Repository),
         Just(SourceType::SkillRegistry),
-        arb_unknown_type().prop_map(|source_type| SourceType::Unknown {
+        unknown_or(SourceType::Gcs, |source_type| SourceType::Unknown {
             data: serde_json::Value::String(source_type.clone()),
             source_type,
         }),
@@ -1887,9 +1933,11 @@ fn arb_response_delivery() -> impl Strategy<Value = ResponseDelivery> {
     prop_oneof![
         Just(ResponseDelivery::Inline),
         Just(ResponseDelivery::Uri),
-        arb_unknown_type().prop_map(|delivery_type| ResponseDelivery::Unknown {
-            data: serde_json::Value::String(delivery_type.clone()),
-            delivery_type,
+        unknown_or(ResponseDelivery::Inline, |delivery_type| {
+            ResponseDelivery::Unknown {
+                data: serde_json::Value::String(delivery_type.clone()),
+                delivery_type,
+            }
         }),
     ]
 }
@@ -1958,9 +2006,11 @@ fn arb_visualization() -> impl Strategy<Value = Visualization> {
     prop_oneof![
         Just(Visualization::Off),
         Just(Visualization::Auto),
-        arb_unknown_type().prop_map(|visualization_type| Visualization::Unknown {
-            data: serde_json::Value::String(visualization_type.clone()),
-            visualization_type,
+        unknown_or(Visualization::Off, |visualization_type| {
+            Visualization::Unknown {
+                data: serde_json::Value::String(visualization_type.clone()),
+                visualization_type,
+            }
         }),
     ]
 }

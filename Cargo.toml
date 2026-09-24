@@ -103,11 +103,12 @@ default = ["wire-color"]
 ## plain pretty-printed text.
 wire-color = ["dep:colored", "dep:colored_json"]
 
-## Strict mode for unknown `Content` and `Step` types.
+## Strict mode for unknown API values.
 ##
-## When enabled, an unrecognized content type or step type in an API response
-## is a deserialization error instead of an `Unknown` variant. Only those two
-## unions are covered; other enums still capture unknown values gracefully.
+## When enabled, an unrecognized content type, step type, or string-enum value
+## (statuses, modes, tiers, ...) in an API response is a deserialization error
+## instead of an `Unknown` variant. Other tagged unions (`Tool`, `StepDelta`,
+## `StreamChunk`, ...) still capture unknown values gracefully.
 ##
 ## Default: disabled (unknown types are captured gracefully)
 strict-unknown = []
