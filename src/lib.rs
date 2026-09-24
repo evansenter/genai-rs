@@ -339,7 +339,7 @@ mod doc_tests {
     doc_comment!(include_str!("../docs/MULTI_TURN_FUNCTION_CALLING.md"));
     doc_comment!(include_str!("../docs/MULTIMODAL.md"));
     doc_comment!(include_str!("../docs/OUTPUT_MODALITIES.md"));
-    doc_comment!(include_str!("../docs/RELIABILITY_PATTERNS.md"));
+    doc_comment!(include_str!("../docs/RELIABILITY.md"));
     doc_comment!(include_str!("../docs/STREAMING_API.md"));
     doc_comment!(include_str!("../docs/TESTING.md"));
     doc_comment!(include_str!("../docs/THINKING_MODE.md"));
