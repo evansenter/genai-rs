@@ -174,10 +174,6 @@ path = "examples/real_world/multi_turn_agent_auto/main.rs"
 name = "multi_turn_agent_manual_stateless"
 path = "examples/real_world/multi_turn_agent_manual_stateless/main.rs"
 
-[[example]]
-name = "data_analysis"
-path = "examples/real_world/data_analysis/main.rs"
-
 # Workspace-level metadata
 
 [profile.dev]
