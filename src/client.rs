@@ -5,19 +5,17 @@ use reqwest::Client as ReqwestClient;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Logs a request body at debug level, preferring JSON format when possible.
-fn log_request_body<T: std::fmt::Debug + serde::Serialize>(body: &T) {
-    match serde_json::to_string_pretty(body) {
-        Ok(json) => tracing::debug!("Request Body (JSON):\n{json}"),
-        Err(_) => tracing::debug!("Request Body: {body:#?}"),
+/// Logs a request or response body at debug level as pretty JSON.
+///
+/// Checked first: bodies can carry megabytes of base64 media, and
+/// `tracing::debug!` only defers formatting, not this serialization.
+fn log_body<T: std::fmt::Debug + serde::Serialize>(label: &str, body: &T) {
+    if !tracing::enabled!(tracing::Level::DEBUG) {
+        return;
     }
-}
-
-/// Logs a response body at debug level, preferring JSON format when possible.
-fn log_response_body<T: std::fmt::Debug + serde::Serialize>(body: &T) {
     match serde_json::to_string_pretty(body) {
-        Ok(json) => tracing::debug!("Response Body (JSON):\n{json}"),
-        Err(_) => tracing::debug!("Response Body: {body:#?}"),
+        Ok(json) => tracing::debug!("{label} Body (JSON):\n{json}"),
+        Err(_) => tracing::debug!("{label} Body: {body:#?}"),
     }
 }
 
@@ -415,17 +413,17 @@ impl Client {
     /// # Ok(())
     /// # }
     /// ```
-    #[tracing::instrument(skip(self), fields(model = ?request.model, agent = ?request.agent))]
+    #[tracing::instrument(skip_all, fields(model = ?request.model, agent = ?request.agent))]
     pub async fn execute(
         &self,
         request: crate::InteractionRequest,
     ) -> Result<crate::InteractionResponse, GenaiError> {
         tracing::debug!("Creating interaction");
-        log_request_body(&request);
+        log_body("Request", &request);
 
         let response = crate::http::interactions::create_interaction(&self.http, request).await?;
 
-        log_response_body(&response);
+        log_body("Response", &response);
         tracing::debug!("Interaction created: ID={:?}", response.id);
 
         Ok(response)
@@ -474,7 +472,7 @@ impl Client {
     /// # Ok(())
     /// # }
     /// ```
-    #[tracing::instrument(skip(self), fields(model = ?request.model, agent = ?request.agent))]
+    #[tracing::instrument(skip_all, fields(model = ?request.model, agent = ?request.agent))]
     pub fn execute_stream(
         &self,
         request: crate::InteractionRequest,
@@ -482,7 +480,7 @@ impl Client {
         use futures_util::StreamExt;
 
         tracing::debug!("Creating streaming interaction");
-        log_request_body(&request);
+        log_body("Request", &request);
 
         let stream = crate::http::interactions::create_interaction_stream(&self.http, request);
 
@@ -531,7 +529,7 @@ impl Client {
         let response =
             crate::http::interactions::get_interaction(&self.http, interaction_id, false).await?;
 
-        log_response_body(&response);
+        log_body("Response", &response);
         tracing::debug!("Retrieved interaction: status={:?}", response.status);
 
         Ok(response)
@@ -567,7 +565,7 @@ impl Client {
         let response =
             crate::http::interactions::get_interaction(&self.http, interaction_id, true).await?;
 
-        log_response_body(&response);
+        log_body("Response", &response);
         tracing::debug!("Retrieved interaction: status={:?}", response.status);
 
         Ok(response)
@@ -765,7 +763,7 @@ impl Client {
         let response =
             crate::http::interactions::cancel_interaction(&self.http, interaction_id).await?;
 
-        log_response_body(&response);
+        log_body("Response", &response);
         tracing::debug!("Interaction cancelled: status={:?}", response.status);
 
         Ok(response)
