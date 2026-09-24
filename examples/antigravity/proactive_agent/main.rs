@@ -20,14 +20,14 @@
 //!   to *your* message, never the trigger's.
 //! - **Idle-only delivery**: a firing due mid-turn is deferred, and missed
 //!   intervals collapse rather than queueing a backlog.
-//! - **Why the opening turn is mandatory**: on harness 0.1.10 a trigger
-//!   that fires into a conversation with no history crashes the harness
-//!   outright. See the comment on the opening `chat` below.
+//! - **Why the opening turn is mandatory**: on harness 0.1.10 and 0.1.18
+//!   a trigger that fires into a conversation with no history kills the
+//!   session outright. See the comment on the opening `chat` below.
 //!
 //! ## Requirements
 //!
 //! ```bash
-//! pip install google-antigravity==0.1.10   # or set ANTIGRAVITY_HARNESS_PATH
+//! pip install google-antigravity==0.1.18   # or set ANTIGRAVITY_HARNESS_PATH
 //! export GEMINI_API_KEY=...
 //! cargo run --example proactive_agent --features antigravity
 //! LOUD_WIRE=automatedTrigger,summary cargo run --example proactive_agent --features antigravity
@@ -126,7 +126,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // An opening turn BEFORE any trigger can fire — this is required, not
     // stylistic. Harness 0.1.10 crashes if a trigger is the first activity
-    // in a conversation: its pre-invocation hook asks for "tokens since
+    // in a conversation, and 0.1.18 (re-verified) still fails the run and
+    // closes the WebSocket: its pre-invocation hook asks for "tokens since
     // the last checkpoint", finds no steps, and dies with
     //
     //     hook_utils.go:94] error getting tokens since last checkpoint:
@@ -203,8 +204,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("--- Production Considerations ---");
     println!("• Give the conversation one real turn before any trigger can");
-    println!("  fire. On harness 0.1.10 a trigger into an empty conversation");
-    println!("  crashes the harness process, not just the turn");
+    println!("  fire. On harness 0.1.10/0.1.18 a trigger into an empty");
+    println!("  conversation kills the session, not just the turn");
     println!("• A trigger's turn is NOT surfaced: its text never reaches your");
     println!("  stream. Use triggers for side effects (tool calls, history), and");
     println!("  read the results with a normal turn afterwards");
