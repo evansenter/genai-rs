@@ -137,7 +137,7 @@ struct NextTicket {
 impl CallableFunction for NextTicket {
     fn declaration(&self) -> FunctionDeclaration {
         FunctionDeclaration::builder("next_ticket")
-            .description("Allocate the next support ticket number")
+            .with_description("Allocate the next support ticket number")
             .build()
     }
 
@@ -197,9 +197,9 @@ use serde_json::json;
 # }
 // Define declarations (schemas only)
 let get_weather = FunctionDeclaration::builder("get_weather")
-    .description("Get weather for a city")
-    .parameter("city", json!({"type": "string"}))
-    .required(vec!["city".to_string()])
+    .with_description("Get weather for a city")
+    .add_parameter("city", json!({"type": "string"}))
+    .with_required(vec!["city".to_string()])
     .build();
 
 // Initial request
@@ -257,17 +257,17 @@ use genai_rs::FunctionDeclaration;
 use serde_json::json;
 
 let declaration = FunctionDeclaration::builder("search_products")
-    .description("Search for products by query")
-    .parameter("query", json!({"type": "string", "description": "Search query"}))
-    .parameter("limit", json!({"type": "integer", "description": "Max results (1-100)"}))
-    .parameter("category", json!({"type": "string", "enum": ["books", "music", "games"]}))
-    .required(vec!["query".to_string()])
+    .with_description("Search for products by query")
+    .add_parameter("query", json!({"type": "string", "description": "Search query"}))
+    .add_parameter("limit", json!({"type": "integer", "description": "Max results (1-100)"}))
+    .add_parameter("category", json!({"type": "string", "enum": ["books", "music", "games"]}))
+    .with_required(vec!["query".to_string()])
     .build();
 
 assert_eq!(declaration.name(), "search_products");
 ```
 
-Each `parameter()` value is a JSON-schema fragment, so nested objects and
+Each `add_parameter()` value is a JSON-schema fragment, so nested objects and
 arrays work as in JSON Schema.
 
 ## Function calling modes

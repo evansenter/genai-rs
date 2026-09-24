@@ -635,6 +635,15 @@ impl<'a> InteractionBuilder<'a> {
         self.tools.get_or_insert_with(Vec::new).push(tool);
     }
 
+    /// Replaces any tool of the same kind as `tool` (the `with_*` built-in
+    /// tool setters), so calling one twice does not send a duplicate.
+    fn replace_tool(&mut self, tool: InternalTool) {
+        let kind = std::mem::discriminant(&tool);
+        let tools = self.tools.get_or_insert_with(Vec::new);
+        tools.retain(|existing| std::mem::discriminant(existing) != kind);
+        tools.push(tool);
+    }
+
     /// Adds any tool that implements `Into<Tool>` to the interaction.
     ///
     /// This is the unified entry point for configurable tools. Use the corresponding
@@ -659,7 +668,7 @@ impl<'a> InteractionBuilder<'a> {
     ///     .interaction()
     ///     .with_model(genai_rs::DEFAULT_MODEL)
     ///     .with_text("Hello")
-    ///     .add_tool(ComputerUseConfig::new().excluding(vec!["download_file".to_string()]))
+    ///     .add_tool(ComputerUseConfig::new().with_excluded_predefined_functions(vec!["download_file".to_string()]))
     ///     .add_tool(FileSearchConfig::new(vec!["docs".to_string()]).with_top_k(5))
     ///     .add_tool(McpServerConfig::new("fs", "https://mcp.example.com/fs"))
     ///     .create()
@@ -675,9 +684,9 @@ impl<'a> InteractionBuilder<'a> {
 
     /// Sets the tools for function calling, replacing any existing tools.
     ///
-    /// Use `add_function()` to accumulate functions instead of replacing.
+    /// Use `add_tool()` or `add_function()` to accumulate instead.
     #[must_use]
-    pub fn set_tools(mut self, tools: Vec<InternalTool>) -> Self {
+    pub fn with_tools(mut self, tools: Vec<InternalTool>) -> Self {
         self.tools = Some(tools);
         self
     }
@@ -696,9 +705,9 @@ impl<'a> InteractionBuilder<'a> {
     /// let client = Client::new("api-key".to_string());
     ///
     /// let func = FunctionDeclaration::builder("get_temperature")
-    ///     .description("Get the temperature for a location")
-    ///     .parameter("location", json!({"type": "string"}))
-    ///     .required(vec!["location".to_string()])
+    ///     .with_description("Get the temperature for a location")
+    ///     .add_parameter("location", json!({"type": "string"}))
+    ///     .with_required(vec!["location".to_string()])
     ///     .build();
     ///
     /// let builder = client
@@ -788,6 +797,9 @@ impl<'a> InteractionBuilder<'a> {
 
     /// Enables Google Search grounding for this interaction.
     ///
+    /// Replaces an earlier tool of the same kind, including one added with
+    /// `add_tool`, so calling this twice sends it once.
+    ///
     /// This adds the built-in `GoogleSearch` tool which allows the model to
     /// search the web and ground its responses in real-time information.
     /// Grounding metadata will be available in the response via
@@ -824,11 +836,14 @@ impl<'a> InteractionBuilder<'a> {
     /// [`InteractionResponse::google_search_results`]: crate::InteractionResponse::google_search_results
     #[must_use]
     pub fn with_google_search(mut self) -> Self {
-        self.push_tool(InternalTool::GoogleSearch { search_types: None });
+        self.replace_tool(InternalTool::GoogleSearch { search_types: None });
         self
     }
 
     /// Enables the Google Maps built-in tool for location-grounded responses.
+    ///
+    /// Replaces an earlier tool of the same kind, including one added with
+    /// `add_tool`, so calling this twice sends it once.
     ///
     /// For configuration options (e.g., widget support), use
     /// `.add_tool(GoogleMapsConfig::new().with_widget())`.
@@ -854,7 +869,7 @@ impl<'a> InteractionBuilder<'a> {
     /// ```
     #[must_use]
     pub fn with_google_maps(mut self) -> Self {
-        self.push_tool(InternalTool::GoogleMaps {
+        self.replace_tool(InternalTool::GoogleMaps {
             latitude: None,
             longitude: None,
             enable_widget: None,
@@ -863,6 +878,9 @@ impl<'a> InteractionBuilder<'a> {
     }
 
     /// Enables code execution for this interaction.
+    ///
+    /// Replaces an earlier tool of the same kind, including one added with
+    /// `add_tool`, so calling this twice sends it once.
     ///
     /// This adds the built-in `CodeExecution` tool which allows the model to
     /// write and execute Python code to help answer questions. The code runs
@@ -904,11 +922,14 @@ impl<'a> InteractionBuilder<'a> {
     /// ```
     #[must_use]
     pub fn with_code_execution(mut self) -> Self {
-        self.push_tool(InternalTool::CodeExecution);
+        self.replace_tool(InternalTool::CodeExecution);
         self
     }
 
     /// Enables URL context fetching for this interaction.
+    ///
+    /// Replaces an earlier tool of the same kind, including one added with
+    /// `add_tool`, so calling this twice sends it once.
     ///
     /// This adds the built-in `UrlContext` tool which allows the model to
     /// fetch and analyze content from URLs provided in the prompt.
@@ -952,7 +973,7 @@ impl<'a> InteractionBuilder<'a> {
     /// [`InteractionResponse::url_context_results`]: crate::InteractionResponse::url_context_results
     #[must_use]
     pub fn with_url_context(mut self) -> Self {
-        self.push_tool(InternalTool::UrlContext);
+        self.replace_tool(InternalTool::UrlContext);
         self
     }
 

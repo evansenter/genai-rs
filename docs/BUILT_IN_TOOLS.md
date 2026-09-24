@@ -274,11 +274,11 @@ let config = ComputerUseConfig::new()
     // Operating environment: "browser" (default), "mobile", or "desktop"
     .with_environment("browser")
     // Disable specific predefined functions for safety
-    .excluding(vec!["submit_form".to_string(), "download_file".to_string()])
+    .with_excluded_predefined_functions(vec!["submit_form".to_string(), "download_file".to_string()])
     // Detect prompt injection attempts in page content
     .with_prompt_injection_detection(true)
     // Opt out of specific safety policies (use with care)
-    .disabling_safety_policies(vec!["financial_transactions".to_string()]);
+    .with_disabled_safety_policies(vec!["financial_transactions".to_string()]);
 
 let response = client
     .interaction()

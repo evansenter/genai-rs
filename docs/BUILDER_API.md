@@ -16,10 +16,19 @@ rules. For every method and its arguments, see the
 | `with_*` | **Configures** a setting (replaces if called twice) | `with_model()`, `with_text()`, `with_content()` |
 | `add_*` | **Accumulates** items to a collection | `add_function()`, `add_tool()` |
 
+The option-free built-in tool setters (`with_google_search()`,
+`with_google_maps()`, `with_code_execution()`, `with_url_context()`) follow the
+`with_*` rule: each replaces any earlier tool of its kind, so calling one
+twice sends it once. `with_tools(Vec<Tool>)` replaces the whole list.
+
 Tools with options take a config struct through `add_tool()`:
 `GoogleSearchConfig`, `GoogleMapsConfig`, `McpServerConfig`,
 `ComputerUseConfig`, `FileSearchConfig` and `RetrievalConfig`. See
 [Built-in Tools](BUILT_IN_TOOLS.md).
+
+The other builders follow the same convention, e.g.
+`FunctionDeclaration::builder(name).with_description(..).add_parameter(..).with_required(..)`
+and `ComputerUseConfig::new().with_excluded_predefined_functions(..)`.
 
 ## Input methods
 

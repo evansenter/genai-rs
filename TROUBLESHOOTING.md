@@ -47,7 +47,7 @@ changing it changes nothing.
 
 **Wrong or missing arguments.** Improve the parameter descriptions. For
 constrained values, declare a JSON-schema `enum` with
-`FunctionDeclaration::builder(..).parameter(..)`. Missing or mistyped
+`FunctionDeclaration::builder(..).add_parameter(..)`. Missing or mistyped
 arguments reach the model as `{"error": "Argument mismatch: ..."}`; see
 [Function calling errors](docs/ERROR_HANDLING.md#function-calling-errors).
 

@@ -135,9 +135,9 @@ mod basic {
             .with_text("Test");
         for i in 0..10 {
             let func = FunctionDeclaration::builder(format!("function_{}", i))
-                .description(format!("Function number {}", i))
-                .parameter("param", json!({"type": "string"}))
-                .required(vec!["param".to_string()])
+                .with_description(format!("Function number {}", i))
+                .add_parameter("param", json!({"type": "string"}))
+                .with_required(vec!["param".to_string()])
                 .build();
             builder = builder.add_function(func);
         }
@@ -229,7 +229,7 @@ mod basic {
         let client = Client::new("test-api-key".to_string());
 
         let func = FunctionDeclaration::builder("get_weather")
-            .description("Get weather")
+            .with_description("Get weather")
             .build();
         let config = GenerationConfig {
             temperature: Some(0.7),
@@ -480,7 +480,7 @@ mod tools {
         let client = Client::new("test-api-key".to_string());
 
         let func = FunctionDeclaration::builder("get_temperature")
-            .description("Get temperature")
+            .with_description("Get temperature")
             .build();
 
         let builder = client
@@ -579,7 +579,7 @@ mod tools {
         let client = Client::new("test-api-key".to_string());
 
         let func = FunctionDeclaration::builder("analyze_page")
-            .description("Analyze web page content")
+            .with_description("Analyze web page content")
             .build();
 
         let builder = client
@@ -715,7 +715,7 @@ mod edge_cases {
         let client = Client::new("test-api-key".to_string());
 
         let func = FunctionDeclaration::builder("test_fn")
-            .description("Test function")
+            .with_description("Test function")
             .build();
 
         let builder = client
@@ -1046,7 +1046,7 @@ mod multimodal {
         let client = Client::new("test-api-key".to_string());
 
         let func = FunctionDeclaration::builder("analyze_image")
-            .description("Analyze an image")
+            .with_description("Analyze an image")
             .build();
 
         let config = GenerationConfig {

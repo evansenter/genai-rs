@@ -124,7 +124,7 @@ async fn canary_function_calling_interaction() {
     let client = get_client().expect("GEMINI_API_KEY must be set");
 
     let get_time = FunctionDeclaration::builder("get_current_time")
-        .description("Get the current time")
+        .with_description("Get the current time")
         .build();
 
     let response = retry_request!([client, get_time] => {

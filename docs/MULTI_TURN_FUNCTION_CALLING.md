@@ -197,12 +197,12 @@ use genai_rs::FunctionDeclaration;
 
 let functions = vec![
     FunctionDeclaration::builder("lookup_customer")
-        .description("Look up customer by ID")
-        .parameter("id", json!({
+        .with_description("Look up customer by ID")
+        .add_parameter("id", json!({
             "type": "string",
             "description": "Customer ID"
         }))
-        .required(vec!["id".to_string()])
+        .with_required(vec!["id".to_string()])
         .build(),
 ];
 

@@ -43,20 +43,20 @@ struct CalculatorTool {
 impl CallableFunction for CalculatorTool {
     fn declaration(&self) -> FunctionDeclaration {
         FunctionDeclaration::builder("calculate")
-            .description("Performs arithmetic calculations")
-            .parameter(
+            .with_description("Performs arithmetic calculations")
+            .add_parameter(
                 "operation",
                 json!({"type": "string", "enum": ["add", "subtract", "multiply"]}),
             )
-            .parameter(
+            .add_parameter(
                 "a",
                 json!({"type": "number", "description": "First operand"}),
             )
-            .parameter(
+            .add_parameter(
                 "b",
                 json!({"type": "number", "description": "Second operand"}),
             )
-            .required(vec![
+            .with_required(vec![
                 "operation".to_string(),
                 "a".to_string(),
                 "b".to_string(),
@@ -245,12 +245,12 @@ async fn test_tool_service_overrides_global_registry() {
             fn declaration(&self) -> FunctionDeclaration {
                 // Same name as the global get_weather_test function
                 FunctionDeclaration::builder("get_weather_test")
-                    .description("Get the current weather for a city")
-                    .parameter(
+                    .with_description("Get the current weather for a city")
+                    .add_parameter(
                         "city",
                         json!({"type": "string", "description": "The city name"}),
                     )
-                    .required(vec!["city".to_string()])
+                    .with_required(vec!["city".to_string()])
                     .build()
             }
 
@@ -341,10 +341,10 @@ async fn test_tool_service_streaming_with_multiple_functions() {
         impl CallableFunction for AddTool {
             fn declaration(&self) -> FunctionDeclaration {
                 FunctionDeclaration::builder("add_numbers")
-                    .description("Adds two numbers together")
-                    .parameter("a", json!({"type": "number"}))
-                    .parameter("b", json!({"type": "number"}))
-                    .required(vec!["a".to_string(), "b".to_string()])
+                    .with_description("Adds two numbers together")
+                    .add_parameter("a", json!({"type": "number"}))
+                    .add_parameter("b", json!({"type": "number"}))
+                    .with_required(vec!["a".to_string(), "b".to_string()])
                     .build()
             }
 
@@ -361,10 +361,10 @@ async fn test_tool_service_streaming_with_multiple_functions() {
         impl CallableFunction for MultiplyTool {
             fn declaration(&self) -> FunctionDeclaration {
                 FunctionDeclaration::builder("multiply_numbers")
-                    .description("Multiplies two numbers together")
-                    .parameter("a", json!({"type": "number"}))
-                    .parameter("b", json!({"type": "number"}))
-                    .required(vec!["a".to_string(), "b".to_string()])
+                    .with_description("Multiplies two numbers together")
+                    .add_parameter("a", json!({"type": "number"}))
+                    .add_parameter("b", json!({"type": "number"}))
+                    .with_required(vec!["a".to_string(), "b".to_string()])
                     .build()
             }
 

@@ -95,9 +95,9 @@ async fn test_conversation_function_then_text() {
     };
 
     let get_weather = FunctionDeclaration::builder("get_weather")
-        .description("Get the current weather")
-        .parameter("city", json!({"type": "string"}))
-        .required(vec!["city".to_string()])
+        .with_description("Get the current weather")
+        .add_parameter("city", json!({"type": "string"}))
+        .with_required(vec!["city".to_string()])
         .build();
 
     // Turn 1: forced call, so the rest of the conversation always happens.

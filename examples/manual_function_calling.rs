@@ -27,21 +27,21 @@ const MAX_ROUNDS: usize = 5;
 fn declarations() -> Vec<FunctionDeclaration> {
     vec![
         FunctionDeclaration::builder("get_weather")
-            .description("Get the current weather for a city")
-            .parameter(
+            .with_description("Get the current weather for a city")
+            .add_parameter(
                 "city",
                 json!({"type": "string", "description": "City name"}),
             )
-            .required(vec!["city".to_string()])
+            .with_required(vec!["city".to_string()])
             .build(),
         FunctionDeclaration::builder("convert_temperature")
-            .description("Convert a temperature between celsius and fahrenheit")
-            .parameter("value", json!({"type": "number"}))
-            .parameter(
+            .with_description("Convert a temperature between celsius and fahrenheit")
+            .add_parameter("value", json!({"type": "number"}))
+            .add_parameter(
                 "to_unit",
                 json!({"type": "string", "enum": ["celsius", "fahrenheit"]}),
             )
-            .required(vec!["value".to_string(), "to_unit".to_string()])
+            .with_required(vec!["value".to_string(), "to_unit".to_string()])
             .build(),
     ]
 }

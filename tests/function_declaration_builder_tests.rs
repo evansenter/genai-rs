@@ -9,7 +9,7 @@ use serde_json::json;
 fn test_function_builder_with_empty_name() {
     // Builder accepts empty names but logs a warning
     let func = FunctionDeclaration::builder("")
-        .description("Test function")
+        .with_description("Test function")
         .build();
 
     assert_eq!(func.name(), "");
@@ -19,7 +19,7 @@ fn test_function_builder_with_empty_name() {
 #[test]
 fn test_function_builder_with_whitespace_only_name() {
     let func = FunctionDeclaration::builder("   ")
-        .description("Test function")
+        .with_description("Test function")
         .build();
 
     assert_eq!(func.name(), "   ");
@@ -29,11 +29,11 @@ fn test_function_builder_with_whitespace_only_name() {
 fn test_function_builder_parameter_overwrites_on_duplicate() {
     // When the same parameter name is added twice, the second should overwrite
     let func = FunctionDeclaration::builder("test_func")
-        .parameter(
+        .add_parameter(
             "location",
             json!({"type": "string", "description": "First"}),
         )
-        .parameter(
+        .add_parameter(
             "location",
             json!({"type": "string", "description": "Second"}),
         )
@@ -54,8 +54,8 @@ fn test_function_builder_parameter_overwrites_on_duplicate() {
 fn test_function_builder_required_non_existent_parameter() {
     // Builder allows requiring parameters that don't exist but logs a warning
     let func = FunctionDeclaration::builder("test_func")
-        .parameter("existing_param", json!({"type": "string"}))
-        .required(vec!["nonexistent_param".to_string()])
+        .add_parameter("existing_param", json!({"type": "string"}))
+        .with_required(vec!["nonexistent_param".to_string()])
         .build();
 
     assert_eq!(func.parameters().required(), vec!["nonexistent_param"]);
@@ -66,15 +66,15 @@ fn test_function_builder_required_non_existent_parameter() {
 fn test_function_builder_method_order_independence() {
     // Verify that calling methods in different orders produces identical results
     let func1 = FunctionDeclaration::builder("test")
-        .description("A test function")
-        .parameter("param1", json!({"type": "string"}))
-        .required(vec!["param1".to_string()])
+        .with_description("A test function")
+        .add_parameter("param1", json!({"type": "string"}))
+        .with_required(vec!["param1".to_string()])
         .build();
 
     let func2 = FunctionDeclaration::builder("test")
-        .required(vec!["param1".to_string()])
-        .parameter("param1", json!({"type": "string"}))
-        .description("A test function")
+        .with_required(vec!["param1".to_string()])
+        .add_parameter("param1", json!({"type": "string"}))
+        .with_description("A test function")
         .build();
 
     // Compare serialized forms since FunctionDeclaration doesn't implement PartialEq
@@ -87,7 +87,7 @@ fn test_function_builder_method_order_independence() {
 #[test]
 fn test_function_builder_with_no_parameters() {
     let func = FunctionDeclaration::builder("no_params")
-        .description("Function with no parameters")
+        .with_description("Function with no parameters")
         .build();
 
     assert_eq!(func.parameters().type_(), "object");
@@ -101,7 +101,7 @@ fn test_function_builder_with_many_parameters() {
 
     // Add 20 parameters
     for i in 0..20 {
-        builder = builder.parameter(
+        builder = builder.add_parameter(
             &format!("param_{}", i),
             json!({"type": "string", "description": format!("Parameter {}", i)}),
         );
@@ -120,10 +120,10 @@ fn test_function_builder_with_many_parameters() {
 #[test]
 fn test_function_builder_required_all_parameters() {
     let func = FunctionDeclaration::builder("all_required")
-        .parameter("param1", json!({"type": "string"}))
-        .parameter("param2", json!({"type": "number"}))
-        .parameter("param3", json!({"type": "boolean"}))
-        .required(vec![
+        .add_parameter("param1", json!({"type": "string"}))
+        .add_parameter("param2", json!({"type": "number"}))
+        .add_parameter("param3", json!({"type": "boolean"}))
+        .with_required(vec![
             "param1".to_string(),
             "param2".to_string(),
             "param3".to_string(),
@@ -136,9 +136,9 @@ fn test_function_builder_required_all_parameters() {
 #[test]
 fn test_function_builder_required_subset_of_parameters() {
     let func = FunctionDeclaration::builder("partial_required")
-        .parameter("required_param", json!({"type": "string"}))
-        .parameter("optional_param", json!({"type": "string"}))
-        .required(vec!["required_param".to_string()])
+        .add_parameter("required_param", json!({"type": "string"}))
+        .add_parameter("optional_param", json!({"type": "string"}))
+        .with_required(vec!["required_param".to_string()])
         .build();
 
     assert_eq!(func.parameters().required().len(), 1);
@@ -148,7 +148,7 @@ fn test_function_builder_required_subset_of_parameters() {
 #[test]
 fn test_function_builder_complex_nested_schema() {
     let func = FunctionDeclaration::builder("nested_schema")
-        .parameter(
+        .add_parameter(
             "complex_param",
             json!({
                 "type": "object",
@@ -174,7 +174,7 @@ fn test_function_builder_complex_nested_schema() {
 #[test]
 fn test_function_builder_with_array_parameter() {
     let func = FunctionDeclaration::builder("array_param")
-        .parameter(
+        .add_parameter(
             "items",
             json!({
                 "type": "array",
@@ -196,7 +196,7 @@ fn test_function_builder_with_array_parameter() {
 #[test]
 fn test_function_builder_with_enum_values() {
     let func = FunctionDeclaration::builder("enum_param")
-        .parameter(
+        .add_parameter(
             "unit",
             json!({
                 "type": "string",
@@ -217,7 +217,9 @@ fn test_function_builder_with_enum_values() {
 
 #[test]
 fn test_function_builder_description_can_be_empty() {
-    let func = FunctionDeclaration::builder("test").description("").build();
+    let func = FunctionDeclaration::builder("test")
+        .with_description("")
+        .build();
 
     assert_eq!(func.description(), "");
 }
@@ -225,7 +227,7 @@ fn test_function_builder_description_can_be_empty() {
 #[test]
 fn test_function_builder_description_with_unicode() {
     let func = FunctionDeclaration::builder("test")
-        .description("测试函数 with émojis 🎉")
+        .with_description("测试函数 with émojis 🎉")
         .build();
 
     assert!(func.description().contains("🎉"));
@@ -235,7 +237,7 @@ fn test_function_builder_description_with_unicode() {
 fn test_function_builder_very_long_description() {
     let long_desc = "x".repeat(10000);
     let func = FunctionDeclaration::builder("test")
-        .description(&long_desc)
+        .with_description(&long_desc)
         .build();
 
     assert_eq!(func.description().len(), 10000);

@@ -318,7 +318,7 @@ struct ServiceTool {
 impl CallableFunction for ServiceTool {
     fn declaration(&self) -> FunctionDeclaration {
         FunctionDeclaration::builder(self.name)
-            .description("service-provided test function")
+            .with_description("service-provided test function")
             .build()
     }
 
