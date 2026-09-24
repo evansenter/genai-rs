@@ -279,16 +279,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Every test binary with `#[ignore = "Requires API key"]` tests must
+          # appear in exactly one group; release.yml is the only other place
+          # they run, and that is after the tag exists.
           - group: core
-            tests: "interactions_api_tests multiturn_tests streaming_multiturn_tests"
+            tests: "interactions_api_tests multiturn_tests streaming_multiturn_tests streaming_resume_tests error_handling_tests"
           - group: tools
-            tests: "tools_and_config_tests agents_tests webhooks_and_agents_tests"
+            tests: "tools_and_config_tests webhooks_and_agents_tests"
           - group: functions
-            tests: "function_calling_tests"
+            tests: "function_calling_tests tool_service_tests"
           - group: multimodal
             tests: "multimodal_tests api_canary_tests temp_file_tests"
           - group: files-and-wire
-            tests: "api_wire_format_live_tests files_api_tests file_search_stores_tests"
+            tests: "files_api_tests file_search_stores_tests"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -302,7 +305,7 @@ jobs:
           set -eo pipefail
           # Every test in these five groups is #[ignore = "Requires API key"]
           # and self-skips when get_client() finds no key, so a rotated or
-          # cleared secret would print ~217 skip lines across the matrix and
+          # cleared secret would print a skip line per test across the matrix and
           # report green having called the API zero times. That is the same
           # vacuous pass guarded on the antigravity steps above, on the suite
           # with the most coverage and the one release validation leans on.

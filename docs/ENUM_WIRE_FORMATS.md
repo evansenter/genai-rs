@@ -1595,8 +1595,6 @@ caller can name it and the attribute is inert on it. That is the guard
 over-scanning a `pub struct` inside a private module — the loud direction it
 deliberately prefers.)
 
-`tests/proptest_roundtrip_tests.rs` shows both routes.
-
 Not in that list, despite having no `Default`: `ModalityTokens` gained a
 `new()`, `StreamEvent` already had one, and `OwnedFunctionCallInfo` is
 produced by the public `FunctionCallInfo::to_owned()`.

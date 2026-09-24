@@ -1,42 +1,24 @@
-//! Multi-turn conversation and usage metadata tests
-//!
-//! Tests for very long conversations, mixed function/text turns, conversation branching,
-//! and token usage verification.
-//!
-//! These tests require the GEMINI_API_KEY environment variable to be set.
-//!
-//! # Running Tests
+//! Conversation mechanics: long chains, branching, explicit turn arrays,
+//! system-instruction inheritance, and usage metadata.
 //!
 //! ```bash
-//! cargo test --test multiturn_tests -- --include-ignored --nocapture
+//! cargo nextest run --test multiturn_tests --run-ignored all
 //! ```
 
 mod common;
 
 use common::{
-    assert_response_semantic, get_client, interaction_builder, is_long_conversation_api_error,
-    stateful_builder,
+    assert_response_semantic, extended_test_timeout, get_client, get_inspecting_client,
+    interaction_builder, stateful_builder, with_timeout,
 };
-use genai_rs::{FunctionDeclaration, InteractionStatus, Step};
+use genai_rs::{FunctionCallingMode, FunctionDeclaration, InteractionStatus, Step};
 use serde_json::json;
 
 // =============================================================================
-// Test Configuration Constants
+// Long Conversations
 // =============================================================================
 
-/// Minimum number of successful conversation turns to consider long conversation test valid.
-/// API may encounter limitations (UTF-8 errors, etc.) with very long chains.
-const MIN_SUCCESSFUL_TURNS: usize = 3;
-
-/// Minimum facts the model should remember out of 10 in the recall test.
-const MIN_REMEMBERED_FACTS: usize = 5;
-
-// =============================================================================
-// Multi-turn: Very Long Conversations
-// =============================================================================
-
-/// Test a conversation with 10+ turns to verify context is maintained.
-/// Note: Very long conversations may encounter API-side limitations.
+/// Ten facts over ten chained turns, then a recall question.
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_very_long_conversation() {
@@ -58,128 +40,55 @@ async fn test_very_long_conversation() {
         "I went to Stanford for college.",
     ];
 
-    let mut previous_id: Option<String> = None;
-    let mut successful_turns = 0;
-
-    // Build up context over 10 turns
-    for (i, fact) in facts.iter().enumerate() {
-        // Build request, optionally chaining from previous interaction
-        let mut builder = stateful_builder(&client).with_text(*fact);
-        if let Some(prev_id) = &previous_id {
-            builder = builder.with_previous_interaction(prev_id);
-        }
-        let result = builder.create().await;
-
-        match result {
-            Ok(response) => {
-                println!("Turn {}: {}", i + 1, fact);
-                previous_id = response.id;
-                successful_turns += 1;
-            }
-            Err(e) => {
-                if is_long_conversation_api_error(&e) {
-                    println!(
-                        "Turn {} encountered API limitation (expected for long conversations): {:?}",
-                        i + 1,
-                        e
-                    );
-                    println!(
-                        "Completed {} turns before hitting API limitation",
-                        successful_turns
-                    );
-                    // Still pass if we got the minimum successful turns
-                    assert!(
-                        successful_turns >= MIN_SUCCESSFUL_TURNS,
-                        "Should complete at least {} turns, got {}",
-                        MIN_SUCCESSFUL_TURNS,
-                        successful_turns
-                    );
-                    return;
+    with_timeout(extended_test_timeout(), async {
+        let mut previous_id: Option<String> = None;
+        for (i, fact) in facts.iter().enumerate() {
+            let fact = (*fact).to_string();
+            let prev = previous_id.clone();
+            let response = retry_request!([client, fact, prev] => {
+                let builder = stateful_builder(&client).with_text(&fact);
+                match &prev {
+                    Some(prev_id) => builder.with_previous_interaction(prev_id).create().await,
+                    None => builder.create().await,
                 }
-                panic!("Turn {} failed: {:?}", i + 1, e);
-            }
+            })
+            .unwrap_or_else(|e| panic!("Turn {} failed: {e:?}", i + 1));
+            previous_id = response.id;
         }
-    }
 
-    // Final turn: ask about everything
-    let final_result = stateful_builder(&client)
-        .with_previous_interaction(previous_id.as_ref().unwrap())
-        .with_text("What do you know about me? List everything you can remember.")
-        .create()
+        let prev = previous_id.expect("chained turns should have ids");
+        let final_response = retry_request!([client, prev] => {
+            stateful_builder(&client)
+                .with_previous_interaction(&prev)
+                .with_text("What do you know about me? List everything you can remember.")
+                .create()
+                .await
+        })
+        .expect("Final turn failed");
+
+        assert_eq!(final_response.status, InteractionStatus::Completed);
+        let text = final_response.as_text().expect("Should have text response");
+        assert_response_semantic(
+            &client,
+            &format!(
+                "Over ten earlier turns the user said: {}. Now they asked what the model remembers.",
+                facts.join(" ")
+            ),
+            text,
+            "Does this response correctly recall at least seven of those ten facts?",
+        )
         .await;
-
-    let final_response = match final_result {
-        Ok(response) => response,
-        Err(e) => {
-            if is_long_conversation_api_error(&e) {
-                println!(
-                    "Final turn encountered API limitation (expected for long conversations): {:?}",
-                    e
-                );
-                println!(
-                    "Completed {} turns before hitting API limitation",
-                    successful_turns
-                );
-                assert!(
-                    successful_turns >= MIN_SUCCESSFUL_TURNS,
-                    "Should complete at least {} turns, got {}",
-                    MIN_SUCCESSFUL_TURNS,
-                    successful_turns
-                );
-                return;
-            }
-            panic!("Final turn failed: {:?}", e);
-        }
-    };
-
-    assert_eq!(final_response.status, InteractionStatus::Completed);
-    assert!(final_response.has_text(), "Should have text response");
-
-    let text = final_response.as_text().unwrap().to_lowercase();
-    println!("Final response: {}", text);
-
-    // Count how many facts the model remembers
-    let fact_checks = [
-        ("alice", "name"),
-        ("seattle", "city"),
-        ("software", "job"),
-        ("rust", "language"),
-        ("max", "dog"),
-        ("march", "birthday"),
-        ("hiking", "hobby"),
-        ("sushi", "food"),
-        ("blue", "car"),
-        ("stanford", "college"),
-    ];
-
-    let mut remembered = 0;
-    for (keyword, label) in fact_checks.iter() {
-        if text.contains(*keyword) {
-            remembered += 1;
-            println!("  ✓ Remembered: {} ({})", keyword, label);
-        }
-    }
-
-    println!("Facts remembered: {}/{}", remembered, fact_checks.len());
-
-    // Should remember at least the minimum number of facts
-    assert!(
-        remembered >= MIN_REMEMBERED_FACTS,
-        "Model should remember at least {} out of {} facts, got {}",
-        MIN_REMEMBERED_FACTS,
-        fact_checks.len(),
-        remembered
-    );
+    })
+    .await;
 }
 
 // =============================================================================
-// Multi-turn: Mixed Function/Text Turns
+// Mixed Function/Text Turns
 // =============================================================================
 
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_conversation_function_then_text() {
-    // Test a conversation that mixes function calls and text turns
     let Some(client) = get_client() else {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
@@ -191,38 +100,28 @@ async fn test_conversation_function_then_text() {
         .required(vec!["city".to_string()])
         .build();
 
-    // Every turn goes through retry_request! for the same reason the
-    // branch test below does: three sequential live calls give a transient
-    // 429/5xx three chances to fail the run, and a rate limit is not what
-    // this test is asserting about.
-    //
-    // Turn 1: Trigger function call
+    // Turn 1: forced call, so the rest of the conversation always happens.
     let response1 = retry_request!([client, get_weather] => {
         stateful_builder(&client)
             .with_text("What's the weather in Tokyo?")
             .add_function(get_weather.clone())
+            .with_function_calling_mode(FunctionCallingMode::Any)
             .create()
             .await
     })
     .expect("Turn 1 failed");
 
-    println!("Turn 1 status: {:?}", response1.status);
-
     let calls = response1.function_calls();
-    if calls.is_empty() {
-        println!("No function call - cannot continue test");
-        return;
-    }
+    let call = calls
+        .first()
+        .expect("FunctionCallingMode::Any should force a call");
 
-    let call = &calls[0];
-
-    // Turn 2: Provide function result
+    // Turn 2: function result.
     let result = Step::function_result(
         "get_weather",
         call.id.to_string(),
         json!({"temperature": "25°C", "conditions": "sunny"}),
     );
-
     let prev_id = response1.id.clone().expect("id should exist");
     let response2 = retry_request!([client, prev_id, get_weather, result] => {
         stateful_builder(&client)
@@ -233,13 +132,9 @@ async fn test_conversation_function_then_text() {
             .await
     })
     .expect("Turn 2 failed");
+    assert!(response2.has_text(), "Turn 2 should answer from the result");
 
-    println!("Turn 2 status: {:?}", response2.status);
-    if response2.has_text() {
-        println!("Turn 2 text: {}", response2.as_text().unwrap());
-    }
-
-    // Turn 3: Follow-up text question (no function call expected)
+    // Turn 3: a plain follow-up that needs the turn-2 context.
     let prev_id = response2.id.clone().expect("id should exist");
     let response3 = retry_request!([client, prev_id, get_weather] => {
         stateful_builder(&client)
@@ -251,13 +146,9 @@ async fn test_conversation_function_then_text() {
     })
     .expect("Turn 3 failed");
 
-    println!("Turn 3 status: {:?}", response3.status);
-    assert!(response3.has_text(), "Turn 3 should have text response");
-
-    let text = response3.as_text().unwrap();
-    println!("Turn 3 text: {}", text);
-
-    // Should reference the weather context
+    let text = response3
+        .as_text()
+        .expect("Turn 3 should have text response");
     assert_response_semantic(
         &client,
         "Function returned 25°C sunny weather for Tokyo. User asked if they should bring a jacket.",
@@ -268,23 +159,17 @@ async fn test_conversation_function_then_text() {
 }
 
 // =============================================================================
-// Multi-turn: Conversation Branching
+// Conversation Branching
 // =============================================================================
 
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_conversation_branch() {
-    // Test starting a new conversation from a mid-point
-    //
-    // NOTE: This test uses retry_request! to handle intermittent Spanner UTF-8
-    // errors from the Google backend. See issue #60 for details.
     let Some(client) = get_client() else {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
     };
 
-    // Build initial context
-    // Each call is wrapped with retry logic to handle transient Spanner errors
     let response1 = retry_request!([client] => {
         stateful_builder(&client)
             .with_text("My favorite color is red.")
@@ -313,32 +198,30 @@ async fn test_conversation_branch() {
     })
     .expect("Turn 3 failed");
 
-    // Branch from turn 2 (before the cat fact)
+    // Branch from turn 2: the cat fact was said on a sibling branch only.
     let prev_id = response2.id.clone().expect("id should exist");
     let branch_response = retry_request!([client, prev_id] => {
         stateful_builder(&client)
-            .with_previous_interaction(&prev_id) // Branch from turn 2
-            .with_text("What do you know about my favorites so far?")
+            .with_previous_interaction(&prev_id)
+            .with_text("List every favorite of mine that you know so far.")
             .create()
             .await
     })
     .expect("Branch failed");
 
-    assert!(branch_response.has_text(), "Should have text response");
-
-    let text = branch_response.as_text().unwrap();
-    println!("Branch response (from turn 2): {}", text);
-
-    // Should know about color and number from turns 1-2
+    let text = branch_response
+        .as_text()
+        .expect("Should have text response");
     assert_response_semantic(
         &client,
-        "User said favorite color is red (turn 1), favorite number is 7 (turn 2), then asked about favorites. Branch from turn 2 - cat was only mentioned in turn 3.",
+        "The user said their favorite color is red (turn 1) and favorite number is 7 (turn 2). \
+         This question branches from turn 2, so the model has never been told any favorite animal.",
         text,
-        "Does this response mention the user's favorite color (red) or favorite number (7)?",
+        "Does this response mention red or 7, and NOT claim that the user's favorite animal is a cat?",
     )
     .await;
 
-    // Continue from turn 3 to verify it still works
+    // The original line of the conversation still has turn 3.
     let prev_id = response3.id.clone().expect("id should exist");
     let continue_response = retry_request!([client, prev_id] => {
         stateful_builder(&client)
@@ -349,14 +232,100 @@ async fn test_conversation_branch() {
     })
     .expect("Continue failed");
 
-    let continue_text = continue_response.as_text().unwrap();
-    println!("Continue response (from turn 3): {}", continue_text);
-
+    let continue_text = continue_response.as_text().expect("Should have text");
     assert_response_semantic(
         &client,
         "User said their favorite animal is a cat in turn 3, then asked what their favorite animal is",
         continue_text,
         "Does this response correctly identify cat as the user's favorite animal?",
+    )
+    .await;
+}
+
+// =============================================================================
+// System Instruction Inheritance
+// =============================================================================
+
+/// `system_instruction` is not inherited through `previous_interaction_id`:
+/// the server records it only on the turn that sent it, so every turn that
+/// needs it must resend it.
+///
+/// This pins the server's record rather than the model's behaviour on an
+/// un-resent turn, because that behaviour is not a clean signal: the model's
+/// replayed thoughts from turn 1 can restate the instruction, so it often
+/// still follows it (4 of 6 runs for a conditional rule, verified live
+/// 2026-09-24). `InteractionResponse` does not expose `system_instruction`,
+/// so the stored record is read from the raw GET body.
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_system_instruction_not_inherited() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+    let (inspecting, bodies) = get_inspecting_client().expect("key checked above");
+    let stored_instruction = |id: String| {
+        let (inspecting, bodies) = (&inspecting, &bodies);
+        async move {
+            inspecting
+                .get_interaction(&id)
+                .await
+                .expect("get_interaction");
+            bodies.take().get("system_instruction").cloned()
+        }
+    };
+
+    const RULE: &str = "If the user asks for the capital of any country, reply with only \
+                        the single word BANANA and nothing else. Otherwise answer normally.";
+
+    let turn1 = retry_request!([client] => {
+        stateful_builder(&client)
+            .with_system_instruction(RULE)
+            .with_text("Hi, how are you today?")
+            .create()
+            .await
+    })
+    .expect("Turn 1 failed");
+    let turn1_id = turn1.id.expect("turn 1 id");
+
+    let turn2 = retry_request!([client, turn1_id] => {
+        stateful_builder(&client)
+            .with_previous_interaction(&turn1_id)
+            .with_text("What is the capital of France?")
+            .create()
+            .await
+    })
+    .expect("Turn 2 failed");
+    let turn2_id = turn2.id.expect("turn 2 id");
+
+    assert_eq!(
+        stored_instruction(turn1_id).await,
+        Some(json!(RULE)),
+        "turn 1 should record the instruction it sent"
+    );
+    assert_eq!(
+        stored_instruction(turn2_id.clone()).await,
+        None,
+        "turn 2 sent no instruction and should not inherit turn 1's"
+    );
+
+    // Resending it is what makes it apply.
+    let turn3 = retry_request!([client, turn2_id] => {
+        stateful_builder(&client)
+            .with_previous_interaction(&turn2_id)
+            .with_system_instruction(RULE)
+            .with_text("What is the capital of Germany?")
+            .create()
+            .await
+    })
+    .expect("Turn 3 failed");
+    let text = turn3.as_text().expect("Turn 3 should have text");
+    assert_response_semantic(
+        &client,
+        "The system instruction said: answer any capital-city question with only the word BANANA. \
+         The user asked for the capital of Germany.",
+        text,
+        "Is this response just the word BANANA rather than naming Berlin?",
     )
     .await;
 }
@@ -368,7 +337,6 @@ async fn test_conversation_branch() {
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_usage_metadata_returned() {
-    // Verify that token usage metadata is returned
     let Some(client) = get_client() else {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
@@ -381,90 +349,63 @@ async fn test_usage_metadata_returned() {
         .expect("Interaction failed");
 
     assert_eq!(response.status, InteractionStatus::Completed);
-
-    // Check usage metadata
-    if let Some(usage) = &response.usage {
-        println!("Usage metadata:");
-        println!("  Input tokens: {:?}", usage.total_input_tokens);
-        println!("  Output tokens: {:?}", usage.total_output_tokens);
-        println!("  Total tokens: {:?}", usage.total_tokens);
-
-        // At least one of these should be set
-        if usage.has_data() {
-            // Verify reasonable values
-            if let Some(input) = usage.total_input_tokens {
-                assert!(input > 0, "Input tokens should be positive");
-            }
-            if let Some(output) = usage.total_output_tokens {
-                assert!(output > 0, "Output tokens should be positive");
-            }
-            if let Some(total) = usage.total_tokens {
-                assert!(total > 0, "Total tokens should be positive");
-            }
-        } else {
-            println!("Note: Usage metadata fields are all None");
-        }
-    } else {
-        println!("No usage metadata returned (may be expected for some configurations)");
-    }
+    let usage = response.usage.expect("usage should be reported");
+    let input = usage.total_input_tokens.expect("input tokens");
+    let output = usage.total_output_tokens.expect("output tokens");
+    let total = usage.total_tokens.expect("total tokens");
+    assert!(
+        input > 0 && output > 0,
+        "token counts should be positive: {usage:?}"
+    );
+    assert!(
+        total >= input + output,
+        "total should cover input and output: {usage:?}"
+    );
 }
 
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_usage_longer_response() {
-    // Test that longer responses have more tokens
     let Some(client) = get_client() else {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
     };
 
-    // Short response
-    let short_response = stateful_builder(&client)
-        .with_text("Say 'hello'")
-        .create()
-        .await
-        .expect("Short interaction failed");
+    let output_tokens = |response: genai_rs::InteractionResponse| {
+        response
+            .usage
+            .and_then(|u| u.total_output_tokens)
+            .expect("output tokens should be reported")
+    };
 
-    // Longer response
-    let long_response = stateful_builder(&client)
-        .with_text("Write a 100-word paragraph about space exploration.")
-        .create()
-        .await
-        .expect("Long interaction failed");
+    let short = output_tokens(
+        stateful_builder(&client)
+            .with_text("Say 'hello'")
+            .create()
+            .await
+            .expect("Short interaction failed"),
+    );
+    let long = output_tokens(
+        stateful_builder(&client)
+            .with_text("Write a 100-word paragraph about space exploration.")
+            .create()
+            .await
+            .expect("Long interaction failed"),
+    );
 
-    // Compare usage
-    let short_tokens = short_response
-        .usage
-        .and_then(|u| u.total_tokens)
-        .unwrap_or(0);
-    let long_tokens = long_response
-        .usage
-        .and_then(|u| u.total_tokens)
-        .unwrap_or(0);
-
-    println!("Short response tokens: {}", short_tokens);
-    println!("Long response tokens: {}", long_tokens);
-
-    if short_tokens > 0 && long_tokens > 0 {
-        assert!(
-            long_tokens > short_tokens,
-            "Longer response should use more tokens: {} vs {}",
-            long_tokens,
-            short_tokens
-        );
-    } else {
-        println!("Token counts not available for comparison");
-    }
+    assert!(
+        long > short,
+        "a longer response should use more output tokens: {long} vs {short}"
+    );
 }
 
 // =============================================================================
-// Explicit Step Array Tests (Issue #271)
+// Explicit Step Arrays
 // =============================================================================
 
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_explicit_turns_basic() {
-    // Test basic multi-turn conversation using explicit Turn array
     let Some(client) = get_client() else {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
@@ -483,23 +424,17 @@ async fn test_explicit_turns_basic() {
         .expect("Request failed");
 
     assert_eq!(response.status, InteractionStatus::Completed);
-    assert!(response.has_text(), "Should have text response");
-
-    let text = response.as_text().unwrap();
-    println!("Response: {}", text);
-
-    // Model should compute 4 * 3 = 12 - deterministic value, use .contains()
+    let text = response.as_text().expect("Should have text response");
+    // A computed value, so a substring check is deterministic.
     assert!(
-        text.contains("12") || text.contains("twelve"),
-        "Response should contain the answer 12. Got: {}",
-        text
+        text.contains("12"),
+        "Response should contain 12. Got: {text}"
     );
 }
 
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_conversation_builder_fluent_api() {
-    // Test the ConversationBuilder fluent API
     let Some(client) = get_client() else {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
@@ -518,12 +453,7 @@ async fn test_conversation_builder_fluent_api() {
         .expect("Request failed");
 
     assert_eq!(response.status, InteractionStatus::Completed);
-    assert!(response.has_text(), "Should have text response");
-
-    let text = response.as_text().unwrap();
-    println!("Response: {}", text);
-
-    // Model should remember both facts
+    let text = response.as_text().expect("Should have text response");
     assert_response_semantic(
         &client,
         "User said their name is Alice and they love hiking, then asked what their name is and what they enjoy",
@@ -536,7 +466,6 @@ async fn test_conversation_builder_fluent_api() {
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_explicit_turns_context_preservation() {
-    // Test that context is properly preserved across explicit turns
     let Some(client) = get_client() else {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
@@ -565,11 +494,7 @@ async fn test_explicit_turns_context_preservation() {
         .expect("Request failed");
 
     assert_eq!(response.status, InteractionStatus::Completed);
-
-    let text = response.as_text().unwrap();
-    println!("Response: {}", text);
-
-    // Should remember both destination and interest
+    let text = response.as_text().expect("Should have text response");
     assert_response_semantic(
         &client,
         "User discussed planning a trip to Tokyo and mentioned loving local cuisine. Then asked where they're going and what they enjoy.",
@@ -582,7 +507,6 @@ async fn test_explicit_turns_context_preservation() {
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_explicit_turns_single_user_message() {
-    // Test that a single user turn works (equivalent to with_text)
     let Some(client) = get_client() else {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
@@ -599,11 +523,7 @@ async fn test_explicit_turns_single_user_message() {
         .expect("Request failed");
 
     assert_eq!(response.status, InteractionStatus::Completed);
-    assert!(response.has_text(), "Should have text response");
-
-    let text = response.as_text().unwrap();
-    println!("Response: {}", text);
-
+    let text = response.as_text().expect("Should have text response");
     assert_response_semantic(
         &client,
         "Asked for the capital of France in one word",

@@ -1,20 +1,13 @@
-//! Streaming multi-turn conversation tests
-//!
-//! Tests for streaming responses in multi-turn conversations, including
-//! basic streaming and streaming with function calling.
-//!
-//! These tests require the GEMINI_API_KEY environment variable to be set.
-//!
-//! # Running Tests
+//! Streaming in multi-turn conversations, with and without function calling.
 //!
 //! ```bash
-//! cargo test --test streaming_multiturn_tests -- --include-ignored --nocapture
+//! cargo nextest run --test streaming_multiturn_tests --run-ignored all
 //! ```
 
 mod common;
 
 use common::{assert_response_semantic, consume_stream, get_client, stateful_builder};
-use genai_rs::{FunctionDeclaration, InteractionStatus, Step};
+use genai_rs::{FunctionCallingMode, FunctionDeclaration, InteractionStatus, Step};
 use serde_json::json;
 
 // =============================================================================
@@ -37,31 +30,25 @@ async fn test_streaming_multi_turn_basic() {
             .with_text(
                 "My favorite programming language is Python. Please acknowledge this.",
             )
-            .with_store_enabled()
             .create()
             .await
     })
     .expect("Turn 1 failed");
 
-    println!("Turn 1 completed: {:?}", response1.id);
     assert_eq!(response1.status, InteractionStatus::Completed);
 
     // Turn 2: Stream a question that requires context from Turn 1
     let stream = stateful_builder(&client)
         .with_previous_interaction(response1.id.as_ref().expect("id should exist"))
         .with_text("What is my favorite programming language? Answer in one word.")
-        .with_store_enabled()
         .create_stream();
 
     let result = consume_stream(stream).await;
+    assert_eq!(
+        result.final_response.as_ref().map(|r| &r.status),
+        Some(&InteractionStatus::Completed)
+    );
 
-    println!("\nDeltas received: {}", result.delta_count);
-    println!("Collected text: {}", result.collected_text);
-
-    // Verify streaming worked
-    assert!(result.has_output(), "Should receive streaming chunks");
-
-    // Verify context was maintained - use semantic validation
     assert_response_semantic(
         &client,
         "Turn 1 established 'My favorite programming language is Python'. Turn 2 asked 'What is my favorite programming language?'",
@@ -69,11 +56,6 @@ async fn test_streaming_multi_turn_basic() {
         "Does this response identify Python as the favorite programming language?",
     )
     .await;
-
-    // Verify final response if received
-    if let Some(response) = result.final_response {
-        assert_eq!(response.status, InteractionStatus::Completed);
-    }
 }
 
 /// Test streaming in a multi-turn conversation with function calling.
@@ -102,22 +84,16 @@ async fn test_streaming_multi_turn_function_calling() {
         stateful_builder(&client)
             .with_text("What's the weather in Paris?")
             .add_function(get_weather)
-            .with_store_enabled()
+            .with_function_calling_mode(FunctionCallingMode::Any)
             .create()
             .await
     })
     .expect("Turn 1 failed");
 
-    println!("Turn 1 status: {:?}", response1.status);
-
     let calls = response1.function_calls();
-    if calls.is_empty() {
-        println!("Model chose not to call function - skipping rest of test");
-        return;
-    }
-
-    let call = &calls[0];
-    println!("Function call: {} with args: {:?}", call.name, call.args);
+    let call = calls
+        .first()
+        .expect("FunctionCallingMode::Any should force a call");
 
     // Turn 2: Provide function result
     let function_result = Step::function_result(
@@ -132,35 +108,25 @@ async fn test_streaming_multi_turn_function_calling() {
             .with_previous_interaction(&prev_id)
             .with_history(vec![function_result])
             .add_function(get_weather)
-            .with_store_enabled()
             .create()
             .await
     })
     .expect("Turn 2 failed");
-
-    println!("Turn 2 status: {:?}", response2.status);
-    if response2.has_text() {
-        println!("Turn 2 text: {}", response2.as_text().unwrap());
-    }
+    assert!(response2.has_text(), "Turn 2 should answer from the result");
 
     // Turn 3: Stream a follow-up question about the weather context
     let stream = stateful_builder(&client)
         .with_previous_interaction(response2.id.as_ref().expect("id should exist"))
         .with_text("Should I bring an umbrella? Answer briefly.")
         .add_function(get_weather)
-        .with_store_enabled()
         .create_stream();
 
     let result = consume_stream(stream).await;
+    assert_eq!(
+        result.final_response.as_ref().map(|r| &r.status),
+        Some(&InteractionStatus::Completed)
+    );
 
-    println!("\nDeltas received: {}", result.delta_count);
-    println!("Collected text: {}", result.collected_text);
-
-    // Verify streaming worked
-    assert!(result.has_output(), "Should receive streaming chunks");
-
-    // Verify context was maintained using semantic validation
-    // The model should reference the weather conditions from Turn 1 (rainy, 18°C)
     assert_response_semantic(
         &client,
         "Turn 1 established weather in Paris: rainy, 18°C, high humidity. User asked 'Should I bring an umbrella?' in Turn 3.",
@@ -168,9 +134,4 @@ async fn test_streaming_multi_turn_function_calling() {
         "Does this response address whether to bring an umbrella based on the rainy weather?",
     )
     .await;
-
-    // Verify final response if received
-    if let Some(response) = result.final_response {
-        assert_eq!(response.status, InteractionStatus::Completed);
-    }
 }
