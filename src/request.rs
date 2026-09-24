@@ -2341,7 +2341,7 @@ mod tests {
 
         // Verify nested format is NOT produced
         // Google docs suggest voiceConfig.prebuiltVoiceConfig.voiceName but that returns 400.
-        // See docs/ENUM_WIRE_FORMATS.md and docs/INTERACTIONS_API_FEEDBACK.md Issue #7.
+        // See docs/ENUM_WIRE_FORMATS.md ("SpeechConfig (generation_config)").
         assert!(
             value.get("voiceConfig").is_none(),
             "Should use flat format, not nested voiceConfig"

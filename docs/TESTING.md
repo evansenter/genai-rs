@@ -48,12 +48,14 @@ cargo nextest run --test interactions_api_tests --run-ignored all  # Single file
 
 | File | Coverage |
 |------|----------|
-| `interactions_api_tests.rs` | Basic API interactions |
-| `multiturn_tests.rs` | Stateful conversations |
-| `streaming_multiturn_tests.rs` | SSE streaming |
-| `tools_and_config_tests.rs` | Built-in tools configuration |
+| `interactions_api_tests.rs` | CRUD, background mode, streaming, generation config, errors |
+| `multiturn_tests.rs` | Conversation mechanics, system-instruction inheritance, usage |
+| `streaming_multiturn_tests.rs` | Streaming in multi-turn conversations |
+| `streaming_resume_tests.rs` | `get_interaction_stream` and `last_event_id` resume |
+| `tools_and_config_tests.rs` | Built-in tools, structured output, generation config |
 | `function_calling_tests.rs` | `#[tool]` macro, auto-execution, multi-turn |
-| `agents_tests.rs` | Agent and background task patterns |
+| `tool_service_tests.rs` | `ToolService` registration and precedence |
+| `webhooks_and_agents_tests.rs` | Webhooks, agents, environments, triggers, Vertex-gated params |
 | `multimodal_tests.rs` | Images, audio, video, documents |
 
 ### Property-Based Tests (proptest)
@@ -64,9 +66,10 @@ Automatic generation of test cases for serialization roundtrips.
 cargo test proptest                       # Run proptest tests
 ```
 
-**Location**:
-- `src/proptest_tests.rs` - Strategy generators for all types
-- `tests/proptest_roundtrip_tests.rs` - Integration proptests
+**Location**: `src/proptest_tests.rs` holds every strategy and roundtrip
+property. It is in-crate so there is one set of strategies to keep current;
+an integration-test copy drifts, because crate-private strategies cannot be
+shared with it.
 
 **What they verify**:
 - Any valid type serializes and deserializes to the same value
@@ -84,9 +87,9 @@ cargo test --test ui_tests
 **Location**: `tests/ui/*.rs`
 
 **What they test**:
-- Type-state pattern enforcement (can't call `with_system_instruction()` after chaining)
-- `#[tool]` macro error messages
-- Invalid builder configurations
+- `#[tool]` macro error messages (`fail_*.rs`)
+- What the macro must *not* require of a consumer, and the `StepSummary`
+  migration path (`pass_*.rs`)
 
 ### Canary Tests
 
@@ -107,8 +110,9 @@ Verify actual API wire formats match our expectations.
 | File | Purpose |
 |------|---------|
 | `wire_format_verification_tests.rs` | Offline format verification |
-| `api_wire_format_live_tests.rs` | Live API format verification |
 | `unknown_variant_tests.rs` | Unknown variant handling |
+
+Live drift detection is the canaries' job (`api_canary_tests.rs`).
 
 ### Strict Mode Tests
 
@@ -181,11 +185,14 @@ Tests are split into 5 groups to parallelize and isolate failures:
 
 | Group | Tests |
 |-------|-------|
-| `core` | interactions_api, multiturn, streaming_multiturn |
-| `tools` | tools_and_config, agents |
-| `functions` | function_calling |
+| `core` | interactions_api, multiturn, streaming_multiturn, streaming_resume, error_handling |
+| `tools` | tools_and_config, webhooks_and_agents |
+| `functions` | function_calling, tool_service |
 | `multimodal` | multimodal, api_canary, temp_file |
-| `files-and-wire` | api_wire_format_live, files_api |
+| `files-and-wire` | files_api, file_search_stores |
+
+Every binary with a live test must appear in exactly one group;
+`tests/ci_coverage.rs` fails the unit suite otherwise.
 
 ## Test Utilities
 
@@ -243,9 +250,12 @@ let stream = interaction_builder(&client)
     .create_stream();
 
 let result = consume_stream(stream).await;
-assert!(result.has_output());
 assert!(!result.collected_text.is_empty());
+assert!(result.final_response.is_some());
 ```
+
+Both stream helpers panic on the first stream error. A test that expects an
+error should iterate the stream itself and match on the item.
 
 ### Semantic Validation
 
@@ -308,7 +318,7 @@ mod common;
 use common::*;
 
 #[tokio::test]
-#[ignore = "Requires GEMINI_API_KEY"]
+#[ignore = "Requires API key"]
 async fn test_feature_name() {
     let Some(client) = get_client() else {
         println!("Skipping: GEMINI_API_KEY not set");
@@ -322,12 +332,17 @@ async fn test_feature_name() {
             .await
             .expect("Request should succeed");
 
-        // Structural assertions (preferred)
-        assert!(response.as_text().is_some());
         assert_eq!(response.status, InteractionStatus::Completed);
+        let text = response.as_text().expect("Should have text");
+        assert_response_semantic(&client, "Asked X", text, "Does this answer X?").await;
     }).await;
 }
 ```
+
+The only early return is the no-key skip. A request that fails must fail
+the test (D-010), and a turn that must call a function sets
+`FunctionCallingMode::Any` rather than returning when the model answers
+directly.
 
 ### Property Test Template
 
@@ -359,9 +374,11 @@ Is it checking LLM-generated text content?
           └── NO (natural language response) → Use semantic validation
 ```
 
-### Structural Assertions (Preferred)
+### Structural Assertions
 
-Check API mechanics without depending on LLM output:
+Check API mechanics without depending on LLM output. A structural check pins
+the wire shape, not that a feature works (D-010): where the feature has an
+observable effect, assert the effect as well.
 
 ```rust,ignore
 // Good - structural
@@ -604,7 +621,7 @@ Serialization is tested at two layers:
 
 | Layer | Location | Purpose |
 |-------|----------|---------|
-| **Proptest** | `src/proptest_tests.rs`, `tests/proptest_roundtrip_tests.rs` | Fuzzing with random inputs to find edge cases |
+| **Proptest** | `src/proptest_tests.rs` | Fuzzing with random inputs to find edge cases |
 | **Manual** | `*_tests.rs` files | Document expected behavior, verify specific scenarios |
 
 **Both are valuable:**
@@ -620,10 +637,10 @@ Integration tests are split into 5 CI matrix groups for parallelization:
 
 | Group | Tests | Rationale |
 |-------|-------|-----------|
-| `core` | interactions_api, multiturn, streaming_multiturn | Core API functionality |
-| `tools` | tools_and_config, agents | Tool/agent patterns |
-| `functions` | function_calling | Function calling (isolated for flakiness) |
-| `multimodal` | multimodal, api_canary, temp_file | Media handling |
-| `files-and-wire` | api_wire_format_live, files_api | File API and wire format |
+| `core` | interactions_api, multiturn, streaming_multiturn, streaming_resume, error_handling | Core API functionality |
+| `tools` | tools_and_config, webhooks_and_agents | Tools and resources |
+| `functions` | function_calling, tool_service | Function calling (isolated for flakiness) |
+| `multimodal` | multimodal, api_canary, temp_file | Media handling and drift canaries |
+| `files-and-wire` | files_api, file_search_stores | File and store resources |
 
 Tests are grouped by feature similarity and failure correlation. If one test in a group fails, related tests likely fail too, so grouping them reduces redundant CI runs.

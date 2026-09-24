@@ -34,6 +34,9 @@ use super::response::{
 use super::response_format::{ResponseDelivery, ResponseFormat, ResponseFormatSpec};
 use super::safety::{HarmCategory, SafetyMethod, SafetySetting, SafetyThreshold};
 use super::steps::{FunctionResultPayload, Step, StepDelta, StepError};
+use super::streaming::{
+    AutoFunctionResult, AutoFunctionStreamChunk, FunctionExecutionResult, PendingFunctionCall,
+};
 use super::tools::{
     AllowedTools, ExaAiSearchConfig, FunctionCallingMode, FunctionParameters, HybridSearchConfig,
     ParallelAiSearchConfig, RagFilter, RagRanking, RagResource, RagRetrievalConfig, RagStoreConfig,
@@ -2749,5 +2752,119 @@ proptest! {
         };
 
         assert_value_roundtrip(&step)?;
+    }
+}
+
+// =============================================================================
+// Auto-Function Types
+// =============================================================================
+//
+// Integration tests used to cover these with their own copies of the
+// strategies above; they live here so there is one set to keep current.
+
+fn arb_function_execution_result() -> impl Strategy<Value = FunctionExecutionResult> {
+    (
+        arb_identifier(),
+        arb_identifier(),
+        arb_json_value(),
+        arb_json_value(),
+        any::<u64>(),
+    )
+        .prop_map(|(name, call_id, args, result, millis)| {
+            FunctionExecutionResult::new(
+                name,
+                call_id,
+                args,
+                result,
+                std::time::Duration::from_millis(millis),
+            )
+        })
+}
+
+fn arb_pending_function_call() -> impl Strategy<Value = PendingFunctionCall> {
+    (arb_identifier(), arb_identifier(), arb_json_value())
+        .prop_map(|(name, call_id, args)| PendingFunctionCall::new(name, call_id, args))
+}
+
+fn arb_auto_function_stream_chunk() -> impl Strategy<Value = AutoFunctionStreamChunk> {
+    prop_oneof![
+        arb_step_delta().prop_map(AutoFunctionStreamChunk::Delta),
+        (
+            arb_interaction_response(),
+            prop::collection::vec(arb_pending_function_call(), 0..5)
+        )
+            .prop_map(|(response, pending_calls)| {
+                AutoFunctionStreamChunk::ExecutingFunctions {
+                    response,
+                    pending_calls,
+                }
+            }),
+        prop::collection::vec(arb_function_execution_result(), 0..5)
+            .prop_map(AutoFunctionStreamChunk::FunctionResults),
+        arb_interaction_response().prop_map(AutoFunctionStreamChunk::Complete),
+        arb_interaction_response().prop_map(AutoFunctionStreamChunk::MaxLoopsReached),
+        (arb_unknown_type(), arb_json_value()).prop_map(|(chunk_type, data)| {
+            AutoFunctionStreamChunk::Unknown { chunk_type, data }
+        }),
+    ]
+}
+
+fn arb_auto_function_result() -> impl Strategy<Value = AutoFunctionResult> {
+    (
+        arb_interaction_response(),
+        prop::collection::vec(arb_function_execution_result(), 0..10),
+        any::<bool>(),
+    )
+        .prop_map(
+            |(response, executions, reached_max_loops)| AutoFunctionResult {
+                response,
+                executions,
+                reached_max_loops,
+            },
+        )
+}
+
+proptest! {
+    #[test]
+    fn function_execution_result_roundtrip(result in arb_function_execution_result()) {
+        let json = serde_json::to_string(&result).expect("Serialization should succeed");
+        let restored: FunctionExecutionResult =
+            serde_json::from_str(&json).expect("Deserialization should succeed");
+        // Duration travels as milliseconds, which the strategy generates.
+        prop_assert_eq!(result, restored);
+    }
+
+    #[test]
+    fn pending_function_call_roundtrip(call in arb_pending_function_call()) {
+        assert_value_roundtrip(&call)?;
+    }
+
+    #[test]
+    fn auto_function_stream_chunk_roundtrip(chunk in arb_auto_function_stream_chunk()) {
+        assert_value_roundtrip(&chunk)?;
+    }
+
+    #[test]
+    fn auto_function_result_roundtrip(result in arb_auto_function_result()) {
+        let json = serde_json::to_value(&result).expect("Serialization should succeed");
+        let restored: AutoFunctionResult =
+            serde_json::from_value(json.clone()).expect("Deserialization should succeed");
+        prop_assert_eq!(result.reached_max_loops, restored.reached_max_loops);
+        prop_assert_eq!(&result.executions, &restored.executions);
+        let restored_json = serde_json::to_value(&restored).expect("Re-serialization should succeed");
+        prop_assert_eq!(json, restored_json);
+    }
+
+    /// `reached_max_loops` is `#[serde(default)]`: payloads written before the
+    /// field existed deserialize as `false`.
+    #[test]
+    fn auto_function_result_defaults_reached_max_loops(response in arb_interaction_response()) {
+        let json = serde_json::json!({
+            "response": serde_json::to_value(&response).unwrap(),
+            "executions": [],
+        });
+        let restored: AutoFunctionResult =
+            serde_json::from_value(json).expect("Deserialization should succeed");
+        prop_assert!(!restored.reached_max_loops);
     }
 }
