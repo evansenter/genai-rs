@@ -1318,12 +1318,6 @@ impl InteractionResponse {
             .any(|s| matches!(s, Step::CodeExecutionCall { .. }))
     }
 
-    /// Get the first code execution call, if any.
-    #[must_use]
-    pub fn code_execution_call(&self) -> Option<CodeExecutionCallInfo<'_>> {
-        self.code_execution_calls().into_iter().next()
-    }
-
     /// Extract all code execution calls from steps.
     #[must_use]
     pub fn code_execution_calls(&self) -> Vec<CodeExecutionCallInfo<'_>> {
@@ -1408,18 +1402,6 @@ impl InteractionResponse {
             .any(|s| matches!(s, Step::GoogleSearchCall { .. }))
     }
 
-    /// Get the first Google Search query, if any.
-    #[must_use]
-    pub fn google_search_call(&self) -> Option<&str> {
-        self.steps.iter().find_map(|step| {
-            if let Step::GoogleSearchCall { queries, .. } = step {
-                queries.iter().find(|q| !q.is_empty()).map(|q| q.as_str())
-            } else {
-                None
-            }
-        })
-    }
-
     /// Extract all Google Search queries from steps (flattened across calls).
     #[must_use]
     pub fn google_search_calls(&self) -> Vec<&str> {
@@ -1470,18 +1452,6 @@ impl InteractionResponse {
         self.steps
             .iter()
             .any(|s| matches!(s, Step::UrlContextCall { .. }))
-    }
-
-    /// Get the ID of the first URL context call, if any.
-    #[must_use]
-    pub fn url_context_call_id(&self) -> Option<&str> {
-        self.steps.iter().find_map(|step| {
-            if let Step::UrlContextCall { id, .. } = step {
-                Some(id.as_str())
-            } else {
-                None
-            }
-        })
     }
 
     /// Extract URL context call URLs from steps (flattened across calls).
@@ -1789,28 +1759,6 @@ impl InteractionResponse {
     pub fn tool_use_tokens(&self) -> Option<u32> {
         self.usage.as_ref().and_then(|u| u.total_tool_use_tokens)
     }
-
-    // =========================================================================
-    // Timestamp Helpers
-    // =========================================================================
-
-    /// Get the timestamp when this interaction was created.
-    ///
-    /// Returns `None` if the interaction was created with `store=false` or
-    /// if the API didn't include timestamp information.
-    #[must_use]
-    pub fn created(&self) -> Option<DateTime<Utc>> {
-        self.created
-    }
-
-    /// Get the timestamp when this interaction was last updated.
-    ///
-    /// Returns `None` if the interaction was created with `store=false` or
-    /// if the API didn't include timestamp information.
-    #[must_use]
-    pub fn updated(&self) -> Option<DateTime<Utc>> {
-        self.updated
-    }
 }
 
 /// Summary of step and content types present in an interaction response.
@@ -2067,7 +2015,7 @@ mod tests {
         );
         let usage = response.usage.as_ref().unwrap();
         assert_eq!(usage.grounding_count_for_tool("google_search"), Some(2));
-        assert!(response.created().is_some());
+        assert!(response.created.is_some());
     }
 
     #[test]

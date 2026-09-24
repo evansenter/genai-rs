@@ -107,7 +107,7 @@ RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo doc --workspace --no-deps --featur
 ### Layered Design
 
 1. **Public API** (`src/lib.rs`, `src/client.rs`, `src/request_builder/`): User-facing `Client`, `InteractionBuilder`
-2. **Internal Logic** (`src/function_calling.rs`, `src/interactions_api.rs`, `src/multimodal.rs`): Function registry, content builders
+2. **Internal Logic** (`src/function_calling.rs`, `src/multimodal.rs`): Function registry, file-loading content builders
 3. **HTTP Layer** (`src/http/`): Raw API requests, SSE streaming (internal, `pub(crate)`)
 4. **Type Modules** (`src/content.rs`, `src/request.rs`, `src/response.rs`, `src/tools.rs`): JSON models
 5. **Macros** (`genai-rs-macros/`): `#[tool]` macro with `inventory` registration

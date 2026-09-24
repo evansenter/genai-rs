@@ -832,13 +832,6 @@ fn test_interaction_response_google_search_call_helpers() {
 
     assert!(response.has_google_search_calls());
 
-    // Test google_search_call() - returns first one
-    assert_eq!(
-        response.google_search_call(),
-        Some("Rust programming language")
-    );
-
-    // Test google_search_calls() - returns all
     let queries = response.google_search_calls();
     assert_eq!(queries.len(), 2);
     assert_eq!(queries[0], "Rust programming language");
@@ -856,7 +849,6 @@ fn test_interaction_response_no_google_search_calls() {
     };
 
     assert!(!response.has_google_search_calls());
-    assert!(response.google_search_call().is_none());
     assert!(response.google_search_calls().is_empty());
 }
 
@@ -888,10 +880,6 @@ fn test_interaction_response_url_context_call_helpers() {
 
     assert!(response.has_url_context_calls());
 
-    // Test url_context_call_id() - returns first call ID
-    assert_eq!(response.url_context_call_id(), Some("ctx_1"));
-
-    // Test url_context_call_urls() - returns all URLs flattened
     let urls = response.url_context_call_urls();
     assert_eq!(urls.len(), 3);
     assert_eq!(urls[0], "https://docs.rs");
@@ -910,7 +898,6 @@ fn test_interaction_response_no_url_context_calls() {
     };
 
     assert!(!response.has_url_context_calls());
-    assert!(response.url_context_call_id().is_none());
     assert!(response.url_context_call_urls().is_empty());
 }
 
@@ -939,10 +926,8 @@ fn test_interaction_response_code_execution_call_singular() {
         ..Default::default()
     };
 
-    // Test code_execution_call() - returns first one
-    let call = response.code_execution_call();
-    assert!(call.is_some());
-    let call = call.unwrap();
+    let calls = response.code_execution_calls();
+    let call = calls.first().expect("first call");
     assert_eq!(call.id, "call_first");
     assert_eq!(call.language, CodeExecutionLanguage::Python);
     assert_eq!(call.code, "print('first')");
@@ -958,7 +943,7 @@ fn test_interaction_response_no_code_execution_call() {
         ..Default::default()
     };
 
-    assert!(response.code_execution_call().is_none());
+    assert!(response.code_execution_calls().is_empty());
 }
 
 #[test]

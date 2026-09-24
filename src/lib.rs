@@ -49,7 +49,7 @@
 //!
 //! - [`Client`]: Main entry point for API interactions
 //! - [`InteractionBuilder`]: Fluent builder for configuring requests
-//! - [`interactions_api`]: Helper functions for constructing content
+//! - [`Content`] and [`Step`]: Constructors for request content and history
 //! - [`function_calling`]: Function registration and execution
 
 // =============================================================================
@@ -261,16 +261,6 @@ pub use streaming::{
     AutoFunctionResult, AutoFunctionResultAccumulator, AutoFunctionStreamChunk,
     AutoFunctionStreamEvent, FunctionExecutionResult, PendingFunctionCall,
 };
-
-// =============================================================================
-// Content Constructor Functions
-// =============================================================================
-//
-// ## Export Strategy
-//
-// Model output constructors for testing and response simulation.
-// Use `Content::*()` constructors for user input content.
-pub mod interactions_api;
 
 // =============================================================================
 // Multimodal File Loading Utilities
