@@ -145,13 +145,6 @@ pub use request::{
 pub mod response_format;
 pub use response_format::{ResponseDelivery, ResponseFormat, ResponseFormatSpec, VideoResolution};
 
-// Environment types (environment request field, agent base_environment)
-pub mod environment;
-pub use environment::{
-    AllowlistEntry, EnvVar, EnvironmentSource, EnvironmentSpec, NetworkConfig, RemoteEnvironment,
-    SourceType,
-};
-
 // Triggers resource (/v1beta/triggers) — server-side scheduled interactions
 pub mod triggers;
 pub use triggers::{
@@ -159,10 +152,14 @@ pub use triggers::{
     TriggerExecutionStatus, TriggerListResponse, TriggerStatus, TriggerUpdate,
 };
 
-// Environments resource (/v1beta/environments)
+// Environments: the spec (environment request field, agent
+// base_environment), the /v1beta/environments resource, and its files
 pub mod environments;
 pub use environments::{
-    CreateEnvironmentRequest, Environment, EnvironmentListResponse, EnvironmentStatus,
+    AllowlistEntry, CreateEnvironmentRequest, EnvVar, Environment, EnvironmentFile,
+    EnvironmentFileList, EnvironmentFileType, EnvironmentFileUpload, EnvironmentListResponse,
+    EnvironmentSource, EnvironmentSpec, EnvironmentStatus, NetworkConfig, RemoteEnvironment,
+    SourceType,
 };
 
 // File Search Stores resource (/v1beta/fileSearchStores) — the documents
@@ -181,12 +178,6 @@ pub use safety::{HarmCategory, SafetyMethod, SafetySetting, SafetyThreshold};
 pub mod agents;
 pub use agents::{Agent, AgentListResponse};
 
-// Webhooks resource (/v1beta/webhooks) and per-request webhook_config
-pub mod environment_files;
-pub use environment_files::{
-    EnvironmentFile, EnvironmentFileList, EnvironmentFileType, EnvironmentFileUpload,
-};
-
 pub mod credentials;
 pub use credentials::{
     CreateCredentialRequest, Credential, CredentialConfig, CredentialListResponse,
@@ -199,6 +190,7 @@ pub use voices::{
     VoiceListResponse, VoicePitch, VoiceSpec, VoiceType,
 };
 
+// Webhooks resource (/v1beta/webhooks) and per-request webhook_config
 pub mod webhooks;
 pub use webhooks::{
     RevocationBehavior, RotateSigningSecretResponse, SigningSecret, Webhook, WebhookConfig,
@@ -236,11 +228,12 @@ pub mod wire;
 #[cfg(feature = "antigravity")]
 pub mod antigravity;
 
-// Files API types
-pub use http::files::{
-    DEFAULT_CHUNK_SIZE, FileError, FileMetadata, FileState, ListFilesResponse, ResumableUpload,
-    VideoMetadata,
+// Files API (/v1beta/files)
+pub mod files;
+pub use files::{
+    FileError, FileMetadata, FileState, FileUploadResponse, ListFilesResponse, VideoMetadata,
 };
+pub use http::files::{DEFAULT_CHUNK_SIZE, ResumableUpload};
 
 // =============================================================================
 // Client and Builder

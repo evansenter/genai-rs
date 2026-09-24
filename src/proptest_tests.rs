@@ -17,11 +17,11 @@ use super::content::{
     GoogleSearchResultItem, Place, Resolution, ReviewSnippet, UrlContextResultItem,
     VideoProcessing,
 };
-use super::environment::{
+use super::environments::EnvironmentStatus;
+use super::environments::{
     AllowlistEntry, EnvironmentSource, EnvironmentSpec, NetworkConfig, RemoteEnvironment,
     SourceType,
 };
-use super::environments::EnvironmentStatus;
 use super::request::{
     AgentConfig, DeepResearchConfig, DynamicConfig, GenerationConfig, ImageAspectRatio,
     ImageConfig, ImageSize, InteractionInput, ServiceTier, SpeechConfig, ThinkingLevel,

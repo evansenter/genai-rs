@@ -12,7 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::environment::EnvironmentSpec;
+use crate::environments::EnvironmentSpec;
 use crate::tools::Tool;
 
 /// An agent definition for the `/v1beta/agents` resource.
@@ -148,7 +148,7 @@ pub struct AgentListResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::environment::{EnvironmentSource, RemoteEnvironment};
+    use crate::environments::{EnvironmentSource, RemoteEnvironment};
     use serde_json::json;
 
     #[test]

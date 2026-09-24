@@ -317,3 +317,27 @@ replacement is `DEFAULT_MODEL`. The generic error text (`Request contains an
 invalid argument`) is the only symptom of a too-short clip, which is now noted
 in `docs/MULTIMODAL.md`.
 
+---
+
+## D-013 — One module per resource (2026-09-24)
+
+**Context.** Environments were spread over three public modules:
+`environment` (the spec), `environments` (the resource) and
+`environment_files`. The Files API types lived in `pub(crate) mod http`,
+reachable only through piecemeal root re-exports, so `FileUploadResponse`
+was `pub` but could not be named.
+
+**Decision.** Moved, per D-011:
+
+| From | To |
+|------|----|
+| `src/environment.rs` | `src/environments/spec.rs` |
+| `src/environments.rs` | `src/environments/mod.rs` |
+| `src/environment_files.rs` | `src/environments/files.rs` |
+| Files API types in `src/http/files.rs` | `src/files.rs` (public); the HTTP calls stay in `src/http/files.rs` |
+
+The submodules are private; `genai_rs::environments` re-exports all of it.
+
+**Consequences.** Every root re-export (`genai_rs::X`) is unchanged. The
+module paths `genai_rs::environment::*` and `genai_rs::environment_files::*`
+are gone; use `genai_rs::environments::*` or the root.

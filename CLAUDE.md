@@ -57,7 +57,7 @@ prints the wire; `RUST_LOG=genai_rs=debug` enables debug logs.
 | `src/request.rs`, `src/content.rs`, `src/tools.rs` | Request types, `Content`, tool configs |
 | `src/steps.rs`, `src/response.rs` | The steps response model, `InteractionResponse` and its accessors |
 | `src/wire_streaming.rs`, `src/streaming.rs` | Stream chunk/event types; auto-function stream types |
-| `src/webhooks.rs`, `triggers.rs`, `agents.rs`, `environments.rs`, `environment.rs`, `file_search_stores.rs` | Resource types (`/v1beta/...`) |
+| `src/webhooks.rs`, `triggers.rs`, `agents.rs`, `environments/`, `files.rs`, `file_search_stores.rs`, `credentials.rs`, `voices.rs` | Resource types (`/v1beta/...`) |
 | `src/http/` | `pub(crate)` HTTP layer: one request path (`common.rs`), SSE parser, error mapping |
 | `src/wire.rs` | `WireInspector`, `LOUD_WIRE` printer |
 | `src/function_calling.rs`, `genai-rs-macros/` | Function registry, `#[tool]` macro (`inventory` registration) |

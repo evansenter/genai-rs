@@ -1959,7 +1959,7 @@ impl Content {
     /// # }
     /// ```
     #[must_use]
-    pub fn from_file(file: &crate::http::files::FileMetadata) -> Self {
+    pub fn from_file(file: &crate::files::FileMetadata) -> Self {
         Self::from_uri_and_mime(file.uri.clone(), file.mime_type.clone())
     }
 

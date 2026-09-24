@@ -1,17 +1,5 @@
-//! Environment types for the `environment` request field and the Agents
-//! resource's `base_environment`.
-//!
-//! An environment describes the sandbox an agent runs in: which sources are
-//! mounted (GCS buckets, inline files, repositories, skill registries) and
-//! what outbound network access is allowed.
-//!
-//! The wire union accepts either a string environment ID — an environment
-//! created explicitly via
-//! [`Client::create_environment()`](crate::Client::create_environment) (see
-//! [`environments`](crate::environments)) or by a previous interaction,
-//! echoed as
-//! [`InteractionResponse::environment_id`](crate::InteractionResponse) — or
-//! a typed remote environment object, modeled here as [`EnvironmentSpec`].
+//! The environment description: the `environment` request field and the
+//! Agents resource's `base_environment`. See the [parent module](super).
 
 use crate::wire_enum::wire_enum;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};

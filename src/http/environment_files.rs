@@ -8,7 +8,7 @@ use super::common::{
 };
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
-use crate::environment_files::{EnvironmentFileList, EnvironmentFileUpload};
+use crate::environments::{EnvironmentFileList, EnvironmentFileUpload};
 use crate::errors::GenaiError;
 
 /// Percent-encodes each segment of a relative file path, keeping the `/`

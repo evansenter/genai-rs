@@ -53,12 +53,12 @@ const REQUEST_SIDE: &[&str] = &[
     "src/tools.rs:RagRetrievalConfig",
     "src/tools.rs:RagStoreConfig",
     // Resource create/update bodies.
-    "src/environments.rs:CreateEnvironmentRequest",
-    "src/environment.rs:EnvironmentSource",
-    "src/environment.rs:AllowlistEntry",
+    "src/environments/mod.rs:CreateEnvironmentRequest",
+    "src/environments/spec.rs:EnvironmentSource",
+    "src/environments/spec.rs:AllowlistEntry",
     // Passed to `with_environment`; reached only via a hand-written
     // Deserialize impl.
-    "src/environment.rs:RemoteEnvironment",
+    "src/environments/spec.rs:RemoteEnvironment",
     "src/triggers.rs:TriggerCreateParams",
     "src/triggers.rs:TriggerUpdate",
     "src/webhooks.rs:WebhookUpdate",

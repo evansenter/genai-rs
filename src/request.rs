@@ -3,7 +3,7 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::content::Content;
-use crate::environment::EnvironmentSpec;
+use crate::environments::EnvironmentSpec;
 use crate::response_format::ResponseFormatSpec;
 use crate::safety::SafetySetting;
 use crate::steps::Step;

@@ -23,7 +23,7 @@ All types below implement graceful handling of unrecognized values via an `Unkno
 | 5 | `Resolution` | src/content.rs | `resolution_type` | Image/video quality |
 | 6 | `StreamChunk` | src/wire_streaming.rs | `chunk_type` | Low-level SSE chunks |
 | 7 | `AutoFunctionStreamChunk` | src/streaming.rs | `chunk_type` | High-level streaming |
-| 8 | `FileState` | src/http/files.rs | `state_type` | File upload states |
+| 8 | `FileState` | src/files.rs | `state_type` | File upload states |
 | 9 | `Tool` | src/tools.rs | `tool_type` | Tool types |
 | 10 | `FunctionCallingMode` | src/tools.rs | `mode_type` | auto/any/none/validated (lowercase) |
 | 11 | `ToolChoice` | src/tools.rs | `choice_type` | Mode string OR `allowed_tools` object |
@@ -40,9 +40,9 @@ All types below implement graceful handling of unrecognized values via an `Unkno
 | 22 | `WebhookEvent` | src/webhooks.rs | `event_type` | batch.*/interaction.*/video.generated |
 | 23 | `WebhookState` | src/webhooks.rs | `state_type` | enabled/disabled/disabled_due_to_failed_deliveries |
 | 24 | `RevocationBehavior` | src/webhooks.rs | `behavior_type` | Signing-secret rotation behavior |
-| 25 | `SourceType` | src/environment.rs | `source_type` | gcs/inline/repository/skill_registry |
-| 26 | `NetworkConfig` | src/environment.rs | `network_type` | `"disabled"` string OR `{allowlist}` object |
-| 27 | `EnvironmentSpec` | src/environment.rs | `environment_type` | Env-ID string OR `{type:"remote"}` object |
+| 25 | `SourceType` | src/environments/spec.rs | `source_type` | gcs/inline/repository/skill_registry |
+| 26 | `NetworkConfig` | src/environments/spec.rs | `network_type` | `"disabled"` string OR `{allowlist}` object |
+| 27 | `EnvironmentSpec` | src/environments/spec.rs | `environment_type` | Env-ID string OR `{type:"remote"}` object |
 | 28 | `ResponseDelivery` | src/response_format.rs | `delivery_type` | inline/uri |
 | 29 | `ResponseFormat` | src/response_format.rs | `format_type` | text/audio/image/video union |
 | 30 | `VideoTask` | src/request.rs | `task_type` | text_to_video/image_to_video/reference_to_video/edit |
@@ -50,7 +50,7 @@ All types below implement graceful handling of unrecognized values via an `Unkno
 | 32 | `HarmCategory` | src/safety.rs | `category_type` | Ten harm categories (Vertex-gated parameter) |
 | 33 | `SafetyThreshold` | src/safety.rs | `threshold_type` | Block thresholds (Vertex-gated parameter) |
 | 34 | `SafetyMethod` | src/safety.rs | `method_type` | severity/probability (Vertex-gated parameter) |
-| 35 | `EnvironmentStatus` | src/environments.rs | `status_type` | active/expired |
+| 35 | `EnvironmentStatus` | src/environments/mod.rs | `status_type` | active/expired |
 | 36 | `TriggerStatus` | src/triggers.rs | `status_type` | active/paused/error (SDK-spec, pending live) |
 | 37 | `TriggerExecutionStatus` | src/triggers.rs | `status_type` | Execution outcomes (SDK-spec, pending live) |
 | 38 | `VideoProcessing` | src/content.rs | `processing_type` | Mode string OR `{type:"static", ...}` object (verified live 2026-08-16) |
@@ -60,7 +60,7 @@ All types below implement graceful handling of unrecognized values via an `Unkno
 | 42 | `CredentialType` | src/credentials.rs | `credential_type` | bearer_token/environment_variable/oauth2 |
 | 43 | `CredentialStatus` | src/credentials.rs | `status_type` | active/revoked |
 | 44 | `InjectionLocation` | src/credentials.rs | `location_type` | header/query/body |
-| 45 | `EnvironmentFileType` | src/environment_files.rs | `file_type` | FILE/DIRECTORY (uppercase on the wire) |
+| 45 | `EnvironmentFileType` | src/environments/files.rs | `file_type` | FILE/DIRECTORY (uppercase on the wire) |
 | 46 | `VideoResolution` | src/response_format.rs | `resolution_type` | 360p/720p/1080p/4k |
 | 47 | `TranscriptionMode` | src/request.rs | `mode_type` | smart/verbatim, string OR tagged object |
 
@@ -1627,7 +1627,8 @@ response.status = InteractionStatus::Completed;
 
 Only the types with neither `Default` nor a constructor need a JSON fixture:
 `FileMetadata`, `FileError`, `VideoMetadata`, `ListFilesResponse`,
-`StreamError`, `InteractionStreamEvent`, and `AutoFunctionResult`.
+`FileUploadResponse`, `StreamError`, `InteractionStreamEvent`, and
+`AutoFunctionResult`.
 
 `AutoFunctionResult` is on that list rather than off it despite predating
 this sweep, because it is the type the section above opens with — so a
@@ -1636,12 +1637,6 @@ exactly it. It derives `Clone, Debug, Serialize, Deserialize` and no
 `Default`, and its inherent methods are `all_executions_succeeded()` and
 `failed_executions()`; the nearby `new()` belongs to
 `AutoFunctionResultAccumulator`.
-
-(`FileUploadResponse` carries the attribute too, but is not in that list: it
-lives in `pub(crate) mod http` and is not re-exported, so no downstream
-caller can name it and the attribute is inert on it. That is the guard
-over-scanning a `pub struct` inside a private module — the loud direction it
-deliberately prefers.)
 
 Not in that list, despite having no `Default`: `ModalityTokens` gained a
 `new()`, `StreamEvent` already had one, and `OwnedFunctionCallInfo` is

@@ -1,14 +1,5 @@
 //! Files inside an environment (`/v1beta/environments/{id}/files/...`).
-//!
-//! List what an agent left in an environment, and upload files into one
-//! before an interaction runs. Paths are relative to the environment root;
-//! `""` lists the root.
-//!
-//! Verified live 2026-09-24: listing (root, a directory, one file,
-//! recursive) and a resumable single-shot upload. The API reports entry
-//! types in uppercase (`FILE`, `DIRECTORY`) although the bindings spell them
-//! lowercase; both are accepted. Environments are forked with
-//! [`CreateEnvironmentRequest::from_environment`](crate::CreateEnvironmentRequest::from_environment).
+//! See the [parent module](super).
 
 use crate::client::Client;
 use crate::errors::GenaiError;

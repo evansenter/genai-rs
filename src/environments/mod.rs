@@ -1,19 +1,55 @@
-//! Environments resource (`/v1beta/environments`).
+//! Environments: the sandbox an agent runs in, the `/v1beta/environments`
+//! resource that stores one, and the files inside it.
+//!
+//! # Describing an environment
+//!
+//! An environment describes which sources are mounted (GCS buckets, inline
+//! files, repositories, skill registries) and what outbound network access
+//! is allowed. The `environment` request field and the Agents resource's
+//! `base_environment` accept either a string environment ID — one created
+//! explicitly via [`Client::create_environment()`](crate::Client::create_environment)
+//! or by a previous interaction, echoed as
+//! [`InteractionResponse::environment_id`](crate::InteractionResponse) — or
+//! a typed remote environment object. [`EnvironmentSpec`] models that union.
+//!
+//! # The Environments resource
 //!
 //! An [`Environment`] is a server-side container of files (and network
 //! configuration) that agent interactions can execute against. Requests
 //! reference one via
 //! [`InteractionRequest::environment`](crate::request::InteractionRequest::environment)
-//! — either inline (the API creates one implicitly) or by ID. This module
-//! models the explicit CRUD surface: create an environment once, reference
-//! it from many interactions, list what exists, and delete what's stale.
+//! — either inline (the API creates one implicitly) or by ID. The CRUD
+//! surface creates an environment once, references it from many
+//! interactions, lists what exists, and deletes what's stale.
 //!
 //! Wire format verified live 2026-08-08: the resource uses `created` /
 //! `updated` / `last_accessed` ISO-8601 timestamps, and `file_count` /
 //! `size_bytes` are int64s serialized as JSON *strings* (protobuf JSON
 //! convention); both are accepted here as numbers too.
+//!
+//! # Files inside an environment
+//!
+//! [`Client::list_environment_files()`](crate::Client::list_environment_files)
+//! lists what an agent left in an environment and
+//! [`Client::upload_environment_file()`](crate::Client::upload_environment_file)
+//! uploads a file into one before an interaction runs. Paths are relative to
+//! the environment root; `""` lists the root.
+//!
+//! Verified live 2026-09-24: listing (root, a directory, one file,
+//! recursive) and a resumable single-shot upload. The API reports entry
+//! types in uppercase (`FILE`, `DIRECTORY`) although the bindings spell them
+//! lowercase; both are accepted. Environments are forked with
+//! [`CreateEnvironmentRequest::from_environment`].
 
-use crate::environment::{EnvironmentSource, NetworkConfig};
+mod files;
+mod spec;
+
+pub use files::{EnvironmentFile, EnvironmentFileList, EnvironmentFileType, EnvironmentFileUpload};
+pub use spec::{
+    AllowlistEntry, EnvVar, EnvironmentSource, EnvironmentSpec, NetworkConfig, RemoteEnvironment,
+    SourceType,
+};
+
 use crate::serde_util::{
     ForEnvironment, deserialize_lenient_timestamp, deserialize_string_i64, serialize_string_i64,
 };
@@ -110,9 +146,9 @@ pub struct Environment {
 /// Request body for creating an environment explicitly.
 ///
 /// For the *inline* per-request form (the `environment` field on an
-/// interaction), use [`RemoteEnvironment`](crate::RemoteEnvironment) /
-/// [`EnvironmentSpec`](crate::EnvironmentSpec) instead — same fields, but
-/// carrying the `remote` type discriminator the inline union requires.
+/// interaction), use [`RemoteEnvironment`] / [`EnvironmentSpec`] instead —
+/// same fields, but carrying the `remote` type discriminator the inline union
+/// requires.
 ///
 /// # Example
 ///
@@ -342,7 +378,7 @@ mod tests {
 
     #[test]
     fn create_request_network_serializes_without_discriminator() {
-        use crate::environment::NetworkConfig;
+        use super::NetworkConfig;
 
         let request = CreateEnvironmentRequest::new().with_network(NetworkConfig::Disabled);
         let json = serde_json::to_value(&request).unwrap();

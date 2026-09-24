@@ -902,7 +902,7 @@ fn test_deep_research_config_full_wire_shape() {
 
 #[test]
 fn test_request_with_webhook_config_and_environment_wire_shape() {
-    use crate::environment::{EnvironmentSource, RemoteEnvironment};
+    use crate::environments::{EnvironmentSource, RemoteEnvironment};
     use crate::webhooks::WebhookConfig;
 
     let request = InteractionRequest {
