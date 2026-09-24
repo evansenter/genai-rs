@@ -92,6 +92,7 @@ pub struct EnvironmentFileUpload {
     pub extract: bool,
 }
 
+/// Environment file methods; see [IDs](crate::environments#ids).
 impl Client {
     /// Lists the entries at `path` in an environment (`""` for the root).
     /// A file path returns that file's own entry.
@@ -141,8 +142,9 @@ impl Client {
     ///
     /// # Errors
     ///
-    /// Returns [`GenaiError::InvalidInput`] for empty data or a `.`/`..`
-    /// path segment, or an error if either upload request fails.
+    /// Returns [`GenaiError::InvalidInput`] for empty data, a `.`/`..` path
+    /// segment, or a MIME type that cannot be sent as a header value, or an
+    /// error if either upload request fails.
     pub async fn upload_environment_file(
         &self,
         environment_id: &str,

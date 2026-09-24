@@ -18,7 +18,17 @@
 //! This is distinct from
 //! `antigravity::TriggerConfig` (feature `antigravity`), which schedules
 //! messages inside a *local* harness session.
+//!
+//! # IDs
+//!
+//! Methods take the bare ID ([`Trigger::id`]), not a `triggers/...` resource name:
+//! the ID is percent-encoded into a single path segment, so a resource name
+//! addresses nothing and 404s. An empty or dot-segment ID fails
+//! locally with [`GenaiError::InvalidInput`]
+//! before any request.
 
+use crate::client::Client;
+use crate::errors::GenaiError;
 use crate::request::{InteractionInput, InteractionRequest};
 use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
@@ -664,6 +674,130 @@ pub struct TriggerExecutionListResponse {
     /// Token for fetching the next page, absent on the last page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_page_token: Option<String>,
+}
+
+/// Triggers resource methods; see [IDs](crate::triggers#ids).
+impl Client {
+    /// Creates a server-side scheduled trigger.
+    ///
+    /// The trigger's `interaction` must target a custom `agent` (see
+    /// [`crate::triggers`] for the live-verified constraints); trigger
+    /// creation is gated with custom-agent creation on standard API keys.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the API rejects the
+    /// trigger definition.
+    pub async fn create_trigger(
+        &self,
+        params: &crate::TriggerCreateParams,
+    ) -> Result<crate::Trigger, GenaiError> {
+        crate::http::triggers::create_trigger(&self.http, params).await
+    }
+
+    /// Retrieves a trigger by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the trigger doesn't exist.
+    pub async fn get_trigger(&self, trigger_id: &str) -> Result<crate::Trigger, GenaiError> {
+        crate::http::triggers::get_trigger(&self.http, trigger_id).await
+    }
+
+    /// Lists triggers, paged.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_size` - Optional maximum number of triggers per page.
+    /// * `page_token` - Optional token from a previous list call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or an invalid page token.
+    pub async fn list_triggers(
+        &self,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+    ) -> Result<crate::TriggerListResponse, GenaiError> {
+        crate::http::triggers::list_triggers(&self.http, page_size, page_token).await
+    }
+
+    /// Updates a trigger (display name and/or status; `paused` pauses it,
+    /// `active` resumes it).
+    ///
+    /// # Arguments
+    ///
+    /// * `trigger_id` - The trigger to update.
+    /// * `update` - The fields to change (only set fields are sent; there
+    ///   is no `update_mask` on this endpoint — see [`crate::TriggerUpdate`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the trigger doesn't exist.
+    pub async fn update_trigger(
+        &self,
+        trigger_id: &str,
+        update: &crate::TriggerUpdate,
+    ) -> Result<crate::Trigger, GenaiError> {
+        crate::http::triggers::update_trigger(&self.http, trigger_id, update).await
+    }
+
+    /// Deletes a trigger.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the trigger doesn't exist.
+    pub async fn delete_trigger(&self, trigger_id: &str) -> Result<(), GenaiError> {
+        crate::http::triggers::delete_trigger(&self.http, trigger_id).await
+    }
+
+    /// Fires a trigger immediately, outside its schedule.
+    ///
+    /// **Unverified endpoint shape**: this posts to the `executions`
+    /// sub-collection (not a `:run` colon verb), a path derived from the
+    /// google-genai generated bindings rather than observed live — it
+    /// needs an existing trigger, and trigger creation is agent-gated
+    /// (see [`triggers`](crate::triggers)). The same caveat applies to
+    /// [`list_trigger_executions`](Self::list_trigger_executions).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the trigger doesn't exist.
+    pub async fn run_trigger(
+        &self,
+        trigger_id: &str,
+    ) -> Result<crate::TriggerExecution, GenaiError> {
+        crate::http::triggers::run_trigger(&self.http, trigger_id).await
+    }
+
+    /// Lists a trigger's past executions, paged.
+    ///
+    /// # Arguments
+    ///
+    /// * `trigger_id` - The trigger whose executions to list.
+    /// * `page_size` - Optional maximum number of executions per page.
+    /// * `page_token` - Optional token from a previous list call.
+    ///
+    /// **Unverified endpoint shape**: reads the same `executions`
+    /// sub-collection [`run_trigger`](Self::run_trigger) posts to, with
+    /// the same caveat — the path comes from the google-genai generated
+    /// bindings, not live observation, because it needs an existing
+    /// trigger and trigger creation is agent-gated.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the trigger doesn't exist.
+    pub async fn list_trigger_executions(
+        &self,
+        trigger_id: &str,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+    ) -> Result<crate::TriggerExecutionListResponse, GenaiError> {
+        crate::http::triggers::list_trigger_executions(
+            &self.http, trigger_id, page_size, page_token,
+        )
+        .await
+    }
 }
 
 #[cfg(test)]

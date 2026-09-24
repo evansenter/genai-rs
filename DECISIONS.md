@@ -338,6 +338,11 @@ was `pub` but could not be named.
 
 The submodules are private; `genai_rs::environments` re-exports all of it.
 
+Each resource's `impl Client` methods moved out of `src/client.rs` into
+that resource's module, as `voices` and `credentials` already did;
+`client.rs` keeps `Client`, `ClientBuilder` and the interaction methods.
+The bare-ID rules are stated once, in each module's `# IDs` section.
+
 **Consequences.** Every root re-export (`genai_rs::X`) is unchanged. The
 module paths `genai_rs::environment::*` and `genai_rs::environment_files::*`
 are gone; use `genai_rs::environments::*` or the root.

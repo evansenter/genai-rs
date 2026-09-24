@@ -40,6 +40,18 @@
 //! types in uppercase (`FILE`, `DIRECTORY`) although the bindings spell them
 //! lowercase; both are accepted. Environments are forked with
 //! [`CreateEnvironmentRequest::from_environment`].
+//!
+//! # IDs
+//!
+//! Methods take the bare ID (the form [`Environment::id`] returns), not an
+//! `environments/...` resource name: the ID is percent-encoded into a single
+//! path segment, so a resource name addresses nothing and 404s (verified
+//! live). The one unobserved source is
+//! [`InteractionResponse::environment_id`](crate::InteractionResponse::environment_id):
+//! strip a leading `environments/` prefix before passing it. An empty or
+//! dot-segment ID fails locally with
+//! [`GenaiError::InvalidInput`] before any
+//! request.
 
 mod files;
 mod spec;
@@ -50,6 +62,8 @@ pub use spec::{
     SourceType,
 };
 
+use crate::client::Client;
+use crate::errors::GenaiError;
 use crate::serde_util::{
     ForEnvironment, deserialize_lenient_timestamp, deserialize_string_i64, serialize_string_i64,
 };
@@ -238,6 +252,67 @@ pub struct EnvironmentListResponse {
     /// Token for fetching the next page, absent on the last page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_page_token: Option<String>,
+}
+
+/// Environments resource methods; see [IDs](crate::environments#ids).
+impl Client {
+    /// Creates an environment explicitly, for reuse across interactions.
+    ///
+    /// Requests can also create environments implicitly by passing a typed
+    /// [`EnvironmentSpec`] inline; explicit creation
+    /// returns the ID so many interactions can share one container.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the definition is
+    /// rejected.
+    pub async fn create_environment(
+        &self,
+        request: &crate::CreateEnvironmentRequest,
+    ) -> Result<crate::Environment, GenaiError> {
+        crate::http::environments::create_environment(&self.http, request).await
+    }
+
+    /// Retrieves an environment by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the environment doesn't
+    /// exist.
+    pub async fn get_environment(
+        &self,
+        environment_id: &str,
+    ) -> Result<crate::Environment, GenaiError> {
+        crate::http::environments::get_environment(&self.http, environment_id).await
+    }
+
+    /// Lists environments, paged.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_size` - Optional maximum number of environments per page.
+    /// * `page_token` - Optional token from a previous list call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or an invalid page token.
+    pub async fn list_environments(
+        &self,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+    ) -> Result<crate::EnvironmentListResponse, GenaiError> {
+        crate::http::environments::list_environments(&self.http, page_size, page_token).await
+    }
+
+    /// Deletes an environment.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the environment doesn't
+    /// exist.
+    pub async fn delete_environment(&self, environment_id: &str) -> Result<(), GenaiError> {
+        crate::http::environments::delete_environment(&self.http, environment_id).await
+    }
 }
 
 #[cfg(test)]
