@@ -748,8 +748,11 @@ impl<'a> InteractionBuilder<'a> {
     /// database connections, API clients, or configuration. The service
     /// provides callable functions that can access the service's internal state.
     ///
-    /// Tools from the service are used in addition to any auto-discovered
-    /// tools from the global registry (via `#[tool]` macro).
+    /// With the `*_with_auto_functions` methods, the service's functions are
+    /// always declared to the model, alongside any tools set explicitly. When
+    /// no tools are set, `#[tool]` functions from the global registry are
+    /// declared too; a service function shadows a registry one of the same
+    /// name.
     ///
     /// # Example
     ///

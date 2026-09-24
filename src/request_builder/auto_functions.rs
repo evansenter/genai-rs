@@ -43,54 +43,54 @@ fn build_service_function_map(
         .unwrap_or_default()
 }
 
-/// Auto-discovers functions from the global registry and tool service.
+/// Declares the functions the auto-function loop can execute.
 ///
-/// If `request.tools` is already set, this is a no-op. Otherwise, it:
-/// 1. Collects all functions from the global registry (`#[tool]` macro functions)
-/// 2. Filters out any that would be shadowed by service functions (with warning)
-/// 3. Adds declarations from the tool service
-/// 4. Sets `request.tools` if any functions were found
+/// A tool service was set on purpose, so its functions are always declared,
+/// next to any tools set explicitly (skipping a name already declared).
+/// The global `#[tool]` registry is only consulted when no tools were set;
+/// a service function shadows a registry one of the same name.
 fn auto_discover_tools(
     request: &mut crate::request::InteractionRequest,
     service_functions: &HashMap<String, Arc<dyn CallableFunction>>,
 ) {
-    if request.tools.is_some() {
+    let mut service_declarations: Vec<_> = service_functions
+        .values()
+        .map(|f| f.declaration())
+        .collect();
+    // HashMap order is arbitrary; keep the wire deterministic.
+    service_declarations.sort_by(|a, b| a.name().cmp(b.name()));
+
+    let mut declarations = match &request.tools {
+        Some(_) => Vec::new(),
+        None => {
+            let mut registry = get_global_function_registry().all_declarations();
+            registry.retain(|decl| {
+                let shadowed = service_functions.contains_key(decl.name());
+                if shadowed {
+                    warn!(
+                        "Tool service function '{}' shadows global registry function with same name",
+                        decl.name()
+                    );
+                }
+                !shadowed
+            });
+            registry.sort_by(|a, b| a.name().cmp(b.name()));
+            registry
+        }
+    };
+    declarations.extend(service_declarations);
+    if declarations.is_empty() {
         return;
     }
 
-    let function_registry = get_global_function_registry();
-    let mut all_declarations = function_registry.all_declarations();
-
-    // Service functions take precedence over global registry
-    // Filter out global declarations that would be shadowed by service functions
-    let service_names: std::collections::HashSet<&str> =
-        service_functions.keys().map(|s| s.as_str()).collect();
-
-    // Log warnings for shadowed functions and filter them out
-    all_declarations.retain(|decl| {
-        if service_names.contains(decl.name()) {
-            warn!(
-                "Tool service function '{}' shadows global registry function with same name",
-                decl.name()
-            );
-            false
-        } else {
-            true
-        }
-    });
-
-    // Add declarations from tool service
-    for func in service_functions.values() {
-        all_declarations.push(func.declaration());
-    }
-
-    if !all_declarations.is_empty() {
-        request.tools = Some(
-            all_declarations
-                .into_iter()
-                .map(|decl| decl.into_tool())
-                .collect(),
+    let tools = request.tools.get_or_insert_with(Vec::new);
+    for declaration in declarations {
+        let declared = tools.iter().any(
+            |tool| matches!(tool, crate::Tool::Function { name, .. } if name == declaration.name()),
         );
+        if !declared {
+            tools.push(declaration.into_tool());
+        }
     }
 }
 
