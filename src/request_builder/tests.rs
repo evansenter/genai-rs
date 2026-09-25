@@ -17,9 +17,9 @@ fn create_test_client() -> Client {
 #[test]
 fn test_function_declaration_builder() {
     let func_decl = FunctionDeclaration::builder("my_func")
-        .description("Does something")
-        .parameter("arg1", json!({"type": "string"}))
-        .required(vec!["arg1".to_string()])
+        .with_description("Does something")
+        .add_parameter("arg1", json!({"type": "string"}))
+        .with_required(vec!["arg1".to_string()])
         .build();
 
     assert_eq!(func_decl.name(), "my_func");
@@ -42,7 +42,7 @@ fn test_function_declaration_builder() {
 #[test]
 fn test_function_declaration_into_tool() {
     let func_decl = FunctionDeclaration::builder("test")
-        .description("Test function")
+        .with_description("Test function")
         .build();
 
     let tool = func_decl.into_tool();
@@ -140,9 +140,9 @@ fn test_interaction_builder_with_generation_config() {
 fn test_interaction_builder_with_function() {
     let client = create_test_client();
     let func = FunctionDeclaration::builder("test_func")
-        .description("Test function")
-        .parameter("location", json!({"type": "string"}))
-        .required(vec!["location".to_string()])
+        .with_description("Test function")
+        .add_parameter("location", json!({"type": "string"}))
+        .with_required(vec!["location".to_string()])
         .build();
 
     let builder = client
@@ -199,7 +199,7 @@ fn test_interaction_builder_with_multiple_mcp_servers() {
 fn test_interaction_builder_add_mcp_server_and_other_tools() {
     let client = create_test_client();
     let func = FunctionDeclaration::builder("test_func")
-        .description("Test function")
+        .with_description("Test function")
         .build();
 
     let builder = client
@@ -237,6 +237,81 @@ fn test_interaction_builder_with_google_maps() {
 }
 
 #[test]
+fn test_built_in_tool_setters_replace_instead_of_duplicating() {
+    let client = create_test_client();
+    let builder = client
+        .interaction()
+        .with_model(crate::DEFAULT_MODEL)
+        .with_text("Test")
+        .with_google_search()
+        .with_code_execution()
+        .with_url_context()
+        .with_google_maps()
+        .with_google_search()
+        .with_code_execution()
+        .with_url_context()
+        .with_google_maps();
+
+    let tools = builder.tools.as_ref().unwrap();
+    assert_eq!(tools.len(), 4, "one of each kind: {tools:?}");
+    let kinds: [fn(&Tool) -> bool; 4] = [
+        |t| matches!(t, Tool::GoogleSearch { .. }),
+        |t| matches!(t, Tool::CodeExecution),
+        |t| matches!(t, Tool::UrlContext),
+        |t| matches!(t, Tool::GoogleMaps { .. }),
+    ];
+    for kind in kinds {
+        assert_eq!(tools.iter().filter(|t| kind(t)).count(), 1, "{tools:?}");
+    }
+}
+
+#[test]
+fn test_with_google_search_replaces_a_configured_search_tool() {
+    use crate::GoogleSearchConfig;
+
+    let client = create_test_client();
+    let builder = client
+        .interaction()
+        .with_model(crate::DEFAULT_MODEL)
+        .with_text("Test")
+        .add_tool(GoogleSearchConfig::new().with_search_types(vec![crate::SearchType::WebSearch]))
+        .add_function(FunctionDeclaration::builder("f").build())
+        .with_google_search();
+
+    let tools = builder.tools.as_ref().unwrap();
+    assert_eq!(tools.len(), 2);
+    assert!(matches!(tools[0], Tool::Function { .. }));
+    assert!(matches!(
+        tools[1],
+        Tool::GoogleSearch { search_types: None }
+    ));
+}
+
+#[test]
+fn test_add_tool_still_accumulates_same_kind() {
+    let client = create_test_client();
+    let builder = client
+        .interaction()
+        .with_model(crate::DEFAULT_MODEL)
+        .with_text("Test")
+        .add_tool(Tool::CodeExecution)
+        .add_tool(Tool::CodeExecution);
+    assert_eq!(builder.tools.as_ref().unwrap().len(), 2);
+}
+
+#[test]
+fn test_with_tools_replaces_all_tools() {
+    let client = create_test_client();
+    let builder = client
+        .interaction()
+        .with_model(crate::DEFAULT_MODEL)
+        .with_text("Test")
+        .with_google_search()
+        .with_tools(vec![Tool::UrlContext]);
+    assert_eq!(builder.tools, Some(vec![Tool::UrlContext]));
+}
+
+#[test]
 fn test_interaction_builder_add_tool_with_configs() {
     use crate::{ComputerUseConfig, FileSearchConfig, GoogleMapsConfig, GoogleSearchConfig};
 
@@ -247,7 +322,10 @@ fn test_interaction_builder_add_tool_with_configs() {
         .with_text("Test all configs")
         .add_tool(GoogleSearchConfig::new().with_search_types(vec![crate::SearchType::WebSearch]))
         .add_tool(GoogleMapsConfig::new().with_widget())
-        .add_tool(ComputerUseConfig::new().excluding(vec!["download".to_string()]))
+        .add_tool(
+            ComputerUseConfig::new()
+                .with_excluded_predefined_functions(vec!["download".to_string()]),
+        )
         .add_tool(FileSearchConfig::new(vec!["store".to_string()]).with_top_k(5));
 
     let tools = builder.tools.as_ref().unwrap();
@@ -521,7 +599,7 @@ async fn test_auto_functions_rejects_store_disabled() {
     // Auto-function execution requires storage to maintain conversation context
     let client = create_test_client();
     let func = FunctionDeclaration::builder("test_func")
-        .description("Test function")
+        .with_description("Test function")
         .build();
 
     let result = client
@@ -551,7 +629,7 @@ async fn test_stream_auto_functions_rejects_store_disabled() {
     // Streaming auto-function execution also requires storage
     let client = create_test_client();
     let func = FunctionDeclaration::builder("test_func")
-        .description("Test function")
+        .with_description("Test function")
         .build();
 
     let mut stream = client
@@ -582,7 +660,7 @@ async fn test_auto_functions_allows_store_true() {
     // The actual API call will fail (invalid key), but validation should pass.
     let client = create_test_client();
     let func = FunctionDeclaration::builder("test_func")
-        .description("Test function")
+        .with_description("Test function")
         .build();
 
     let result = client
@@ -610,7 +688,7 @@ async fn test_auto_functions_allows_store_default() {
     // The actual API call will fail (invalid key), but validation should pass.
     let client = create_test_client();
     let func = FunctionDeclaration::builder("test_func")
-        .description("Test function")
+        .with_description("Test function")
         .build();
 
     let result = client
@@ -1180,7 +1258,7 @@ fn test_interaction_builder_with_file_search_config() {
 fn test_interaction_builder_with_file_search_and_other_tools() {
     let client = create_test_client();
     let func = FunctionDeclaration::builder("process_result")
-        .description("Process search result")
+        .with_description("Process search result")
         .build();
 
     let builder = client
@@ -1588,7 +1666,7 @@ fn test_builder_deep_research_config_new_fields() {
     let client = create_test_client();
     let request = client
         .interaction()
-        .with_agent("deep-research-preview-04-2026")
+        .with_agent(crate::DEFAULT_DEEP_RESEARCH_AGENT)
         .with_text("Research something")
         .with_agent_config(
             DeepResearchConfig::new()

@@ -1,257 +1,138 @@
-# Agents and Background Execution Guide
+# Agents and Background Execution
 
-This guide covers agent-based interactions and background execution patterns for long-running tasks.
+An interaction targets either a **model** (`with_model(...)`), which answers
+synchronously, or an **agent** (`with_agent(...)`), which runs a multi-step
+task and must run in the background. This page covers agents, the resources
+around them (custom agents, environments, credentials, triggers), and how to
+get results from background work: webhooks, polling, streaming, and
+cancellation.
 
-## Table of Contents
-
-- [Overview](#overview)
-- [Agents vs Models](#agents-vs-models)
-- [Managed Agent IDs](#managed-agent-ids)
-- [Deep Research Agent](#deep-research-agent)
-- [Custom Agents (Agents Resource)](#custom-agents-agents-resource)
-- [Environments](#environments)
-- [Scheduled Triggers](#scheduled-triggers)
-- [Background Execution](#background-execution)
-- [Webhooks Instead of Polling](#webhooks-instead-of-polling)
-- [Polling Patterns](#polling-patterns)
-- [Cancellation](#cancellation)
-- [Best Practices](#best-practices)
-
-## Overview
-
-Gemini supports two types of interactions:
-
-| Type | Entry Point | Execution | Use Case |
-|------|-------------|-----------|----------|
-| **Model** | `with_model(genai_rs::DEFAULT_MODEL)` | Synchronous | Quick responses, streaming |
-| **Agent** | `with_agent("deep-research-pro-preview")` | Background | Long-running tasks, research |
-
-Agents are specialized systems that perform multi-step tasks autonomously.
-
-## Agents vs Models
-
-### Models
-
-Direct interaction with a language model:
-
-```rust,ignore
-let response = client
-    .interaction()
-    .with_model(genai_rs::DEFAULT_MODEL)
-    .with_text("Explain quantum computing")
-    .create()
-    .await?;
-
-// Response available immediately
-println!("{}", response.as_text().unwrap());
-```
-
-### Agents
-
-Autonomous systems that execute complex workflows:
-
-```rust,ignore
-let response = client
-    .interaction()
-    .with_agent("deep-research-pro-preview-12-2025")
-    .with_text("Research best practices for Rust REST APIs")
-    .with_background(true)      // Required for agents
-    .with_store_enabled()       // Required to retrieve results
-    .create()
-    .await?;
-
-// Returns immediately with interaction ID
-// Must poll for completion
-```
-
-## Managed Agent IDs
+## Managed agents
 
 Google-managed agents known to this crate (from the 2026-05-20 spec):
 
-| Agent ID | Description |
-|----------|-------------|
-| `deep-research-pro-preview-12-2025` | Gemini Deep Research agent (launch preview) |
-| `deep-research-preview-04-2026` | Gemini Deep Research agent |
-| `deep-research-max-preview-04-2026` | Gemini Deep Research Max agent |
-| `antigravity-preview-05-2026` | Antigravity managed agent for multi-step tasks with reasoning, file operations, and tool use (requires an [environment](#environments); tune via `AntigravityConfig` — `agent_config` type `antigravity`) |
+| Agent ID | Constant | Notes |
+|----------|----------|-------|
+| `deep-research-preview-04-2026` | `genai_rs::DEFAULT_DEEP_RESEARCH_AGENT` | Deep Research |
+| `deep-research-max-preview-04-2026` | — | Deep Research Max |
+| `deep-research-pro-preview-12-2025` | — | The Deep Research launch preview |
+| `antigravity-preview-05-2026` | `genai_rs::DEFAULT_ANTIGRAVITY_AGENT` | Multi-step tasks with file operations and tool use. Requires an [environment](#environments) |
 
-Availability varies by account and region; unknown agent IDs pass through
-unchanged (Evergreen), so newer agents work without a crate update.
+Prefer the constants. Unknown agent ids pass through unchanged, so newer
+agents work without a crate update. Availability varies by account.
 
-## Deep Research Agent
+Agent interactions **require `with_background(true)`**. They also need
+storage, which is on by default; `with_store_disabled()` combined with
+background is rejected at build time.
 
-The Deep Research agent conducts multi-step research by:
-1. Executing iterative web searches
-2. Synthesizing information across sources
-3. Generating comprehensive reports
-
-### Basic Usage
-
-```rust,ignore
-use genai_rs::{Client, DeepResearchConfig, ThinkingSummaries};
-
-let response = client
-    .interaction()
-    .with_agent("deep-research-pro-preview-12-2025")
-    .with_text("What are the current best practices for building production REST APIs in Rust?")
-    .with_agent_config(
-        DeepResearchConfig::new()
-            .with_thinking_summaries(ThinkingSummaries::Auto)
-    )
-    .with_background(true)
-    .with_store_enabled()
-    .create()
-    .await?;
-
-let interaction_id = response.id.expect("stored interaction has ID");
-```
-
-### Expected Runtime
-
-- Simple queries: 30-60 seconds
-- Complex research: 60-120+ seconds
-- Very comprehensive queries: 2+ minutes
-
-### Configuration Options
+## Deep Research
 
 ```rust,ignore
 use genai_rs::{DeepResearchConfig, ThinkingSummaries, Visualization};
 
-let config = DeepResearchConfig::new()
-    .with_thinking_summaries(ThinkingSummaries::Auto) // Include reasoning summary
-    .with_visualization(Visualization::Auto)          // Let the agent add visualizations
-    .with_collaborative_planning(true)                // Return a plan first; proceed after confirmation
-    .with_bigquery_tool(true);                        // Enable the BigQuery tool
-
-client
+let response = client
     .interaction()
-    .with_agent("deep-research-preview-04-2026")
-    .with_agent_config(config)
-    // ...
+    .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
+    .with_text("What are the current best practices for production REST APIs in Rust?")
+    .with_agent_config(
+        DeepResearchConfig::new()
+            .with_thinking_summaries(ThinkingSummaries::Auto)
+            .with_visualization(Visualization::Auto)
+            .with_collaborative_planning(true),
+    )
+    .with_background(true)
+    .create()
+    .await?;
+
+let interaction_id = response.id.expect("stored interaction has an id");
 ```
 
-| Option | Wire field | Values | Effect |
-|--------|-----------|--------|--------|
-| `with_thinking_summaries` | `thinking_summaries` | `THINKING_SUMMARIES_AUTO`/`_NONE` | Reasoning summaries in output |
+| Option | Wire field (`agent_config`) | Values | Effect |
+|--------|-----------------------------|--------|--------|
+| `with_thinking_summaries` | `thinking_summaries` | `"auto"` / `"none"` (`THINKING_SUMMARIES_*` is rejected since 2026-08-10) | Reasoning summaries in the output |
 | `with_visualization` | `visualization` | `"off"` / `"auto"` | Visualizations in the report |
-| `with_collaborative_planning` | `collaborative_planning` | bool | Human-in-the-loop planning: the agent returns a research plan and proceeds only after you confirm in the next turn |
-| `with_bigquery_tool` | `enable_bigquery_tool` | bool | BigQuery access for the agent |
+| `with_collaborative_planning` | `collaborative_planning` | bool | The agent returns a plan and proceeds only after you confirm in the next turn |
+| `with_bigquery_tool` | `enable_bigquery_tool` | bool | **Vertex-only**: the Gemini API rejects the field |
 
-## Custom Agents (Agents Resource)
+Runs take minutes, and the duration varies widely with the question. Get the
+result through [webhooks](#webhooks) or [polling](#polling), not a long
+request timeout. `examples/deep_research.rs` is runnable.
 
-Beyond the managed agents, `/v1beta/agents` lets you define reusable custom
-agents: an ID, system instruction, tools (subset: `code_execution`,
-`url_context`, `google_search`, `mcp_server`), and a base environment.
+## Custom agents (`/v1beta/agents`)
+
+A custom agent bundles an id, a system instruction, tools (a subset:
+`code_execution`, `url_context`, `google_search`, `mcp_server`) and a base
+environment. Creating custom agents is gated on standard API keys.
 
 ```rust,ignore
 use genai_rs::{Agent, EnvironmentSource, RemoteEnvironment, Tool};
 
-// Create
 let agent = client.create_agent(
     &Agent::new("customer-sentinel")
         .with_system_instruction("You monitor customer feedback.")
         .with_description("Watches feedback channels and summarizes sentiment")
         .add_tool(Tool::CodeExecution)
         .with_base_environment(
-            RemoteEnvironment::new()
-                .add_source(EnvironmentSource::gcs("gs://feedback", "/data")),
+            RemoteEnvironment::new().add_source(EnvironmentSource::gcs("gs://feedback", "/data")),
         ),
 ).await?;
 
-// Run it like any agent
-let response = client
-    .interaction()
-    .with_agent("customer-sentinel")
-    .with_text("Summarize this week's feedback")
-    .with_background(true)
-    .with_store_enabled()
-    .create()
-    .await?;
+// Run it like any agent: .with_agent("customer-sentinel").with_background(true)
 
-// Manage
 let fetched = client.get_agent("customer-sentinel").await?;
-let list = client.list_agents(Some(50), None, None).await?; // page_size, page_token, parent
+let page = client.list_agents(Some(50), None, None).await?; // page_size, page_token, parent
 client.delete_agent("customer-sentinel").await?;
 ```
 
 ## Environments
 
-Agent interactions can run inside a sandboxed *environment*: mounted sources
-(GCS, inline files, repositories, skill registries) plus an outbound network
-policy. Set it per request with `with_environment(...)`, which accepts either
-a typed `RemoteEnvironment` or a string environment ID:
+An agent interaction can run in a sandboxed **environment**: mounted sources
+(GCS, inline files, repositories, skill registries), environment variables,
+and an outbound network policy. `with_environment(...)` takes either a typed
+`RemoteEnvironment` or an environment id string.
 
 ```rust,ignore
-use genai_rs::{AllowlistEntry, EnvironmentSource, NetworkConfig, RemoteEnvironment};
+use genai_rs::{AllowlistEntry, AntigravityConfig, EnvVar, EnvironmentSource, NetworkConfig, RemoteEnvironment};
 
 let response = client
     .interaction()
-    .with_agent("antigravity-preview-05-2026")
+    .with_agent(genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
     .with_text("Run the test suite and report failures")
     .with_environment(
         RemoteEnvironment::new()
             .add_source(EnvironmentSource::repository("github.com/org/repo", "/workspace"))
             .add_source(EnvironmentSource::inline("/workspace/.env", "MODE=ci"))
-            .with_network(NetworkConfig::allowlist(vec![
-                AllowlistEntry::new("*.crates.io"),
-            ])),
-    )
-    .with_background(true)
-    .with_store_enabled()
-    .create()
-    .await?;
-
-// The server assigns an environment ID; reuse it on later turns
-let env_id = response.environment_id.clone().expect("assigned environment");
-let follow_up = client
-    .interaction()
-    .with_agent("antigravity-preview-05-2026")
-    .with_previous_interaction(response.id.clone().unwrap())
-    .with_text("Now fix the failing test")
-    .with_environment(env_id)
-    .create()
-    .await?;
-```
-
-The Antigravity managed agent above is the one whose config is
-live-verified end to end (2026-08-09): the environment is **required**,
-and `AntigravityConfig` tunes the run — leave its `model` unset (an
-unavailable value 404s — as `gemini-3.6-flash` did when this was
-recorded, despite being a valid model for ordinary interactions):
-
-```rust,ignore
-use genai_rs::{AntigravityConfig, EnvironmentSource, RemoteEnvironment};
-
-let response = client
-    .interaction()
-    .with_agent("antigravity-preview-05-2026")
-    .with_text("Print the contents of /etc/motd")
-    .with_background(true)
-    .with_store_enabled()
-    .with_environment(
-        RemoteEnvironment::new().add_source(EnvironmentSource::inline("/etc/motd", "hello")),
+            .add_env_var("CI", EnvVar::value("true"))
+            .with_network(NetworkConfig::allowlist(vec![AllowlistEntry::new("*.crates.io")])),
     )
     .with_agent_config(AntigravityConfig::new().with_max_total_tokens(200_000))
+    .with_background(true)
     .create()
     .await?;
+
+// The server assigns an environment id; pass it to reuse the environment
+let env_id = response.environment_id.clone().expect("assigned environment");
 ```
 
-Network policy is a union: omit `with_network` to allow all outbound
-traffic, use `NetworkConfig::Disabled` to turn networking off, or an
-allowlist of domains (wildcards supported; `transform` injects headers on
-matching requests). Custom agents can also carry a default environment via
-`Agent::with_base_environment`.
+- **Network policy**: omit `with_network` to allow all outbound traffic, use
+  `NetworkConfig::Disabled` to turn networking off, or pass an allowlist
+  (wildcards supported; `with_transform` injects headers on matching
+  requests).
+- **`AntigravityConfig`**: the Antigravity agent config was verified end to
+  end on 2026-08-09. Leave its `model` unset: an unavailable value returns 404,
+  as `gemini-3.6-flash` did then, even though it worked for ordinary
+  interactions.
+- A custom agent can carry a default environment via
+  `Agent::with_base_environment`.
 
-### Explicit environment CRUD
+### Managing environments
 
-Instead of letting the server create an environment implicitly from an
-inline `RemoteEnvironment`, you can manage environments as first-class
-resources (`/v1beta/environments`) — create one up front, reference its ID
-from many interactions, and delete it when done. The full lifecycle works
-on a standard API key:
+Environments are also first-class resources. Create one up front, reference
+its id from many interactions, and delete it when done. The full lifecycle
+works on a standard API key.
 
 ```rust,ignore
-use genai_rs::{CreateEnvironmentRequest, EnvironmentSource};
+use genai_rs::{CreateEnvironmentRequest, EnvironmentFileUpload, EnvironmentSource};
 
 let env = client
     .create_environment(
@@ -259,115 +140,122 @@ let env = client
             .add_source(EnvironmentSource::inline("/workspace/.env", "MODE=ci")),
     )
     .await?;
-let env_id = env.id.clone().expect("create returns an ID");
+let env_id = env.id.clone().expect("create returns an id");
 
-// Reference it from any interaction, then inspect and clean up.
+// Put a file in before a run, and list what the agent left afterwards
+client
+    .upload_environment_file(&env_id, "data/input.csv", b"a,b\n1,2\n".to_vec(), "text/csv",
+        EnvironmentFileUpload { overwrite: true, ..Default::default() })
+    .await?;
+let files = client.list_environment_files(&env_id, "", true, None, None).await?; // path, recursive
+
+// Fork it, files included
+let fork = client
+    .create_environment(&CreateEnvironmentRequest::from_environment(&env_id))
+    .await?;
+
 let fetched = client.get_environment(&env_id).await?;
 println!("status={:?} files={:?}", fetched.status, fetched.file_count);
-let listed = client.list_environments(Some(10), None).await?;
-println!("environments: {}", listed.environments.len());
+let page = client.list_environments(Some(10), None).await?;
 client.delete_environment(&env_id).await?;
 ```
 
-Environments expire on their own (`status` moves from `active` to
-`expired`), but delete what you create — repeated runs otherwise
-accumulate containers until expiry.
+Environment file paths are relative to the root (`""` lists the root), and
+`.`/`..` segments are rejected. Environments expire on their own (`status`
+moves from `active` to `expired`), but delete what you create: repeated runs
+otherwise accumulate containers until they expire.
 
-## Scheduled Triggers
+### Credentials (`/v1beta/credentials`)
 
-A *trigger* (`/v1beta/triggers`) runs a stored interaction on a cron
-schedule server-side — no process of yours needs to be running. Creating
-one requires the nested interaction to target a **custom agent**, and
-custom-agent creation is gated/allowlisted on standard API keys today, so
-most accounts can list but not create:
+A credential is a server-held secret that an environment references by id,
+instead of carrying it inline. Reference it with `EnvVar::credential(id)`
+(an environment variable) or `AllowlistEntry::with_credential(id)` (a header
+on matching egress). Secret material is write-only: reads return metadata.
+
+```rust,ignore
+use genai_rs::{CreateCredentialRequest, EnvVar, RemoteEnvironment};
+
+let cred = client
+    .create_credential(&CreateCredentialRequest::bearer_token("s3cret").with_id("github-token"))
+    .await?;
+
+let env = RemoteEnvironment::new().add_env_var("GITHUB_TOKEN", EnvVar::credential("github-token"));
+```
+
+CRUD was verified live (2026-09-24): create, get, list, update with and
+without `update_mask`, and delete. **The references have no observed effect
+yet.** The API accepts and echoes them, but an Antigravity sandbox saw
+neither the variable nor an injected header.
+
+## Scheduled triggers (`/v1beta/triggers`)
+
+A trigger runs a stored interaction on a cron schedule, server-side. The
+nested interaction must target a **custom agent**: a model-only interaction
+is rejected. Since custom-agent creation is gated, most accounts can list
+triggers but not create them.
 
 ```rust,ignore
 use genai_rs::{InteractionInput, InteractionRequest, TriggerCreateParams, TriggerStatus, TriggerUpdate};
 
-// The nested interaction must target a custom agent (an /v1beta/agents
-// resource ID) — a model-only interaction is rejected.
 let interaction = InteractionRequest {
     agent: Some("my-custom-agent".to_string()),
     input: InteractionInput::Text("Summarize yesterday's alerts".to_string()),
     ..Default::default()
 };
 
-// Schedule + IANA time zone + the interaction to run each firing.
+// Cron schedule, IANA time zone, the interaction to run
 let params = TriggerCreateParams::new("0 9 * * 1-5", "America/Los_Angeles", interaction)
     .with_display_name("weekday-briefing")
-    .with_environment_id("env-id");         // optional: run inside an environment
+    .with_environment_id("env-id"); // optional
 let trigger = client.create_trigger(&params).await?;
 
-// Fire immediately and inspect runs, then pause via update.
-let id = trigger.id.clone().expect("created trigger has an ID");
-let execution = client.run_trigger(&id).await?;
-println!("fired: {:?}", execution.status);
+let id = trigger.id.clone().expect("created trigger has an id");
+let execution = client.run_trigger(&id).await?; // fire now
 let runs = client.list_trigger_executions(&id, Some(10), None).await?;
-println!("executions: {}", runs.trigger_executions.len());
-client
-    .update_trigger(&id, &TriggerUpdate::new().with_status(TriggerStatus::Paused))
-    .await?;
+client.update_trigger(&id, &TriggerUpdate::new().with_status(TriggerStatus::Paused)).await?;
 client.delete_trigger(&id).await?;
 ```
 
-`TriggerUpdate` omits unset fields from the PATCH body; note there is no
-`update_mask` on this endpoint (unlike webhooks), so partial-update
-semantics rest on that omission and are unconfirmed until trigger updates
-are live-verifiable. See the `genai_rs::triggers` module docs for the
-execution-status lifecycle and the agent-gating details.
+The nested request must not set `store`: the API rejects it there.
+`TriggerUpdate` omits unset fields from the PATCH body. The endpoint takes no
+`update_mask`, so partial-update behavior rests on that omission, and it is
+unverified until trigger updates can be live-tested. `TriggerExecutionStatus`
+lists the execution outcomes.
 
-## Background Execution
+## Background execution
 
-Background mode allows requests to return immediately while processing continues.
-
-### When to Use Background Mode
-
-| Scenario | Background? | Why |
-|----------|-------------|-----|
-| Agent interactions | **Required** | Agents don't support synchronous execution |
-| Long model requests | Optional | Avoid timeout, handle asynchronously |
-| Batch processing | Recommended | Submit many, poll results |
-
-### Starting a Background Task
+`with_background(true)` returns as soon as the interaction is created. It is
+required for agents and optional for models.
 
 ```rust,ignore
+use genai_rs::InteractionStatus;
+
 let response = client
     .interaction()
-    .with_model(genai_rs::DEFAULT_MODEL)  // or with_agent()
+    .with_model(genai_rs::DEFAULT_MODEL) // or .with_agent(...)
     .with_text("Complex analysis task...")
     .with_background(true)
-    .with_store_enabled()  // Must enable storage to retrieve results
     .create()
     .await?;
 
-// Response returns immediately
 match response.status {
-    InteractionStatus::InProgress => {
-        println!("Task running, ID: {:?}", response.id);
-    }
-    InteractionStatus::Completed => {
-        println!("Completed immediately: {}", response.as_text().unwrap());
-    }
+    InteractionStatus::InProgress => println!("running: {:?}", response.id),
+    InteractionStatus::Completed => println!("done: {}", response.as_text().unwrap_or_default()),
     _ => {}
 }
 ```
 
-### Requirements
+### Webhooks
 
-- `with_store_enabled()` - Required to retrieve results by ID
-- `with_background(true)` - Required for agent interactions
+Webhooks push lifecycle events to your HTTPS endpoint so you don't have to
+poll. `WebhookEvent` covers `interaction.requires_action`,
+`interaction.completed` and `interaction.failed`, plus the `batch.*` events
+and `video.generated`.
 
-## Webhooks Instead of Polling
-
-For long-running background work, webhooks push lifecycle events
-(`interaction.requires_action`, `interaction.completed`,
-`interaction.failed`, plus `batch.*` and `video.generated`) to your HTTPS
-endpoint so you don't have to poll.
-
-**Option 1 - register a webhook once** (applies to all matching events):
+Register once for all matching events:
 
 ```rust,ignore
-use genai_rs::{Webhook, WebhookEvent, WebhookUpdate, WebhookState};
+use genai_rs::{Webhook, WebhookEvent, WebhookState, WebhookUpdate};
 
 let webhook = client.create_webhook(
     &Webhook::new(
@@ -377,29 +265,27 @@ let webhook = client.create_webhook(
     .with_name("prod-hook"),
 ).await?;
 
-// Store this at create time - it is never returned again.
+// Returned only at creation: store it now
 let signing_secret = webhook.new_signing_secret.clone().expect("returned on create");
-let id = webhook.id.clone().unwrap();
+let id = webhook.id.clone().expect("created webhook has an id");
 
-client.ping_webhook(&id).await?;                       // test delivery
-let rotated = client.rotate_webhook_signing_secret(&id, None).await?; // zero-downtime rotation
+client.ping_webhook(&id).await?;                                  // test delivery
+let rotated = client.rotate_webhook_signing_secret(&id, None).await?;
 client.update_webhook(&id, &WebhookUpdate::new().with_state(WebhookState::Disabled), Some("state")).await?;
 client.delete_webhook(&id).await?;
 ```
 
-**Option 2 - per-request routing** with `webhook_config` (overrides the
-registered webhooks for one request and echoes `user_metadata` on every
-event):
+Or route one request, which overrides the registered webhooks for it and
+echoes `user_metadata` on every event:
 
 ```rust,ignore
 use genai_rs::WebhookConfig;
 
 let response = client
     .interaction()
-    .with_agent("deep-research-preview-04-2026")
+    .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
     .with_text("Research the history of quantum computing")
     .with_background(true)
-    .with_store_enabled()
     .with_webhook_config(
         WebhookConfig::new()
             .with_uris(vec!["https://example.com/hooks/genai".to_string()])
@@ -407,242 +293,88 @@ let response = client
     )
     .create()
     .await?;
-
-// On interaction.completed, fetch the result:
-// let done = client.get_interaction(&interaction_id_from_event).await?;
+// On interaction.completed: client.get_interaction(&id_from_event).await?
 ```
 
-Operational notes:
+Verify delivery signatures with the signing secret before trusting a
+payload. The API disables a webhook after repeated delivery failures
+(`WebhookState::DisabledDueToFailedDeliveries`), so monitor its state.
+`examples/webhooks_and_background.rs` shows the whole flow.
 
-- Verify delivery signatures with the signing secret before trusting
-  payloads.
-- The API disables webhooks after repeated delivery failures
-  (`WebhookState::DisabledDueToFailedDeliveries`) - monitor state and
-  re-enable after fixing your endpoint.
-- See `cargo run --example webhooks_and_background` for the full flow.
-
-## Polling Patterns
-
-### Basic Polling
+### Polling
 
 ```rust,ignore
+use genai_rs::{Client, InteractionResponse, InteractionStatus};
 use std::time::{Duration, Instant};
-use tokio::time::sleep;
 
-async fn poll_for_completion(
+async fn poll_until_done(
     client: &Client,
-    interaction_id: &str,
-    max_wait: Duration,
+    id: &str,
+    deadline: Duration,
 ) -> Result<InteractionResponse, Box<dyn std::error::Error>> {
     let start = Instant::now();
     let mut delay = Duration::from_secs(2);
-    let max_delay = Duration::from_secs(10);
-
     loop {
-        if start.elapsed() > max_wait {
-            return Err("Polling timed out".into());
-        }
-
-        let response = client.get_interaction(interaction_id).await?;
-
+        let response = client.get_interaction(id).await?;
         match response.status {
             InteractionStatus::Completed => return Ok(response),
-            InteractionStatus::Failed => return Err("Task failed".into()),
-            InteractionStatus::Cancelled => return Err("Task cancelled".into()),
-            InteractionStatus::BudgetExceeded => return Err("Budget exceeded".into()),
-            InteractionStatus::InProgress => {
-                // Exponential backoff
-                sleep(delay).await;
-                delay = (delay * 2).min(max_delay);
+            InteractionStatus::Failed
+            | InteractionStatus::Cancelled
+            | InteractionStatus::Incomplete
+            | InteractionStatus::BudgetExceeded => {
+                return Err(format!("ended as {:?}", response.status).into());
             }
-            _ => {
-                // Unknown status - continue polling (Evergreen pattern)
-                sleep(delay).await;
-            }
+            // InProgress, RequiresAction, and statuses this crate doesn't
+            // know yet (InteractionStatus::Unknown): keep polling
+            _ => {}
         }
+        if start.elapsed() > deadline {
+            return Err("polling deadline exceeded".into());
+        }
+        tokio::time::sleep(delay).await;
+        delay = (delay * 2).min(Duration::from_secs(10));
     }
 }
 ```
 
-### Usage
+| Status | Meaning |
+|--------|---------|
+| `InProgress` | Still running |
+| `Completed` | Finished; read the result |
+| `Failed` | Failed |
+| `Cancelled` | Cancelled |
+| `RequiresAction` | Waiting for input |
+| `Incomplete` | Ended before completion (for example a token limit); inspect partial results |
+| `BudgetExceeded` | The configured budget ran out; inspect partial results |
 
-```rust,ignore
-// Start background task
-let initial = client
-    .interaction()
-    .with_agent("deep-research-pro-preview-12-2025")
-    .with_text("Research topic")
-    .with_background(true)
-    .with_store_enabled()
-    .create()
-    .await?;
+Persist the interaction id as soon as `create()` returns, so a restart can
+resume with `get_interaction(&id)`. `response.steps` can be non-empty while
+the run is still `InProgress`, and `response.output_steps()` folds those
+partial results into a history.
 
-// Poll for completion
-let result = poll_for_completion(
-    &client,
-    initial.id.as_ref().unwrap(),
-    Duration::from_secs(120),
-).await?;
+### Streaming a background interaction
 
-println!("Research complete: {}", result.as_text().unwrap());
-```
-
-### Streaming During Polling
-
-You can also stream results as they become available:
+`client.get_interaction_stream(&id, None)` streams a running interaction from
+the start. Pass a `last_event_id` to resume; see
+[Streaming API](STREAMING_API.md#stream-resume).
 
 ```rust,ignore
 use futures_util::StreamExt;
-use genai_rs::StreamChunk;
 
-// Second argument is an optional last_event_id for resuming a prior stream
-let mut stream = client.get_interaction_stream(interaction_id, None);
-
-while let Some(result) = stream.next().await {
-    match result {
-        Ok(event) => match event.chunk {
-            StreamChunk::StepDelta { delta, .. } => {
-                if let Some(text) = delta.as_text() {
-                    print!("{}", text);
-                }
-            }
-            StreamChunk::Completed(_response) => {
-                println!("\nComplete!");
-                break;
-            }
-            _ => {}
-        },
-        Err(e) => {
-            eprintln!("Stream error: {}", e);
-            break;
-        }
+let mut stream = client.get_interaction_stream(&interaction_id, None);
+while let Some(event) = stream.next().await {
+    let event = event?;
+    if let Some(text) = event.chunk.delta_text() {
+        print!("{text}");
+    }
+    if event.is_terminal() {
+        break;
     }
 }
 ```
 
-## Cancellation
+### Cancellation
 
-Long-running tasks can be cancelled:
-
-```rust,ignore
-// Start a background task
-let response = client
-    .interaction()
-    .with_agent("deep-research-pro-preview-12-2025")
-    .with_text("Very long research query")
-    .with_background(true)
-    .with_store_enabled()
-    .create()
-    .await?;
-
-let interaction_id = response.id.unwrap();
-
-// Later, cancel if needed
-client.cancel_interaction(&interaction_id).await?;
-
-// Check status
-let cancelled = client.get_interaction(&interaction_id).await?;
-assert_eq!(cancelled.status, InteractionStatus::Cancelled);
-```
-
-### Cancellation Behavior
-
-- Already completed tasks cannot be cancelled
-- Cancelled tasks may have partial results
-- Cancellation is not instantaneous
-
-## Best Practices
-
-### 1. Always Use Exponential Backoff
-
-```rust,ignore
-let mut delay = Duration::from_secs(2);
-let max_delay = Duration::from_secs(10);
-
-// After each poll
-delay = (delay * 2).min(max_delay);  // 2s, 4s, 8s, 10s, 10s...
-```
-
-### 2. Set Reasonable Timeouts
-
-```rust,ignore
-const MAX_POLL_DURATION: Duration = Duration::from_secs(120);  // 2 minutes
-
-// For Deep Research, consider longer timeouts
-const RESEARCH_TIMEOUT: Duration = Duration::from_secs(300);  // 5 minutes
-```
-
-### 3. Handle All Status Values
-
-```rust,ignore
-match response.status {
-    InteractionStatus::Completed => { /* success */ }
-    InteractionStatus::Failed => { /* handle failure */ }
-    InteractionStatus::Cancelled => { /* handle cancellation */ }
-    InteractionStatus::InProgress => { /* keep polling */ }
-    InteractionStatus::RequiresAction => { /* handle required action */ }
-    InteractionStatus::Incomplete => { /* ended early, e.g. token limit */ }
-    InteractionStatus::BudgetExceeded => { /* configured budget exhausted */ }
-    _ => {
-        // Unknown status - log and continue (Evergreen pattern)
-        log::warn!("Unknown status: {:?}", response.status);
-    }
-}
-```
-
-### 4. Store Interaction IDs
-
-For recovery after crashes or restarts:
-
-```rust,ignore
-// Save interaction ID to persistent storage
-save_to_database(&interaction_id);
-
-// Later, resume polling
-let interaction_id = load_from_database();
-let result = client.get_interaction(&interaction_id).await?;
-```
-
-### 5. Handle Partial Results
-
-Background tasks may have intermediate outputs:
-
-```rust,ignore
-let response = client.get_interaction(&interaction_id).await?;
-
-// Check for steps even if still in progress
-if !response.steps.is_empty() {
-    println!("Partial results available");
-}
-```
-
-To fold partial or final results into a conversation history, use
-`response.output_steps()`:
-
-```rust,ignore
-let mut history: Vec<Step> = vec![Step::user_text("Research topic")];
-history.extend(response.output_steps());
-```
-
-## Status Reference
-
-| Status | Meaning | Action |
-|--------|---------|--------|
-| `InProgress` | Task running | Continue polling |
-| `Completed` | Task finished successfully | Retrieve results |
-| `Failed` | Task failed | Check error, possibly retry |
-| `Cancelled` | Task was cancelled | Handle cancellation |
-| `RequiresAction` | Task needs input | Rare for agents, check response |
-| `Incomplete` | Ended before completion (e.g., token limit) | Inspect partial results |
-| `BudgetExceeded` | Configured budget was exceeded | Inspect partial results, adjust budget |
-
-Unrecognized statuses deserialize to `InteractionStatus::Unknown` — keep
-polling on unknown statuses and rely on your own timeout (Evergreen pattern).
-
-## Example
-
-See `cargo run --example deep_research` for a complete working example.
-
-```bash
-GEMINI_API_KEY=your-key cargo run --example deep_research
-```
+`client.cancel_interaction(&id)` stops a background interaction that is still
+`InProgress`, and returns it with status `Cancelled`. It errors if the
+interaction is not background or has already finished.

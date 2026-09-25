@@ -39,7 +39,7 @@ The same check is asserted in
 ## Running
 
 ```bash
-pip install google-antigravity==0.1.10   # ships the localharness binary
+pip install google-antigravity==0.1.18   # ships the localharness binary
 export GEMINI_API_KEY=...
 
 cargo run --example session_resume --features antigravity

@@ -17,54 +17,72 @@
 //! - Structured output via `with_response_schema` (the `finish` tool schema)
 //! - Live step streaming (`send_streaming` + `AgentEvent`)
 //!
+//! ## Things to know
+//!
+//! - Keep an auditor read-only: never enable `edit_file` or `run_command`.
+//!   `deny_all()` also keeps tools added in later harness versions denied.
+//! - Severity policy lives in code (`classify_severity`), and `render()`
+//!   cross-checks the model's report against it rather than trusting it.
+//! - Cost: a run makes ~35 model calls and uses roughly 300–650K prompt
+//!   tokens on harness 0.1.18, because every call resends the trajectory and
+//!   the harness's requests get almost no implicit cache hits (4K of 274K
+//!   cached, measured 2026-09-24).
+//!
 //! ## Running
 //!
 //! ```bash
-//! pip install google-antigravity==0.1.10   # or set ANTIGRAVITY_HARNESS_PATH
+//! pip install google-antigravity==0.1.18   # or set ANTIGRAVITY_HARNESS_PATH
 //! export GEMINI_API_KEY=your_api_key
 //! cargo run --example repo_auditor --features antigravity
 //! LOUD_WIRE=1 cargo run --example repo_auditor --features antigravity  # wire trace
 //! ```
 //!
-//! ## Sample output (trimmed from a real run)
+//! ## Sample output (trimmed from a real run against harness 0.1.18)
 //!
 //! ```text
 //! === Repo Auditor (Antigravity harness) ===
 //!
 //! Workspace: .../examples/antigravity/repo_auditor/fixture
-//! Harness up. conversation_id=Some("9d772d7c9085062190aefd6723785b77")
+//! Harness up. conversation_id=Some("...")
 //!
 //! --- Audit in progress ---
 //! [list_directory] file:///.../fixture
 //! [list_directory] file:///.../fixture/app
+//! [view_file] file:///.../fixture/README.md
 //! [pre-tool hook] denied view_file on /.../fixture/.env
-//! [DENIED view_file] file:///.../fixture/.env — Secret files are off-limits; ...
-//! [harness noise] User denied permission for tool call.
+//! [DENIED] Secret files are off-limits; report them as findings instead.
+//! [harness noise] Secret files are off-limits; ... ("denied by pre-tool hook: ...")
 //! [start_subagent] delegated (subagent runs its own trajectory)
-//! [view_file] file:///.../fixture/app/backup.py
 //! [view_file] file:///.../fixture/app/database.py
+//! [view_file] file:///.../fixture/app/backup.py
 //! [tool] classify_severity -> {"category":"sql_injection","severity":"critical"}
-//! [tool] classify_severity -> {"category":"hardcoded_credentials","severity":"high"}
+//! [custom tool dispatched] classify_severity
 //! [tool] classify_severity -> {"category":"command_injection","severity":"critical"}
-//! [search_directory] query="password|secret|key|token|auth|db_password"
+//! [custom tool dispatched] classify_severity
+//! [tool] classify_severity -> {"category":"hardcoded_credentials","severity":"high"}
+//! [custom tool dispatched] classify_severity
 //! [finish] structured report received
 //!
 //! --- Audit report ---
-//! Repo summary: The project is a deliberately flawed notes-app fixture designed for
-//! testing security auditing tools. It contains multiple high-severity vulnerabilities...
+//! Repo summary: The audited project, notes-app, is a lightweight Python note-taking
+//! application providing database utilities ... alongside backup and restore helpers.
 //!
-//! Findings (3):
-//!   1. [CRITICAL] app/database.py — SQL Injection in find_user function
-//!      category: sql_injection | fix: Use parameterized queries instead of string formatting...
-//!   2. [HIGH] app/database.py — Hardcoded DB Password in database.py
-//!      category: hardcoded_credentials | fix: Remove hardcoded passwords from the source code...
-//!   3. [CRITICAL] app/backup.py — Command Injection in backup_notes and restore_notes functions
-//!      category: command_injection | fix: Avoid using `os.system` with user-controlled input...
+//! Findings (5):
+//!   1. [CRITICAL] app/database.py — SQL Injection in User Query Construction
+//!      category: sql_injection | fix: Use parameterized queries with SQLite placeholders ...
+//!   2. [HIGH] app/database.py — Hardcoded Credential in Database Module
+//!      category: hardcoded_credentials | fix: Remove hardcoded credentials from source ...
+//!   3. [CRITICAL] app/backup.py — OS Command Injection in Notes Backup
+//!      category: command_injection | fix: Avoid passing shell command strings to os.system ...
+//!   4. [CRITICAL] app/backup.py — OS Command Injection in Notes Restore
+//!      category: command_injection | fix: Avoid shell invocation via os.system ...
+//!   5. [HIGH] .env — Committed Secrets in .env Configuration File
+//!      category: hardcoded_credentials | fix: Add .env to .gitignore, untrack the file ...
 //!
 //! Overall risk: CRITICAL
 //! Severity cross-check: all findings match the classifier table.
 //!
-//! Usage: prompt=Some(9425) total=Some(9725)
+//! Usage: prompt=Some(408606) total=Some(427009)
 //! ```
 
 mod report;
@@ -189,34 +207,48 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .add_policy(policy::allow("finish"))
         // Defense in depth on top of the allow rules: even allowed read
         // tools are confined to the workspace, and secret material like
-        // .env files stays off-limits. Action paths arrive as file:// URIs.
+        // .env files stays off-limits.
         .on_pre_tool({
             let workspace = workspace.clone();
             move |call| {
-                let raw = call.args["filePath"]
-                    .as_str()
-                    .or_else(|| call.args["directoryPath"].as_str());
-                if let Some(path) = raw.map(|p| p.strip_prefix("file://").unwrap_or(p)) {
-                    if !path.starts_with(workspace.as_str()) {
-                        println!(
-                            "[pre-tool hook] denied {} outside workspace: {path}",
-                            call.name
-                        );
-                        return PreToolDecision::deny(format!(
-                            "Path is outside the workspace {workspace}; stay inside it."
-                        ));
-                    }
-                    if call.name == "view_file" && path.contains(".env") {
-                        println!("[pre-tool hook] denied view_file on {path}");
-                        return PreToolDecision::deny(
-                            "Secret files are off-limits; report them as findings instead.",
-                        );
-                    }
+                const FILE_TOOLS: [&str; 4] = [
+                    "view_file",
+                    "list_directory",
+                    "find_file",
+                    "search_directory",
+                ];
+                if !FILE_TOOLS.contains(&call.name.as_str()) {
+                    return PreToolDecision::Allow;
+                }
+                // Fail closed: a file tool whose path this hook cannot find
+                // is denied, not waved through. A gate keyed on an argument
+                // name that is not there allows *everything* — exactly how
+                // this check sat dead for a harness release, reading the
+                // action-record keys (`filePath`) while the hook was being
+                // handed the model's arguments (`AbsolutePath`).
+                let Some(path) = tool_path(&call.args) else {
+                    println!("[pre-tool hook] denied {}: no recognizable path", call.name);
+                    return PreToolDecision::deny("Could not determine the target path.");
+                };
+                if !path.starts_with(workspace.as_str()) {
+                    println!(
+                        "[pre-tool hook] denied {} outside workspace: {path}",
+                        call.name
+                    );
+                    return PreToolDecision::deny(format!(
+                        "Path is outside the workspace {workspace}; stay inside it."
+                    ));
+                }
+                if call.name == "view_file" && path.contains(".env") {
+                    println!("[pre-tool hook] denied view_file on {path}");
+                    return PreToolDecision::deny(
+                        "Secret files are off-limits; report them as findings instead.",
+                    );
                 }
                 PreToolDecision::Allow
             }
         })
-        // Audit trail for every custom-tool execution.
+        // Audit trail for every completed tool call (custom and harness-side).
         .on_post_tool(|outcome| {
             let result = outcome
                 .result
@@ -291,44 +323,37 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     agent.shutdown().await?; // graceful: persists the harness trajectory
 
-    println!("\n=== Example Complete ===\n");
-
-    println!("--- What You'll See with LOUD_WIRE=1 ---");
-    println!("  HARNESS /path/to/localharness (pid N) - process spawn");
-    println!(
-        "  WS Send: {{\"config\": ...}} - init with workspace, tools, customSubagents, finish schema"
-    );
-    println!(
-        "  WS Send: {{\"config\": {{\"systemInstructions\": ...}}}} - workspace root announced to the model"
-    );
-    println!("  WS Receive: {{\"initializeConversationResponse\": ...}} - cascade id");
-    println!("  WS Send: {{\"userInput\": ...}} - the audit task");
-    println!("  WS Receive: {{\"stepUpdate\": ...}} - listDirectory/viewFile/invokeSubagent steps");
-    println!(
-        "  WS Receive: {{\"toolConfirmationRequest\": {{}}}} / WS Send: {{\"toolConfirmation\": \
-         {{\"accepted\": ...}}}} - Rust-side policy verdicts"
-    );
-    println!(
-        "  WS Receive: {{\"toolCall\": ...}} / WS Send: {{\"toolResponse\": ...}} - classify_severity"
-    );
-    println!("  WS Receive: {{\"stepUpdate\": {{\"finish\": ...}}}} - structured report\n");
-
-    println!("--- Production Considerations ---");
-    println!("• Keep audits read-only: never enable edit_file/run_command for an auditor agent");
-    println!("• Policies are allow-lists here — new harness tools stay denied by deny_all()");
-    println!(
-        "• Put severity policy in code (a table), not prompts: it stays auditable and testable"
-    );
-    println!("• Cross-check model output against deterministic tools, as render() does here");
-    println!(
-        "• Bound runaway turns with with_turn_timeout; add with_save_dir to resume long audits"
-    );
-    println!("• Pin the harness wheel (google-antigravity==0.1.10, SUPPORTED_HARNESS_VERSION)");
-
     if mismatches > 0 {
         return Err(format!("{mismatches} finding(s) contradict the severity classifier").into());
     }
     Ok(())
+}
+
+/// The target path of a file-tool call, as the pre-tool hook sees it.
+///
+/// The hook is handed the *model's* arguments, whose names are the
+/// harness's tool schema (on 0.1.18: `AbsolutePath` for `view_file`,
+/// `DirectoryPath` for `list_directory`, `SearchDirectory` / `SearchPath`
+/// for the finders). A confirmation step carries the action record's
+/// camelCase keys instead, and models — subagents especially — sometimes
+/// echo the record's snake_case keys back as arguments, so all three
+/// spellings are accepted. Anything else is not a path this hook can vouch
+/// for, and the caller denies it.
+fn tool_path(args: &serde_json::Value) -> Option<&str> {
+    const PATH_KEYS: [&str; 8] = [
+        "AbsolutePath",
+        "DirectoryPath",
+        "SearchDirectory",
+        "SearchPath",
+        "filePath",
+        "directoryPath",
+        "file_path",
+        "directory_path",
+    ];
+    PATH_KEYS
+        .iter()
+        .find_map(|key| args[*key].as_str())
+        .map(|p| p.strip_prefix("file://").unwrap_or(p))
 }
 
 /// One concise progress line per harness-side tool action. Denied actions
@@ -336,13 +361,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
 /// they don't read like executed ones.
 fn print_action(action: &ToolAction, decision: &ToolDecision) {
     if let ToolDecision::Denied { reason } = decision {
-        // e.g. the .env view_file the pre-tool hook rejects.
-        let args = action.args();
-        let path = args["filePath"]
-            .as_str()
-            .or_else(|| args["directoryPath"].as_str())
-            .unwrap_or("");
-        println!("[DENIED {}] {path} — {reason}", action.tool_name());
+        // A hook-denied call never ran, so there is no action record for
+        // it: the harness reports it as an error step carrying the reason.
+        match action {
+            ToolAction::Error(_) => println!("[DENIED] {reason}"),
+            other => println!("[DENIED {}] {reason}", other.tool_name()),
+        }
         return;
     }
     match action {

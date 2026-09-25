@@ -7,7 +7,7 @@
 //! `cancel()`.
 //!
 //! **The part worth reading twice**: a cancelled turn does *not* fail. On
-//! harness 0.1.10 a halt takes the trajectory to the same terminal state a
+//! harness 0.1.10 and 0.1.18 a halt takes the trajectory to the same terminal state a
 //! natural completion does, so the turn resolves normally, carrying
 //! whatever text it had produced. Treat `cancel()` as "stop early and keep
 //! what you have" — and record the cancellation yourself, because nothing
@@ -27,10 +27,21 @@
 //! - **The contrast with `with_turn_timeout`**, which *does* produce an
 //!   error and discards the turn.
 //!
+//! ## Things to know
+//!
+//! - The handle is cheap to clone: hand copies to a UI button, a signal
+//!   handler and a watchdog at once.
+//! - Thinking deltas are not answer text. Halting mid-thought keeps nothing;
+//!   trigger on `TextDelta` if partial output is the point.
+//! - Cancelling before the turn starts is a no-op: there is nothing to halt,
+//!   and the halt is dropped.
+//! - After a halt the harness logs `context canceled` on stderr. That is the
+//!   expected trace of a successful halt, not an error.
+//!
 //! ## Requirements
 //!
 //! ```bash
-//! pip install google-antigravity==0.1.10   # or set ANTIGRAVITY_HARNESS_PATH
+//! pip install google-antigravity==0.1.18   # or set ANTIGRAVITY_HARNESS_PATH
 //! export GEMINI_API_KEY=...
 //! cargo run --example cancellable_turn --features antigravity
 //! LOUD_WIRE=haltRequest,trajectoryStateUpdate cargo run --example cancellable_turn --features antigravity
@@ -191,41 +202,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  {preview}...");
 
     if elapsed >= TURN_BUDGET {
-        println!("\n⚠ The turn ran to its budget — the halt did not stop it.");
-    } else {
-        println!("\n✓ The turn resolved normally — cancellation is not an error.");
+        agent.shutdown().await?;
+        return Err("the turn ran to its budget — the halt did not stop it".into());
     }
+    println!("\n✓ The turn resolved normally — cancellation is not an error.");
 
     agent.shutdown().await?;
-
-    println!("\n=== Example Complete ===\n");
-
-    println!("--- What You'll See with LOUD_WIRE=1 ---");
-    println!("  WS Send: {{\"userInput\": \"Write an extremely detailed...\"}}");
-    println!("  WS Receive: {{\"stepUpdate\": ...}} - deltas as the essay streams");
-    println!("  WS Send: {{\"haltRequest\": true}} - the cancel handle firing");
-    println!("  STDERR: \"received model response error: context canceled\"");
-    println!("    - the harness aborting its upstream request; expected, not a bug");
-    println!("  WS Receive: {{\"trajectoryStateUpdate\": {{\"state\": \"STATE_FULLY_IDLE\"}}}}");
-    println!("    - the SAME terminal state a natural completion sends, which is");
-    println!("      why the turn resolves instead of failing");
-    println!("  Try LOUD_WIRE=haltRequest,trajectoryStateUpdate to see just this\n");
-
-    println!("--- Production Considerations ---");
-    println!("• A cancelled turn RESOLVES, carrying partial text. Nothing in the");
-    println!("  response says it was halted — record that on your side if it matters");
-    println!("• Take the handle before starting the turn: send_streaming holds");
-    println!("  &mut agent, so you cannot reach the agent while consuming it");
-    println!("• cancel() vs with_turn_timeout: cancel keeps partial output and");
-    println!("  succeeds; the timeout discards the turn and returns Timeout");
-    println!("• The handle is cheap to clone — hand copies to a UI button, a");
-    println!("  shutdown signal handler, and a watchdog all at once");
-    println!("• Thinking deltas are not answer text. Halting mid-thought keeps");
-    println!("  nothing — trigger on TextDelta if partial output is the point");
-    println!("• Cancelling before any output is a no-op worth guarding: there is");
-    println!("  no turn to halt yet, and the halt is simply dropped");
-    println!("• The harness's \"context canceled\" stderr is the expected trace of");
-    println!("  a successful halt, not an error to alert on");
 
     Ok(())
 }

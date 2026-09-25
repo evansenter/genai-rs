@@ -30,8 +30,8 @@ correctness check that doesn't depend on LLM phrasing.
 |-------|---------------|
 | Capabilities | `Capabilities::read_only().enable(BuiltinTool::StartSubagent)` |
 | Policies | `deny_all()` + explicit `allow(...)` for each tool the audit needs |
-| Pre-tool hook | Denies `view_file` on `.env` paths, even though `view_file` is allowed |
-| Post-tool hook | Logs every custom-tool execution (audit trail) |
+| Pre-tool hook | Confines file tools to the workspace and denies `view_file` on `.env` paths, even though `view_file` is allowed; denies a file tool whose path it cannot read (fail closed) |
+| Post-tool hook | Logs every completed tool call, custom and harness-side (audit trail) |
 | Turn bound | `with_turn_timeout(Duration::from_secs(600))` |
 
 The pre-tool hook fires *after* the policy allow — defense in depth: the
@@ -41,7 +41,7 @@ denied by Rust code.
 ## Running
 
 ```bash
-pip install google-antigravity==0.1.10   # ships the localharness binary
+pip install google-antigravity==0.1.18   # ships the localharness binary
 # ...or point at an existing binary:
 export ANTIGRAVITY_HARNESS_PATH=/path/to/localharness
 
@@ -57,63 +57,73 @@ LOUD_WIRE=1 cargo run --example repo_auditor --features antigravity
 
 ## Sample output
 
-Trimmed from a real run:
+Trimmed from a real run against harness 0.1.18 (the harness's own post-tool
+lines and the subagent's repeat reads are cut):
 
 ```text
 === Repo Auditor (Antigravity harness) ===
 
 Workspace: .../examples/antigravity/repo_auditor/fixture
-Harness up. conversation_id=Some("9d772d7c9085062190aefd6723785b77")
+Harness up. conversation_id=Some("...")
 
 --- Audit in progress ---
 [list_directory] file:///.../fixture
 [list_directory] file:///.../fixture/app
+[view_file] file:///.../fixture/README.md
 [pre-tool hook] denied view_file on /.../fixture/.env
+[DENIED] Secret files are off-limits; report them as findings instead.
+[harness noise] Secret files are off-limits; ... ("denied by pre-tool hook: ...")
 [start_subagent] delegated (subagent runs its own trajectory)
-[view_file] file:///.../fixture/app/backup.py
 [view_file] file:///.../fixture/app/database.py
-[tool] classify_severity -> {"result":"{\"category\":\"command_injection\",\"severity\":\"critical\"}"}
+[view_file] file:///.../fixture/app/backup.py
+[tool] classify_severity -> {"category":"sql_injection","severity":"critical"}
 [custom tool dispatched] classify_severity
-[tool] classify_severity -> {"result":"{\"category\":\"hardcoded_credentials\",\"severity\":\"high\"}"}
+[tool] classify_severity -> {"category":"command_injection","severity":"critical"}
 [custom tool dispatched] classify_severity
-[tool] classify_severity -> {"result":"{\"category\":\"sql_injection\",\"severity\":\"critical\"}"}
+[tool] classify_severity -> {"category":"hardcoded_credentials","severity":"high"}
 [custom tool dispatched] classify_severity
-[search_directory] query="password|secret|key|token|auth|db_password"
 [finish] structured report received
 
 --- Audit report ---
-Repo summary: The project is a deliberately flawed notes-app fixture designed for
-testing security auditing tools. It contains multiple high-severity vulnerabilities
-including SQL injection, command injection, and hardcoded credentials.
+Repo summary: The audited project, notes-app, is a lightweight Python note-taking
+application providing database utilities ... alongside backup and restore helpers.
 
-Findings (3):
-  1. [CRITICAL] app/database.py — SQL Injection in find_user function
-     category: sql_injection | fix: Use parameterized queries instead of string
-     formatting to prevent SQL injection. ...
-  2. [HIGH] app/database.py — Hardcoded DB Password in database.py
-     category: hardcoded_credentials | fix: Remove hardcoded passwords from the
-     source code. Use environment variables or a secret management system. ...
-  3. [CRITICAL] app/backup.py — Command Injection in backup_notes and restore_notes
-     category: command_injection | fix: Avoid using `os.system` with user-controlled
-     input. Use the `subprocess` module with argument lists. ...
+Findings (5):
+  1. [CRITICAL] app/database.py — SQL Injection in User Query Construction
+     category: sql_injection | fix: Use parameterized queries with SQLite placeholders ...
+  2. [HIGH] app/database.py — Hardcoded Credential in Database Module
+     category: hardcoded_credentials | fix: Remove hardcoded credentials from source ...
+  3. [CRITICAL] app/backup.py — OS Command Injection in Notes Backup
+     category: command_injection | fix: Avoid passing shell command strings to os.system ...
+  4. [CRITICAL] app/backup.py — OS Command Injection in Notes Restore
+     category: command_injection | fix: Avoid shell invocation via os.system ...
+  5. [HIGH] .env — Committed Secrets in .env Configuration File
+     category: hardcoded_credentials | fix: Add .env to .gitignore, untrack the file ...
 
 Overall risk: CRITICAL
 Severity cross-check: all findings match the classifier table.
 
-Usage: prompt=Some(9425) total=Some(9725)
+Usage: prompt=Some(408606) total=Some(427009)
 ```
 
 Notes from real runs:
 
-- The harness passes workspaces to its tools but does not announce the path
-  to the model — name the workspace root in the task prompt (and in the
-  subagent's instructions, since its trajectory starts fresh) or the agent
-  wanders the filesystem.
-- Harness action paths arrive as `file:///` URIs; the pre-tool hook strips
-  the scheme before comparing against the workspace root.
-- A denied action still surfaces as a `ToolAction` event (the harness echoes
-  the rejected step); the wire shows `"accepted": false` and the model sees
-  "User denied permission for tool call."
+- The workspace root is announced to the model (and appended to the
+  subagent's instructions) automatically; without that, agents guess paths
+  and wander the filesystem.
+- The pre-tool hook is handed the *model's* arguments — on 0.1.18 plain
+  absolute paths under `AbsolutePath` / `DirectoryPath` / `SearchDirectory`
+  / `SearchPath` — while the streamed actions carry `file:///` URIs. The
+  hook denies a file tool whose path it cannot find rather than waving it
+  through: this guard was silently dead for a harness release because it
+  read the action-record keys (`filePath`) the hook is never given.
+- A denied call never runs, so it has no action record: the harness turns
+  it into an error step carrying the hook's reason, which surfaces as a
+  `ToolAction::Error` marked `ToolDecision::Denied` (plus the harness's own
+  error event), and the model sees the reason.
+- It is expensive: on 0.1.18 a run costs a few hundred thousand prompt
+  tokens (the subagent re-reads the fixture and polls subagent status),
+  against roughly ten thousand on 0.1.10.
 
 ## Files
 
@@ -132,5 +142,5 @@ Notes from real runs:
   can be verified mechanically
 - Bound turns with `with_turn_timeout`; use `with_save_dir` +
   `conversation_id()` to resume long audits
-- Pin the harness wheel (`google-antigravity==0.1.10`, see
+- Pin the harness wheel (`google-antigravity==0.1.18`, see
   `antigravity::SUPPORTED_HARNESS_VERSION`)

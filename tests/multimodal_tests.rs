@@ -1,33 +1,12 @@
-//! Multimodal input tests for the Interactions API
+//! Multimodal input: images, audio, video, PDFs, mixed media, streaming with
+//! media, loading media from files, and text-to-speech output.
 //!
-//! Tests for image, audio, video, and mixed media inputs.
-//!
-//! These tests require the GEMINI_API_KEY environment variable to be set.
-//!
-//! This file is organized by input type:
-//!
-//! - **image**: Image input from URI and base64, multiple images, follow-up
-//! - **audio**: Audio input from URI and base64
-//! - **video**: Video input from URI and base64
-//! - **mixed_content**: Text and image interleaved, image comparison
-//! - **mixed_media**: Multiple media types (image + audio, all three)
-//! - **document**: PDF document input
-//! - **streaming**: Streaming with multimodal input
-//! - **file_loading**: Builder pattern add_image_file() methods
-//! - **bytes_loading**: Builder pattern add_*_bytes() methods
-//! - **text_to_speech**: Audio output generation
-//!
-//! # Running Tests
+//! Inline media uses the base64 fixtures in `tests/common`; `gs://` URIs are
+//! rejected by the API, which `test_image_input_gcs_uri_unsupported` pins.
 //!
 //! ```bash
-//! cargo test --test multimodal_tests -- --include-ignored --nocapture
+//! cargo nextest run --test multimodal_tests --run-ignored all
 //! ```
-//!
-//! # Test Assets
-//!
-//! Tests primarily use base64-encoded media since the Interactions API does NOT
-//! support Google Cloud Storage (gs://) URIs. URI-based tests gracefully handle
-//! the expected "unsupported file uri" error.
 
 mod common;
 mod image {
@@ -37,10 +16,7 @@ mod image {
     };
     use genai_rs::{Content, InteractionInput, InteractionStatus};
 
-    /// Tests image input via GCS URI (gs://) which may not be supported by the Interactions API.
-    /// This test documents the expected "Unsupported file uri" error behavior when the API rejects
-    /// such URIs, but also handles success gracefully if the API accepts the format.
-    /// For reliable image input, use base64 encoding (see `test_image_input_from_base64`).
+    /// `gs://` URIs are rejected outright; files must be registered first.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_image_input_gcs_uri_unsupported() {
@@ -62,27 +38,15 @@ mod image {
         });
 
         match result {
-            Ok(response) => {
-                assert_eq!(response.status, InteractionStatus::Completed);
-                assert!(
-                    response.has_text(),
-                    "Should have text response describing image"
-                );
-                let text = response.as_text().unwrap().to_lowercase();
-                println!("Image description: {}", text);
-            }
-            Err(e) => {
-                // GCS URIs are expected to fail with a 400-class error.
-                // Don't check specific message - API error text changes over time.
-                match &e {
-                    genai_rs::GenaiError::Api { status_code, .. } if *status_code == 400 => {
-                        println!(
-                            "Expected: GCS URIs not supported directly (400 error). Use base64 encoding or FileService.RegisterFile."
-                        );
-                    }
-                    _ => panic!("Unexpected error type: {:?}", e),
-                }
-            }
+            Err(genai_rs::GenaiError::Api {
+                status_code: 400,
+                message,
+                ..
+            }) => assert!(
+                message.contains("Google Cloud Storage"),
+                "expected the gs:// rejection, got: {message}"
+            ),
+            other => panic!("expected a 400 for a gs:// URI, got: {other:?}"),
         }
     }
 
@@ -161,7 +125,7 @@ mod image {
             &client,
             "Showed two images (one red, one blue) and asked to describe the colors",
             text,
-            "Does this response mention at least one of the colors red or blue?",
+            "Does this response identify one image as red (or a shade of red) and the other as blue?",
         )
         .await;
     }
@@ -223,51 +187,8 @@ mod image {
 }
 
 mod audio {
-    use crate::common::{SAMPLE_AUDIO_URL, TINY_WAV_BASE64, get_client, stateful_builder};
+    use crate::common::{TINY_WAV_BASE64, get_client, stateful_builder};
     use genai_rs::{Content, InteractionInput, InteractionStatus};
-
-    /// Tests audio input from URI.
-    /// Note: GCS URIs are not supported by the Interactions API.
-    #[tokio::test]
-    #[ignore = "Requires API key"]
-    async fn test_audio_input_from_uri() {
-        let Some(client) = get_client() else {
-            println!("Skipping: GEMINI_API_KEY not set");
-            return;
-        };
-
-        let contents = vec![
-            Content::text("What is this audio about? Summarize briefly."),
-            Content::audio_uri(SAMPLE_AUDIO_URL, "audio/mpeg"),
-        ];
-
-        let result = crate::retry_request!([client, contents] => {
-            stateful_builder(&client)
-                .with_input(InteractionInput::Content(contents))
-                .create()
-                .await
-        });
-
-        match result {
-            Ok(response) => {
-                println!("Audio response status: {:?}", response.status);
-                if response.has_text() {
-                    let text = response.as_text().unwrap();
-                    println!("Audio transcription/summary: {}", text);
-                }
-            }
-            Err(e) => {
-                let error_str = format!("{:?}", e);
-                if error_str.contains("Unsupported file uri") {
-                    println!(
-                        "Expected: GCS URIs not supported by Interactions API. Use base64 encoding instead."
-                    );
-                } else {
-                    println!("Audio input error (may be expected): {:?}", e);
-                }
-            }
-        }
-    }
 
     #[tokio::test]
     #[ignore = "Requires API key"]
@@ -299,53 +220,8 @@ mod audio {
 }
 
 mod video {
-    use crate::common::{
-        SAMPLE_VIDEO_URL, SAMPLE_YOUTUBE_VIDEO_URL, TINY_MP4_BASE64, get_client, stateful_builder,
-    };
+    use crate::common::{SAMPLE_YOUTUBE_VIDEO_URL, TINY_MP4_BASE64, get_client, stateful_builder};
     use genai_rs::{Content, InteractionInput, InteractionStatus, Step};
-
-    /// Tests video input from URI.
-    /// Note: GCS URIs are not supported by the Interactions API.
-    #[tokio::test]
-    #[ignore = "Requires API key"]
-    async fn test_video_input_from_uri() {
-        let Some(client) = get_client() else {
-            println!("Skipping: GEMINI_API_KEY not set");
-            return;
-        };
-
-        let contents = vec![
-            Content::text("What animals appear in this video? List them."),
-            Content::video_uri(SAMPLE_VIDEO_URL, "video/mp4"),
-        ];
-
-        let result = crate::retry_request!([client, contents] => {
-            stateful_builder(&client)
-                .with_input(InteractionInput::Content(contents))
-                .create()
-                .await
-        });
-
-        match result {
-            Ok(response) => {
-                println!("Video response status: {:?}", response.status);
-                if response.has_text() {
-                    let text = response.as_text().unwrap();
-                    println!("Video description: {}", text);
-                }
-            }
-            Err(e) => {
-                let error_str = format!("{:?}", e);
-                if error_str.contains("Unsupported file uri") {
-                    println!(
-                        "Expected: GCS URIs not supported by Interactions API. Use base64 encoding instead."
-                    );
-                } else {
-                    println!("Video input error (may be expected): {:?}", e);
-                }
-            }
-        }
-    }
 
     /// Tests video input from base64.
     #[tokio::test]
@@ -365,8 +241,7 @@ mod video {
 
         let response = crate::retry_request!([client, contents] => {
             stateful_builder(&client)
-                // Inline video bytes — see INLINE_VIDEO_MODEL.
-                .with_model(genai_rs::INLINE_VIDEO_MODEL)
+                .with_model(genai_rs::DEFAULT_MODEL)
                 .with_input(InteractionInput::Content(contents))
                 .create()
                 .await
@@ -458,8 +333,9 @@ mod video {
         let unclipped = video_tokens(&client, "static", genai_rs::VideoProcessing::Static).await;
 
         let (Some(clipped), Some(unclipped)) = (clipped, unclipped) else {
-            println!("Skipping assertion: could not read per-modality video token usage");
-            return;
+            panic!(
+                "per-modality video token usage missing (clipped: {clipped:?}, unclipped: {unclipped:?})"
+            );
         };
 
         println!("video tokens - clipped: {clipped}, unclipped: {unclipped}");
@@ -652,8 +528,7 @@ mod mixed_media {
 
         let result = crate::retry_request!([client, contents] => {
             stateful_builder(&client)
-                // Inline video bytes — see INLINE_VIDEO_MODEL.
-                .with_model(genai_rs::INLINE_VIDEO_MODEL)
+                .with_model(genai_rs::DEFAULT_MODEL)
                 .with_input(InteractionInput::Content(contents))
                 .create()
                 .await
@@ -787,43 +662,15 @@ mod streaming {
 
             let result = consume_stream(stream).await;
 
-            println!("\nDelta count: {}", result.delta_count);
-            println!("Collected text: {}", result.collected_text);
-
-            // Verify streaming worked
-            assert!(
-                result.has_output(),
-                "Should receive streaming chunks or final response"
-            );
-
-            // Verify content describes the red image
-            let text_to_check = if !result.collected_text.is_empty() {
-                result.collected_text.clone()
-            } else if let Some(ref response) = result.final_response {
-                response.as_text().unwrap_or_default().to_string()
-            } else {
-                String::new()
-            };
-
-            // Use semantic validation for the color check
+            let response = result.final_response.expect("no Completed event");
+            assert_eq!(response.status, InteractionStatus::Completed);
             assert_response_semantic(
                 &client,
                 "Asked what color a red 1x1 pixel image is",
-                &text_to_check,
+                &result.collected_text,
                 "Does this response identify the color as red or a shade of red?",
             )
             .await;
-
-            // Verify final response if present
-            if let Some(ref response) = result.final_response {
-                assert_eq!(
-                    response.status,
-                    InteractionStatus::Completed,
-                    "Final response should be completed"
-                );
-            }
-
-            println!("\n✓ Multimodal + streaming completed successfully");
         })
         .await;
     }
@@ -835,64 +682,6 @@ mod file_loading {
     };
     use base64::Engine;
     use genai_rs::{Content, InteractionStatus, image_from_file};
-
-    /// Tests loading images from files with image_from_file() helper.
-    ///
-    /// This validates loading images from files using the image_from_file() helper,
-    /// which auto-detects MIME type from the file extension and base64 encodes the content.
-    #[tokio::test]
-    #[ignore = "Requires API key"]
-    async fn test_add_image_file_builder() {
-        use tempfile::TempDir;
-
-        let Some(client) = get_client() else {
-            println!("Skipping: GEMINI_API_KEY not set");
-            return;
-        };
-
-        // Create temp directory and file
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let image_path = temp_dir.path().join("test_image.png");
-
-        // Decode base64 and write to file
-        let image_bytes = base64::engine::general_purpose::STANDARD
-            .decode(TINY_RED_PNG_BASE64)
-            .expect("Failed to decode base64");
-        std::fs::write(&image_path, &image_bytes).expect("Failed to write image");
-
-        // Use image_from_file() helper to load and encode, then with_content()
-        let image_content = image_from_file(&image_path)
-            .await
-            .expect("Failed to load image file");
-        let contents = vec![
-            Content::text("What color is this image? Answer with just the color name."),
-            image_content,
-        ];
-        let response = crate::retry_request!([client, contents] => {
-            client
-                .interaction()
-                .with_model(genai_rs::DEFAULT_MODEL)
-                .with_content(contents)
-                .create()
-                .await
-        })
-        .expect("Image interaction failed");
-
-        assert_eq!(response.status, InteractionStatus::Completed);
-        assert!(response.has_text(), "Should have text response");
-
-        let text = response.as_text().unwrap();
-        println!("Color response: {}", text);
-
-        // The tiny PNG is red - use semantic validation
-        assert_response_semantic(
-            &client,
-            "Asked what color a red 1x1 pixel PNG image is",
-            text,
-            "Does this response identify the color as red or a shade of red (like pink, magenta)?",
-        )
-        .await;
-    }
 
     /// Tests loading multiple images from files.
     ///
@@ -959,195 +748,7 @@ mod file_loading {
             &client,
             "Showed two images (red and blue) and asked to list both colors",
             text,
-            "Does this response mention at least one color (red, blue, pink, etc.)?",
-        )
-        .await;
-    }
-
-    /// Tests image_from_file() error handling for missing file.
-    #[tokio::test]
-    async fn test_image_from_file_not_found() {
-        // This test doesn't require an API key - just tests local file loading error
-        let result = image_from_file("/nonexistent/path/image.png").await;
-
-        assert!(result.is_err(), "Should return error for missing file");
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("Failed to read file") || err.contains("No such file"),
-            "Error should mention file not found: {}",
-            err
-        );
-    }
-}
-
-mod bytes_loading {
-    use crate::common::{
-        TINY_MP4_BASE64, TINY_PDF_BASE64, TINY_RED_PNG_BASE64, TINY_WAV_BASE64,
-        assert_response_semantic, get_client,
-    };
-    use genai_rs::{Content, InteractionStatus};
-
-    /// Tests image input with base64-encoded data using Content::image_data().
-    ///
-    /// This validates that base64-encoded image data works correctly.
-    /// Uses semantic validation to verify the model correctly interprets the image.
-    ///
-    /// Note: All media fixtures (PNG, WAV, MP4) are complete, well-formed files
-    /// the API should always accept, so media roundtrip tests assert strictly.
-    #[tokio::test]
-    #[ignore = "Requires API key"]
-    async fn test_image_data_roundtrip() {
-        let Some(client) = get_client() else {
-            println!("Skipping: GEMINI_API_KEY not set");
-            return;
-        };
-
-        // Use Content::image_data() with base64-encoded data
-        // The tiny PNG is well-formed and should always be processable
-        let contents = vec![
-            Content::text("What color is this image? Answer with just the color name."),
-            Content::image_data(TINY_RED_PNG_BASE64, "image/png"),
-        ];
-        let response = crate::retry_request!([client, contents] => {
-            client
-                .interaction()
-                .with_model(genai_rs::DEFAULT_MODEL)
-                .with_content(contents)
-                .create()
-                .await
-        })
-        .expect("Image data interaction failed");
-
-        assert_eq!(response.status, InteractionStatus::Completed);
-        assert!(response.has_text(), "Should have text response");
-
-        let text = response.as_text().unwrap();
-        println!("Color response: {}", text);
-
-        // Use semantic validation instead of brittle content checks
-        assert_response_semantic(
-            &client,
-            "User asked about the color of a 1x1 red PNG image",
-            text,
-            "Does this response describe a red, pink, magenta, or similar warm color?",
-        )
-        .await;
-    }
-
-    /// Tests audio input with base64-encoded data using Content::audio_data().
-    ///
-    /// This validates that base64-encoded audio data works correctly.
-    /// The TINY_WAV fixture is a complete, well-formed clip, so this test
-    /// asserts strictly — an API rejection is a real failure.
-    #[tokio::test]
-    #[ignore = "Requires API key"]
-    async fn test_audio_data_roundtrip() {
-        let Some(client) = get_client() else {
-            println!("Skipping: GEMINI_API_KEY not set");
-            return;
-        };
-
-        // Use Content::audio_data() with base64-encoded data
-        let contents = vec![
-            Content::text("Describe what you hear in this audio file."),
-            Content::audio_data(TINY_WAV_BASE64, "audio/wav"),
-        ];
-        let result = crate::retry_request!([client, contents] => {
-            client
-                .interaction()
-                .with_model(genai_rs::DEFAULT_MODEL)
-                .with_content(contents)
-                .create()
-                .await
-        });
-
-        let response = result.expect("Audio bytes interaction failed");
-        assert_eq!(response.status, InteractionStatus::Completed);
-        assert!(response.has_text(), "Should have text response");
-        println!("Audio response: {:?}", response.as_text());
-    }
-
-    /// Tests video input with base64-encoded data using Content::video_data().
-    ///
-    /// This validates that base64-encoded video data works correctly.
-    /// The TINY_MP4 fixture is a real one-frame H.264 clip, so this test
-    /// asserts strictly — an API rejection is a real failure.
-    #[tokio::test]
-    #[ignore = "Requires API key"]
-    async fn test_video_data_roundtrip() {
-        let Some(client) = get_client() else {
-            println!("Skipping: GEMINI_API_KEY not set");
-            return;
-        };
-
-        // Use Content::video_data() with base64-encoded data
-        let contents = vec![
-            Content::text("Describe what you see in this video file."),
-            Content::video_data(TINY_MP4_BASE64, "video/mp4"),
-        ];
-        let result = crate::retry_request!([client, contents] => {
-            client
-                .interaction()
-                // Inline video bytes — see INLINE_VIDEO_MODEL.
-                .with_model(genai_rs::INLINE_VIDEO_MODEL)
-                .with_content(contents)
-                .create()
-                .await
-        });
-
-        let response = result.expect("Video bytes interaction failed");
-        assert_eq!(response.status, InteractionStatus::Completed);
-        assert!(response.has_text(), "Should have text response");
-        println!("Video response: {:?}", response.as_text());
-    }
-
-    /// Tests document input with base64-encoded data using Content::document_data().
-    ///
-    /// This validates that base64-encoded document data (PDF) works correctly.
-    /// The test PDF contains "Hello World" text.
-    /// Uses semantic validation to verify the model correctly interprets the document.
-    ///
-    /// Asserts strictly on the interaction under test; semantic validation
-    /// (like all sibling tests) is non-fatal on validator transport errors.
-    #[tokio::test]
-    #[ignore = "Requires API key"]
-    async fn test_document_data_roundtrip() {
-        let Some(client) = get_client() else {
-            println!("Skipping: GEMINI_API_KEY not set");
-            return;
-        };
-
-        // Use Content::document_data() with base64-encoded data
-        let contents = vec![
-            Content::text(
-                "What text does this PDF document contain? Answer with just the text you find.",
-            ),
-            Content::document_data(TINY_PDF_BASE64, "application/pdf"),
-        ];
-        let result = crate::retry_request!([client, contents] => {
-            client
-                .interaction()
-                .with_model(genai_rs::DEFAULT_MODEL)
-                .with_content(contents)
-                .create()
-                .await
-        });
-
-        let response = result.expect("PDF bytes interaction failed");
-        println!("PDF bytes response status: {:?}", response.status);
-        assert_eq!(response.status, InteractionStatus::Completed);
-        assert!(response.has_text(), "Should have text response");
-
-        let text = response.as_text().unwrap();
-        println!("PDF response: {}", text);
-
-        // Use semantic validation instead of brittle content checks
-        // (assert_response_semantic is non-fatal on validator transport errors).
-        assert_response_semantic(
-            &client,
-            "User asked about text in a PDF that contains 'Hello World'",
-            text,
-            "Does this response mention 'Hello', 'World', or indicate these words were found in the document?",
+            "Does this response identify one image as red (or a shade of red) and the other as blue?",
         )
         .await;
     }
@@ -1156,54 +757,40 @@ mod bytes_loading {
 mod text_to_speech {
     use crate::common::{extended_test_timeout, get_client, with_timeout};
 
-    /// Tests basic text-to-speech audio output
+    /// Single-voice TTS on the default TTS model returns playable WAV.
     #[tokio::test]
-    #[ignore = "Requires API key and TTS model access"]
+    #[ignore = "Requires API key"]
     async fn test_text_to_speech_basic() {
         let Some(client) = get_client() else {
             println!("Skipping: GEMINI_API_KEY not set");
             return;
         };
 
-        // TTS requires a specific model
-        let tts_model = genai_rs::DEFAULT_TTS_MODEL;
-
-        // TTS can be slow - use extended timeout
         with_timeout(extended_test_timeout(), async {
             let response = client
                 .interaction()
-                .with_model(tts_model)
+                .with_model(genai_rs::DEFAULT_TTS_MODEL)
                 .with_text("Hello, world!")
                 .with_audio_output()
                 .with_voice("Kore")
+                .with_store_disabled()
                 .create()
-                .await;
+                .await
+                .expect("TTS request failed");
 
-            match response {
-                Ok(r) => {
-                    println!("TTS response status: {:?}", r.status);
-                    assert!(r.has_audio(), "Response should contain audio output");
-
-                    if let Some(audio) = r.first_audio() {
-                        let bytes = audio.bytes().expect("Should decode audio");
-                        println!("Audio size: {} bytes", bytes.len());
-                        println!("Audio MIME type: {:?}", audio.mime_type());
-                        println!("Audio extension: {}", audio.extension());
-                        assert!(!bytes.is_empty(), "Audio should not be empty");
-                    }
-                }
-                Err(e) => {
-                    // TTS model might not be available in all regions
-                    println!("TTS test error (may be expected): {:?}", e);
-                }
-            }
+            let audio = response.first_audio().expect("response has no audio");
+            let bytes = audio.bytes().expect("audio must decode");
+            // gemini-3.8-flash-tts returns a RIFF container, not raw L16.
+            assert_eq!(audio.mime_type(), Some("audio/wav"));
+            assert!(bytes.starts_with(b"RIFF"), "expected a WAV container");
+            assert_eq!(audio.extension(), "wav");
         })
         .await;
     }
 
-    /// Tests text-to-speech with speech configuration
+    /// An explicit `SpeechConfig` (voice + language) is accepted.
     #[tokio::test]
-    #[ignore = "Requires API key and TTS model access"]
+    #[ignore = "Requires API key"]
     async fn test_text_to_speech_with_speech_config() {
         use genai_rs::SpeechConfig;
 
@@ -1212,51 +799,28 @@ mod text_to_speech {
             return;
         };
 
-        let tts_model = genai_rs::DEFAULT_TTS_MODEL;
-
-        // TTS can be slow - use extended timeout
         with_timeout(extended_test_timeout(), async {
-            let config = SpeechConfig {
-                voice: Some("Puck".to_string()),
-                language: Some("en-US".to_string()),
-                speaker: None,
-            };
-
             let response = client
                 .interaction()
-                .with_model(tts_model)
+                .with_model(genai_rs::DEFAULT_TTS_MODEL)
                 .with_text("Testing speech configuration.")
                 .with_audio_output()
-                .with_speech_config(config)
+                .with_speech_config(SpeechConfig::with_voice_and_language("Puck", "en-US"))
+                .with_store_disabled()
                 .create()
-                .await;
+                .await
+                .expect("TTS request with speech config failed");
 
-            match response {
-                Ok(r) => {
-                    println!("TTS with config status: {:?}", r.status);
-                    assert!(r.has_audio(), "Response should contain audio output");
-                }
-                Err(e) => {
-                    println!("TTS with config error (may be expected): {:?}", e);
-                }
-            }
+            assert!(response.has_audio(), "response has no audio");
         })
         .await;
     }
 
-    /// Verifies that nested SpeechConfig format fails and flat format succeeds.
-    ///
-    /// Documentation shows a nested format:
-    /// ```json
-    /// {"speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Kore"}}}}
-    /// ```
-    ///
-    /// We use a flat format: `{"voice": "Kore", "language": "en-US"}`
-    ///
-    /// This test documents API behavior: nested format returns 400, flat format works.
-    /// See docs/INTERACTIONS_API_FEEDBACK.md Issue #7.
+    /// The generateContent-style nested `voiceConfig` object is rejected;
+    /// the flat list form the crate sends is accepted. See
+    /// docs/ENUM_WIRE_FORMATS.md ("SpeechConfig (generation_config)").
     #[tokio::test]
-    #[ignore = "Requires API key and TTS model access"]
+    #[ignore = "Requires API key"]
     async fn test_speech_config_nested_format_fails_flat_succeeds() {
         use genai_rs::{GenerationConfig, InteractionInput, InteractionRequest};
         use reqwest::Client as ReqwestClient;

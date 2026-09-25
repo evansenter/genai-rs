@@ -1,296 +1,134 @@
-# Interactions API Gap Analysis
+# Interactions API Gap Tracker
 
 > ## ⚠️ This is a point-in-time snapshot, not a completeness guarantee
 >
 > | | |
 > |---|---|
-> | **Last swept against** | `google-genai` **2.18.1** |
-> | **Sweep date** | **2026-08-16** |
+> | **Last swept against** | `google-genai` **2.25.0** |
+> | **Sweep date** | **2026-09-24** |
 > | **Baseline in CI** | `.github/last-swept-sdk-version` |
 >
-> Everything below being checked off means *"nothing was missing as of the
-> sweep date"* — it does **not** mean the crate is currently complete. The
-> SDK ships new Interactions surface between sweeps, and this file cannot
-> know about it.
->
-> **Before relying on this file, check whether a newer `google-genai` has
-> shipped.** The scheduled `api-surface-sweep` workflow does this daily and
-> opens an issue when the SDK moves; if that issue is open, this file is
-> behind by at least that much. The workflow closes that issue itself on the
-> next run that finds no bindings diff against the recorded baseline, so an
-> open issue always means genuinely-unswept surface rather than a close
-> someone forgot.
+> "Done" below means *nothing was missing as of the sweep date*. The SDK
+> ships new surface between sweeps. The daily `api-surface-sweep` workflow
+> opens an issue when the bindings move past the baseline and closes it once
+> a sweep catches up, so an open issue means this file is behind.
 
-## How to verify API surface (read this before trusting any source)
-
-These three disagree, and they disagree in a consistent direction. Use them
-in this order:
+## How to verify API surface
 
 | Rank | Source | Why |
 |------|--------|-----|
-| 1 | **Generated bindings** — `google-genai`'s `_gaos/types/interactions/*.py` | Machine-generated from the spec; ships *ahead* of prose. Diffing two releases is the only reliable way to spot new surface. |
-| 2 | **Live probes** against `generativelanguage.googleapis.com` | Ground truth for what the Gemini endpoint actually accepts, which is often narrower than the spec. |
-| 3 | **Prose docs** — `ai.google.dev` *and this file* | Both lag the other two. Neither is evidence of absence. |
+| 1 | **Generated bindings**: `google-genai`'s `_gaos/types/**` and the endpoint `path=` lines in `_gaos/*.py` | Ships ahead of prose. Diff two releases to find new surface. |
+| 2 | **Live probes** against `generativelanguage.googleapis.com` | Ground truth, and it disagrees with rank 1 in both directions. |
+| 3 | **Prose docs**: `ai.google.dev`, and this file | Both lag. Neither is evidence of absence. |
 
-This ordering was learned the hard way. The 2.17.0 → 2.18.1 sweep found
-`Content::Video.processing` (a 127x token-cost lever) and a widened
-`speech_config` union — **neither documented on `ai.google.dev`**, and both
-invisible to a reader who trusted this file's checked-off list. See #421.
+Rank 2 disagrees with rank 1 in both directions, which is why nothing from
+the bindings is modeled until it is probed. From the 2.25.0 sweep:
 
-Rank 2 matters as much as rank 1: the bindings describe a union for
-`speech_config` that the Gemini API rejects outright, and `Tool::Retrieval`
-is in the bindings but Vertex-only. New surface found at rank 1 must be
-live-probed before it is modeled as usable.
+- **Bindings list surface the API rejects:** `cached_content` and
+  `transcription_config.language_hints` (`400 Unknown parameter`), the
+  `service_tier: "deferred"` value, and the string arm of `environment.env`.
+- **The API accepts surface the bindings lack:** the tool types
+  `filesystem`, `tool_search`, `manage_task`, `schedule`, `bash`; the
+  annotation types `in_context_file_citation` and `reference_metadata`; and
+  extra usage and environment fields.
 
-Status: implementation tracker — items are removed/checked off as they land.
-Source: Google's `google-genai` generated API bindings, originally 2.10.0
-cross-checked against SDK 1.65/1.74/2.0 for protocol history; re-swept
-2026-08 against 2.17.0 (items 18-20, landed) and 2026-08-16 against 2.18.1
-(items 21-22, **found but not yet modeled**), with every new parameter
-live-probed first. All behaviors should be re-verified live with
-`LOUD_WIRE=1` before release.
+## Protocol facts (live, 2026-09-24)
 
-## Headline: wire revision migration — ✅ DONE (2026-07)
+- **`Api-Revision` is ignored.** Any value, garbage, or no header returns
+  the 2026-05-20 steps protocol, streaming included. The bindings still pin
+  `2026-05-20`; the crate keeps sending it.
+- **Inline video works on every current model.** The earlier "3.7-flash
+  rejects inline video" came from the 0.2s test fixture. A clip that yields
+  no sampled frame at the default ~1 fps gets a generic `400 Request contains
+  an invalid argument`. A clip of 1s or longer, or a higher `processing.fps`,
+  passes. `INLINE_VIDEO_MODEL` is gone (D-012).
+- **`speech_config`:** the object form `{"speakers": [...]}` is now accepted
+  on every TTS model (it was rejected on 2026-08-16). A bare `{voice,
+  language}` object is still rejected. The crate sends the list, which works
+  everywhere.
+- **`labels` are accepted** and echoed on the response (Vertex-only on
+  2026-08-08). `safety_settings` is still Vertex-only.
+- **`gemini-3.8-flash-tts`** returns `audio/wav`, and multi-speaker needs a
+  `speech_metadata` annotation per text turn (see `docs/OUTPUT_MODALITIES.md`).
+- **The Voices resource** uses the standard Google error envelope
+  (`code: 400, status: "INVALID_ARGUMENT"`).
 
-The crate now sends `Api-Revision: 2026-05-20` on every Interactions API
-request and implements the revision's protocol:
+## Sweep 2.18.1 → 2.25.0 (2026-09-24)
 
-- ✅ `steps: [Step...]` response model (`Step`, `StepDelta`,
-  `FunctionResultPayload` in `src/steps.rs`); convenience accessors
-  reimplemented over steps.
-- ✅ New SSE lifecycle: `interaction.created`, `interaction.status_update`,
-  `step.start`, `step.delta`, `step.stop`, `interaction.completed`, `error`
-  (`src/wire_streaming.rs`, dispatch + step accumulation in
-  `src/http/interactions.rs`).
-- ✅ Thought steps `{signature, summary}` + `thought_summary` /
-  `thought_signature` stream deltas.
-- ✅ Input union `str | [Step] | [Content] | Content`; `Turn` removed
-  (deprecated in spec); history represented as steps.
-- ✅ `arguments_delta` streaming function-call arguments (exposed through
-  `StreamChunk::StepDelta` and `AutoFunctionStreamChunk::Delta`; assembled
-  into `FunctionCall.arguments` on completion).
-- ✅ Per-step usage (`usage`/`step_usage` on `step.stop`) and
-  `metadata.total_usage` on lifecycle events.
+### Modeled
 
-✅ Live wire verification performed 2026-07 with a real `GEMINI_API_KEY`
-against `generativelanguage.googleapis.com` (Api-Revision 2026-05-20).
-Results:
+| Surface | Where | Live result |
+|---|---|---|
+| `processing_call` / `processing_result` steps and deltas | `Step::Processing*`, `StepDelta::Processing*` | Emitted for video with `processing: "agentic"`. The ~36KB signatures are required on replay. The streaming accumulator dropped them (`step.start` has `""`; the value arrives in `step.delta`), so stateless replay of a streamed turn got `400 Processing call step is missing signature`. Fixed; covered by `tests/processing_steps_tests.rs`. Unknown deltas now also merge a `signature` into a same-typed Unknown step. |
+| `retrieval_call` / `retrieval_result` steps and deltas | `Step::Retrieval*` | Spec parity; the retrieval tool is Vertex-only |
+| `speech_metadata` and `word_info` annotations | `Annotation::SpeechMetadata` / `WordInfo`, `Content::speaker_text` | Required for multi-speaker on 3.8 TTS; rejected by older TTS models |
+| Voices resource `/v1beta/voices` | `src/voices.rs` | List with filters and paging, prompted create, get, synthesize with the custom ID, delete |
+| Credentials resource `/v1beta/credentials` | `src/credentials.rs` | Create, get, list, patch, delete. OAuth2 create checks that `token_url` is reachable. The ID is optional on create. |
+| `environment.env` and `AllowlistEntry.credential` | `RemoteEnvironment::env`, `EnvVar` | Validated (unknown ID → 404) and echoed; the echo spells `env` as a list of single-key maps. Works at runtime (`tests/credentials_tests.rs`): plain values are visible in the sandbox; credential-backed variables hold a placeholder and the egress proxy substitutes the secret; allowlist bearer credentials are injected. Bearer `header_name`/`prefix` are accepted but not applied. |
+| Environment files (list and resumable upload) | `src/environments/files.rs` | Works; entry `type` is uppercase `FILE`/`DIRECTORY` on the wire |
+| `from_environment` (fork) | `CreateEnvironmentRequest::from_environment` | Works with a bare ID; `environments/{id}` returns 404 |
+| `Video.name` | `Content::with_video_name` | Accepted |
+| Video `response_format.resolution` | `VideoResolution` | Server-validated; no Interactions model outputs video (Veo 404s) |
+| `transcription_config.mode` | `TranscriptionMode` | String and object forms accepted and validated; no output effect seen |
+| `Ranking.rank_service` | `RankService` | Vertex-only (retrieval tool) |
+| `FunctionResultDelta.call_id` dropped | now `Option` | Keeps the delta typed if the field stops arriving |
+| Interaction echoes: `labels`, `system_instruction` | `InteractionResponse` | Observed live |
+| Unmodeled response fields | `extra` on `InteractionResponse` and `UsageMetadata` | Usage carries `raw_prompt_token` and `model_invocation_token_counts`; interactions echo `environment`, `generation_config`, and more |
+| Model literals `gemini-3.8-flash`, `gemini-3.8-flash-tts` | `DEFAULT_MODEL`, `DEFAULT_TTS_MODEL` | — |
 
-- Revision `2026-05-20` accepted; the steps model and snake_case field
-  naming confirmed on the wire.
-- `function_call` steps carry a `signature` field the generated SDK bindings
-  omit — the API returns it and **rejects stateless replay without it**.
-  `Step::FunctionCall` / `Step::FunctionResult` now model it.
-- Response modalities are enforced lowercase (`text`, `image`, `audio`,
-  `video`, `document`); uppercase values (e.g. `"AUDIO"`) are rejected.
-  `with_response_modalities()` now normalizes to lowercase.
-- The deprecated `response_mime_type` is rejected outright
-  (400 "responseFormat must be set when responseMimeType is set" — returned
-  even when `response_format` IS set, raw-schema or typed; and camelCase
-  `responseMimeType` gets "Unknown parameter"). The field has therefore been
-  removed from this crate; use `response_format` alone.
-- The typed `response_format` union (`{type: "text", mime_type, schema}`)
-  and the raw JSON-schema form were both accepted live for text output.
+### Deliberately not modeled
 
-✅ Phase-2 surface verified live 2026-07 (real `GEMINI_API_KEY`,
-`generativelanguage.googleapis.com`, Api-Revision 2026-05-20). Per-item
-results — full wire notes in `docs/ENUM_WIRE_FORMATS.md`:
+| Surface | Why |
+|---|---|
+| `cached_content` (re-added, deprecated) | Still `400 Unknown parameter 'cached_content'`. Stays removed (D-005). |
+| `transcription_config.language_hints` | `400 Unknown parameter` |
+| `input` optional on create | The API still answers `400 Missing input.` in every form tried |
+| `service_tier: "deferred"` | `400 The value 'deferred' is not supported` |
+| String arm of `environment.env` | `Invalid input at 'environment'`. Preserved in `extra` if read. |
+| Server-only tool types (`bash`, `filesystem`, `tool_search`, `manage_task`, `schedule`) | Absent from the bindings. Accepted bare, but `bash`/`filesystem` end in `400 malformed_tool_call` and the rest do nothing on a raw model. Revisit when they reach the bindings. |
+| Annotation types `in_context_file_citation`, `reference_metadata` | Server enum only. They land in `Annotation::Unknown`. |
+| Environment `storage` field | Server only. Preserved in `Environment::extra`. |
+| Path-parameter renames (`interactionsId`, `agentsId`, ...) and new MIME literals (`audio/webm`, `video/jpeg2000`) | Cosmetic. MIME types are open strings. |
 
-- **Webhooks**: full CRUD + `:ping` + `:rotateSigningSecret` round-trip
-  green; get/list echo create's fields exactly; `new_signing_secret` only
-  on create; rotate returns a fresh distinct secret and old secrets get a
-  24h `expire_time`. `:ping` accepts our empty `{}` body (and a bodiless
-  POST). `update_mask` on PATCH is optional and observed to be **ignored**
-  — the body's fields alone determine what changes. `create_time`/
-  `update_time` were never returned. `webhook_config` on requests needs
-  `background=true` and is echoed back verbatim in the create response.
-- **Agents**: creation is **gated** on a standard API key — every
-  schema-valid payload got a generic 400 "Request contains an invalid
-  argument." (field names still validated: snake_case `id`, `base_agent`,
-  `system_instruction`, `description`, `tools`, `base_environment`).
-  Agent `tools` accept only `code_execution` / `google_search` /
-  `url_context` (per the API's validation error). `GET/LIST /agents` work
-  (`{"agents": [...]}`); managed agent IDs are not retrievable (404).
-  CRUD round-trip beyond create therefore unverifiable on this account.
-- **Environments**: inline source, `network: "disabled"`, allowlist with
-  header `transform`, and the string environment-ID form all accepted
-  (agent `antigravity-preview-05-2026`, background); `environment_id`
-  returned on typed requests.
-- **Typed response_format**: single + list forms accepted. Text-with-schema
-  output validates against the schema. Image: inline `image/jpeg` only
-  (`delivery` rejected). Audio: `sample_rate` works, `mime_type`/`delivery`
-  rejected (inline `audio/l16` returned). Video: `gcs_uri` is Vertex-only.
-- **Multi-speaker TTS**: list-form `speech_config` accepted; one combined
-  `audio/l16` stream returned. `include_input=true` on GET is a no-op (no
-  input or config echo), so the speech_config echo shape is unobservable.
-- **Video config**: Veo models 404 on the Interactions API (models list
-  shows them as `predictLongRunning`-only); `video_config.task` enum
-  validated server-side and revealed a fifth value `extend` (added to
-  `VideoTask`).
-- **Retrieval tool**: rejected as **Vertex-only** ("allowed on the Gemini
-  Enterprise Agent Platform"); Gemini tool types are `google_maps`,
-  `mcp_server`, `function`, `google_search`, `file_search`,
-  `computer_use`, `code_execution`, `url_context`.
-- **Deep-research knobs**: `visualization` (`off|auto`, server-validated) +
-  `collaborative_planning` accepted; `enable_bigquery_tool` is Vertex-only.
-- **`safety_settings` / `labels`**: both rejected as **Vertex-only**
-  (2026-08-08: "not available on the Gemini API but ... available on the
-  Gemini Enterprise Agent Platform") — modeled for spec parity like the
-  Retrieval tool and `enable_bigquery_tool` above.
-- **Environments resource**: full CRUD lifecycle verified live
-  (`/v1beta/environments`); wire uses `created`/`updated`/`last_accessed`
-  timestamps and string-serialized int64 `file_count`/`size_bytes`.
-- **Triggers resource**: list verified live (`{}` when empty); create is
-  custom-agent-gated ("Agent '' is invalid or not found") and rejects
-  `store` inside the nested interaction, so the create/update/execution
-  shapes are modeled from the SDK spec with per-field Evergreen defaults.
-- **`transcription_config`**: accepted by the API (200) inside
-  `generation_config`.
+## Earlier sweeps: landed
 
-Evergreen extras spotted during verification (returned by the API but not
-previously modeled on `InteractionResponse`) — all now modeled:
-`object: "interaction"`, `service_tier`, and the `webhook_config` echo.
+- **Revision 2026-05-20 migration (2026-07):** steps model, the
+  `interaction.created` / `step.*` / `interaction.completed` SSE lifecycle,
+  thought signatures, `arguments_delta`, per-step usage, lowercase enums,
+  and the `tool_choice` union. `function_call` steps carry a `signature` the
+  bindings omit, and replay requires it.
+- **Phase 2 (2026-07):** service tier; webhooks (CRUD, `:ping`,
+  `:rotateSigningSecret`; `update_mask` is ignored); `include_input`
+  (a no-op); retrieval tool (Vertex-only); video config and `VideoTask`
+  (with `extend`); typed `response_format` (image: `image/jpeg` inline only;
+  audio: `sample_rate` only); environments and agents (agent create is gated
+  on a standard key; agent tools are code execution, search and URL context
+  only); multi-speaker TTS; presence/frequency penalties; tool-config
+  completeness; `budget_exceeded`; deep-research knobs (`enable_bigquery_tool`
+  is Vertex-only); typed citations; audio channels and sample rate.
+- **2.17.0 (2026-08):** triggers resource (list verified, create
+  agent-gated), environments resource (full lifecycle),
+  `transcription_config`, `safety_settings` (Vertex-only), `labels` (now
+  accepted, see above), `AntigravityConfig`.
+- **2.18.1 (2026-08-16):** `Content::Video.processing` (#434; the segment
+  window is the token-cost lever, and it is valid only inside a `user_input`
+  step), and `speech_config` deserialize accepting `{"speakers": [...]}`
+  (#437).
+- **Reverted:** `cached_content` (#439). It was modeled from the spec without
+  a probe and could only ever 400.
 
-⚠️ Still pending live verification: per-step usage shapes on `step.stop`.
+## Spec vs. implementation: fixed
 
-## Missing surface (by user value)
-
-Completed in the revision-migration phase and the phase-2 surface expansion
-(2026-07):
-
-1. ~~`Api-Revision: 2026-05-20` migration (steps model + new SSE lifecycle).~~ ✅
-2. ~~`tool_choice` restructure: lowercase enums or
-   `{allowed_tools: {mode, tools}}`; remove crate's top-level `allowed_tools`
-   inside generation_config.~~ ✅ (`ToolChoice` / `AllowedTools`)
-3. `cached_content` request field (explicit caching). ❌ **REVERTED
-   2026-08-16** — not struck through, because unlike every other entry in
-   this list it did not land. The Interactions API rejects the field
-   outright: `400 Unknown parameter 'cached_content'` (also tried
-   `cachedContent` and `cached_content_name`, and both spellings nested
-   inside `generation_config`, which is where `transcription_config` and
-   `speech_config` live — all rejected, so it is neither a spelling nor a
-   placement problem). The `/v1beta/cachedContents`
-   resource itself works — a cache creates fine and reports its token
-   count — but nothing in the Interactions API consumes one.
-
-   This item was marked done on spec-reading alone and never live-probed,
-   so `with_cached_content()` shipped as a public method that could only
-   ever produce a 400. Its test asserted the field *serialized* correctly,
-   which it did. Field and builder method both removed, matching the
-   `response_mime_type` precedent below (rejected outright → removed,
-   as opposed to `safety_settings`/`Tool::Retrieval`, which are kept for
-   spec parity because the API names them as Vertex-only rather than
-   unknown).
-
-   Implicit caching still works and is reported via
-   `usage.total_cached_tokens`.
-4. ~~`service_tier`: `flex | standard | priority`.~~ ✅ (`ServiceTier`,
-   `with_service_tier()`)
-5. ~~Webhooks: `webhook_config {uris, user_metadata}` on requests + full
-   `/v1beta/webhooks` resource (CRUD, `:ping`, `:rotateSigningSecret`,
-   events `batch.succeeded/expired/failed`, `interaction.requires_action/
-   completed/failed`, `video.generated`).~~ ✅ (`src/webhooks.rs`,
-   `Client::*_webhook*()`, `with_webhook_config()`)
-6. ~~`include_input` query param on GET interaction.~~ ✅
-   (`Client::get_interaction_with_input()`)
-7. ~~`retrieval` tool: `vertex_ai_search | rag_store | exa_ai_search |
-   parallel_ai_search` + per-backend configs.~~ ✅ (`Tool::Retrieval`,
-   `RetrievalConfig`)
-8. ~~Video generation: `response_modalities: ["video"]`,
-   `generation_config.video_config {task}`, video response_format
-   (`gcs_uri`, `duration`, `delivery: uri`).~~ ✅ (`VideoConfig`/`VideoTask`,
-   `with_video_output()`, `ResponseFormat::Video`)
-9. ~~Typed `response_format` union (text/audio/image/video) + list form +
-   `delivery: inline|uri`.~~ ✅ (`ResponseFormat`/`ResponseFormatSpec`/
-   `ResponseDelivery`; raw JSON schemas still accepted by
-   `with_response_format()`)
-10. ~~Environments (`environment` request field, sources
-    `gcs|inline|repository|skill_registry`, network allowlist) + Agents
-    resource (`/v1beta/agents` CRUD).~~ ✅ (`src/environment.rs`,
-    `src/agents.rs`, `with_environment()`, `Client::*_agent*()`)
-11. ~~Multi-speaker TTS: `speech_config` as a list of `{voice, language,
-    speaker}`.~~ ✅ (list wire form; `with_speech_configs()` /
-    `add_speech_config()`; legacy single object accepted on deserialize)
-12. ~~`presence_penalty` / `frequency_penalty` [-2, 2].~~ ✅
-13. ~~Tool config completeness: GoogleMaps `latitude`/`longitude`; ComputerUse
-    `enable_prompt_injection_detection`, `disabled_safety_policies`,
-    `mobile|desktop` environments; GoogleSearch `enterprise_web_search`;
-    MCP `allowed_tools` as `[{mode, tools}]`.~~ ✅
-14. ~~`budget_exceeded` status (first-class); usage `grounding_tool_count`.~~ ✅
-15. ~~Deep-research config: `visualization`, `collaborative_planning`,
-    `enable_bigquery_tool`; document agent IDs incl.
-    `antigravity-preview-05-2026`.~~ ✅ (`DeepResearchConfig` options;
-    agent IDs in `docs/AGENTS_AND_BACKGROUND.md`)
-16. ~~Typed citation annotations: `url_citation`, `file_citation`,
-    `place_citation` (with review snippets); byte indices.~~ ✅
-17. ~~Audio content `channels`/`sample_rate`.~~ ✅
-
-Completed in the 2026-08 sweep against SDK 2.17.0 (the 0.9.0 release):
-
-18. ~~Triggers resource (`/v1beta/triggers` CRUD + `:run`-equivalent
-    `POST .../executions` + executions listing).~~ ✅ (`src/triggers.rs`,
-    `Client::*_trigger*()`; list live-verified, create agent-gated — see
-    verification notes above)
-19. ~~Environments as a standalone resource (`/v1beta/environments` CRUD,
-    complementing the inline `environment` request field).~~ ✅
-    (`src/environments.rs`, `Client::*_environment()`; full lifecycle
-    live-verified)
-20. ~~`generation_config.transcription_config`, `safety_settings`,
-    request `labels` (both Vertex-only), and the `AntigravityConfig`
-    typed agent-config helper.~~ ✅ (`TranscriptionConfig`,
-    `SafetySetting` in `src/safety.rs`, `with_labels()`/`add_label()`,
-    `AntigravityConfig`)
-
-## Found in the 2026-08-16 sweep against SDK 2.18.1 — NOT yet modeled
-
-⚠️ **These are open gaps, not completed items.** Both were found by diffing
-the bindings and confirmed by live probe; neither is in the crate yet.
-Deliberately listed separately from the completed items above, because a
-struck-through line reads as shipped and that is precisely the confusion
-this file's header now warns about.
-
-21. `Content::Video.processing` — segment clipping (`start_offset` /
-    `end_offset`), `fps`, and the `static | agentic` mode enum.
-    **Tracked in #419.**
-
-    New in 2.18.x and **absent from `ai.google.dev`** — found only by
-    diffing the bindings. Live-probed: the segment window is a ~127x
-    token-cost lever (455 vs 57,775 video input tokens on one source
-    video), while the mode and `fps` alone change nothing. Also
-    position-sensitive — accepted only inside a `user_input` step (#427).
-
-22. `generation_config.speech_config` widened to
-    `SpeakerConfig | List[SpeechConfig]`. **Tracked in #420.**
-
-    Live-probed: the Gemini API **rejects both object forms** on send
-    (`400 ... Expected an array, got object`), so the crate should keep
-    emitting the list; the gap is on deserialize, where the object form
-    currently matches an all-optional `SpeechConfig` and silently discards
-    every speaker.
-
-## Spec-vs-implementation disagreements — ✅ ALL FIXED
-
-- ~~`excludedPredefinedFunctions` serialized camelCase~~ → snake_case
-  (legacy alias accepted on deserialize).
-- ~~`FunctionCallingMode` serialized UPPERCASE~~ → lowercase.
-- ~~`CodeExecutionLanguage` `"PYTHON"`~~ → `"python"`.
-- ~~`top_k` in GenerationConfig~~ → removed.
-- ~~`response_mime_type`~~ → removed (the API rejects it in all forms).
-- ~~`cached_content`~~ → removed (rejected at both the top level and inside
-  `generation_config`, in every spelling; verified live 2026-08-16).
-- ~~`Turn`-array input~~ → removed; history is steps.
-- ~~`system_instruction` typed as InteractionInput~~ → plain string.
-- ~~`total_reasoning_tokens` in usage~~ → removed.
-- ~~`InteractionResponse` `rename_all = "camelCase"`~~ → snake_case.
+`excludedPredefinedFunctions` → snake_case; `FunctionCallingMode` and
+`CodeExecutionLanguage` → lowercase; `top_k`, `response_mime_type`,
+`cached_content`, `Turn` input and `total_reasoning_tokens` removed;
+`system_instruction` → plain string; `InteractionResponse` → snake_case.
 
 ## Verification protocol
 
-Every change lands with wire-fixture tests derived from the generated SDK
-bindings (see `src/steps.rs`, `src/wire_streaming.rs`,
-`src/http/interactions.rs`, `tests/wire_format_verification_tests.rs`;
-phase-2 fixtures in `src/webhooks.rs`, `src/environment.rs`,
-`src/agents.rs`, `src/response_format.rs`, `src/tools.rs`, and
-`tests/webhooks_and_agents_tests.rs`).
-Before release: run the integration suite with a real `GEMINI_API_KEY` and
-`LOUD_WIRE=1`, diff observed wire shapes against the fixtures, and update
+New surface lands with wire-fixture unit tests taken from the bindings,
+next to the type (`src/steps.rs`, `src/voices.rs`, ...). It also gets a
+strict live test that cleans up after itself and is registered in the
+`rust.yml` integration matrix (`tests/ci_coverage.rs` enforces this).
+Before a release, run the integration suite with `LOUD_WIRE=1` and update
 `docs/ENUM_WIRE_FORMATS.md`.

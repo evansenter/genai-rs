@@ -23,7 +23,6 @@ bytes = "1.11"
 syn = { version = "2.0", features = ["full", "parsing"] }
 quote = "1.0"
 proc-macro2 = "1.0"
-utoipa = "5.5"
 chrono = { version = "0.4", features = ["serde"] }
 
 [package]
@@ -68,11 +67,9 @@ inventory = { workspace = true }
 bytes = { workspace = true }
 chrono = { workspace = true }
 base64 = "0.22"
-# Dependencies from genai-client
 tokio-util = { version = "0.7", features = ["io"] }
 colored = { version = "3", optional = true }
 colored_json = { version = "5", optional = true }
-regex = "1"
 urlencoding = "2"
 # Antigravity harness client (feature = "antigravity"). The harness WebSocket
 # is localhost-only (ws://), so no TLS features are needed.
@@ -91,8 +88,10 @@ futures-util = { workspace = true }
 proptest = "1.11"
 chrono = { workspace = true }
 doc-comment = "0.3"
-rand = "0.9"
+regex = "1"
 backon = "1.6"
+# tests/non_exhaustive_responses.rs parses src/ to check struct attributes.
+syn = { workspace = true, features = ["full", "visit"] }
 
 [features]
 default = ["wire-color"]
@@ -104,12 +103,12 @@ default = ["wire-color"]
 ## plain pretty-printed text.
 wire-color = ["dep:colored", "dep:colored_json"]
 
-## Strict mode for unknown content types.
+## Strict mode for unknown API values.
 ##
-## When enabled, encountering unknown content types in API responses will
-## return deserialization errors instead of gracefully capturing them in
-## Unknown variants. Use this if you want to fail-fast when the API returns
-## content types your code doesn't handle.
+## When enabled, an unrecognized content type, step type, or string-enum value
+## (statuses, modes, tiers, ...) in an API response is a deserialization error
+## instead of an `Unknown` variant. Other tagged unions (`Tool`, `StepDelta`,
+## `StreamChunk`, ...) still capture unknown values gracefully.
 ##
 ## Default: disabled (unknown types are captured gracefully)
 strict-unknown = []
@@ -169,36 +168,12 @@ required-features = ["antigravity"]
 
 # Real-world example applications
 [[example]]
-name = "rag_system"
-path = "examples/real_world/rag_system/main.rs"
-
-[[example]]
 name = "multi_turn_agent_auto"
 path = "examples/real_world/multi_turn_agent_auto/main.rs"
 
 [[example]]
-name = "multi_turn_agent_manual"
-path = "examples/real_world/multi_turn_agent_manual/main.rs"
-
-[[example]]
 name = "multi_turn_agent_manual_stateless"
 path = "examples/real_world/multi_turn_agent_manual_stateless/main.rs"
-
-[[example]]
-name = "code_assistant"
-path = "examples/real_world/code_assistant/main.rs"
-
-[[example]]
-name = "data_analysis"
-path = "examples/real_world/data_analysis/main.rs"
-
-[[example]]
-name = "web_scraper_agent"
-path = "examples/real_world/web_scraper_agent/main.rs"
-
-[[example]]
-name = "testing_assistant"
-path = "examples/real_world/testing_assistant/main.rs"
 
 # Workspace-level metadata
 

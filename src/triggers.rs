@@ -18,248 +18,60 @@
 //! This is distinct from
 //! `antigravity::TriggerConfig` (feature `antigravity`), which schedules
 //! messages inside a *local* harness session.
+//!
+//! # IDs
+//!
+//! Methods take the bare ID ([`Trigger::id`]), not a `triggers/...` resource name:
+//! the ID is percent-encoded into a single path segment, so a resource name
+//! addresses nothing and 404s. An empty or dot-segment ID fails
+//! locally with [`GenaiError::InvalidInput`]
+//! before any request.
 
+use crate::client::Client;
+use crate::errors::GenaiError;
 use crate::request::{InteractionInput, InteractionRequest};
+use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
 use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
-/// Current status of a [`Trigger`].
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-///
-/// # Wire Format
-///
-/// Serializes as lowercase strings: `"active"`, `"paused"`, `"error"`.
-///
-/// # Evergreen Pattern
-///
-/// Unknown values from the API deserialize into the `Unknown` variant,
-/// preserving the original data for debugging and roundtrip serialization.
-#[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum TriggerStatus {
-    /// The trigger fires on its schedule.
-    Active,
-    /// The trigger is paused and does not fire.
-    Paused,
-    /// The trigger is disabled after consecutive failures.
-    Error,
-    /// Unknown variant for forward compatibility (Evergreen pattern)
-    Unknown {
-        /// The unrecognized status type from the API
-        status_type: String,
-        /// The raw JSON value, preserved for debugging and roundtrip
-        data: serde_json::Value,
-    },
+wire_enum! {
+    /// Current status of a [`Trigger`].
+    ///
+    /// # Wire Format
+    ///
+    /// Serializes as lowercase strings: `"active"`, `"paused"`, `"error"`.
+    pub enum TriggerStatus {
+        /// The trigger fires on its schedule.
+        Active = "active",
+        /// The trigger is paused and does not fire.
+        Paused = "paused",
+        /// The trigger is disabled after consecutive failures.
+        Error = "error",
+    }
+    unknown(status_type, unknown_status_type)
 }
 
-impl TriggerStatus {
-    /// The wire string for this status — the single source both `Display`
-    /// and `Serialize` render, so the two can never disagree.
-    fn as_wire(&self) -> &str {
-        match self {
-            Self::Active => "active",
-            Self::Paused => "paused",
-            Self::Error => "error",
-            Self::Unknown { status_type, .. } => status_type,
-        }
+wire_enum! {
+    /// Status of a single [`TriggerExecution`].
+    ///
+    /// # Wire Format
+    ///
+    /// Serializes as snake_case strings: `"in_progress"`, `"completed"`,
+    /// `"failed"`, `"skipped"`, `"timed_out"`.
+    pub enum TriggerExecutionStatus {
+        /// The execution is still running.
+        InProgress = "in_progress",
+        /// The execution finished successfully.
+        Completed = "completed",
+        /// The execution failed.
+        Failed = "failed",
+        /// The execution was skipped (e.g. the prior one was still running).
+        Skipped = "skipped",
+        /// The execution exceeded its timeout.
+        TimedOut = "timed_out",
     }
-
-    /// Returns true if this is an unknown status.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
-    }
-
-    /// Returns the status type name if this is an unknown status.
-    #[must_use]
-    pub fn unknown_status_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { status_type, .. } => Some(status_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the preserved data if this is an unknown status.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Display for TriggerStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_wire())
-    }
-}
-
-impl Serialize for TriggerStatus {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(self.as_wire())
-    }
-}
-
-impl<'de> Deserialize<'de> for TriggerStatus {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value.as_str() {
-            Some("active") => Ok(Self::Active),
-            Some("paused") => Ok(Self::Paused),
-            Some("error") => Ok(Self::Error),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown TriggerStatus '{other}' - using Unknown variant (Evergreen)"
-                );
-                Ok(Self::Unknown {
-                    status_type: other.to_string(),
-                    data: value.clone(),
-                })
-            }
-            None => {
-                tracing::warn!(
-                    "TriggerStatus received non-string value: {value}. Preserving in Unknown variant."
-                );
-                Ok(Self::Unknown {
-                    status_type: format!("<non-string: {value}>"),
-                    data: value,
-                })
-            }
-        }
-    }
-}
-
-/// Status of a single [`TriggerExecution`].
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-///
-/// # Wire Format
-///
-/// Serializes as snake_case strings: `"in_progress"`, `"completed"`,
-/// `"failed"`, `"skipped"`, `"timed_out"`.
-///
-/// # Evergreen Pattern
-///
-/// Unknown values from the API deserialize into the `Unknown` variant,
-/// preserving the original data for debugging and roundtrip serialization.
-#[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum TriggerExecutionStatus {
-    /// The execution is still running.
-    InProgress,
-    /// The execution finished successfully.
-    Completed,
-    /// The execution failed.
-    Failed,
-    /// The execution was skipped (e.g. the prior one was still running).
-    Skipped,
-    /// The execution exceeded its timeout.
-    TimedOut,
-    /// Unknown variant for forward compatibility (Evergreen pattern)
-    Unknown {
-        /// The unrecognized status type from the API
-        status_type: String,
-        /// The raw JSON value, preserved for debugging and roundtrip
-        data: serde_json::Value,
-    },
-}
-
-impl TriggerExecutionStatus {
-    /// The wire string for this status — the single source both `Display`
-    /// and `Serialize` render, so the two can never disagree.
-    fn as_wire(&self) -> &str {
-        match self {
-            Self::InProgress => "in_progress",
-            Self::Completed => "completed",
-            Self::Failed => "failed",
-            Self::Skipped => "skipped",
-            Self::TimedOut => "timed_out",
-            Self::Unknown { status_type, .. } => status_type,
-        }
-    }
-
-    /// Returns true if this is an unknown status.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
-    }
-
-    /// Returns the status type name if this is an unknown status.
-    #[must_use]
-    pub fn unknown_status_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { status_type, .. } => Some(status_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the preserved data if this is an unknown status.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Display for TriggerExecutionStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_wire())
-    }
-}
-
-impl Serialize for TriggerExecutionStatus {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(self.as_wire())
-    }
-}
-
-impl<'de> Deserialize<'de> for TriggerExecutionStatus {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value.as_str() {
-            Some("in_progress") => Ok(Self::InProgress),
-            Some("completed") => Ok(Self::Completed),
-            Some("failed") => Ok(Self::Failed),
-            Some("skipped") => Ok(Self::Skipped),
-            Some("timed_out") => Ok(Self::TimedOut),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown TriggerExecutionStatus '{other}' - using Unknown variant (Evergreen)"
-                );
-                Ok(Self::Unknown {
-                    status_type: other.to_string(),
-                    data: value.clone(),
-                })
-            }
-            None => {
-                tracing::warn!(
-                    "TriggerExecutionStatus received non-string value: {value}. Preserving in Unknown variant."
-                );
-                Ok(Self::Unknown {
-                    status_type: format!("<non-string: {value}>"),
-                    data: value,
-                })
-            }
-        }
-    }
+    unknown(status_type, unknown_status_type)
 }
 
 /// A server-side scheduled trigger, as returned by `/v1beta/triggers`.
@@ -288,35 +100,17 @@ pub struct Trigger {
     pub time_zone: Option<String>,
     /// The interaction request created on each firing.
     ///
-    /// A nested `input` this crate can't deserialize (explicit null, a
-    /// stray scalar) degrades to empty text with a `warn!`, and any
-    /// other undeserializable `interaction` (a non-object shape, a type
-    /// mismatch on a modeled field) degrades to `None`, instead of
-    /// failing the whole list response. An *absent* `input` (a projection
-    /// that elides it — the common list shape) likewise reads as empty
-    /// text, silently: don't treat `interaction.input` as evidence of the
-    /// stored prompt. (Under default features a
-    /// malformed steps *array* never reaches this path — the Evergreen
-    /// `Step` deserializer absorbs unrecognized elements as
-    /// `Step::Unknown` per-element; under `strict-unknown` it is rejected
-    /// and degrades here like any other bad input.) Leniency is
-    /// scoped to this response side; [`TriggerCreateParams`]'s send-side
-    /// interaction stays strict, so a config-file typo is a clean parse
-    /// error rather than a silently scheduled empty prompt.
+    /// Lenient on this response side, so one odd trigger cannot fail a whole
+    /// list: an undeserializable `input` reads as empty text and any other
+    /// undeserializable `interaction` as `None`, each with a `warn!`. An
+    /// absent `input` (list projections elide it) reads as empty text
+    /// silently, so don't treat `interaction.input` as evidence of the stored
+    /// prompt. [`TriggerCreateParams`]'s send side stays strict.
     ///
-    /// Also lossy for unmodeled keys: [`InteractionRequest`] carries no
-    /// `extra` escape hatch, so an interaction field this crate doesn't
-    /// model is dropped on deserialize rather than preserved — a second
-    /// roundtrip asymmetry alongside the absent-`input` one above. (The
-    /// same currently holds for [`Trigger`]'s own top-level unmodeled
-    /// keys; a response-side `extra` is tracked as issue #406.)
-    ///
-    /// And a third: because this is an [`InteractionRequest`], its `input`
-    /// carries that type's request-side serializer, so a trigger created
-    /// outside this SDK with a bare `[Content]` input re-serializes as a
-    /// `user_input` step (#427). Semantically identical, and the step form
-    /// is the one wanted on the `TriggerUpdateParams` send path — but it is
-    /// a reshape of server data rather than a faithful echo.
+    /// Two roundtrip asymmetries follow from this being an
+    /// [`InteractionRequest`]: interaction fields this crate does not model
+    /// are dropped (it has no `extra`), and a bare `[Content]` input
+    /// re-serializes as a `user_input` step.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -602,33 +396,18 @@ pub struct TriggerCreateParams {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-/// Pre-flight warns for a trigger's nested interaction. Called from
-/// [`TriggerCreateParams::new`], the deserialize path a config file loads
-/// through, and `create_trigger` itself — the funnel covering struct
-/// literals and post-construction mutation. The `new`-then-create flow
-/// therefore warns twice; deliberate, trading a duplicate log line for a
-/// fail-fast signal at construction plus a guaranteed pre-wire one.
-/// Warns rather than hard-errors throughout: full validation of this shape
-/// can't be exercised while creation is agent-gated.
+/// Pre-flight warnings for a trigger's nested interaction, each a
+/// server-side rejection or a silent failure the agent gate would otherwise
+/// hide until the round-trip:
+/// - `store` set: the API rejects it inside a trigger's interaction.
+/// - no `agent`: a trigger must target a custom agent; a model-only request
+///   is refused ("Agent '' is invalid or not found").
+/// - empty input: would fire on a schedule with an empty prompt.
 ///
-/// Three checks:
-/// - `store` set: live-verified server rejection (see the module docs) —
-///   the API rejects `store` inside a trigger's nested interaction, and
-///   the agent gate would otherwise mask that until the round-trip.
-/// - no `agent`: the other live-verified rejection — a trigger's
-///   interaction must target a custom agent, and a model-only request is
-///   refused ("Agent '' is invalid or not found"). The likelier mistake
-///   of the three, since `with_model(...)` is the muscle memory from
-///   every other entry point in the crate.
-/// - empty input: [`InteractionInput::default()`] is an empty string, so
-///   a struct literal that sets `agent` and falls through to
-///   `..Default::default()` without setting `input` compiles, serializes,
-///   and would then fire on a schedule with an empty prompt and nobody
-///   watching — and an explicit empty `Content`/`Steps` vector is the
-///   same outcome spelled differently. The send-side strictness on
-///   `input` only covers the deserialize path (where an absent key is a
-///   parse error); this funnel is the only place the struct-literal
-///   shapes can be caught.
+/// Called from [`TriggerCreateParams::new`], the deserialize path, and
+/// `create_trigger` (which also catches struct literals and later mutation),
+/// so `new`-then-create warns twice. Warns rather than errors: the full shape
+/// can't be validated while creation is agent-gated.
 pub(crate) fn warn_on_interaction_footguns(interaction: &InteractionRequest) {
     if interaction.store.is_some() {
         tracing::warn!(
@@ -895,6 +674,130 @@ pub struct TriggerExecutionListResponse {
     /// Token for fetching the next page, absent on the last page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_page_token: Option<String>,
+}
+
+/// Triggers resource methods; see [IDs](crate::triggers#ids).
+impl Client {
+    /// Creates a server-side scheduled trigger.
+    ///
+    /// The trigger's `interaction` must target a custom `agent` (see
+    /// [`crate::triggers`] for the live-verified constraints); trigger
+    /// creation is gated with custom-agent creation on standard API keys.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the API rejects the
+    /// trigger definition.
+    pub async fn create_trigger(
+        &self,
+        params: &crate::TriggerCreateParams,
+    ) -> Result<crate::Trigger, GenaiError> {
+        crate::http::triggers::create_trigger(&self.http, params).await
+    }
+
+    /// Retrieves a trigger by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the trigger doesn't exist.
+    pub async fn get_trigger(&self, trigger_id: &str) -> Result<crate::Trigger, GenaiError> {
+        crate::http::triggers::get_trigger(&self.http, trigger_id).await
+    }
+
+    /// Lists triggers, paged.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_size` - Optional maximum number of triggers per page.
+    /// * `page_token` - Optional token from a previous list call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or an invalid page token.
+    pub async fn list_triggers(
+        &self,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+    ) -> Result<crate::TriggerListResponse, GenaiError> {
+        crate::http::triggers::list_triggers(&self.http, page_size, page_token).await
+    }
+
+    /// Updates a trigger (display name and/or status; `paused` pauses it,
+    /// `active` resumes it).
+    ///
+    /// # Arguments
+    ///
+    /// * `trigger_id` - The trigger to update.
+    /// * `update` - The fields to change (only set fields are sent; there
+    ///   is no `update_mask` on this endpoint — see [`crate::TriggerUpdate`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the trigger doesn't exist.
+    pub async fn update_trigger(
+        &self,
+        trigger_id: &str,
+        update: &crate::TriggerUpdate,
+    ) -> Result<crate::Trigger, GenaiError> {
+        crate::http::triggers::update_trigger(&self.http, trigger_id, update).await
+    }
+
+    /// Deletes a trigger.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the trigger doesn't exist.
+    pub async fn delete_trigger(&self, trigger_id: &str) -> Result<(), GenaiError> {
+        crate::http::triggers::delete_trigger(&self.http, trigger_id).await
+    }
+
+    /// Fires a trigger immediately, outside its schedule.
+    ///
+    /// **Unverified endpoint shape**: this posts to the `executions`
+    /// sub-collection (not a `:run` colon verb), a path derived from the
+    /// google-genai generated bindings rather than observed live — it
+    /// needs an existing trigger, and trigger creation is agent-gated
+    /// (see [`triggers`](crate::triggers)). The same caveat applies to
+    /// [`list_trigger_executions`](Self::list_trigger_executions).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the trigger doesn't exist.
+    pub async fn run_trigger(
+        &self,
+        trigger_id: &str,
+    ) -> Result<crate::TriggerExecution, GenaiError> {
+        crate::http::triggers::run_trigger(&self.http, trigger_id).await
+    }
+
+    /// Lists a trigger's past executions, paged.
+    ///
+    /// # Arguments
+    ///
+    /// * `trigger_id` - The trigger whose executions to list.
+    /// * `page_size` - Optional maximum number of executions per page.
+    /// * `page_token` - Optional token from a previous list call.
+    ///
+    /// **Unverified endpoint shape**: reads the same `executions`
+    /// sub-collection [`run_trigger`](Self::run_trigger) posts to, with
+    /// the same caveat — the path comes from the google-genai generated
+    /// bindings, not live observation, because it needs an existing
+    /// trigger and trigger creation is agent-gated.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure or when the trigger doesn't exist.
+    pub async fn list_trigger_executions(
+        &self,
+        trigger_id: &str,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+    ) -> Result<crate::TriggerExecutionListResponse, GenaiError> {
+        crate::http::triggers::list_trigger_executions(
+            &self.http, trigger_id, page_size, page_token,
+        )
+        .await
+    }
 }
 
 #[cfg(test)]
@@ -1322,6 +1225,7 @@ mod tests {
         assert!(trigger.update_time.is_some());
     }
 
+    #[cfg(not(feature = "strict-unknown"))]
     #[test]
     fn unknown_statuses_roundtrip() {
         let status: TriggerStatus = serde_json::from_value(serde_json::json!("snoozing")).unwrap();

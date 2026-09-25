@@ -22,10 +22,21 @@
 //! - **`on_post_tool`** — recording what each custom call actually
 //!   returned.
 //!
+//! ## Things to know
+//!
+//! - Policies gate by tool name; `on_pre_tool` gates by content. Use both: a
+//!   name-based allow cannot tell a safe argument from a dangerous one.
+//! - Hooks run inline on the event pump. Keep them non-blocking, and never
+//!   wait for a human decision inside one.
+//! - A denial reaches the model as the call's error, so the reason string
+//!   steers its next attempt.
+//! - The workspace root is announced to the model by default
+//!   (`with_workspace_announcement(false)` to ground paths yourself).
+//!
 //! ## Requirements
 //!
 //! ```bash
-//! pip install google-antigravity==0.1.10   # or set ANTIGRAVITY_HARNESS_PATH
+//! pip install google-antigravity==0.1.18   # or set ANTIGRAVITY_HARNESS_PATH
 //! export GEMINI_API_KEY=...
 //! cargo run --example workspace_explorer --features antigravity
 //! LOUD_WIRE=1 cargo run --example workspace_explorer --features antigravity
@@ -40,11 +51,13 @@
 //!   src/config.rs, src/main.rs, README.md, secrets.env
 //!
 //! --- Exploring ---
-//! [action] list_directory      (allowed)  .
-//! [action] view_file           (allowed)  README.md
-//! [tool]   record_finding      -> ok
+//! [tool]   list_directory       -> ok
+//! [action] list_directory       (allowed)  file:///tmp/workspace-explorer-.../
+//! [tool]   view_file            -> ok
+//! [action] view_file            (allowed)  file:///tmp/workspace-explorer-.../README.md
+//! [tool]   record_finding       -> ok
 //!
-//! --- Audit trail (6 streamed actions, 12 post-tool callbacks, 0 denied) ---
+//! --- Audit trail (5 streamed actions, 11 post-tool callbacks, 0 denied) ---
 //! ```
 //!
 //! The deny path is prompt-dependent: the system instruction tells the
@@ -148,12 +161,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Dynamic gate: policies match on *names*, so they cannot express
         // "this particular call is bad". Content-based refusal lives here.
         .on_pre_tool(move |call| {
-            // The hook is consulted for harness builtins too, and they use
-            // their own argument names — `view_file` sends `file_path`, not
-            // `file`. Reading only the custom tool's keys would silently
-            // allow every builtin (a missing key indexes to Null), so the
-            // gate would cover recording a secret but not *reading* one.
-            const ARG_KEYS: [&str; 5] = ["note", "file", "file_path", "directory_path", "query"];
+            // The hook is consulted for harness builtins too, and it is
+            // handed the model's arguments under the harness's own schema
+            // names — on 0.1.18 `view_file` sends `AbsolutePath`, the
+            // finders `SearchDirectory`/`SearchPath` plus `Pattern`/`Query`.
+            // Reading only the custom tool's keys would silently allow every
+            // builtin (a missing key indexes to Null), so the gate would
+            // cover recording a secret but not *reading* one. (This list
+            // once held the action-record spellings, `file_path` and
+            // friends, and was dead for exactly that reason.)
+            const ARG_KEYS: [&str; 9] = [
+                "note",
+                "file",
+                "AbsolutePath",
+                "DirectoryPath",
+                "SearchDirectory",
+                "SearchPath",
+                "Pattern",
+                "Query",
+                "file_path",
+            ];
             let looks_secret = ARG_KEYS
                 .iter()
                 .filter_map(|k| call.args[*k].as_str())
@@ -285,30 +312,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "the agent took no actions and made no tool calls — nothing was exercised".into(),
         );
     }
-
-    println!("\n=== Example Complete ===\n");
-
-    println!("--- What You'll See with LOUD_WIRE=1 ---");
-    println!("  WS Send: {{\"config\": {{\"workspaces\": [{{\"filesystemWorkspace\": ...}}]}}}}");
-    println!("    - the workspace root the builtins are pointed at");
-    println!("  WS Receive: {{\"stepUpdate\": {{\"listDirectory\": ...}}}} - a harness action");
-    println!("  WS Receive: {{\"stepUpdate\": {{\"viewFile\": ...}}}} - each file read");
-    println!("  WS Receive: {{\"toolCall\": ...}} / WS Send: {{\"toolResponse\": ...}}");
-    println!("    - record_finding, dispatched through the crate's registry");
-    println!("  (a denied call sends a toolResponse carrying the refusal reason,");
-    println!("   so the model sees why and can adapt)\n");
-
-    println!("--- Production Considerations ---");
-    println!("• Policies gate by NAME; on_pre_tool gates by CONTENT. Use both —");
-    println!("  a name-based allow cannot tell a safe argument from a dangerous one");
-    println!("• Hooks run inline on the event pump: keep them non-blocking, and");
-    println!("  never await a human decision inside one");
-    println!("• ToolAction carries trajectory_id — with subagents running, that is");
-    println!("  what tells the parent's actions apart from a subagent's");
-    println!("• Denials are visible to the model as tool responses, so a good");
-    println!("  reason string steers the next attempt instead of stalling it");
-    println!("• Workspace announcement is on by default; disable it only if you");
-    println!("  ground the model on paths yourself");
 
     Ok(())
 }

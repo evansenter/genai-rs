@@ -1,21 +1,10 @@
-//! Integration tests for multimodal file loading functions.
-//!
-//! These tests serve dual purposes:
-//! 1. Verify file loading, base64 encoding, and MIME type detection
-//! 2. Validate that the Gemini API successfully accepts and processes the encoded content
-//!
-//! # Running Tests
+//! The `*_from_file` loaders: MIME detection and rejection offline, and that
+//! the API accepts what they produce live. Also guards the example fixture
+//! copies against drift.
 //!
 //! ```bash
-//! cargo test --test temp_file_tests -- --include-ignored --nocapture
+//! cargo nextest run --test temp_file_tests --run-ignored all
 //! ```
-//!
-//! # Prerequisites
-//!
-//! - `GEMINI_API_KEY` environment variable must be set (exception:
-//!   `example_fixtures_match_test_fixtures` needs no key and runs in the
-//!   keyless unit-test CI pass)
-//! - Tests create temporary files that are automatically cleaned up
 
 mod common;
 
@@ -88,10 +77,8 @@ async fn test_image_from_temp_file() {
     .await;
 }
 
-/// Tests that image_from_file() handles mismatched content and extension.
-///
-/// This test writes PNG data with a .jpg extension to verify the API
-/// processes the actual content regardless of the declared MIME type.
+/// A PNG saved as `.jpg` is sent as `image/jpeg`; the API decodes the actual
+/// bytes rather than trusting the declared type.
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_image_mismatched_mime() {
@@ -101,8 +88,6 @@ async fn test_image_mismatched_mime() {
     };
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-
-    // Write PNG data with .jpg extension - MIME will be image/jpeg but content is PNG
     let image_path = temp_dir.path().join("test_image.jpg");
     let image_bytes = base64::engine::general_purpose::STANDARD
         .decode(TINY_RED_PNG_BASE64)
@@ -112,12 +97,15 @@ async fn test_image_mismatched_mime() {
     let image_content = image_from_file(&image_path)
         .await
         .expect("Failed to load image from file");
+    assert!(
+        matches!(&image_content, Content::Image { mime_type: Some(m), .. } if m == "image/jpeg"),
+        "the extension should set the declared type: {image_content:?}"
+    );
 
     let contents = vec![
-        Content::text("Is this an image? Answer yes or no."),
+        Content::text("What color is this image? Answer with just the color name."),
         image_content,
     ];
-
     let response = crate::retry_request!([client, contents] => {
         stateful_builder(&client)
             .with_input(InteractionInput::Content(contents))
@@ -127,7 +115,14 @@ async fn test_image_mismatched_mime() {
     .expect("Image interaction failed");
 
     assert_eq!(response.status, InteractionStatus::Completed);
-    println!("Response: {:?}", response.as_text());
+    let text = response.as_text().expect("Should have text response");
+    assert_response_semantic(
+        &client,
+        "Showed a red 1x1 pixel PNG (declared as image/jpeg) and asked its color",
+        text,
+        "Does this response identify the color as red or a shade of red?",
+    )
+    .await;
 }
 
 // =============================================================================
@@ -190,159 +185,70 @@ async fn test_pdf_from_temp_file() {
 // Document File Tests (Text Formats)
 // =============================================================================
 
-/// Tests that document_from_file correctly rejects TXT files.
+/// Tests that document_from_file sends TXT and Markdown files as documents.
 ///
-/// The Gemini Interactions API only supports PDF for document content type.
+/// The Interactions API accepts `text/plain` and `text/markdown` document
+/// content (verified live 2026-09-24).
 #[tokio::test]
-async fn test_document_from_file_rejects_txt() {
+async fn test_document_from_file_accepts_txt_and_markdown() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let txt_path = temp_dir.path().join("test.txt");
+    for (name, mime) in [("test.txt", "text/plain"), ("README.md", "text/markdown")] {
+        let path = temp_dir.path().join(name);
+        std::fs::write(&path, "# Test content").expect("Failed to write file");
 
-    std::fs::write(&txt_path, "Test content").expect("Failed to write TXT");
-
-    let result = document_from_file(&txt_path).await;
-
-    assert!(
-        result.is_err(),
-        "document_from_file should reject TXT files"
-    );
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("text/plain") && err.contains("application/pdf"),
-        "Error should mention text/plain and application/pdf: {}",
-        err
-    );
+        let content = document_from_file(&path)
+            .await
+            .unwrap_or_else(|e| panic!("{name} should load as a document: {e}"));
+        match content {
+            Content::Document { mime_type, .. } => {
+                assert_eq!(mime_type.as_deref(), Some(mime), "{name}");
+            }
+            other => panic!("{name}: expected Content::Document, got {other:?}"),
+        }
+    }
 }
 
-/// Tests sending plain text file content (the correct approach for text-based files).
+/// Tests that the API reads a Markdown document from document_from_file().
 #[tokio::test]
 #[ignore = "Requires API key"]
-async fn test_txt_file_as_text_input() {
+async fn test_markdown_document_from_temp_file() {
     let Some(client) = get_client() else {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
     };
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let txt_path = temp_dir.path().join("test_document.txt");
+    let md_path = temp_dir.path().join("notes.md");
+    std::fs::write(
+        &md_path,
+        "# Inventory\n\nThe warehouse holds exactly 417 crates.\n",
+    )
+    .expect("Failed to write Markdown");
 
-    // Write plain text content
-    let txt_content = "The quick brown fox jumps over the lazy dog.";
-    std::fs::write(&txt_path, txt_content).expect("Failed to write TXT");
+    let doc_content = document_from_file(&md_path)
+        .await
+        .expect("Failed to load Markdown from file");
+    let contents = vec![
+        Content::text("How many crates does the warehouse hold? Answer with just the number."),
+        doc_content,
+    ];
 
-    // For text-based files, read the content and send as Content::text()
-    let file_content = std::fs::read_to_string(&txt_path).expect("Failed to read TXT");
-
-    let prompt = format!(
-        "What animal jumps in this text? Answer with one word.\n\n{}",
-        file_content
-    );
-
-    let response = crate::retry_request!([client, prompt] => {
+    let response = crate::retry_request!([client, contents] => {
         stateful_builder(&client)
-            .with_text(&prompt)
+            .with_input(InteractionInput::Content(contents))
             .create()
             .await
     })
-    .expect("TXT interaction failed");
+    .expect("Markdown document interaction failed");
 
     assert_eq!(response.status, InteractionStatus::Completed);
-    let text = response.as_text().unwrap();
-    println!("TXT response: {}", text);
-
-    // Use semantic validation - the text asks about which animal jumps
-    assert_response_semantic(
-        &client,
-        "Asked which animal jumps in 'The quick brown fox jumps over the lazy dog'",
-        text,
-        "Does this response identify the fox as the jumping animal?",
-    )
-    .await;
+    let text = response.as_text().expect("Should have text response");
+    // A deterministic value read out of the document.
+    assert!(text.contains("417"), "Expected 417 in: {text}");
 }
 
-// Note: JSON test removed - Gemini API does not support application/json MIME type
-// for document inputs. The API returns 404 "No content type found for mime type: application/json"
-
-/// Tests that document_from_file correctly rejects Markdown files.
-///
-/// The Gemini Interactions API only supports PDF for document content type.
-#[tokio::test]
-async fn test_document_from_file_rejects_markdown() {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let md_path = temp_dir.path().join("README.md");
-
-    std::fs::write(&md_path, "# Test").expect("Failed to write Markdown");
-
-    let result = document_from_file(&md_path).await;
-
-    assert!(
-        result.is_err(),
-        "document_from_file should reject Markdown files"
-    );
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("text/markdown") && err.contains("application/pdf"),
-        "Error should mention text/markdown and application/pdf: {}",
-        err
-    );
-}
-
-/// Tests sending Markdown file content as text (the correct approach for text-based files).
-#[tokio::test]
-#[ignore = "Requires API key"]
-async fn test_markdown_file_as_text_input() {
-    let Some(client) = get_client() else {
-        println!("Skipping: GEMINI_API_KEY not set");
-        return;
-    };
-
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let md_path = temp_dir.path().join("README.md");
-
-    let md_content = r#"# Project Title
-
-## Features
-- Fast performance
-- Easy to use
-- Well documented
-"#;
-    std::fs::write(&md_path, md_content).expect("Failed to write Markdown");
-
-    // For text-based files, read the content and send as Content::text()
-    let file_content = std::fs::read_to_string(&md_path).expect("Failed to read Markdown");
-
-    let prompt = format!(
-        "How many features are listed in this markdown? Answer with just a number.\n\n{}",
-        file_content
-    );
-
-    let response = crate::retry_request!([client, prompt] => {
-        stateful_builder(&client)
-            .with_text(&prompt)
-            .create()
-            .await
-    })
-    .expect("Markdown interaction failed");
-
-    assert_eq!(response.status, InteractionStatus::Completed);
-    let text = response.as_text().unwrap();
-    println!("Markdown response: {}", text);
-
-    // Use semantic validation for the count
-    assert_response_semantic(
-        &client,
-        "Asked how many features are listed in a markdown file with 3 bullet points",
-        text,
-        "Does this response indicate there are 3 features (or 'three')?",
-    )
-    .await;
-}
-
-/// Tests that document_from_file correctly rejects non-PDF files.
-///
-/// The Gemini Interactions API only supports PDF for document content type.
-/// For text-based files like CSV, the proper approach is to read the file
-/// and send it as Content::text().
+/// Tests that document_from_file rejects CSV files, which it does not send as
+/// document content.
 #[tokio::test]
 async fn test_document_from_file_rejects_csv() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
@@ -359,58 +265,10 @@ async fn test_document_from_file_rejects_csv() {
     );
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("text/csv") && err.contains("application/pdf"),
-        "Error should mention text/csv and application/pdf: {}",
+        err.contains("text/csv") && err.contains("text/plain"),
+        "Error should mention text/csv and the supported types: {}",
         err
     );
-}
-
-/// Tests sending CSV data as text content (the correct approach for text-based files).
-///
-/// Since document_from_file only supports PDF, text-based files like CSV should
-/// be read and sent as Content::text() instead.
-#[tokio::test]
-#[ignore = "Requires API key"]
-async fn test_csv_file_as_text_input() {
-    let Some(client) = get_client() else {
-        println!("Skipping: GEMINI_API_KEY not set");
-        return;
-    };
-
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let csv_path = temp_dir.path().join("data.csv");
-
-    let csv_content = "name,score\nAlice,95\nBob,87\nCarol,92";
-    std::fs::write(&csv_path, csv_content).expect("Failed to write CSV");
-
-    // For text-based files, read the content and send as Content::text()
-    let file_content = std::fs::read_to_string(&csv_path).expect("Failed to read CSV");
-
-    let prompt = format!(
-        "Who has the highest score in this CSV? Answer with just the name.\n\n{}",
-        file_content
-    );
-
-    let response = crate::retry_request!([client, prompt] => {
-        stateful_builder(&client)
-            .with_text(&prompt)
-            .create()
-            .await
-    })
-    .expect("CSV interaction failed");
-
-    assert_eq!(response.status, InteractionStatus::Completed);
-    let text = response.as_text().unwrap();
-    println!("CSV response: {}", text);
-
-    // Use semantic validation - Alice has score 95 (highest)
-    assert_response_semantic(
-        &client,
-        "Asked who has highest score in CSV: Alice=95, Bob=87, Carol=92",
-        text,
-        "Does this response identify Alice as having the highest score?",
-    )
-    .await;
 }
 
 // =============================================================================
@@ -466,8 +324,7 @@ async fn test_audio_from_temp_file() {
 
 /// Tests loading a video file from a temp file using video_from_file().
 ///
-/// Uses the TINY_MP4_BASE64 fixture (a real one-frame 64x64 H.264 clip, ~1.5KB),
-/// so the API accepts it as valid video data.
+/// Uses the TINY_MP4_BASE64 fixture (a 1-second 64x64 H.264 clip, ~1.7KB).
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_video_from_temp_file() {
@@ -495,10 +352,7 @@ async fn test_video_from_temp_file() {
 
     let response = crate::retry_request!([client, contents] => {
         stateful_builder(&client)
-            // Inline video bytes — see INLINE_VIDEO_MODEL. `video_from_file`
-            // reads the file into base64 inline data, so this is the same
-            // path the multimodal inline-video tests pin.
-            .with_model(genai_rs::INLINE_VIDEO_MODEL)
+            .with_model(genai_rs::DEFAULT_MODEL)
             .with_input(InteractionInput::Content(contents))
             .create()
             .await

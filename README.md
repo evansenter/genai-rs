@@ -59,8 +59,8 @@ async fn main() -> Result<(), genai_rs::GenaiError> {
 | Code Execution | `with_code_execution()` | Python sandbox |
 | URL Context | `with_url_context()` | Web page analysis |
 | Google Maps | `with_google_maps()` | Places and geographic grounding |
-| File Search | `add_tool(FileSearchConfig::new(stores))` | Semantic retrieval from vector stores |
-| Computer Use | `add_tool(ComputerUseConfig::new())` | Browser/desktop automation (allowlisted keys) |
+| File Search | `add_tool(FileSearchConfig::new(stores))` | Semantic retrieval over your file search stores (`create_file_search_store`) |
+| Computer Use | `add_tool(ComputerUseConfig::new())` | Browser/desktop actions your code executes (allowlisted keys) |
 | MCP Servers | `add_tool(McpServerConfig::new(name, url))` | Model Context Protocol tools |
 | Retrieval | `add_tool(RetrievalConfig::new()...)` | Vertex AI Search / RAG stores (Vertex-only, see below) |
 
@@ -68,7 +68,7 @@ async fn main() -> Result<(), genai_rs::GenaiError> {
 
 | Input | Output |
 |-------|--------|
-| Images, Audio, Video, PDFs | Text, Images, Audio (TTS, incl. multi-speaker), Video config |
+| Images, Audio, Video, PDFs | Text, Images, Audio (TTS, incl. multi-speaker), Video (generation config) |
 
 ### API coverage and Vertex-gated features
 
@@ -78,8 +78,8 @@ point-in-time claim, not a completeness guarantee — see
 [the gap analysis](docs/INTERACTIONS_API_GAP.md) for what the most recent
 sweep found and what is still open. A few knobs are **modeled but
 gated to Vertex AI** and rejected by the Gemini API today: the Retrieval
-tool, `DeepResearchConfig::with_bigquery_tool()`, `safety_settings`,
-request `labels`, and video `gcs_uri` delivery. Details and per-feature
+tool, `DeepResearchConfig::with_bigquery_tool()`, `safety_settings`, and
+video `gcs_uri` delivery. Details and per-feature
 live-verification notes are in
 [docs/INTERACTIONS_API_GAP.md](docs/INTERACTIONS_API_GAP.md).
 
@@ -113,7 +113,7 @@ certificates against the **OS trust store**. Minimal containers
 
 ## Examples
 
-Runnable examples covering all features:
+Runnable examples (each one runs against the live API and exits 0):
 
 ```bash
 export GEMINI_API_KEY=your-key
@@ -132,7 +132,7 @@ cargo run --example simple_interaction
 | Text to speech | `text_to_speech` |
 | Get structured JSON | `structured_output` |
 | Route results to webhooks | `webhooks_and_background` |
-| Ground answers in my documents | `retrieval_grounding` |
+| Ground answers in my documents | `file_search` |
 | Run a local agent on my repo | `repo_auditor` (requires `--features antigravity`) |
 | Implement retry logic | `retry_with_backoff` |
 
@@ -235,7 +235,7 @@ let webhook = client.create_webhook(&Webhook::new(
 
 // ...then route long-running interactions to it (background required)
 let response = client.interaction()
-    .with_agent("deep-research-preview-04-2026")
+    .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
     .with_text("Research the history of the Rust programming language.")
     .with_background(true)
     .with_webhook_config(WebhookConfig::new().with_uris(vec![webhook.uri.clone()]))
@@ -289,7 +289,7 @@ agent.shutdown().await?;
 ```
 
 The same `#[tool]` functions work in both modes, and `LOUD_WIRE=1` covers
-harness sessions too. Setup (`pip install google-antigravity==0.1.10`),
+harness sessions too. Setup (`pip install google-antigravity==0.1.18`),
 capabilities, policies/hooks, MCP servers, subagents, triggers, and session
 resume are covered in [docs/ANTIGRAVITY.md](docs/ANTIGRAVITY.md).
 
@@ -308,14 +308,13 @@ agentic code-review application with subagents and a structured report.
 |-------|-------------|
 | [Examples Index](docs/EXAMPLES_INDEX.md) | All examples, categorized |
 | [Function Calling](docs/FUNCTION_CALLING.md) | `#[tool]` macro, ToolService, manual execution |
-| [Multi-Turn Patterns](docs/MULTI_TURN_FUNCTION_CALLING.md) | Stateful/stateless, signature replay, inheritance rules |
+| [Conversations](docs/CONVERSATIONS.md) | Stateful/stateless, what carries over between turns, replaying history |
 | [Streaming API](docs/STREAMING_API.md) | Stream types, resume, auto-functions |
 | [Multimodal](docs/MULTIMODAL.md) | Images, audio, video, PDFs |
 | [Output Modalities](docs/OUTPUT_MODALITIES.md) | Image generation, text-to-speech |
 | [Thinking Mode](docs/THINKING_MODE.md) | Reasoning depth, thought signatures |
 | [Built-in Tools](docs/BUILT_IN_TOOLS.md) | Google Search, code execution, URL context, Maps |
 | [Configuration](docs/CONFIGURATION.md) | Client options, generation config |
-| [Conversation Patterns](docs/CONVERSATION_PATTERNS.md) | Multi-turn, context management |
 | [Antigravity](docs/ANTIGRAVITY.md) | Local agent harness: setup, policies, subagents |
 | [Agents & Background](docs/AGENTS_AND_BACKGROUND.md) | Hosted agents, long-running tasks, polling |
 
@@ -325,7 +324,7 @@ agentic code-review application with subagents and a structured report.
 |----------|-------------|
 | [Builder API](docs/BUILDER_API.md) | Method naming conventions, validation |
 | [Error Handling](docs/ERROR_HANDLING.md) | Error types, recovery patterns |
-| [Reliability Patterns](docs/RELIABILITY_PATTERNS.md) | Retries, timeouts, resilience |
+| [Reliability](docs/RELIABILITY.md) | Retries, timeouts, cancellation, service tiers |
 | [Logging Strategy](docs/LOGGING_STRATEGY.md) | Log levels, `LOUD_WIRE` debugging |
 | [Enum Wire Formats](docs/ENUM_WIRE_FORMATS.md) | Verified wire formats, Unknown variants |
 | [API Gap Analysis](docs/INTERACTIONS_API_GAP.md) | Coverage tracker, Vertex-only findings |
@@ -365,7 +364,8 @@ For programmatic capture (snapshot tests, bug reports), implement the
 `WireInspector` trait and register it with
 `ClientBuilder::add_wire_inspector()` — inspectors receive structured
 `WireEvent`s (requests, response bodies, SSE frames, harness WebSocket
-traffic) with per-client correlation ids and secret redaction applied.
+traffic) with per-client correlation ids. Bodies reach custom inspectors
+unredacted; only the built-in `LOUD_WIRE` and tracing printers redact secrets.
 See [Logging Strategy](docs/LOGGING_STRATEGY.md) for details.
 
 ## Forward Compatibility
@@ -392,7 +392,7 @@ make test-all  # Full integration suite (requires GEMINI_API_KEY)
 ```text
 genai-rs/           # Main crate: Client, InteractionBuilder, types
 genai-rs-macros/    # Procedural macro for #[tool]
-docs/               # Comprehensive guides
+docs/               # Guides
 examples/           # Runnable examples
 ```
 
@@ -404,7 +404,8 @@ speed — but it is the one setup step that is not `cargo`.
 
 Contributions welcome! Please read:
 
-- [CLAUDE.md](CLAUDE.md) - Development guidelines and architecture
+- [CONTRIBUTING.md](CONTRIBUTING.md) - Setup, the quality gate, review checklist
+- [DECISIONS.md](DECISIONS.md) - Why the crate is shaped the way it is
 - [CHANGELOG.md](CHANGELOG.md) - Version history and migration guides
 - [SECURITY.md](SECURITY.md) - Security policy and reporting
 
@@ -414,7 +415,7 @@ Common issues and solutions are documented in [TROUBLESHOOTING.md](TROUBLESHOOTI
 
 **Quick fixes:**
 - **"API key not valid"** - Check `GEMINI_API_KEY` is set
-- **"Model not found"** - Use `gemini-3.7-flash`
+- **"Model not found"** - Use `genai_rs::DEFAULT_MODEL` rather than a hand-typed id
 - **Functions not executing** - Use `create_with_auto_functions()`
 - **TLS errors in minimal containers** - Install a CA bundle (OS trust store is used since reqwest 0.13)
 

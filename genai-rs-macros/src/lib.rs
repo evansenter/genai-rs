@@ -9,12 +9,8 @@
 //! at every `#[tool]` site with `could not find __private in genai_rs`.
 //! Bump them together.
 
-#![cfg_attr(test, allow(dead_code))]
-
 use proc_macro::TokenStream;
 use syn::Pat;
-use utoipa::openapi::RefOr;
-use utoipa::openapi::schema::{ObjectBuilder, Schema};
 
 mod codegen;
 mod parsing;
@@ -80,7 +76,7 @@ pub fn tool(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     let func_description = parsing::extract_doc_comments(&func.attrs);
-    let mut object_builder = ObjectBuilder::new();
+    let mut properties = serde_json::Map::new();
     let mut required_params_for_struct_field = Vec::new();
 
     for fn_arg in &func.sig.inputs {
@@ -89,9 +85,7 @@ pub fn tool(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         {
             let param_name = pat_ident.ident.to_string();
             let config = config_map.get(&param_name);
-            let param_schema = build_param_schema(pat_type, config);
-
-            object_builder = object_builder.property(param_name.clone(), param_schema);
+            properties.insert(param_name.clone(), build_param_schema(pat_type, config));
 
             let (is_option, _) = get_type_info(&pat_type.ty);
             if !is_option {
@@ -100,14 +94,11 @@ pub fn tool(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    let parameters_schema_obj = object_builder.build();
-    let parameters_schema_ref_or: RefOr<Schema> = RefOr::T(Schema::Object(parameters_schema_obj));
-
     codegen::generate_declaration_function(
         &func,
         &func_name,
         &func_description,
-        &parameters_schema_ref_or,
+        &serde_json::Value::Object(properties),
         &required_params_for_struct_field,
     )
     .into()

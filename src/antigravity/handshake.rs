@@ -23,6 +23,11 @@
 //! | `ClientInfo` | `language_version`  | 3      | string  |
 //! | `OutputConfig`| `port`             | 1      | int32   |
 //! | `OutputConfig`| `api_key`          | 2      | string  |
+//!
+//! Unchanged through harness 0.1.18. The descriptor also defines fields
+//! this client never sends — `InputConfig.env` (5), `InputConfig.
+//! use_interactions_api` (6), `ClientInfo.os` (4), `ClientInfo.os_version`
+//! (5) — which are all optional to the harness.
 
 /// Protobuf wire type for varint-encoded scalars.
 const WIRE_VARINT: u32 = 0;

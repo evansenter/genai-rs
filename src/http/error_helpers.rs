@@ -4,34 +4,19 @@ use super::context::HttpContext;
 use crate::errors::GenaiError;
 use crate::wire::WireEvent;
 use reqwest::Response;
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
-/// Maximum characters to include from error body in context messages
+/// Maximum characters to include from a raw body in error messages.
 const ERROR_BODY_PREVIEW_LENGTH: usize = 200;
 
-/// Checks if an HTTP response is successful, returning it if so or an error otherwise.
-///
-/// This helper consolidates the common pattern of checking response status and
-/// extracting error details on failure.
-///
-/// # Errors
-///
-/// Returns an error with status code and body preview on non-success status.
-pub async fn check_response(response: Response) -> Result<Response, GenaiError> {
-    if response.status().is_success() {
-        Ok(response)
-    } else {
-        Err(read_error_with_context(response).await)
-    }
-}
-
-/// Like [`check_response`], but also surfaces error response bodies to the
-/// installed wire inspectors as [`WireEvent::ErrorBody`] before constructing
-/// the error.
+/// Returns `response` if its status is a success; otherwise reads the error
+/// body, surfaces it to wire inspectors as [`WireEvent::ErrorBody`], and
+/// builds a [`GenaiError::Api`].
 ///
 /// # Errors
 ///
-/// Returns an error with status code and body preview on non-success status.
+/// Returns [`GenaiError::Api`] on a non-success status.
 pub async fn check_response_wire(
     response: Response,
     ctx: &HttpContext,
@@ -52,18 +37,10 @@ pub async fn check_response_wire(
     Err(parts.into_api_error())
 }
 
-/// Google's request ID header name.
-///
-/// This is a standard Google Cloud API header that uniquely identifies each request.
-/// The value can be used when contacting Google support or correlating with server logs.
-/// See: <https://cloud.google.com/apis/docs/system-parameters>
+/// Google's request ID header, for correlating with server logs or support.
 const REQUEST_ID_HEADER: &str = "x-goog-request-id";
 
-/// Standard HTTP header indicating how long to wait before retrying.
-///
-/// Can contain either:
-/// - Seconds as integer (e.g., "120")
-/// - HTTP date (e.g., "Wed, 21 Oct 2015 07:28:00 GMT")
+/// Standard HTTP header: seconds, or an HTTP date, to wait before retrying.
 const RETRY_AFTER_HEADER: &str = "retry-after";
 
 /// Raw pieces of an error response, extracted before the body is consumed.
@@ -76,14 +53,52 @@ struct ErrorParts {
 }
 
 impl ErrorParts {
-    /// Builds the structured API error, truncating the body for the message.
     fn into_api_error(self) -> GenaiError {
         GenaiError::Api {
             status_code: self.status_code,
-            message: truncate_for_context(&self.body, ERROR_BODY_PREVIEW_LENGTH),
+            message: api_error_message(&self.body),
             request_id: self.request_id,
             retry_after: self.retry_after,
         }
+    }
+}
+
+/// Google's JSON error envelope, `{"error": {...}}`.
+///
+/// The Interactions API sends a string `code` (`"invalid_request"`); the
+/// standard Google endpoints send the HTTP status as an integer `code` plus
+/// a string `status` (`"INVALID_ARGUMENT"`).
+#[derive(Deserialize)]
+struct ErrorEnvelope {
+    error: ErrorBody,
+}
+
+#[derive(Deserialize)]
+struct ErrorBody {
+    message: Option<String>,
+    code: Option<serde_json::Value>,
+    status: Option<String>,
+}
+
+/// The human-readable message for an error body: the envelope's `message`,
+/// prefixed with its symbolic status or code, or a truncated preview of the
+/// raw body when it is not an envelope (an HTML proxy page, say).
+fn api_error_message(body: &str) -> String {
+    let Ok(ErrorEnvelope { error }) = serde_json::from_str::<ErrorEnvelope>(body) else {
+        return truncate_for_context(body, ERROR_BODY_PREVIEW_LENGTH);
+    };
+    let Some(message) = error.message else {
+        return truncate_for_context(body, ERROR_BODY_PREVIEW_LENGTH);
+    };
+    // The integer `code` only repeats the HTTP status, so it is not a label.
+    let string_code = match error.code {
+        Some(serde_json::Value::String(code)) => Some(code),
+        _ => None,
+    };
+    let label = error.status.or(string_code);
+    match label {
+        Some(label) if !label.is_empty() => format!("{label}: {message}"),
+        _ => message,
     }
 }
 
@@ -91,14 +106,12 @@ impl ErrorParts {
 async fn read_error_parts(response: Response) -> ErrorParts {
     let status_code = response.status().as_u16();
 
-    // Extract request ID from response headers before consuming the body
     let request_id = response
         .headers()
         .get(REQUEST_ID_HEADER)
         .and_then(|v| v.to_str().ok())
         .map(String::from);
 
-    // Extract Retry-After header (primarily for 429 rate limit responses)
     let retry_after = response
         .headers()
         .get(RETRY_AFTER_HEADER)
@@ -118,116 +131,50 @@ async fn read_error_parts(response: Response) -> ErrorParts {
     }
 }
 
-/// Reads error response body and creates a detailed GenaiError::Api with context.
-///
-/// Extracts:
-/// - HTTP status code for programmatic error handling
-/// - Truncated response body (first 200 chars)
-/// - Request ID from `x-goog-request-id` header for debugging/support
-/// - Retry delay from `Retry-After` header (typically for 429 errors)
-///
-/// # Returns
-///
-/// A structured `GenaiError::Api` with status code, message, optional request ID,
-/// and optional retry delay. If body cannot be read, the message describes the read failure.
-pub async fn read_error_with_context(response: Response) -> GenaiError {
-    read_error_parts(response).await.into_api_error()
-}
-
 /// Parses the Retry-After header value into a Duration.
 ///
-/// Supports two formats per HTTP spec:
-/// - Seconds as integer (e.g., "120" → 120 seconds)
-/// - HTTP date (e.g., "Wed, 21 Oct 2015 07:28:00 GMT" → duration until then)
+/// Supports both formats of the HTTP spec: integer seconds (`"120"`) and an
+/// HTTP date (`"Wed, 21 Oct 2015 07:28:00 GMT"`), the latter as the time
+/// remaining until then (zero if already past).
 fn parse_retry_after(value: &str) -> Option<std::time::Duration> {
-    // Try parsing as seconds first (most common for rate limiting)
     if let Ok(seconds) = value.parse::<u64>() {
         return Some(std::time::Duration::from_secs(seconds));
     }
 
-    // Try parsing as HTTP date using chrono
-    // HTTP date format (RFC 7231): "Wed, 21 Oct 2015 07:28:00 GMT"
-    // RFC 2822 (email) format requires numeric offset, so convert "GMT" → "+0000"
+    // RFC 2822 requires a numeric offset, so convert "GMT" → "+0000".
     let normalized = value.replace(" GMT", " +0000");
     if let Ok(date) = chrono::DateTime::parse_from_rfc2822(&normalized) {
         let now = chrono::Utc::now();
         let target = date.with_timezone(&chrono::Utc);
         if target > now {
-            let duration = target - now;
-            return duration.to_std().ok();
+            return (target - now).to_std().ok();
         }
-        // If target is in the past, return zero duration (retry immediately)
         return Some(std::time::Duration::ZERO);
     }
 
-    // Unable to parse - return None
     None
 }
 
-/// Formats JSON parsing context by including a preview of the raw JSON.
-///
-/// # Arguments
-///
-/// * `json_str` - The JSON string that failed to parse
-/// * `error` - The original serde_json error
-///
-/// # Returns
-///
-/// A formatted error message with JSON preview (first 200 chars)
+/// Formats a JSON parse error with a preview of the raw JSON.
 pub fn format_json_parse_error(json_str: &str, error: serde_json::Error) -> String {
     let preview = truncate_for_context(json_str, ERROR_BODY_PREVIEW_LENGTH);
     format!("JSON parse error: {} | Context: {}", error, preview)
 }
 
-/// Deserializes JSON with context-rich error messages.
+/// Deserializes a successful response body.
 ///
-/// This function wraps `serde_json::from_str` and converts deserialization errors
-/// to `GenaiError::Json` with additional context about what type failed to parse
-/// and a preview of the JSON that caused the error.
-///
-/// # Arguments
-///
-/// * `json_str` - The JSON string to deserialize
-/// * `type_context` - A human-readable description of what's being deserialized
-///   (e.g., "InteractionResponse", "create interaction response")
-///
-/// # Returns
-///
-/// The deserialized value on success, or a context-rich `GenaiError` on failure.
-///
-/// # Example
-///
-/// ```ignore
-/// // This module is pub(crate) - example shown for documentation only
-/// use genai_rs::http::error_helpers::deserialize_with_context;
-/// use serde::Deserialize;
-///
-/// #[derive(Deserialize, Debug)]
-/// struct Response { id: String }
-///
-/// let json = r#"{"id": "test123"}"#;
-/// let result: Result<Response, _> = deserialize_with_context(json, "API response");
-/// assert!(result.is_ok());
-///
-/// let bad_json = r#"{"missing_id": true}"#;
-/// let result: Result<Response, _> = deserialize_with_context(bad_json, "API response");
-/// let err = result.unwrap_err();
-/// assert!(err.to_string().contains("API response"));
-/// ```
+/// A body that does not match the expected type is the server's contract
+/// breaking, not the caller's input, so it maps to
+/// [`GenaiError::MalformedResponse`] with the type and a preview of the JSON.
 pub fn deserialize_with_context<T: DeserializeOwned>(
     json_str: &str,
     type_context: &str,
 ) -> Result<T, GenaiError> {
     serde_json::from_str(json_str).map_err(|e| {
         let preview = truncate_for_context(json_str, ERROR_BODY_PREVIEW_LENGTH);
-        let message = format!(
-            "Failed to parse {}: {} | JSON: {}",
-            type_context, e, preview
-        );
-        GenaiError::Json(serde_json::Error::io(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            message,
-        )))
+        GenaiError::MalformedResponse(format!(
+            "Failed to parse {type_context}: {e} | JSON: {preview}"
+        ))
     })
 }
 
@@ -385,6 +332,50 @@ mod tests {
             err_str.contains("..."),
             "Long JSON should be truncated: {}",
             err_str
+        );
+    }
+
+    #[test]
+    fn test_deserialize_with_context_is_malformed_response() {
+        let err = deserialize_with_context::<Vec<u32>>("{}", "numbers").unwrap_err();
+        assert!(matches!(err, GenaiError::MalformedResponse(_)), "{err:?}");
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn test_api_error_message_interactions_envelope() {
+        let body = r#"{"error":{"message":"'minimal' is not supported","code":"invalid_request"}}"#;
+        assert_eq!(
+            api_error_message(body),
+            "invalid_request: 'minimal' is not supported"
+        );
+    }
+
+    #[test]
+    fn test_api_error_message_standard_envelope() {
+        let body = r#"{"error":{"code":400,"message":"Request contains an invalid argument.","status":"INVALID_ARGUMENT","details":[]}}"#;
+        assert_eq!(
+            api_error_message(body),
+            "INVALID_ARGUMENT: Request contains an invalid argument."
+        );
+    }
+
+    #[test]
+    fn test_api_error_message_keeps_long_messages_whole() {
+        let long = "x".repeat(500);
+        let body = format!(r#"{{"error":{{"message":"{long}","code":404}}}}"#);
+        assert_eq!(api_error_message(&body), long);
+    }
+
+    #[test]
+    fn test_api_error_message_falls_back_to_raw_preview() {
+        assert_eq!(api_error_message("Bad Gateway"), "Bad Gateway");
+        let html = format!("<html>{}</html>", "y".repeat(400));
+        assert!(api_error_message(&html).ends_with("..."));
+        // An envelope without a message is not worth unwrapping.
+        assert_eq!(
+            api_error_message(r#"{"error":{"code":500}}"#),
+            r#"{"error":{"code":500}}"#
         );
     }
 

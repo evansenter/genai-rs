@@ -14,388 +14,79 @@
 //! Enterprise Agent Platform" (Vertex-only). The types are modeled for
 //! spec parity and forward compatibility.
 
-use serde::de::Deserializer;
-use serde::ser::Serializer;
+use crate::wire_enum::wire_enum;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
-/// Category of harmful content a [`SafetySetting`] applies to.
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-///
-/// # Wire Format
-///
-/// Serializes as snake_case strings: `"hate_speech"`, `"dangerous_content"`,
-/// `"harassment"`, `"sexually_explicit"`, `"civic_integrity"`,
-/// `"image_hate"`, `"image_dangerous_content"`, `"image_harassment"`,
-/// `"image_sexually_explicit"`, `"jailbreak"`.
-///
-/// # Evergreen Pattern
-///
-/// Unknown values from the API deserialize into the `Unknown` variant,
-/// preserving the original data for debugging and roundtrip serialization.
-#[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum HarmCategory {
-    /// Hateful or discriminatory speech.
-    HateSpeech,
-    /// Content that facilitates or encourages dangerous acts.
-    DangerousContent,
-    /// Harassing or bullying content.
-    Harassment,
-    /// Sexually explicit content.
-    SexuallyExplicit,
-    /// Content that could undermine civic processes.
-    CivicIntegrity,
-    /// Hateful imagery.
-    ImageHate,
-    /// Dangerous imagery.
-    ImageDangerousContent,
-    /// Harassing imagery.
-    ImageHarassment,
-    /// Sexually explicit imagery.
-    ImageSexuallyExplicit,
-    /// Prompt-injection / jailbreak attempts.
-    Jailbreak,
-    /// Unknown variant for forward compatibility (Evergreen pattern)
-    Unknown {
-        /// The unrecognized category type from the API
-        category_type: String,
-        /// The raw JSON value, preserved for debugging and roundtrip
-        data: serde_json::Value,
-    },
+wire_enum! {
+    /// Category of harmful content a [`SafetySetting`] applies to.
+    ///
+    /// # Wire Format
+    ///
+    /// Serializes as snake_case strings: `"hate_speech"`, `"dangerous_content"`,
+    /// `"harassment"`, `"sexually_explicit"`, `"civic_integrity"`,
+    /// `"image_hate"`, `"image_dangerous_content"`, `"image_harassment"`,
+    /// `"image_sexually_explicit"`, `"jailbreak"`.
+    pub enum HarmCategory {
+        /// Hateful or discriminatory speech.
+        HateSpeech = "hate_speech",
+        /// Content that facilitates or encourages dangerous acts.
+        DangerousContent = "dangerous_content",
+        /// Harassing or bullying content.
+        Harassment = "harassment",
+        /// Sexually explicit content.
+        SexuallyExplicit = "sexually_explicit",
+        /// Content that could undermine civic processes.
+        CivicIntegrity = "civic_integrity",
+        /// Hateful imagery.
+        ImageHate = "image_hate",
+        /// Dangerous imagery.
+        ImageDangerousContent = "image_dangerous_content",
+        /// Harassing imagery.
+        ImageHarassment = "image_harassment",
+        /// Sexually explicit imagery.
+        ImageSexuallyExplicit = "image_sexually_explicit",
+        /// Prompt-injection / jailbreak attempts.
+        Jailbreak = "jailbreak",
+    }
+    unknown(category_type, unknown_category_type)
 }
 
-impl HarmCategory {
-    /// The wire string for this category — the single source both `Display`
-    /// and `Serialize` render, so the two can never disagree.
-    fn as_wire(&self) -> &str {
-        match self {
-            Self::HateSpeech => "hate_speech",
-            Self::DangerousContent => "dangerous_content",
-            Self::Harassment => "harassment",
-            Self::SexuallyExplicit => "sexually_explicit",
-            Self::CivicIntegrity => "civic_integrity",
-            Self::ImageHate => "image_hate",
-            Self::ImageDangerousContent => "image_dangerous_content",
-            Self::ImageHarassment => "image_harassment",
-            Self::ImageSexuallyExplicit => "image_sexually_explicit",
-            Self::Jailbreak => "jailbreak",
-            Self::Unknown { category_type, .. } => category_type,
-        }
+wire_enum! {
+    /// Blocking threshold for a [`SafetySetting`].
+    ///
+    /// # Wire Format
+    ///
+    /// Serializes as snake_case strings: `"block_low_and_above"`,
+    /// `"block_medium_and_above"`, `"block_only_high"`, `"block_none"`, `"off"`.
+    pub enum SafetyThreshold {
+        /// Block content with low probability of harm and above.
+        BlockLowAndAbove = "block_low_and_above",
+        /// Block content with medium probability of harm and above.
+        BlockMediumAndAbove = "block_medium_and_above",
+        /// Block only content with high probability of harm.
+        BlockOnlyHigh = "block_only_high",
+        /// Never block for this category, but keep safety scoring on.
+        BlockNone = "block_none",
+        /// Disable the safety filter for this category entirely.
+        Off = "off",
     }
-
-    /// Returns true if this is an unknown harm category.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
-    }
-
-    /// Returns the category type name if this is an unknown harm category.
-    #[must_use]
-    pub fn unknown_category_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { category_type, .. } => Some(category_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the preserved data if this is an unknown harm category.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
+    unknown(threshold_type, unknown_threshold_type)
 }
 
-impl fmt::Display for HarmCategory {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_wire())
+wire_enum! {
+    /// Scoring method a [`SafetySetting`] blocks on.
+    ///
+    /// # Wire Format
+    ///
+    /// Serializes as lowercase strings: `"severity"`, `"probability"`.
+    /// When unset, the API defaults to the probability score.
+    pub enum SafetyMethod {
+        /// Block based on the severity score.
+        Severity = "severity",
+        /// Block based on the probability score (API default).
+        Probability = "probability",
     }
-}
-
-impl Serialize for HarmCategory {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_wire())
-    }
-}
-
-impl<'de> Deserialize<'de> for HarmCategory {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value.as_str() {
-            Some("hate_speech") => Ok(Self::HateSpeech),
-            Some("dangerous_content") => Ok(Self::DangerousContent),
-            Some("harassment") => Ok(Self::Harassment),
-            Some("sexually_explicit") => Ok(Self::SexuallyExplicit),
-            Some("civic_integrity") => Ok(Self::CivicIntegrity),
-            Some("image_hate") => Ok(Self::ImageHate),
-            Some("image_dangerous_content") => Ok(Self::ImageDangerousContent),
-            Some("image_harassment") => Ok(Self::ImageHarassment),
-            Some("image_sexually_explicit") => Ok(Self::ImageSexuallyExplicit),
-            Some("jailbreak") => Ok(Self::Jailbreak),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown HarmCategory '{other}' - using Unknown variant (Evergreen)"
-                );
-                Ok(Self::Unknown {
-                    category_type: other.to_string(),
-                    data: value.clone(),
-                })
-            }
-            None => {
-                tracing::warn!(
-                    "HarmCategory received non-string value: {value}. Preserving in Unknown variant."
-                );
-                Ok(Self::Unknown {
-                    category_type: format!("<non-string: {value}>"),
-                    data: value,
-                })
-            }
-        }
-    }
-}
-
-/// Blocking threshold for a [`SafetySetting`].
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-///
-/// # Wire Format
-///
-/// Serializes as snake_case strings: `"block_low_and_above"`,
-/// `"block_medium_and_above"`, `"block_only_high"`, `"block_none"`, `"off"`.
-///
-/// # Evergreen Pattern
-///
-/// Unknown values from the API deserialize into the `Unknown` variant,
-/// preserving the original data for debugging and roundtrip serialization.
-#[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum SafetyThreshold {
-    /// Block content with low probability of harm and above.
-    BlockLowAndAbove,
-    /// Block content with medium probability of harm and above.
-    BlockMediumAndAbove,
-    /// Block only content with high probability of harm.
-    BlockOnlyHigh,
-    /// Never block for this category, but keep safety scoring on.
-    BlockNone,
-    /// Disable the safety filter for this category entirely.
-    Off,
-    /// Unknown variant for forward compatibility (Evergreen pattern)
-    Unknown {
-        /// The unrecognized threshold type from the API
-        threshold_type: String,
-        /// The raw JSON value, preserved for debugging and roundtrip
-        data: serde_json::Value,
-    },
-}
-
-impl SafetyThreshold {
-    /// The wire string for this threshold — the single source both `Display`
-    /// and `Serialize` render, so the two can never disagree.
-    fn as_wire(&self) -> &str {
-        match self {
-            Self::BlockLowAndAbove => "block_low_and_above",
-            Self::BlockMediumAndAbove => "block_medium_and_above",
-            Self::BlockOnlyHigh => "block_only_high",
-            Self::BlockNone => "block_none",
-            Self::Off => "off",
-            Self::Unknown { threshold_type, .. } => threshold_type,
-        }
-    }
-
-    /// Returns true if this is an unknown threshold.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
-    }
-
-    /// Returns the threshold type name if this is an unknown threshold.
-    #[must_use]
-    pub fn unknown_threshold_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { threshold_type, .. } => Some(threshold_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the preserved data if this is an unknown threshold.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Display for SafetyThreshold {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_wire())
-    }
-}
-
-impl Serialize for SafetyThreshold {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_wire())
-    }
-}
-
-impl<'de> Deserialize<'de> for SafetyThreshold {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value.as_str() {
-            Some("block_low_and_above") => Ok(Self::BlockLowAndAbove),
-            Some("block_medium_and_above") => Ok(Self::BlockMediumAndAbove),
-            Some("block_only_high") => Ok(Self::BlockOnlyHigh),
-            Some("block_none") => Ok(Self::BlockNone),
-            Some("off") => Ok(Self::Off),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown SafetyThreshold '{other}' - using Unknown variant (Evergreen)"
-                );
-                Ok(Self::Unknown {
-                    threshold_type: other.to_string(),
-                    data: value.clone(),
-                })
-            }
-            None => {
-                tracing::warn!(
-                    "SafetyThreshold received non-string value: {value}. Preserving in Unknown variant."
-                );
-                Ok(Self::Unknown {
-                    threshold_type: format!("<non-string: {value}>"),
-                    data: value,
-                })
-            }
-        }
-    }
-}
-
-/// Scoring method a [`SafetySetting`] blocks on.
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-///
-/// # Wire Format
-///
-/// Serializes as lowercase strings: `"severity"`, `"probability"`.
-/// When unset, the API defaults to the probability score.
-///
-/// # Evergreen Pattern
-///
-/// Unknown values from the API deserialize into the `Unknown` variant,
-/// preserving the original data for debugging and roundtrip serialization.
-#[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum SafetyMethod {
-    /// Block based on the severity score.
-    Severity,
-    /// Block based on the probability score (API default).
-    Probability,
-    /// Unknown variant for forward compatibility (Evergreen pattern)
-    Unknown {
-        /// The unrecognized method type from the API
-        method_type: String,
-        /// The raw JSON value, preserved for debugging and roundtrip
-        data: serde_json::Value,
-    },
-}
-
-impl SafetyMethod {
-    /// The wire string for this method — the single source both `Display`
-    /// and `Serialize` render, so the two can never disagree.
-    fn as_wire(&self) -> &str {
-        match self {
-            Self::Severity => "severity",
-            Self::Probability => "probability",
-            Self::Unknown { method_type, .. } => method_type,
-        }
-    }
-
-    /// Returns true if this is an unknown method.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
-    }
-
-    /// Returns the method type name if this is an unknown method.
-    #[must_use]
-    pub fn unknown_method_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { method_type, .. } => Some(method_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the preserved data if this is an unknown method.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Display for SafetyMethod {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_wire())
-    }
-}
-
-impl Serialize for SafetyMethod {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_wire())
-    }
-}
-
-impl<'de> Deserialize<'de> for SafetyMethod {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value.as_str() {
-            Some("severity") => Ok(Self::Severity),
-            Some("probability") => Ok(Self::Probability),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown SafetyMethod '{other}' - using Unknown variant (Evergreen)"
-                );
-                Ok(Self::Unknown {
-                    method_type: other.to_string(),
-                    data: value.clone(),
-                })
-            }
-            None => {
-                tracing::warn!(
-                    "SafetyMethod received non-string value: {value}. Preserving in Unknown variant."
-                );
-                Ok(Self::Unknown {
-                    method_type: format!("<non-string: {value}>"),
-                    data: value,
-                })
-            }
-        }
-    }
+    unknown(method_type, unknown_method_type)
 }
 
 /// A safety setting that affects the safety-blocking behavior for one
@@ -485,6 +176,7 @@ mod tests {
         assert!(json.get("method").is_none());
     }
 
+    #[cfg(not(feature = "strict-unknown"))]
     #[test]
     fn unknown_values_roundtrip() {
         let json = serde_json::json!({

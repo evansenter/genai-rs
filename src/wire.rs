@@ -108,14 +108,14 @@ pub enum WireEvent {
         /// Raw error payload as returned by the server.
         body: String,
     },
-    /// A frame observed on an SSE stream.
+    /// One event dispatched from an SSE stream.
     SseFrame {
         /// Correlation id shared by all events of this request.
         id: u64,
-        /// The value of an `event:` line, when the frame is an event-type
-        /// line. `None` for `data:` payload frames.
+        /// The event's `event:` field, if it had one.
         event_type: Option<String>,
-        /// The raw `data:` payload. Empty for `event:`-only frames.
+        /// The event's `data:` payload (multiple `data:` lines joined with
+        /// `\n`).
         data: String,
     },
     /// A file upload is starting.
@@ -214,11 +214,24 @@ pub trait WireInspector: Send + Sync + 'static {
 const TRUNCATE_FIELDS: &[&str] = &["data", "signature"];
 
 /// Fields whose values are secrets and must be fully redacted (never
-/// printed, even partially). Covers third-party retrieval credentials
-/// (e.g. Exa/Parallel `api_key` in search configs) and webhook signing
-/// secrets (`new_signing_secret` on create, `secret` on rotate — both
-/// returned exactly once by the API).
-const REDACT_FIELDS: &[&str] = &["api_key", "new_signing_secret", "secret"];
+/// printed, even partially), wherever they appear: third-party retrieval
+/// credentials (`api_key` in the Exa/Parallel search configs), webhook
+/// signing secrets (`new_signing_secret` on create, `secret` on rotate), and
+/// credential material (`token`, `client_secret`, `refresh_token` in
+/// Credentials request bodies).
+const REDACT_FIELDS: &[&str] = &[
+    "api_key",
+    "new_signing_secret",
+    "secret",
+    "token",
+    "client_secret",
+    "refresh_token",
+];
+
+/// A field redacted only in context, because the name is too common to
+/// redact everywhere: an `environment_variable` credential's secret, and an
+/// environment variable's value inside an `env` map (`RemoteEnvironment`).
+const CONTEXT_REDACT_FIELD: &str = "value";
 
 /// Replacement value for redacted fields.
 const REDACTED_PLACEHOLDER: &str = "[REDACTED]";
@@ -251,18 +264,28 @@ fn truncate_utf8(s: &str, max_bytes: usize) -> Cow<'_, str> {
 /// value.
 ///
 /// Walks the JSON tree, truncates `"data"` and `"signature"` fields that
-/// contain strings longer than 100 bytes, and replaces secret fields (e.g.
-/// `"api_key"`) with `"[REDACTED]"` regardless of length. Text content and
-/// other fields are preserved in full.
+/// contain strings longer than 100 bytes, and replaces secret fields (see
+/// [`REDACT_FIELDS`] and [`CONTEXT_REDACT_FIELD`]) with `"[REDACTED]"`
+/// regardless of length. Text content and other fields are preserved in full.
 fn truncate_long_fields(value: &mut serde_json::Value) {
+    redact_walk(value, false);
+}
+
+/// The walk behind [`truncate_long_fields`]; `in_env` is true anywhere
+/// beneath an `env` key.
+fn redact_walk(value: &mut serde_json::Value, in_env: bool) {
     match value {
         serde_json::Value::Object(map) => {
+            let redact_value = in_env
+                || map.get("type").and_then(serde_json::Value::as_str)
+                    == Some("environment_variable");
             for (key, val) in map.iter_mut() {
-                if REDACT_FIELDS.contains(&key.as_str()) {
+                let key = key.as_str();
+                if REDACT_FIELDS.contains(&key) || (redact_value && key == CONTEXT_REDACT_FIELD) {
                     if !val.is_null() {
                         *val = serde_json::Value::String(REDACTED_PLACEHOLDER.to_string());
                     }
-                } else if TRUNCATE_FIELDS.contains(&key.as_str()) {
+                } else if TRUNCATE_FIELDS.contains(&key) {
                     match val {
                         serde_json::Value::String(s) => {
                             if s.len() > TRUNCATE_THRESHOLD {
@@ -273,16 +296,16 @@ fn truncate_long_fields(value: &mut serde_json::Value) {
                         // payloads (e.g. Evergreen `Unknown` variants
                         // preserve raw JSON under `data`); recurse so
                         // secrets nested inside are still redacted.
-                        _ => truncate_long_fields(val),
+                        _ => redact_walk(val, in_env),
                     }
                 } else {
-                    truncate_long_fields(val);
+                    redact_walk(val, in_env || key == "env");
                 }
             }
         }
         serde_json::Value::Array(arr) => {
             for item in arr.iter_mut() {
-                truncate_long_fields(item);
+                redact_walk(item, in_env);
             }
         }
         _ => {}
@@ -1714,6 +1737,55 @@ mod tests {
     }
 
     #[test]
+    fn test_redact_fields_credential_secrets() {
+        // Create bodies for each credential type, and an update body.
+        let mut value = serde_json::json!([
+            {"type": "bearer_token", "token": "tok-1", "header_name": "Authorization"},
+            {"type": "environment_variable", "value": "val-1", "injection_location": ["header"]},
+            {"type": "oauth2", "client_id": "cid", "client_secret": "csec-1",
+             "refresh_token": "rtok-1", "token_url": "https://oauth.example/token"},
+            {"type": "environment_variable", "value": "val-2"},
+        ]);
+        truncate_long_fields(&mut value);
+        let rendered = value.to_string();
+        for secret in ["tok-1", "val-1", "csec-1", "rtok-1", "val-2"] {
+            assert!(!rendered.contains(secret), "{secret} leaked: {rendered}");
+        }
+        assert_eq!(value[0]["header_name"], "Authorization");
+        assert_eq!(value[2]["client_id"], "cid");
+        assert_eq!(value[2]["token_url"], "https://oauth.example/token");
+    }
+
+    #[test]
+    fn test_redact_fields_env_var_values_in_both_env_forms() {
+        // `env` is sent as a map and echoed as a list of single-key maps.
+        let mut value = serde_json::json!({
+            "environment": {
+                "type": "remote",
+                "env": {"PLAIN": {"value": "env-secret-1"}, "REF": {"credential": "cred-1"}}
+            },
+            "echo": {"env": [{"PLAIN": {"value": "env-secret-2"}}]},
+        });
+        truncate_long_fields(&mut value);
+        let rendered = value.to_string();
+        assert!(!rendered.contains("env-secret-"), "leaked: {rendered}");
+        assert_eq!(value["environment"]["env"]["REF"]["credential"], "cred-1");
+    }
+
+    #[test]
+    fn test_redact_fields_ordinary_value_keys_still_print() {
+        // `value` is redacted only in the two secret contexts.
+        let mut value = serde_json::json!({
+            "type": "function_result",
+            "result": {"value": 42},
+            "metadata": [{"key": "k", "value": "v"}],
+        });
+        truncate_long_fields(&mut value);
+        assert_eq!(value["result"]["value"], 42);
+        assert_eq!(value["metadata"][0]["value"], "v");
+    }
+
+    #[test]
     fn test_tracing_forwarder_body_rendering_redacts() {
         // TracingForwarder must apply the same redaction guarantees as
         // LoudWirePrinter to JSON bodies and raw string payloads.
@@ -1724,6 +1796,15 @@ mod tests {
 
         let raw_json = r#"{"new_signing_secret":"whsec_y"}"#;
         assert!(!redacted_raw_string(raw_json).contains("whsec_y"));
+
+        let credential = serde_json::json!({
+            "type": "environment_variable", "value": "val-z", "token": "tok-z",
+            "env": {"V": {"value": "env-z"}},
+        });
+        let rendered = redacted_body_string(&credential);
+        for secret in ["val-z", "tok-z", "env-z"] {
+            assert!(!rendered.contains(secret), "{secret} leaked: {rendered}");
+        }
 
         // Non-JSON payloads pass through unchanged.
         assert_eq!(redacted_raw_string("plain text"), "plain text");

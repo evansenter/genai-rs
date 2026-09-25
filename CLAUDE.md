@@ -1,381 +1,213 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code when working in this repository. The reasoning
+behind the rules lives in `DECISIONS.md`; setup and review checklist in
+`CONTRIBUTING.md`.
 
-## External Gemini API Documentation
+`genai-rs` is a Rust client for Google's Gemini **Interactions API**
+(wire revision 2026-05-20), plus an optional native client for the
+Antigravity `localharness` agent runtime (`antigravity` feature).
 
-**Important**: When working on API integration or troubleshooting, consult these sources:
+## Sources of truth for API behavior
 
-| Document | URL |
-|----------|-----|
-| Interactions API Reference | https://ai.google.dev/static/api/interactions.md.txt |
-| Interactions API Guide | https://ai.google.dev/static/api/interactions-api.md.txt |
-| Function Calling Guide | https://ai.google.dev/gemini-api/docs/function-calling.md.txt |
-| Thought Signatures | https://ai.google.dev/gemini-api/docs/thought-signatures.md.txt |
+Prose docs lag the API; absence from them is not evidence of absence. In
+order (D-004):
 
-**These docs lag the API — absence from them is not evidence of absence.**
-When asking "does the API support X?", use this order:
+1. **Generated bindings** — `google-genai`'s `_gaos/types/` (diff two
+   releases to find new surface).
+2. **Live probe** against `generativelanguage.googleapis.com` — what the
+   Gemini endpoint actually accepts, often narrower than the bindings.
+   Probe with `LOUD_WIRE=1` or curl before modeling anything.
+3. **Prose** — [Interactions API reference](https://ai.google.dev/static/api/interactions.md.txt),
+   [guide](https://ai.google.dev/static/api/interactions-api.md.txt),
+   and `docs/INTERACTIONS_API_GAP.md` (a dated snapshot; the
+   `api-surface-sweep` workflow opens an issue when the SDK moves).
 
-1. **Generated bindings** (`google-genai`'s `_gaos/types/interactions/*.py`) — ships ahead of prose; diff two releases to spot new surface
-2. **Live probe** against `generativelanguage.googleapis.com` — ground truth, and often narrower than the spec
-3. **Prose docs** (the table above, and `docs/INTERACTIONS_API_GAP.md`) — lag both
+A field that serializes correctly is not a working feature (D-010): verify
+against the live API.
 
-Two features found in the 2.18.1 sweep — video `processing` (a ~127x
-token-cost lever) and a widened `speech_config` — appear in neither doc
-above. Conversely, the bindings describe a `speech_config` object arm the
-API rejects outright. Rank 1 tells you what to look at; rank 2 tells you
-what actually works.
+## Commands
 
-`docs/INTERACTIONS_API_GAP.md` is a point-in-time snapshot, not a
-completeness guarantee — check its header for what it was last swept
-against. The `api-surface-sweep` workflow files an issue when the SDK moves.
-
-## Project Overview
-
-`genai-rs` is a Rust client library for Google's Generative AI (Gemini) API using the **Interactions API** for unified model/agent interactions.
-
-**Workspace structure:**
-- **`genai-rs`** (root): Public API crate with user-facing `Client`, `InteractionBuilder`, and all type modules
-- **`genai-rs-macros/`**: Procedural macro for automatic function declaration generation
-
-## Development Commands
-
-Use the Makefile for common operations. Requires [cargo-nextest](https://nexte.st/).
-
-**Optional, once per clone:** `./scripts/setup-dev.sh` enables the mold
-linker if you have it. `.cargo/config.toml` is *not* checked in — when it
-was, a machine without mold failed every build with `cannot find 'ld'`,
-naming a binary that is installed rather than the one that is not (#428).
-The script checks before enabling and is a no-op otherwise.
+Requires [cargo-nextest](https://nexte.st/). Optional: `./scripts/setup-dev.sh`
+enables the mold linker when the compiler supports it (`.cargo/config.toml`
+is gitignored).
 
 ```bash
-make check     # Pre-push gate: fmt + clippy + test + test-scripts
-make test      # Unit tests only (excludes doctests for speed)
-make test-all  # Full suite including integration tests (requires GEMINI_API_KEY)
-make test-scripts # Fixture tests for the repo's shell scripts (needs bash, jq, python3)
-make fmt       # Check formatting
-make clippy    # Lint with warnings as errors
-make docs      # Build docs with warnings as errors (all-features + docs.rs feature set)
-make clean     # Clean build artifacts
+make check        # pre-push gate: fmt + clippy + test + test-scripts
+make test         # unit/offline tests (no doctests)
+make test-all     # + live integration tests (needs GEMINI_API_KEY)
+make test-scripts # shell-script harnesses (needs bash, jq, python3)
+make docs         # rustdoc -D warnings, all-features and docs.rs feature set
+
+cargo nextest run -E 'test(/name/)'            # one test
+cargo nextest run --test <file> --run-ignored all   # one live test file
+cargo test --workspace --doc --all-features    # doctests (CI runs these; make does not)
+cargo nextest run --features antigravity --run-ignored all -E 'binary(antigravity_harness)'
+                                               # harness suite (needs localharness)
 ```
 
-`make test-scripts` hard-fails if `jq` or `python3` is missing rather than
-skipping, and it is a prerequisite of `make check` — so the pre-push gate
-needs both. One side effect worth knowing before running it: `test_setup_dev.sh`
-rewrites the checkout's real `.cargo/config.toml` and restores it from a temp
-copy on an EXIT trap. That file is gitignored, so git cannot bring it back if
-the harness is killed outright. Tracked in #455.
+Live tests take minutes and can flake on model variability. `LOUD_WIRE=1`
+prints the wire; `RUST_LOG=genai_rs=debug` enables debug logs.
 
-### Testing
+## Layout
 
-**Default**: Always run `make test-all` for full integration testing.
-
-**Note**: Doctests run only in CI (`cargo test --workspace --doc`), not via `make test` or `make test-all`. This is intentional—doctests add compile overhead and CI catches them.
-
-```bash
-make test-all                                    # Integration tests (requires GEMINI_API_KEY)
-make test                                        # Unit tests only
-cargo nextest run -E 'test(/test_name/)'         # Single test by name
-cargo nextest run --test integration_file        # Single integration test file
-```
-
-**Environment**: `GEMINI_API_KEY` required for integration tests. Tests take 2-5 minutes; some may flake due to LLM variability.
-
-### Nextest vs Cargo Test Flags
-
-| Purpose | cargo test | cargo nextest |
-|---------|-----------|---------------|
-| Include ignored | `-- --include-ignored` | `--run-ignored all` |
-| Single test | `test_name` | `test_name` (or `-E 'test(/regex/)'`) |
-| Release mode | `--release` | `--cargo-profile release` |
-| Show output | `-- --nocapture` | `--no-capture` |
-
-### Quality Checks
-
-```bash
-make check  # Run all quality gates (fmt + clippy + test + test-scripts)
-
-# Or individually:
-cargo fmt -- --check                                                 # Check format
-cargo clippy --workspace --all-targets --all-features -- -D warnings # Lint
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --document-private-items
-RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs  # docs.rs feature set (separate target dir so it doesn't clobber target/doc)
-```
-
-## Architecture
-
-### Layered Design
-
-1. **Public API** (`src/lib.rs`, `src/client.rs`, `src/request_builder/`): User-facing `Client`, `InteractionBuilder`
-2. **Internal Logic** (`src/function_calling.rs`, `src/interactions_api.rs`, `src/multimodal.rs`): Function registry, content builders
-3. **HTTP Layer** (`src/http/`): Raw API requests, SSE streaming (internal, `pub(crate)`)
-4. **Type Modules** (`src/content.rs`, `src/request.rs`, `src/response.rs`, `src/tools.rs`): JSON models
-5. **Macros** (`genai-rs-macros/`): `#[tool]` macro with `inventory` registration
-
-### Key Patterns
-
-**Builder API**: Fluent builders throughout (`Client::builder()`, `client.interaction().with_*()`)
-
-**Function Calling** - Two categories:
-
-| Category | Tools | Who Executes |
-|----------|-------|--------------|
-| Client-Side | `#[tool]` macro, `ToolService`, Manual | YOUR code |
-| Server-Side | Google Search, Code Execution, URL Context, Google Maps | API |
-
-**Choosing Client-Side Approach**:
-| Approach | Registration | State | Best For |
-|----------|-------------|-------|----------|
-| `#[tool]` macro | Compile-time | Stateless | Simple tools, clean code |
-| `ToolService` | Runtime | Stateful | DB pools, API clients, dynamic config |
-| Manual handling | N/A | Flexible | Custom execution logic, rate limiting |
-
-**Function Calling Modes**:
-| Mode | Behavior |
+| Path | Contents |
 |------|----------|
-| Auto (default) | Model decides whether to call functions |
-| Any | Model must call a function |
-| None | Function calling disabled |
-| Validated | Schema adherence for both calls and natural language |
+| `src/client.rs`, `src/request_builder/` | `Client`, `ClientBuilder`, the interaction methods, `InteractionBuilder`, the auto-function loop (`auto_functions.rs`) |
+| `src/request.rs`, `src/content.rs`, `src/tools.rs` | Request types, `Content`, tool configs |
+| `src/steps.rs`, `src/response.rs` | The steps response model, `InteractionResponse` and its accessors |
+| `src/wire_streaming.rs`, `src/streaming.rs` | Stream chunk/event types; auto-function stream types |
+| `src/webhooks.rs`, `triggers.rs`, `agents.rs`, `environments/`, `files.rs`, `file_search_stores.rs`, `credentials.rs`, `voices.rs` | Resource types (`/v1beta/...`) and each resource's `impl Client` methods |
+| `src/http/` | `pub(crate)` HTTP layer: one request path (`common.rs`), SSE parser, error mapping |
+| `src/wire.rs` | `WireInspector`, `LOUD_WIRE` printer |
+| `src/function_calling.rs`, `genai-rs-macros/` | Function registry, `#[tool]` macro (`inventory` registration) |
+| `src/antigravity/` | Harness client (feature-gated); see `docs/ANTIGRAVITY.md` |
 
-**Multi-Turn Inheritance Rules** (critical gotcha):
-| Field | Inherited by API? | SDK Behavior |
-|-------|-------------------|--------------|
-| `systemInstruction` | ❌ No | Available on all interactions; set explicitly per-turn if needed |
-| `tools` | ❌ No | Must resend on every new user message turn |
-| Conversation history | ✅ Yes | Automatically included |
+When a module or directory moves, record it in `DECISIONS.md` (D-011).
 
-**Debugging**: Use `LOUD_WIRE=1` to see wire-level request/response details.
+## Rules
 
-**Comprehensive Guides** (see `docs/`):
-- `docs/MULTI_TURN_FUNCTION_CALLING.md` - Stateful/stateless, auto/manual execution, thought signatures
-- `docs/STREAMING_API.md` - Stream types, resume capability, auto-function streaming
-- `docs/LOGGING_STRATEGY.md` - Log levels, sensitive data handling
-- `docs/ENUM_WIRE_FORMATS.md` - Wire formats and Unknown variant catalog
+### Evergreen soft-typing (D-001)
 
-### Error Types
-
-- `GenaiError`: API/network errors (thiserror-based), defined in `src/errors.rs`
-- `FunctionError`: Function execution errors
-
-## Core Design Philosophy: Evergreen Soft-Typing
-
-> **Why is it like this?** `DECISIONS.md` holds the reasoning behind the
-> durable design choices — Evergreen soft-typing, `#[non_exhaustive]` response
-> structs, model constants, the verify-from-bindings-first rule, and what to do
-> with fields the API rejects. This file holds the rules; that file holds the
-> arguments. `CONTRIBUTING.md` covers setup and the review checklist.
-
-This library follows the [Evergreen spec](https://github.com/google-deepmind/evergreen-spec) philosophy: **unknown data should be preserved, not rejected**.
-
-### Key Principles
-
-1. **Graceful Unknown Handling**: Unrecognized API types deserialize into `Unknown` variants
-2. **Non-Exhaustive Enums**: Use `#[non_exhaustive]` on enums that may grow
-3. **Preserve Data Roundtrip**: `Unknown` variants serialize back with original data intact
-4. **Continue on Unknown Status**: When polling, continue on unrecognized status (use timeouts)
-
-### Standard Unknown Variant Pattern
-
-All enums use consistent naming - field names follow `<context>_type` (e.g., `content_type`, `tool_type`, `status_type`):
+Unknown API data is preserved, never rejected. Enums that can grow are
+`#[non_exhaustive]` and carry an Unknown variant:
 
 ```rust
 Unknown {
-    <context>_type: String,      // The unrecognized type from API
-    data: serde_json::Value,     // Full JSON preserved for roundtrip
+    <context>_type: String,      // the unrecognized wire value
+    data: serde_json::Value,     // full JSON, re-serialized unchanged
 }
 ```
 
-Helper methods: `is_unknown()`, `unknown_<context>_type()`, `unknown_data()`
+with helpers `is_unknown()`, `unknown_<context>_type()`, `unknown_data()`
+(reference: `Content` in `src/content.rs`). Response and resource structs are
+`#[non_exhaustive]` (D-002, guarded by `tests/non_exhaustive_responses.rs`)
+and keep unmodeled fields in a `#[serde(flatten)] extra` map. Polling
+continues on unknown statuses, bounded by timeouts. The `strict-unknown`
+feature makes `Content`, `Step` and every string enum fail on unknown values
+instead. New string enums use the crate-private `wire_enum!` macro
+(`src/wire_enum.rs`), which supplies all of the above.
 
-**When adding enums with Unknown variants**, implement all three helper methods:
-- `fn is_unknown(&self) -> bool`
-- `fn unknown_<context>_type(&self) -> Option<&str>`
-- `fn unknown_data(&self) -> Option<&serde_json::Value>`
+When adding or changing an enum, record its verified wire format in
+`docs/ENUM_WIRE_FORMATS.md`.
 
-See `Content` in `src/content.rs` for reference implementation.
+### Wire format
 
-**When adding/updating enums**: Always update `docs/ENUM_WIRE_FORMATS.md` with verified wire format and Unknown variant info. Test with `LOUD_WIRE=1` to confirm actual API format.
+- Interactions API field names are **snake_case**; send snake_case even if
+  camelCase is also accepted. (The Files and File Search Store APIs are
+  camelCase.)
+- Fields the endpoint rejects as *Vertex-only* are kept and documented;
+  fields rejected as *Unknown parameter* are removed (D-005).
 
-**Wire format field naming**: The Gemini Interactions API uses **snake_case** for field names. If the API appears to accept both camelCase and snake_case, always use snake_case in our serialization. Verify actual wire format with `LOUD_WIRE=1` before assuming documentation is correct.
+### Model and agent ids (D-006)
 
-## Test Organization
+Never hardcode one. Use the constants in `src/lib.rs`;
+`tests/model_literals.rs` fails on `"gemini-<digit>..."` or dated agent-id
+literals elsewhere.
 
-- **Unit tests**: Inline in source files
-- **Integration tests** (`tests/`): Require `GEMINI_API_KEY` for most; see file names for categories
-- **Property-based tests** (proptest): Serialization roundtrip verification
-  - `src/proptest_tests.rs`: Strategy generators
-  - `tests/proptest_roundtrip_tests.rs`: Integration proptests
+| Constant | Use for |
+|----------|---------|
+| `DEFAULT_MODEL` | Everything, unless a row below applies |
+| `MINIMAL_THINKING_MODEL` | `ThinkingLevel::Minimal` (the default model rejects it) |
+| `DEFAULT_IMAGE_MODEL` | Image generation |
+| `DEFAULT_TTS_MODEL` | Text-to-speech |
+| `DEFAULT_DEEP_RESEARCH_AGENT`, `DEFAULT_ANTIGRAVITY_AGENT` | `with_agent()` |
 
-**Test conventions**:
-- Use `#[ignore = "Requires API key"]` (exact format) for tests needing `GEMINI_API_KEY`
-- New public constructors need unit tests, not just integration tests (e.g., `Content::from_file()` should have unit tests for MIME type inference logic)
+Unit tests may use `"test-model"` where the id is filler. Non-test code that
+reaches the wire must use a real id.
 
-### Test Assertion Strategies
+### API conventions
 
-- **Structural**: Verify API mechanics (status, field presence) - default for most tests
-- **Semantic**: Use `assert_response_semantic()` for behavioral tests (adds ~1-2s API call; retries the validator on transient errors and asserts on the verdict)
-- **Avoid**: Brittle `text.contains("word")` assertions on LLM output - responses vary
+- `with_*` configures a setting (calling twice replaces); `add_*` appends to a
+  collection. See `docs/BUILDER_API.md`.
+- `*_with_auto_functions()` runs the function-calling loop
+  (`docs/FUNCTION_CALLING.md`).
+- `#[must_use]` on getters, handles and boolean checks.
+- Errors: `GenaiError` (`src/errors.rs`) for API/transport, `FunctionError`
+  for tool execution.
+- Logging (`docs/LOGGING_STRATEGY.md`): `warn` for recoverable issues
+  including Evergreen unknowns, `debug` for lifecycle; user content and
+  request bodies only at `debug`; API keys always redacted.
+- Breaking changes are fine when they simplify the API (D-007); no
+  compatibility shims. Pre-1.0.
 
-**Decision rule**: Is it checking LLM text content with a non-deterministic expected value? → Use semantic validation.
+### Multi-turn inheritance
 
-```rust
-// BAD - LLM might rephrase
-assert!(text.contains("paris"));
-assert!(text.contains("red") || text.contains("crimson"));
+| Field | Inherited via `previous_interaction_id`? |
+|-------|------------------------------------------|
+| Conversation history | Yes |
+| `system_instruction` | No — resend per turn |
+| `tools` | No — resend on every user turn |
 
-// GOOD - Handles natural language variability
-assert_response_semantic(&client, context, text, "Does this identify Paris?").await;
+### Tests
 
-// OK - Deterministic values (error messages, code execution results)
-assert!(text.contains("3628800"));  // factorial(10) - exact computed value
-assert!(error.to_string().contains("invalid"));  // library error message
-```
+- Unit tests live inline in `src/` (and `src/*_tests.rs`); offline HTTP
+  behavior is tested against a local stub in `tests/http_mock_tests.rs` via
+  `ClientBuilder::with_base_url`.
+- Live tests are `#[ignore = "Requires API key"]` (exact string) and must
+  **fail**, not skip, when the request fails. Every live test file belongs to
+  a `test-integration` matrix group in `.github/workflows/rust.yml`.
+- Don't assert `text.contains(..)` on non-deterministic model output; use
+  `assert_response_semantic()` (see `docs/TESTING.md`). Exact computed values
+  are fine.
+- Tests are organized by the feature they verify, not the mechanics they use
+  (D-008).
+- New public constructors need unit tests.
 
-See `docs/TESTING.md` for the full decision flowchart and examples.
+### Examples
 
-## CI/CD
+See `examples/CLAUDE.md`, which covers every example including
+`examples/antigravity/`: each runs live and exits 0, propagates errors, fails
+when its own claim doesn't hold, prints results rather than commentary, and
+cleans up.
 
-GitHub Actions runs: check, test, test-strict-unknown, test-integration (5 matrix groups), fmt, clippy, doc, msrv, cross-platform, coverage, build-metrics, shell-scripts (harnesses + shellcheck over `.github/scripts/` and `scripts/` via `make test-scripts`, plus the workflow `run:` parse-check and the gap-tracker baseline check — one home for everything needing no Rust toolchain), ci-flakiness-report (daily). Security audits run in separate `audit.yml` workflow (on Cargo.toml/lock changes + weekly). Integration tests require same-repo origin (protects API key). Release validation includes full integration test suite.
+## Changelog and versioning
 
-### Example size gate (`build-metrics`)
+Update `CHANGELOG.md` `[Unreleased]` for user-facing changes (features,
+breaking changes with migration, fixes). Not for internal refactors or CI.
 
-Example binary sizes are checked as a **per-example delta against the last
-main build**, not against an absolute ceiling. The baseline is an artifact
-refreshed on every push to main, which is why `build-metrics` is the one job
-that also runs on merges and not only on PRs — sizes are toolchain- and
-linker-dependent, so a committed number would encode one machine's toolchain.
+Version bump — update all of:
 
-| Situation | What happens |
-|-----------|--------------|
-| An example grows more than +15% vs main | The job fails, naming the example and both sizes |
-| No baseline (first run, expired artifact, lookup failed) | `::warning::`, the delta check does **not** run, and only the 64MB sanity ceiling applies |
-| Growth is intended | Add the **`size-growth-ok`** label to the PR, then **push a commit** |
-
-The push is not optional: a re-run replays the original event payload, so a
-label added afterwards is not in it, and this workflow does not trigger on
-`labeled`. The label waives both the threshold and the disjoint-key guard.
-The baseline refreshes automatically once the change lands on main, so the
-override is only ever needed for the PR that introduces the growth.
-
-## Project Conventions
-
-- **Model name**: Never hardcode a model id — reference the constants in `src/lib.rs`, which are the single source of truth. `tests/model_literals.rs` fails the build on any hardcoded `"gemini-<digit>"` outside them.
-
-  | Constant | Use for |
-  |----------|---------|
-  | `DEFAULT_MODEL` | Everything, unless a row below applies |
-  | `INLINE_VIDEO_MODEL` | **Inline base64 video** — `DEFAULT_MODEL` returns 400 on inline video bytes while accepting video by URI (verified live on `gemini-3.6-flash` 2026-08-10, `gemini-3.7-flash` 2026-08-15) |
-  | `MINIMAL_THINKING_MODEL` | `ThinkingLevel::Minimal` — `DEFAULT_MODEL` rejects it as unsupported (verified live 2026-08-15) |
-  | `DEFAULT_IMAGE_MODEL` | Image generation |
-  | `DEFAULT_TTS_MODEL` | Text-to-speech |
-
-  In-crate unit tests may use either the constants or the synthetic `"test-model"`; the tree does both. They exercise serialization round-trips and never cared which model, so the only rule that matters is that neither form is a model-bump site. Prefer `"test-model"` where the id is pure filler, and a constant where the test reads better naming a real default.
-
-  None of this extends to non-test code: a fallback model id that reaches the wire must be a real one. `AgentBuilder`'s default was briefly swept to `"test-model"` on exactly this confusion.
-
-### Naming Conventions
-
-**Builder method prefixes** (see `docs/BUILDER_API.md` for complete reference):
-
-| Prefix | Behavior | Example |
-|--------|----------|---------|
-| `with_*` | **Configures** a setting (replaces if called twice) | `with_model()`, `with_text()` |
-| `add_*` | **Accumulates** items to a collection | `add_function()`, `add_tool()` |
-
-**Method suffix**: `*_with_auto_functions()` automatically executes functions in a loop with timeout/storage semantics — see `docs/MULTI_TURN_FUNCTION_CALLING.md`.
-
-### #[must_use] Annotation
-
-Apply `#[must_use]` to getters, handles, and boolean checks where ignoring the result is likely a bug.
-
-## Versioning Philosophy
-
-Breaking changes are permitted and preferred when they simplify the API or align with Evergreen principles. Prefer clean breaks over backwards-compatibility shims.
-
-**CHANGELOG**: Update `CHANGELOG.md` for user-facing changes: new features, breaking changes, bug fixes, deprecations. Internal refactors and CI changes don't need entries.
-
-### Version Bump Checklist
-
-When releasing a new version, update these files:
-
-| File | Location |
-|------|----------|
-| `Cargo.toml` | `version = "X.Y.Z"` (line ~3) |
-| `Cargo.toml` | `genai-rs-macros = { version = "X.Y.Z"` (dependencies) |
-| `genai-rs-macros/Cargo.toml` | `version = "X.Y.Z"` (line ~3) |
-| `README.md` | `genai-rs = "X.Y"` and `genai-rs-macros = "X.Y"` (Installation section) |
-| `docs/ANTIGRAVITY.md` | `genai-rs = { version = "X.Y", ... }` (Setup section) |
+| File | Field |
+|------|-------|
+| `Cargo.toml` | `version`, and the `genai-rs-macros` dependency version |
+| `genai-rs-macros/Cargo.toml` | `version` |
+| `README.md` | `genai-rs = "X.Y"`, `genai-rs-macros = "X.Y"` |
+| `docs/ANTIGRAVITY.md` | `genai-rs = { version = "X.Y", ... }` |
 | `CHANGELOG.md` | `## [Unreleased]` → `## [X.Y.Z] - YYYY-MM-DD` |
 
-`Cargo.lock` updates automatically—don't edit manually.
+## Release
 
-### Release Steps
-
-After merging version bump PR:
-
-0. **Verify the docs.rs build locally** (docs.rs builds on nightly rustdoc —
-   e.g. nightly-only attribute removals; release.yml's validate job runs the
-   same nightly check before publish, but catching it here means finding out
-   before the tag exists rather than after):
+1. Build docs on nightly first (docs.rs builds on nightly; CI checks stable,
+   D-009):
    `RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo +nightly doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs`
-   (matches the `[package.metadata.docs.rs]` feature set; `-D warnings` here
-   is deliberately stricter than docs.rs, though not stricter than the CI
-   gate — `rust.yml`'s docs.rs-feature-set step sets the same flags on
-   stable. What the local run buys is the toolchain: nightly, which is what
-   docs.rs builds on. `release.yml` does run nightly rustdoc, but without
-   `-D warnings` and only once the tag exists — which is the whole point of
-   doing it here first. Warnings are an early signal locally; only hard
-   errors fail the actual docs.rs build.)
-1. **Tag the release**: `git tag -a vX.Y.Z origin/main -m "Release vX.Y.Z"`
-2. **Push tag**: `git push origin vX.Y.Z`
-3. **Watch the run.** The tag push is the trigger — `release.yml` runs on
-   `push: tags: ['v*']` and does the rest itself, in this order:
+2. `git tag -a vX.Y.Z origin/main -m "Release vX.Y.Z" && git push origin vX.Y.Z`.
+   `release.yml` validates (including the live suite), publishes
+   `genai-rs-macros` then `genai-rs`, and creates the GitHub release from the
+   `## [X.Y.Z]` CHANGELOG section. Never `cargo publish` or
+   `gh release create` by hand.
+3. On failure: `validate` → re-run (the live suite can flake); tag/version
+   mismatch → delete the tag, fix, re-tag; failed after `genai-rs-macros`
+   published → bump the patch version and release again; `github-release` →
+   re-run.
 
-   | Job | What it does |
-   |-----|--------------|
-   | `validate` | check, unit tests, doctests, the full integration suite, fmt, clippy, and the docs.rs build on both stable and nightly |
-   | `publish` | re-checks the tag against `Cargo.toml`, publishes `genai-rs-macros`, polls crates.io until it is indexed (up to 5 min), then publishes `genai-rs` |
-   | `github-release` | creates the GitHub release; body is the `## [X.Y.Z]` section of `CHANGELOG.md`, followed by the auto-generated PR list and compare link |
+## CI notes
 
-   If that section is missing — the Version Bump Checklist above is what
-   creates it: rename `## [Unreleased]` if the file has one, otherwise add a
-   `## [X.Y.Z] - YYYY-MM-DD` heading above the previous release — the job
-   does not fail. It emits a `::warning::No [X.Y.Z] section in CHANGELOG.md` and falls
-   back to a raw commit list, which is then worth replacing by hand. The
-   fallback leaves no trace in the release itself — and since the
-   auto-generated list is appended either way, the signal is the *absence of
-   the CHANGELOG prose* at the top of the body, not the presence of a list.
+- `rust.yml` jobs: check, test, test-strict-unknown, test-antigravity (pinned
+  `localharness` wheel), test-integration (live, grouped), example-smoke
+  (live), fmt, shell-scripts, clippy, doc, msrv, cross-platform, coverage,
+  build-metrics. Live jobs run only for same-repo pushes/PRs and fail on an
+  empty `GEMINI_API_KEY`.
+- Other workflows: `audit.yml`, `api-surface-sweep.yml`, `consumer-crate.yml`,
+  `ci-flakiness-report.yml`, `release.yml`, `release-drafter.yml`.
+- **Example size gate:** `build-metrics` fails when an example binary grows
+  more than 15% against the last main build. For intended growth, add the
+  `size-growth-ok` label **and push a commit** (a re-run replays the old event
+  payload).
+- `gh run view --log-failed` lines are prefixed `Job\tStep\tTimestamp\t`; use
+  `sed 's/.*test //'` to extract test names.
 
-   Nothing here is a manual step. Running `cargo publish` or
-   `gh release create` by hand races the workflow: neither silently
-   double-publishes — `cargo publish` refuses an already-uploaded version —
-   but both fail confusingly, on a release that already succeeded.
+## Technical notes
 
-   **If something fails, what you do next depends on how far it got:**
-
-   | Failure | Recovery |
-   |---------|----------|
-   | `validate` fails | Nothing published. Re-run the job first — this step runs the full live integration suite, which CLAUDE.md's own testing section warns may flake, and it hard-fails on an empty or whitespace `GEMINI_API_KEY`. Re-tag only for a real defect. |
-   | `publish` fails on the tag check | Nothing published — the tag-vs-`Cargo.toml` check runs before the first upload. Delete the tag, fix the version, tag again. |
-   | `publish` fails *between* the two crates | `genai-rs-macros` is already on crates.io and that version can never be re-uploaded, so re-tagging does **not** recover: the retry's first `cargo publish -p genai-rs-macros` fails and `genai-rs` never publishes. Bump to a new patch version and release that. |
-   | `github-release` fails | Both crates are published; only the GitHub release is missing. Re-run the job, or create the release by hand from the CHANGELOG. |
-
-## Logging
-
-See `docs/LOGGING_STRATEGY.md`. Key points:
-- `error` for unrecoverable, `warn` for recoverable (including Evergreen unknowns), `debug` for API lifecycle
-- API keys redacted; user content only at `debug` level
-- Enable: `RUST_LOG=genai_rs=debug cargo run --example simple_interaction`
-
-## Technical Notes
-
-- Rust edition 2024 (requires Rust 1.88+)
-- Uses `rustls-tls` (not native TLS)
-- Tokio async runtime
-- API version: Gemini V1Beta (configured in `src/http/common.rs`)
-- See `CHANGELOG.md` for breaking changes and migration guides
-
-### CI Debugging Tips
-
-- **GitHub Actions log parsing**: Logs from `gh run view --log-failed` are prefixed with `JobName\tStepName\tTimestamp\t`. Use `sed 's/.*test //'` (not `sed 's/^test //'`) to extract test names from failure output.
+Rust edition 2024, MSRV 1.88. `reqwest` with `rustls` (OS trust store).
+Tokio runtime.

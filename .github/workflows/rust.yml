@@ -63,42 +63,20 @@ jobs:
       - uses: ./.github/actions/setup-mold
       - name: Install pinned localharness wheel
         # Version must match SUPPORTED_HARNESS_VERSION in src/antigravity/.
-        run: pip install google-antigravity==0.1.10
+        run: pip install google-antigravity==0.1.18
       - name: Run unit tests with antigravity feature
         run: cargo nextest run --workspace --features antigravity
-      # The model-backed tests in this binary are the only ones that
-      # drive a real turn end-to-end, which makes them the only guard
-      # against a harness protocol change breaking turn completion. They
-      # self-skip without a key — so omitting it here made them pass
-      # vacuously, and the harness 0.1.5 -> 0.1.10 terminal-state rename
-      # (every turn hanging to timeout) went unnoticed.
-      # Same-repo guard on this step only, not the job: the unit-test step
-      # above needs no key, and gating the whole job would stop forks from
-      # running the antigravity-gated unit tests entirely. The repository
-      # check is part of that guard rather than redundant with it: `push`
-      # fires on a fork's own main too (Sync fork), as does a fork-internal
-      # PR where head and base are both the fork, and the hard failure
-      # below would then fire in a repo that never had the secret.
-      # Owner rather than the full slug: a rename would otherwise make both
-      # key-gated steps skip everywhere including upstream, which is the
-      # same vacuous pass the checks below exist to stop -- only moved to
-      # the `if:`, where no ::error:: can fire.
+      # The only end-to-end guard against a harness protocol change. Key-gated
+      # per step, not per job, so forks still run the unit tests. Owner check:
+      # `push` also fires on a fork's main, where the secret is absent.
       - name: Run harness integration tests
         if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
-        # --retries 2 for the same reason as the integration matrix: this
-        # step now draws on the same shared key, so it sees the same
-        # low-rate 429s. A retried test is reported FLAKY, not hidden.
+        # --retries 2: the shared key sees occasional 429s; retried tests show
+        # as FLAKY.
         run: |
           set -eo pipefail
-          # These tests self-skip without a key, so a rotated or cleared
-          # secret would turn this step green having run nothing — the exact
-          # vacuous pass that let the 0.1.5 -> 0.1.10 break reach a release
-          # (see the comment above). The `if:` above rules out forks --
-          # including a fork's own push to main, which satisfies the
-          # event_name arm -- but cannot see a rotated or cleared secret.
-          # Trimmed, to match the `Ok(key) if !key.trim().is_empty()` the
-          # tests and examples gate on: a secret of just whitespace would
-          # pass a bare -z and then skip everything downstream anyway.
+          # Fail on an empty key: these tests self-skip without one. Whitespace
+          # is stripped to match the tests' `!key.trim().is_empty()` gate.
           if [ -z "${GEMINI_API_KEY//[[:space:]]/}" ]; then
             echo "::error::GEMINI_API_KEY is empty or unset — the harness tests would self-skip and this step would pass having verified nothing"
             exit 1
@@ -106,143 +84,37 @@ jobs:
           cargo nextest run --features antigravity --run-ignored all --retries 2 -E 'binary(antigravity_harness)'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      # Examples were compiled but never executed, so bugs that only show
-      # up in a real run stayed invisible: `on_post_tool` reporting every
-      # successful builtin as a failure was found by running one of these
-      # by hand, not by any test. Most finish in seconds; repo_auditor
-      # drives subagents and is the one whose cost is not yet measured.
+      # Run, not just compiled: some bugs only show up in a real run.
       - name: Smoke-run antigravity examples
         if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
-        # Belt and braces alongside the examples' own with_turn_timeout: a
-        # harness that stops signalling turn completion hangs rather than
-        # errors, and an unbounded step would burn the runner's full budget
-        # instead of going red.
-        #
-        # A runner-budget cap, not a bound above the retry loop's worst
-        # case. It was the latter when this was five examples at 120s/180s;
-        # with seven examples and wrappers of 300s/360s/420s/660s, three
-        # attempts apiece run well past this. That is deliberate: the
-        # per-attempt `timeout` below is what attributes a hang to an example
-        # by name, and it does that job whenever a small number of examples
-        # hang, which is every case observed. Reaching this ceiling is a
-        # different failure, and a step-level timeout is the accepted
-        # reporting for it — raising the ceiling to cover the worst case
-        # would mean a wedged run burning two hours of runner before saying
-        # anything.
-        #
-        # repo_auditor can reach it unaccompanied (3 x 660s is 33min), so
-        # this is not only a pileup case. Attribution survives even then:
-        # its per-attempt `::warning::` timed-out lines print as they go,
-        # and only the terminal failed-N-times line is lost to the step
-        # timeout. It is ordered *last* in the loop below for that reason:
-        # the six faster examples finish and report before the one that can
-        # exhaust the ceiling starts, so a hang there costs its own coverage
-        # rather than theirs. A step killed mid-list leaves no signal
-        # separating "passed" from "never ran".
+        # A runner-budget cap, not a bound on the retry loop's worst case: the
+        # per-attempt `timeout` below is what names a hung example. repo_auditor
+        # runs last so a hang there cannot cost the others their coverage.
         timeout-minutes: 30
         run: |
           set -eo pipefail
-          # Every example self-skips without a key, so a rotated or cleared
-          # secret would run seven processes that each print one line and
-          # exit 0 — green, having proven nothing.
-          # Trimmed, to match the `Ok(key) if !key.trim().is_empty()` the
-          # tests and examples gate on: a secret of just whitespace would
-          # pass a bare -z and then skip everything downstream anyway.
+          # Fail on an empty key: every example self-skips without one.
           if [ -z "${GEMINI_API_KEY//[[:space:]]/}" ]; then
             echo "::error::GEMINI_API_KEY is empty or unset — every example would self-skip and this step would pass having verified nothing"
             exit 1
           fi
-          # Retry each example, for the same reason the nextest steps use
-          # --retries: four of the five hard-fail on LLM-dependent outcomes
-          # (no MCP call made, fewer than N chars streamed before the halt,
-          # no trigger inside the window, empty restored history). Those
-          # assertions are deliberate — a run that proves nothing must not
-          # pass green — but a single unlucky turn should not redden an
-          # unrelated PR. `cargo run` has no --retries, hence the loop.
-          #
-          # Each attempt gets its own `timeout`, rather than relying on the
-          # step budget: an example that hangs is then attributed to that
-          # example by name, instead of the whole step dying on the ceiling
-          # and reporting nothing about which one stalled.
-          #
-          # The wrapper must sit above each example's worst *legal* runtime,
-          # so a slow-but-legal run is ended by the example — which reports a
-          # real error naming the turn — and the wrapper only ever catches a
-          # process that stopped responding altogether. Below it, the wrapper
-          # preempts the example's own ceiling and the loop reads a legal
-          # slow run as a broken example: this mechanism's own misattribution
-          # failure, running backwards.
-          #
-          # The examples are already compiled by the `cargo nextest run
-          # --workspace --features antigravity` step above — nextest shells
-          # out to `cargo test --no-run`, which builds `--example` targets
-          # too (verified by breaking one: the build fails at that step, not
-          # here). Same features, same dev profile, so `cargo run` below
-          # re-execs an existing binary rather than compiling under the
-          # wrapper. A broken example therefore fails once as a build error
-          # up there, instead of being retried three times down here and
-          # reported as a flaky run.
-          #
-          # Note the units. `with_turn_timeout` bounds one *turn*; this
-          # wrapper bounds the whole *process*, so the bar is
-          # turns x ceiling, not ceiling — plus compile, process start and
-          # harness spawn, which the turn budget never sees. Worst legal
-          # runtime per example, against its budget below. The third column
-          # is wall clock spent *outside* any turn, which no turn budget
-          # bounds:
-          #
-          #                      turns x ceiling   out-of-turn   budget
-          #   antigravity_agent   3 x 120s = 360             —  <  420
-          #   repo_auditor        1 x 600s = 600             —  <  660
-          #   proactive_agent     2 x 120s = 240      30s poll  <  360
-          #   session_resume      2 x 120s = 240     2nd spawn  <  360
-          #   workspace_explorer  1 x 120s = 120             —  <  300
-          #   mcp_toolbelt        1 x 120s = 120             —  <  300
-          #   cancellable_turn    1 x 180s = 180             —  <  300
-          #
-          # proactive_agent polls up to 30s for a trigger delivery between
-          # its two turns, so a 300s budget would have left only ~30s for
-          # the link step and spawn — thin enough that a cold runner could
-          # fire the wrapper on a run that stayed inside every budget the
-          # example declares. session_resume spawns a second harness to
-          # prove resume works, and at 300s its 60s of headroom would have
-          # covered two spawns at that same ~30s apiece — so it gets the
-          # same treatment, rather than a story about why a second spawn is
-          # cheaper to absorb than the poll was.
-          #
-          # Re-check this table when an example gains a turn, changes its
-          # budget, or waits on anything outside a turn; every one declares
-          # its budget explicitly so the first column reads off the source.
-          #
-          # Not a replacement for the step budget: enough simultaneous
-          # hangs run well over the 30min `timeout-minutes` above — three
-          # attempts each, plus `--kill-after` grace and the backoff sleeps
-          # — and that case reports as it always did. Deliberately not
-          # spelled as a total: it would need recomputing on every budget
-          # change, and the conclusion does not turn on the figure.
-          #
-          # All seven, not the five this started with: repo_auditor is the
-          # example the README sends people to first and was the only one
-          # never executed here, and antigravity_agent is the starter. Both
-          # were compile-only, which is how `on_post_tool` reporting every
-          # successful builtin as a failure survived — that was found by
-          # running an example by hand. repo_auditor drives subagents over
-          # a fixture repo, so it is the slowest of the seven; this run is
-          # the first measurement of what a healthy one costs.
+          # Retried: several examples hard-fail on LLM-dependent outcomes, and
+          # `cargo run` has no --retries. Budgets sit above each example's
+          # declared turn timeouts (turns x ceiling, plus out-of-turn waits), so
+          # a hang is attributed by name and a slow-but-legal run is still ended
+          # by the example itself. Already compiled by the nextest step above,
+          # so no build runs under the timeout.
           for ex in antigravity_agent session_resume workspace_explorer mcp_toolbelt proactive_agent cancellable_turn repo_auditor; do
-            # Above the example's own with_turn_timeout, never below.
             case "$ex" in
-              # Declares 600s.
+              # 1 turn x 600s.
               repo_auditor) budget=660 ;;
-              # Declares 120s, but takes three sequential turns.
+              # 3 turns x 120s.
               antigravity_agent) budget=420 ;;
-              # Two turns at 120s, plus up to 30s polling out-of-turn for
-              # the trigger delivery.
+              # 2 turns x 120s, plus up to 30s polling for the trigger delivery.
               proactive_agent) budget=360 ;;
-              # Two turns at 120s, and it spawns a second harness to prove
-              # resume works — two spawns to absorb, not one.
+              # 2 turns x 120s, plus a second harness spawn.
               session_resume) budget=360 ;;
-              # The rest are single-turn at 120s, or 180s for cancellable_turn.
+              # Single turn at 120s (cancellable_turn: 180s).
               *) budget=300 ;;
             esac
             echo "::group::cargo run --example $ex (budget ${budget}s)"
@@ -270,25 +142,25 @@ jobs:
     name: Integration Tests (${{ matrix.group }})
     needs: check
     runs-on: ubuntu-latest
-    # Owner check for the same reason as the antigravity steps: the vacuous-
-    # pass guard below hard-fails on a missing key, and `push` fires on a
-    # fork's own main too, so without it a fork would go red for a secret it
-    # was never going to have.
+    # Owner check: `push` also fires on a fork's main, where the secret is
+    # absent.
     if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
     strategy:
       fail-fast: false
       matrix:
         include:
+          # Every binary with `#[ignore = "Requires API key"]` tests goes in
+          # exactly one group; tests/ci_coverage.rs enforces it.
           - group: core
-            tests: "interactions_api_tests multiturn_tests streaming_multiturn_tests"
+            tests: "interactions_api_tests multiturn_tests streaming_multiturn_tests streaming_resume_tests error_handling_tests"
           - group: tools
-            tests: "tools_and_config_tests agents_tests webhooks_and_agents_tests"
+            tests: "tools_and_config_tests webhooks_and_agents_tests credentials_tests environment_files_tests"
           - group: functions
-            tests: "function_calling_tests"
+            tests: "function_calling_tests tool_service_tests"
           - group: multimodal
-            tests: "multimodal_tests api_canary_tests temp_file_tests"
+            tests: "multimodal_tests api_canary_tests temp_file_tests processing_steps_tests voices_tests binding_parity_tests"
           - group: files-and-wire
-            tests: "api_wire_format_live_tests files_api_tests file_search_stores_tests"
+            tests: "files_api_tests file_search_stores_tests"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -300,69 +172,80 @@ jobs:
       - name: Run integration tests (${{ matrix.group }})
         run: |
           set -eo pipefail
-          # Every test in these five groups is #[ignore = "Requires API key"]
-          # and self-skips when get_client() finds no key, so a rotated or
-          # cleared secret would print ~217 skip lines across the matrix and
-          # report green having called the API zero times. That is the same
-          # vacuous pass guarded on the antigravity steps above, on the suite
-          # with the most coverage and the one release validation leans on.
-          # The SEMANTIC_VALIDATION_SKIPPED escalation below is the same
-          # argument applied to a partial skip; this is the total case.
-          # Trimmed, to match the `Ok(key) if !key.trim().is_empty()` the
-          # tests and examples gate on: a secret of just whitespace would
-          # pass a bare -z and then skip everything downstream anyway.
+          # Fail on an empty key: every test here self-skips without one.
           if [ -z "${GEMINI_API_KEY//[[:space:]]/}" ]; then
             echo "::error::GEMINI_API_KEY is empty or unset — every integration test would self-skip and this job would pass having verified nothing"
             exit 1
           fi
           for test in ${{ matrix.tests }}; do
             echo "::group::Running $test"
-            # --success-output=final keeps passing-test output (notably the
-            # SEMANTIC_VALIDATION_SKIPPED and LIVE_TOOL_EVIDENCE_SKIPPED
-            # markers) greppable in CI logs.
-            # Capture the status instead of dying on it so the group is
-            # closed and the skip warning still fires on a failing run —
-            # the run where the skip count is most diagnostic.
+            # --success-output=final keeps passing tests' *_SKIPPED markers in
+            # the log. rc is captured so the group closes and the skip check
+            # still runs on a failure.
             rc=0
-            # --retries 2: the shared project key sees a low-rate 429 under
-            # a five-way matrix, and nextest is fail-fast — so one transient
-            # error discards the rest of the group (observed: 30 of 37 tests
-            # skipped for a single 429). Retrying only the failed test costs
-            # one call instead of re-running the matrix. Nothing is hidden:
-            # a test that needed a retry is reported FLAKY, which is exactly
-            # what the ci-flakiness-report job is for.
+            # --retries 2: the shared key sees occasional 429s, and nextest's
+            # fail-fast would drop the rest of the group; retried tests show as
+            # FLAKY.
             cargo nextest run --test $test --run-ignored all --retries 2 --success-output=final 2>&1 | tee "/tmp/$test.log" || rc=$?
             echo "::endgroup::"
-            # Both markers, counted together. `LIVE_TOOL_EVIDENCE_SKIPPED`
-            # is emitted by a live tool test whose interaction succeeded, or
-            # failed in a way the test's triage guard did not recognise,
-            # without evidence the server was reached — one occurrence is
-            # model variability or a third-party blip, a persistent one is a
-            # silently broken tool, which is the failure that would otherwise
-            # stay green and unremarked.
+            # LIVE_TOOL_EVIDENCE_SKIPPED: a live tool test that could not show
+            # the server was reached. Occasional is noise; persistent is a
+            # silently broken tool.
             skips=$(grep -cE 'SEMANTIC_VALIDATION_SKIPPED|LIVE_TOOL_EVIDENCE_SKIPPED' "/tmp/$test.log" || true)
             if [ "${skips:-0}" -gt 3 ]; then
-              # The tolerated-skip escape hatch is only meaningful while it
-              # stays rare — past this threshold the run's green can't be
-              # trusted, so fail instead of warn. Escalate only a passing
-              # run: a real nextest failure keeps its own exit code.
-              #
-              # 3 is unchanged now that both marker classes share the budget,
-              # and that is deliberate rather than an oversight. It does mean
-              # a permanently unreachable MCP server costs
-              # `tools_and_config_tests` one of its three slots — but a run
-              # that is both missing live tool evidence *and* burning
-              # validator transients is precisely the run whose green is
-              # least worth trusting, so spending them from one pool is the
-              # behaviour wanted. release.yml re-derived its own number
-              # because it counts a whole workspace run against a much larger
-              # denominator, where one extra marker really is noise.
+              # Past 3, a green run can't be trusted. Both marker classes share
+              # the budget; a real nextest failure keeps its own exit code.
               echo "::error::$test: $skips unverified assertion(s) or tolerated failure(s) — too many to trust this run (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)"
               if [ "$rc" -eq 0 ]; then rc=1; fi
             elif [ "${skips:-0}" -gt 0 ]; then
               echo "::warning::$test: $skips unverified assertion(s) or tolerated failure(s) (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)"
             fi
             [ "$rc" -eq 0 ] || exit "$rc"
+          done
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+  example-smoke:
+    name: Example Smoke Run
+    needs: check
+    runs-on: ubuntu-latest
+    # Same owner gating as test-integration.
+    if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: example-smoke
+      - uses: ./.github/actions/setup-mold
+      # Compile outside the per-example timeout, so a slow build is never
+      # reported as a hung example.
+      - name: Build examples
+        run: cargo build --examples
+      - name: Run examples
+        run: |
+          set -eo pipefail
+          if [ -z "${GEMINI_API_KEY//[[:space:]]/}" ]; then
+            echo "::error::GEMINI_API_KEY is empty or unset — the examples cannot run"
+            exit 1
+          fi
+          # A cheap subset, each exiting non-zero when its demo didn't happen.
+          # One retry absorbs a transient 429 or an unlucky model turn.
+          for ex in simple_interaction streaming stateful_interaction explicit_turns \
+                    auto_function_calling manual_function_calling structured_output \
+                    pdf_input files_api multi_turn_agent_manual_stateless; do
+            echo "::group::cargo run --example $ex"
+            if ! timeout --kill-after=30s 300s cargo run --example "$ex"; then
+              echo "::warning::$ex failed, retrying once"
+              sleep 5
+              if ! timeout --kill-after=30s 300s cargo run --example "$ex"; then
+                echo "::error::$ex failed twice"
+                echo "::endgroup::"
+                exit 1
+              fi
+            fi
+            echo "::endgroup::"
           done
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -384,67 +267,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         id: checkout
-      # One entry point for every harness under `.github/scripts/tests/`,
-      # via the same make target a contributor runs locally, so CI and
-      # `make check` cannot disagree about what is covered.
-      #
-      # No toolchain needed, so this reports in seconds — which is why the
-      # harnesses live here rather than in `build-metrics`, a job that opens
-      # with `cargo clean` and a full release build. A shell lint failure
-      # should not take ten minutes to surface.
-      #
-      # `bash -n` cannot catch what these scripts get wrong — the
-      # `$ENV.TITLE` ordering bug was valid syntax meaning the wrong thing —
-      # so the branches are exercised against a stubbed `gh`, and shellcheck
-      # covers the quoting and `set -e` classes the fixtures structurally
-      # cannot reach.
+      # Same make target as `make check`, so CI and local runs cover the same
+      # things. No toolchain needed, so shell failures report in seconds.
       - name: Run the shell harnesses and shellcheck
         run: make test-scripts
 
-      # The real CHANGELOG, not a fixture: this is what a release would
-      # actually read, and a heading that drifts off the `## [X.Y.Z]` shape
-      # would otherwise only surface at tag time as an empty release body.
-      # Independent of the step above, and kept that way. Folding this into
-      # `shell-scripts` put it downstream of `make test-scripts`, and Actions
-      # stops a job at the first failing step — so without this guard, a red
-      # harness anywhere under `.github/scripts/tests/` (including the four
-      # this PR does not own) would skip the one check that catches a
-      # CHANGELOG heading drifting off the `## [X.Y.Z]` shape, whose absence
-      # otherwise only resurfaces at tag time. `make test-scripts` itself
-      # collects `rc=1` and keeps going for exactly this reason; this step
-      # sits outside that loop and has to say so.
-      #
-      # `!cancelled()` rather than `always()`: both restore independence, but
-      # `always()` also runs the step after someone cancels the job.
-      #
-      # Gated on the checkout too, not just on `!cancelled()`. Independence
-      # from `make test-scripts` is the point; independence from the
-      # checkout is not something to want — without it this step would run
-      # on a failed checkout and die on `awk: can't open file Cargo.toml`,
-      # a bare red step carrying none of the diagnostics the block below
-      # takes care to emit, underneath a clearer failure.
+      # The real CHANGELOG: a heading off the `## [X.Y.Z]` shape would otherwise
+      # surface only at tag time, as an empty release body. `!cancelled()` so a
+      # red harness above doesn't skip it; gated on the checkout so it can't
+      # fail noisily.
       - name: Extract the current version's section from the real CHANGELOG
         if: ${{ !cancelled() && steps.checkout.conclusion == 'success' }}
         run: |
           set -euo pipefail
-          # One awk pass rather than `grep | head -1 | sed`. This step turns on
-          # `pipefail`, which the equivalent steps in release.yml do not, and
-          # under it a `head` that closes the pipe before `grep` flushes makes
-          # the pipeline 141 and fails the step. Not reachable against this
-          # tree — one matching line, flushed at exit — but free to remove,
-          # and `exit` gives the `head -1` semantics for nothing. Both
-          # release.yml sites are swept to the same one-liner, so the three
-          # readers of this rule cannot drift apart — and the load-bearing one
-          # is release.yml's, which gates publishing.
+          # awk `exit` rather than `grep | head -1`: under pipefail an
+          # early-closing `head` can fail the pipeline with 141.
           VERSION=$(awk -F'"' '/^version = /{print $2; exit}' Cargo.toml)
-          # An empty read makes this step vacuous rather than loud: the
-          # extractor would be called with two arguments, pass the arity
-          # check, search for `## []`, find nothing, and land in the benign
-          # `elif` — a green step that verified nothing about the real
-          # CHANGELOG, which is the only thing it exists to do. `set -u` does
-          # not catch it, because the variable is set and merely empty.
-          # Reachable by restructuring Cargo.toml: an indented
-          # `[workspace.package]` version, or `version.workspace = true`.
+          # An empty version would search for `## []` and pass vacuously.
           if [ -z "$VERSION" ]; then
             echo "::error::No anchored 'version = ' line in Cargo.toml — the version could not be read, so this check verified nothing."
             exit 1
@@ -455,45 +294,18 @@ jobs:
           if [ "$rc" -eq 0 ]; then
             echo "CHANGELOG.md has a [$VERSION] section"
           elif [ "$rc" -eq 1 ]; then
-            # A warning, not a failure. Between a version bump landing and its
-            # CHANGELOG entry being written, and on any PR that predates the
-            # bump, this is the normal state — failing here would redden
-            # unrelated PRs. release.yml warns and falls back for the same
-            # reason.
+            # Normal between a version bump and its CHANGELOG entry, so only a
+            # warning.
             echo "::warning::CHANGELOG.md has no [$VERSION] section — a release tagged now would fall back to a raw commit list for its body."
           else
-            # Exit 2 is a caller or environment error — bad arguments, or no
-            # CHANGELOG.md at all. Not the benign case above, and not
-            # something a PR should be allowed to introduce quietly.
+            # Exit 2: bad arguments or no CHANGELOG.md.
             echo "::error::extract_changelog_section.sh exited $rc — a usage or environment error, not a missing section."
             exit 1
           fi
 
-      # Python, so it needs a toolchain step the rest of this job does not —
-      # kept here anyway rather than in a job of its own. #443 folded two
-      # script jobs into this one and #441 deleted a third; a fourth
-      # checkout-plus-run-a-script job would re-create exactly what those
-      # removed, and leave no rule for where the next check goes. One
-      # `setup-python` is a cheaper price than that ambiguity, and the job
-      # still needs no Rust toolchain, so it still reports in seconds.
-      #
-      # Every step below is guarded, because folding them in here put them
-      # downstream of `make test-scripts` and Actions stops a job at the
-      # first failing step. Without the guard a red harness under
-      # `.github/scripts/tests/` — including ones this PR does not own —
-      # would silently skip both checks, and a skipped check is
-      # indistinguishable from a passing one. `make test-scripts` collects
-      # `rc=1` and keeps going for the same reason; these sit outside that
-      # loop. The setup steps carry the guard too: skipping those while
-      # running the check would fail it on a missing `yaml` import rather
-      # than on anything real.
-      #
-      # `!cancelled()` rather than `always()`: both restore independence,
-      # but `always()` would also run these after a job is cancelled. Gated
-      # on the checkout as well, matching the step above — independence from
-      # `make test-scripts` is the point; independence from the checkout is
-      # not, and without it these would run on a failed checkout and fail on
-      # a missing file rather than on anything real.
+      # Guarded like the step above, so a red harness can't silently skip these.
+      # The setup steps too, or the check would fail on a missing `yaml` import
+      # instead.
       - uses: actions/setup-python@v5
         if: ${{ !cancelled() && steps.checkout.conclusion == 'success' }}
         with:
@@ -503,9 +315,7 @@ jobs:
       - name: 'Parse-check workflow run: blocks'
         if: ${{ !cancelled() && steps.checkout.conclusion == 'success' }}
         run: python3 .github/scripts/check_workflow_shell.py
-      # Not a harness under `.github/scripts/tests/`, so the glob above does
-      # not reach it — it checks a duplicated fact in the tree rather than
-      # exercising a script, and needs naming explicitly.
+      # Not a harness under `.github/scripts/tests/`, so run explicitly.
       - name: Gap tracker matches the CI sweep baseline
         if: ${{ !cancelled() && steps.checkout.conclusion == 'success' }}
         run: .github/scripts/check_gap_tracker_baseline.sh
@@ -536,11 +346,8 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
       - name: Check documentation (docs.rs feature set)
-        # Mirrors [package.metadata.docs.rs] (features AND the docsrs
-        # rustdoc-arg) on stable: gates warnings specific to the published
-        # feature set. Nightly-only breakage (docs.rs builds on nightly) is
-        # covered by the nightly step in release.yml's validate job (and by
-        # release checklist step 0 in CLAUDE.md), not this job.
+        # Mirrors [package.metadata.docs.rs] on stable. Nightly-only breakage is
+        # caught by release.yml's validate job.
         run: cargo doc --workspace --no-deps --features antigravity
         env:
           RUSTDOCFLAGS: --cfg docsrs -D warnings
@@ -558,8 +365,7 @@ jobs:
 
   cross-platform:
     name: Cross Platform (${{ matrix.os }}, ${{ matrix.rust }})
-    # Only run on main branch pushes to speed up PR feedback loop.
-    # Platform-specific issues are rare and will be caught immediately after merge.
+    # Main pushes only, to keep PR feedback fast.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ${{ matrix.os }}
     strategy:
@@ -576,9 +382,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: ${{ matrix.os }}-${{ matrix.rust }}
-      # No `if: runner.os == 'Linux'` — the composite guards itself, and
-      # says so on the other legs. Reintroducing the condition here would
-      # restore the per-call-site knowledge the composite removed.
+      # No `if: runner.os == 'Linux'`: the composite guards itself.
       - uses: ./.github/actions/setup-mold
       - name: Build
         run: cargo build --workspace --release
@@ -599,16 +403,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: ./.github/actions/setup-mold
-      # nextest, because `Generate coverage` runs under it rather than under
-      # plain `cargo test` — see the comment on that step.
       - uses: taiki-e/install-action@cargo-nextest
       - name: Generate coverage
-        # `nextest` (process per test), not plain `cargo test` (threads in one
-        # process). Several unit tests assume process isolation — a scoped
-        # thread-local tracing subscriber vs tracing's process-wide interest
-        # cache, and LOUD_WIRE env mutation vs concurrently-built clients — so
-        # under `cargo test` they flake, and only this job ran that way. See
-        # #418.
+        # nextest (process per test): several unit tests assume process
+        # isolation and flake under plain `cargo test` threads (#418).
         run: cargo llvm-cov nextest --workspace --lcov --output-path lcov.info
       - uses: codecov/codecov-action@v4
         with:
@@ -620,35 +418,18 @@ jobs:
   build-metrics:
     name: Build Metrics
     runs-on: ubuntu-latest
-    # PRs consume the size baseline; main pushes publish it. Previously this
-    # was PR-only, which is fine for an absolute ceiling but leaves a delta
-    # check with nothing to compare against — so main is now included, at the
-    # cost of running this job on merges as well. That is the price of
-    # absorbing toolchain drift automatically instead of bumping a ceiling by
-    # hand every few releases (#403).
+    # PRs consume the size baseline; main pushes publish it.
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     permissions:
       contents: read
       actions: read # `gh run download` for the baseline artifact
     steps:
       - uses: actions/checkout@v4
-      # First, before the clean release build: this depends only on bash and
-      # jq, does not read `target/`, and fails in seconds. Late, a broken
-      # assertion surfaced minutes in with the expensive work already sunk.
-      #
-      # The size check decides whether a PR goes red, and its interesting
-      # behaviours are all comparisons it either makes or silently declines
-      # to make — including the mode where it compares nothing and reports
-      # "all examples within threshold". Fixtures, so that stays checked.
       - uses: dtolnay/rust-toolchain@stable
       - uses: ./.github/actions/setup-mold
       - name: Clean build time
-        # Same feature set as `Build examples` below, for two reasons. The
-        # reported number should describe the build everything downstream is
-        # measured at — otherwise this row is a plain-default build while the
-        # sizes come from an antigravity one. And a different feature set is a
-        # different metadata hash, so without this the lib would be compiled
-        # twice per run: once here, once again for the examples.
+        # Same feature set as the examples build, so the lib compiles once and
+        # this number describes the build the sizes come from.
         run: |
           echo "## Build Metrics" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -661,28 +442,9 @@ jobs:
           echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Clean release build | ${duration}s |" >> $GITHUB_STEP_SUMMARY
       - name: Build examples
-        # `--features antigravity` because all seven `examples/antigravity/*`
-        # targets carry `required-features = ["antigravity"]`, which is not in
-        # `default`. A plain `cargo build --examples` silently skips a target
-        # whose required features are off, so those seven never reached
-        # `target/release/examples` — and so were absent from the summary
-        # table, the delta check and the sanity ceiling alike. That is the
-        # largest feature surface in the crate, which makes it the place a
-        # size regression was most likely to go unnoticed. They compile in CI
-        # already (`check` runs `--all-targets --all-features`), so this only
-        # changes what gets linked and measured.
-        #
-        # This also shifts every other example's size, since they now link an
-        # antigravity-enabled lib. Harmless in the steady state — baseline and
-        # PR are measured by this same step, so both sides move together — but
-        # not across the edit that changes this line. The baseline artifact
-        # was measured at whatever feature set this step had on the last main
-        # push, so the PR that adds or drops a feature here compares new-set
-        # sizes against old-set ones, and a change of this size shifts every
-        # example at once: expect the whole table to trip, not one target, and
-        # nothing in it to hint that the feature flag is the cause. Waive that
-        # one PR with `size-growth-ok` and push a commit; the next main push
-        # republishes at the new feature set and it self-clears.
+        # --features antigravity: those examples have required-features and
+        # would be skipped silently. Changing the feature set shifts every
+        # example against the baseline; waive that one PR with `size-growth-ok`.
         run: |
           start=$(date +%s)
           cargo build --release --examples --features antigravity
@@ -695,79 +457,26 @@ jobs:
             target/release/examples current-sizes.json
           cat current-sizes.json
 
-      # Rendered from current-sizes.json, not re-derived. This was the last
-      # step in the job with its own size-measuring implementation (`ls -lh`
-      # through `awk`), so the job carried two — and it sampled a hardcoded
-      # three examples, silently omitting every other one, including the
-      # antigravity targets and `multi_turn_agent_manual_stateless` that are
-      # among the likeliest to move. One definition of "an example binary and
-      # its size", now shared by the summary, the delta check and the
-      # backstop.
+      # Rendered from current-sizes.json: one size definition for every report.
       - name: Binary sizes
         run: |
           .github/scripts/check_example_sizes.sh render current-sizes.json \
             >> $GITHUB_STEP_SUMMARY
-      # Per-example delta against the last main build, not an absolute
-      # ceiling. The old 16MB ceiling had been raised three times (10 -> 12
-      # -> 16), each time only after going red on an unrelated PR: an
-      # absolute tripwire fires once drift accumulates past the margin, and
-      # the only remedy is widening the margin — so it caught toolchain
-      # drift loudly while a real per-PR regression under the ceiling passed
-      # silently. See #403.
-      #
-      # The baseline is an artifact refreshed on every main push rather than
-      # a committed file: sizes are toolchain- and linker-dependent, so a
-      # committed number would encode one machine's toolchain and drift
-      # against every other.
+      # Per-example delta against the last main build. The baseline is an
+      # artifact, not a committed file, because sizes depend on the toolchain
+      # and linker.
       - name: Fetch the size baseline from main
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # Best-effort: a missing baseline (first run after this lands, or
-          # an expired artifact) must not fail the job — the compare step
-          # skips and warns.
-          #
-          # `// empty`, not a bare `.[0].databaseId`: on an empty result set
-          # jq prints the literal string "null", which passes `[ -n ]` and
-          # sends the download after run "null".
-          #
-          # Several runs, not just the newest: a run whose artifact expired
-          # or whose upload did not happen would otherwise mean no baseline
-          # at all, even with an older successful run still carrying one.
-          # `completed`, not `success`: the status is the whole `Rust` run's,
-          # not this job's. `test-integration` runs five live-API matrix
-          # groups on main pushes and CLAUDE.md says they may flake, so one
-          # flake marks the run failed and skips a `size-baseline` artifact
-          # that `build-metrics` published perfectly well. The loop below
-          # already tolerates a run with no artifact — that is what the
-          # `2>/dev/null` is for — so the stricter filter bought nothing the
-          # loop did not already handle, and cost baselines.
-          # "The lookup broke" and "there is nothing to look up" must not
-          # read identically. Both end in the same `::warning::No usable
-          # baseline` branch — honest, since the check genuinely did not run —
-          # but the effective gate for that PR is then only the 64MB backstop,
-          # four times looser than the ceiling this replaces. An expired
-          # artifact self-clears on the next main push; a dropped
-          # `actions: read` or a rate-limited token does not, and would look
-          # like the benign first-PR case every time.
-          #
-          # stderr is deliberately not suppressed here (it still is on the
-          # download below, where a missing artifact is the expected case).
-          # The warning tells the reader to check permissions and rate limits;
-          # gh's own message is what actually distinguishes those, so
-          # discarding it would send them looking for something the log had
-          # already thrown away. `RUN_IDS` captures stdout only, so letting
-          # stderr through cannot contaminate the id list.
-          # `rust.yml`, not `Rust`: `--workflow` accepts either the display
-          # `name:` or the filename, and the display name is the cosmetic one
-          # — the identifier most likely to be edited by someone with no
-          # reason to look at this job. The failure branch below keeps a
-          # rename from being silent (gh errors on an unknown workflow rather
-          # than returning empty), but until someone reads that annotation
-          # every PR sits on the weakest path, gated only by the 64MB
-          # backstop. Cheaper to name the stable identifier.
+          # Best-effort: with no baseline, the compare step warns and skips.
+          # `// empty`: jq prints "null" on an empty result. `completed`, not
+          # `success`: that status is the whole run's, and one live-test flake
+          # would discard a good baseline. gh's stderr is kept so a permissions
+          # or rate-limit failure is distinguishable from "no artifact".
+          # `rust.yml`, not the renamable display name.
           if ! RUN_IDS=$(gh run list --workflow rust.yml --branch main --status completed \
               --limit 10 --json databaseId --jq '.[].databaseId // empty'); then
             echo "::warning::Could not list main runs — the baseline lookup failed rather than finding nothing. See the gh error above; check the actions:read permission and rate limits."
@@ -786,30 +495,17 @@ jobs:
             : > baseline-sizes.json
           fi
 
-      # PR-only, both here and on the fetch above, and that is a deliberate
-      # trust boundary rather than leftover scoping: a direct push to main has
-      # no PR to fail and no label to waive with, and the same run then
-      # publishes its sizes as the new baseline — so growth arriving that way
-      # is absorbed rather than flagged. Safe while branch protection requires
-      # PRs into main; if that ever changes, the fix is to run `compare`
-      # advisory-only on main pushes (fetch, compare, swallow the status) so
-      # drift lands in the step summary before the baseline is overwritten.
+      # PR-only: a direct push has no label to waive with and becomes the
+      # baseline itself. Relies on branch protection requiring PRs into main.
       - name: Check size deltas
         if: github.event_name == 'pull_request'
         env:
-          # The escape hatch the failure message promises. Kept in the
-          # workflow rather than the script so the script needs no `gh` and
-          # stays runnable — and testable — outside Actions.
+          # Read here, not in the script, so the script needs no `gh`.
           SIZE_GROWTH_OK: ${{ contains(github.event.pull_request.labels.*.name, 'size-growth-ok') }}
-        # The delta table goes to the step summary as well as the log. The
-        # absolute-size table already surfaced there, which had the value
-        # ordering backwards — the deltas are the signal this job exists for,
-        # and on a green run nobody opens the raw log, so routine drift stayed
-        # invisible until it tripped the threshold.
+        # Deltas go to the step summary too: nobody opens the log on a green
+        # run.
         run: |
-          # `pipefail` because the pipeline's status would otherwise be tee's,
-          # and a failing compare would stop failing the step. The default
-          # shell is `bash -e` with no pipefail.
+          # pipefail, or the step would take tee's status.
           set -o pipefail
           {
             echo '### Example size deltas vs main'
@@ -820,24 +516,14 @@ jobs:
           .github/scripts/check_example_sizes.sh compare \
             baseline-sizes.json current-sizes.json 15 \
             | tee -a $GITHUB_STEP_SUMMARY || rc=$?
-          # Fenced, so Markdown keeps the column alignment instead of
-          # collapsing the runs of spaces. Closed unconditionally — an
-          # unterminated fence would swallow whatever a later step appends.
+          # Fenced to keep the column alignment; closed unconditionally.
           echo '```' >> $GITHUB_STEP_SUMMARY
           exit "$rc"
 
-      # Backstop only, deliberately far above any plausible size. The delta
-      # check above is the real gate; this exists for the no-baseline case,
-      # where a pathological binary would otherwise go unremarked.
+      # Backstop for the no-baseline case; the delta check is the real gate.
       - name: Sanity ceiling
         run: |
-          # Reads current-sizes.json rather than re-deriving with GNU-only
-          # `stat -c%s`. `measure` already wrote every size portably — round 2
-          # swapped it off `stat` precisely so the script runs on a macOS
-          # checkout — and this loop re-implemented the `.d` filter while
-          # still walking the hash-suffixed duplicates. One definition of "an
-          # example binary and its size", shared by the backstop and the
-          # delta check.
+          # Reads current-sizes.json rather than GNU-only `stat -c%s`.
           over=$(jq -r 'to_entries[] | select(.value > 67108864)
             | "::error::Binary \(.key) exceeds the 64MB sanity ceiling: \(.value) bytes"' \
             current-sizes.json)
@@ -846,17 +532,8 @@ jobs:
             exit 1
           fi
 
-      # After the sanity ceiling, deliberately. Published first, a build
-      # carrying a pathological binary uploaded its sizes and *then* failed
-      # the job — the red run is visible, but the artifact is already the
-      # newest one the fetch loop finds, so every later PR measures against
-      # the inflated number: the PR restoring normal sizes reads as a large
-      # shrink and passes, and a re-regression back up to the bloated size
-      # also passes at 0% growth. The delta gate would end up calibrated to
-      # the build the backstop rejected. The ceiling reads only
-      # current-sizes.json, so it has no ordering dependency on the upload.
-      # Refreshes the baseline for subsequent PRs. Routine toolchain drift is
-      # absorbed here instead of requiring a manual ceiling bump.
+      # After the sanity ceiling, so a rejected build never becomes the
+      # baseline.
       - name: Publish the size baseline
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4

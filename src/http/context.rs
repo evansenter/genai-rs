@@ -1,17 +1,20 @@
 //! Shared per-client context for the HTTP layer.
 
+use super::common::{API_VERSION, DEFAULT_BASE_URL};
 use crate::wire::{WireEvent, WireInspector};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Everything the HTTP layer needs to make and observe API requests:
-/// the reqwest client, the API key, the installed wire inspectors, and a
-/// per-client request-id counter for correlating wire events.
+/// the reqwest client, the API key, the base URL every endpoint is built
+/// from, the installed wire inspectors, and a per-client request-id counter
+/// for correlating wire events.
 #[derive(Clone)]
 pub struct HttpContext {
     pub http_client: reqwest::Client,
     pub api_key: String,
     pub inspectors: Arc<[Arc<dyn WireInspector>]>,
+    base_url: String,
     request_counter: Arc<AtomicU64>,
 }
 
@@ -21,13 +24,15 @@ impl std::fmt::Debug for HttpContext {
         f.debug_struct("HttpContext")
             .field("http_client", &self.http_client)
             .field("api_key", &"[REDACTED]")
+            .field("base_url", &self.base_url)
             .field("inspectors", &self.inspectors.len())
             .finish_non_exhaustive()
     }
 }
 
 impl HttpContext {
-    /// Creates a new context. The request-id counter starts at 1.
+    /// Creates a new context against the production API host. The
+    /// request-id counter starts at 1.
     pub fn new(
         http_client: reqwest::Client,
         api_key: String,
@@ -37,8 +42,33 @@ impl HttpContext {
             http_client,
             api_key,
             inspectors: inspectors.into(),
+            base_url: DEFAULT_BASE_URL.to_string(),
             request_counter: Arc::new(AtomicU64::new(1)),
         }
+    }
+
+    /// Replaces the scheme + host (+ optional path prefix) every URL is
+    /// built from. A trailing slash is ignored.
+    #[must_use]
+    pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
+        let mut base_url = base_url.into();
+        while base_url.ends_with('/') {
+            base_url.pop();
+        }
+        self.base_url = base_url;
+        self
+    }
+
+    /// `{base}/v1beta/{path}` — the URL of an API resource.
+    #[must_use]
+    pub fn api_url(&self, path: &str) -> String {
+        format!("{}/{API_VERSION}/{path}", self.base_url)
+    }
+
+    /// `{base}/upload/v1beta/{path}` — the URL of a media-upload endpoint.
+    #[must_use]
+    pub fn upload_url(&self, path: &str) -> String {
+        format!("{}/upload/{API_VERSION}/{path}", self.base_url)
     }
 
     /// Returns true if any wire inspectors are installed.
@@ -206,6 +236,24 @@ mod tests {
         let ctx = test_ctx(vec![]);
         // Must not panic or block.
         ctx.emit(WireEvent::ResponseStatus { id: 1, status: 200 });
+    }
+
+    #[test]
+    fn test_urls_follow_base_url() {
+        let ctx = test_ctx(vec![]);
+        assert_eq!(
+            ctx.api_url("interactions"),
+            "https://generativelanguage.googleapis.com/v1beta/interactions"
+        );
+        let ctx = ctx.with_base_url("http://127.0.0.1:9/prefix/");
+        assert_eq!(
+            ctx.api_url("files/abc"),
+            "http://127.0.0.1:9/prefix/v1beta/files/abc"
+        );
+        assert_eq!(
+            ctx.upload_url("files"),
+            "http://127.0.0.1:9/prefix/upload/v1beta/files"
+        );
     }
 
     #[test]

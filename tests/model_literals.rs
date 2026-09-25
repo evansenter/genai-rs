@@ -32,8 +32,15 @@ fn no_hardcoded_model_ids_outside_the_constants() {
     // ("models/gemini-3.7-flash"), which the opening-quote anchor would
     // otherwise let past — nothing in the repo writes one today, and this
     // keeps it that way.
-    static MODEL_LITERAL: std::sync::LazyLock<regex::Regex> =
-        std::sync::LazyLock::new(|| regex::Regex::new(r#""(models/)?gemini-\d"#).unwrap());
+    //
+    // Dated agent ids ("deep-research-preview-04-2026") are covered too: they
+    // are retired on the same schedule as models.
+    static MODEL_LITERAL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(
+            r#""(models/)?gemini-\d|"(deep-research|antigravity)(-[a-z]+)*-\d{2}-\d{4}""#,
+        )
+        .unwrap()
+    });
 
     /// Where a model id may legitimately appear as a literal.
     ///
@@ -107,8 +114,9 @@ fn no_hardcoded_model_ids_outside_the_constants() {
     assert!(
         hits.is_empty(),
         "hardcoded model id(s) found — use genai_rs::DEFAULT_MODEL (or \
-         INLINE_VIDEO_MODEL / MINIMAL_THINKING_MODEL / DEFAULT_IMAGE_MODEL / \
-         DEFAULT_TTS_MODEL) so a model bump stays a one-line change:\n  {}",
+         MINIMAL_THINKING_MODEL / DEFAULT_IMAGE_MODEL / DEFAULT_TTS_MODEL / \
+         DEFAULT_DEEP_RESEARCH_AGENT / DEFAULT_ANTIGRAVITY_AGENT) so a bump \
+         stays a one-line change:\n  {}",
         hits.join("\n  ")
     );
 }

@@ -9,7 +9,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Validate the release before publishing
   validate:
     name: Validate Release
     runs-on: ubuntu-latest
@@ -30,41 +29,20 @@ jobs:
       - name: Run integration tests
         run: |
           set -eo pipefail
-          # Mirrors the rust.yml integration step: keep passing-test output so
-          # vacuously-passed assertions surface as a warning even in release
-          # validation — the run where a silent skip matters most.
-          #
-          # Which is why the total-skip case is guarded first. Every
-          # integration test self-skips without a key, so a rotated or
-          # cleared secret would validate a release by calling the API zero
-          # times and still go green — gating a publish on nothing.
-          # Trimmed, to match the `Ok(key) if !key.trim().is_empty()` the
-          # tests and examples gate on: a secret of just whitespace would
-          # pass a bare -z and then skip everything downstream anyway.
+          # Fail on an empty key: every integration test self-skips without one,
+          # and this run gates a publish.
           if [ -z "${GEMINI_API_KEY//[[:space:]]/}" ]; then
             echo "::error::GEMINI_API_KEY is empty or unset — every integration test would self-skip and this release would validate having verified nothing"
             exit 1
           fi
           rc=0
           cargo nextest run --workspace --run-ignored all --success-output=final 2>&1 | tee /tmp/integration.log || rc=$?
-          # Both markers, matching rust.yml. This step runs the whole
-          # workspace with --run-ignored all, so the live tool tests that
-          # emit LIVE_TOOL_EVIDENCE_SKIPPED execute here too — counting only
-          # the semantic marker would leave release validation, the run where
-          # a silent skip matters most, as the one gate the newer marker does
-          # not reach.
+          # Both markers, as in rust.yml.
           skips=$(grep -cE 'SEMANTIC_VALIDATION_SKIPPED|LIVE_TOOL_EVIDENCE_SKIPPED' /tmp/integration.log || true)
-          # Threshold scaled to this run's denominator: rust.yml applies 3
-          # per test binary (largest group ~13 markers, ~23% tolerated); this
-          # single workspace run has ~48 semantic validations plus at most one
-          # tool-evidence skip — both of those sites are in
-          # `test_mcp_server_tool_round_trip` and are mutually exclusive, so a
-          # run can contribute only one — so 10 (~20%) keeps the two gates
-          # equivalent in intent without moving.
+          # 10, not rust.yml's 3 per binary: this is one whole-workspace run
+          # (~50 markers), so both tolerate roughly 20%.
           if [ "${skips:-0}" -gt 10 ]; then
             echo "::error::$skips unverified assertion(s) or tolerated failure(s) — too many to trust this run (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)"
-            # Escalate only a passing run — a real nextest failure keeps
-            # its own exit code and stays the headline cause.
             if [ "$rc" -eq 0 ]; then rc=1; fi
           elif [ "${skips:-0}" -gt 0 ]; then
             echo "::warning::$skips unverified assertion(s) or tolerated failure(s) (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)"
@@ -84,22 +62,15 @@ jobs:
         run: cargo doc --workspace --no-deps --features antigravity
         env:
           RUSTDOCFLAGS: --cfg docsrs -D warnings
-      # docs.rs builds on nightly rustdoc, which no stable invocation can
-      # mirror (e.g. the Rust 1.92 doc_auto_cfg removal was nightly-only
-      # breakage). This is the last gate before the version becomes
-      # immutable on crates.io, so the nightly check lives here rather
-      # than in rust.yml, where nightly churn would redden unrelated PRs.
-      # No -D warnings: docs.rs fails on hard errors only, and gating new
-      # nightly lints here would block a release that would publish fine.
-      # NOTE: installing the nightly toolchain changes the rustup default
-      # for later steps — keep this the last step in the job.
+      # docs.rs builds on nightly rustdoc. Checked here, the last gate before
+      # crates.io, so nightly churn can't redden PRs. No -D warnings: docs.rs
+      # fails only on hard errors. Keep last: it changes the rustup default.
       - uses: dtolnay/rust-toolchain@nightly
       - name: Check documentation (docs.rs feature set, nightly)
         run: cargo +nightly doc --workspace --no-deps --features antigravity --target-dir target/doc-docsrs-nightly
         env:
           RUSTDOCFLAGS: --cfg docsrs
 
-  # Publish to crates.io
   publish:
     name: Publish to crates.io
     needs: validate
@@ -124,25 +95,18 @@ jobs:
         run: cargo publish -p genai-rs-macros --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
         continue-on-error: false
 
-      # Wait for crates.io to index the macros crate
       - name: Wait for crates.io indexing
         run: |
           MACRO_VERSION=$(awk -F'"' '/^version = /{print $2; exit}' genai-rs-macros/Cargo.toml)
-          # Guarded because an empty read is worse here than anywhere else:
-          # `grep -q ""` matches any output, so the poll below would report
-          # "indexed successfully" on its first attempt without the crate
-          # being indexed at all, and `genai-rs` would then publish against a
-          # dependency crates.io cannot yet resolve. The tag check above
-          # fails safe on an empty read (empty never equals the tag); this one
-          # passes safe, which is the wrong direction.
+          # An empty version would make the grep below match anything and the
+          # poll pass at once.
           if [ -z "$MACRO_VERSION" ]; then
             echo "::error::No anchored 'version = ' line in genai-rs-macros/Cargo.toml — cannot verify indexing."
             exit 1
           fi
           echo "Waiting for genai-rs-macros v${MACRO_VERSION} to be indexed..."
           for i in {1..30}; do
-            # `-F --`: the version is data, not a pattern. A literal match
-            # also means a future pre-release suffix cannot be read as a regex.
+            # -F: the version is data, not a regex.
             if cargo search genai-rs-macros --limit 1 2>/dev/null | grep -qF -- "${MACRO_VERSION}"; then
               echo "Crate indexed successfully after $((i * 10)) seconds"
               exit 0
@@ -156,7 +120,6 @@ jobs:
       - name: Publish genai-rs
         run: cargo publish -p genai-rs --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-  # Create GitHub release
   github-release:
     name: Create GitHub Release
     needs: publish
@@ -173,56 +136,25 @@ jobs:
           set -euo pipefail
           TAG=${GITHUB_REF#refs/tags/}
 
-          # The curated CHANGELOG entry, not a raw commit list. CLAUDE.md has
-          # always told the releaser that release notes come from
-          # CHANGELOG.md; the workflow never read it, so the published body
-          # was two overlapping auto-generated commit lists (the `git log`
-          # written here, plus `generate_release_notes`) and none of the prose
-          # that was written for exactly this purpose. See #432.
-          #
-          # `generate_release_notes: true` stays: it appends the PR-linked
-          # "What's Changed" list and the full-changelog compare link, which
-          # the CHANGELOG does not carry. Only the hand-rolled duplicate of it
-          # goes away.
-          # `rc`, not a bare `if`: the script exits 2 for a usage error and 1
-          # for a missing section, and collapsing those would annotate a
-          # broken invocation as "no [X.Y.Z] section in CHANGELOG.md" — a
-          # wrong diagnosis pointing at a file that may be perfectly fine.
-          # This is the branch that ships a release body, so it is the one
-          # worth distinguishing.
+          # Body from the curated CHANGELOG entry; generate_release_notes
+          # appends the PR list and compare link. rc keeps exit 1 (no section)
+          # apart from 2 (usage).
           rc=0
           .github/scripts/extract_changelog_section.sh \
               CHANGELOG.md "${TAG#v}" > /tmp/release-body.md || rc=$?
           if [ "$rc" -eq 0 ]; then
             echo "Release body from the CHANGELOG.md [${TAG#v}] section"
           elif [ "$rc" -eq 1 ]; then
-            # The recoverable case: the file is fine, the section is not
-            # there. Falling back rather than failing, because the tag exists
-            # and the crates are already published by this point — refusing to
-            # cut the release over a formatting problem would leave it
-            # half-done. Loud enough to be fixed by hand after.
+            # Fall back rather than fail: the crates are already published.
             echo "::warning::No [${TAG#v}] section in CHANGELOG.md — falling back to the commit list. Edit the release body by hand."
           else
-            # Annotated but NOT fatal, unlike the identical dispatch in
-            # rust.yml. This job is `needs: publish`, so by the time it runs
-            # both crates are immutable on crates.io — exiting here would
-            # leave the release genuinely half-done (versions published, tag
-            # pushed, no GitHub release), which is the outcome the fallback
-            # below exists to avoid. A red annotation on a completed release
-            # beats a completed publish with no release. The recovery table in
-            # CLAUDE.md covers the residue either way.
+            # Not fatal, unlike rust.yml: both crates are already published, and
+            # a release with a bad body beats none.
             echo "::error::extract_changelog_section.sh exited $rc — a usage or environment error, not a missing section. Falling back to the commit list; the body needs replacing by hand."
           fi
           if [ "$rc" -ne 0 ]; then
-            # Both non-zero paths land here — each has already annotated
-            # itself at the right severity above, so this block is only the
-            # body generation.
-            #
-            # `tformat`, not `format`: `format` omits the terminating
-            # newline, so this branch would write a body that does not end in
-            # one while the CHANGELOG branch above does. The file gets
-            # concatenated with the auto-generated change list, and this is
-            # the branch nobody exercises before a real tag.
+            # `tformat`, not `format`: the body must end in a newline, as the
+            # CHANGELOG branch's does.
             PREV_TAG=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || echo "")
             if [ -n "$PREV_TAG" ]; then
               echo "Generating changelog from $PREV_TAG to $TAG"
@@ -238,9 +170,7 @@ jobs:
           echo "===================="
 
       - name: Create release
-        # v2, not v1: actionlint flags v1's runner as too old for GitHub
-        # Actions — i.e. this step was heading for a hard failure on the one
-        # workflow that only ever runs after a tag exists.
+        # v2: actionlint flags v1's runner as too old.
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true

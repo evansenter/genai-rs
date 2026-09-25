@@ -1,16 +1,9 @@
 #!/usr/bin/env bash
 # Closes the `ci-health` issue for a scheduled workflow that has recovered.
 #
-# The counterpart to `report_scheduled_failure.sh`. Without it the issue
-# stays open after the failure is fixed, and a signal that is always on is
-# no signal — the same argument as the API sweep's close step.
+# The counterpart to `report_scheduled_failure.sh`: an issue left open after a
+# fix is no signal.
 #
-#
-# Boundary worth naming: this runs inside the job it reports on and reads its
-# own script from the checkout, so a scheduled run that dies *before or
-# during* `actions/checkout` fails as silently as it did before #431. That is
-# the one sub-case an in-job mechanism cannot cover; the general
-# not-running-at-all case is the deferred liveness work.
 # Usage: resolve_scheduled_failure.sh <workflow-name>
 # Requires: GH_TOKEN with issues:write.
 
@@ -18,13 +11,11 @@ set -euo pipefail
 
 WORKFLOW="${1:?usage: resolve_scheduled_failure.sh <workflow-name>}"
 
-# Exported before the query, so the `--jq` filter's `$ENV.TITLE` resolves in
-# the `gh` child process. See the longer note in the reporting script.
+# Exported so the `--jq` filter's `$ENV.TITLE` sees it.
 export TITLE="Scheduled workflow failing: $WORKFLOW"
 
-# The same dedicated label the reporting script files under — see the long
-# note there. If these two lookups drift apart, updates land on one issue
-# while closes target another.
+# Must match the reporter's label, or updates and closes target different
+# issues.
 ESCALATION_LABEL="ci-health-escalation"
 
 # Open only: a closed one is already resolved.
@@ -40,20 +31,11 @@ if [ -z "$EXISTING" ]; then
   exit 0
 fi
 
-# A named constant because `report_scheduled_failure.sh` matches on this
-# prefix to reset its streak count. Reword it as a bare string and that reset
-# silently stops firing: the streak then spans a recovery that did happen,
-# reporting a number that is simply wrong with nothing failing to say so.
-# The harness asserts this matches the prefix the reporter looks for.
+# The reporter matches this prefix to reset its streak; the harness checks they
+# agree.
 RECOVERY_PREFIX="Recovered"
 
-# No trigger named, for the same reason the issue body names none: the
-# flakiness report's resolve gate also accepts `workflow_dispatch`, so a
-# maintainer who fixes it and dispatches to confirm would otherwise close the
-# issue with a comment claiming a scheduled run succeeded when none has. This
-# string is the more durable of the two — comments are append-only, so a wrong
-# assertion stays on the closed issue permanently, while the body is
-# regenerated on the next episode.
+# Names no trigger: the flakiness report also resolves on `workflow_dispatch`.
 gh issue comment "$EXISTING" --body "$RECOVERY_PREFIX — the workflow succeeded. Closing.
 
 ---

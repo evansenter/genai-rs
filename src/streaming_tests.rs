@@ -1,6 +1,7 @@
 //! Unit tests for streaming types (StreamChunk, InteractionStreamEvent, etc.)
 
 use super::*;
+use crate::wire_streaming::InteractionStreamEvent;
 
 #[test]
 fn test_deserialize_streaming_text_delta() {

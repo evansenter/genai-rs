@@ -1,30 +1,14 @@
-//! API Canary Tests
+//! Canaries for API drift: each exercises one response surface and fails if
+//! the API returns a step, delta or status type the crate does not model.
+//! `Unknown` keeps the library working when that happens; these make sure
+//! someone finds out.
 //!
-//! These tests act as early-warning "canaries" to detect when the Gemini API
-//! starts returning content types that the library doesn't recognize.
+//! Skipped under `strict-unknown`, where an unknown type is a deserialization
+//! error rather than an `Unknown` to report.
 //!
-//! When these tests fail, it indicates:
-//! 1. Google has added new content types to the API
-//! 2. The library should be updated to add proper support
-//!
-//! The Unknown variant ensures the library doesn't break, but we want to know
-//! when new types appear so we can add first-class support.
-//!
-//! # Test Execution Time
-//!
-//! These tests make 6 API calls and typically complete in 12-60 seconds total.
-//! Consider using `--test-threads=1` to avoid rate limiting.
-//!
-//! Every call goes through `retry_request!`. These canaries exist to detect
-//! *unknown content types*, so a transient 429 or 5xx failing one is a false
-//! alarm about the API's shape — and one that reads as "Google changed the
-//! protocol" when it means "the project ran out of quota".
-//!
-//! # Feature Flags
-//!
-//! These tests are SKIPPED when `strict-unknown` feature is enabled, since they
-//! rely on graceful degradation behavior (capturing unknown types in Unknown variants).
-//! In strict mode, unknown types cause deserialization errors instead.
+//! ```bash
+//! cargo nextest run --test api_canary_tests --run-ignored all
+//! ```
 
 // Skip all tests in this module when strict-unknown is enabled
 #![cfg(not(feature = "strict-unknown"))]
@@ -35,11 +19,15 @@ use common::get_client;
 use futures_util::StreamExt;
 use genai_rs::InteractionInput;
 
-/// Model used for all canary tests - update if model availability changes
 const CANARY_MODEL: &str = genai_rs::DEFAULT_MODEL;
 
-/// Helper to check a response for unknown step types and panic with details if found
+/// Panics with details if the response carries an unknown status or step.
 fn assert_no_unknown_steps(response: &genai_rs::InteractionResponse, context: &str) {
+    assert!(
+        !response.status.is_unknown(),
+        "API returned an unknown status in {context}: {:?}",
+        response.status
+    );
     if response.has_unknown() {
         let summary = response.step_summary();
         panic!(
@@ -136,7 +124,7 @@ async fn canary_function_calling_interaction() {
     let client = get_client().expect("GEMINI_API_KEY must be set");
 
     let get_time = FunctionDeclaration::builder("get_current_time")
-        .description("Get the current time")
+        .with_description("Get the current time")
         .build();
 
     let response = retry_request!([client, get_time] => {
@@ -145,6 +133,7 @@ async fn canary_function_calling_interaction() {
             .with_model(CANARY_MODEL)
             .with_text("What time is it?")
             .add_functions(vec![get_time.clone()])
+            .with_function_calling_mode(genai_rs::FunctionCallingMode::Any)
             .create()
             .await
     })
@@ -152,11 +141,10 @@ async fn canary_function_calling_interaction() {
 
     assert_no_unknown_steps(&response, "function calling interaction");
 
-    // Also check the follow-up response after providing function results.
-    // This tests for unknown types in the model's response to function results,
-    // which may differ from the initial function call response.
-    if !response.function_calls().is_empty() {
-        let call = &response.function_calls()[0];
+    // The response to a function result is a different surface; check it too.
+    {
+        let calls = response.function_calls();
+        let call = calls.first().expect("Any mode should force a call");
 
         use genai_rs::Step;
 
@@ -186,42 +174,52 @@ async fn canary_function_calling_interaction() {
     }
 }
 
-/// Canary test for code execution tool
-///
-/// Tests the built-in code execution tool to detect any new content types.
-/// Uses timeout protection since code execution sandbox can be slow/unavailable.
+/// Code execution returns its own call and result step types.
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn canary_code_execution_interaction() {
-    use genai_rs::Tool;
-    use std::time::Duration;
-
     let client = get_client().expect("GEMINI_API_KEY must be set");
 
-    let result = tokio::time::timeout(
-        Duration::from_secs(60),
+    let response = retry_request!([client] => {
         client
             .interaction()
             .with_model(CANARY_MODEL)
-            .with_text("Use code execution to calculate 2 + 2")
-            .set_tools(vec![Tool::CodeExecution])
-            .create(),
-    )
-    .await;
+            .with_text("Use code execution to calculate 123 * 456")
+            .with_code_execution()
+            .create()
+            .await
+    })
+    .expect("API call should succeed");
 
-    match result {
-        Ok(Ok(response)) => {
-            assert_no_unknown_steps(&response, "code execution interaction");
-        }
-        Ok(Err(e)) => {
-            // API error - log and skip (code execution can be temporarily unavailable)
-            eprintln!("Code execution API error (skipping): {}", e);
-        }
-        Err(_) => {
-            // Timeout - code execution sandbox was slow
-            eprintln!("Code execution timed out after 60s (skipping)");
-        }
-    }
+    assert!(
+        !response.code_execution_results().is_empty(),
+        "canary needs a code execution result to check"
+    );
+    assert_no_unknown_steps(&response, "code execution interaction");
+}
+
+/// Google Search returns its own call and result step types.
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn canary_google_search_interaction() {
+    let client = get_client().expect("GEMINI_API_KEY must be set");
+
+    let response = retry_request!([client] => {
+        client
+            .interaction()
+            .with_model(CANARY_MODEL)
+            .with_text("What is the current population of Tokyo according to recent data?")
+            .with_google_search()
+            .create()
+            .await
+    })
+    .expect("API call should succeed");
+
+    assert!(
+        !response.google_search_calls().is_empty(),
+        "canary needs a search step to check"
+    );
+    assert_no_unknown_steps(&response, "google search interaction");
 }
 
 /// Canary test for multimodal interaction

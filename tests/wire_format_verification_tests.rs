@@ -12,8 +12,7 @@
 
 use genai_rs::{
     Annotation, CodeExecutionLanguage, Content, FunctionCallingMode, InteractionStatus, Resolution,
-    Role, SearchType, ServiceTier, Step, ThinkingLevel, ThinkingSummaries, ToolChoice,
-    VideoProcessing,
+    SearchType, ServiceTier, Step, ThinkingLevel, ThinkingSummaries, ToolChoice, VideoProcessing,
 };
 use serde_json::json;
 
@@ -191,26 +190,6 @@ mod function_calling_mode {
         ));
         assert!(matches!(
             serde_json::from_value::<FunctionCallingMode>(json!("validated")).unwrap(),
-            FunctionCallingMode::Validated
-        ));
-    }
-
-    #[test]
-    fn deserializes_from_legacy_screaming_case() {
-        assert!(matches!(
-            serde_json::from_value::<FunctionCallingMode>(json!("AUTO")).unwrap(),
-            FunctionCallingMode::Auto
-        ));
-        assert!(matches!(
-            serde_json::from_value::<FunctionCallingMode>(json!("ANY")).unwrap(),
-            FunctionCallingMode::Any
-        ));
-        assert!(matches!(
-            serde_json::from_value::<FunctionCallingMode>(json!("NONE")).unwrap(),
-            FunctionCallingMode::None
-        ));
-        assert!(matches!(
-            serde_json::from_value::<FunctionCallingMode>(json!("VALIDATED")).unwrap(),
             FunctionCallingMode::Validated
         ));
     }
@@ -419,7 +398,7 @@ mod search_type {
 
 // =============================================================================
 // CodeExecutionLanguage Wire Format Tests
-// Revision 2026-05-20: lowercase "python"; legacy "PYTHON" accepted on read.
+// Revision 2026-05-20: lowercase "python".
 // =============================================================================
 
 mod code_execution_language {
@@ -437,14 +416,6 @@ mod code_execution_language {
     fn deserializes_from_lowercase() {
         assert!(matches!(
             serde_json::from_value::<CodeExecutionLanguage>(json!("python")).unwrap(),
-            CodeExecutionLanguage::Python
-        ));
-    }
-
-    #[test]
-    fn deserializes_from_legacy_uppercase() {
-        assert!(matches!(
-            serde_json::from_value::<CodeExecutionLanguage>(json!("PYTHON")).unwrap(),
             CodeExecutionLanguage::Python
         ));
     }
@@ -584,45 +555,6 @@ mod resolution {
 }
 
 // =============================================================================
-// Role Wire Format Tests
-// Per docs: lowercase - "user", "model"
-// =============================================================================
-
-mod role {
-    use super::*;
-
-    #[test]
-    fn serializes_to_lowercase() {
-        assert_eq!(serde_json::to_value(Role::User).unwrap(), "user");
-        assert_eq!(serde_json::to_value(Role::Model).unwrap(), "model");
-    }
-
-    #[test]
-    fn deserializes_from_lowercase() {
-        assert!(matches!(
-            serde_json::from_value::<Role>(json!("user")).unwrap(),
-            Role::User
-        ));
-        assert!(matches!(
-            serde_json::from_value::<Role>(json!("model")).unwrap(),
-            Role::Model
-        ));
-    }
-
-    #[test]
-    fn roundtrip_all_variants() {
-        for variant in [Role::User, Role::Model] {
-            let json = serde_json::to_value(&variant).unwrap();
-            let back: Role = serde_json::from_value(json).unwrap();
-            assert_eq!(
-                std::mem::discriminant(&variant),
-                std::mem::discriminant(&back)
-            );
-        }
-    }
-}
-
-// =============================================================================
 // Content Wire Format Tests
 // Per docs: snake_case type field - "text", "image", "audio", "video",
 // "document". Tool calls/results are Steps in revision 2026-05-20.
@@ -676,6 +608,7 @@ mod interaction_content {
             mime_type: Some("video/mp4".to_string()),
             resolution: None,
             processing: None,
+            name: None,
         };
         let json = serde_json::to_value(&content).unwrap();
         assert_eq!(json["type"], "video");

@@ -497,8 +497,8 @@ pub struct StreamEvent {
     /// Event ID for stream resumption.
     ///
     /// Pass this to `last_event_id` when calling `get_interaction_stream()` to resume
-    /// the stream from this point. Events are ordered, so resuming from an event_id
-    /// will replay all subsequent events.
+    /// the stream after this point. Only background interactions' streams carry
+    /// it (and only they can be resumed); otherwise it is `None`.
     pub event_id: Option<String>,
 }
 
@@ -599,8 +599,7 @@ impl<'de> Deserialize<'de> for StreamEvent {
 /// Optional metadata accompanying any streamed event.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
-#[non_exhaustive]
-pub struct StreamMetadata {
+pub(crate) struct StreamMetadata {
     /// Cumulative token usage for the interaction so far.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_usage: Option<UsageMetadata>,
@@ -618,8 +617,7 @@ pub struct StreamMetadata {
 /// - `interaction.completed`: Final complete interaction (terminal)
 /// - `error`: Error occurred during streaming (terminal)
 #[derive(Clone, Debug)]
-#[non_exhaustive]
-pub struct InteractionStreamEvent {
+pub(crate) struct InteractionStreamEvent {
     /// Event type (e.g., "step.delta", "interaction.completed")
     pub event_type: String,
 
@@ -717,15 +715,14 @@ impl<'de> Deserialize<'de> for InteractionStreamEvent {
 ///
 /// Represents error information sent in "error" type SSE events.
 #[derive(Clone, Deserialize, Debug)]
-#[non_exhaustive]
-pub struct StreamError {
+pub(crate) struct StreamError {
     /// Human-readable error message
     #[serde(default)]
     pub message: String,
 
     /// Error code from the API (if provided). Per spec this is a URI that
     /// identifies the error type.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub code: Option<String>,
 }
 

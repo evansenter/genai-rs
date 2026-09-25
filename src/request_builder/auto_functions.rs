@@ -20,7 +20,6 @@ use crate::ToolService;
 use crate::function_calling::{CallableFunction, FunctionRegistry, get_global_function_registry};
 use crate::streaming::{
     AutoFunctionResult, AutoFunctionStreamChunk, AutoFunctionStreamEvent, FunctionExecutionResult,
-    PendingFunctionCall,
 };
 
 use super::InteractionBuilder;
@@ -43,54 +42,54 @@ fn build_service_function_map(
         .unwrap_or_default()
 }
 
-/// Auto-discovers functions from the global registry and tool service.
+/// Declares the functions the auto-function loop can execute.
 ///
-/// If `request.tools` is already set, this is a no-op. Otherwise, it:
-/// 1. Collects all functions from the global registry (`#[tool]` macro functions)
-/// 2. Filters out any that would be shadowed by service functions (with warning)
-/// 3. Adds declarations from the tool service
-/// 4. Sets `request.tools` if any functions were found
+/// A tool service was set on purpose, so its functions are always declared,
+/// next to any tools set explicitly (skipping a name already declared).
+/// The global `#[tool]` registry is only consulted when no tools were set;
+/// a service function shadows a registry one of the same name.
 fn auto_discover_tools(
     request: &mut crate::request::InteractionRequest,
     service_functions: &HashMap<String, Arc<dyn CallableFunction>>,
 ) {
-    if request.tools.is_some() {
+    let mut service_declarations: Vec<_> = service_functions
+        .values()
+        .map(|f| f.declaration())
+        .collect();
+    // HashMap order is arbitrary; keep the wire deterministic.
+    service_declarations.sort_by(|a, b| a.name().cmp(b.name()));
+
+    let mut declarations = match &request.tools {
+        Some(_) => Vec::new(),
+        None => {
+            let mut registry = get_global_function_registry().all_declarations();
+            registry.retain(|decl| {
+                let shadowed = service_functions.contains_key(decl.name());
+                if shadowed {
+                    warn!(
+                        "Tool service function '{}' shadows global registry function with same name",
+                        decl.name()
+                    );
+                }
+                !shadowed
+            });
+            registry.sort_by(|a, b| a.name().cmp(b.name()));
+            registry
+        }
+    };
+    declarations.extend(service_declarations);
+    if declarations.is_empty() {
         return;
     }
 
-    let function_registry = get_global_function_registry();
-    let mut all_declarations = function_registry.all_declarations();
-
-    // Service functions take precedence over global registry
-    // Filter out global declarations that would be shadowed by service functions
-    let service_names: std::collections::HashSet<&str> =
-        service_functions.keys().map(|s| s.as_str()).collect();
-
-    // Log warnings for shadowed functions and filter them out
-    all_declarations.retain(|decl| {
-        if service_names.contains(decl.name()) {
-            warn!(
-                "Tool service function '{}' shadows global registry function with same name",
-                decl.name()
-            );
-            false
-        } else {
-            true
-        }
-    });
-
-    // Add declarations from tool service
-    for func in service_functions.values() {
-        all_declarations.push(func.declaration());
-    }
-
-    if !all_declarations.is_empty() {
-        request.tools = Some(
-            all_declarations
-                .into_iter()
-                .map(|decl| decl.into_tool())
-                .collect(),
+    let tools = request.tools.get_or_insert_with(Vec::new);
+    for declaration in declarations {
+        let declared = tools.iter().any(
+            |tool| matches!(tool, crate::Tool::Function { name, .. } if name == declaration.name()),
         );
+        if !declared {
+            tools.push(declaration.into_tool());
+        }
     }
 }
 
@@ -153,7 +152,7 @@ impl<'a> InteractionBuilder<'a> {
     /// 4. Repeat until model returns text or max iterations reached
     ///
     /// Functions are auto-discovered from the global registry (via `#[tool]` macro)
-    /// or can be explicitly provided via `.add_function()` or `.set_tools()`.
+    /// or can be explicitly provided via `.add_function()` or `.with_tools()`.
     ///
     /// The loop automatically stops when:
     /// - Model returns text without function calls
@@ -545,7 +544,7 @@ impl<'a> InteractionBuilder<'a> {
     ///   function calls that completed in previous iterations are preserved on the API
     ///   side via the interaction chain, but the stream yields an error rather than
     ///   a partial result. Use `previous_interaction_id` to continue.
-    /// - A function call is missing its required `call_id` field
+    /// - The server sends an error event mid-stream ([`GenaiError::Stream`])
     /// - `max_function_call_loops` is set to 0 (invalid configuration)
     pub fn create_stream_with_auto_functions(
         self,
@@ -582,8 +581,6 @@ impl<'a> InteractionBuilder<'a> {
             // Main auto-function streaming loop
             for loop_count in 0..max_loops {
                 debug!("Auto-function streaming loop iteration {}/{}", loop_count + 1, max_loops);
-                // Enable streaming for this request
-                request.stream = Some(true);
 
                 // Stream this iteration's response
                 let mut stream = client.execute_stream(request.clone());
@@ -631,10 +628,7 @@ impl<'a> InteractionBuilder<'a> {
                             complete_response = Some(response);
                         }
                         StreamChunk::Error { message, code } => {
-                            tracing::warn!(
-                                "Streaming error during auto-function loop: {} (code: {:?})",
-                                message, code
-                            );
+                            Err(GenaiError::Stream { message, code })?;
                         }
                         // Log unknown chunk types for observability, but continue for forward compatibility
                         StreamChunk::Unknown { chunk_type, .. } => {
@@ -700,10 +694,8 @@ impl<'a> InteractionBuilder<'a> {
 
                 // Signal that we're executing functions with pending call info
                 debug!("Executing {} function call(s)", calls_to_execute.len());
-                let pending_calls: Vec<PendingFunctionCall> = calls_to_execute
-                    .iter()
-                    .map(|(call_id, name, args)| PendingFunctionCall::new(name, call_id, args.clone()))
-                    .collect();
+                let pending_calls: Vec<_> =
+                    response_function_calls.iter().map(|call| call.to_owned()).collect();
                 // ExecutingFunctions is client-generated, no API event_id
                 yield AutoFunctionStreamEvent::new(
                     AutoFunctionStreamChunk::ExecutingFunctions {

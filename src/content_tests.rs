@@ -701,6 +701,22 @@ fn test_function_result_payload_conversions() {
     assert_eq!(payload.as_json().unwrap()["temp"], 72);
     assert_eq!(payload.to_value(), serde_json::json!({"temp": 72}));
 
+    // Any other value is wrapped: the API rejects a top-level array
+    for value in [
+        serde_json::json!([1, 2, 3]),
+        serde_json::json!([{"type": "text", "text": "not converted to Contents"}]),
+        serde_json::json!(42),
+        serde_json::json!(true),
+        serde_json::Value::Null,
+    ] {
+        let payload: FunctionResultPayload = value.clone().into();
+        assert_eq!(
+            payload.to_value(),
+            serde_json::json!({"result": value}),
+            "{value}"
+        );
+    }
+
     // From Vec<Content> -> Contents
     let payload: FunctionResultPayload = vec![Content::text("block")].into();
     let contents = payload.as_contents().expect("Should be Contents");
@@ -770,21 +786,6 @@ fn test_deserialize_code_execution_call_step() {
     }
 
     assert!(!step.is_unknown());
-}
-
-#[test]
-fn test_deserialize_code_execution_call_step_legacy_uppercase_language() {
-    // Legacy uppercase "PYTHON" is still accepted on deserialize
-    let json = r#"{"type": "code_execution_call", "id": "call_123", "arguments": {"code": "print(42)", "language": "PYTHON"}}"#;
-    let step: Step = serde_json::from_str(json).expect("Should deserialize");
-
-    match &step {
-        Step::CodeExecutionCall { language, code, .. } => {
-            assert_eq!(*language, CodeExecutionLanguage::Python);
-            assert_eq!(code, "print(42)");
-        }
-        _ => panic!("Expected CodeExecutionCall variant, got {:?}", step),
-    }
 }
 
 #[test]
@@ -1121,13 +1122,13 @@ fn test_code_execution_language_known_variants_serde() {
     assert_eq!(format!("{}", CodeExecutionLanguage::Python), "python");
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
-fn test_code_execution_language_accepts_legacy_uppercase() {
-    // Legacy uppercase "PYTHON" is still accepted on deserialize
+fn test_code_execution_language_uppercase_is_unknown() {
+    // The pre-revision spelling is not the wire format any more.
     let deserialized: CodeExecutionLanguage =
-        serde_json::from_str(r#""PYTHON""#).expect("Should deserialize legacy format");
-    assert_eq!(deserialized, CodeExecutionLanguage::Python);
-    assert!(!deserialized.is_unknown());
+        serde_json::from_str(r#""PYTHON""#).expect("Should deserialize");
+    assert_eq!(deserialized.unknown_language_type(), Some("PYTHON"));
 }
 
 // --- Google Search / URL Context Steps ---
@@ -1827,6 +1828,7 @@ fn test_video_with_resolution_serialization() {
         mime_type: Some("video/mp4".to_string()),
         resolution: Some(Resolution::Low),
         processing: None,
+        name: None,
     };
 
     let json = serde_json::to_string(&video).unwrap();
@@ -1871,6 +1873,7 @@ fn test_video_with_resolution_deserialization() {
             mime_type,
             resolution,
             processing,
+            ..
         } => {
             assert_eq!(data, None);
             assert_eq!(uri, Some("https://example.com/video.mp4".to_string()));
@@ -1932,6 +1935,7 @@ fn test_video_with_resolution_roundtrip() {
         mime_type: Some("video/mp4".to_string()),
         resolution: Some(Resolution::High),
         processing: None,
+        name: None,
     };
 
     let json = serde_json::to_string(&original).unwrap();
@@ -1944,6 +1948,7 @@ fn test_video_with_resolution_roundtrip() {
             mime_type,
             resolution,
             processing,
+            ..
         } => {
             assert_eq!(data, None);
             assert_eq!(uri, Some("gs://bucket/video.mp4".to_string()));
@@ -1957,6 +1962,7 @@ fn test_video_with_resolution_roundtrip() {
 
 // --- Resolution Unknown Tests ---
 
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
 fn test_resolution_unknown_deserialization() {
     // Test that unrecognized resolution strings deserialize to Unknown
@@ -1967,6 +1973,7 @@ fn test_resolution_unknown_deserialization() {
     assert_eq!(resolution.unknown_resolution_type(), Some("super_high"));
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
 fn test_resolution_unknown_roundtrip() {
     // Test that Unknown variant roundtrips correctly
@@ -2000,6 +2007,7 @@ fn test_resolution_unknown_helper_methods() {
     assert_eq!(data.get("extra").unwrap(), true);
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
 fn test_resolution_unknown_in_image_content() {
     // Test that unknown resolution works within Image content
@@ -2017,6 +2025,7 @@ fn test_resolution_unknown_in_image_content() {
     }
 }
 
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
 fn test_resolution_unknown_object_form() {
     // Test that object-form resolution values are handled (future API compatibility)
@@ -2235,7 +2244,7 @@ fn test_new_image_data_creates_correct_variant() {
 #[test]
 fn test_new_image_data_with_resolution_creates_correct_variant() {
     let content =
-        Content::image_data_with_resolution("base64encodeddata", "image/png", Resolution::High);
+        Content::image_data("base64encodeddata", "image/png").with_resolution(Resolution::High);
     match content {
         Content::Image {
             data,
@@ -2273,11 +2282,8 @@ fn test_new_image_uri_creates_correct_variant() {
 
 #[test]
 fn test_new_image_uri_with_resolution_creates_correct_variant() {
-    let content = Content::image_uri_with_resolution(
-        "https://example.com/image.png",
-        "image/png",
-        Resolution::Low,
-    );
+    let content = Content::image_uri("https://example.com/image.png", "image/png")
+        .with_resolution(Resolution::Low);
     match content {
         Content::Image {
             data,
@@ -2346,6 +2352,7 @@ fn test_new_video_data_creates_correct_variant() {
             mime_type,
             resolution,
             processing,
+            ..
         } => {
             assert_eq!(data, Some("base64videodata".to_string()));
             assert!(uri.is_none());
@@ -2360,7 +2367,7 @@ fn test_new_video_data_creates_correct_variant() {
 #[test]
 fn test_new_video_data_with_resolution_creates_correct_variant() {
     let content =
-        Content::video_data_with_resolution("base64videodata", "video/mp4", Resolution::Low);
+        Content::video_data("base64videodata", "video/mp4").with_resolution(Resolution::Low);
     match content {
         Content::Video {
             data, resolution, ..
@@ -2382,6 +2389,7 @@ fn test_new_video_uri_creates_correct_variant() {
             mime_type,
             resolution,
             processing,
+            ..
         } => {
             assert!(data.is_none());
             assert_eq!(uri, Some("https://example.com/video.mp4".to_string()));
@@ -2395,11 +2403,8 @@ fn test_new_video_uri_creates_correct_variant() {
 
 #[test]
 fn test_new_video_uri_with_resolution_creates_correct_variant() {
-    let content = Content::video_uri_with_resolution(
-        "https://example.com/video.mp4",
-        "video/mp4",
-        Resolution::Medium,
-    );
+    let content = Content::video_uri("https://example.com/video.mp4", "video/mp4")
+        .with_resolution(Resolution::Medium);
     match content {
         Content::Video {
             uri, resolution, ..
@@ -2525,7 +2530,7 @@ fn test_constructor_serialization_roundtrip() {
     let deserialized: Content = serde_json::from_str(&json).expect("Should deserialize");
     assert_eq!(deserialized.as_text(), Some("Test message"));
 
-    let image = Content::image_data_with_resolution("data", "image/png", Resolution::High);
+    let image = Content::image_data("data", "image/png").with_resolution(Resolution::High);
     let json = serde_json::to_string(&image).expect("Should serialize");
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(value["type"], "image");
@@ -2955,7 +2960,8 @@ fn test_video_content_processing_roundtrip() {
 #[test]
 fn test_video_content_with_processing_preserves_resolution() {
     // with_processing must not clobber a previously set resolution.
-    let video = Content::video_uri_with_resolution("files/x", "video/mp4", Resolution::High)
+    let video = Content::video_uri("files/x", "video/mp4")
+        .with_resolution(Resolution::High)
         .with_processing(VideoProcessing::Static);
 
     match &video {

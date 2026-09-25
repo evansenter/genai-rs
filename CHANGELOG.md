@@ -7,356 +7,203 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- **The mold linker is now opt-in** (#428). `.cargo/config.toml` was checked
-  in and set `-fuse-ld=mold` unconditionally, so a clone on a machine without
-  mold failed every build before compiling anything:
-
-  ```text
-  error: linking with `cc` failed: exit status: 1
-    = note: collect2: fatal error: cannot find 'ld'
-  ```
-
-  `ld`, `lld` and `gold` are all present in that state — the missing binary
-  is mold, which the message never names. CI installs mold explicitly, so
-  this only ever hit new contributors and fresh containers.
-
-  The config now ships as `.cargo/config.toml.example`; run
-  `./scripts/setup-dev.sh` to enable it. The script asks the compiler the
-  question cargo will ask it — link a trivial program with
-  `cc -fuse-ld=mold` — rather than checking whether mold is on `PATH`.
-  `-fuse-ld=mold` is a compiler-driver option that GCC only accepts from
-  12.1 (clang 12+), so on Ubuntu 22.04, whose default gcc is 11, `apt
-  install mold` satisfies a `PATH` check while leaving every build broken in
-  exactly the way above. The probe covers both conditions at once and needs
-  no version table; when it fails the script explains and exits 0, since
-  building without mold is fine, just slower. CI enables the config
-  alongside its existing mold install, so build times there are unchanged.
-
-- **Scheduled workflows escalate their own failures** (#431). The flakiness
-  report failed 22 days running, then stopped firing for ~10 weeks, and none
-  of the three transitions produced a signal anyone acted on. `CI Flakiness
-  Report` and `Security Audit` now open a rolling `ci-health` issue on a
-  failing scheduled run, comment on each subsequent failure, and close it on
-  recovery. The issue body carries streak length — "failing since 2026-05-01,
-  22 consecutive scheduled runs" — because "it failed again" is what the
-  email channel already provided 22 times, and what nobody acted on.
-
-  Bounded honestly: this runs inside the job it reports on, so a run that is
-  cancelled, hits its execution limit, or dies before `actions/checkout`
-  still fails silently. Catching those needs a `workflow_run` watcher, which
-  is deferred with the rest of the liveness work.
-
-  `Security Audit` additionally gains `issues: write`, which the escalation
-  needs — and which also switches on `audit-check`'s own per-advisory issue
-  reporting, inert until now for want of the permission.
-
-### Changed (breaking)
-
-- **BREAKING**: **`InteractionInput::Content` is now sent as a single
-  `user_input` step**
-  rather than as a bare content array. Both are valid arms of the API's input
-  union, but only the step form accepts video `processing` — the identical
-  content in a bare array is rejected with
-  `Unknown parameter 'processing' at 'input[1]'`, which names the field
-  rather than the input shape and so points at the wrong thing entirely.
-
-  That field is not modeled by this crate yet (#419), so today the change is
-  alignment with the canonical form rather than a fix for a pairing a caller
-  can express; it means #419 can land without a second wire-shape decision.
-
-  Verified live (2026-08-16, `gemini-3.7-flash`, revision 2026-05-20) that
-  the step form is accepted everywhere the bare form is: text, inline image,
-  inline audio, inline document, video by URI, and a stored follow-up turn
-  via `previous_interaction_id` all complete under both shapes. The steps
-  array is also the canonical form under this revision — the one `Turn` was
-  removed in favour of.
-
-  Callers using `with_content()` need no change. The wrap is scoped to
-  `InteractionRequest::input` rather than to `InteractionInput`'s own
-  `Serialize`, so `InteractionResponse::input` — which echoes back what the
-  server sent — still re-serializes in the shape it arrived in. A request's
-  `Content` input does now deserialize back as
-  `InteractionInput::Steps(vec![Step::user_input(..)])`, since the two are
-  indistinguishable once serialized. Marked breaking for that reason rather
-  than for a signature change — there is none — since anyone who persists a
-  built `InteractionRequest` and matches on `input` after reloading it now
-  takes a different branch. (#427)
-
-- **Breaking: response structs are now `#[non_exhaustive]`.** The convention
-  was already documented in `docs/ENUM_WIRE_FORMATS.md`, but 32 deserializable
-  response types had drifted from it — including the five (`Trigger`,
-  `TriggerExecution`, `Environment`, `Agent`, `Webhook`) that adding an `extra`
-  field had just turned into a breaking change. Under the convention that
-  would have been a non-event.
-
-  **What breaks:** struct-literal construction of these types from another
-  crate, and `..Default::default()` functional-update syntax. Exhaustive
-  `match` on them needs a `..` arm.
-
-  **What still works:** `T::default()` followed by field assignment, on every
-  one of these types that derives `Default` — which is most of them, including
-  `InteractionResponse`, `UsageMetadata`, `Agent`, `Trigger`, `Environment`,
-  `Webhook` and the `*ListResponse` wrappers. That is the migration for most
-  call sites:
-
-  ```rust
-  // before
-  let response = InteractionResponse { id: Some("x".into()), ..Default::default() };
-  // after
-  let mut response = InteractionResponse::default();
-  response.id = Some("x".into());
-  ```
-
-  For the few with neither `Default` nor a constructor, deserialize a JSON
-  fixture. `ModalityTokens` gains a `new()` in this release for that reason.
-
-  Request-side types are deliberately untouched: `GenerationConfig`,
-  `FunctionDeclaration`, the tool configs and the create/update bodies are
-  yours to build, and closing them would cost construction syntax while
-  gaining the crate nothing. The exception is a body that ships builders —
-  `CreateFileSearchStoreRequest` is `#[non_exhaustive]` because `new()` /
-  `with_display_name()` / `with_extra()` already give callers a construction
-  path, so closing it takes nothing away.
-
-  `tests/non_exhaustive_responses.rs` now fails the build on a new response
-  struct without the attribute, so the backlog cannot re-accumulate.
-
-- **Breaking:** `Content::Video` has a new `processing` field. Code that
-  constructs or exhaustively destructures the variant with struct-literal
-  syntax needs `processing: None` (or `..`) added. The `Content::video_*()`
-  constructors are unaffected.
-
-- **Evergreen `extra` passthrough on response-side resource shapes.**
-  `Trigger`, `TriggerExecution`, `Environment`, `Agent`, and `Webhook` now
-  carry a flattened `extra` map, so a deserialize-then-serialize cycle no
-  longer silently drops fields the crate hasn't modeled.
-
-  Scoped to those five resource shapes themselves. Types nested inside them
-  still drop unmodeled keys — `SigningSecret`, `EnvironmentSource`,
-  `NetworkConfig` — as do the list envelopes (`AgentListResponse` and its
-  siblings), so a new field alongside `next_page_token` is still lost.
-  Extending the passthrough down those trees is follow-up work.
-
-  `Content` and `RemoteEnvironment` already did this; the request bodies
-  gained it in 0.9.0. These five were the remaining hole, and `Trigger` /
-  `TriggerExecution` are the sharpest cases — trigger creation is agent-gated,
-  so their response shapes have never been live-verified and a field the API
-  returns today would be both invisible and unrecoverable.
-
-  As on the request side, a key colliding with a modeled field wins on
-  serialize via `serde_json::to_value`.
-
-- **Breaking:** the five structs above have a new `extra` field. All derive
-  `Default`; see the `#[non_exhaustive]` entry above for how to construct
-  them from outside the crate — `..Default::default()` is functional-update
-  syntax, which that attribute now blocks, so the route is `T::default()`
-  followed by field assignment.
-
-- **`StepSummary` gains a `tool_call_count` field, and is now
-  `#[non_exhaustive]`.** Exhaustive struct literals and destructuring without
-  a `..` rest pattern will fail to compile — both because of the new field and
-  because the struct is now closed.
-
-  Closed in the same change that takes the break, deliberately. The field
-  addition is source-breaking *only* because the struct was open, and the API
-  is expected to grow step types — `mcp_server_tool_call` may start arriving,
-  and the recurring SDK-bindings sweep (#421) is the intended detector for
-  new ones — so every future counter would
-  repeat this break for a purely mechanical reason. Doing it now costs
-  consumers nothing extra: they are already recompiling for the new field.
-
-  `Default` is derived, so the migration is `StepSummary::default()` then
-  assign — pinned by `tests/ui/pass_step_summary_migration.rs`, a trybuild
-  fixture compiled as its own crate. Its counterpart
-  `tests/ui/fail_step_summary_struct_literal.rs` pins the attribute itself:
-  the migration path compiles the same with or without it, so only a
-  `compile_fail` fixture goes red if it is removed.
-
-### Fixed
-
-- **`#[tool]` no longer requires consumer-side dependencies or imports**
-  (#402). A crate depending only on `genai-rs` and `genai-rs-macros`, with no
-  trait import, now compiles.
-
-  Previously the generated code named `::async_trait` and `::serde_json`,
-  which resolve in the *consumer's* dependency graph, so both had to be added
-  as direct dependencies; and it called `.declaration()` in method position,
-  which needed `use genai_rs::CallableFunction;` at every expansion site.
-
-  ```toml
-  # No longer needed alongside genai-rs-macros:
-  # async-trait = "0.1"
-  # serde_json = "1.0"
-  ```
-
-  Scoped to `#[tool]`: a **manual** `CallableFunction` impl still needs both
-  `async-trait` and `serde_json` as direct dependencies — the trait is
-  declared with `#[async_trait]`, and its `call` signature names
-  `serde_json::Value`.
-
-  **Version coupling:** the generated code now references
-  `genai_rs::__private`, so `genai-rs-macros` requires a `genai-rs` from this
-  release or later. `genai-rs-macros` is a proc-macro crate and declares no
-  dependency on `genai-rs`, so Cargo cannot enforce this — pinning the two to
-  independent versions with the macro ahead of the library fails at every
-  `#[tool]` site with `could not find __private in genai_rs`. Bump them
-  together, as the release checklist already does.
-
-  `tests/ui/pass_no_consumer_imports.rs` pins the no-imports behavior.
-
-- **`speech_config` in the `{"speakers": [...]}` form no longer silently
-  discards every speaker.** `google-genai` 2.18.x widened the field to
-  `SpeakerConfig | List[SpeechConfig]`. Because `SpeechConfig`'s fields are
-  all optional and serde ignores unknown keys, the object form matched the
-  deserializer's single-object arm and produced one all-`None` config — the
-  speakers vanished with no error.
-
-  All three wire forms now normalize to the list: the spec list, the
-  `{"speakers": [...]}` object, and the legacy single object.
-
-  Note the Gemini API **rejects both object forms on send** (`400 ... Expected
-  an array, got object`, verified live 2026-08-16), so the crate continues to
-  emit the list. The leniency is deserialize-only, and it matters because a
-  `GenerationConfig` also arrives nested inside a stored `Trigger`
-  interaction that another SDK may have created.
-
-  No public type changed — `speech_config` is still `Option<Vec<SpeechConfig>>`.
+Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
+`gemini-3.8-flash`, and Antigravity harness 0.1.18.
 
 ### Added
 
-- **Video `processing` — segment clipping, frame-rate sampling, and agentic
-  mode.** `Content::Video` gained a `processing` field, modeled as the new
-  `VideoProcessing` enum with a `with_processing()` setter and a
-  `VideoProcessing::segment()` builder.
+- **Voices API**: `Client::{list_voices, get_voice, create_voice,
+  delete_voice}`, `CreateVoiceRequest`, `ListVoicesParams`. A custom voice id
+  works as `SpeechConfig::voice` on 3.8 TTS models.
+- **Credentials API**: `Client::{create, get, list, update,
+  delete}_credential(s)`, plus `RemoteEnvironment::add_env_var` / `EnvVar` and
+  `AllowlistEntry::with_credential` references, verified end to end: the
+  sandbox never sees a credential's secret, and the egress proxy injects it
+  into requests to trusted domains. Bearer `header_name`/`prefix` are
+  accepted but not applied by the API yet.
+- **Environment files and forking**: `Client::list_environment_files`,
+  `Client::upload_environment_file`, `CreateEnvironmentRequest::from_environment`
+  (bare environment id only).
+- **File Search Store management**: create, get, list and delete stores;
+  upload, get, list and delete documents; `wait_for_document_active` (indexing
+  is asynchronous and search returns nothing for a pending document). Types
+  `FileSearchStore`, `FileSearchDocument`, `DocumentState`.
+- **Video `processing`**: `Content::with_processing()` and
+  `VideoProcessing::segment()` for clip windows, `fps` sampling and agentic
+  mode. A segment window is the main token-cost lever (16,198 vs 57,778 video
+  tokens for a 5s window on one test video, 2026-08-18).
+- **New step types**: `Step::ToolCall` (the generic step MCP and other
+  server-side tools actually emit — previously `Unknown`, so MCP calls went
+  uncounted), `Step::ProcessingCall` / `ProcessingResult` (agentic video),
+  `Step::RetrievalCall` / `RetrievalResult` (Vertex-only), with matching
+  `StepDelta` variants, `InteractionResponse::tool_calls()` / `has_tool_calls()`,
+  and new `StepSummary` counts.
+- **TTS on `gemini-3.8-flash-tts`**: `Annotation::SpeechMetadata` and
+  `Annotation::WordInfo`, `Content::speaker_text`, `SpeechConfig::for_speaker`.
+  3.8 TTS requires a speaker annotation per text turn for multi-speaker audio.
+- **Response fields**: `InteractionResponse::{labels, system_instruction,
+  extra}` and `UsageMetadata::extra`, so fields the crate doesn't model yet
+  (e.g. `model_invocation_token_counts`) survive a round trip. Resource shapes
+  (`Trigger`, `TriggerExecution`, `Environment`, `Agent`, `Webhook`) gained
+  `extra` too.
+- **Small parity items**: `Content::with_video_name`,
+  `ResponseFormat::Video.resolution` (`VideoResolution`),
+  `TranscriptionConfig::with_mode` (`TranscriptionMode`),
+  `RagRanking::with_rank_service` (`RankService`).
+- `ClientBuilder::with_base_url()` — point every endpoint, including upload
+  URLs, at another host (a proxy or a local test stub).
+- `GenaiError::Stream { message, code }` for in-stream server errors in the
+  auto-function streaming loop.
+- `DEFAULT_DEEP_RESEARCH_AGENT` and `DEFAULT_ANTIGRAVITY_AGENT` constants.
+- `ModalityTokens::new()`.
+- Antigravity: `AgentBehavior` with `AgentBuilder`/`Subagent::with_agent_behavior`,
+  `BuiltinTool::ReadUrlContent` (write-capable: network egress),
+  `ChatResponse::stop_reason()`, `protocol::{StopReason, Modality, AgentBehavior}`.
 
-  A segment window is the difference between the model ingesting a five-second
-  clip and the entire video. Re-measured live 2026-08-18 against
-  `gemini-3.7-flash` on one source video: **16,198 video input tokens with a
-  5s-10s window, 57,778 without.** Among the `static` forms the window is the
-  lever — omitting the field, `"static"`, `{"type": "static"}` and
-  `{"type": "static", "fps": 1}` all produced the same 57,778, and `fps`
-  alone moved nothing.
+### Changed
 
-  Two caveats, both service-side and both worth knowing before relying on
-  the figures. When first measured on 2026-08-16 the same window produced
-  455 tokens against 57,775 — a ~127x saving rather than today's ~3.6x — so
-  the clipped accounting has been revised while the unclipped side held.
-  And `"agentic"` no longer reports video tokens at all: it bills as `image`,
-  2,112 and 4,158 on two consecutive runs, which makes it the cheapest mode
-  rather than one equivalent to `static` — so mode selection *is* a lever
-  now, contrary to what the 2026-08-16 reading showed. What held across both
-  is that a window reduces ingestion among the `static` forms.
+- **Breaking:** `genai_rs::environment` and `genai_rs::environment_files` are
+  merged into `genai_rs::environments`, and the Files API types moved to a
+  public `genai_rs::files` module (`FileUploadResponse` is now exported). Root
+  re-exports are unchanged.
+- **Breaking:** `upload_file` / `upload_file_with_mime` stream from disk with
+  bounded memory. `upload_file_chunked*`, `ResumableUpload` and
+  `DEFAULT_CHUNK_SIZE` are removed: the handle was only returned after a
+  successful upload, so it could never resume anything.
+- **Breaking:** `InteractionStreamEvent`, `StreamMetadata` and `StreamError` are
+  no longer public; no public API took or returned them.
+- **Breaking:** `strict-unknown` now rejects unknown values of every string
+  enum, not only `Content` and `Step` types. Every string enum implements `Eq`,
+  `Hash` and `Display`.
+- **Breaking:** `From<serde_json::Value> for FunctionResultPayload` wraps a
+  non-object value as `{"result": value}` (the API rejects a top-level array
+  as a function result).
 
-  ```rust
-  let video = Content::video_uri("files/abc123", "video/mp4")
-      .with_processing(VideoProcessing::segment().start_offset("5s").end_offset("10s").build());
-  ```
-
-  One sharp edge, documented on the type: the API accepts `processing` only
-  when the video sits inside a `user_input` step. Sending the same content via
-  `InteractionInput::Content` returns `400 Unknown parameter 'processing'`, so
-  use `InteractionInput::Steps`.
-
-- **`Step::ToolCall`** — the generic `tool_call` step the API actually emits
-  for server-side tool invocations, including MCP (#433).
-
-  Before this it landed in `Step::Unknown`, so a successful MCP interaction
-  reported no tool calls at all. Verified live (2026-08-16,
-  `gemini-3.7-flash`, a real MCP server): the step carries only
-  `{id, signature}`. Which server or tool ran is not recoverable from the
-  response; `usage.total_tool_use_tokens` is what shows the call happened.
-
-- **`InteractionResponse::tool_calls()` / `has_tool_calls()`** and the
-  `ToolCallInfo` borrowed view they return — `id` plus `signature`, which is
-  everything the API discloses about a server-side tool call.
-
-- **`StepSummary::tool_call_count`** — where MCP calls are counted.
-  `mcp_server_tool_call_count` reads **0** on a successful MCP interaction,
-  which is worse than absent: a caller checking it concludes MCP did not run.
-  Both fields now cross-reference each other.
-
-  `Step::McpServerToolCall` / `McpServerToolResult` are retained and now
-  documented as spec-present but never observed — the same status as
-  `Tool::Retrieval`, and unlike `cached_content` (D-005) nothing rejects
-  them.
-
-- **File Search Store management.** `Tool::FileSearch` takes store names, but
-  the crate had no way to *create* a store — so file search was unusable
-  without provisioning one out-of-band. New `Client` methods close that loop:
-
-  | Method | Purpose |
-  |--------|---------|
-  | `create_file_search_store` / `_with_request` | Create a store |
-  | `get_file_search_store` / `list_file_search_stores` | Read stores |
-  | `delete_file_search_store` | Delete (with `force`) |
-  | `upload_to_file_search_store` / `_with_mime` | Add a document |
-  | `get_file_search_document` / `list_file_search_documents` / `delete_file_search_document` | Manage documents |
-  | `wait_for_document_active` | Block until a document is indexed |
-
-  Plus the `FileSearchStore`, `FileSearchDocument`, and `DocumentState` types,
-  all carrying Evergreen `extra` passthrough. The two list envelopes
-  (`FileSearchStoreListResponse`, `DocumentListResponse`) do not, matching
-  `AgentListResponse` and its siblings — a field the API adds alongside
-  `next_page_token` is still dropped. Tracked in #460.
-
-  ```rust
-  let store = client.create_file_search_store(Some("my-docs")).await?;
-  let doc = client.upload_to_file_search_store(&store.name, "handbook.pdf", None).await?;
-  client.wait_for_document_active(&doc.name, None, None).await?;
-  ```
-
-  `wait_for_document_active` is not optional in practice: indexing is
-  asynchronous, and file search silently returns nothing for a document still
-  in `STATE_PENDING`.
-
-  `examples/file_search.rs` now provisions its own store and runs end to end,
-  replacing a placeholder store ID that could never work.
-
-- **`ModalityTokens::new()`** — the type had no `Default` and no constructor,
-  so closing it above would otherwise have left `serde` as the only way to
-  produce one.
-
-### Documented
-
-- Several live-verified File Search behaviors now in
-  `docs/ENUM_WIRE_FORMATS.md`: the resource is **camelCase** (unlike the
-  Interactions API), `sizeBytes` is a JSON string, `DocumentState` uses a
-  `STATE_` prefix that `FileState` does not, deleting an indexed document or
-  a non-empty store requires `force=true`, `file_search_result` steps carry
-  no chunk contents (so `has_file_search_results()` can be `true` while
-  `file_search_results()` is empty), and `file_search` cannot be combined with
-  either `google_search` or `url_context` (`code_execution` is fine).
+- **Breaking:** `DEFAULT_MODEL` is `gemini-3.8-flash` (was `gemini-3.7-flash`).
+  It rejects `ThinkingLevel::Minimal`; use `MINIMAL_THINKING_MODEL`.
+- **Breaking:** `DEFAULT_TTS_MODEL` is `gemini-3.8-flash-tts` (was
+  `gemini-2.5-pro-preview-tts`). It returns `audio/wav` rather than raw L16, and
+  multi-speaker requests need `Content::speaker_text` turns instead of a
+  `Name: line` transcript.
+- **Breaking:** Antigravity targets harness **0.1.18**
+  (`SUPPORTED_HARNESS_VERSION`) and no longer drives 0.1.10: the harness
+  rejects the old plain-string user message (visible only on its stderr), so
+  every turn timed out. `protocol::InputEvent::UserInput` carries a `UserInput`
+  (use `InputEvent::user_text`); `ComplexUserInput` is removed.
+  `ask_question` is policy-gated on 0.1.18 and needs
+  `AgentBehavior::Interactive`. `AgentEvent::TextDelta` now carries only model
+  text addressed to the user.
+- **Breaking:** builder names follow the `with_*` (replace) / `add_*` (append)
+  rule: `InteractionBuilder::set_tools` → `with_tools`;
+  `FunctionDeclarationBuilder::{description, parameter, required}` →
+  `with_description` / `add_parameter` / `with_required`;
+  `ComputerUseConfig::{excluding, disabling_safety_policies}` →
+  `with_excluded_predefined_functions` / `with_disabled_safety_policies`.
+  `with_google_search` / `with_google_maps` / `with_code_execution` /
+  `with_url_context` now replace an existing tool of the same kind instead of
+  appending a duplicate.
+- **Breaking:** `create_file_search_store` takes `&CreateFileSearchStoreRequest`.
+- **Breaking:** `Api.message` is the parsed error envelope,
+  `"STATUS_OR_CODE: message"`, no longer the raw body cut at 200 characters.
+  A 2xx body that fails to parse is `MalformedResponse` (was `Json`); an upload
+  response without a session URL is `MalformedResponse` (was `InvalidInput`).
+- **Breaking:** response structs are `#[non_exhaustive]`, enforced by
+  `tests/non_exhaustive_responses.rs`. Construct them with `T::default()` and
+  field assignment, or deserialize a fixture. Request-side types are unchanged.
+- **Breaking:** `InteractionInput::Content` is sent as a single `user_input`
+  step (the form that accepts video `processing`). `with_content()` callers
+  need no change.
+- **Breaking:** `Role` is a plain enum without serde or an `Unknown` variant
+  (it never reaches the wire). `FunctionCallingMode` and
+  `CodeExecutionLanguage` no longer accept pre-revision uppercase spellings.
+- **Breaking:** `StepDelta::FunctionResult.call_id` is `Option<String>`;
+  `AutoFunctionStreamChunk::ExecutingFunctions.pending_calls` is
+  `Vec<OwnedFunctionCallInfo>`. New fields on `Content::Video`,
+  `ResponseFormat::Video`, `RemoteEnvironment`, `AllowlistEntry`,
+  `CreateEnvironmentRequest`, `TranscriptionConfig` and `RagRanking` break
+  exhaustive struct literals.
+- Request `labels` are accepted by the Gemini API (verified 2026-09-24; no
+  longer Vertex-only). `safety_settings` still is.
+- `#[tool]` needs only `genai-rs` and `genai-rs-macros` — no `async-trait`,
+  `serde_json` or trait import at the expansion site. The two crates must be
+  bumped together (the expansion uses `genai_rs::__private`).
+- `genai-rs-macros` no longer depends on `utoipa`; `regex` is no longer a
+  runtime dependency.
+- Tool declarations are sent sorted by name; Files endpoints now send the
+  `Api-Revision` header too (the server currently ignores its value).
+- Examples: every example runs live, exits non-zero when what it
+  demonstrates didn't happen, and cleans up; a subset runs in CI. New
+  coverage for stream resume, `delete_interaction`, `VideoProcessing::segment`
+  and `with_image_config`.
 
 ### Removed
 
-- **Breaking: `with_cached_content()` and `InteractionRequest.cached_content`.**
-  The Interactions API rejects the field outright:
+- **Breaking:** `INLINE_VIDEO_MODEL`. Its premise was a fixture bug: the test
+  clip was 0.2 s long and yields no sampled frame. Any clip of 1 s or longer
+  works inline on `DEFAULT_MODEL` (D-012).
+- **Breaking:** `with_cached_content()` / `InteractionRequest.cached_content`
+  (the Interactions API rejects the field in every spelling and placement;
+  implicit caching still shows in `usage.total_cached_tokens`).
+- **Breaking:** the `interactions_api` module; `PendingFunctionCall`;
+  `Content::{image,video}_{data,uri}_with_resolution` (use
+  `.with_resolution()`); `InteractionResponse::{created, updated,
+  code_execution_call, google_search_call, url_context_call_id}`;
+  `create_file_search_store_with_request`;
+  the `excludedPredefinedFunctions` alias.
+- Examples that demonstrated nothing real: `rag_system`, `web_scraper_agent`,
+  `code_assistant`, `testing_assistant`, `multi_turn_agent_manual`,
+  `response_passthrough`, `retrieval_grounding`, `text_input`. Folded into
+  others: `parallel_and_compositional_functions`, `thought_echo`,
+  `cancel_interaction`, `data_analysis`.
 
-  ```
-  400 Unknown parameter 'cached_content'
-  ```
+### Fixed
 
-  `cachedContent` and `cached_content_name` are rejected too, so it isn't a
-  spelling problem — and neither is it a placement one: `generation_config`
-  holds several fields that are not top-level (`transcription_config`,
-  `speech_config`), but both spellings are rejected there as well
-  (`Unknown parameter 'cached_content' at 'generation_config'`). The
-  `/v1beta/cachedContents` resource works fine — a cache creates and reports
-  its token count — but nothing in the Interactions API consumes one, so the
-  builder method could only ever produce a 400.
+- An upload MIME type that cannot be a header value returns `InvalidInput`
+  (not retryable) instead of a retryable `GenaiError::Http`, for every upload
+  path.
+- File search store, document and Files list responses drop only an
+  undeserializable entry (with a warning) and treat a `null` list as empty,
+  like every other resource list, instead of failing the whole page.
 
-  It shipped because the field was modeled from the spec and never live-probed;
-  its test asserted the field *serialized* correctly, which it did.
+- **Antigravity policies were bypassed on the pre-tool hook path** for MCP
+  tools (`mcp_<server>_<tool>`) and `start_subagent`, because the harness names
+  them differently there; on 0.1.18 that hook is the only gate. Hook-denied
+  calls now surface as `ToolDecision::Denied`, `on_post_tool` fires once per
+  custom call, and every builtin toggle is sent explicitly (0.1.10 silently
+  exposed `manage_task` / `schedule`).
+- **`get_interaction_stream` never streamed** — it omitted `stream=true`, so
+  the server returned plain JSON and the stream ended empty. It works now,
+  for background interactions (the only kind the API streams on GET).
+- **Streamed `processing_call` / `processing_result` signatures were dropped**,
+  so stateless replay of a streamed agentic-video turn failed with 400.
+- Tracing spans recorded the whole request (prompts, base64 media) at INFO;
+  bodies are now logged only at debug, and not serialized at all when debug
+  is off.
+- `with_tool_service()` functions were not declared to the model when any other
+  tool was set.
+- The streaming auto-function loop reported "Stream ended without Complete
+  event" instead of the server's in-stream error.
+- `execute_stream()` did not set `stream: true` itself.
+- `wait_for_file_ready()` reported a failed file as a retryable 500.
+- The SSE parser dropped a final event without a trailing newline and did not
+  join multi-line `data:` fields.
+- `#[tool]` mapped `i8`/`u8`/`i16`/`u16`, `&str`, `char` and path-qualified
+  types to `object`, and dropped descriptions on `Vec` parameters.
+- `speech_config` in the `{"speakers": [...]}` form deserialized to one empty
+  config, silently discarding every speaker.
+- `document_from_file` rejected `.txt` / `.md`; they are sent as `text/plain`
+  / `text/markdown`.
+- Unknown SSE event types are logged at `warn` (Evergreen), not `debug`.
 
-  This follows the `response_mime_type` precedent — rejected outright, so
-  removed — rather than the `safety_settings` / `Tool::Retrieval` one, where
-  the API explicitly names the feature as Vertex-only and the surface is kept
-  for spec parity.
+### Security
 
-  Implicit caching is unaffected and still reported via
-  `usage.total_cached_tokens`.
+- `LOUD_WIRE` and the `genai_rs::wire` tracing output printed credential
+  secrets in full. `token`, `client_secret` and `refresh_token` are now
+  redacted everywhere, and `value` inside `environment_variable` credentials
+  and environment `env` maps. Custom `WireInspector`s still receive raw bodies.
+- Antigravity policy bypass on the pre-tool hook path (see Fixed): `deny`
+  rules for MCP tools and `start_subagent` were not applied.
+
 
 ## [0.10.0] - 2026-08-16
 

@@ -1,131 +1,85 @@
 # Thinking Mode Guide
 
-This guide covers Gemini's thinking capabilities, which expose the model's chain-of-thought reasoning process.
+Gemini models can reason before they answer. Under the 2026-05-20 API
+revision, that reasoning appears in `response.steps` as
+`Step::Thought { signature, summary }`:
 
-## Table of Contents
+- `signature`: an opaque signature over the reasoning. It is not readable
+  text; pass it back unchanged when replaying history.
+- `summary`: human-readable summary content, populated only when you ask for
+  [thinking summaries](#thinking-summaries).
 
-- [Overview](#overview)
-- [Thinking Levels](#thinking-levels)
-- [Basic Usage](#basic-usage)
-- [Accessing Thoughts](#accessing-thoughts)
-- [Thinking Summaries](#thinking-summaries)
-- [Streaming with Thinking](#streaming-with-thinking)
-- [Cost and Performance](#cost-and-performance)
-- [Best Practices](#best-practices)
-- [Thought Signatures](#thought-signatures)
+## Thinking levels
 
-## Overview
+`with_thinking_level(ThinkingLevel::…)` sets `generation_config.thinking_level`.
 
-Thinking mode enables the model to "think out loud" before responding, showing its reasoning process. This is useful for:
+| Level | Wire value | On `DEFAULT_MODEL` |
+|-------|-----------|--------------------|
+| `Minimal` | `"minimal"` | **Rejected**: `'minimal' is not a supported thinking level for this model. Allowed values are: high, low, medium.` Use `genai_rs::MINIMAL_THINKING_MODEL`, a model that accepts it |
+| `Low` | `"low"` | Accepted; the cheapest level this model allows |
+| `Medium` | `"medium"` | Accepted |
+| `High` | `"high"` | Accepted |
 
-- Complex problem solving
-- Mathematical calculations
-- Multi-step reasoning
-- Debugging model behavior
-- Understanding how the model reaches conclusions
+**Omitting `with_thinking_level()` does not turn thinking off.** It sends no
+level, and the model's default applies. `DEFAULT_MODEL` (`gemini-3.8-flash`)
+still thinks. One live check, 2026-09-24, on a short arithmetic puzzle:
 
-Under API revision 2026-05-20, thinking appears in `response.steps` as `Step::Thought { signature, summary }`:
+| Level sent | Thought tokens |
+|------------|----------------|
+| *(none)* | 103, then 222 on a second run |
+| `low` | 56 |
+| `medium` | 142 |
+| `high` | 260 |
 
-- `signature`: an opaque cryptographic signature validating the reasoning (not readable text)
-- `summary`: human-readable summary content blocks, populated when thinking summaries are enabled
+Counts vary run to run and with the prompt. Treat these as the shape of the
+behavior, not a price list. To keep reasoning cost down, set
+`ThinkingLevel::Low` explicitly, and read the actual cost from
+`response.thought_tokens()`.
 
-## Thinking Levels
+## Basic usage
 
-| Level | Description | Token Cost | Use Case |
-|-------|-------------|------------|----------|
-| `Minimal` [^minimal] | Minimal reasoning | Low | Quick checks |
-| `Low` | Light reasoning | Moderate | Simple problems |
-| `Medium` | Balanced reasoning | Higher | Moderate complexity |
-| `High` | Extensive reasoning | Highest | Complex problems |
+```rust,no_run
+use genai_rs::ThinkingLevel;
 
-[^minimal]: `Minimal` is not accepted by every model. `DEFAULT_MODEL` rejects
-it with a 400 (verified live 2026-08-15), so the snippets below — which all
-pass `genai_rs::DEFAULT_MODEL` — will fail if you swap their level for
-`Minimal`. Use `genai_rs::MINIMAL_THINKING_MODEL` instead, which is pinned to
-a model that supports it.
-
-Higher levels produce more detailed reasoning but consume more tokens. To skip thinking entirely, simply omit `with_thinking_level()`.
-
-## Basic Usage
-
-### Enable Thinking
-
-```rust,ignore
-use genai_rs::{Client, ThinkingLevel};
-
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
-    .with_text("Solve step by step: If a train travels 120 miles in 2 hours, what's its speed?")
+    .with_text("If a train travels 120 miles in 2 hours, what's its speed?")
     .with_thinking_level(ThinkingLevel::Medium)
     .create()
     .await?;
+
+println!("answer: {}", response.as_text().unwrap_or_default());
+println!("thought tokens: {:?}", response.thought_tokens());
+println!("thought steps: {}", response.step_summary().thought_count);
+# Ok(())
+# }
 ```
 
-### Check for Thoughts
+Helpers on `InteractionResponse`:
 
-```rust,ignore
-if response.has_thoughts() {
-    println!("Model used reasoning!");
-}
-```
+| Method | Returns |
+|--------|---------|
+| `has_thoughts()` | `true` if any `Thought` step is present (a step can be present even when `thought_tokens()` is 0) |
+| `thought_signatures()` | Iterator over the populated signatures (`&str`) |
+| `thought_summaries()` | Iterator over summary `Content` blocks |
+| `thought_tokens()` | `Option<u32>`, the same as `usage.total_thought_tokens` |
+| `step_summary().thought_count` | Number of `Thought` steps |
 
-## Accessing Thoughts
+## Thinking summaries
 
-> **Note**: Thought steps carry cryptographic signatures for verification, not human-readable reasoning text. Enable [thinking summaries](#thinking-summaries) to get readable summaries. See [Thought Signatures](#thought-signatures) for details.
+Summaries are returned only when requested:
 
-### Check for Thoughts
+| `with_thinking_summaries(...)` | Result (live check, 2026-09-24) |
+|-------------------------------|------------------------------|
+| `ThinkingSummaries::Auto` | `Thought` steps carry a `summary` |
+| `ThinkingSummaries::None`, or not set | No summary |
 
-```rust,ignore
-// Check if model used reasoning
-if response.has_thoughts() {
-    println!("Model used {} thought steps", response.thought_signatures().count());
-}
-```
-
-### Get Thought Signatures
-
-```rust,ignore
-// Iterate over thought signatures (cryptographic proofs, not readable text)
-for signature in response.thought_signatures() {
-    // Signatures are for verification/replay, not display
-    println!("Thought signature present");
-}
-
-// Get final answer
-if let Some(text) = response.as_text() {
-    println!("Final Answer: {}", text);
-}
-```
-
-### Step Summary
-
-```rust,ignore
-let summary = response.step_summary();
-println!("Thought steps: {}", summary.thought_count);
-println!("Text blocks: {}", summary.text_count);
-```
-
-### Thought Token Usage
-
-```rust,ignore
-if let Some(thought_tokens) = response.thought_tokens() {
-    println!("Tokens used for reasoning: {}", thought_tokens);
-}
-
-// Equivalent, via the usage struct:
-if let Some(thought_tokens) = response.usage.as_ref().and_then(|u| u.total_thought_tokens) {
-    println!("Tokens used for reasoning: {}", thought_tokens);
-}
-```
-
-## Thinking Summaries
-
-Request human-readable summaries of the reasoning process:
-
-```rust,ignore
+```rust,no_run
 use genai_rs::{ThinkingLevel, ThinkingSummaries};
 
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let response = client
     .interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
@@ -135,29 +89,28 @@ let response = client
     .create()
     .await?;
 
-// Read the summaries (Content blocks inside Step::Thought)
 for content in response.thought_summaries() {
     if let Some(text) = content.as_text() {
-        println!("Reasoning summary: {}", text);
+        println!("reasoning summary: {text}");
     }
 }
+# Ok(())
+# }
 ```
 
-### ThinkingSummaries Options
+On the wire both `generation_config.thinking_summaries` and the Deep Research
+`agent_config.thinking_summaries` take `"auto"` / `"none"`.
 
-| Option | Behavior |
-|--------|----------|
-| `Auto` | Include thinking summaries (default when thinking is enabled) |
-| `None` | No summary included |
+## Streaming with thinking
 
-## Streaming with Thinking
+Summaries and signatures stream as their own `StepDelta` variants, before the
+answer text:
 
-Thought summaries and signatures stream before the final response as dedicated `StepDelta` variants:
-
-```rust,ignore
+```rust,no_run
 use futures_util::StreamExt;
 use genai_rs::{StepDelta, StreamChunk, ThinkingLevel, ThinkingSummaries};
 
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let mut stream = client
     .interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
@@ -166,220 +119,69 @@ let mut stream = client
     .with_thinking_summaries(ThinkingSummaries::Auto)
     .create_stream();
 
-let mut in_thought = false;
-
-while let Some(Ok(event)) = stream.next().await {
-    if let StreamChunk::StepDelta { delta, .. } = event.chunk {
+while let Some(event) = stream.next().await {
+    if let StreamChunk::StepDelta { delta, .. } = event?.chunk {
         match delta {
-            StepDelta::ThoughtSummary { content } => {
-                if !in_thought {
-                    println!("=== Thinking ===");
-                    in_thought = true;
-                }
-                if let Some(text) = content.as_ref().and_then(|c| c.as_text()) {
-                    print!("{}", text);
+            StepDelta::ThoughtSummary { content: Some(c) } => {
+                if let Some(text) = c.as_text() {
+                    eprint!("[thinking] {text}");
                 }
             }
-            StepDelta::ThoughtSignature { .. } => {
-                // Opaque signature fragment; keep for replay, nothing to display
-            }
-            StepDelta::Text { text } => {
-                if in_thought {
-                    println!("\n=== Response ===");
-                    in_thought = false;
-                }
-                print!("{}", text);
-            }
+            StepDelta::ThoughtSignature { .. } => {} // opaque; the Completed response carries it
+            StepDelta::Text { text } => print!("{text}"),
             _ => {}
         }
     }
 }
+# Ok(())
+# }
 ```
 
-## Cost and Performance
+## Thought signatures
 
-### Token Costs
+Signatures live on `Step::Thought { signature, .. }`. `Step::FunctionCall`
+steps also carry a `signature`, which the API **requires** when a function
+call is replayed in stateless history (verified live 2026-07), and server-tool
+call and result steps carry an optional one.
 
-Thinking increases token usage significantly:
+When you manage history yourself, replay the model's steps unchanged.
+`response.output_steps()` returns them ready for `with_history()`, signatures
+included:
 
-| Level | Typical Overhead |
-|-------|------------------|
-| (none) | Baseline |
-| Minimal | +10-20% |
-| Low | +20-50% |
-| Medium | +50-100% |
-| High | +100-300% |
+```rust,no_run
+use genai_rs::{Step, ThinkingLevel};
 
-Actual overhead varies based on query complexity.
-
-### When to Use Each Level
-
-```rust,ignore
-// Simple factual query - no thinking needed
-client.interaction()
-    .with_text("What is the capital of France?")
-    // No with_thinking_level() - thinking not requested
-
-// Math problem - medium thinking
-client.interaction()
-    .with_text("Calculate compound interest...")
-    .with_thinking_level(ThinkingLevel::Medium)
-
-// Complex reasoning - high thinking
-client.interaction()
-    .with_text("Analyze this philosophical argument...")
-    .with_thinking_level(ThinkingLevel::High)
-```
-
-### Monitoring Costs
-
-```rust,ignore
-if let Some(usage) = &response.usage {
-    println!("Input tokens: {:?}", usage.total_input_tokens);
-    println!("Output tokens: {:?}", usage.total_output_tokens);
-    println!("Thought tokens: {:?}", usage.total_thought_tokens);
-
-    if let Some(total) = usage.total_tokens {
-        println!("Total tokens: {}", total);
-    }
-}
-```
-
-## Best Practices
-
-### 1. Match Level to Task Complexity
-
-```rust,ignore
-// DON'T: Use high thinking for simple queries
-let response = client.interaction()
-    .with_text("What color is the sky?")
-    .with_thinking_level(ThinkingLevel::High)  // Wasteful!
-    .create().await?;
-
-// DO: Use appropriate level
-let response = client.interaction()
-    .with_text("What color is the sky?")
-    // No thinking needed for simple facts
-    .create().await?;
-```
-
-### 2. Request Thinking for Problem-Solving Prompts
-
-```rust,ignore
-// Good prompts for thinking mode
-let prompts = [
-    "Solve step by step: ...",
-    "Analyze this code for bugs: ...",
-    "Compare and contrast: ...",
-    "Explain your reasoning: ...",
-    "Debug this issue: ...",
-];
-```
-
-### 3. Handle Missing Thoughts Gracefully
-
-```rust,ignore
-// Check for thought presence (signatures are cryptographic, not readable)
-if response.has_thoughts() {
-    let sig_count = response.thought_signatures().count();
-    println!("Model used {} thought steps for reasoning", sig_count);
-} else {
-    println!("No thought steps in response");
-}
-```
-
-### 4. Use for Debugging Model Behavior
-
-```rust,ignore
-// Enable thinking + summaries to understand why the model gave an unexpected answer
-let response = client.interaction()
-    .with_text(&problematic_prompt)
-    .with_thinking_level(ThinkingLevel::High)
-    .with_thinking_summaries(ThinkingSummaries::Auto)
-    .create().await?;
-
-for content in response.thought_summaries() {
-    if let Some(text) = content.as_text() {
-        println!("DEBUG - Reasoning: {}", text);
-    }
-}
-
-if let Some(text) = response.as_text() {
-    println!("DEBUG - Model response: {}", text);
-}
-```
-
-### 5. Combine with Function Calling
-
-Thinking works with function calling to show reasoning about tool use:
-
-```rust,ignore
-use genai_rs::CallableFunction;
-
-let response = client.interaction()
-    .with_model(genai_rs::DEFAULT_MODEL)
-    .with_text("What's the weather in Tokyo and should I bring an umbrella?")
-    .with_thinking_level(ThinkingLevel::Medium)
-    .add_function(GetWeatherCallable.declaration())
-    .create_with_auto_functions()
-    .await?;
-
-// Thoughts may include reasoning about:
-// - Whether to call the function
-// - How to interpret function results
-// - What recommendation to make
-```
-
-## Thought Signatures
-
-Thought signatures provide cryptographic verification of model reasoning. See [Google's documentation](https://ai.google.dev/gemini-api/docs/thought-signatures.md.txt) for details.
-
-Signatures live on `Step::Thought { signature, .. }`; server-tool call/result steps (`Step::CodeExecutionCall`, `Step::GoogleSearchCall`, ...) also carry an optional `signature` field.
-
-### Replaying Signatures in Stateless Multi-Turn
-
-When managing conversation history yourself (stateless mode), include the model's output steps unchanged in the next request so thought signatures are replayed. `response.output_steps()` returns the steps ready for `with_history()`:
-
-```rust,ignore
-// Turn 1
-let response = client
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+let first = client
     .interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Think about the fastest route from A to B")
     .with_thinking_level(ThinkingLevel::Medium)
+    .with_store_disabled()
     .create()
     .await?;
 
-// Build history: prior turns + this response's steps (thought signatures included)
-let mut history = vec![genai_rs::Step::user_text("Think about the fastest route from A to B")];
-history.extend(response.output_steps());
+let mut history = vec![Step::user_text("Think about the fastest route from A to B")];
+history.extend(first.output_steps());
 
-// Turn 2 - signatures replay automatically via the history
 let followup = client
     .interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
     .with_history(history)
     .with_text("Now assume road B2 is closed")
+    .with_store_disabled()
     .create()
     .await?;
+# let _ = followup;
+# Ok(())
+# }
 ```
 
-### Streaming Signatures
-
-```rust,ignore
-use genai_rs::{StepDelta, StreamChunk};
-
-// Thought signatures arrive as dedicated deltas in streaming
-if let StreamChunk::StepDelta { delta, .. } = event.chunk {
-    if let StepDelta::ThoughtSignature { signature } = delta {
-        // Opaque fragment; the accumulated final response carries the full signature
-    }
-}
-```
+See Google's [thought signatures guide](https://ai.google.dev/gemini-api/docs/thought-signatures.md.txt).
+It describes `generateContent`, where the field sits in a different place;
+this crate follows what the Interactions API actually returns.
 
 ## Example
-
-See `cargo run --example thinking` for a complete working example.
 
 ```bash
 GEMINI_API_KEY=your-key cargo run --example thinking

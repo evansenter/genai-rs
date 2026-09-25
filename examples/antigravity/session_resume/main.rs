@@ -24,10 +24,18 @@
 //! - **The distinction that matters**: `shutdown()` persists,
 //!   dropping does not.
 //!
+//! ## Things to know
+//!
+//! - A resume with an unknown id, or without the save dir, is not an error:
+//!   it silently starts a fresh conversation. Check `initial_history()`.
+//! - The save dir grows per conversation; prune it on your own schedule.
+//! - Restored history counts toward the context window like any other
+//!   history.
+//!
 //! ## Requirements
 //!
 //! ```bash
-//! pip install google-antigravity==0.1.10   # or set ANTIGRAVITY_HARNESS_PATH
+//! pip install google-antigravity==0.1.18   # or set ANTIGRAVITY_HARNESS_PATH
 //! export GEMINI_API_KEY=...
 //! cargo run --example session_resume --features antigravity
 //! LOUD_WIRE=1 cargo run --example session_resume --features antigravity
@@ -99,32 +107,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ---------------------------------------------------------------
     println!("\n--- Run 2: resuming the same conversation ---");
     run_two(&api_key, &save_path, &conversation_id).await?;
-
-    println!("\n=== Example Complete ===\n");
-
-    println!("--- What You'll See with LOUD_WIRE=1 ---");
-    println!("  HARNESS /path/to/localharness (pid N) - spawned once per run");
-    println!("  WS Send: {{\"config\": {{... \"cascadeId\": \"\"}}}} - run 1, no id to resume");
-    println!(
-        "  WS Receive: {{\"initializeConversationResponse\": {{\"cascadeId\": \"01JD...\"}}}}"
-    );
-    println!("    - run 1: history absent/empty (fresh conversation)");
-    println!(
-        "  WS Send: {{\"config\": {{... \"cascadeId\": \"01JD...\"}}}} - run 2 asks to resume"
-    );
-    println!("  WS Receive: {{\"initializeConversationResponse\": {{\"history\": [...]}}}}");
-    println!("    - run 2: the restored steps, which initial_history() exposes\n");
-
-    println!("--- Production Considerations ---");
-    println!("• Persist BOTH halves: the save dir and the conversation id. Either");
-    println!("  one alone silently starts a fresh conversation rather than failing");
-    println!("• Always shutdown() — dropping the agent kills the harness without");
-    println!("  writing the trajectory, so the next run has nothing to resume");
-    println!("• Check initial_history() rather than assuming: a resume with an");
-    println!("  unknown id is not an error, it just comes back empty");
-    println!("• The save dir grows per conversation; prune it on your own schedule");
-    println!("• Restored history counts toward the context window like any other");
-    println!("  history — long-lived conversations still compact");
 
     Ok(())
 }
@@ -237,11 +219,11 @@ async fn run_two(
 
     // Structural check, not a phrasing check: the model is free to
     // rephrase, but "deploy key" can only have come from run 1.
-    if answer.to_lowercase().contains("deploy key") {
-        println!("✓ The agent recalled the fact from run 1.");
-    } else {
-        println!("⚠ Recall unclear — the answer did not mention the planted fact.");
+    if !answer.to_lowercase().contains("deploy key") {
+        agent.shutdown().await?;
+        return Err("run 2 did not recall the fact planted in run 1".into());
     }
+    println!("✓ The agent recalled the fact from run 1.");
 
     agent.shutdown().await?;
     Ok(())

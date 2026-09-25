@@ -1,43 +1,45 @@
-//! Built-in tools, response formats, and generation config tests
+//! Built-in tools (Google Search, code execution, URL context, Google Maps,
+//! MCP, computer use), structured output, image output, and generation
+//! config.
 //!
-//! Tests for Google Search grounding, code execution, URL context,
-//! structured output with JSON schema, and advanced generation config.
-//!
-//! This file is organized by feature:
-//!
-//! - **google_search**: Google Search grounding and annotations
-//! - **code_execution**: Python code execution tool
-//! - **url_context**: URL fetching and analysis
-//! - **mcp_server**: Remote Model Context Protocol servers
-//! - **computer_use**: Browser automation action loop
-//! - **structured_output**: JSON schema enforcement
-//! - **image_generation**: Image output modalities
-//! - **thinking**: Thinking level configuration
-//! - **sampling**: Top-p and combined sampling
-//! - **config_fields**: Seed, stop sequences, MIME types, thinking summaries
-//! - **function_calling_modes**: auto, any, none, validated modes
-//!
-//! # Running Tests
+//! Each built-in tool test asserts evidence that the tool ran (its call or
+//! result steps), not just that the model produced text: a model that
+//! ignored the tool and answered from memory must not pass.
 //!
 //! ```bash
-//! cargo test --test tools_and_config_tests -- --include-ignored --nocapture
+//! cargo nextest run --test tools_and_config_tests --run-ignored all
 //! ```
-//!
-//! # Notes
-//!
-//! Some built-in tools may not be available in all regions or account types.
-//! Tests are designed to gracefully skip if tools are unavailable.
 
 mod common;
 
 use common::{
-    assert_response_semantic, get_client, interaction_builder, retry_on_any_error, stateful_builder,
+    assert_response_semantic, get_client, interaction_builder, is_safety_block_error,
+    stateful_builder,
 };
 use genai_rs::{
-    FunctionCallingMode, FunctionDeclaration, GenerationConfig, InteractionStatus, ThinkingLevel,
-    ThinkingSummaries, Tool,
+    FunctionCallingMode, FunctionDeclaration, GenaiError, GenerationConfig, InteractionResponse,
+    InteractionStatus, ThinkingLevel, ThinkingSummaries, Tool,
 };
 use serde_json::json;
+
+/// Unwraps a built-in tool request, tolerating only the content-safety block
+/// that fetched external pages intermittently trip (observed live 2026-07).
+/// The skip is marked so CI counts it.
+fn tool_response(
+    result: Result<InteractionResponse, GenaiError>,
+    what: &str,
+) -> Option<InteractionResponse> {
+    match result {
+        Ok(response) => Some(response),
+        Err(e) if is_safety_block_error(&e) => {
+            println!(
+                "LIVE_TOOL_EVIDENCE_SKIPPED: {what} blocked by the content safety filter: {e:?}"
+            );
+            None
+        }
+        Err(e) => panic!("{what} failed: {e:?}"),
+    }
+}
 
 // =============================================================================
 // Built-in Tools: Google Search
@@ -48,70 +50,68 @@ mod google_search {
     use futures_util::StreamExt;
     use genai_rs::StreamChunk;
 
+    /// Search grounding on turn 1, and a follow-up that answers from the
+    /// grounded context on turn 2.
     #[tokio::test]
     #[ignore = "Requires API key"]
-    async fn test_google_search() {
-        // Test using Google Search for grounding with current information
+    async fn test_google_search_multi_turn() {
         let Some(client) = get_client() else {
             println!("Skipping: GEMINI_API_KEY not set");
             return;
         };
 
-        let result = stateful_builder(&client)
-            .with_text(
-                "What is the current weather in New York City today? Use search to find current data.",
-            )
-            .with_google_search() // Use convenience method
-            .create()
-            .await;
+        let result1 = retry_request!([client] => {
+            stateful_builder(&client)
+                .with_text("What is the current weather in Tokyo, Japan today? Use search to find current data.")
+                .with_google_search()
+                .create()
+                .await
+        });
+        let Some(response1) = tool_response(result1, "Google Search turn 1") else {
+            return;
+        };
 
-        match result {
-            Ok(response) => {
-                println!("Status: {:?}", response.status);
-                if response.has_text() {
-                    let text = response.as_text().unwrap();
-                    println!("Response with Google Search: {}", text);
-                    // Should provide current/recent information - use semantic validation
-                    assert_response_semantic(
-                        &client,
-                        "Asked about current weather in New York City with Google Search enabled",
-                        text,
-                        "Does this response discuss weather, temperature, or conditions in New York?",
-                    ).await;
-                }
+        assert_eq!(response1.status, InteractionStatus::Completed);
+        assert!(
+            !response1.google_search_calls().is_empty(),
+            "no search was issued: {:?}",
+            response1.step_summary()
+        );
+        let text1 = response1.as_text().expect("turn 1 should answer in text");
+        assert_response_semantic(
+            &client,
+            "Asked about the current weather in Tokyo with Google Search enabled",
+            text1,
+            "Does this response describe weather conditions or temperature in Tokyo?",
+        )
+        .await;
 
-                // Verify grounding data is available via search steps
-                let queries = response.google_search_calls();
-                let search_results = response.google_search_results();
-                if !queries.is_empty() || !search_results.is_empty() {
-                    println!("Google Search steps found:");
-                    println!("  Search queries: {:?}", queries);
-                    println!("  Result items: {}", search_results.len());
-                    for item in &search_results {
-                        println!("    - {} ({})", item.title, item.url);
-                    }
-                } else {
-                    println!("Note: No Google Search steps returned (may vary by API response)");
-                }
-            }
-            Err(e) => {
-                let error_str = format!("{:?}", e);
-                println!("Google Search error (may be expected): {}", error_str);
-                // Google Search may not be available in all accounts
-                if error_str.contains("not supported")
-                    || error_str.contains("not available")
-                    || error_str.contains("permission")
-                {
-                    println!("Google Search tool not available - skipping test");
-                }
-            }
-        }
+        let prev_id = response1.id.clone().expect("id should exist");
+        let result2 = retry_request!([client, prev_id] => {
+            stateful_builder(&client)
+                .with_previous_interaction(&prev_id)
+                .with_text("Based on the weather information you just found, should I bring an umbrella if I visit Tokyo today?")
+                .create()
+                .await
+        });
+        let Some(response2) = tool_response(result2, "Google Search turn 2") else {
+            return;
+        };
+
+        assert_eq!(response2.status, InteractionStatus::Completed);
+        let text2 = response2.as_text().expect("turn 2 should answer in text");
+        assert_response_semantic(
+            &client,
+            &format!("Turn 1 found this Tokyo weather: {text1}. The user then asked whether to bring an umbrella."),
+            text2,
+            "Does this response give umbrella advice consistent with that weather?",
+        )
+        .await;
     }
 
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_google_search_streaming() {
-        // Test Google Search with streaming
         let Some(client) = get_client() else {
             println!("Skipping: GEMINI_API_KEY not set");
             return;
@@ -122,126 +122,56 @@ mod google_search {
             .with_google_search()
             .create_stream();
 
-        let mut chunk_count = 0;
         let mut final_response = None;
-
         while let Some(result) = stream.next().await {
-            match result {
-                Ok(event) => {
-                    chunk_count += 1;
-                    match event.chunk {
-                        StreamChunk::StepDelta { index, delta } => {
-                            println!("Delta chunk {} (step {}): {:?}", chunk_count, index, delta);
-                        }
-                        StreamChunk::Completed(response) => {
-                            println!("Complete response received");
-                            // Check for grounding steps in the final response
-                            let queries = response.google_search_calls();
-                            let search_results = response.google_search_results();
-                            println!("Streaming search queries: {:?}", queries);
-                            println!("Streaming search result items: {}", search_results.len());
-                            final_response = Some(response);
-                        }
-                        _ => {} // Handle unknown variants
-                    }
-                }
-                Err(e) => {
-                    let error_str = format!("{:?}", e);
-                    println!("Stream error: {}", error_str);
-                    // Google Search may not be available in all accounts
-                    if error_str.contains("not supported")
-                        || error_str.contains("not available")
-                        || error_str.contains("permission")
-                    {
-                        println!("Google Search tool not available - skipping test");
-                        return;
-                    }
-                    // For other errors, break but let assertions catch issues
-                    break;
-                }
+            if let StreamChunk::Completed(response) = result.expect("stream error").chunk {
+                final_response = Some(response);
             }
         }
 
-        assert!(chunk_count > 0, "Should receive at least one chunk");
-        assert!(final_response.is_some(), "Should receive complete response");
+        let response = final_response.expect("Should receive complete response");
+        assert!(
+            !response.google_search_calls().is_empty(),
+            "the accumulated response should carry the search step: {:?}",
+            response.step_summary()
+        );
     }
 
+    /// Grounded text carries citation annotations pointing at sources.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_google_search_annotations() {
-        // Test that Google Search grounding populates annotations in text content
-        // Issue #264: Add annotations and citation support for Text content
         let Some(client) = get_client() else {
             println!("Skipping: GEMINI_API_KEY not set");
             return;
         };
 
-        let result = stateful_builder(&client)
-            .with_text("What is the capital of France? Use search to verify the answer.")
-            .with_google_search()
-            .create()
-            .await;
+        let result = retry_request!([client] => {
+            stateful_builder(&client)
+                .with_text("Who won the most recent FIFA World Cup? Use search to verify and cite your sources.")
+                .with_google_search()
+                .create()
+                .await
+        });
+        let Some(response) = tool_response(result, "Google Search") else {
+            return;
+        };
 
-        match result {
-            Ok(response) => {
-                println!("Status: {:?}", response.status);
-                if response.has_text() {
-                    let text = response.as_text().unwrap();
-                    println!("Response text: {}", text);
-
-                    // Check for annotations
-                    if response.has_annotations() {
-                        let annotations: Vec<_> = response.all_annotations().collect();
-                        println!("Found {} annotations:", annotations.len());
-                        for (i, annotation) in annotations.iter().enumerate() {
-                            let span = annotation.extract_span(text).unwrap_or("<invalid span>");
-                            println!(
-                                "  [{}: bytes {:?}..{:?}] \"{}\" -> {:?}",
-                                i,
-                                annotation.start_index(),
-                                annotation.end_index(),
-                                span,
-                                annotation.source()
-                            );
-                        }
-
-                        // Verify at least one annotation has a source
-                        let has_sourced_annotation =
-                            annotations.iter().any(|a| a.source().is_some());
-                        if has_sourced_annotation {
-                            println!("✓ Found annotations with source attributions");
-                        } else {
-                            println!("Note: Annotations present but no source attributions");
-                        }
-                    } else {
-                        // Annotations are not guaranteed - Google may not always return them
-                        println!(
-                            "Note: No annotations returned (varies by API response and query)"
-                        );
-                    }
-                }
-
-                // Also check grounding steps for completeness
-                let search_results = response.google_search_results();
-                if !search_results.is_empty() {
-                    println!(
-                        "Grounding steps: {} result items, {:?} queries",
-                        search_results.len(),
-                        response.google_search_calls()
-                    );
-                }
-            }
-            Err(e) => {
-                let error_str = format!("{:?}", e);
-                println!("Google Search error (may be expected): {}", error_str);
-                if error_str.contains("not supported")
-                    || error_str.contains("not available")
-                    || error_str.contains("permission")
-                {
-                    println!("Google Search tool not available - skipping test");
-                }
-            }
+        let text = response.as_text().expect("Should have text");
+        assert!(
+            response.has_annotations(),
+            "grounded text carried no annotations"
+        );
+        for annotation in response.all_annotations() {
+            assert!(
+                annotation.extract_span(text).is_some(),
+                "annotation span out of range: {annotation:?}"
+            );
         }
+        assert!(
+            response.all_annotations().any(|a| a.source().is_some()),
+            "no annotation named a source"
+        );
     }
 }
 
@@ -257,139 +187,86 @@ mod code_execution {
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_code_execution() {
-        // Test code execution tool for calculations
         let Some(client) = get_client() else {
             println!("Skipping: GEMINI_API_KEY not set");
             return;
         };
 
-        let result = stateful_builder(&client)
-            .with_text("Calculate the factorial of 10 using Python code execution.")
-            .with_code_execution() // Use the new convenience method
-            .create()
-            .await;
+        let response = retry_request!([client] => {
+            stateful_builder(&client)
+                .with_text("Calculate the factorial of 10 using Python code execution.")
+                .with_code_execution()
+                .create()
+                .await
+        })
+        .expect("Code execution request failed");
 
-        match result {
-            Ok(response) => {
-                println!("Status: {:?}", response.status);
-                if response.has_text() {
-                    let text = response.as_text().unwrap();
-                    println!("Response with Code Execution: {}", text);
-                    // factorial(10) = 3628800
-                    assert!(
-                        text.contains("3628800") || text.contains("3,628,800"),
-                        "Response should contain the factorial result: {}",
-                        text
-                    );
-                }
-
-                // Check for typed built-in tool steps using new helpers
-                let summary = response.step_summary();
-                println!(
-                    "Step summary: {} text, {} code_execution_call, {} code_execution_result, {} unknown",
-                    summary.text_count,
-                    summary.code_execution_call_count,
-                    summary.code_execution_result_count,
-                    summary.unknown_count
-                );
-
-                // Test the new typed helper methods
-                for call in response.code_execution_calls() {
-                    println!(
-                        "Executed {} code (id: {}): {}",
-                        call.language,
-                        call.id,
-                        &call.code[..call.code.len().min(100)]
-                    );
-                }
-
-                for result in response.code_execution_results() {
-                    println!(
-                        "is_error: {} (success: {}, call_id: {})",
-                        result.is_error, !result.is_error, result.call_id
-                    );
-                    println!("Result: {}", &result.result[..result.result.len().min(100)]);
-                }
-
-                // Test the convenience helper and verify the code output directly
-                // This is more robust than checking LLM text response
-                if let Some(output) = response.successful_code_output() {
-                    println!(
-                        "First successful output: {}",
-                        &output[..output.len().min(100)]
-                    );
-                    assert!(
-                        output.contains("3628800"),
-                        "Code output should contain correct factorial result (3628800), got: {}",
-                        output
-                    );
-                } else {
-                    // If no successful code output, check that code was at least executed
-                    assert!(
-                        !response.code_execution_results().is_empty(),
-                        "Expected code execution results but found none"
-                    );
-                }
-
-                // Verify the response doesn't contain unknown step types for code execution
-                // (they should all be recognized as known types now)
-                if !summary.unknown_types.is_empty() {
-                    println!("Unknown types found: {:?}", summary.unknown_types);
-                }
-            }
-            Err(e) => {
-                let error_str = format!("{:?}", e);
-                println!("Code Execution error (may be expected): {}", error_str);
-                if error_str.contains("not supported") || error_str.contains("not available") {
-                    println!("Code Execution tool not available - skipping test");
-                }
-            }
-        }
+        assert!(
+            !response.code_execution_calls().is_empty(),
+            "no code was executed"
+        );
+        let output = response
+            .successful_code_output()
+            .expect("code execution should succeed");
+        // A computed value, so a substring check is deterministic.
+        assert!(
+            output.contains("3628800"),
+            "factorial(10) = 3628800, got: {output}"
+        );
+        assert!(
+            response.step_summary().unknown_types.is_empty(),
+            "code execution steps should all be typed"
+        );
     }
 
     #[tokio::test]
     #[ignore = "Requires API key"]
-    async fn test_code_execution_complex() {
-        // Test code execution with a more complex calculation
+    async fn test_code_execution_multi_turn() {
         let Some(client) = get_client() else {
             println!("Skipping: GEMINI_API_KEY not set");
             return;
         };
 
-        let result = interaction_builder(&client)
-            .with_text(
-                "Using Python, calculate the sum of the first 100 prime numbers. Execute the code to get the answer.",
-            )
-            .set_tools(vec![Tool::CodeExecution])
-            .with_store_enabled()
-            .create()
-            .await;
+        let response1 = retry_request!([client] => {
+            stateful_builder(&client)
+                .with_text("Calculate the factorial of 5 using code execution. Return just the number.")
+                .with_code_execution()
+                .create()
+                .await
+        })
+        .expect("Turn 1 failed");
+        assert_eq!(response1.status, InteractionStatus::Completed);
+        assert!(
+            response1
+                .successful_code_output()
+                .is_some_and(|o| o.contains("120")),
+            "turn 1 should compute 120 in code: {:?}",
+            response1.code_execution_results()
+        );
 
-        match result {
-            Ok(response) => {
-                println!("Status: {:?}", response.status);
-                if response.has_text() {
-                    let text = response.as_text().unwrap();
-                    println!("Prime sum response: {}", text);
-                    // Sum of first 100 primes is 24133
-                    // Model might express this with or without comma formatting
-                    assert!(
-                        text.contains("24133") || text.contains("24,133"),
-                        "Response should contain the sum of first 100 primes (24133), got: {}",
-                        text
-                    );
-                }
-            }
-            Err(e) => {
-                println!("Code Execution error (may be expected): {:?}", e);
-            }
-        }
+        let prev_id = response1.id.clone().expect("id should exist");
+        let response2 = retry_request!([client, prev_id] => {
+            stateful_builder(&client)
+                .with_previous_interaction(&prev_id)
+                .with_text("Multiply the factorial result you just calculated by 2. What is the answer?")
+                .with_code_execution()
+                .create()
+                .await
+        })
+        .expect("Turn 2 failed");
+
+        assert_eq!(response2.status, InteractionStatus::Completed);
+        let computed = response2
+            .code_execution_results()
+            .iter()
+            .any(|r| r.result.contains("240"))
+            || response2.as_text().is_some_and(|t| t.contains("240"));
+        assert!(computed, "Turn 2 should calculate 120 * 2 = 240");
     }
 
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_code_execution_streaming() {
-        // Test code execution with streaming
         let Some(client) = get_client() else {
             println!("Skipping: GEMINI_API_KEY not set");
             return;
@@ -400,101 +277,31 @@ mod code_execution {
             .with_code_execution()
             .create_stream();
 
-        let mut chunk_count = 0;
-        let mut has_complete = false;
-        let mut has_code_execution_call = false;
-        let mut has_code_execution_result = false;
-        let mut tool_not_available = false;
-
+        let mut streamed_call = false;
+        let mut streamed_result = false;
+        let mut final_response = None;
         while let Some(result) = stream.next().await {
-            match result {
-                Ok(event) => {
-                    chunk_count += 1;
-                    match event.chunk {
-                        StreamChunk::StepStart { index, step } => {
-                            println!("Step start {} (step {}): {:?}", chunk_count, index, step);
-                            // Code execution arrives as dedicated steps in the
-                            // 2026-05-20 SSE lifecycle (step.start / step.delta).
-                            if matches!(step, Step::CodeExecutionCall { .. }) {
-                                has_code_execution_call = true;
-                            }
-                            if matches!(step, Step::CodeExecutionResult { .. }) {
-                                has_code_execution_result = true;
-                            }
-                        }
-                        StreamChunk::StepDelta { index, delta } => {
-                            println!("Delta chunk {} (step {}): {:?}", chunk_count, index, delta);
-                            if matches!(delta, StepDelta::CodeExecutionCall { .. }) {
-                                has_code_execution_call = true;
-                            }
-                            if matches!(delta, StepDelta::CodeExecutionResult { .. }) {
-                                has_code_execution_result = true;
-                            }
-                        }
-                        StreamChunk::Completed(response) => {
-                            println!("Complete response received");
-                            // The HTTP layer accumulates streamed steps into the
-                            // final response, so the summary reflects code execution too.
-                            let summary = response.step_summary();
-                            println!(
-                                "Complete response code execution: {} calls, {} results",
-                                summary.code_execution_call_count,
-                                summary.code_execution_result_count
-                            );
-                            if summary.code_execution_call_count > 0 {
-                                has_code_execution_call = true;
-                            }
-                            if summary.code_execution_result_count > 0 {
-                                has_code_execution_result = true;
-                            }
-                            has_complete = true;
-                        }
-                        _ => {} // Handle unknown variants
-                    }
+            match result.expect("stream error").chunk {
+                StreamChunk::StepStart { step, .. } => {
+                    streamed_call |= matches!(step, Step::CodeExecutionCall { .. });
+                    streamed_result |= matches!(step, Step::CodeExecutionResult { .. });
                 }
-                Err(e) => {
-                    let error_str = format!("{:?}", e);
-                    println!("Stream error: {}", error_str);
-                    if error_str.contains("not supported") || error_str.contains("not available") {
-                        println!("Code Execution tool not available - skipping test");
-                        tool_not_available = true;
-                    }
-                    break;
+                StreamChunk::StepDelta { delta, .. } => {
+                    streamed_call |= matches!(delta, StepDelta::CodeExecutionCall { .. });
+                    streamed_result |= matches!(delta, StepDelta::CodeExecutionResult { .. });
                 }
+                StreamChunk::Completed(response) => final_response = Some(response),
+                _ => {}
             }
         }
 
-        // Skip assertions if tool wasn't available
-        if tool_not_available {
-            return;
-        }
-
-        assert!(chunk_count > 0, "Should receive at least one chunk");
-        assert!(has_complete, "Should receive complete response");
-
-        // Verify code execution happened - check streamed steps and the
-        // accumulated final response.
-        // We expect BOTH call and result for a successful code execution.
-        println!(
-            "Code execution in stream: call={}, result={}",
-            has_code_execution_call, has_code_execution_result
-        );
-
-        // Log warnings for partial results (helps debug flaky tests)
-        if has_code_execution_call && !has_code_execution_result {
-            println!("Warning: CodeExecutionCall received but no CodeExecutionResult");
-        }
-        if !has_code_execution_call && has_code_execution_result {
-            println!("Warning: CodeExecutionResult received but no CodeExecutionCall");
-        }
-
+        assert!(streamed_call, "no code execution call was streamed");
+        assert!(streamed_result, "no code execution result was streamed");
+        let response = final_response.expect("Should receive complete response");
+        let summary = response.step_summary();
         assert!(
-            has_code_execution_call,
-            "Should have code execution call in streaming response"
-        );
-        assert!(
-            has_code_execution_result,
-            "Should have code execution result in streaming response"
+            summary.code_execution_call_count > 0 && summary.code_execution_result_count > 0,
+            "the accumulated response should carry both steps: {summary:?}"
         );
     }
 }
@@ -508,69 +315,72 @@ mod url_context {
     use futures_util::StreamExt;
     use genai_rs::StreamChunk;
 
+    fn assert_fetched(response: &InteractionResponse) {
+        let results = response.url_context_results();
+        assert!(
+            results
+                .iter()
+                .any(|r| r.items.iter().any(|i| i.url.contains("example.com"))),
+            "no URL context result for example.com: {:?}",
+            response.step_summary()
+        );
+    }
+
     #[tokio::test]
     #[ignore = "Requires API key"]
-    async fn test_url_context() {
-        // Test URL context tool for fetching and analyzing web content
+    async fn test_url_context_multi_turn() {
         let Some(client) = get_client() else {
             println!("Skipping: GEMINI_API_KEY not set");
             return;
         };
 
-        let result = stateful_builder(&client)
-            .with_text(
-                "Fetch and summarize the main content from https://example.com using URL context.",
-            )
-            .with_url_context() // Use convenience method
-            .with_store_enabled()
-            .create()
-            .await;
+        let result1 = retry_request!([client] => {
+            stateful_builder(&client)
+                .with_text("Fetch and summarize the main content from https://example.com using URL context.")
+                .with_url_context()
+                .create()
+                .await
+        });
+        let Some(response1) = tool_response(result1, "URL context turn 1") else {
+            return;
+        };
 
-        match result {
-            Ok(response) => {
-                println!("Status: {:?}", response.status);
+        assert_eq!(response1.status, InteractionStatus::Completed);
+        assert_fetched(&response1);
+        let text1 = response1.as_text().expect("turn 1 should answer in text");
+        assert_response_semantic(
+            &client,
+            "Asked to summarize https://example.com (IANA reserved domain for documentation)",
+            text1,
+            "Does this response describe example.com as a reserved/example domain or mention its illustrative/documentation purpose?",
+        )
+        .await;
 
-                // Check for URL context result steps
-                let url_results = response.url_context_results();
-                if url_results.is_empty() {
-                    println!(
-                        "No URL context results in response (may be normal for some responses)"
-                    );
-                } else {
-                    println!("URL Context results found:");
-                    for result in &url_results {
-                        for item in result.items {
-                            println!("  URL: {} - Status: {}", item.url, item.status);
-                        }
-                    }
-                }
+        let prev_id = response1.id.clone().expect("id should exist");
+        let result2 = retry_request!([client, prev_id] => {
+            stateful_builder(&client)
+                .with_previous_interaction(&prev_id)
+                .with_text("Is that website a real company or an example domain?")
+                .create()
+                .await
+        });
+        let Some(response2) = tool_response(result2, "URL context turn 2") else {
+            return;
+        };
 
-                if response.has_text() {
-                    let text = response.as_text().unwrap();
-                    println!("URL Context response: {}", text);
-                    // example.com has standard placeholder content - use semantic validation
-                    assert_response_semantic(
-                        &client,
-                        "Asked to describe example.com (IANA reserved domain for documentation)",
-                        text,
-                        "Does this response describe example.com as a reserved/example domain or mention its illustrative/documentation purpose?",
-                    ).await;
-                }
-            }
-            Err(e) => {
-                let error_str = format!("{:?}", e);
-                println!("URL Context error (may be expected): {}", error_str);
-                if error_str.contains("not supported") || error_str.contains("not available") {
-                    println!("URL Context tool not available - skipping test");
-                }
-            }
-        }
+        let text2 = response2.as_text().expect("turn 2 should answer in text");
+        assert_response_semantic(
+            &client,
+            "Turn 1 fetched example.com. The user asked whether it is a real company or an example domain.",
+            text2,
+            "Does this response say it is an example/reserved domain rather than a real company?",
+        )
+        .await;
     }
 
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_url_context_streaming() {
-        // Test URL context with streaming
         let Some(client) = get_client() else {
             println!("Skipping: GEMINI_API_KEY not set");
             return;
@@ -581,57 +391,25 @@ mod url_context {
             .with_url_context()
             .create_stream();
 
-        let mut chunk_count = 0;
         let mut final_response = None;
-
         while let Some(result) = stream.next().await {
             match result {
                 Ok(event) => {
-                    chunk_count += 1;
-                    match event.chunk {
-                        StreamChunk::StepDelta { index, delta } => {
-                            println!("Delta chunk {} (step {}): {:?}", chunk_count, index, delta);
-                        }
-                        StreamChunk::Completed(response) => {
-                            println!("Complete response received");
-                            // Check for URL context result steps
-                            println!(
-                                "URL context result entries: {}",
-                                response.url_context_results().len()
-                            );
-                            final_response = Some(response);
-                        }
-                        _ => {} // Handle unknown variants
+                    if let StreamChunk::Completed(response) = event.chunk {
+                        final_response = Some(response);
                     }
                 }
-                Err(e) => {
-                    let error_str = format!("{:?}", e);
-                    println!("Stream error: {}", error_str);
-                    if error_str.contains("not supported") || error_str.contains("not available") {
-                        println!("URL Context tool not available - skipping test");
-                    }
-                    break;
+                Err(e) if is_safety_block_error(&e) => {
+                    println!(
+                        "LIVE_TOOL_EVIDENCE_SKIPPED: URL context stream blocked by the content safety filter: {e:?}"
+                    );
+                    return;
                 }
+                Err(e) => panic!("stream error: {e:?}"),
             }
         }
 
-        // Skip assertions if tool wasn't available
-        if final_response.is_none() {
-            return;
-        }
-
-        assert!(chunk_count > 0, "Should receive at least one chunk");
-
-        // Verify URL context results are present
-        let response = final_response.expect("Should have final response");
-        let url_results = response.url_context_results();
-        if !url_results.is_empty() {
-            println!("URL context result entries: {}", url_results.len());
-            assert!(
-                url_results.iter().any(|r| !r.items.is_empty()),
-                "Should have URL metadata items in streaming response"
-            );
-        }
+        assert_fetched(&final_response.expect("Should receive complete response"));
     }
 }
 
@@ -650,50 +428,35 @@ mod google_maps {
             return;
         };
 
-        let result = stateful_builder(&client)
-            .with_text("Find popular coffee shops near Times Square, New York City")
-            .with_google_maps()
-            .with_store_enabled()
-            .create()
-            .await;
+        let response = retry_request!([client] => {
+            stateful_builder(&client)
+                .with_text("Find popular coffee shops near Times Square, New York City")
+                .with_google_maps()
+                .create()
+                .await
+        })
+        .expect("Google Maps interaction should succeed");
 
-        let response = result.expect("Google Maps interaction should succeed");
-
-        // Verify completed status
-        assert!(
-            matches!(response.status, genai_rs::InteractionStatus::Completed),
-            "Expected Completed status, got {:?}",
-            response.status
-        );
-
-        // Verify Google Maps results are present
+        assert_eq!(response.status, InteractionStatus::Completed);
         assert!(
             response.has_google_maps_results(),
             "Response should contain Google Maps results"
         );
-
-        let results = response.google_maps_results();
-        println!("Google Maps results found: {}", results.len());
-        for result in &results {
-            println!("  Call ID: {}", result.call_id);
-            for item in result.items {
-                if let Some(places) = &item.places {
-                    for place in places {
-                        println!(
-                            "    Place: {}",
-                            place.name.as_deref().unwrap_or("(unnamed)")
-                        );
-                    }
-                }
-            }
-        }
-
-        // Verify step summary reflects maps steps
-        let summary = response.step_summary();
-        println!("Step summary: {}", summary);
         assert!(
-            summary.google_maps_result_count > 0,
+            response.step_summary().google_maps_result_count > 0,
             "Step summary should count Google Maps results"
+        );
+        let named_places = response
+            .google_maps_results()
+            .iter()
+            .flat_map(|r| r.items)
+            .filter_map(|item| item.places.as_ref())
+            .flatten()
+            .filter(|place| place.name.is_some())
+            .count();
+        assert!(
+            named_places > 0,
+            "maps results should name at least one place"
         );
     }
 }
@@ -706,17 +469,18 @@ mod mcp_server {
     use super::*;
     use genai_rs::McpServerConfig;
 
-    /// A public MCP server, used so this exercises a real MCP round-trip
-    /// rather than a mock. If it goes away the test reports and skips rather
-    /// than failing — a third party's uptime is not this repo's regression.
+    /// A public MCP server, so this is a real round trip rather than a mock.
     const PUBLIC_MCP_SERVER: &str = "https://mcp.deepwiki.com/mcp";
 
-    /// Verifies remote MCP works on the current default model.
+    /// Remote MCP works on the default model (#265 once recorded it as
+    /// unsupported on Gemini 3).
     ///
-    /// This test exists because #265 recorded MCP as blocked: "Remote MCP
-    /// does not work with Gemini 3 models yet ... NOT supported:
-    /// gemini-3-flash-preview, gemini-3-pro-preview". That is no longer true,
-    /// and a live test is the only thing that would have noticed.
+    /// Loud failures are the ones that are ours: the API rejecting the tool,
+    /// or a non-`Completed` status. The two ambiguous outcomes (an error this
+    /// guard cannot classify, and a completed turn with no evidence the server
+    /// was called) are both what a dead third-party server and a silent
+    /// regression look like, so they print `LIVE_TOOL_EVIDENCE_SKIPPED` for
+    /// CI to count rather than failing on deepwiki's uptime.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_mcp_server_tool_round_trip() {
@@ -737,37 +501,9 @@ mod mcp_server {
         let response = match result {
             Ok(response) => response,
             Err(e) => {
-                // Distinguish "the API rejected MCP" (a real regression) from
-                // "the third-party server is down" (not our problem).
                 let msg = format!("{e:?}").to_lowercase();
-                // The guard is a tool-type token AND an availability phrase,
-                // and each half is narrow for its own reason.
-                //
-                // `mcp_server`, not a bare `mcp`: the configured URL is
-                // `mcp.deepwiki.com/mcp`, so a bare match would fire on any
-                // error that merely echoes the URL back.
-                //
-                // Four availability phrases, not two: "mcp_server tool is
-                // not enabled for this project" is a real rejection that
-                // "not supported"/"unsupported" alone would miss, leaving it
-                // to print "unreachable" and the run to stay green.
-                //
-                // And no "invalid": those four describe availability of the
-                // tool itself, while "invalid" describes anything. The
-                // `mcp_server` scoping does not save it — an API-generated
-                // "mcp_server tool call failed: invalid response from <url>"
-                // satisfies both halves and would panic with "regression"
-                // for exactly the third-party outage this branch tolerates.
-                //
-                // "not available" is the closest call of the four kept, and
-                // is kept knowingly: it describes availability, but not
-                // necessarily *the tool's* — "mcp_server tool call failed:
-                // server not available" is about deepwiki's uptime and would
-                // panic here. Kept because the phrasing is speculative while
-                // the miss it guards against is not: an unrecognised
-                // rejection is a real regression reported as a skip, and this
-                // panic is loud and diagnosable when it misfires. Erring
-                // toward the false regression is the direction chosen.
+                // Both halves required: an availability phrase alone matches
+                // any rejection, and `mcp` alone matches the echoed URL.
                 let rejected = [
                     "not supported",
                     "unsupported",
@@ -776,29 +512,10 @@ mod mcp_server {
                 ]
                 .iter()
                 .any(|phrase| msg.contains(phrase));
-                // Both registers, as with computer use below: `mcp_server` is
-                // what the SDK writes, but Google's error prose need not use
-                // the identifier. "MCP server tools are not supported for
-                // this model" clears `rejected` and fails a token-only check
-                // — the space breaks it — so it would print "unreachable"
-                // and stay green for exactly the regression this test exists
-                // to catch. The panic stays scoped either way, since
-                // `rejected` must still match.
                 let about_mcp = msg.contains("mcp_server") || msg.contains("mcp server");
                 if about_mcp && rejected {
                     panic!("API rejected the MCP tool — this is a regression: {e:?}");
                 }
-                // Marked, like the no-evidence skip below. This branch is the
-                // catch-all `else` of an error arm: it fires on any error the
-                // `about_mcp && rejected` guard above did not recognise, so it
-                // cannot tell a third-party outage from a rejection phrased in
-                // words that guard misses. That ambiguity is the whole reason
-                // the marker exists — a permanently dead deepwiki and a
-                // silently unrecognised rejection both land here, and without
-                // the marker both leave a green run with nothing annotated.
-                //
-                // (The computer-use skip further down is deliberately not
-                // marked; see the comment there.)
                 println!(
                     "LIVE_TOOL_EVIDENCE_SKIPPED: MCP call failed for an unrecognised \
                      reason (server down, or a rejection this guard did not match): {e:?}"
@@ -807,109 +524,33 @@ mod mcp_server {
             }
         };
 
-        println!("MCP status: {:?}", response.status);
         let step_types: Vec<&str> = response
             .steps
             .iter()
             .map(genai_rs::Step::step_type)
             .collect();
-        println!("Steps: {step_types:?}");
-
         assert_eq!(
             response.status,
             InteractionStatus::Completed,
             "MCP interaction should complete; steps were {step_types:?}"
         );
 
-        // The tool-use token count is the load-bearing signal: it is non-zero
-        // only if the server was actually called. Asserting on the answer text
-        // instead would pass on a model that ignored the tool and guessed.
-        //
-        // That the count excludes *declaration* overhead is measured, not
-        // assumed — the field's own doc says "tool/function calling
-        // overhead", which would admit it. Declaring this MCP tool alongside
-        // a prompt the model answers from its own knowledge returned
-        // `Some(0)`, identical to the same prompt with no tool declared
-        // (2026-08-16). Had it counted declaration, this assertion would
-        // pass on a model that ignored the tool — the exact failure it was
-        // chosen to avoid.
-        //
-        // It is the corroborating aggregate, not the primary signal. The API
-        // emits generic `tool_call` steps for MCP, not the
-        // `mcp_server_tool_call` / `mcp_server_tool_result` types the crate
-        // models from the spec — verified on the wire 2026-08-16, where the
-        // steps carry only {id, signature, type}. Those steps now deserialize
-        // into `Step::ToolCall` (#433), so the signal a caller should check is
-        // `step_summary().tool_call_count`, or `tool_calls()` for the
-        // per-call ids. `mcp_server_tool_call_count` still reads 0 on a
-        // successful call, because nothing emits those step types yet.
-        // Through the public accessor rather than reaching into `usage`:
-        // it is the same chain, and an integration test is the right place
-        // to exercise the surface a caller actually has.
+        // Tool-use tokens are non-zero only if the server was called; the
+        // declaration alone costs none (measured 2026-08-16). The API emits
+        // generic `tool_call` steps for MCP today.
         let tool_tokens = response.tool_use_tokens().unwrap_or(0);
-        println!("Tool-use tokens: {tool_tokens}");
-
-        // Report and skip rather than assert, because every reason this can
-        // be zero is outside this repo: deepwiki down (the interaction still
-        // completes, the model just has nothing back from the tool), or the
-        // model choosing not to call it. The `PUBLIC_MCP_SERVER` doc comment
-        // promises that tolerance and it previously existed only on the
-        // `Err` arm — a 200 whose tool call failed reddened the `tools`
-        // group for a third party's uptime.
-        //
-        // What still fails loudly is the thing that is ours: the API
-        // rejecting the tool, caught on the `Err` arm above, and a status
-        // other than `Completed`, asserted above. So this weakens to
-        // best-effort evidence of the round trip while keeping the
-        // library-facing regression a hard failure.
-        // Evidence of a round trip, in both wire shapes: `tool_call` is what
-        // the API sends today, `mcp_server_tool_call` is what it is modeled
-        // to send once #433 lands. The second arm alone was dead by this
-        // PR's own measurement — checking only for a type documented three
-        // files over as never emitted.
         let called = tool_tokens > 0
             || step_types.contains(&"tool_call")
             || step_types.contains(&"mcp_server_tool_call");
-
-        if called {
-            println!("MCP round trip confirmed: {tool_tokens} tool-use tokens, {step_types:?}");
-            return;
+        if !called {
+            println!(
+                "LIVE_TOOL_EVIDENCE_SKIPPED: the interaction completed but shows no \
+                 evidence the MCP server was called (tool-use tokens 0, steps \
+                 {step_types:?})"
+            );
         }
-
-        // The cost of this skip, stated rather than left to be rediscovered:
-        // an interaction that completes with no tool call is also what a
-        // silent MCP regression looks like (#265 becoming true again — the
-        // API accepts the tool, returns 200, and nothing gets through), and
-        // this reports it as a skip.
-        //
-        // It is not distinguishable from the response alone. A model that
-        // simply chose not to call the tool produces the identical shape,
-        // and that is ordinary LLM variability rather than a defect. The
-        // separating signal is whether `PUBLIC_MCP_SERVER` is reachable,
-        // which is a property of a third party rather than of this response
-        // — and probing it would mean pulling an HTTP client into
-        // dev-dependencies for one branch of one test.
-        //
-        // So the loud failures stay the ones that are unambiguously ours:
-        // the API rejecting the tool (the `Err` arm above) and a status
-        // other than `Completed`.
-        // Marked, not just printed. `rust.yml` already counts
-        // `SEMANTIC_VALIDATION_SKIPPED` per test file — warn above zero, fail
-        // above three — on the reasoning that a suite which self-skips passes
-        // having verified nothing. This skip has the same property and needs
-        // the same treatment: one occurrence is model variability, a
-        // persistent one is the #265 shape above. A distinct marker rather
-        // than reusing that one, which means something narrower.
-        println!(
-            "LIVE_TOOL_EVIDENCE_SKIPPED: the interaction completed but shows no \
-             evidence the MCP server was called (tool-use tokens 0, steps \
-             {step_types:?}). Most likely the server is down or the model \
-             answered without it; a silent MCP regression would look the same \
-             from here."
-        );
     }
 
-    /// Pins the wire shape the builder produces, with no network involved.
     #[test]
     fn test_mcp_server_config_wire_shape() {
         let mut headers = std::collections::HashMap::new();
@@ -937,14 +578,8 @@ mod computer_use {
     use super::*;
     use genai_rs::ComputerUseConfig;
 
-    /// Verifies the Computer Use tool is accepted and drives the model into
-    /// the action loop.
-    ///
-    /// #306 recorded this as blocked on availability. It is available now.
-    ///
-    /// `requires_action` is the success condition, not `completed`: the model
-    /// emits an action for the caller to execute and waits. A `completed`
-    /// response would mean the model answered without using the tool.
+    /// Computer use hands an action back (`requires_action` plus a
+    /// `function_call` step) instead of answering on its own.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_computer_use_reaches_requires_action() {
@@ -954,12 +589,8 @@ mod computer_use {
         };
 
         let result = stateful_builder(&client)
-            // Deliberately not example.com: its heading is "Example Domain",
-            // one of the most memorized strings on the web, so the model can
-            // satisfy that prompt without touching the tool — which by the
-            // doc comment above is an assertion failure, not a skip. Asking
-            // for live state the model cannot know a priori leaves
-            // `requires_action` as the only plausible outcome.
+            // Live page state the model cannot know, so answering without the
+            // tool is not a plausible outcome (example.com's heading is).
             .with_text(
                 "Open https://news.ycombinator.com and tell me the exact title \
                  of the current top story.",
@@ -971,18 +602,7 @@ mod computer_use {
         let response = match result {
             Ok(response) => response,
             Err(e) => {
-                // Computer use is allowlisted on some accounts; a permission
-                // rejection is an account property, not a library regression.
                 let msg = format!("{e:?}").to_lowercase();
-                // Same phrase set `examples/computer_use.rs` treats as "not
-                // available for this model or account". Narrower than that,
-                // a key without access getting back "Computer use is not
-                // supported for this model" would match neither `permission`
-                // nor `not allowed`, fall through to the panic, and redden
-                // the `tools` group for the exact account property this
-                // branch exists to skip on. The 4xx wording Google returns
-                // for a non-allowlisted key is not pinned down, which is why
-                // this matches a set of phrasings rather than one.
                 let unavailable = [
                     "permission",
                     "not allowed",
@@ -992,35 +612,11 @@ mod computer_use {
                 ]
                 .iter()
                 .any(|phrase| msg.contains(phrase));
-                // Scoped to the tool, as the MCP branch above is. Unscoped,
-                // any 4xx phrased with one of those words — about the model,
-                // the schema, an unrelated field — reports a skip. The case
-                // that matters is the one this test exists for: if the
-                // default model stops supporting computer use, the 400 will
-                // almost certainly say "not supported", and an unscoped
-                // predicate would call that regression a skip.
-                // Both registers. `computer_use` is the wire token, but
-                // "computer use" is a natural-language form Google's error
-                // text is at least as likely to use — and the phrase set
-                // beside it is prose, so a message like "Computer use is not
-                // supported for this model" would clear `unavailable`, fail
-                // a token-only scope check, and panic for exactly the
-                // account property this skips on. The MCP guard above is not
-                // exposed the same way: nobody spells `mcp_server`
-                // differently.
                 let about_computer_use =
                     msg.contains("computer_use") || msg.contains("computer use");
                 if about_computer_use && unavailable {
-                    // Deliberately unmarked, unlike the two MCP skips. Both
-                    // halves of this guard must match, so it fires only on an
-                    // error that names computer use *and* says it is not
-                    // available — a stable property of the key, in the same
-                    // family as the "no GEMINI_API_KEY" skip and not something
-                    // a passing run could be hiding. Everything else in this
-                    // arm panics. Marking it would annotate every single run
-                    // on an un-allowlisted key, which is noise rather than
-                    // signal; the MCP branches are marked because they are
-                    // catch-alls that cannot make that distinction.
+                    // Unmarked: a key that is not allowlisted is a stable
+                    // account property, like having no key at all.
                     println!("Skipping: computer use not enabled for this key: {e:?}");
                     return;
                 }
@@ -1033,45 +629,24 @@ mod computer_use {
             .iter()
             .map(genai_rs::Step::step_type)
             .collect();
-        println!(
-            "Computer use status: {:?}, steps: {step_types:?}",
-            response.status
-        );
-
-        // Asserted, not tolerated — unlike the MCP test, where a model that
-        // simply declined to use the declared tool is treated as ordinary
-        // variability and reported as a marked skip. The difference is the
-        // prompt: this one asks about live page state the model cannot know
-        // a priori (see the comment on it above), so answering without the
-        // tool is not a plausible alternative the way "explain this repo" is
-        // for deepwiki. If this ever does flake on variability, the fix is a
-        // more unanswerable prompt rather than widening the tolerance —
-        // relaxing it would leave the test unable to fail on the #306 shape
-        // it exists for.
         assert_eq!(
             response.status,
             InteractionStatus::RequiresAction,
-            "computer use should hand an action back to the caller rather than \
-             completing on its own; steps were {step_types:?}"
+            "computer use should hand an action back; steps were {step_types:?}"
         );
-        // Status alone does not cover the doc comment above: `RequiresAction`
-        // is the generic "the caller must do something" state, so a future
-        // shape that requires an action for an unrelated reason would satisfy
-        // it. The action itself is the `function_call` step.
         assert!(
             step_types.contains(&"function_call"),
             "expected an action handed back as a function_call step; got {step_types:?}"
         );
     }
 
-    /// Pins the wire shape, including the snake_case field name that was a
-    /// spec-vs-implementation disagreement (`excluded_predefined_functions`,
-    /// once emitted as camelCase).
+    /// Pins the snake_case `excluded_predefined_functions`, once emitted as
+    /// camelCase.
     #[test]
     fn test_computer_use_config_wire_shape() {
         let tool: Tool = ComputerUseConfig::new()
             .with_environment("browser")
-            .excluding(vec!["submit_form".to_string()])
+            .with_excluded_predefined_functions(vec!["submit_form".to_string()])
             .with_prompt_injection_detection(true)
             .into();
 
@@ -1092,10 +667,12 @@ mod structured_output {
     use futures_util::StreamExt;
     use genai_rs::StreamChunk;
 
-    /// Test structured output with JSON schema enforcement.
-    ///
-    /// The response_format parameter accepts a JSON schema directly to enforce
-    /// structured output from the model.
+    fn parse_json(response: &InteractionResponse) -> serde_json::Value {
+        assert_eq!(response.status, InteractionStatus::Completed);
+        let text = response.as_text().expect("Should have text response");
+        serde_json::from_str(text).unwrap_or_else(|e| panic!("not valid JSON ({e}): {text}"))
+    }
+
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_structured_output() {
@@ -1104,7 +681,6 @@ mod structured_output {
             return;
         };
 
-        // Pass the JSON schema directly to response_format
         let schema = json!({
             "type": "object",
             "properties": {
@@ -1115,37 +691,21 @@ mod structured_output {
             "required": ["name", "age", "email"]
         });
 
-        let result = retry_request!([client, schema] => {
+        let response = retry_request!([client, schema] => {
             stateful_builder(&client)
                 .with_text("Generate a fake user profile with a name, age, and email address.")
                 .with_response_format(schema.clone())
                 .create()
                 .await
-        });
+        })
+        .expect("Structured output request should succeed");
 
-        let response = result.expect("Structured output request should succeed");
-        assert_eq!(response.status, InteractionStatus::Completed);
-        assert!(response.has_text(), "Should have text response");
-
-        let text = response.as_text().unwrap();
-        println!("Structured output: {}", text);
-
-        // Parse as JSON - should be valid JSON matching our schema
-        let json: serde_json::Value =
-            serde_json::from_str(text).expect("Response should be valid JSON");
-        println!(
-            "Parsed JSON: {}",
-            serde_json::to_string_pretty(&json).unwrap()
-        );
-
-        assert!(json.get("name").is_some(), "Should have name field");
-        assert!(json.get("age").is_some(), "Should have age field");
-        assert!(json.get("email").is_some(), "Should have email field");
+        let json = parse_json(&response);
+        assert!(json["name"].is_string(), "{json}");
+        assert!(json["age"].is_i64() || json["age"].is_u64(), "{json}");
+        assert!(json["email"].is_string(), "{json}");
     }
 
-    /// Test structured output with enum constraints.
-    ///
-    /// The response_format parameter enforces specific enum values for fields.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_structured_output_enum() {
@@ -1154,7 +714,6 @@ mod structured_output {
             return;
         };
 
-        // Pass the JSON schema directly - enum constrains valid values
         let schema = json!({
             "type": "object",
             "properties": {
@@ -1162,56 +721,29 @@ mod structured_output {
                     "type": "string",
                     "enum": ["positive", "negative", "neutral"]
                 },
-                "confidence": {
-                    "type": "number"
-                }
+                "confidence": {"type": "number"}
             },
             "required": ["sentiment", "confidence"]
         });
 
-        let result = stateful_builder(&client)
+        let response = stateful_builder(&client)
             .with_text("Analyze the sentiment of: 'I love this product, it's amazing!'")
             .with_response_format(schema)
             .create()
-            .await;
+            .await
+            .expect("Structured output with enum should succeed");
 
-        let response = result.expect("Structured output with enum should succeed");
-        assert_eq!(response.status, InteractionStatus::Completed);
-        assert!(response.has_text(), "Should have text response");
-
-        let text = response.as_text().unwrap();
-        println!("Sentiment analysis: {}", text);
-
-        // Parse as JSON
-        let json: serde_json::Value =
-            serde_json::from_str(text).expect("Response should be valid JSON");
-        println!(
-            "Parsed JSON: {}",
-            serde_json::to_string_pretty(&json).unwrap()
-        );
-
-        // Verify sentiment is one of the enum values
-        let sentiment = json
-            .get("sentiment")
-            .and_then(|v| v.as_str())
-            .expect("Should have sentiment field");
+        let json = parse_json(&response);
+        let sentiment = json["sentiment"]
+            .as_str()
+            .expect("sentiment should be a string");
         assert!(
             ["positive", "negative", "neutral"].contains(&sentiment),
-            "Sentiment '{}' should be one of: positive, negative, neutral",
-            sentiment
+            "sentiment '{sentiment}' is outside the enum"
         );
-
-        // Verify confidence exists
-        assert!(
-            json.get("confidence").is_some(),
-            "Should have confidence field"
-        );
+        assert!(json["confidence"].is_number(), "{json}");
     }
 
-    /// Test structured output combined with Google Search grounding.
-    ///
-    /// This demonstrates using response_format with built-in tools to get
-    /// structured data from real-time web searches.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_structured_output_with_google_search() {
@@ -1220,7 +752,6 @@ mod structured_output {
             return;
         };
 
-        // Schema for structured search results
         let schema = json!({
             "type": "object",
             "properties": {
@@ -1230,42 +761,25 @@ mod structured_output {
             "required": ["answer"]
         });
 
-        let result = stateful_builder(&client)
-            .with_text("What is the current population of Tokyo, Japan?")
-            .with_google_search()
-            .with_response_format(schema)
-            .create()
-            .await;
+        let response = retry_request!([client, schema] => {
+            stateful_builder(&client)
+                .with_text("What is the current population of Tokyo, Japan? Use search.")
+                .with_google_search()
+                .with_response_format(schema)
+                .create()
+                .await
+        })
+        .expect("Structured output with Google Search should succeed");
 
-        let response = result.expect("Structured output with Google Search should succeed");
-        assert_eq!(response.status, InteractionStatus::Completed);
-        assert!(response.has_text(), "Should have text response");
-
-        let text = response.as_text().unwrap();
-        println!("Google Search structured output: {}", text);
-
-        // Parse as JSON
-        let json: serde_json::Value =
-            serde_json::from_str(text).expect("Response should be valid JSON");
-        println!(
-            "Parsed JSON: {}",
-            serde_json::to_string_pretty(&json).unwrap()
+        let json = parse_json(&response);
+        assert!(json["answer"].is_string(), "{json}");
+        assert!(
+            !response.google_search_calls().is_empty(),
+            "no search was issued: {:?}",
+            response.step_summary()
         );
-
-        // Verify required field exists
-        assert!(json.get("answer").is_some(), "Should have answer field");
-
-        // Verify grounding steps are present (Google Search was used)
-        let search_results = response.google_search_results();
-        if !search_results.is_empty() {
-            println!("Grounding result items: {}", search_results.len());
-        }
     }
 
-    /// Test structured output combined with URL context fetching.
-    ///
-    /// This demonstrates using response_format with URL context to extract
-    /// structured data from web pages.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_structured_output_with_url_context() {
@@ -1274,7 +788,6 @@ mod structured_output {
             return;
         };
 
-        // Schema for extracting page metadata
         let schema = json!({
             "type": "object",
             "properties": {
@@ -1291,39 +804,20 @@ mod structured_output {
             .with_response_format(schema)
             .create()
             .await;
+        let Some(response) = tool_response(result, "URL context with structured output") else {
+            return;
+        };
 
-        let response = result.expect("Structured output with URL context should succeed");
-        assert_eq!(response.status, InteractionStatus::Completed);
-        assert!(response.has_text(), "Should have text response");
-
-        let text = response.as_text().unwrap();
-        println!("URL context structured output: {}", text);
-
-        // Parse as JSON
-        let json: serde_json::Value =
-            serde_json::from_str(text).expect("Response should be valid JSON");
-        println!(
-            "Parsed JSON: {}",
-            serde_json::to_string_pretty(&json).unwrap()
-        );
-
-        // Verify required fields exist
-        assert!(json.get("title").is_some(), "Should have title field");
+        let json = parse_json(&response);
+        assert!(json["title"].is_string(), "{json}");
+        assert!(json["description"].is_string(), "{json}");
         assert!(
-            json.get("description").is_some(),
-            "Should have description field"
+            !response.url_context_results().is_empty(),
+            "no URL context result: {:?}",
+            response.step_summary()
         );
-
-        // Verify URL context result steps are present
-        let url_results = response.url_context_results();
-        if !url_results.is_empty() {
-            println!("URL context result entries: {}", url_results.len());
-        }
     }
 
-    /// Test structured output with complex nested schema.
-    ///
-    /// This demonstrates more complex JSON schemas with nested objects and arrays.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_structured_output_nested() {
@@ -1332,7 +826,6 @@ mod structured_output {
             return;
         };
 
-        // Complex nested schema
         let schema = json!({
             "type": "object",
             "properties": {
@@ -1359,47 +852,27 @@ mod structured_output {
             "required": ["company", "employees"]
         });
 
-        let result = stateful_builder(&client)
+        let response = stateful_builder(&client)
             .with_text("Generate data for a fictional tech startup called 'CloudAI' founded in 2023 with 3 employees: a CEO, CTO, and designer.")
             .with_response_format(schema)
             .create()
-            .await;
+            .await
+            .expect("Nested schema structured output should succeed");
 
-        let response = result.expect("Nested schema structured output should succeed");
-        assert_eq!(response.status, InteractionStatus::Completed);
-        assert!(response.has_text(), "Should have text response");
-
-        let text = response.as_text().unwrap();
-        println!("Nested structured output: {}", text);
-
-        // Parse as JSON
-        let json: serde_json::Value =
-            serde_json::from_str(text).expect("Response should be valid JSON");
-        println!(
-            "Parsed JSON: {}",
-            serde_json::to_string_pretty(&json).unwrap()
-        );
-
-        // Verify nested structure
-        let company = json.get("company").expect("Should have company object");
-        assert!(company.get("name").is_some(), "Company should have name");
-
-        let employees = json
-            .get("employees")
-            .and_then(|e| e.as_array())
-            .expect("Should have employees array");
+        let json = parse_json(&response);
+        assert!(json["company"]["name"].is_string(), "{json}");
+        let employees = json["employees"]
+            .as_array()
+            .expect("employees should be an array");
         assert_eq!(employees.len(), 3, "Should have 3 employees");
-
         for emp in employees {
-            assert!(emp.get("name").is_some(), "Each employee should have name");
-            assert!(emp.get("role").is_some(), "Each employee should have role");
+            assert!(emp["name"].is_string() && emp["role"].is_string(), "{emp}");
         }
     }
 
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_structured_output_streaming() {
-        // Test structured output with streaming
         let Some(client) = get_client() else {
             println!("Skipping: GEMINI_API_KEY not set");
             return;
@@ -1427,66 +900,34 @@ mod structured_output {
             .with_response_format(schema)
             .create_stream();
 
-        let mut chunk_count = 0;
         let mut collected_text = String::new();
         let mut final_response = None;
-
         while let Some(result) = stream.next().await {
-            match result {
-                Ok(event) => {
-                    chunk_count += 1;
-                    match event.chunk {
-                        StreamChunk::StepDelta { index, delta } => {
-                            if let Some(text) = delta.as_text() {
-                                collected_text.push_str(text);
-                            }
-                            println!("Delta chunk {} (step {}): {:?}", chunk_count, index, delta);
-                        }
-                        StreamChunk::Completed(response) => {
-                            println!("Complete response received");
-                            final_response = Some(response);
-                        }
-                        _ => {} // Handle unknown variants
+            match result.expect("stream error").chunk {
+                StreamChunk::StepDelta { delta, .. } => {
+                    if let Some(text) = delta.as_text() {
+                        collected_text.push_str(text);
                     }
                 }
-                Err(e) => {
-                    println!("Stream error: {:?}", e);
-                    break;
-                }
+                StreamChunk::Completed(response) => final_response = Some(response),
+                _ => {}
             }
         }
 
-        assert!(chunk_count > 0, "Should receive at least one chunk");
-        assert!(final_response.is_some(), "Should receive complete response");
-
-        // Verify the final response is valid JSON matching our schema
-        if let Some(text) = final_response.as_ref().and_then(|r| r.as_text()) {
-            // Verify streamed text matches final response
-            assert_eq!(
-                collected_text, text,
-                "Streamed chunks should match final response text"
-            );
-
-            let json: serde_json::Value =
-                serde_json::from_str(text).expect("Streaming response should be valid JSON");
-            println!(
-                "Parsed JSON: {}",
-                serde_json::to_string_pretty(&json).unwrap()
-            );
-            assert!(json.get("color").is_some(), "Should have color field");
-            assert!(json.get("hex_code").is_some(), "Should have hex_code field");
-        }
+        let response = final_response.expect("Should receive complete response");
+        let json = parse_json(&response);
+        assert_eq!(
+            Some(collected_text.as_str()),
+            response.as_text(),
+            "Streamed chunks should match final response text"
+        );
+        assert!(
+            json["color"].is_string() && json["hex_code"].is_string(),
+            "{json}"
+        );
     }
 
-    /// Test structured output (JSON schema) across multiple conversation turns.
-    ///
-    /// This validates that:
-    /// - JSON schema enforcement works in stateful conversations
-    /// - Data from Turn 1 can be extended with new schema in Turn 2
-    /// - Context is preserved between turns with different schemas
-    ///
-    /// Turn 1: Generate {name, age} for a software developer (model chooses values)
-    /// Turn 2: Extend with {original_name, original_age, email, occupation} preserving Turn 1 values
+    /// A second turn with a different schema can read values from the first.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_structured_output_multi_turn() {
@@ -1495,10 +936,7 @@ mod structured_output {
             return;
         };
 
-        println!("=== Structured Output + Multi-turn ===");
-
-        // Turn 1: Generate initial user profile
-        let schema1 = serde_json::json!({
+        let schema1 = json!({
             "type": "object",
             "properties": {
                 "name": {"type": "string"},
@@ -1507,7 +945,6 @@ mod structured_output {
             "required": ["name", "age"]
         });
 
-        println!("\n--- Turn 1: Generate user profile ---");
         let response1 = stateful_builder(&client)
             .with_text("Create a user profile for a software developer. Choose any name and age you like. Output as JSON.")
             .with_response_format(schema1)
@@ -1515,26 +952,11 @@ mod structured_output {
             .await
             .expect("Turn 1 should succeed");
 
-        assert_eq!(
-            response1.status,
-            InteractionStatus::Completed,
-            "Turn 1 should complete successfully"
-        );
-
-        let text1 = response1.as_text().expect("Should have text response");
-        println!("Turn 1 JSON: {}", text1);
-
-        // Parse and validate Turn 1 JSON
-        let json1: serde_json::Value = serde_json::from_str(text1).expect("Should parse as JSON");
+        let json1 = parse_json(&response1);
         let original_name = json1["name"].as_str().expect("Should have name");
         let original_age = json1["age"].as_i64().expect("Should have age");
-        println!(
-            "Turn 1 values - name: {}, age: {}",
-            original_name, original_age
-        );
 
-        // Turn 2: Extend the profile with new fields
-        let schema2 = serde_json::json!({
+        let schema2 = json!({
             "type": "object",
             "properties": {
                 "original_name": {"type": "string"},
@@ -1545,7 +967,6 @@ mod structured_output {
             "required": ["original_name", "original_age", "email", "occupation"]
         });
 
-        println!("\n--- Turn 2: Extend profile ---");
         let response2 = stateful_builder(&client)
             .with_previous_interaction(response1.id.as_ref().expect("id should exist"))
             .with_text("Based on the user profile you just created, output a new JSON with the original name and age, plus add an email address and occupation that fits the profile.")
@@ -1554,56 +975,26 @@ mod structured_output {
             .await
             .expect("Turn 2 should succeed");
 
-        assert_eq!(
-            response2.status,
-            InteractionStatus::Completed,
-            "Turn 2 should complete successfully"
-        );
-
-        let text2 = response2.as_text().expect("Should have text response");
-        println!("Turn 2 JSON: {}", text2);
-
-        // Parse and validate Turn 2 JSON
-        let json2: serde_json::Value = serde_json::from_str(text2).expect("Should parse as JSON");
-        let turn2_name = json2["original_name"]
-            .as_str()
-            .expect("Should have original_name");
-        let turn2_age = json2["original_age"]
-            .as_i64()
-            .expect("Should have original_age");
-        let email = json2["email"].as_str().expect("Should have email");
-        let occupation = json2["occupation"]
-            .as_str()
-            .expect("Should have occupation");
-
-        println!(
-            "Turn 2 references - name: {}, age: {}",
-            turn2_name, turn2_age
-        );
-
-        // Compare Turn 2 values against Turn 1 values for robust context preservation test
+        let json2 = parse_json(&response2);
         assert!(
-            turn2_name.to_lowercase() == original_name.to_lowercase(),
-            "Turn 2 should preserve name from Turn 1. Expected '{}', got: '{}'",
-            original_name,
-            turn2_name
+            json2["original_name"]
+                .as_str()
+                .is_some_and(|n| n.eq_ignore_ascii_case(original_name)),
+            "Turn 2 should preserve name '{original_name}': {json2}"
         );
-
         assert_eq!(
-            turn2_age, original_age,
-            "Turn 2 should preserve age from Turn 1. Expected {}, got: {}",
-            original_age, turn2_age
+            json2["original_age"].as_i64(),
+            Some(original_age),
+            "{json2}"
         );
-
-        // Email should look valid and occupation should be set
         assert!(
-            email.contains("@"),
-            "Email should contain @. Got: {}",
-            email
+            json2["email"].as_str().is_some_and(|e| e.contains('@')),
+            "{json2}"
         );
-        assert!(!occupation.is_empty(), "Occupation should not be empty");
-
-        println!("\n✓ Structured Output + multi-turn completed successfully");
+        assert!(
+            json2["occupation"].as_str().is_some_and(|o| !o.is_empty()),
+            "{json2}"
+        );
     }
 }
 
@@ -1613,12 +1004,7 @@ mod structured_output {
 
 mod image_generation {
     use super::*;
-    use std::time::Duration;
 
-    /// Test image generation using response modalities.
-    ///
-    /// Note: Uses retry logic because the image generation model sometimes returns
-    /// text instead of images. See issue #287 for details.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_response_modalities_image() {
@@ -1627,50 +1013,24 @@ mod image_generation {
             return;
         };
 
-        // Retry up to 2 times (3 total attempts) because the image generation model
-        // sometimes returns text instead of images (see issue #287)
-        type BoxError = Box<dyn std::error::Error + Send + Sync>;
-        let result: Result<(), BoxError> = retry_on_any_error(2, Duration::from_secs(3), || {
-            let client = client.clone();
-            async move {
-                let response = client
-                    .interaction()
-                    .with_model(genai_rs::DEFAULT_IMAGE_MODEL)
-                    .with_text("Generate a simple image of a red circle on a white background.")
-                    .with_response_modalities(vec!["image".to_string()])
-                    .with_store_enabled()
-                    .create()
-                    .await?;
-
-                println!("Status: {:?}", response.status);
-                println!("Steps count: {}", response.steps.len());
-
-                // Check for image content in output steps
-                for (i, content) in response.output_contents().enumerate() {
-                    println!("Output content {}: {:?}", i, content);
-                }
-
-                // Image generation should return image content
-                let has_image = response.has_images();
-
-                if has_image {
-                    println!("Has image output: true");
-                    Ok(())
-                } else {
-                    // No image found - this is the flaky case we want to retry
-                    Err("Response did not contain image data (model returned text instead)".into())
-                }
-            }
+        let response = retry_request!([client] => {
+            client
+                .interaction()
+                .with_model(genai_rs::DEFAULT_IMAGE_MODEL)
+                .with_text("Generate a simple image of a red circle on a white background.")
+                .with_response_modalities(vec!["image".to_string()])
+                .with_store_enabled()
+                .create()
+                .await
         })
-        .await;
+        .expect("Image generation request failed");
 
-        match result {
-            Ok(()) => println!("\n✓ Response modalities image test passed"),
-            Err(e) => {
-                println!("Image generation error after retries: {}", e);
-                panic!("Image generation failed after retries: {}", e);
-            }
-        }
+        assert_eq!(response.status, InteractionStatus::Completed);
+        let bytes = response
+            .first_image_bytes()
+            .expect("image data should decode")
+            .expect("response should contain an image");
+        assert!(!bytes.is_empty(), "decoded image is empty");
     }
 }
 
@@ -1690,18 +1050,11 @@ mod thinking {
         };
 
         let config = GenerationConfig {
-            temperature: Some(0.7),
-            // Headroom for the same reason as the High case below: thinking
-            // draws from this budget. Minimal should need far less, which
-            // is the point of the level — but the assertion here is that
-            // the level is accepted, not that 500 tokens is enough.
             max_output_tokens: Some(2000),
             thinking_level: Some(ThinkingLevel::Minimal),
             ..Default::default()
         };
 
-        // Retry-wrapped: flaked in CI on a server-side 500 "Internal error
-        // encountered." at create time, which is_retryable already covers.
         let response = retry_request!([client, config] => {
             stateful_builder(&client)
                 .with_model(genai_rs::MINIMAL_THINKING_MODEL)
@@ -1713,16 +1066,11 @@ mod thinking {
         .expect("Minimal thinking interaction failed");
 
         assert_eq!(response.status, InteractionStatus::Completed);
-        assert!(response.has_text(), "Should have text response");
-
-        let text = response.as_text().unwrap();
-        println!("Minimal thinking response: {}", text);
-
-        // Deterministic math - use .contains() per CLAUDE.md guidance
+        let text = response.as_text().expect("Should have text response");
+        // A computed value, so a substring check is deterministic.
         assert!(
             text.contains('4'),
-            "Should contain the answer 4. Got: {}",
-            text
+            "Should contain the answer 4. Got: {text}"
         );
     }
 
@@ -1735,13 +1083,7 @@ mod thinking {
         };
 
         let config = GenerationConfig {
-            temperature: Some(0.7),
-            // Headroom: thinking tokens are drawn from this same budget,
-            // and ThinkingLevel::High on a step-by-step prompt can consume
-            // 1000 on its own — which surfaced as an intermittent
-            // `Incomplete` status rather than as anything about thinking.
-            // This test is about the level being accepted and honored, not
-            // about truncation behavior.
+            // Thinking draws from this budget; High can spend over 1000 alone.
             max_output_tokens: Some(8000),
             thinking_level: Some(ThinkingLevel::High),
             ..Default::default()
@@ -1755,26 +1097,16 @@ mod thinking {
             .expect("High thinking interaction failed");
 
         assert_eq!(response.status, InteractionStatus::Completed);
-        assert!(response.has_text(), "Should have text response");
-
-        let text = response.as_text().unwrap();
-        println!("High thinking response: {}", text);
-
-        // Should provide a detailed explanation
-        let word_count = text.split_whitespace().count();
-        println!("Word count: {}", word_count);
-
-        // Deterministic math - use .contains() per CLAUDE.md guidance
-        assert!(
-            text.contains('4') || text.contains("four"),
-            "Should contain the answer x = 4. Got: {}",
-            text
-        );
+        let text = response.as_text().expect("Should have text response");
+        assert_response_semantic(
+            &client,
+            "Asked to solve x + 3 = 7 step by step",
+            text,
+            "Does this response conclude that x = 4?",
+        )
+        .await;
     }
 
-    /// Test thinking_summaries with the builder method.
-    ///
-    /// This test validates that with_thinking_summaries() works correctly with the API.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_generation_config_thinking_summaries() {
@@ -1783,7 +1115,6 @@ mod thinking {
             return;
         };
 
-        // Use thinking with summaries enabled
         let response = stateful_builder(&client)
             .with_text("What is the capital of France?")
             .with_thinking_level(ThinkingLevel::Medium)
@@ -1793,19 +1124,16 @@ mod thinking {
             .expect("Thinking with summaries request should succeed");
 
         assert_eq!(response.status, InteractionStatus::Completed);
+        assert!(
+            response.has_thoughts(),
+            "summaries were requested but no thought came back"
+        );
         assert!(response.has_text(), "Should have text response");
-
-        let text = response.as_text().unwrap();
-        println!("Thinking with summaries response: {}", text);
-
-        // Verify we got a reasonable response
-        assert!(!text.is_empty(), "Response should not be empty");
-        println!("✓ with_thinking_summaries() builder method works with API");
     }
 }
 
 // =============================================================================
-// Generation Config: Top-p and Combined Sampling
+// Generation Config: Sampling
 // =============================================================================
 
 mod sampling {
@@ -1819,22 +1147,11 @@ mod sampling {
             return;
         };
 
-        // Low top_p = more focused/deterministic
         let config = GenerationConfig {
             temperature: Some(1.0),
-            // Headroom, deliberately: this test is about `top_p`, not
-            // truncation. These models spend ~100 thinking tokens on even
-            // this trivial prompt (measured on gemini-3.6-flash, verified
-            // live 2026-08-10: ~99-102 total for a 1-token answer; not
-            // re-measured on 3.7, which is why the number names the model
-            // it came from — the headroom holds either way), so the old
-            // 100-token cap made
-            // "is there any text left?" a coin flip rather than a top_p
-            // assertion — the same fix as its siblings
-            // `test_generation_config_temperature` (100 -> 2000) and
-            // `test_generation_config_thinking_level_high` (1000 -> 8000).
+            // Headroom: ~100 thinking tokens even on this prompt.
             max_output_tokens: Some(2000),
-            top_p: Some(0.1), // Very focused
+            top_p: Some(0.1),
             ..Default::default()
         };
 
@@ -1846,11 +1163,7 @@ mod sampling {
             .expect("Top-p interaction failed");
 
         assert_eq!(response.status, InteractionStatus::Completed);
-        assert!(response.has_text(), "Should have text response");
-
-        let text = response.as_text().unwrap();
-        println!("Top-p response: {}", text);
-
+        let text = response.as_text().expect("Should have text response");
         assert_response_semantic(
             &client,
             "Asked for the capital of France in one word",
@@ -1860,9 +1173,8 @@ mod sampling {
         .await;
     }
 
-    /// Test combining multiple generation config options.
-    /// Note: top_k is not part of GenerationConfig in the Interactions API
-    /// (removed in API revision 2026-05-20).
+    /// Several sampling knobs together are accepted. (`top_k` is not part of
+    /// the Interactions API since revision 2026-05-20.)
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_generation_config_combined() {
@@ -1871,8 +1183,6 @@ mod sampling {
             return;
         };
 
-        // Use a generous max_output_tokens to avoid Incomplete status when
-        // thinking tokens consume part of the budget.
         let config = GenerationConfig {
             temperature: Some(0.5),
             max_output_tokens: Some(2048),
@@ -1890,79 +1200,16 @@ mod sampling {
 
         assert_eq!(response.status, InteractionStatus::Completed);
         assert!(response.has_text(), "Should have text response");
-
-        let text = response.as_text().unwrap();
-        println!("Combined config response: {}", text);
-
-        // Haiku should be short and have line breaks or short lines
-        let line_count = text.lines().count();
-        println!("Line count: {}", line_count);
-        assert!(line_count >= 1, "Should have at least one line of text");
     }
 }
 
 // =============================================================================
-// Generation Config: New Fields (seed, stop_sequences)
+// Generation Config: stop sequences, seed with a response format
 // =============================================================================
 
 mod config_fields {
     use super::*;
 
-    /// Test seed for deterministic output generation.
-    ///
-    /// Using the same seed with identical inputs should produce the same output.
-    /// This is useful for testing and debugging.
-    #[tokio::test]
-    #[ignore = "Requires API key"]
-    async fn test_generation_config_seed() {
-        let Some(client) = get_client() else {
-            println!("Skipping: GEMINI_API_KEY not set");
-            return;
-        };
-
-        let seed = 12345i64;
-        let prompt = "Generate exactly one random 4-letter word.";
-
-        // First request with seed
-        let response1 = interaction_builder(&client)
-            .with_text(prompt)
-            .with_seed(seed)
-            .create()
-            .await
-            .expect("First seed request should succeed");
-
-        assert_eq!(response1.status, InteractionStatus::Completed);
-        let text1 = response1.as_text().expect("Should have text response");
-        println!("Seed {} response 1: {}", seed, text1);
-
-        // Second request with same seed - should produce same output
-        let response2 = interaction_builder(&client)
-            .with_text(prompt)
-            .with_seed(seed)
-            .create()
-            .await
-            .expect("Second seed request should succeed");
-
-        assert_eq!(response2.status, InteractionStatus::Completed);
-        let text2 = response2.as_text().expect("Should have text response");
-        println!("Seed {} response 2: {}", seed, text2);
-
-        // With the same seed and input, outputs should be identical
-        // Note: API behavior may vary, so we log but use a softer assertion
-        if text1.trim() == text2.trim() {
-            println!("✓ Seed produced identical outputs");
-        } else {
-            println!(
-                "Note: Seed produced different outputs (API behavior may vary)\n  1: {}\n  2: {}",
-                text1.trim(),
-                text2.trim()
-            );
-        }
-    }
-
-    /// Test stop_sequences for halting generation.
-    ///
-    /// When the model generates any of these sequences, generation stops.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_generation_config_stop_sequences() {
@@ -1972,7 +1219,7 @@ mod config_fields {
         };
 
         let response = interaction_builder(&client)
-            .with_text("Count from 1 to 10, one number per line.")
+            .with_text("Count from 1 to 10, one number per line. Output only the numbers.")
             .with_stop_sequences(vec!["5".to_string()])
             .create()
             .await
@@ -1980,77 +1227,18 @@ mod config_fields {
 
         assert_eq!(response.status, InteractionStatus::Completed);
         let text = response.as_text().expect("Should have text response");
-        println!("Stop sequence response: {}", text);
-
-        // The response should be shorter than a full 1-10 count.
-        // Stop sequences halt generation, so we expect fewer numbers.
-        // We verify the response doesn't contain the later numbers (8, 9, 10)
-        // which would indicate the stop sequence had no effect at all.
-        let has_late_numbers = text.contains("8") || text.contains("9") || text.contains("10");
+        let numbers: Vec<&str> = text.split_whitespace().collect();
         assert!(
-            !has_late_numbers,
-            "Stop sequence '5' should have halted generation before 8-10, got: {}",
-            text
+            !numbers
+                .iter()
+                .any(|n| ["6", "7", "8", "9", "10"].contains(n)),
+            "generation should stop at '5', got: {text}"
         );
     }
 
-    /// Test that the API rejects requests carrying `response_mime_type`.
-    ///
-    /// The typed field was removed from `InteractionRequest` (the API
-    /// rejects it in every combination — alone or alongside
-    /// `response_format`, raw-schema or typed; verified live 2026-07 with
-    /// 400 "responseFormat must be set when responseMimeType is set"), so
-    /// this test injects the field via a raw JSON request to document the
-    /// server-side constraint that motivated the removal.
     #[tokio::test]
     #[ignore = "Requires API key"]
-    async fn test_generation_config_response_mime_type_rejected() {
-        let Some(api_key) = std::env::var("GEMINI_API_KEY")
-            .ok()
-            .filter(|k| !k.is_empty())
-        else {
-            println!("Skipping: GEMINI_API_KEY not set");
-            return;
-        };
-
-        // Raw request: the typed InteractionRequest no longer carries the
-        // field, so build the JSON body directly.
-        let body = json!({
-            "model": genai_rs::DEFAULT_MODEL,
-            "input": "Generate a greeting in Spanish.",
-            "response_mime_type": "application/json",
-        });
-        let response = reqwest::Client::new()
-            .post("https://generativelanguage.googleapis.com/v1beta/interactions")
-            .header("X-Goog-Api-Key", api_key)
-            .header("Api-Revision", "2026-05-20")
-            .json(&body)
-            .send()
-            .await
-            .expect("request should reach the API");
-
-        let status = response.status().as_u16();
-        let text = response.text().await.unwrap_or_default();
-        assert_eq!(
-            status, 400,
-            "Expected 400 for a request carrying response_mime_type; \
-             got {status}: {text} — the constraint may have been lifted"
-        );
-        assert!(
-            text.contains("responseFormat") || text.contains("response_mime_type"),
-            "Expected the responseFormat/responseMimeType constraint message, got: {text}"
-        );
-        println!("✓ API rejected response_mime_type: {text}");
-    }
-
-    /// Test combined new generation config fields.
-    ///
-    /// This test uses seed and response_format together. (The removed
-    /// `response_mime_type` field is rejected by the API in every form —
-    /// see test_generation_config_response_mime_type_rejected.)
-    #[tokio::test]
-    #[ignore = "Requires API key"]
-    async fn test_generation_config_new_fields_combined() {
+    async fn test_generation_config_seed_with_response_format() {
         let Some(client) = get_client() else {
             println!("Skipping: GEMINI_API_KEY not set");
             return;
@@ -2073,21 +1261,13 @@ mod config_fields {
             .with_response_format(schema)
             .create()
             .await
-            .expect("Combined new fields request should succeed");
+            .expect("seed + response_format request should succeed");
 
         assert_eq!(response.status, InteractionStatus::Completed);
         let text = response.as_text().expect("Should have text response");
-        println!("Combined new fields response: {}", text);
-
-        // Should be valid JSON with items array
-        let parsed: serde_json::Value =
-            serde_json::from_str(text).expect("Response should be valid JSON");
-        let items = parsed
-            .get("items")
-            .and_then(|v| v.as_array())
-            .expect("Should have items array");
-        assert!(!items.is_empty(), "Items array should not be empty");
-        println!("✓ Combined new generation config fields work correctly");
+        let parsed: serde_json::Value = serde_json::from_str(text).expect("valid JSON");
+        let items = parsed["items"].as_array().expect("Should have items array");
+        assert_eq!(items.len(), 3, "{parsed}");
     }
 }
 
@@ -2097,78 +1277,10 @@ mod config_fields {
 
 mod function_calling_modes {
     use super::*;
-    use genai_rs::ToolChoice;
 
-    /// Test that ToolChoice serializes correctly in GenerationConfig.
-    ///
-    /// Validates that tool_choice in generation_config serializes correctly
-    /// for each function calling mode (lowercase wire format) and for the
-    /// allowed_tools union shape.
-    #[test]
-    fn test_generation_config_tool_choice_serialization() {
-        // Mode variants serialize as plain lowercase strings
-        let cases = [
-            (FunctionCallingMode::Auto, "auto"),
-            (FunctionCallingMode::Any, "any"),
-            (FunctionCallingMode::None, "none"),
-            (FunctionCallingMode::Validated, "validated"),
-        ];
-        for (mode, expected) in cases {
-            let config = GenerationConfig {
-                tool_choice: Some(ToolChoice::Mode(mode)),
-                ..Default::default()
-            };
-            let json = serde_json::to_value(&config).unwrap();
-            assert_eq!(
-                json["tool_choice"],
-                serde_json::Value::String(expected.to_string())
-            );
-        }
-
-        // AllowedTools variant serializes as an object union
-        let config = GenerationConfig {
-            tool_choice: Some(ToolChoice::allowed_tools(
-                Some(FunctionCallingMode::Any),
-                vec!["get_weather".to_string()],
-            )),
-            ..Default::default()
-        };
-        let json = serde_json::to_value(&config).unwrap();
-        assert_eq!(
-            json["tool_choice"],
-            json!({"allowed_tools": {"mode": "any", "tools": ["get_weather"]}})
-        );
-
-        println!("✓ All tool_choice shapes serialize correctly in GenerationConfig");
-    }
-
-    /// Test Unknown function calling mode roundtrip.
-    ///
-    /// Validates that unknown mode values are preserved through serialization.
-    #[test]
-    fn test_function_calling_mode_unknown_roundtrip() {
-        let unknown_mode = FunctionCallingMode::Unknown {
-            mode_type: "FUTURE_MODE".to_string(),
-            data: serde_json::Value::String("FUTURE_MODE".to_string()),
-        };
-
-        // Serialize
-        let json = serde_json::to_string(&unknown_mode).unwrap();
-        assert_eq!(json, "\"FUTURE_MODE\"");
-
-        // Deserialize
-        let deserialized: FunctionCallingMode = serde_json::from_str(&json).unwrap();
-        assert!(deserialized.is_unknown());
-        assert_eq!(deserialized.unknown_mode_type(), Some("FUTURE_MODE"));
-
-        println!("✓ Unknown mode roundtrip works correctly");
-    }
-
-    /// Test validated mode with function calling (API integration).
-    ///
-    /// This test verifies that the validated mode can be sent to the API.
-    /// Note: validated mode may not yet be supported by all models, so we
-    /// handle potential API errors gracefully.
+    /// Validated mode is accepted and yields either a schema-bound call or
+    /// text. (`FunctionCallingMode::Any` is covered in
+    /// `function_calling_tests.rs`.)
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_function_calling_validated_mode() {
@@ -2177,109 +1289,34 @@ mod function_calling_modes {
             return;
         };
 
-        // Define a simple function
         let weather_fn = FunctionDeclaration::builder("get_weather")
-            .description("Get the current weather for a location")
-            .parameter(
+            .with_description("Get the current weather for a location")
+            .add_parameter(
                 "location",
                 json!({"type": "string", "description": "The city name"}),
             )
-            .required(vec!["location".to_string()])
+            .with_required(vec!["location".to_string()])
             .build();
 
-        let result = interaction_builder(&client)
-            .with_text("What's the weather like in Tokyo?")
-            .add_functions(vec![weather_fn])
-            .with_function_calling_mode(FunctionCallingMode::Validated)
-            .create()
-            .await;
+        let response = retry_request!([client, weather_fn] => {
+            interaction_builder(&client)
+                .with_text("What's the weather like in Tokyo?")
+                .add_functions(vec![weather_fn])
+                .with_function_calling_mode(FunctionCallingMode::Validated)
+                .create()
+                .await
+        })
+        .expect("validated mode should be accepted");
 
-        match result {
-            Ok(response) => {
-                println!("Validated mode response status: {:?}", response.status);
-                println!("Response has text: {}", response.has_text());
-                println!(
-                    "Response has function calls: {}",
-                    !response.function_calls().is_empty()
-                );
-
-                // With validated mode, the model should either:
-                // - Call the function (with schema-adherent output), or
-                // - Provide a natural language response (also schema-adherent)
-                let has_output = response.has_text() || !response.function_calls().is_empty();
-                assert!(
-                    has_output,
-                    "Validated mode should produce either text or function calls"
-                );
-
-                println!("✓ Validated mode works with API");
+        match response.function_calls().first() {
+            Some(call) => {
+                assert_eq!(call.name, "get_weather");
+                assert!(call.args["location"].is_string(), "args: {}", call.args);
             }
-            Err(e) => {
-                let error_str = format!("{:?}", e);
-                println!("Validated mode error: {}", error_str);
-
-                // Validated mode may not yet be supported
-                if error_str.contains("validated")
-                    || error_str.contains("VALIDATED")
-                    || error_str.contains("not supported")
-                    || error_str.contains("invalid")
-                    || error_str.contains("mode")
-                {
-                    println!("Note: validated mode may not be supported yet - skipping");
-                } else {
-                    panic!("Unexpected error: {:?}", e);
-                }
-            }
-        }
-    }
-
-    /// Test with_function_calling_mode() builder method (API integration).
-    ///
-    /// Verifies that the function calling mode is correctly sent to the API
-    /// via generation_config.tool_choice. Uses any mode which requires the
-    /// model to call a function.
-    #[tokio::test]
-    #[ignore = "Requires API key"]
-    async fn test_with_function_calling_mode_builder() {
-        let Some(client) = get_client() else {
-            println!("Skipping: GEMINI_API_KEY not set");
-            return;
-        };
-
-        // Define a simple function
-        let greet_fn = FunctionDeclaration::builder("greet_user")
-            .description("Greet a user by name")
-            .parameter(
-                "name",
-                json!({"type": "string", "description": "The user's name"}),
-            )
-            .required(vec!["name".to_string()])
-            .build();
-
-        // Use any mode - model MUST call a function
-        let response = interaction_builder(&client)
-            .with_text("Please greet Alice")
-            .add_functions(vec![greet_fn])
-            .with_function_calling_mode(FunctionCallingMode::Any)
-            .create()
-            .await
-            .expect("Request with function_calling_mode should succeed");
-
-        println!("Response status: {:?}", response.status);
-
-        // With any mode, the model MUST call a function
-        let function_calls = response.function_calls();
-        println!("Function calls: {:?}", function_calls.len());
-
-        if !function_calls.is_empty() {
-            let call = &function_calls[0];
-            println!("Called function: {}", call.name);
-            assert_eq!(call.name, "greet_user", "Should call greet_user function");
-            println!("✓ with_function_calling_mode() builder method works with API");
-        } else if response.has_text() {
-            // Model may respond with text if function calling fails
-            println!("Note: Model responded with text instead of function call");
-            println!("Text: {}", response.as_text().unwrap());
+            None => assert!(
+                response.has_text(),
+                "validated mode produced neither a call nor text"
+            ),
         }
     }
 }

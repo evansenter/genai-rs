@@ -17,6 +17,7 @@ use crate::errors::GenaiError;
 use crate::request::{InteractionInput, ServiceTier};
 use crate::steps::{FunctionResultPayload, Step};
 use crate::tools::Tool;
+use crate::wire_enum::wire_enum;
 
 // =============================================================================
 // Token Count Deserialization Helpers
@@ -71,143 +72,30 @@ where
     }
 }
 
-/// Status of an interaction.
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-/// New status values may be added by the API in future versions.
-///
-/// # Unknown Status Handling
-///
-/// When the API returns a status value that this library doesn't recognize,
-/// it will be captured in the `Unknown` variant with the original status
-/// string preserved. This follows the Evergreen philosophy of graceful
-/// degradation and data preservation.
-#[derive(Clone, Debug, Default, PartialEq)]
-#[non_exhaustive]
-pub enum InteractionStatus {
-    /// Interaction completed successfully.
-    Completed,
-    /// Interaction is still being processed.
-    ///
-    /// This is the `Default` (used when a hand-constructed response omits a
-    /// status; the wire always carries one).
-    #[default]
-    InProgress,
-    /// Interaction requires client action (e.g., function results).
-    RequiresAction,
-    /// Interaction failed.
-    Failed,
-    /// Interaction was cancelled.
-    Cancelled,
-    /// Interaction ended before completion (e.g., token limit reached).
-    Incomplete,
-    /// Interaction stopped because the configured budget was exceeded.
-    BudgetExceeded,
-    /// Unknown status (for forward compatibility).
-    ///
-    /// This variant captures any unrecognized status values from the API,
-    /// allowing the library to handle new statuses gracefully.
-    ///
-    /// The `status_type` field contains the unrecognized status string,
-    /// and `data` contains the JSON value (typically the same string).
-    Unknown {
-        /// The unrecognized status string from the API
-        status_type: String,
-        /// The raw JSON value, preserved for debugging
-        data: serde_json::Value,
-    },
-}
-
-impl InteractionStatus {
-    /// Check if this is an unknown status.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
+wire_enum! {
+    /// Status of an interaction.
+    #[derive(Default)]
+    pub enum InteractionStatus {
+        /// Interaction completed successfully.
+        Completed = "completed",
+        /// Interaction is still being processed.
+        ///
+        /// This is the `Default` (used when a hand-constructed response omits a
+        /// status; the wire always carries one).
+        #[default]
+        InProgress = "in_progress",
+        /// Interaction requires client action (e.g., function results).
+        RequiresAction = "requires_action",
+        /// Interaction failed.
+        Failed = "failed",
+        /// Interaction was cancelled.
+        Cancelled = "cancelled",
+        /// Interaction ended before completion (e.g., token limit reached).
+        Incomplete = "incomplete",
+        /// Interaction stopped because the configured budget was exceeded.
+        BudgetExceeded = "budget_exceeded",
     }
-
-    /// Returns the status type name if this is an unknown status.
-    ///
-    /// Returns `None` for known statuses.
-    #[must_use]
-    pub fn unknown_status_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { status_type, .. } => Some(status_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the raw JSON data if this is an unknown status.
-    ///
-    /// Returns `None` for known statuses.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl Serialize for InteractionStatus {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Self::Completed => serializer.serialize_str("completed"),
-            Self::InProgress => serializer.serialize_str("in_progress"),
-            Self::RequiresAction => serializer.serialize_str("requires_action"),
-            Self::Failed => serializer.serialize_str("failed"),
-            Self::Cancelled => serializer.serialize_str("cancelled"),
-            Self::Incomplete => serializer.serialize_str("incomplete"),
-            Self::BudgetExceeded => serializer.serialize_str("budget_exceeded"),
-            Self::Unknown { status_type, .. } => serializer.serialize_str(status_type),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for InteractionStatus {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-
-        match value.as_str() {
-            Some("completed") => Ok(Self::Completed),
-            Some("in_progress") => Ok(Self::InProgress),
-            Some("requires_action") => Ok(Self::RequiresAction),
-            Some("failed") => Ok(Self::Failed),
-            Some("cancelled") => Ok(Self::Cancelled),
-            Some("incomplete") => Ok(Self::Incomplete),
-            Some("budget_exceeded") => Ok(Self::BudgetExceeded),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown InteractionStatus '{}'. \
-                     This may indicate a new API feature. \
-                     The status will be preserved in the Unknown variant.",
-                    other
-                );
-                Ok(Self::Unknown {
-                    status_type: other.to_string(),
-                    data: value,
-                })
-            }
-            None => {
-                // Non-string value - preserve it in Unknown
-                let status_type = format!("<non-string: {}>", value);
-                tracing::warn!(
-                    "InteractionStatus received non-string value: {}. \
-                     Preserving in Unknown variant.",
-                    value
-                );
-                Ok(Self::Unknown {
-                    status_type,
-                    data: value,
-                })
-            }
-        }
-    }
+    unknown(status_type, unknown_status_type)
 }
 
 /// Token count for a specific modality.
@@ -366,6 +254,14 @@ pub struct UsageMetadata {
     /// calls were made while grounding this interaction).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grounding_tool_count: Option<Vec<GroundingToolCount>>,
+
+    /// Fields the API returned that this struct does not model, preserved
+    /// for roundtrip (Evergreen). Live responses carry `raw_prompt_token`,
+    /// `model_invocation_token_counts` and
+    /// `non_grounding_model_invocation_token_counts`, none of which are in
+    /// the bindings (2026-09-24).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl UsageMetadata {
@@ -685,6 +581,7 @@ impl AudioInfo<'_> {
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[non_exhaustive]
 pub struct FunctionCallInfo<'a> {
     /// Unique identifier for this function call (used when sending results back)
     pub id: &'a str,
@@ -754,6 +651,7 @@ pub struct OwnedFunctionCallInfo {
 ///
 /// This is a **view type** that borrows data from the underlying [`InteractionResponse`].
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[non_exhaustive]
 pub struct FunctionResultInfo<'a> {
     /// Name of the function that was called (optional per API spec)
     pub name: Option<&'a str>,
@@ -924,6 +822,21 @@ pub struct InteractionResponse {
     /// Timestamp when the interaction was last updated (ISO 8601 UTC)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated: Option<DateTime<Utc>>,
+
+    /// The system instruction the interaction ran with, as echoed by the API.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_instruction: Option<String>,
+
+    /// The request's labels, as echoed by the API (verified live
+    /// 2026-09-24).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub labels: Option<std::collections::BTreeMap<String, String>>,
+
+    /// Fields the API returned that this struct does not model, preserved
+    /// for roundtrip (Evergreen): e.g. the `environment`, `generation_config`
+    /// and `agent_config` echoes.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl InteractionResponse {
@@ -1318,12 +1231,6 @@ impl InteractionResponse {
             .any(|s| matches!(s, Step::CodeExecutionCall { .. }))
     }
 
-    /// Get the first code execution call, if any.
-    #[must_use]
-    pub fn code_execution_call(&self) -> Option<CodeExecutionCallInfo<'_>> {
-        self.code_execution_calls().into_iter().next()
-    }
-
     /// Extract all code execution calls from steps.
     #[must_use]
     pub fn code_execution_calls(&self) -> Vec<CodeExecutionCallInfo<'_>> {
@@ -1408,18 +1315,6 @@ impl InteractionResponse {
             .any(|s| matches!(s, Step::GoogleSearchCall { .. }))
     }
 
-    /// Get the first Google Search query, if any.
-    #[must_use]
-    pub fn google_search_call(&self) -> Option<&str> {
-        self.steps.iter().find_map(|step| {
-            if let Step::GoogleSearchCall { queries, .. } = step {
-                queries.iter().find(|q| !q.is_empty()).map(|q| q.as_str())
-            } else {
-                None
-            }
-        })
-    }
-
     /// Extract all Google Search queries from steps (flattened across calls).
     #[must_use]
     pub fn google_search_calls(&self) -> Vec<&str> {
@@ -1470,18 +1365,6 @@ impl InteractionResponse {
         self.steps
             .iter()
             .any(|s| matches!(s, Step::UrlContextCall { .. }))
-    }
-
-    /// Get the ID of the first URL context call, if any.
-    #[must_use]
-    pub fn url_context_call_id(&self) -> Option<&str> {
-        self.steps.iter().find_map(|step| {
-            if let Step::UrlContextCall { id, .. } = step {
-                Some(id.as_str())
-            } else {
-                None
-            }
-        })
     }
 
     /// Extract URL context call URLs from steps (flattened across calls).
@@ -1717,6 +1600,10 @@ impl InteractionResponse {
                 Step::FileSearchResult { .. } => summary.file_search_result_count += 1,
                 Step::GoogleMapsCall { .. } => summary.google_maps_call_count += 1,
                 Step::GoogleMapsResult { .. } => summary.google_maps_result_count += 1,
+                Step::ProcessingCall { .. } => summary.processing_call_count += 1,
+                Step::ProcessingResult { .. } => summary.processing_result_count += 1,
+                Step::RetrievalCall { .. } => summary.retrieval_call_count += 1,
+                Step::RetrievalResult { .. } => summary.retrieval_result_count += 1,
                 Step::Unknown { step_type, .. } => {
                     summary.unknown_count += 1;
                     unknown_types_set.insert(step_type.clone());
@@ -1789,28 +1676,6 @@ impl InteractionResponse {
     pub fn tool_use_tokens(&self) -> Option<u32> {
         self.usage.as_ref().and_then(|u| u.total_tool_use_tokens)
     }
-
-    // =========================================================================
-    // Timestamp Helpers
-    // =========================================================================
-
-    /// Get the timestamp when this interaction was created.
-    ///
-    /// Returns `None` if the interaction was created with `store=false` or
-    /// if the API didn't include timestamp information.
-    #[must_use]
-    pub fn created(&self) -> Option<DateTime<Utc>> {
-        self.created
-    }
-
-    /// Get the timestamp when this interaction was last updated.
-    ///
-    /// Returns `None` if the interaction was created with `store=false` or
-    /// if the API didn't include timestamp information.
-    #[must_use]
-    pub fn updated(&self) -> Option<DateTime<Utc>> {
-        self.updated
-    }
 }
 
 /// Summary of step and content types present in an interaction response.
@@ -1821,23 +1686,8 @@ impl InteractionResponse {
 /// Content counts (`text_count`, `image_count`, ...) tally content blocks
 /// inside `model_output` steps.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-// Closed deliberately, in the same change that takes the break. Adding
-// `tool_call_count` is source-breaking *only* because this struct is open, and
-// the API is expected to grow step types — this PR argues `mcp_server_tool_call`
-// may start arriving, and the recurring SDK-bindings sweep (#421) is the
-// intended detector for new ones. Without the
-// attribute every future counter repeats this break for a purely mechanical
-// reason; with it, they are additive.
-//
-// Folding it in here is free for consumers: they are already recompiling for
-// the new field. `Default` is derived, so the documented migration
-// (`StepSummary::default()` then assign) still works, and nothing that
-// compiled before stops compiling: the only in-crate literals are the two in
-// `src/response_tests.rs`, where the attribute does not apply, and the only
-// out-of-crate sites are the two trybuild fixtures added alongside this
-// attribute — `tests/ui/pass_step_summary_migration.rs`, which uses the
-// surviving idiom, and `tests/ui/fail_step_summary_struct_literal.rs`, which
-// exists to be rejected.
+// Closed so that counters for new step types are additive; build one with
+// `StepSummary::default()` and field assignment.
 #[non_exhaustive]
 pub struct StepSummary {
     /// Number of `user_input` steps
@@ -1908,6 +1758,14 @@ pub struct StepSummary {
     pub google_maps_call_count: usize,
     /// Number of `google_maps_result` steps
     pub google_maps_result_count: usize,
+    /// Number of `processing_call` steps (agentic video processing)
+    pub processing_call_count: usize,
+    /// Number of `processing_result` steps
+    pub processing_result_count: usize,
+    /// Number of `retrieval_call` steps (Vertex-only retrieval tool)
+    pub retrieval_call_count: usize,
+    /// Number of `retrieval_result` steps
+    pub retrieval_result_count: usize,
     /// Number of unknown steps/content blocks
     pub unknown_count: usize,
     /// List of unique unknown type names encountered (sorted alphabetically)
@@ -1918,7 +1776,7 @@ impl fmt::Display for StepSummary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut parts = Vec::new();
 
-        let fields: [(&str, usize); 23] = [
+        let fields: [(&str, usize); 27] = [
             ("user_input", self.user_input_count),
             ("model_output", self.model_output_count),
             ("text", self.text_count),
@@ -1942,6 +1800,10 @@ impl fmt::Display for StepSummary {
             ("file_search_result", self.file_search_result_count),
             ("google_maps_call", self.google_maps_call_count),
             ("google_maps_result", self.google_maps_result_count),
+            ("processing_call", self.processing_call_count),
+            ("processing_result", self.processing_result_count),
+            ("retrieval_call", self.retrieval_call_count),
+            ("retrieval_result", self.retrieval_result_count),
         ];
 
         for (name, count) in fields {
@@ -2067,7 +1929,7 @@ mod tests {
         );
         let usage = response.usage.as_ref().unwrap();
         assert_eq!(usage.grounding_count_for_tool("google_search"), Some(2));
-        assert!(response.created().is_some());
+        assert!(response.created.is_some());
     }
 
     #[test]
@@ -2502,6 +2364,7 @@ mod tests {
         assert_eq!(serialized, r#""incomplete""#);
     }
 
+    #[cfg(not(feature = "strict-unknown"))]
     #[test]
     fn test_interaction_status_unknown_preserved() {
         let status: InteractionStatus = serde_json::from_str("\"hibernating\"").unwrap();
@@ -2509,5 +2372,40 @@ mod tests {
         assert_eq!(status.unknown_status_type(), Some("hibernating"));
         assert!(status.unknown_data().is_some());
         assert_eq!(serde_json::to_string(&status).unwrap(), "\"hibernating\"");
+    }
+
+    /// Shapes from a live `gemini-3.8-flash` response (2026-09-24).
+    #[test]
+    fn usage_preserves_unmodeled_live_fields() {
+        let wire = serde_json::json!({
+            "total_tokens": 123,
+            "total_input_tokens": 7,
+            "raw_prompt_token": 38,
+            "model_invocation_token_counts": [{
+                "prompt_tokens_details": [{"modality": "text", "tokens": 38}],
+                "candidates_tokens_details": [{"modality": "text", "tokens": 5}]
+            }]
+        });
+        let usage: UsageMetadata = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(usage.total_tokens, Some(123));
+        assert_eq!(usage.extra["raw_prompt_token"], 38);
+        assert_eq!(serde_json::to_value(&usage).unwrap(), wire);
+    }
+
+    #[test]
+    fn interaction_echoes_labels_system_instruction_and_extras() {
+        let wire = serde_json::json!({
+            "id": "int_1",
+            "status": "completed",
+            "steps": [],
+            "system_instruction": "Be brief.",
+            "labels": {"team": "audit"},
+            "environment": {"type": "remote", "env": [{"A": {"value": "1"}}]}
+        });
+        let response: InteractionResponse = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(response.system_instruction.as_deref(), Some("Be brief."));
+        assert_eq!(response.labels.as_ref().unwrap()["team"], "audit");
+        assert_eq!(response.extra["environment"], wire["environment"]);
+        assert_eq!(serde_json::to_value(&response).unwrap(), wire);
     }
 }

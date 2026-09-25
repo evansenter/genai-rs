@@ -1,124 +1,106 @@
 # Examples Index
 
-This guide provides an overview of all examples in the `genai-rs` repository, organized by category to help you find what you need.
-
-## Running Examples
-
-All examples require the `GEMINI_API_KEY` environment variable:
+Every example runs against the live API. Set `GEMINI_API_KEY` and:
 
 ```bash
-export GEMINI_API_KEY=your-api-key
-cargo run --example <example_name>
+cargo run --example <name>
+LOUD_WIRE=1 cargo run --example <name>   # print each request and response
 ```
 
-For wire-level debugging:
-```bash
-LOUD_WIRE=1 cargo run --example <example_name>
-```
+Examples exit non-zero when the thing they demonstrate didn't happen, so a
+clean exit means it worked. A cheap subset is smoke-run in CI
+(`example-smoke` in `.github/workflows/rust.yml`).
 
 ## Quick Reference
 
 | I want to... | Example |
 |--------------|---------|
 | Make my first API call | `simple_interaction` |
-| Stream responses | `streaming` |
-| Use function calling | `auto_function_calling` |
-| Have multi-turn conversations | `stateful_interaction` |
+| Stream responses (and resume a dropped stream) | `streaming` |
+| Call my own functions | `auto_function_calling` |
+| Hold a multi-turn conversation | `stateful_interaction` |
+| Get JSON matching a schema | `structured_output` |
+| Answer questions over my documents | `file_search` |
 | Generate images | `image_generation` |
 | Convert text to speech | `text_to_speech` |
-| Get structured JSON output | `structured_output` |
+| Retry transient failures | `retry_with_backoff` |
 
-## Categories
+## Basics
 
-### Getting Started
+| Example | Shows |
+|---------|-------|
+| `simple_interaction` | `create()`, reading text and usage |
+| `streaming` | `create_stream()` and every `StreamChunk` variant; resuming with `get_interaction_stream(id, Some(last_event_id))` |
+| `system_instructions` | `with_system_instruction()`; resending it each turn, since it is not inherited |
+| `retry_with_backoff` | `build()` + `execute()`, `is_retryable()` / `retry_after()` with `backon` |
 
-| Example | Description | Difficulty |
-|---------|-------------|------------|
-| `simple_interaction` | Basic single request/response | Beginner |
-| `streaming` | Stream text as it arrives | Beginner |
-| `stateful_interaction` | Multi-turn conversation with context | Beginner |
-| `system_instructions` | Set model behavior and persona | Beginner |
+## Conversations
 
-### Function Calling
+| Example | Shows |
+|---------|-------|
+| `stateful_interaction` | Server-side history via `with_previous_interaction()`; `get_interaction_with_input()`; `delete_interaction()` |
+| `explicit_turns` | Client-side history: `conversation()`, `with_history()`, replaying `output_steps()` with signed thoughts under `with_store_disabled()` |
 
-| Example | Description | Difficulty |
-|---------|-------------|------------|
-| `auto_function_calling` | Auto-discovery and execution with `#[tool]` | Beginner |
-| `manual_function_calling` | Full control over execution loop | Intermediate |
-| `tool_service` | Dependency injection for stateful tools | Intermediate |
-| `parallel_and_compositional_functions` | Parallel execution, chained calls | Advanced |
-| `streaming_auto_functions` | Streaming with auto function execution | Intermediate |
+## Function Calling
 
-### Built-in Tools
+| Example | Shows |
+|---------|-------|
+| `auto_function_calling` | `#[tool]` (zero-arg, typed, optional + enum params), auto-discovery vs `add_function()`, `FunctionCallingMode::Any` / `None` |
+| `manual_function_calling` | Your own loop: parallel calls run with `join_all`, dependent calls across rounds, `Step::function_result` / `function_result_error` |
+| `tool_service` | `ToolService` for tools that need shared state (`Arc<RwLock<_>>`), errors returned to the model |
+| `streaming_auto_functions` | `create_stream_with_auto_functions()`: streamed text and argument deltas, execution events |
 
-| Example | Description | Difficulty |
-|---------|-------------|------------|
-| `google_search` | Real-time web grounding | Beginner |
-| `code_execution` | Run Python in sandbox | Beginner |
-| `url_context` | Fetch and analyze web pages | Beginner |
-| `google_maps` | Location-grounded responses with place data | Beginner |
-| `computer_use` | Browser automation | Advanced |
-| `file_search` | Semantic document retrieval | Intermediate |
-| `retrieval_grounding` | Retrieval tool (Vertex AI Search, RAG store, Exa.ai/Parallel.ai) | Advanced |
+## Built-in Tools
 
-### Multimodal Input
+| Example | Shows |
+|---------|-------|
+| `google_search` | Search grounding: queries issued, citation annotations, search-suggestion widgets |
+| `url_context` | Fetching URLs named in the prompt, per-URL fetch status |
+| `code_execution` | Server-side Python: executed code, output, answer |
+| `google_maps` | Place data, `GoogleMapsConfig::with_widget()` |
+| `file_search` | Create a store, upload, wait for indexing, retrieve, clean up |
+| `computer_use` | `ComputerUseConfig`; the first requested browser action (executing actions needs your own browser harness) |
 
-| Example | Description | Difficulty |
-|---------|-------------|------------|
-| `multimodal_image` | Analyze images, resolution control | Beginner |
-| `audio_input` | Transcribe and analyze audio (incl. `TranscriptionConfig` tuning) | Beginner |
-| `video_input` | Analyze video content | Beginner |
-| `pdf_input` | Process PDF documents | Beginner |
-| `text_input` | Analyze text documents (TXT, JSON, CSV) | Beginner |
-| `files_api` | Upload files for reuse | Intermediate |
+## Multimodal Input
 
-### Output Modalities
+| Example | Shows |
+|---------|-------|
+| `multimodal_image` | Inline images, several per request, follow-ups, `Resolution` vs image tokens |
+| `audio_input` | Inline audio with `TranscriptionConfig` |
+| `video_input` | Inline video; `VideoProcessing::segment()` to clip the window and frame rate |
+| `pdf_input` | PDFs via `document_data`; text files via `document_from_file_with_mime` |
+| `files_api` | `upload_file`, `wait_for_file_ready`, `Content::from_file`, list/get/delete, `upload_file_bytes` |
 
-| Example | Description | Difficulty |
-|---------|-------------|------------|
-| `image_generation` | Generate images from text | Beginner |
-| `text_to_speech` | Convert text to audio | Beginner |
-| `structured_output` | JSON schema enforcement | Intermediate |
+## Output
 
-### Conversations
+| Example | Shows |
+|---------|-------|
+| `structured_output` | `with_response_format()` into typed structs; with Google Search; while streaming |
+| `thinking` | `ThinkingLevel` (incl. `Minimal` on `MINIMAL_THINKING_MODEL`), thought summaries, streamed summaries |
+| `image_generation` | `DEFAULT_IMAGE_MODEL`, `with_image_output()`, `with_image_config()`, `images()` |
+| `text_to_speech` | `DEFAULT_TTS_MODEL`, `with_audio_output()`, `SpeechConfig::for_speaker()` + `Content::speaker_text()` for dialogue |
 
-| Example | Description | Difficulty |
-|---------|-------------|------------|
-| `stateful_interaction` | Server-side context with `previous_interaction_id` | Beginner |
-| `explicit_turns` | Client-side history with `Step` arrays | Intermediate |
-| `response_passthrough` | Feed `response.output_steps()` back as history | Intermediate |
-| `thought_echo` | Manual thought handling in multi-turn | Advanced |
+## Background Work and Agents
 
-### Advanced Features
+| Example | Shows |
+|---------|-------|
+| `deep_research` | `DEFAULT_DEEP_RESEARCH_AGENT` in the background, polling with backoff, `cancel_interaction()` when the wait budget runs out |
+| `webhooks_and_background` | Webhook CRUD / ping / secret rotation, per-request `webhook_config`, environments CRUD, `list_triggers()`. Without a key it prints the request shapes instead. |
 
-| Example | Description | Difficulty |
-|---------|-------------|------------|
-| `thinking` | Chain-of-thought reasoning levels | Intermediate |
-| `deep_research` | Long-running research agent | Advanced |
-| `webhooks_and_background` | Webhook resource CRUD + per-request webhook routing + environments CRUD + triggers listing | Advanced |
-| `cancel_interaction` | Cancel background tasks | Intermediate |
+## Applications
 
-### Real-World Applications
+Located in [`examples/real_world/`](../examples/real_world/):
 
-Located in `examples/real_world/`. These run against the Interactions API
-and need nothing but a key:
-
-| Example | Description | Difficulty |
-|---------|-------------|------------|
-| `multi_turn_agent_auto/` | Customer support bot (auto functions) | Intermediate |
-| `multi_turn_agent_manual/` | Customer support bot (manual functions) | Intermediate |
-| `multi_turn_agent_manual_stateless/` | Stateless multi-turn (no server storage) | Advanced |
-| `web_scraper_agent/` | Research agent with Google Search | Intermediate |
-| `code_assistant/` | Code analysis and generation | Intermediate |
-| `testing_assistant/` | Test generation from code | Intermediate |
-| `data_analysis/` | CSV data analysis with functions | Intermediate |
-| `rag_system/` | Retrieval-augmented generation | Advanced |
+| Example | Shows |
+|---------|-------|
+| `multi_turn_agent_auto` | Support agent: `#[tool]` functions over a stub CRM, server-side history, system instruction and tools resent each turn |
+| `multi_turn_agent_manual_stateless` | The same agent with `store` disabled: client-held history replayed via `output_steps()`, manual loop |
 
 ### Antigravity Harness
 
 Located in [`examples/antigravity/`](../examples/antigravity/), grouped the
 way `src/antigravity/` is. All seven need the `antigravity` feature **and**
-the `localharness` binary (`pip install google-antigravity==0.1.10`), and
+the `localharness` binary (`pip install google-antigravity==0.1.18`), and
 all seven are smoke-run in CI:
 
 | Example | Description | Difficulty |
@@ -131,223 +113,12 @@ all seven are smoke-run in CI:
 | [`proactive_agent/`](../examples/antigravity/proactive_agent/) | Work that starts without a user turn — `add_trigger`, observing deliveries via a wire inspector, the trigger/user-turn discard boundary | Advanced |
 | [`cancellable_turn/`](../examples/antigravity/cancellable_turn/) | Stopping an agent mid-thought — `cancel_handle` from another task, partial output kept, contrast with `with_turn_timeout` | Advanced |
 
-## Example Details
+## Prerequisites
 
-### Getting Started Examples
+| Example | Needs |
+|---------|-------|
+| `deep_research` | Deep Research agent access; takes minutes (`DEEP_RESEARCH_MAX_WAIT_SECS` sets the budget) |
+| `computer_use` | Computer Use access on your key |
+| Antigravity examples | `localharness` binary (`pip install google-antigravity==0.1.18`) + `--features antigravity` |
 
-#### simple_interaction
-The most basic example - send a prompt, get a response.
-```bash
-cargo run --example simple_interaction
-```
-**Learn**: Basic client setup, making requests, accessing responses.
-
-#### streaming
-Stream responses token-by-token as they arrive.
-```bash
-cargo run --example streaming
-```
-**Learn**: `create_stream()`, handling `StreamChunk` events, real-time output.
-
-#### stateful_interaction
-Build multi-turn conversations with automatic context.
-```bash
-cargo run --example stateful_interaction
-```
-**Learn**: `with_previous_interaction()`, conversation continuity.
-
-#### system_instructions
-Set model behavior, personas, and output formats.
-```bash
-cargo run --example system_instructions
-```
-**Learn**: `with_system_instruction()`, persona configuration.
-
-### Function Calling Examples
-
-#### auto_function_calling
-Automatic function discovery and execution using the `#[tool]` macro.
-```bash
-cargo run --example auto_function_calling
-```
-**Learn**: `#[tool]` macro, `create_with_auto_functions()`, function calling modes.
-
-#### manual_function_calling
-Full control over the function execution loop.
-```bash
-cargo run --example manual_function_calling
-```
-**Learn**: Manual loop, `Step::function_result()`, custom execution logic.
-
-#### tool_service
-Dependency injection for functions that need shared state.
-```bash
-cargo run --example tool_service
-```
-**Learn**: `ToolService` trait, `Arc<RwLock<T>>`, runtime configuration.
-
-#### parallel_and_compositional_functions
-Handle parallel calls and function chaining.
-```bash
-cargo run --example parallel_and_compositional_functions
-```
-**Learn**: Concurrent execution, compositional patterns.
-
-### Built-in Tools Examples
-
-#### google_search
-Use real-time web data for grounded responses.
-```bash
-cargo run --example google_search
-```
-**Learn**: `with_google_search()`, `google_search_calls()`/`google_search_results()` steps.
-
-#### code_execution
-Run Python code in a sandboxed environment.
-```bash
-cargo run --example code_execution
-```
-**Learn**: `with_code_execution()`, execution results.
-
-#### url_context
-Fetch and analyze web page content.
-```bash
-cargo run --example url_context
-```
-**Learn**: `with_url_context()`, web content analysis.
-
-#### retrieval_grounding
-Ground responses in external retrieval backends.
-```bash
-cargo run --example retrieval_grounding
-```
-**Learn**: `RetrievalConfig`, `VertexAiSearchConfig`, `RagStoreConfig` (+
-`RagRetrievalConfig` hybrid search/filter/ranking), `ExaAiSearchConfig`.
-**Note**: Runs without credentials (prints request shapes); live call needs
-`GEMINI_API_KEY` + `VERTEX_AI_SEARCH_ENGINE`.
-
-### Multimodal Examples
-
-#### multimodal_image
-Send images for analysis with resolution control.
-```bash
-cargo run --example multimodal_image
-```
-**Learn**: `with_content()`, `Content::image_data()`, `Resolution`, image comparison.
-
-#### files_api
-Upload files once, reference many times.
-```bash
-cargo run --example files_api
-```
-**Learn**: `upload_file()`, `wait_for_file_active()`, `delete_file()`.
-
-### Output Examples
-
-#### image_generation
-Generate images from text prompts.
-```bash
-cargo run --example image_generation
-```
-**Learn**: `with_image_output()`, `first_image_bytes()`, image iteration.
-**Note**: Requires `gemini-3.1-flash-image` model.
-
-#### text_to_speech
-Convert text to spoken audio.
-```bash
-cargo run --example text_to_speech
-```
-**Learn**: `with_audio_output()`, `with_voice()`, `SpeechConfig`.
-**Note**: Requires `gemini-2.5-pro-preview-tts` model.
-
-#### structured_output
-Enforce JSON schema on responses.
-```bash
-cargo run --example structured_output
-```
-**Learn**: `with_response_format()`.
-
-### Advanced Examples
-
-#### thinking
-Expose chain-of-thought reasoning.
-```bash
-cargo run --example thinking
-```
-**Learn**: `with_thinking_level()`, `response.has_thoughts()`, `response.thought_signatures()`.
-
-#### deep_research
-Long-running research with background execution.
-```bash
-cargo run --example deep_research
-```
-**Learn**: `with_agent()`, `with_background()`, polling patterns.
-
-#### webhooks_and_background
-Push-based completion via webhooks instead of polling, plus the
-environments and triggers resources.
-```bash
-cargo run --example webhooks_and_background
-```
-**Learn**: `create_webhook()`/`ping_webhook()`/`rotate_webhook_signing_secret()`,
-`WebhookEvent`, `with_webhook_config()` on background interactions;
-`create_environment()`/`get_environment()`/`list_environments()`/
-`delete_environment()` lifecycle; `list_triggers()` (creation is
-agent-gated).
-**Note**: Runs without `GEMINI_API_KEY` (prints request shapes).
-
-#### cancel_interaction
-Cancel in-progress background tasks.
-```bash
-cargo run --example cancel_interaction
-```
-**Learn**: `cancel_interaction()`, task lifecycle management.
-
-#### antigravity_agent
-Local Antigravity harness agent: custom Rust tools, policies, streaming,
-and answering agent questions.
-```bash
-cargo run --example antigravity_agent --features antigravity
-```
-**Learn**: `AntigravityAgent::builder()`, `#[tool]` dispatch through the
-harness, `policy::deny_all()`/`allow()`, `on_questions()` (enabling the
-write-capable `AskQuestion` builtin), `send_streaming()`, `shutdown()`.
-**Note**: Requires the `localharness` binary
-(`pip install google-antigravity==0.1.10`) and `GEMINI_API_KEY`.
-
-## Prerequisites by Example
-
-| Example | Special Requirements |
-|---------|---------------------|
-| `image_generation` | `gemini-3.1-flash-image` model access |
-| `text_to_speech` | `gemini-2.5-pro-preview-tts` model access |
-| `deep_research` | Deep Research agent access |
-| `computer_use` | Computer Use capability access |
-| `file_search` | None — creates its own store, uploads, and deletes it on exit |
-| `google_search` | Google Search grounding access |
-| `antigravity_agent`, `repo_auditor`, `session_resume`, `workspace_explorer`, `mcp_toolbelt`, `proactive_agent`, `cancellable_turn` | `localharness` binary (`pip install google-antigravity==0.1.10`) + `--features antigravity` |
-
-## Example Progression
-
-**New to genai-rs?** Follow this path:
-
-1. `simple_interaction` - Basic usage
-2. `streaming` - Real-time responses
-3. `stateful_interaction` - Multi-turn
-4. `auto_function_calling` - Function calling
-5. `structured_output` - JSON responses
-6. `multimodal_image` - Image input
-7. Pick examples matching your use case
-
-**Building a chatbot?**
-
-1. `stateful_interaction` - Basic multi-turn
-2. `system_instructions` - Set persona
-3. `auto_function_calling` - Add capabilities
-4. `real_world/multi_turn_agent_auto/` - Full example
-
-**Building a data pipeline?**
-
-1. `structured_output` - Enforce schemas
-2. `files_api` - Handle documents
-3. `real_world/data_analysis/` - Full example
+Everything else runs on a standard API key.

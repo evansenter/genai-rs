@@ -14,107 +14,21 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::request::{ImageAspectRatio, ImageSize};
+use crate::wire_enum::wire_enum;
 
-/// Delivery mode for generated media output.
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-///
-/// # Wire Format
-///
-/// Serializes as lowercase strings: `"inline"`, `"uri"`.
-///
-/// # Evergreen Pattern
-///
-/// Unknown values from the API deserialize into the `Unknown` variant,
-/// preserving the original data for debugging and roundtrip serialization.
-#[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum ResponseDelivery {
-    /// Media bytes are returned inline (base64) in the response.
-    Inline,
-    /// Media is delivered by URI (e.g., a GCS object).
-    Uri,
-    /// Unknown variant for forward compatibility (Evergreen pattern)
-    Unknown {
-        /// The unrecognized delivery type from the API
-        delivery_type: String,
-        /// The raw JSON value, preserved for debugging and roundtrip
-        data: serde_json::Value,
-    },
-}
-
-impl ResponseDelivery {
-    /// Returns true if this is an unknown delivery mode.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
+wire_enum! {
+    /// Delivery mode for generated media output.
+    ///
+    /// # Wire Format
+    ///
+    /// Serializes as lowercase strings: `"inline"`, `"uri"`.
+    pub enum ResponseDelivery {
+        /// Media bytes are returned inline (base64) in the response.
+        Inline = "inline",
+        /// Media is delivered by URI (e.g., a GCS object).
+        Uri = "uri",
     }
-
-    /// Returns the delivery type name if this is an unknown delivery mode.
-    #[must_use]
-    pub fn unknown_delivery_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { delivery_type, .. } => Some(delivery_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the preserved data if this is an unknown delivery mode.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl Serialize for ResponseDelivery {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            Self::Inline => serializer.serialize_str("inline"),
-            Self::Uri => serializer.serialize_str("uri"),
-            Self::Unknown { delivery_type, .. } => serializer.serialize_str(delivery_type),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for ResponseDelivery {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value.as_str() {
-            Some("inline") => Ok(Self::Inline),
-            Some("uri") => Ok(Self::Uri),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown ResponseDelivery '{}' - using Unknown variant (Evergreen)",
-                    other
-                );
-                Ok(Self::Unknown {
-                    delivery_type: other.to_string(),
-                    data: value,
-                })
-            }
-            None => {
-                let delivery_type = format!("<non-string: {}>", value);
-                tracing::warn!(
-                    "ResponseDelivery received non-string value: {}. \
-                     Preserving in Unknown variant.",
-                    value
-                );
-                Ok(Self::Unknown {
-                    delivery_type,
-                    data: value,
-                })
-            }
-        }
-    }
+    unknown(delivery_type, unknown_delivery_type)
 }
 
 /// A typed response format, tagged by `type` on the wire.
@@ -153,7 +67,8 @@ pub enum ResponseFormat {
     /// `mime_type` and `delivery` are schema-valid but rejected
     /// ("Audio mime_type is not supported in response_format." /
     /// "Audio delivery mode is not supported."); `sample_rate` is accepted.
-    /// Output is returned inline as `audio/l16`.
+    /// Output is returned inline: `audio/wav` from the 3.8 TTS models,
+    /// `audio/l16` from older ones (2026-09-24).
     Audio {
         /// MIME type of the audio output. Known values: `audio/mp3`,
         /// `audio/ogg_opus`, `audio/l16`, `audio/wav`, `audio/alaw`,
@@ -187,6 +102,10 @@ pub enum ResponseFormat {
         image_size: Option<ImageSize>,
     },
     /// Video output configuration.
+    ///
+    /// No model reachable through the Interactions API produces video as of
+    /// 2026-09-24 (Veo models 404 there), so none of these fields is
+    /// live-verified beyond server-side validation.
     Video {
         /// Delivery mode for the video output.
         delivery: Option<ResponseDelivery>,
@@ -199,6 +118,9 @@ pub enum ResponseFormat {
         aspect_ratio: Option<ImageAspectRatio>,
         /// Duration for the video output (e.g., `"8s"`).
         duration: Option<String>,
+        /// Output resolution; the server validates the value
+        /// (`360p`, `720p`, `1080p`, `4k`).
+        resolution: Option<VideoResolution>,
     },
     /// Unknown variant for forward compatibility (Evergreen pattern)
     Unknown {
@@ -207,6 +129,21 @@ pub enum ResponseFormat {
         /// The raw JSON value, preserved for debugging and roundtrip
         data: serde_json::Value,
     },
+}
+
+wire_enum! {
+    /// Output resolution of generated video (`response_format` `resolution`).
+    pub enum VideoResolution {
+        /// 360p.
+        Sd360p = "360p",
+        /// 720p.
+        Hd720p = "720p",
+        /// 1080p.
+        Fhd1080p = "1080p",
+        /// 4K.
+        Uhd4k = "4k",
+    }
+    unknown(resolution_type, unknown_resolution_type)
 }
 
 impl ResponseFormat {
@@ -343,6 +280,7 @@ impl Serialize for ResponseFormat {
                 gcs_uri,
                 aspect_ratio,
                 duration,
+                resolution,
             } => {
                 let mut map = serializer.serialize_map(None)?;
                 map.serialize_entry("type", "video")?;
@@ -357,6 +295,9 @@ impl Serialize for ResponseFormat {
                 }
                 if let Some(duration) = duration {
                     map.serialize_entry("duration", duration)?;
+                }
+                if let Some(resolution) = resolution {
+                    map.serialize_entry("resolution", resolution)?;
                 }
                 map.end()
             }
@@ -414,6 +355,8 @@ impl<'de> Deserialize<'de> for ResponseFormat {
                 aspect_ratio: Option<ImageAspectRatio>,
                 #[serde(default)]
                 duration: Option<String>,
+                #[serde(default)]
+                resolution: Option<VideoResolution>,
             },
         }
 
@@ -447,11 +390,13 @@ impl<'de> Deserialize<'de> for ResponseFormat {
                     gcs_uri,
                     aspect_ratio,
                     duration,
+                    resolution,
                 } => Self::Video {
                     delivery,
                     gcs_uri,
                     aspect_ratio,
                     duration,
+                    resolution,
                 },
             }),
             Err(parse_error) => {
@@ -570,6 +515,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "strict-unknown"))]
     #[test]
     fn test_response_delivery_unknown_roundtrip() {
         let unknown: ResponseDelivery = serde_json::from_str("\"multipart\"").unwrap();
@@ -648,6 +594,7 @@ mod tests {
             gcs_uri: Some("gs://bucket/out".to_string()),
             aspect_ratio: Some(ImageAspectRatio::Portrait9x16),
             duration: Some("8s".to_string()),
+            resolution: Some(VideoResolution::Hd720p),
         };
         let value = serde_json::to_value(&format).unwrap();
         assert_eq!(
@@ -657,7 +604,8 @@ mod tests {
                 "delivery": "uri",
                 "gcs_uri": "gs://bucket/out",
                 "aspect_ratio": "9:16",
-                "duration": "8s"
+                "duration": "8s",
+                "resolution": "720p"
             })
         );
     }
@@ -684,6 +632,7 @@ mod tests {
                 gcs_uri: None,
                 aspect_ratio: None,
                 duration: Some("4s".to_string()),
+                resolution: None,
             },
         ];
         for format in formats {
@@ -766,6 +715,7 @@ mod tests {
             gcs_uri: Some("gs://b/o".to_string()),
             aspect_ratio: None,
             duration: None,
+            resolution: None,
         }]
         .into();
         let json = serde_json::to_string(&list).unwrap();

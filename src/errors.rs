@@ -4,17 +4,21 @@ use thiserror::Error;
 ///
 /// # Example: Handling API Errors
 ///
-/// ```ignore
-/// match client.interaction().create().await {
+/// ```no_run
+/// # use genai_rs::{Client, GenaiError};
+/// # async fn example(client: Client) {
+/// match client.interaction().with_text("Hi").create().await {
 ///     Err(GenaiError::Api { status_code: 429, request_id, .. }) => {
-///         tracing::warn!("Rate limited, request_id: {:?}", request_id);
+///         eprintln!("Rate limited, request_id: {request_id:?}");
 ///         // Retry with backoff
 ///     }
-///     Err(GenaiError::Api { status_code, message, request_id }) => {
-///         tracing::error!("API error {}: {} (request: {:?})", status_code, message, request_id);
+///     Err(GenaiError::Api { status_code, message, request_id, .. }) => {
+///         eprintln!("API error {status_code}: {message} (request: {request_id:?})");
 ///     }
-///     // ...
+///     Err(other) => eprintln!("{other}"),
+///     Ok(response) => println!("{:?}", response.as_text()),
 /// }
+/// # }
 /// ```
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -35,7 +39,10 @@ pub enum GenaiError {
     Api {
         /// HTTP status code (e.g., 400, 429, 500)
         status_code: u16,
-        /// Error message from the API response body
+        /// The `message` of Google's `{"error": {...}}` envelope, prefixed with
+        /// its symbolic status or code (`"INVALID_ARGUMENT: ..."`,
+        /// `"invalid_request: ..."`). A body that is not an envelope is
+        /// included raw, truncated.
         message: String,
         /// Request ID from `x-goog-request-id` header, if available
         request_id: Option<String>,
@@ -63,11 +70,25 @@ pub enum GenaiError {
     MalformedResponse(String),
     /// Request timed out after the specified duration.
     ///
-    /// This error is returned when a request exceeds the timeout configured
-    /// via `with_timeout()`. The duration indicates how long the request
-    /// was allowed to run before being cancelled.
+    /// Returned when a request exceeds
+    /// [`InteractionBuilder::with_timeout`](crate::InteractionBuilder::with_timeout).
+    /// [`ClientBuilder::with_timeout`](crate::ClientBuilder::with_timeout) is
+    /// enforced by the HTTP client instead and surfaces as [`GenaiError::Http`].
     #[error("Request timed out after {0:?}")]
     Timeout(std::time::Duration),
+    /// The server reported an error inside a stream (an SSE `error` event)
+    /// after the HTTP status had already succeeded.
+    ///
+    /// Returned by the auto-function streaming loop, which cannot continue
+    /// past it. Plain streams surface the same event as
+    /// [`StreamChunk::Error`](crate::StreamChunk::Error) instead.
+    #[error("Stream error: {message}")]
+    Stream {
+        /// Human-readable error message from the event
+        message: String,
+        /// Error code from the event, if provided
+        code: Option<String>,
+    },
     /// Failed to build the HTTP client.
     ///
     /// This typically only occurs in exceptional circumstances such as
@@ -152,6 +173,7 @@ impl GenaiError {
             | GenaiError::Internal(_)
             | GenaiError::InvalidInput(_)
             | GenaiError::MalformedResponse(_)
+            | GenaiError::Stream { .. }
             | GenaiError::ClientBuild(_) => false,
         }
     }
@@ -492,5 +514,18 @@ mod tests {
             !error.is_retryable(),
             "UTF-8 errors should NOT be retryable"
         );
+    }
+
+    #[test]
+    fn test_stream_error_display_and_not_retryable() {
+        let error = GenaiError::Stream {
+            message: "quota exhausted mid-stream".to_string(),
+            code: Some("resource_exhausted".to_string()),
+        };
+        assert_eq!(
+            error.to_string(),
+            "Stream error: quota exhausted mid-stream"
+        );
+        assert!(!error.is_retryable());
     }
 }

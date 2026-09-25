@@ -127,6 +127,9 @@ impl std::fmt::Debug for InteractionBuilder<'_> {
             .field("background", &self.background)
             .field("store", &self.store)
             .field("system_instruction", &self.system_instruction)
+            .field("service_tier", &self.service_tier)
+            .field("safety_settings", &self.safety_settings)
+            .field("labels", &self.labels)
             .field("max_function_call_loops", &self.max_function_call_loops)
             .field("tool_service", &self.tool_service.as_ref().map(|_| "..."))
             .field("timeout", &self.timeout)
@@ -285,7 +288,7 @@ impl<'a> InteractionBuilder<'a> {
         self
     }
 
-    /// Sets the agent to use for this interaction (e.g., "deep-research-pro-preview-12-2025").
+    /// Sets the agent to use for this interaction (e.g. [`DEFAULT_DEEP_RESEARCH_AGENT`](crate::DEFAULT_DEEP_RESEARCH_AGENT)).
     ///
     /// Note: Mutually exclusive with `with_model()`.
     #[must_use]
@@ -312,7 +315,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// let response = client
     ///     .interaction()
-    ///     .with_agent("deep-research-pro-preview-12-2025")
+    ///     .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
     ///     .with_text("Research the history of quantum computing")
     ///     .with_agent_config(DeepResearchConfig::new()
     ///         .with_thinking_summaries(ThinkingSummaries::Auto))
@@ -359,7 +362,7 @@ impl<'a> InteractionBuilder<'a> {
     ///     .with_thinking_summaries(summaries))
     /// ```
     ///
-    /// Only applicable when using `with_agent("deep-research-pro-preview-12-2025")`.
+    /// Only applicable to Deep Research agents (e.g. [`DEFAULT_DEEP_RESEARCH_AGENT`](crate::DEFAULT_DEEP_RESEARCH_AGENT)).
     ///
     /// # Example
     ///
@@ -372,7 +375,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// let response = client
     ///     .interaction()
-    ///     .with_agent("deep-research-pro-preview-12-2025")
+    ///     .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
     ///     .with_text("Research the history of quantum computing")
     ///     .with_deep_research_config(ThinkingSummaries::Auto)
     ///     .with_background(true)
@@ -632,6 +635,15 @@ impl<'a> InteractionBuilder<'a> {
         self.tools.get_or_insert_with(Vec::new).push(tool);
     }
 
+    /// Replaces any tool of the same kind as `tool` (the `with_*` built-in
+    /// tool setters), so calling one twice does not send a duplicate.
+    fn replace_tool(&mut self, tool: InternalTool) {
+        let kind = std::mem::discriminant(&tool);
+        let tools = self.tools.get_or_insert_with(Vec::new);
+        tools.retain(|existing| std::mem::discriminant(existing) != kind);
+        tools.push(tool);
+    }
+
     /// Adds any tool that implements `Into<Tool>` to the interaction.
     ///
     /// This is the unified entry point for configurable tools. Use the corresponding
@@ -656,7 +668,7 @@ impl<'a> InteractionBuilder<'a> {
     ///     .interaction()
     ///     .with_model(genai_rs::DEFAULT_MODEL)
     ///     .with_text("Hello")
-    ///     .add_tool(ComputerUseConfig::new().excluding(vec!["download_file".to_string()]))
+    ///     .add_tool(ComputerUseConfig::new().with_excluded_predefined_functions(vec!["download_file".to_string()]))
     ///     .add_tool(FileSearchConfig::new(vec!["docs".to_string()]).with_top_k(5))
     ///     .add_tool(McpServerConfig::new("fs", "https://mcp.example.com/fs"))
     ///     .create()
@@ -672,9 +684,9 @@ impl<'a> InteractionBuilder<'a> {
 
     /// Sets the tools for function calling, replacing any existing tools.
     ///
-    /// Use `add_function()` to accumulate functions instead of replacing.
+    /// Use `add_tool()` or `add_function()` to accumulate instead.
     #[must_use]
-    pub fn set_tools(mut self, tools: Vec<InternalTool>) -> Self {
+    pub fn with_tools(mut self, tools: Vec<InternalTool>) -> Self {
         self.tools = Some(tools);
         self
     }
@@ -693,9 +705,9 @@ impl<'a> InteractionBuilder<'a> {
     /// let client = Client::new("api-key".to_string());
     ///
     /// let func = FunctionDeclaration::builder("get_temperature")
-    ///     .description("Get the temperature for a location")
-    ///     .parameter("location", json!({"type": "string"}))
-    ///     .required(vec!["location".to_string()])
+    ///     .with_description("Get the temperature for a location")
+    ///     .add_parameter("location", json!({"type": "string"}))
+    ///     .with_required(vec!["location".to_string()])
     ///     .build();
     ///
     /// let builder = client
@@ -748,8 +760,11 @@ impl<'a> InteractionBuilder<'a> {
     /// database connections, API clients, or configuration. The service
     /// provides callable functions that can access the service's internal state.
     ///
-    /// Tools from the service are used in addition to any auto-discovered
-    /// tools from the global registry (via `#[tool]` macro).
+    /// With the `*_with_auto_functions` methods, the service's functions are
+    /// always declared to the model, alongside any tools set explicitly. When
+    /// no tools are set, `#[tool]` functions from the global registry are
+    /// declared too; a service function shadows a registry one of the same
+    /// name.
     ///
     /// # Example
     ///
@@ -781,6 +796,9 @@ impl<'a> InteractionBuilder<'a> {
     }
 
     /// Enables Google Search grounding for this interaction.
+    ///
+    /// Replaces an earlier tool of the same kind, including one added with
+    /// `add_tool`, so calling this twice sends it once.
     ///
     /// This adds the built-in `GoogleSearch` tool which allows the model to
     /// search the web and ground its responses in real-time information.
@@ -818,11 +836,14 @@ impl<'a> InteractionBuilder<'a> {
     /// [`InteractionResponse::google_search_results`]: crate::InteractionResponse::google_search_results
     #[must_use]
     pub fn with_google_search(mut self) -> Self {
-        self.push_tool(InternalTool::GoogleSearch { search_types: None });
+        self.replace_tool(InternalTool::GoogleSearch { search_types: None });
         self
     }
 
     /// Enables the Google Maps built-in tool for location-grounded responses.
+    ///
+    /// Replaces an earlier tool of the same kind, including one added with
+    /// `add_tool`, so calling this twice sends it once.
     ///
     /// For configuration options (e.g., widget support), use
     /// `.add_tool(GoogleMapsConfig::new().with_widget())`.
@@ -848,7 +869,7 @@ impl<'a> InteractionBuilder<'a> {
     /// ```
     #[must_use]
     pub fn with_google_maps(mut self) -> Self {
-        self.push_tool(InternalTool::GoogleMaps {
+        self.replace_tool(InternalTool::GoogleMaps {
             latitude: None,
             longitude: None,
             enable_widget: None,
@@ -857,6 +878,9 @@ impl<'a> InteractionBuilder<'a> {
     }
 
     /// Enables code execution for this interaction.
+    ///
+    /// Replaces an earlier tool of the same kind, including one added with
+    /// `add_tool`, so calling this twice sends it once.
     ///
     /// This adds the built-in `CodeExecution` tool which allows the model to
     /// write and execute Python code to help answer questions. The code runs
@@ -898,11 +922,14 @@ impl<'a> InteractionBuilder<'a> {
     /// ```
     #[must_use]
     pub fn with_code_execution(mut self) -> Self {
-        self.push_tool(InternalTool::CodeExecution);
+        self.replace_tool(InternalTool::CodeExecution);
         self
     }
 
     /// Enables URL context fetching for this interaction.
+    ///
+    /// Replaces an earlier tool of the same kind, including one added with
+    /// `add_tool`, so calling this twice sends it once.
     ///
     /// This adds the built-in `UrlContext` tool which allows the model to
     /// fetch and analyze content from URLs provided in the prompt.
@@ -946,7 +973,7 @@ impl<'a> InteractionBuilder<'a> {
     /// [`InteractionResponse::url_context_results`]: crate::InteractionResponse::url_context_results
     #[must_use]
     pub fn with_url_context(mut self) -> Self {
-        self.push_tool(InternalTool::UrlContext);
+        self.replace_tool(InternalTool::UrlContext);
         self
     }
 
@@ -974,7 +1001,7 @@ impl<'a> InteractionBuilder<'a> {
     /// ```
     ///
     /// Use this when you want the model to generate images. Requires a model
-    /// that supports image generation (e.g., `gemini-3.1-flash-image`).
+    /// that supports image generation (e.g. [`DEFAULT_IMAGE_MODEL`](crate::DEFAULT_IMAGE_MODEL)).
     ///
     /// # Example
     ///
@@ -1013,7 +1040,7 @@ impl<'a> InteractionBuilder<'a> {
     /// ```
     ///
     /// Use this when you want the model to generate speech audio. Requires a model
-    /// that supports text-to-speech (e.g., `gemini-2.5-pro-preview-tts`).
+    /// that supports text-to-speech (e.g. [`DEFAULT_TTS_MODEL`](crate::DEFAULT_TTS_MODEL)).
     ///
     /// For voice customization, chain with [`with_speech_config`](Self::with_speech_config)
     /// or [`with_voice`](Self::with_voice).
@@ -1093,18 +1120,17 @@ impl<'a> InteractionBuilder<'a> {
     /// Sets the full list of speaker configurations for multi-speaker
     /// text-to-speech, replacing any previously set configs.
     ///
-    /// Each entry's `speaker` should match a speaker name given in the
-    /// prompt.
-    ///
-    /// The list wire form was verified live (2026-07): a two-speaker
-    /// request returns a single combined `audio/l16` stream. The API does
-    /// not echo `speech_config` back on reads (`include_input` was observed
-    /// to be a no-op), so the echo shape could not be observed.
+    /// Each entry's `speaker` names a speaker the input's turns refer to.
+    /// On [`DEFAULT_TTS_MODEL`](crate::DEFAULT_TTS_MODEL) every text turn
+    /// must carry that name via [`Content::speaker_text`]; older TTS models
+    /// instead read an `Alice: ...` transcript and reject the annotation
+    /// (verified live 2026-09-24). Either way one combined audio stream is
+    /// returned.
     ///
     /// # Example
     ///
     /// ```no_run
-    /// use genai_rs::{Client, SpeechConfig};
+    /// use genai_rs::{Client, Content, InteractionInput, SpeechConfig};
     ///
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -1113,7 +1139,10 @@ impl<'a> InteractionBuilder<'a> {
     /// let response = client
     ///     .interaction()
     ///     .with_model(genai_rs::DEFAULT_TTS_MODEL)
-    ///     .with_text("Alice: Hi Bob!\nBob: Hey Alice, how are you?")
+    ///     .with_input(InteractionInput::Content(vec![
+    ///         Content::speaker_text("Alice", "Hi Bob!"),
+    ///         Content::speaker_text("Bob", "Hey Alice, how are you?"),
+    ///     ]))
     ///     .with_audio_output()
     ///     .with_speech_configs(vec![
     ///         SpeechConfig { voice: Some("Kore".into()), language: Some("en-US".into()), speaker: Some("Alice".into()) },
@@ -1298,7 +1327,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// let response = client
     ///     .interaction()
-    ///     .with_agent("deep-research-preview-04-2026")
+    ///     .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
     ///     .with_text("Research the history of quantum computing")
     ///     .with_background(true)
     ///     .with_webhook_config(
@@ -1336,7 +1365,7 @@ impl<'a> InteractionBuilder<'a> {
     /// // Typed remote environment
     /// let response = client
     ///     .interaction()
-    ///     .with_agent("antigravity-preview-05-2026")
+    ///     .with_agent(genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
     ///     .with_text("Run the test suite")
     ///     .with_environment(
     ///         RemoteEnvironment::new()
@@ -1349,7 +1378,7 @@ impl<'a> InteractionBuilder<'a> {
     /// let env_id = response.environment_id.clone().unwrap_or_default();
     /// let follow_up = client
     ///     .interaction()
-    ///     .with_agent("antigravity-preview-05-2026")
+    ///     .with_agent(genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
     ///     .with_previous_interaction(response.id.clone().unwrap_or_default())
     ///     .with_text("Now fix the failing test")
     ///     .with_environment(env_id)
@@ -1409,10 +1438,11 @@ impl<'a> InteractionBuilder<'a> {
     /// Sets the user-defined metadata labels for this request, replacing
     /// any previously added ones.
     ///
-    /// Server-side constraint (verified live 2026-08-08): the Gemini API
-    /// rejects `labels` (Vertex-only); modeled for spec parity. Stored in a
-    /// `BTreeMap` so the serialized key order is deterministic; a repeated
-    /// key in the input keeps the last value.
+    /// Accepted by the Gemini API and echoed as
+    /// [`InteractionResponse::labels`](crate::InteractionResponse::labels)
+    /// (verified live 2026-09-24). Stored in a `BTreeMap` so the serialized
+    /// key order is deterministic; a repeated key in the input keeps the
+    /// last value.
     #[must_use]
     pub fn with_labels(
         mut self,
@@ -2128,8 +2158,7 @@ impl<'a> InteractionBuilder<'a> {
         let client = self.client;
         let timeout = self.timeout;
         Box::pin(async_stream::try_stream! {
-            let mut request = self.build()?;
-            request.stream = Some(true);
+            let request = self.build()?;
             let mut stream = client.execute_stream(request);
 
             loop {
@@ -2199,16 +2228,8 @@ impl<'a> InteractionBuilder<'a> {
         // Runtime validation for storage-related constraints
         self.validate()?;
 
-        // Validate that content input is not combined with history.
-        //
-        // A builder policy, not a wire constraint — and it stopped being the
-        // latter when `InteractionRequest::input` began emitting `Content` as
-        // a `user_input` step (#427). Composing the two would now serialize
-        // cleanly as history steps followed by that step, which is exactly
-        // the arrangement the error message below tells the caller to build
-        // by hand. Left in place deliberately: relaxing it is an API-surface
-        // decision about what `with_content()` means alongside history, not a
-        // consequence of the wire shape. Tracked in #454.
+        // A builder policy, not a wire constraint: say what the caller should
+        // build instead.
         if self.content_input.is_some() && !self.history.is_empty() {
             return Err(GenaiError::InvalidInput(
                 "Content input (with_content()) cannot be combined with with_history(). \
@@ -2296,7 +2317,7 @@ impl<'a> InteractionBuilder<'a> {
             response_modalities: self.response_modalities,
             response_format: self.response_format,
             generation_config,
-            stream: None, // Set by create() vs create_stream()
+            stream: None, // Set by the transport: execute() vs execute_stream()
             background: self.background,
             store: self.store,
             system_instruction: self.system_instruction,

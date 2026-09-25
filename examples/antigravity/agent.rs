@@ -3,9 +3,22 @@
 //! enabling the write-capable `ask_question` builtin and answering the
 //! agent's question batches through an `on_questions` hook.
 //!
+//! Things to know:
+//! - `on_questions` runs inline on the event pump. Never block in it waiting
+//!   for a human; answer from policy or state you already collected.
+//! - `ask_question` needs `AgentBehavior::Interactive`, or the model is told
+//!   nobody will answer.
+//! - `ask_question` counts as write-capable: enabling it needs a policy or an
+//!   `on_pre_tool` hook (the spawn-time safety gate), and `deny_all()` needs
+//!   `allow("ask_question")` beside it.
+//! - `shutdown()` exits gracefully and persists the trajectory; dropping the
+//!   agent kills the harness without persisting.
+//! - Turns are bounded by `DEFAULT_TURN_TIMEOUT`; `with_turn_timeout` changes
+//!   it and `without_turn_timeout` removes it.
+//!
 //! Requirements:
 //! - The `localharness` binary (ships in the `google-antigravity` Python
-//!   wheel): `pip install google-antigravity==0.1.10`, or set
+//!   wheel): `pip install google-antigravity==0.1.18`, or set
 //!   `ANTIGRAVITY_HARNESS_PATH` to the binary.
 //! - `GEMINI_API_KEY` for model calls.
 //!
@@ -18,7 +31,8 @@
 use futures_util::StreamExt;
 use genai_rs::CallableFunction;
 use genai_rs::antigravity::{
-    AgentEvent, AntigravityAgent, BuiltinTool, Capabilities, QuestionAnswer, QuestionReply, policy,
+    AgentBehavior, AgentEvent, AntigravityAgent, BuiltinTool, Capabilities, QuestionAnswer,
+    QuestionReply, policy,
 };
 use genai_rs_macros::tool;
 use std::time::Duration;
@@ -64,6 +78,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // read_only() does not include AskQuestion — enable it explicitly
         // so the on_questions hook below is reachable.
         .with_capabilities(Capabilities::read_only().enable(BuiltinTool::AskQuestion))
+        // ...and tell the harness a human is in the loop. Its default
+        // (autonomous) prompt says the user will not answer, so the model
+        // asks in prose instead of calling ask_question.
+        .with_agent_behavior(AgentBehavior::Interactive)
         // Answer agent questions (ask_question builtin) from policy: pick
         // the first choice when there is one, otherwise leave unanswered.
         // The hook runs inline in the event pump — never block in it
@@ -100,6 +118,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_tool(GetWeatherCallable.declaration())
         .add_policy(policy::deny_all())
         .add_policy(policy::allow("get_weather"))
+        // The question tool is policy-gated like any other call; without
+        // this, deny_all() blocks every question before it is asked.
+        .add_policy(policy::allow("ask_question"))
         .spawn()
         .await?;
 
@@ -158,45 +179,5 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let conversation_id = agent.conversation_id().map(ToString::to_string);
     agent.shutdown().await?;
     println!("\nHarness shut down cleanly. (conversation_id={conversation_id:?})");
-
-    println!("\n=== Example Complete ===\n");
-
-    println!("--- What You'll See with LOUD_WIRE=1 ---");
-    println!("  HARNESS /path/to/localharness (pid N) - process spawn");
-    println!("  WS Send: {{\"config\": ...}} - conversation init with models/tools/policies");
-    println!("  WS Receive: {{\"initializeConversationResponse\": ...}} - cascade id");
-    println!("  WS Send: {{\"userInput\": ...}} - each chat turn");
-    println!("  WS Receive: {{\"stepUpdate\": ...}} - streaming step/thinking/text updates");
-    println!(
-        "  WS Receive: {{\"toolCall\": ...}} / WS Send: {{\"toolResponse\": ...}} - custom tools"
-    );
-    println!(
-        "  WS Receive: stepUpdate.questionsRequest / WS Send: {{\"questionResponse\": ...}} - \
-         agent questions answered by the on_questions hook"
-    );
-    println!("  STDERR: ... - harness diagnostics\n");
-
-    println!("--- Production Considerations ---");
-    println!(
-        "• Pin the harness: pip install google-antigravity==0.1.10 (see SUPPORTED_HARNESS_VERSION)"
-    );
-    println!("• Always add policies before enabling write tools (run_command, edit_file)");
-    println!(
-        "• on_questions runs inline in the event pump - never block in it waiting for a human;"
-    );
-    println!("  answer from policy or pre-collected state (channel + try_recv)");
-    println!("• AskQuestion counts as write-capable: enabling it without a policy or");
-    println!("  on_pre_tool hook fails the spawn-time safety gate - but questions bypass");
-    println!("  the policy engine at runtime; on_questions (or not enabling) is the control");
-    println!(
-        "• Call agent.shutdown() for graceful exit; dropping kills the harness without persistence"
-    );
-    println!("• Use with_save_dir + conversation_id() to resume sessions across runs");
-    println!(
-        "• Turns are bounded at {}s by default (DEFAULT_TURN_TIMEOUT); \
-with_turn_timeout raises or lowers it, without_turn_timeout removes it",
-        genai_rs::antigravity::DEFAULT_TURN_TIMEOUT.as_secs()
-    );
-
     Ok(())
 }

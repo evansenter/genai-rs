@@ -1,582 +1,109 @@
-# Troubleshooting Guide
+# Troubleshooting
 
-This guide covers common issues, debugging techniques, and solutions when working with `genai-rs`.
+Symptoms and fixes, each with a link to the guide that covers it.
 
-## Table of Contents
-
-- [Wire-Level Debugging](#wire-level-debugging)
-- [Common Errors](#common-errors)
-- [Function Calling Issues](#function-calling-issues)
-- [Streaming Issues](#streaming-issues)
-- [Multimodal Issues](#multimodal-issues)
-- [Regional Availability](#regional-availability)
-- [Performance Issues](#performance-issues)
-- [FAQ](#faq)
-
-## Wire-Level Debugging
-
-### Enable LOUD_WIRE
-
-See exactly what's sent to and received from the API:
+## First: look at the wire
 
 ```bash
-LOUD_WIRE=1 cargo run --example simple_interaction
+LOUD_WIRE=1 cargo run --example simple_interaction            # requests, responses, SSE frames
+RUST_LOG=genai_rs=debug cargo run --example simple_interaction # library logs
 ```
 
-Output shows:
-```text
-[REQ#1] POST https://generativelanguage.googleapis.com/v1beta/interactions
-{
-  "model": "gemini-3.7-flash",
-  "input": "Hello!",
-  ...
-}
-
-[RES#1] 200 OK
-{
-  "status": "completed",
-  "steps": [
-    {"type": "model_output", "content": [{"type": "text", "text": "..."}]}
-  ],
-  "output_text": "...",
-  ...
-}
-```
-
-Every request also carries the `Api-Revision: 2026-05-20` header, which selects
-the Interactions API revision this library targets.
-
-Error responses are shown too (`Error (429): {...}`), including the full
-error body from the API.
-
-`LOUD_WIRE` is read once when the `Client` is constructed — set it before
-starting your program. Under the hood it installs a
-`genai_rs::wire::LoudWirePrinter`; for programmatic capture (custom sinks,
-forwarding to `tracing` via `RUST_LOG=genai_rs::wire=debug`), see the wire
-inspection API in [docs/LOGGING_STRATEGY.md](docs/LOGGING_STRATEGY.md).
-
-### Enable Library Logging
-
-For internal library behavior:
-
-```bash
-RUST_LOG=genai_rs=debug cargo run --example simple_interaction
-```
-
-Log levels:
-- `error` - Unrecoverable errors
-- `warn` - Recoverable issues, unknown enum variants
-- `info` - High-level operations
-- `debug` - Detailed API lifecycle
-
-### Combined Debugging
-
-```bash
-LOUD_WIRE=1 RUST_LOG=genai_rs=debug cargo run --example auto_function_calling
-```
-
-## Common Errors
-
-### Invalid API Key (401)
-
-```text
-GenaiError::Api { status_code: 401, message: "API key not valid..." }
-```
-
-**Solutions:**
-1. Check the key is set: `echo $GEMINI_API_KEY`
-2. Verify key format (should start with `AI`)
-3. Regenerate key in [Google AI Studio](https://ai.dev/)
-
-```rust,ignore
-let api_key = env::var("GEMINI_API_KEY")
-    .expect("GEMINI_API_KEY must be set");
-
-// Validate format
-if !api_key.starts_with("AI") {
-    panic!("Invalid API key format");
-}
-```
-
-### Model Not Found (404)
-
-```text
-GenaiError::Api { status_code: 404, message: "Model not found..." }
-```
-
-**Solutions:**
-1. Check model name spelling: `gemini-3.7-flash` (not `gemini-flash`)
-2. Verify model availability in your region
-3. Check if model requires special access
-
-```rust,ignore
-// Correct model names
-const STANDARD_MODEL: &str = genai_rs::DEFAULT_MODEL;
-const IMAGE_MODEL: &str = genai_rs::DEFAULT_IMAGE_MODEL;
-const TTS_MODEL: &str = genai_rs::DEFAULT_TTS_MODEL;
-```
-
-### Rate Limited (429)
-
-```text
-GenaiError::Api { status_code: 429, message: "Resource exhausted..." }
-```
-
-**Solutions:**
-1. Implement exponential backoff
-2. Reduce request frequency
-3. Check quota in Google Cloud Console
-
-```rust,ignore
-async fn with_backoff<T>(operation: impl Fn() -> Future<Output = Result<T, GenaiError>>) {
-    let mut delay = Duration::from_secs(1);
-    for _ in 0..5 {
-        match operation().await {
-            Ok(result) => return Ok(result),
-            Err(GenaiError::Api { status_code: 429, .. }) => {
-                sleep(delay).await;
-                delay *= 2;
-            }
-            Err(e) => return Err(e),
-        }
-    }
-}
-```
-
-### Request Timeout
-
-```text
-GenaiError::Timeout(duration)
-```
-
-**Solutions:**
-1. Increase timeout for complex requests
-2. Use streaming for long responses
-3. Use background execution for agents
-
-```rust,ignore
-// Increase timeout
-let response = client
-    .interaction()
-    .with_model(genai_rs::DEFAULT_MODEL)
-    .with_text(complex_prompt)
-    .with_timeout(Duration::from_secs(180))
-    .create()
-    .await?;
-```
-
-### Spanner UTF-8 Error (Transient)
-
-```text
-GenaiError::Api { message: "...Spanner...UTF-8..." }
-```
-
-This is a known transient Google backend issue.
-
-**Solution:** Retry the request:
-
-```rust,ignore
-// Use the test utility pattern
-async fn retry_on_transient<T>(operation: impl Fn() -> Future<Output = Result<T, GenaiError>>) {
-    for attempt in 0..3 {
-        match operation().await {
-            Ok(result) => return Ok(result),
-            Err(GenaiError::Api { message, .. })
-                if message.to_lowercase().contains("spanner")
-                    && message.to_lowercase().contains("utf-8") =>
-            {
-                sleep(Duration::from_secs(1 << attempt)).await;
-            }
-            Err(e) => return Err(e),
-        }
-    }
-}
-```
-
-## Function Calling Issues
-
-### Function Not Being Called
-
-**Symptoms:** Model responds with text instead of calling your function.
-
-**Diagnose with LOUD_WIRE:**
-```bash
-LOUD_WIRE=1 cargo run --example auto_function_calling
-```
-
-Check that `tools` array is in the request.
-
-**Solutions:**
-
-1. **Function not registered:**
-```rust,ignore
-// Ensure #[tool] functions are in scope
-use crate::my_tools::*;  // Bring into scope
-
-let result = client
-    .interaction()
-    .with_text("What's the weather?")
-    .create_with_auto_functions()  // Auto-discovers from registry
-    .await?;
-```
-
-2. **Function not declared:**
-```rust,ignore
-use genai_rs::CallableFunction;
-
-// Explicitly add function
-let result = client
-    .interaction()
-    .with_text("What's the weather?")
-    .add_function(GetWeatherCallable.declaration())  // Explicit
-    .create_with_auto_functions()
-    .await?;
-```
-
-3. **Prompt doesn't trigger function:**
-```rust,ignore
-// Be explicit about needing the function
-let prompt = "Use the get_weather function to check Tokyo's weather";
-```
-
-4. **Force function calling:**
-```rust,ignore
-use genai_rs::FunctionCallingMode;
-
-let result = client
-    .interaction()
-    .with_text("What's the weather?")
-    .add_function(decl)
-    .with_function_calling_mode(FunctionCallingMode::Any)  // MUST call
-    .create()
-    .await?;
-```
-
-### Function Called with Wrong Arguments
-
-**Diagnose:**
-```rust,ignore
-use genai_rs_macros::tool;
-
-#[tool(city(description = "City name"))]
-fn get_weather(city: String) -> String {
-    println!("DEBUG: city = {:?}", city); // Log arguments
-    format!(r#"{{"city": "{city}"}}"#)
-}
-```
-
-**Solutions:**
-
-1. **Better parameter descriptions:**
-```rust,ignore
-use genai_rs_macros::tool;
-
-#[tool(city(description = "The city name, e.g., 'Tokyo', 'New York City'"))]
-fn get_weather(city: String) -> String {
-    format!(r#"{{"city": "{city}"}}"#)
-}
-```
-
-2. **Use enums for constrained values:**
-```rust,ignore
-let decl = FunctionDeclaration::builder("set_unit")
-    .parameter("unit", json!({
-        "type": "string",
-        "enum": ["celsius", "fahrenheit"],
-        "description": "Temperature unit"
-    }))
-    .build();
-```
-
-### Missing call_id Error
-
-```text
-"Function call 'get_weather' is missing call_id"
-```
-
-**Cause:** `store=false` disables call IDs needed for multi-turn.
-
-**Solution:** Ensure storage is enabled (it is by default):
-```rust,ignore
-let response = client
-    .interaction()
-    .with_model(genai_rs::DEFAULT_MODEL)
-    .with_text("What's the weather?")
-    .with_store_enabled()  // Explicit, but default is true
-    .create()
-    .await?;
-```
-
-### Infinite Function Loop
-
-**Cause:** Function returns data that triggers another call.
-
-**Solution:** Set max loops:
-```rust,ignore
-let result = client
-    .interaction()
-    .with_text(prompt)
-    .add_function(func)
-    .with_max_function_call_loops(3)  // Default is 10
-    .create_with_auto_functions()
-    .await?;
-```
-
-## Streaming Issues
-
-### Stream Stops Unexpectedly
-
-**Diagnose:**
-```rust,ignore
-while let Some(result) = stream.next().await {
-    match result {
-        Ok(event) => println!("Event: {:?}", event),
-        Err(e) => {
-            println!("Stream error: {:?}", e);
-            break;
-        }
-    }
-}
-```
-
-**Solutions:**
-
-1. **Network timeout:** Increase client timeout
-2. **Parse error:** Check for malformed SSE (use LOUD_WIRE)
-3. **Server disconnect:** Implement resume with `event_id`
-
-### Stream Resume After Error
-
-```rust,ignore
-let mut last_event_id: Option<String> = None;
-let mut interaction_id: Option<String> = None;
-
-loop {
-    let mut stream = if let (Some(ref iid), Some(ref eid)) = (&interaction_id, &last_event_id) {
-        // Resume from where we left off
-        client.get_interaction_stream(iid, Some(eid.as_str()))
-    } else {
-        // Start fresh
-        client.interaction().with_text(prompt).create_stream()
-    };
-
-    while let Some(result) = stream.next().await {
-        if let Ok(event) = result {
-            last_event_id = event.event_id.clone();
-            // Capture interaction_id from the Completed chunk
-            if let StreamChunk::Completed(response) = &event.chunk {
-                interaction_id = response.id.clone();
-            }
-            // Process...
-        }
-    }
-}
-```
-
-## Multimodal Issues
-
-### Image Not Recognized
-
-**Symptoms:** Model says "I can't see any image" or ignores the image.
-
-**Solutions:**
-
-1. **Check MIME type:**
-```rust,ignore
-// Correct MIME types
-Content::image_data(base64, "image/png")   // Not "png"
-Content::image_data(base64, "image/jpeg")  // Not "jpg"
-```
-
-2. **Verify base64 encoding:**
-```rust,ignore
-use base64::{Engine as _, engine::general_purpose::STANDARD};
-let encoded = STANDARD.encode(&image_bytes);
-```
-
-3. **Check file size:** Images >20MB should use Files API
-
-### Files API Upload Stuck Processing
-
-**Symptoms:** File state remains `Processing` indefinitely.
-
-**Solution:** Wait with timeout:
-```rust,ignore
-match client
-    .wait_for_file_active(&file.name, Duration::from_secs(120))
-    .await
-{
-    Ok(()) => println!("File ready"),
-    Err(e) => {
-        // Check state manually
-        let metadata = client.get_file(&file.name).await?;
-        println!("State: {:?}", metadata.state);
-    }
-}
-```
-
-### Image Generation Returns Text
-
-**Cause:** Model interpreted prompt as conversation instead of generation.
-
-**Solutions:**
-
-1. **Ensure correct model:**
-```rust,ignore
-.with_model(genai_rs::DEFAULT_IMAGE_MODEL)  // NOT DEFAULT_MODEL
-```
-
-2. **Ensure image output enabled:**
-```rust,ignore
-.with_image_output()  // Required
-```
-
-3. **Check for images:**
-```rust,ignore
-if response.has_images() {
-    // Success
-} else if let Some(text) = response.as_text() {
-    println!("Got text instead: {}", text);
-}
-```
-
-## Regional Availability
-
-### Feature Not Available
-
-Some features have regional restrictions:
-
-| Feature | Availability |
-|---------|-------------|
-| Image generation | Limited regions |
-| Google Search | Most regions |
-| Computer Use | Limited access |
-| Deep Research | Limited access |
-
-**Check availability:**
-```rust,ignore
-match result {
-    Err(GenaiError::Api { message, .. })
-        if message.contains("not available")
-            || message.contains("not supported")
-            || message.contains("permission") =>
-    {
-        println!("Feature not available in your region/account");
-    }
-    _ => {}
-}
-```
-
-## Performance Issues
-
-### Slow Responses
-
-**Diagnose:**
-```rust,ignore
-let start = Instant::now();
-let response = client.interaction().create().await?;
-println!("Request took: {:?}", start.elapsed());
-```
-
-**Solutions:**
-
-1. **Use streaming** for perceived speed:
-```rust,ignore
-let mut stream = client.interaction().create_stream();
-// First token arrives faster
-```
-
-2. **Reduce input size:**
-```rust,ignore
-// Summarize large documents before sending
-```
-
-3. **Use appropriate model:**
-```rust,ignore
-// gemini-3.7-flash is faster than gemini-3.1-pro-preview
-```
-
-### High Token Usage
-
-**Monitor usage:**
-```rust,ignore
-// Using convenience methods (recommended)
-println!("Input: {:?}", response.input_tokens());
-println!("Output: {:?}", response.output_tokens());
-println!("Thoughts: {:?}", response.thought_tokens());
-
-// Or using the UsageMetadata struct directly
-if let Some(usage) = &response.usage {
-    println!("Input: {:?}", usage.total_input_tokens);
-    println!("Output: {:?}", usage.total_output_tokens);
-    println!("Thoughts: {:?}", usage.total_thought_tokens);
-}
-```
-
-**Reduce tokens:**
-
-1. **Lower thinking level:**
-```rust,ignore
-.with_thinking_level(ThinkingLevel::Low)  // Instead of High
-```
-
-2. **Limit output:**
-```rust,ignore
-.with_generation_config(GenerationConfig {
-    max_output_tokens: Some(500),
-    ..Default::default()
-})
-```
-
-3. **Use lower resolution for images:**
-```rust,ignore
-Content::image_data(data, "image/png").with_resolution(Resolution::Low)
-```
-
-## FAQ
-
-### Why does my test fail intermittently?
-
-LLM outputs are non-deterministic. Solutions:
-1. Use `with_seed()` for reproducibility
-2. Validate structure, not exact content
-3. Use semantic validation (ask model to verify)
-4. Retry with backoff
-
-### Why is my function called multiple times?
-
-The model may call functions in parallel or sequentially. This is normal behavior for multi-step tasks.
-
-### Can I use this library synchronously?
-
-No, `genai-rs` is async-only. Use a runtime like Tokio:
-```rust,ignore
-#[tokio::main]
-async fn main() {
-    // Your code
-}
-```
-
-### How do I debug what's sent to the API?
-
-```bash
-LOUD_WIRE=1 cargo run --example your_example
-```
-
-### Why do I get "unknown variant" warnings?
-
-The Evergreen pattern logs when the API returns values not yet in the library's enums. This is informational - your code continues working. Consider updating the library if you see these frequently.
-
-### How do I report issues?
-
-1. Enable `LOUD_WIRE=1` and capture output
-2. Include Rust version: `rustc --version`
-3. Include library version from `Cargo.toml`
-4. Open issue at [GitHub](https://github.com/evansenter/genai-rs/issues)
-
-## Getting Help
-
-1. **Check examples:** `cargo run --example <name>`
-2. **Read docs:** See `docs/` directory
-3. **Enable debugging:** `LOUD_WIRE=1 RUST_LOG=genai_rs=debug`
-4. **Open issue:** Include debug output and reproduction steps
+`LOUD_WIRE` is read once, when the `Client` is built, so set it before your
+program starts. Error responses are printed in full. For output format,
+`RUST_LOG=genai_rs::wire=debug` and programmatic capture, see
+[Logging Strategy](docs/LOGGING_STRATEGY.md).
+
+Every request sends `Api-Revision: 2026-05-20`. The server currently ignores
+the header and serves the 2026-05-20 protocol whatever value it carries, so
+changing it changes nothing.
+
+## Errors
+
+| Symptom | Fix |
+|---------|-----|
+| `Api { status_code: 401 \| 403, .. }` | `GEMINI_API_KEY` is unset, invalid, or lacks access to the feature |
+| `Api { status_code: 404, .. }` naming a model or agent | Use `genai_rs::DEFAULT_MODEL` (or another constant in the crate root) instead of a typed id |
+| `Api { status_code: 429, .. }` | Rate limited. Retry with backoff and honor `error.retry_after()`; see [Reliability](docs/RELIABILITY.md) |
+| `Api { status_code: 400, .. }` | The `message` usually names the field. Some fields are Vertex-only and rejected by the Gemini API (see [docs/INTERACTIONS_API_GAP.md](docs/INTERACTIONS_API_GAP.md)) |
+| A 400 that passes on re-run | See [Known transient errors](docs/ERROR_HANDLING.md#known-transient-errors) |
+| `GenaiError::Timeout(_)` | The request-level `with_timeout()` elapsed |
+| `GenaiError::Http(e)` with `e.is_timeout()` | The **client-level** `ClientBuilder::with_timeout()` elapsed. It caps every request, including streams, and a request-level timeout cannot extend it; see [Timeouts](docs/RELIABILITY.md#timeouts) |
+| `GenaiError::InvalidInput(_)` before any request is sent | The builder rejected the combination (for example, no input, both model and agent, or `with_store_disabled()` with chaining or background) |
+| `'minimal' is not a supported thinking level for this model` | `DEFAULT_MODEL` rejects `ThinkingLevel::Minimal`; use `genai_rs::MINIMAL_THINKING_MODEL` |
+| TLS errors in minimal containers | The crate verifies against the OS trust store; install a CA bundle |
+
+## Function calling
+
+**The model answers in text instead of calling your function.**
+- Check that the request has a `tools` array (`LOUD_WIRE=1`).
+- `create_with_auto_functions()` always declares `ToolService` functions,
+  but it declares registered `#[tool]` functions only when no tools are set on
+  the request. Once you set any tool (`add_function()`,
+  `with_google_search()`, ...), add the `#[tool]` declarations you want too.
+- Tools are not inherited across turns: resend them on every new user turn
+  that should be able to call them.
+- To force a call, use `.with_function_calling_mode(FunctionCallingMode::Any)`.
+
+**Wrong or missing arguments.** Improve the parameter descriptions. For
+constrained values, declare a JSON-schema `enum` with
+`FunctionDeclaration::builder(..).add_parameter(..)`. Missing or mistyped
+arguments reach the model as `{"error": "Argument mismatch: ..."}`; see
+[Function calling errors](docs/ERROR_HANDLING.md#function-calling-errors).
+
+**The model sees your JSON as a string.** A `#[tool]` returning a `String`
+is sent as `{"result": "<the string>"}`. Return a `serde_json::Value` or a
+`Serialize` struct instead; see
+[What a `#[tool]` function's return value becomes](docs/ERROR_HANDLING.md#what-a-tool-functions-return-value-becomes).
+
+**The loop stops early.** The auto-function loop allows 5 rounds by default.
+When it hits the limit it returns a partial `AutoFunctionResult` with
+`reached_max_loops: true`. Raise the limit with
+`.with_max_function_call_loops(n)`.
+
+**`create_with_auto_functions()` errors immediately with store disabled.**
+The loop chains turns by `previous_interaction_id`, so it needs storage.
+Stateless conversations need the manual loop; see
+[Function Calling](docs/FUNCTION_CALLING.md#manual-function-handling).
+
+## Streaming
+
+**The stream ends early.**
+- `Err(GenaiError)` items are transport, parse or timeout errors.
+- A `StreamChunk::Error { message, code }` event is a server-side error; it
+  is terminal.
+- A client-level timeout (`ClientBuilder::with_timeout`) cuts off long
+  streams; prefer the request-level timeout, which applies between chunks.
+- For stored interactions, resume from the last `event_id`; see
+  [Stream Resume](docs/STREAMING_API.md#stream-resume).
+
+## Multimodal and files
+
+| Symptom | Fix |
+|---------|-----|
+| The model says it can't see the image | Use full MIME types (`"image/png"`, not `"png"`) and standard base64 |
+| Inline video fails with a generic `400 Request contains an invalid argument` | The clip is shorter than one sampled frame (sub-second at the default ~1 fps). Use a longer clip or raise `fps`; see [Multimodal](docs/MULTIMODAL.md#video-processing) |
+| An uploaded file is not usable yet | `client.wait_for_file_ready(&file, poll_interval, timeout).await?` returns the ready `FileMetadata`; `get_file()` and `is_active()` / `is_processing()` / `is_failed()` show the state |
+| Image generation returns text | Use `genai_rs::DEFAULT_IMAGE_MODEL` and `.with_image_output()` |
+| File Search finds nothing right after an upload | Wait with `client.wait_for_document_active(&doc.name, None, None)`; a pending document just returns no matches |
+| `file_search_results()` is empty | Expected: the API does not emit that step; results are folded into the text (#429) |
+| `'google_search' and 'file_search' cannot be combined` | File Search can't be combined with Google Search or URL Context in one request |
+
+## Other questions
+
+**"Unknown ... type" warnings in the logs.** The API returned a value the
+crate doesn't model yet. It is preserved in an `Unknown` variant and your code
+keeps working (the [Evergreen](https://github.com/google-deepmind/evergreen-spec)
+pattern). Match with a wildcard arm and consider upgrading.
+
+**Can I use this synchronously?** No. The crate is async-only (Tokio).
+
+**Why do tests fail intermittently?** LLM output varies. Assert on
+structure, use semantic validation for text, and see
+[docs/TESTING.md](docs/TESTING.md).
+
+## Reporting an issue
+
+Include the `LOUD_WIRE=1` output (secrets are redacted), `rustc --version`,
+the `genai-rs` version, and the `request_id` from any `GenaiError::Api`.
+Open issues at <https://github.com/evansenter/genai-rs/issues>.

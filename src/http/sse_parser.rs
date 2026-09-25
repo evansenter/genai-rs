@@ -1,7 +1,9 @@
-/// SSE (Server-Sent Events) parsing utilities
-///
-/// This module provides generic utilities for parsing SSE streams from the Gemini API.
-/// SSE format consists of lines starting with "data: " followed by JSON payloads.
+//! Server-Sent Events parsing for the Interactions API stream.
+//!
+//! Follows the SSE framing rules: an event is the set of field lines up to a
+//! blank line, multiple `data:` lines join with `\n`, `:` lines are comments,
+//! and one leading space after the colon is dropped.
+
 use super::context::HttpContext;
 use super::error_helpers::format_json_parse_error;
 use crate::errors::GenaiError;
@@ -13,42 +15,15 @@ use serde::de::DeserializeOwned;
 use std::str;
 use tracing::debug;
 
-/// Parses an SSE byte stream into a stream of deserialized objects.
+/// Parses an SSE byte stream into a stream of deserialized events.
 ///
-/// This function handles the low-level SSE protocol parsing:
-/// - Buffers incoming bytes
-/// - Splits on newlines
-/// - Extracts "data: " prefixed lines
-/// - Deserializes JSON payloads
+/// Each dispatched event's joined `data` is parsed as one `T`. Events with
+/// no data, and the `[DONE]` marker some endpoints send, are skipped. An
+/// event still pending when the body ends is dispatched too, so a stream
+/// whose last event lacks the terminating blank line (or newline) is not
+/// truncated.
 ///
-/// Wire inspectors installed on the client see every `data:` payload and
-/// every `event:` line as [`WireEvent::SseFrame`] events.
-///
-/// # Type Parameters
-///
-/// * `T` - The type to deserialize each SSE data payload into
-///
-/// # Arguments
-///
-/// * `byte_stream` - An async stream of byte chunks from the HTTP response
-/// * `ctx` - HTTP context carrying the wire inspectors
-/// * `request_id` - Request ID for wire-event correlation
-///
-/// # Returns
-///
-/// A stream that yields deserialized objects of type `T` or errors
-///
-/// # Example
-///
-/// ```ignore
-/// let byte_stream = response.bytes_stream();
-/// let parsed_stream = parse_sse_stream::<MyResponseType>(byte_stream, ctx, request_id);
-///
-/// while let Some(result) = parsed_stream.next().await {
-///     let response = result?;
-///     // Process response...
-/// }
-/// ```
+/// Wire inspectors see one [`WireEvent::SseFrame`] per dispatched event.
 pub fn parse_sse_stream<'a, T>(
     byte_stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'a,
     ctx: &'a HttpContext,
@@ -60,54 +35,102 @@ where
     try_stream! {
         futures_util::pin_mut!(byte_stream);
         let mut buffer = Vec::new();
+        let mut event = PendingEvent::default();
 
-        while let Some(chunk_result) = byte_stream.next().await {
-            let chunk: Bytes = chunk_result?;
-            buffer.extend_from_slice(&chunk);
+        loop {
+            let finished = match byte_stream.next().await {
+                Some(chunk) => {
+                    buffer.extend_from_slice(&chunk?);
+                    false
+                }
+                None => {
+                    if !buffer.is_empty() {
+                        buffer.push(b'\n');
+                    }
+                    true
+                }
+            };
 
             while let Some(newline_pos) = buffer.iter().position(|&b| b == b'\n') {
-                let line_bytes = buffer.drain(..=newline_pos).collect::<Vec<u8>>();
-                let line = str::from_utf8(&line_bytes)?.trim_end_matches(|c| c == '\n' || c == '\r');
-
-                if line.starts_with("data:") {
-                    let json_data = line
-                        .strip_prefix("data:")
-                        .expect("Line should start with 'data:' prefix after check");
-                    let json_data = json_data.trim_start();
-
-                    // Skip empty data lines and [DONE] markers (used by some SSE endpoints)
-                    if !json_data.is_empty() && json_data != "[DONE]" {
-                        debug!("SSE raw data: {}", json_data);
-
-                        if ctx.has_inspectors() {
-                            ctx.emit(WireEvent::SseFrame {
-                                id: request_id,
-                                event_type: None,
-                                data: json_data.to_string(),
-                            });
-                        }
-
-                        let parsed: T = serde_json::from_str(json_data).map_err(|e| {
-                            let context_msg = format_json_parse_error(json_data, e);
-                            GenaiError::Parse(context_msg)
-                        })?;
+                let line_bytes: Vec<u8> = buffer.drain(..=newline_pos).collect();
+                let line = str::from_utf8(&line_bytes)?.trim_end_matches(['\n', '\r']);
+                if line.is_empty() {
+                    if let Some(parsed) = event.dispatch(ctx, request_id)? {
                         yield parsed;
                     }
-                } else if let Some(event_type) = line.strip_prefix("event:") {
-                    // Surface event-type lines to wire inspectors. The
-                    // Interactions API carries its event type inside the data
-                    // payload, so these are informational only.
-                    let event_type = event_type.trim_start();
-                    if !event_type.is_empty() && ctx.has_inspectors() {
-                        ctx.emit(WireEvent::SseFrame {
-                            id: request_id,
-                            event_type: Some(event_type.to_string()),
-                            data: String::new(),
-                        });
-                    }
+                } else {
+                    event.push_line(line);
                 }
             }
+
+            if finished {
+                if let Some(parsed) = event.dispatch(ctx, request_id)? {
+                    yield parsed;
+                }
+                break;
+            }
         }
+    }
+}
+
+/// The fields of the event currently being read.
+#[derive(Default)]
+struct PendingEvent {
+    event_type: Option<String>,
+    data: Option<String>,
+}
+
+impl PendingEvent {
+    fn push_line(&mut self, line: &str) {
+        if line.starts_with(':') {
+            return;
+        }
+        let (field, value) = match line.split_once(':') {
+            Some((field, value)) => (field, value.strip_prefix(' ').unwrap_or(value)),
+            None => (line, ""),
+        };
+        match field {
+            "data" => {
+                let data = self.data.get_or_insert_with(String::new);
+                if !data.is_empty() {
+                    data.push('\n');
+                }
+                data.push_str(value);
+            }
+            "event" => self.event_type = Some(value.to_string()),
+            // `id` and `retry` carry nothing this client uses: the event id
+            // is repeated inside the JSON payload.
+            _ => {}
+        }
+    }
+
+    /// Ends the current event and parses its data, if it has any.
+    fn dispatch<T: DeserializeOwned>(
+        &mut self,
+        ctx: &HttpContext,
+        request_id: u64,
+    ) -> Result<Option<T>, GenaiError> {
+        let Self { event_type, data } = std::mem::take(self);
+        let Some(data) = data else {
+            return Ok(None);
+        };
+        let data = data.trim();
+        if data.is_empty() || data == "[DONE]" {
+            return Ok(None);
+        }
+
+        debug!("SSE raw data: {}", data);
+        if ctx.has_inspectors() {
+            ctx.emit(WireEvent::SseFrame {
+                id: request_id,
+                event_type,
+                data: data.to_string(),
+            });
+        }
+
+        serde_json::from_str(data)
+            .map(Some)
+            .map_err(|e| GenaiError::Parse(format_json_parse_error(data, e)))
     }
 }
 
@@ -162,7 +185,7 @@ mod tests {
         }
 
         let events = collector.events.lock().unwrap();
-        assert_eq!(events.len(), 3, "expected event: line + 2 data frames");
+        assert_eq!(events.len(), 2, "one frame per dispatched event");
         match &events[0] {
             WireEvent::SseFrame {
                 id,
@@ -171,22 +194,76 @@ mod tests {
             } => {
                 assert_eq!(*id, 42);
                 assert_eq!(event_type.as_deref(), Some("message"));
-                assert!(data.is_empty());
+                assert_eq!(data, r#"{"text":"Hello"}"#);
             }
             other => panic!("expected SseFrame, got {other:?}"),
         }
         match &events[1] {
             WireEvent::SseFrame {
-                id,
-                event_type,
-                data,
+                event_type, data, ..
             } => {
-                assert_eq!(*id, 42);
                 assert_eq!(*event_type, None);
-                assert_eq!(data, r#"{"text":"Hello"}"#);
+                assert_eq!(data, r#"{"text":"World"}"#);
             }
             other => panic!("expected SseFrame, got {other:?}"),
         }
+    }
+
+    async fn collect(data: &'static [u8]) -> Vec<Result<TestMessage, GenaiError>> {
+        let ctx = test_ctx();
+        let byte_stream = stream::iter(vec![Ok(Bytes::from_static(data))]);
+        parse_sse_stream::<TestMessage>(byte_stream, &ctx, 0)
+            .collect()
+            .await
+    }
+
+    fn texts(results: Vec<Result<TestMessage, GenaiError>>) -> Vec<String> {
+        results.into_iter().map(|r| r.unwrap().text).collect()
+    }
+
+    #[tokio::test]
+    async fn test_final_event_without_trailing_newline_is_dispatched() {
+        assert_eq!(
+            texts(collect(b"data: {\"text\":\"a\"}\n\ndata: {\"text\":\"b\"}").await),
+            ["a", "b"]
+        );
+        // Terminated line but no blank line after it.
+        assert_eq!(texts(collect(b"data: {\"text\":\"c\"}\n").await), ["c"]);
+    }
+
+    #[tokio::test]
+    async fn test_multi_line_data_joins_into_one_event() {
+        let results = collect(b"data: {\"text\":\ndata: \"joined\"}\n\n").await;
+        assert_eq!(texts(results), ["joined"]);
+    }
+
+    #[tokio::test]
+    async fn test_crlf_blank_line_ends_an_event() {
+        let results = collect(
+            b"event: step.delta\r\ndata: {\"text\":\"a\"}\r\n\r\ndata: {\"text\":\"b\"}\r\n\r\n",
+        )
+        .await;
+        assert_eq!(texts(results), ["a", "b"]);
+    }
+
+    #[tokio::test]
+    async fn test_done_marker_comments_and_dataless_events_are_skipped() {
+        let results = collect(
+            b": keep-alive\n\nevent: ping\n\nid: 7\ndata: {\"text\":\"a\"}\n\ndata: [DONE]\n\n",
+        )
+        .await;
+        assert_eq!(texts(results), ["a"]);
+    }
+
+    #[tokio::test]
+    async fn test_data_without_space_after_colon() {
+        assert_eq!(texts(collect(b"data:{\"text\":\"a\"}\n\n").await), ["a"]);
+    }
+
+    #[tokio::test]
+    async fn test_invalid_utf8_is_an_error() {
+        let results = collect(b"data: \xff\n\n").await;
+        assert!(matches!(results.as_slice(), [Err(GenaiError::Utf8(_))]));
     }
 
     #[tokio::test]

@@ -1,5 +1,6 @@
 // Shared types used by the Interactions API
 
+use crate::wire_enum::wire_enum;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -337,9 +338,7 @@ impl<'de> Deserialize<'de> for Tool {
             #[serde(rename = "computer_use")]
             ComputerUse {
                 environment: String,
-                // Spec wire format is snake_case; accept the legacy camelCase
-                // alias for pre-revision payloads.
-                #[serde(default, alias = "excludedPredefinedFunctions")]
+                #[serde(default)]
                 excluded_predefined_functions: Vec<String>,
                 #[serde(default)]
                 enable_prompt_injection_detection: Option<bool>,
@@ -626,22 +625,26 @@ impl FunctionDeclarationBuilder {
         }
     }
 
-    /// Sets the function description
-    pub fn description(mut self, description: impl Into<String>) -> Self {
+    /// Sets the function description.
+    #[must_use]
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
         self.description = description.into();
         self
     }
 
-    /// Adds a parameter to the function schema
-    pub fn parameter(mut self, name: &str, schema: serde_json::Value) -> Self {
+    /// Adds a parameter to the function schema (replacing one of the same
+    /// name).
+    #[must_use]
+    pub fn add_parameter(mut self, name: &str, schema: serde_json::Value) -> Self {
         if let serde_json::Value::Object(ref mut map) = self.properties {
             map.insert(name.to_string(), schema);
         }
         self
     }
 
-    /// Sets the list of required parameter names
-    pub fn required(mut self, required: Vec<String>) -> Self {
+    /// Sets the list of required parameter names.
+    #[must_use]
+    pub fn with_required(mut self, required: Vec<String>) -> Self {
         self.required = required;
         self
     }
@@ -654,8 +657,8 @@ impl FunctionDeclarationBuilder {
     /// - Empty or whitespace-only function names
     /// - Required parameters that don't exist in the properties schema
     ///
-    /// These conditions may cause API errors but are allowed by the builder
-    /// for backwards compatibility.
+    /// These are warnings rather than errors: the API is the authority on
+    /// what it accepts.
     pub fn build(self) -> FunctionDeclaration {
         // Validate function name
         if self.name.trim().is_empty() {
@@ -691,140 +694,29 @@ impl FunctionDeclarationBuilder {
     }
 }
 
-/// Modes for function calling behavior.
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-/// New modes may be added in future versions.
-///
-/// # Forward Compatibility (Evergreen Philosophy)
-///
-/// When the API returns a mode value that this library doesn't recognize,
-/// it will be captured as `FunctionCallingMode::Unknown` rather than
-/// causing a deserialization error. This follows the
-/// [Evergreen spec](https://github.com/google-deepmind/evergreen-spec)
-/// philosophy of graceful degradation.
-///
-/// # Modes
-///
-/// - `Auto` (default): Model decides whether to call functions or respond naturally
-/// - `Any`: Model must call a function; guarantees schema adherence for calls
-/// - `None`: Prohibits function calling entirely
-/// - `Validated` (Preview): Ensures either function calls OR natural language adhere to schema
-#[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum FunctionCallingMode {
-    /// Model decides whether to call functions or respond with natural language.
-    Auto,
-    /// Model must call a function; guarantees schema adherence for calls.
-    Any,
-    /// Function calling is disabled.
-    None,
-    /// Ensures either function calls OR natural language adhere to schema.
+wire_enum! {
+    /// Modes for function calling behavior.
     ///
-    /// This is a preview mode that provides schema adherence guarantees
-    /// for both function call outputs and natural language responses.
-    Validated,
-    /// Unknown mode (for forward compatibility).
+    /// # Modes
     ///
-    /// This variant captures any unrecognized mode values from the API,
-    /// allowing the library to handle new modes gracefully.
-    ///
-    /// The `mode_type` field contains the unrecognized mode string,
-    /// and `data` contains the JSON value (typically the same string).
-    Unknown {
-        /// The unrecognized mode string from the API
-        mode_type: String,
-        /// The raw JSON value, preserved for debugging
-        data: serde_json::Value,
-    },
-}
-
-impl FunctionCallingMode {
-    /// Check if this is an unknown mode.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
+    /// - `Auto` (default): Model decides whether to call functions or respond naturally
+    /// - `Any`: Model must call a function; guarantees schema adherence for calls
+    /// - `None`: Prohibits function calling entirely
+    /// - `Validated` (Preview): Ensures either function calls OR natural language adhere to schema
+    pub enum FunctionCallingMode {
+        /// Model decides whether to call functions or respond with natural language.
+        Auto = "auto",
+        /// Model must call a function; guarantees schema adherence for calls.
+        Any = "any",
+        /// Function calling is disabled.
+        None = "none",
+        /// Ensures either function calls OR natural language adhere to schema.
+        ///
+        /// This is a preview mode that provides schema adherence guarantees
+        /// for both function call outputs and natural language responses.
+        Validated = "validated",
     }
-
-    /// Returns the mode type name if this is an unknown mode.
-    ///
-    /// Returns `None` for known modes.
-    #[must_use]
-    pub fn unknown_mode_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { mode_type, .. } => Some(mode_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the raw JSON data if this is an unknown mode.
-    ///
-    /// Returns `None` for known modes.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl Serialize for FunctionCallingMode {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        // Wire format is lowercase per API revision 2026-05-20.
-        match self {
-            Self::Auto => serializer.serialize_str("auto"),
-            Self::Any => serializer.serialize_str("any"),
-            Self::None => serializer.serialize_str("none"),
-            Self::Validated => serializer.serialize_str("validated"),
-            Self::Unknown { mode_type, .. } => serializer.serialize_str(mode_type),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for FunctionCallingMode {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-
-        match value.as_str() {
-            // Spec wire format is lowercase; accept legacy UPPERCASE too.
-            Some("auto") | Some("AUTO") => Ok(Self::Auto),
-            Some("any") | Some("ANY") => Ok(Self::Any),
-            Some("none") | Some("NONE") => Ok(Self::None),
-            Some("validated") | Some("VALIDATED") => Ok(Self::Validated),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown FunctionCallingMode '{}'. \
-                     This may indicate a new API feature. \
-                     The mode will be preserved in the Unknown variant.",
-                    other
-                );
-                Ok(Self::Unknown {
-                    mode_type: other.to_string(),
-                    data: value,
-                })
-            }
-            Option::None => {
-                // Non-string value - preserve it in Unknown
-                let mode_type = format!("<non-string: {}>", value);
-                tracing::warn!(
-                    "FunctionCallingMode received non-string value: {}. \
-                     Preserving in Unknown variant.",
-                    value
-                );
-                Ok(Self::Unknown {
-                    mode_type,
-                    data: value,
-                })
-            }
-        }
-    }
+    unknown(mode_type, unknown_mode_type)
 }
 
 /// Restriction on which tools the model may call.
@@ -1002,219 +894,42 @@ impl<'de> Deserialize<'de> for ToolChoice {
     }
 }
 
-/// Types of search to perform with the Google Search tool.
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-///
-/// # Wire Format
-///
-/// Values serialize as snake_case strings: `"web_search"`, `"image_search"`,
-/// `"enterprise_web_search"`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum SearchType {
-    /// Web search
-    WebSearch,
-    /// Image search (only available for specific models like `gemini-3.1-flash-image-preview`)
-    ImageSearch,
-    /// Enterprise web search
-    EnterpriseWebSearch,
-    /// Unknown search type for forward compatibility
-    Unknown {
-        /// The unrecognized search type string from the API
-        search_type: String,
-        /// The raw JSON value, preserved for debugging
-        data: serde_json::Value,
-    },
+wire_enum! {
+    /// Types of search to perform with the Google Search tool.
+    ///
+    /// # Wire Format
+    ///
+    /// Values serialize as snake_case strings: `"web_search"`, `"image_search"`,
+    /// `"enterprise_web_search"`.
+    pub enum SearchType {
+        /// Web search
+        WebSearch = "web_search",
+        /// Image search (only available for specific models like `gemini-3.1-flash-image-preview`)
+        ImageSearch = "image_search",
+        /// Enterprise web search
+        EnterpriseWebSearch = "enterprise_web_search",
+    }
+    unknown(search_type, unknown_search_type)
 }
 
-impl SearchType {
-    /// Check if this is an unknown search type.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
+wire_enum! {
+    /// Retrieval backends for the built-in `retrieval` tool.
+    ///
+    /// # Wire Format
+    ///
+    /// Serializes as snake_case strings: `"vertex_ai_search"`, `"rag_store"`,
+    /// `"exa_ai_search"`, `"parallel_ai_search"`.
+    pub enum RetrievalType {
+        /// Vertex AI Search engines and datastores.
+        VertexAiSearch = "vertex_ai_search",
+        /// Vertex RAG Store corpora.
+        RagStore = "rag_store",
+        /// Exa.ai search.
+        ExaAiSearch = "exa_ai_search",
+        /// Parallel.ai search.
+        ParallelAiSearch = "parallel_ai_search",
     }
-
-    /// Returns the search type name if this is an unknown type.
-    #[must_use]
-    pub fn unknown_search_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { search_type, .. } => Some(search_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the raw JSON data if this is an unknown search type.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl Serialize for SearchType {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Self::WebSearch => serializer.serialize_str("web_search"),
-            Self::ImageSearch => serializer.serialize_str("image_search"),
-            Self::EnterpriseWebSearch => serializer.serialize_str("enterprise_web_search"),
-            Self::Unknown { search_type, .. } => serializer.serialize_str(search_type),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for SearchType {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value.as_str() {
-            Some("web_search") => Ok(Self::WebSearch),
-            Some("image_search") => Ok(Self::ImageSearch),
-            Some("enterprise_web_search") => Ok(Self::EnterpriseWebSearch),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown SearchType '{}'. \
-                     Preserving in Unknown variant.",
-                    other
-                );
-                Ok(Self::Unknown {
-                    search_type: other.to_string(),
-                    data: value,
-                })
-            }
-            None => {
-                let search_type = format!("<non-string: {}>", value);
-                tracing::warn!(
-                    "SearchType received non-string value: {}. \
-                     Preserving in Unknown variant.",
-                    value
-                );
-                Ok(Self::Unknown {
-                    search_type,
-                    data: value,
-                })
-            }
-        }
-    }
-}
-
-/// Retrieval backends for the built-in `retrieval` tool.
-///
-/// This enum is marked `#[non_exhaustive]` for forward compatibility.
-///
-/// # Wire Format
-///
-/// Serializes as snake_case strings: `"vertex_ai_search"`, `"rag_store"`,
-/// `"exa_ai_search"`, `"parallel_ai_search"`.
-///
-/// # Evergreen Pattern
-///
-/// Unknown values from the API deserialize into the `Unknown` variant,
-/// preserving the original data for debugging and roundtrip serialization.
-#[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum RetrievalType {
-    /// Vertex AI Search engines and datastores.
-    VertexAiSearch,
-    /// Vertex RAG Store corpora.
-    RagStore,
-    /// Exa.ai search.
-    ExaAiSearch,
-    /// Parallel.ai search.
-    ParallelAiSearch,
-    /// Unknown retrieval type for forward compatibility
-    Unknown {
-        /// The unrecognized retrieval type string from the API
-        retrieval_type: String,
-        /// The raw JSON value, preserved for debugging
-        data: serde_json::Value,
-    },
-}
-
-impl RetrievalType {
-    /// Check if this is an unknown retrieval type.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
-    }
-
-    /// Returns the retrieval type name if this is an unknown type.
-    #[must_use]
-    pub fn unknown_retrieval_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { retrieval_type, .. } => Some(retrieval_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the raw JSON data if this is an unknown retrieval type.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-}
-
-impl Serialize for RetrievalType {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Self::VertexAiSearch => serializer.serialize_str("vertex_ai_search"),
-            Self::RagStore => serializer.serialize_str("rag_store"),
-            Self::ExaAiSearch => serializer.serialize_str("exa_ai_search"),
-            Self::ParallelAiSearch => serializer.serialize_str("parallel_ai_search"),
-            Self::Unknown { retrieval_type, .. } => serializer.serialize_str(retrieval_type),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for RetrievalType {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value.as_str() {
-            Some("vertex_ai_search") => Ok(Self::VertexAiSearch),
-            Some("rag_store") => Ok(Self::RagStore),
-            Some("exa_ai_search") => Ok(Self::ExaAiSearch),
-            Some("parallel_ai_search") => Ok(Self::ParallelAiSearch),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown RetrievalType '{}'. \
-                     Preserving in Unknown variant.",
-                    other
-                );
-                Ok(Self::Unknown {
-                    retrieval_type: other.to_string(),
-                    data: value,
-                })
-            }
-            None => {
-                let retrieval_type = format!("<non-string: {}>", value);
-                tracing::warn!(
-                    "RetrievalType received non-string value: {}. \
-                     Preserving in Unknown variant.",
-                    value
-                );
-                Ok(Self::Unknown {
-                    retrieval_type,
-                    data: value,
-                })
-            }
-        }
-    }
+    unknown(retrieval_type, unknown_retrieval_type)
 }
 
 /// Configuration for the Vertex AI Search retrieval backend.
@@ -1389,6 +1104,30 @@ pub struct RagRanking {
     /// The model name of the rank service.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub model_name: Option<String>,
+    /// Rank Service settings in the nested form added in google-genai 2.24.
+    /// Like the whole retrieval tool, Vertex-only on the Gemini API.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub rank_service: Option<RankService>,
+}
+
+/// Rank Service settings (`rank_service` inside [`RagRanking`]).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct RankService {
+    /// The rank service model.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_name: Option<String>,
+}
+
+impl RankService {
+    /// Rank Service settings using `model_name`.
+    #[must_use]
+    pub fn new(model_name: impl Into<String>) -> Self {
+        Self {
+            model_name: Some(model_name.into()),
+        }
+    }
 }
 
 impl RagRanking {
@@ -1408,6 +1147,13 @@ impl RagRanking {
         self.model_name = Some(model_name.into());
         self
     }
+
+    /// Sets the nested `rank_service` settings.
+    #[must_use]
+    pub fn with_rank_service(mut self, rank_service: RankService) -> Self {
+        self.rank_service = Some(rank_service);
+        self
+    }
 }
 
 impl Default for RagRanking {
@@ -1415,6 +1161,7 @@ impl Default for RagRanking {
         Self {
             ranking_config: Self::default_ranking_config(),
             model_name: None,
+            rank_service: None,
         }
     }
 }
@@ -1692,7 +1439,7 @@ impl From<McpServerConfig> for Tool {
 /// # Security Warning
 ///
 /// Computer use allows the model to control a real browser. Use
-/// [`ComputerUseConfig::excluding`] to restrict dangerous actions.
+/// [`ComputerUseConfig::with_excluded_predefined_functions`] to restrict dangerous actions.
 ///
 /// # Example
 ///
@@ -1700,7 +1447,7 @@ impl From<McpServerConfig> for Tool {
 /// use genai_rs::ComputerUseConfig;
 ///
 /// let config = ComputerUseConfig::new()
-///     .excluding(vec!["submit_form".to_string(), "download_file".to_string()]);
+///     .with_excluded_predefined_functions(vec!["submit_form".to_string(), "download_file".to_string()]);
 /// ```
 #[derive(Clone, Debug)]
 pub struct ComputerUseConfig {
@@ -1730,9 +1477,9 @@ impl ComputerUseConfig {
         self
     }
 
-    /// Excludes specific predefined browser functions from model access.
+    /// Sets the predefined browser functions hidden from the model.
     #[must_use]
-    pub fn excluding(mut self, functions: Vec<String>) -> Self {
+    pub fn with_excluded_predefined_functions(mut self, functions: Vec<String>) -> Self {
         self.excluded_predefined_functions = functions;
         self
     }
@@ -1744,14 +1491,14 @@ impl ComputerUseConfig {
         self
     }
 
-    /// Disables the given safety policies.
+    /// Sets the safety policies to disable.
     ///
     /// Known values include `financial_transactions`,
     /// `sensitive_data_modification`, `communication_tool`,
     /// `account_creation`, `data_modification`, `user_consent_management`,
     /// and `legal_terms_and_agreements`.
     #[must_use]
-    pub fn disabling_safety_policies(mut self, policies: Vec<String>) -> Self {
+    pub fn with_disabled_safety_policies(mut self, policies: Vec<String>) -> Self {
         self.disabled_safety_policies = policies;
         self
     }
@@ -1947,15 +1694,15 @@ mod tests {
     #[test]
     fn test_serialize_function_declaration() {
         let function = FunctionDeclaration::builder("get_weather")
-            .description("Get the current weather in a given location")
-            .parameter(
+            .with_description("Get the current weather in a given location")
+            .add_parameter(
                 "location",
                 serde_json::json!({
                     "type": "string",
                     "description": "The city and state, e.g. San Francisco, CA"
                 }),
             )
-            .required(vec!["location".to_string()])
+            .with_required(vec!["location".to_string()])
             .build();
 
         let json_string = serde_json::to_string(&function).expect("Serialization failed");
@@ -1987,18 +1734,9 @@ mod tests {
                 serde_json::from_str(&json).expect("Deserialization failed");
             assert_eq!(parsed, mode);
         }
-
-        // Legacy UPPERCASE values are still accepted on deserialize
-        for (raw, expected) in [
-            ("\"AUTO\"", FunctionCallingMode::Auto),
-            ("\"VALIDATED\"", FunctionCallingMode::Validated),
-        ] {
-            let parsed: FunctionCallingMode =
-                serde_json::from_str(raw).expect("Deserialization failed");
-            assert_eq!(parsed, expected);
-        }
     }
 
+    #[cfg(not(feature = "strict-unknown"))]
     #[test]
     fn test_function_calling_mode_unknown_roundtrip() {
         // Test that unknown modes are preserved
@@ -2035,6 +1773,7 @@ mod tests {
         assert!(unknown.unknown_data().is_some());
     }
 
+    #[cfg(not(feature = "strict-unknown"))]
     #[test]
     fn test_function_calling_mode_non_string_value() {
         // Test that non-string JSON values are handled gracefully
@@ -2273,7 +2012,6 @@ mod tests {
         let json = serde_json::to_string(&tool).expect("Serialization failed");
         assert!(json.contains("\"type\":\"computer_use\""));
         assert!(json.contains("\"environment\":\"browser\""));
-        // Spec wire format is snake_case (fixed from legacy camelCase)
         assert!(json.contains("\"excluded_predefined_functions\""));
         assert!(!json.contains("excludedPredefinedFunctions"));
         assert!(json.contains("\"enable_prompt_injection_detection\":true"));
@@ -2296,20 +2034,6 @@ mod tests {
                     vec!["data_modification".to_string()]
                 );
             }
-            other => panic!("Expected ComputerUse variant, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_tool_computer_use_legacy_camel_case_accepted() {
-        // Pre-revision payloads used camelCase; the alias keeps them parseable.
-        let json = r#"{"type":"computer_use","environment":"browser","excludedPredefinedFunctions":["a"]}"#;
-        let parsed: Tool = serde_json::from_str(json).expect("Deserialization failed");
-        match parsed {
-            Tool::ComputerUse {
-                excluded_predefined_functions,
-                ..
-            } => assert_eq!(excluded_predefined_functions, vec!["a".to_string()]),
             other => panic!("Expected ComputerUse variant, got {:?}", other),
         }
     }
@@ -2471,6 +2195,7 @@ mod tests {
         assert_eq!(parsed, types);
     }
 
+    #[cfg(not(feature = "strict-unknown"))]
     #[test]
     fn test_search_type_unknown_roundtrip() {
         let json = r#""future_search""#;
@@ -2559,7 +2284,7 @@ mod tests {
         }
 
         let tool: Tool = ComputerUseConfig::new()
-            .excluding(vec!["download".to_string()])
+            .with_excluded_predefined_functions(vec!["download".to_string()])
             .into();
         match tool {
             Tool::ComputerUse {
@@ -2606,6 +2331,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "strict-unknown"))]
     #[test]
     fn test_retrieval_type_unknown_roundtrip() {
         let unknown: RetrievalType = serde_json::from_str("\"bing_search\"").unwrap();
@@ -2771,5 +2497,16 @@ mod tests {
             .into();
         let value = serde_json::to_value(&tool).unwrap();
         assert_eq!(value["retrieval_types"][0], "future_backend");
+    }
+
+    #[test]
+    fn test_rag_ranking_nested_rank_service() {
+        let ranking = RagRanking::rank_service().with_rank_service(RankService::new("ranker-v3"));
+        let wire = serde_json::json!({
+            "ranking_config": "rank_service",
+            "rank_service": {"model_name": "ranker-v3"}
+        });
+        assert_eq!(serde_json::to_value(&ranking).unwrap(), wire);
+        assert_eq!(serde_json::from_value::<RagRanking>(wire).unwrap(), ranking);
     }
 }

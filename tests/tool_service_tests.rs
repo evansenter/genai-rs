@@ -1,26 +1,29 @@
-//! ToolService dependency injection tests for the Interactions API
-//!
-//! Tests for the ToolService pattern which enables runtime function registration
-//! with dependency injection for stateful tools (DB pools, API clients, etc.).
-//!
-//! These tests require the GEMINI_API_KEY environment variable to be set.
-//!
-//! # Running Tests
+//! `ToolService`: runtime-registered, stateful tools, with and without
+//! streaming, and their precedence over `#[tool]` registrations.
 //!
 //! ```bash
-//! cargo test --test tool_service_tests -- --include-ignored --nocapture
+//! cargo nextest run --test tool_service_tests --run-ignored all
 //! ```
 
 mod common;
 
 use async_trait::async_trait;
 use common::{
-    consume_auto_function_stream, extended_test_timeout, get_client, interaction_builder,
-    test_timeout, with_timeout,
+    assert_response_semantic, consume_auto_function_stream, extended_test_timeout, get_client,
+    interaction_builder, test_timeout, with_timeout,
 };
 use genai_rs::{CallableFunction, FunctionDeclaration, FunctionError, ToolService};
+use genai_rs_macros::tool;
 use serde_json::json;
 use std::sync::Arc;
+
+/// A global `#[tool]` registration that `CustomWeatherTool` shadows. It must
+/// live in this binary: `inventory` registrations are per test binary.
+#[allow(dead_code)]
+#[tool(city(description = "The city name"))]
+fn get_weather_test(city: String) -> String {
+    format!(r#"{{"city": "{city}", "source": "global_registry"}}"#)
+}
 
 // =============================================================================
 // ToolService Helper Types
@@ -40,20 +43,20 @@ struct CalculatorTool {
 impl CallableFunction for CalculatorTool {
     fn declaration(&self) -> FunctionDeclaration {
         FunctionDeclaration::builder("calculate")
-            .description("Performs arithmetic calculations")
-            .parameter(
+            .with_description("Performs arithmetic calculations")
+            .add_parameter(
                 "operation",
                 json!({"type": "string", "enum": ["add", "subtract", "multiply"]}),
             )
-            .parameter(
+            .add_parameter(
                 "a",
                 json!({"type": "number", "description": "First operand"}),
             )
-            .parameter(
+            .add_parameter(
                 "b",
                 json!({"type": "number", "description": "Second operand"}),
             )
-            .required(vec![
+            .with_required(vec![
                 "operation".to_string(),
                 "a".to_string(),
                 "b".to_string(),
@@ -139,35 +142,26 @@ async fn test_tool_service_non_streaming() {
 
         println!("Function executions: {:?}", result.executions);
 
-        // Verify the function was called
-        assert!(
-            !result.executions.is_empty(),
-            "Should have at least one function execution"
-        );
-        assert_eq!(
-            result.executions[0].name, "calculate",
-            "Should have called the calculate function"
-        );
+        let exec = result
+            .executions
+            .iter()
+            .find(|e| e.name == "calculate")
+            .unwrap_or_else(|| panic!("calculate was not executed: {:?}", result.executions));
+        // The service's precision config shapes the result: 4 decimal places.
+        assert_eq!(exec.result["precision"], 4, "{}", exec.result);
+        assert_eq!(exec.result["result"], "912.4680", "{}", exec.result);
 
-        // Verify the result includes the precision from the service
-        let exec_result = &result.executions[0].result;
-        println!("Execution result: {}", exec_result);
-        assert!(
-            exec_result.get("precision").is_some(),
-            "Result should include precision from service config"
-        );
-
-        // Verify final response
-        let response = &result.response;
-        assert!(response.has_text(), "Should have text response");
-        let text = response.as_text().unwrap();
-        println!("Final response: {}", text);
-
-        // Should mention the sum (912.468)
-        assert!(
-            text.contains("912") || text.contains("sum") || text.contains("result"),
-            "Response should mention the calculation result"
-        );
+        let text = result
+            .response
+            .as_text()
+            .expect("Should have text response");
+        assert_response_semantic(
+            &client,
+            "The calculate tool returned 912.4680 for 123.456 + 789.012.",
+            text,
+            "Does this response give the sum as about 912.468?",
+        )
+        .await;
     })
     .await;
 }
@@ -204,25 +198,14 @@ async fn test_tool_service_streaming() {
         );
         println!("Functions executed: {:?}", result.executed_function_names);
 
-        // Should have received a final response
-        assert!(
-            result.final_response.is_some(),
-            "Should receive a complete response"
+        assert_eq!(
+            result.executed_function_names,
+            ["calculate"],
+            "the ToolService function should be executed"
         );
-
-        // If functions were executed, verify calculate was called
-        if result.executing_functions_count > 0 {
-            println!("✓ Function execution was streamed with ToolService");
-            assert!(
-                result
-                    .executed_function_names
-                    .contains(&"calculate".to_string()),
-                "Should have executed calculate function from ToolService"
-            );
-        }
-
-        // Should have some response
-        let response = result.final_response.unwrap();
+        let response = result
+            .final_response
+            .expect("Should receive a complete response");
         assert!(
             response.has_text() || !result.collected_text.is_empty(),
             "Should have text response"
@@ -262,12 +245,12 @@ async fn test_tool_service_overrides_global_registry() {
             fn declaration(&self) -> FunctionDeclaration {
                 // Same name as the global get_weather_test function
                 FunctionDeclaration::builder("get_weather_test")
-                    .description("Get the current weather for a city")
-                    .parameter(
+                    .with_description("Get the current weather for a city")
+                    .add_parameter(
                         "city",
                         json!({"type": "string", "description": "The city name"}),
                     )
-                    .required(vec!["city".to_string()])
+                    .with_required(vec!["city".to_string()])
                     .build()
             }
 
@@ -358,10 +341,10 @@ async fn test_tool_service_streaming_with_multiple_functions() {
         impl CallableFunction for AddTool {
             fn declaration(&self) -> FunctionDeclaration {
                 FunctionDeclaration::builder("add_numbers")
-                    .description("Adds two numbers together")
-                    .parameter("a", json!({"type": "number"}))
-                    .parameter("b", json!({"type": "number"}))
-                    .required(vec!["a".to_string(), "b".to_string()])
+                    .with_description("Adds two numbers together")
+                    .add_parameter("a", json!({"type": "number"}))
+                    .add_parameter("b", json!({"type": "number"}))
+                    .with_required(vec!["a".to_string(), "b".to_string()])
                     .build()
             }
 
@@ -378,10 +361,10 @@ async fn test_tool_service_streaming_with_multiple_functions() {
         impl CallableFunction for MultiplyTool {
             fn declaration(&self) -> FunctionDeclaration {
                 FunctionDeclaration::builder("multiply_numbers")
-                    .description("Multiplies two numbers together")
-                    .parameter("a", json!({"type": "number"}))
-                    .parameter("b", json!({"type": "number"}))
-                    .required(vec!["a".to_string(), "b".to_string()])
+                    .with_description("Multiplies two numbers together")
+                    .add_parameter("a", json!({"type": "number"}))
+                    .add_parameter("b", json!({"type": "number"}))
+                    .with_required(vec!["a".to_string(), "b".to_string()])
                     .build()
             }
 
@@ -416,40 +399,19 @@ async fn test_tool_service_streaming_with_multiple_functions() {
         );
         println!("Functions executed: {:?}", result.executed_function_names);
 
-        assert!(
-            result.final_response.is_some(),
-            "Should receive a complete response"
-        );
+        let mut names = result.executed_function_names.clone();
+        names.sort_unstable();
+        assert_eq!(names, ["add_numbers", "multiply_numbers"]);
 
-        // Model should have called at least one of the functions
-        // (it might call them in parallel or sequentially)
-        if result.executing_functions_count > 0 {
-            println!("✓ Functions were executed via ToolService streaming");
-
-            // Check that our custom functions were used
-            let has_add = result.executed_function_names.contains(&"add_numbers".to_string());
-            let has_multiply = result.executed_function_names.contains(&"multiply_numbers".to_string());
-
-            println!("  - add_numbers called: {}", has_add);
-            println!("  - multiply_numbers called: {}", has_multiply);
-
-            // At least one should have been called
-            assert!(
-                has_add || has_multiply,
-                "At least one ToolService function should have been called"
-            );
-        }
-
-        // Response should contain the answers
-        let response = result.final_response.unwrap();
+        let response = result.final_response.expect("Should receive a complete response");
         let text = response.as_text().unwrap_or(&result.collected_text);
-        println!("Final response: {}", text);
-
-        // Should mention 8 (5+3) or 28 (4*7)
-        assert!(
-            text.contains("8") || text.contains("28"),
-            "Response should contain calculation results"
-        );
+        assert_response_semantic(
+            &client,
+            "add_numbers returned 8 for 5 + 3 and multiply_numbers returned 28 for 4 * 7.",
+            text,
+            "Does this response give both 8 and 28?",
+        )
+        .await;
     })
     .await;
 }

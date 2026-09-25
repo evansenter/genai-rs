@@ -5,6 +5,7 @@
 //! video, and document. Tool calls, tool results, and thoughts are NOT
 //! content — they are typed [`Step`](crate::Step) variants.
 
+use crate::wire_enum::wire_enum;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -109,6 +110,40 @@ pub enum Annotation {
         /// End of the cited span (UTF-8 byte offset, exclusive).
         end_index: usize,
     },
+    /// Speaker and style for a span of TTS input text
+    /// (`type: "speech_metadata"`).
+    ///
+    /// Multi-speaker synthesis on `gemini-3.8-flash-tts` requires one per
+    /// text turn, naming a speaker from `speech_config`; the older
+    /// `Name: line` transcript form is rejected there. Older TTS models
+    /// reject these annotations outright (verified live 2026-09-24). Omit the
+    /// indices to cover the whole text block; with indices, the spans must
+    /// tile the text without gaps. See [`Content::speaker_text`].
+    SpeechMetadata {
+        /// Speaker name, matching a `speaker` in `speech_config`.
+        speaker: Option<String>,
+        /// Delivery instruction, e.g. `"whisper"`.
+        style: Option<String>,
+        /// Start of the span (UTF-8 byte offset, inclusive).
+        start_index: Option<usize>,
+        /// End of the span (UTF-8 byte offset, exclusive).
+        end_index: Option<usize>,
+    },
+    /// Per-word transcription detail (`type: "word_info"`).
+    WordInfo {
+        /// The word.
+        text: Option<String>,
+        /// Diarized speaker label.
+        speaker: Option<String>,
+        /// Start time within the audio, as a duration string (e.g. `"1.2s"`).
+        start_offset: Option<String>,
+        /// End time within the audio, as a duration string.
+        end_offset: Option<String>,
+        /// Start of the span (UTF-8 byte offset, inclusive).
+        start_index: Option<usize>,
+        /// End of the span (UTF-8 byte offset, exclusive).
+        end_index: Option<usize>,
+    },
     /// Unknown annotation type for forward compatibility.
     Unknown {
         /// The unrecognized type name from the API.
@@ -132,6 +167,26 @@ impl Annotation {
             title,
             start_index,
             end_index,
+        }
+    }
+
+    /// Creates a `speech_metadata` annotation covering a whole text block.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use genai_rs::Annotation;
+    ///
+    /// let whisper = Annotation::speech_metadata(None, Some("whisper".into()));
+    /// assert_eq!(whisper.start_index(), None);
+    /// ```
+    #[must_use]
+    pub const fn speech_metadata(speaker: Option<String>, style: Option<String>) -> Self {
+        Self::SpeechMetadata {
+            speaker,
+            style,
+            start_index: None,
+            end_index: None,
         }
     }
 
@@ -171,6 +226,9 @@ impl Annotation {
             Self::UrlCitation { start_index, .. }
             | Self::FileCitation { start_index, .. }
             | Self::PlaceCitation { start_index, .. } => Some(*start_index),
+            Self::SpeechMetadata { start_index, .. } | Self::WordInfo { start_index, .. } => {
+                *start_index
+            }
             Self::Unknown { data, .. } => data
                 .get("start_index")
                 .and_then(|v| v.as_u64())
@@ -185,6 +243,7 @@ impl Annotation {
             Self::UrlCitation { end_index, .. }
             | Self::FileCitation { end_index, .. }
             | Self::PlaceCitation { end_index, .. } => Some(*end_index),
+            Self::SpeechMetadata { end_index, .. } | Self::WordInfo { end_index, .. } => *end_index,
             Self::Unknown { data, .. } => data
                 .get("end_index")
                 .and_then(|v| v.as_u64())
@@ -207,7 +266,7 @@ impl Annotation {
                 ..
             } => document_uri.as_deref().or(file_name.as_deref()),
             Self::PlaceCitation { url, place_id, .. } => url.as_deref().or(place_id.as_deref()),
-            Self::Unknown { .. } => None,
+            Self::SpeechMetadata { .. } | Self::WordInfo { .. } | Self::Unknown { .. } => None,
         }
     }
 
@@ -317,6 +376,54 @@ impl Serialize for Annotation {
                 map.serialize_entry("start_index", start_index)?;
                 map.serialize_entry("end_index", end_index)?;
             }
+            Self::SpeechMetadata {
+                speaker,
+                style,
+                start_index,
+                end_index,
+            } => {
+                map.serialize_entry("type", "speech_metadata")?;
+                if let Some(s) = speaker {
+                    map.serialize_entry("speaker", s)?;
+                }
+                if let Some(s) = style {
+                    map.serialize_entry("style", s)?;
+                }
+                if let Some(i) = start_index {
+                    map.serialize_entry("start_index", i)?;
+                }
+                if let Some(i) = end_index {
+                    map.serialize_entry("end_index", i)?;
+                }
+            }
+            Self::WordInfo {
+                text,
+                speaker,
+                start_offset,
+                end_offset,
+                start_index,
+                end_index,
+            } => {
+                map.serialize_entry("type", "word_info")?;
+                if let Some(t) = text {
+                    map.serialize_entry("text", t)?;
+                }
+                if let Some(s) = speaker {
+                    map.serialize_entry("speaker", s)?;
+                }
+                if let Some(o) = start_offset {
+                    map.serialize_entry("start_offset", o)?;
+                }
+                if let Some(o) = end_offset {
+                    map.serialize_entry("end_offset", o)?;
+                }
+                if let Some(i) = start_index {
+                    map.serialize_entry("start_index", i)?;
+                }
+                if let Some(i) = end_index {
+                    map.serialize_entry("end_index", i)?;
+                }
+            }
             Self::Unknown {
                 annotation_type,
                 data,
@@ -394,6 +501,30 @@ impl<'de> Deserialize<'de> for Annotation {
                 #[serde(default)]
                 end_index: usize,
             },
+            SpeechMetadata {
+                #[serde(default)]
+                speaker: Option<String>,
+                #[serde(default)]
+                style: Option<String>,
+                #[serde(default)]
+                start_index: Option<usize>,
+                #[serde(default)]
+                end_index: Option<usize>,
+            },
+            WordInfo {
+                #[serde(default)]
+                text: Option<String>,
+                #[serde(default)]
+                speaker: Option<String>,
+                #[serde(default)]
+                start_offset: Option<String>,
+                #[serde(default)]
+                end_offset: Option<String>,
+                #[serde(default)]
+                start_index: Option<usize>,
+                #[serde(default)]
+                end_index: Option<usize>,
+            },
         }
 
         match serde_json::from_value::<KnownAnnotation>(value.clone()) {
@@ -440,6 +571,32 @@ impl<'de> Deserialize<'de> for Annotation {
                     name,
                     url,
                     review_snippets,
+                    start_index,
+                    end_index,
+                },
+                KnownAnnotation::SpeechMetadata {
+                    speaker,
+                    style,
+                    start_index,
+                    end_index,
+                } => Annotation::SpeechMetadata {
+                    speaker,
+                    style,
+                    start_index,
+                    end_index,
+                },
+                KnownAnnotation::WordInfo {
+                    text,
+                    speaker,
+                    start_offset,
+                    end_offset,
+                    start_index,
+                    end_index,
+                } => Annotation::WordInfo {
+                    text,
+                    speaker,
+                    start_offset,
+                    end_offset,
                     start_index,
                     end_index,
                 },
@@ -735,288 +892,66 @@ impl FileSearchResultItem {
     }
 }
 
-/// Programming language for code execution.
-///
-/// Currently only Python is supported by the Gemini API.
-///
-/// # Wire Format
-///
-/// Revision 2026-05-20 uses lowercase: `"python"`. The legacy uppercase
-/// `"PYTHON"` is still accepted on deserialization for robustness.
-///
-/// # Forward Compatibility (Evergreen Philosophy)
-///
-/// This enum is marked `#[non_exhaustive]`; unknown languages are captured as
-/// `CodeExecutionLanguage::Unknown` rather than causing a deserialization
-/// error.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum CodeExecutionLanguage {
-    /// Python programming language
-    #[default]
-    Python,
-    /// Unknown language (for forward compatibility).
+wire_enum! {
+    /// Programming language for code execution.
     ///
-    /// The `language_type` field contains the unrecognized language string,
-    /// and `data` contains the full JSON value for debugging.
-    Unknown {
-        /// The unrecognized language string from the API
-        language_type: String,
-        /// The raw JSON value, preserved for debugging
-        data: serde_json::Value,
-    },
-}
-
-impl CodeExecutionLanguage {
-    /// Check if this is an unknown language.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
-    }
-
-    /// Returns the language type name if this is an unknown language.
+    /// Currently only Python is supported by the Gemini API.
     ///
-    /// Returns `None` for known languages.
-    #[must_use]
-    pub fn unknown_language_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown { language_type, .. } => Some(language_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the raw JSON data if this is an unknown language.
+    /// # Wire Format
     ///
-    /// Returns `None` for known languages.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
+    /// Lowercase: `"python"`.
+    #[derive(Default)]
+    pub enum CodeExecutionLanguage {
+        /// Python programming language
+        #[default]
+        Python = "python",
     }
+    unknown(language_type, unknown_language_type)
 }
 
-impl Serialize for CodeExecutionLanguage {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Self::Python => serializer.serialize_str("python"),
-            Self::Unknown { language_type, .. } => serializer.serialize_str(language_type),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for CodeExecutionLanguage {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-
-        match value.as_str() {
-            // Spec wire format is lowercase; accept legacy uppercase too.
-            Some("python") | Some("PYTHON") => Ok(Self::Python),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown CodeExecutionLanguage '{}'. \
-                     This may indicate a new API feature. \
-                     The language will be preserved in the Unknown variant.",
-                    other
-                );
-                Ok(Self::Unknown {
-                    language_type: other.to_string(),
-                    data: value,
-                })
-            }
-            None => {
-                // Non-string value - preserve it in Unknown
-                let language_type = format!("<non-string: {}>", value);
-                tracing::warn!(
-                    "CodeExecutionLanguage received non-string value: {}. \
-                     Preserving in Unknown variant.",
-                    value
-                );
-                Ok(Self::Unknown {
-                    language_type,
-                    data: value,
-                })
-            }
-        }
-    }
-}
-
-impl fmt::Display for CodeExecutionLanguage {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Python => write!(f, "python"),
-            Self::Unknown { language_type, .. } => write!(f, "{}", language_type),
-        }
-    }
-}
-
-/// Resolution level for image and video content processing.
-///
-/// Controls the quality vs. token cost trade-off when processing images and videos.
-/// Lower resolution uses fewer tokens (lower cost), while higher resolution provides
-/// more detail for the model to analyze.
-///
-/// # Token Cost Trade-offs
-///
-/// | Resolution | Token Cost | Detail Level |
-/// |------------|------------|--------------|
-/// | Low | Lowest | Basic shapes and colors |
-/// | Medium | Moderate | Standard detail |
-/// | High | Higher | Fine details visible |
-/// | UltraHigh | Highest | Maximum fidelity |
-///
-/// # Forward Compatibility (Evergreen Philosophy)
-///
-/// This enum is marked `#[non_exhaustive]`; unknown values are captured as
-/// `Resolution::Unknown` rather than causing a deserialization error.
-///
-/// # Example
-///
-/// ```
-/// use genai_rs::Resolution;
-///
-/// // Use Low for cheap, basic analysis
-/// let low_cost = Resolution::Low;
-///
-/// // Use High for detailed analysis
-/// let detailed = Resolution::High;
-///
-/// // Default is Medium
-/// assert_eq!(Resolution::default(), Resolution::Medium);
-/// ```
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum Resolution {
-    /// Lowest token cost, basic shapes and colors
-    Low,
-    /// Moderate token cost, standard detail (default)
-    #[default]
-    Medium,
-    /// Higher token cost, fine details visible
-    High,
-    /// Highest token cost, maximum fidelity
-    UltraHigh,
-    /// Unknown resolution (for forward compatibility).
+wire_enum! {
+    /// Resolution level for image and video content processing.
     ///
-    /// The `resolution_type` field contains the unrecognized resolution string,
-    /// and `data` contains the JSON value (typically the same string).
-    Unknown {
-        /// The unrecognized resolution string from the API
-        resolution_type: String,
-        /// The raw JSON value, preserved for debugging
-        data: serde_json::Value,
-    },
-}
-
-impl Resolution {
-    /// Check if this is an unknown resolution.
-    #[must_use]
-    pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::Unknown { .. })
-    }
-
-    /// Returns the resolution type name if this is an unknown resolution.
+    /// Controls the quality vs. token cost trade-off when processing images and videos.
+    /// Lower resolution uses fewer tokens (lower cost), while higher resolution provides
+    /// more detail for the model to analyze.
     ///
-    /// Returns `None` for known resolutions.
-    #[must_use]
-    pub fn unknown_resolution_type(&self) -> Option<&str> {
-        match self {
-            Self::Unknown {
-                resolution_type, ..
-            } => Some(resolution_type),
-            _ => None,
-        }
-    }
-
-    /// Returns the raw JSON data if this is an unknown resolution.
+    /// # Token Cost Trade-offs
     ///
-    /// Returns `None` for known resolutions.
-    #[must_use]
-    pub fn unknown_data(&self) -> Option<&serde_json::Value> {
-        match self {
-            Self::Unknown { data, .. } => Some(data),
-            _ => None,
-        }
+    /// | Resolution | Token Cost | Detail Level |
+    /// |------------|------------|--------------|
+    /// | Low | Lowest | Basic shapes and colors |
+    /// | Medium | Moderate | Standard detail |
+    /// | High | Higher | Fine details visible |
+    /// | UltraHigh | Highest | Maximum fidelity |
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use genai_rs::Resolution;
+    ///
+    /// // Use Low for cheap, basic analysis
+    /// let low_cost = Resolution::Low;
+    ///
+    /// // Use High for detailed analysis
+    /// let detailed = Resolution::High;
+    ///
+    /// // Default is Medium
+    /// assert_eq!(Resolution::default(), Resolution::Medium);
+    /// ```
+    #[derive(Default)]
+    pub enum Resolution {
+        /// Lowest token cost, basic shapes and colors
+        Low = "low",
+        /// Moderate token cost, standard detail (default)
+        #[default]
+        Medium = "medium",
+        /// Higher token cost, fine details visible
+        High = "high",
+        /// Highest token cost, maximum fidelity
+        UltraHigh = "ultra_high",
     }
-}
-
-impl Serialize for Resolution {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Self::Low => serializer.serialize_str("low"),
-            Self::Medium => serializer.serialize_str("medium"),
-            Self::High => serializer.serialize_str("high"),
-            Self::UltraHigh => serializer.serialize_str("ultra_high"),
-            Self::Unknown {
-                resolution_type, ..
-            } => serializer.serialize_str(resolution_type),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for Resolution {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-
-        match value.as_str() {
-            Some("low") => Ok(Self::Low),
-            Some("medium") => Ok(Self::Medium),
-            Some("high") => Ok(Self::High),
-            Some("ultra_high") => Ok(Self::UltraHigh),
-            Some(other) => {
-                tracing::warn!(
-                    "Encountered unknown Resolution '{}'. \
-                     This may indicate a new API feature. \
-                     The resolution will be preserved in the Unknown variant.",
-                    other
-                );
-                Ok(Self::Unknown {
-                    resolution_type: other.to_string(),
-                    data: value,
-                })
-            }
-            None => {
-                // Non-string value - preserve it in Unknown
-                let resolution_type = format!("<non-string: {}>", value);
-                tracing::warn!(
-                    "Resolution received non-string value: {}. \
-                     Preserving in Unknown variant.",
-                    value
-                );
-                Ok(Self::Unknown {
-                    resolution_type,
-                    data: value,
-                })
-            }
-        }
-    }
-}
-
-impl fmt::Display for Resolution {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Low => write!(f, "low"),
-            Self::Medium => write!(f, "medium"),
-            Self::High => write!(f, "high"),
-            Self::UltraHigh => write!(f, "ultra_high"),
-            Self::Unknown {
-                resolution_type, ..
-            } => write!(f, "{}", resolution_type),
-        }
-    }
+    unknown(resolution_type, unknown_resolution_type)
 }
 
 /// How the model processes a video for understanding
@@ -1080,16 +1015,17 @@ impl fmt::Display for Resolution {
 /// 400 Unknown parameter 'processing' at 'input[1]'.
 /// ```
 ///
-/// So use [`InteractionInput::Steps`](crate::InteractionInput::Steps), not
-/// [`InteractionInput::Content`](crate::InteractionInput::Content), when any
-/// video carries `processing`. This is an API-side asymmetry, not a crate
-/// limitation — both input forms are otherwise valid.
+/// The crate always sends content input in the step form, so
+/// [`with_content`](crate::InteractionBuilder::with_content) and
+/// [`InteractionInput::Content`](crate::InteractionInput::Content) both work;
+/// nothing needs wrapping by hand.
 ///
 /// # Example
 ///
 /// ```
-/// use genai_rs::{Content, InteractionInput, Step, VideoProcessing};
+/// use genai_rs::{Client, Content, VideoProcessing};
 ///
+/// # fn example(client: &Client) {
 /// // Clip a 5-second window and sample one frame per second.
 /// let clipped = VideoProcessing::segment()
 ///     .start_offset("5s")
@@ -1099,10 +1035,12 @@ impl fmt::Display for Resolution {
 ///
 /// let video = Content::video_uri("files/abc123", "video/mp4").with_processing(clipped);
 ///
-/// // Must be wrapped in a user_input step — see above.
-/// let input = InteractionInput::Steps(vec![Step::UserInput {
-///     content: vec![Content::text("Describe this clip."), video],
-/// }]);
+/// let builder = client
+///     .interaction()
+///     .with_model(genai_rs::DEFAULT_MODEL)
+///     .with_content(vec![Content::text("Describe this clip."), video]);
+/// # let _ = builder;
+/// # }
 /// ```
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
@@ -1442,6 +1380,9 @@ pub enum Content {
         /// agentic processing. Has a large effect on token cost — see
         /// [`VideoProcessing`].
         processing: Option<VideoProcessing>,
+        /// Optional label for the video. Accepted on input (verified live
+        /// 2026-09-24); no effect on the output was observed.
+        name: Option<String>,
     },
     /// Document content for file-based inputs.
     ///
@@ -1553,6 +1494,7 @@ impl Serialize for Content {
                 mime_type,
                 resolution,
                 processing,
+                name,
             } => {
                 let mut map = serializer.serialize_map(None)?;
                 map.serialize_entry("type", "video")?;
@@ -1570,6 +1512,9 @@ impl Serialize for Content {
                 }
                 if let Some(p) = processing {
                     map.serialize_entry("processing", p)?;
+                }
+                if let Some(n) = name {
+                    map.serialize_entry("name", n)?;
                 }
                 map.end()
             }
@@ -1730,6 +1675,35 @@ impl Content {
         }
     }
 
+    /// Creates text spoken by one speaker of a multi-speaker TTS request.
+    ///
+    /// The text carries an [`Annotation::SpeechMetadata`] naming `speaker`,
+    /// which must match a `speaker` in the request's speech configs. Required
+    /// for multi-speaker synthesis on `gemini-3.8-flash-tts`; older TTS models
+    /// reject the annotation.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use genai_rs::Content;
+    ///
+    /// let turns = vec![
+    ///     Content::speaker_text("Alice", "Hello Bob!"),
+    ///     Content::speaker_text("Bob", "Hi Alice."),
+    /// ];
+    /// assert_eq!(turns[0].as_text(), Some("Hello Bob!"));
+    /// ```
+    #[must_use]
+    pub fn speaker_text(speaker: impl Into<String>, text: impl Into<String>) -> Self {
+        Self::Text {
+            text: Some(text.into()),
+            annotations: Some(vec![Annotation::speech_metadata(
+                Some(speaker.into()),
+                None,
+            )]),
+        }
+    }
+
     /// Creates image content from base64-encoded data.
     ///
     /// # Example
@@ -1752,33 +1726,6 @@ impl Content {
         }
     }
 
-    /// Creates image content from base64-encoded data with specified resolution.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use genai_rs::{Content, Resolution};
-    ///
-    /// let image = Content::image_data_with_resolution(
-    ///     "base64encodeddata...",
-    ///     "image/png",
-    ///     Resolution::High
-    /// );
-    /// ```
-    #[must_use]
-    pub fn image_data_with_resolution(
-        data: impl Into<String>,
-        mime_type: impl Into<String>,
-        resolution: Resolution,
-    ) -> Self {
-        Self::Image {
-            data: Some(data.into()),
-            uri: None,
-            mime_type: Some(mime_type.into()),
-            resolution: Some(resolution),
-        }
-    }
-
     /// Creates image content from a URI.
     ///
     /// # Example
@@ -1795,21 +1742,6 @@ impl Content {
             uri: Some(uri.into()),
             mime_type: Some(mime_type.into()),
             resolution: None,
-        }
-    }
-
-    /// Creates image content from a URI with specified resolution.
-    #[must_use]
-    pub fn image_uri_with_resolution(
-        uri: impl Into<String>,
-        mime_type: impl Into<String>,
-        resolution: Resolution,
-    ) -> Self {
-        Self::Image {
-            data: None,
-            uri: Some(uri.into()),
-            mime_type: Some(mime_type.into()),
-            resolution: Some(resolution),
         }
     }
 
@@ -1870,22 +1802,7 @@ impl Content {
             mime_type: Some(mime_type.into()),
             resolution: None,
             processing: None,
-        }
-    }
-
-    /// Creates video content from base64-encoded data with specified resolution.
-    #[must_use]
-    pub fn video_data_with_resolution(
-        data: impl Into<String>,
-        mime_type: impl Into<String>,
-        resolution: Resolution,
-    ) -> Self {
-        Self::Video {
-            data: Some(data.into()),
-            uri: None,
-            mime_type: Some(mime_type.into()),
-            resolution: Some(resolution),
-            processing: None,
+            name: None,
         }
     }
 
@@ -1906,22 +1823,7 @@ impl Content {
             mime_type: Some(mime_type.into()),
             resolution: None,
             processing: None,
-        }
-    }
-
-    /// Creates video content from a URI with specified resolution.
-    #[must_use]
-    pub fn video_uri_with_resolution(
-        uri: impl Into<String>,
-        mime_type: impl Into<String>,
-        resolution: Resolution,
-    ) -> Self {
-        Self::Video {
-            data: None,
-            uri: Some(uri.into()),
-            mime_type: Some(mime_type.into()),
-            resolution: Some(resolution),
-            processing: None,
+            name: None,
         }
     }
 
@@ -2020,6 +1922,7 @@ impl Content {
                 mime_type: Some(mime_str),
                 resolution: None,
                 processing: None,
+                name: None,
             }
         } else {
             // Default to document for PDFs, text files, and other types
@@ -2059,7 +1962,7 @@ impl Content {
     /// # }
     /// ```
     #[must_use]
-    pub fn from_file(file: &crate::http::files::FileMetadata) -> Self {
+    pub fn from_file(file: &crate::files::FileMetadata) -> Self {
         Self::from_uri_and_mime(file.uri.clone(), file.mime_type.clone())
     }
 
@@ -2104,6 +2007,7 @@ impl Content {
                 uri,
                 mime_type,
                 processing,
+                name,
                 ..
             } => Self::Video {
                 data,
@@ -2111,6 +2015,7 @@ impl Content {
                 mime_type,
                 resolution: Some(resolution),
                 processing,
+                name,
             },
             other => {
                 tracing::warn!(
@@ -2152,6 +2057,7 @@ impl Content {
                 uri,
                 mime_type,
                 resolution,
+                name,
                 ..
             } => Self::Video {
                 data,
@@ -2159,12 +2065,40 @@ impl Content {
                 mime_type,
                 resolution,
                 processing: Some(processing),
+                name,
             },
             other => {
                 tracing::warn!(
                     "with_processing() called on content type that doesn't support processing. \
                      Processing is only applicable to Video content."
                 );
+                other
+            }
+        }
+    }
+
+    /// Sets a label on video content; other content is returned unchanged
+    /// with a warning. Accepted by the API (verified live 2026-09-24).
+    #[must_use]
+    pub fn with_video_name(self, name: impl Into<String>) -> Self {
+        match self {
+            Self::Video {
+                data,
+                uri,
+                mime_type,
+                resolution,
+                processing,
+                ..
+            } => Self::Video {
+                data,
+                uri,
+                mime_type,
+                resolution,
+                processing,
+                name: Some(name.into()),
+            },
+            other => {
+                tracing::warn!("with_video_name() called on non-video content; ignoring.");
                 other
             }
         }
@@ -2218,6 +2152,8 @@ impl<'de> Deserialize<'de> for Content {
                 resolution: Option<Resolution>,
                 #[serde(default)]
                 processing: Option<VideoProcessing>,
+                #[serde(default)]
+                name: Option<String>,
             },
             Document {
                 data: Option<String>,
@@ -2260,12 +2196,14 @@ impl<'de> Deserialize<'de> for Content {
                     mime_type,
                     resolution,
                     processing,
+                    name,
                 } => Content::Video {
                     data,
                     uri,
                     mime_type,
                     resolution,
                     processing,
+                    name,
                 },
                 KnownContent::Document {
                     data,
@@ -2315,5 +2253,84 @@ impl<'de> Deserialize<'de> for Content {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod binding_2_25_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// The per-content form accepted live by `gemini-3.8-flash-tts`
+    /// (2026-09-24): no indices, one annotation per text block.
+    #[test]
+    fn speaker_text_serializes_the_accepted_multi_speaker_shape() {
+        assert_eq!(
+            serde_json::to_value(Content::speaker_text("Alice", "Hello Bob!")).unwrap(),
+            json!({
+                "type": "text",
+                "text": "Hello Bob!",
+                "annotations": [{"type": "speech_metadata", "speaker": "Alice"}]
+            })
+        );
+    }
+
+    #[test]
+    fn speech_metadata_roundtrips_with_and_without_indices() {
+        for wire in [
+            json!({"type": "speech_metadata", "speaker": "Bob", "style": "whisper",
+                   "start_index": 11, "end_index": 37}),
+            json!({"type": "speech_metadata", "style": "excited"}),
+        ] {
+            let annotation: Annotation = serde_json::from_value(wire.clone()).unwrap();
+            assert!(matches!(annotation, Annotation::SpeechMetadata { .. }));
+            assert_eq!(serde_json::to_value(&annotation).unwrap(), wire);
+        }
+        let spanned: Annotation = serde_json::from_value(
+            json!({"type": "speech_metadata", "start_index": 0, "end_index": 5}),
+        )
+        .unwrap();
+        assert_eq!(spanned.extract_span("Hello there"), Some("Hello"));
+        assert_eq!(spanned.source(), None);
+    }
+
+    #[test]
+    fn word_info_roundtrips_the_binding_shape() {
+        let wire = json!({
+            "type": "word_info",
+            "text": "Hello",
+            "speaker": "1",
+            "start_offset": "0.1s",
+            "end_offset": "0.4s",
+            "start_index": 0,
+            "end_index": 5
+        });
+        let annotation: Annotation = serde_json::from_value(wire.clone()).unwrap();
+        match &annotation {
+            Annotation::WordInfo {
+                text, start_offset, ..
+            } => {
+                assert_eq!(text.as_deref(), Some("Hello"));
+                assert_eq!(start_offset.as_deref(), Some("0.1s"));
+            }
+            other => panic!("expected WordInfo, got {other:?}"),
+        }
+        assert_eq!(annotation.end_index(), Some(5));
+        assert_eq!(serde_json::to_value(&annotation).unwrap(), wire);
+    }
+
+    #[test]
+    fn video_name_roundtrips() {
+        let wire = json!({"type": "video", "uri": "files/abc", "mime_type": "video/mp4", "name": "clip.mp4"});
+        let content: Content = serde_json::from_value(wire.clone()).unwrap();
+        assert!(matches!(&content, Content::Video { name: Some(n), .. } if n == "clip.mp4"));
+        assert_eq!(serde_json::to_value(&content).unwrap(), wire);
+        // Builders preserve it.
+        let content = content.with_resolution(Resolution::Low);
+        assert!(matches!(&content, Content::Video { name: Some(_), .. }));
+        let named = Content::video_uri("files/x", "video/mp4").with_video_name("n");
+        assert!(matches!(&named, Content::Video { name: Some(n), .. } if n == "n"));
+        let text = Content::text("hi").with_video_name("n");
+        assert_eq!(text.as_text(), Some("hi"));
     }
 }

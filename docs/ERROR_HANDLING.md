@@ -1,502 +1,161 @@
-# Error Handling Guide
+# Error Handling
 
-This guide covers error types, common error scenarios, and recovery patterns in `genai-rs`.
+This page covers error types, what each one means, and how function-call
+errors reach the model. For retries, timeouts and cancellation, see
+[Reliability](RELIABILITY.md).
 
-## Table of Contents
+## `GenaiError`
 
-- [Error Types](#error-types)
-- [Handling API Errors](#handling-api-errors)
-- [Common Error Scenarios](#common-error-scenarios)
-- [Retry Strategies](#retry-strategies)
-- [Function Calling Errors](#function-calling-errors)
-- [Streaming Errors](#streaming-errors)
+Every `Client` and `InteractionBuilder` operation returns
+`Result<_, GenaiError>`. The enum is `#[non_exhaustive]`, so always include a
+wildcard arm.
 
-## Error Types
+| Variant | Meaning | `is_retryable()` |
+|---------|---------|------------------|
+| `Api { status_code, message, request_id, retry_after }` | The API returned a non-2xx status | 429 and 5xx only |
+| `Http(reqwest::Error)` | Network, connect, TLS, or client-level timeout | Yes |
+| `Timeout(Duration)` | The request-level timeout (`InteractionBuilder::with_timeout`) elapsed | Yes |
+| `Json(serde_json::Error)` | JSON (de)serialization failed outside response parsing, e.g. inside a stream event | No |
+| `Parse(String)` | An SSE stream could not be parsed | No |
+| `Utf8(Utf8Error)` | A response was not valid UTF-8 | No |
+| `InvalidInput(String)` | The builder rejected the request before sending (for example: no input, neither or both of model and agent, or `with_store_disabled()` combined with chaining or background) | No |
+| `MalformedResponse(String)` | A 2xx response did not parse or did not have the expected shape | No |
+| `Stream { message, code }` | The server sent an in-stream `error` event (auto-function streaming loop only; plain streams yield `StreamChunk::Error`) | No |
+| `Internal(String)` | A client-side invariant failed | No |
+| `ClientBuild(String)` | The HTTP client could not be built (TLS backend init) | No |
 
-### GenaiError
-
-The primary error type for all API operations.
-
-```rust,ignore
+```rust
 use genai_rs::GenaiError;
 
-match client.interaction().create().await {
-    Ok(response) => { /* success */ }
-    Err(e) => match e {
-        GenaiError::Api { status_code, message, request_id, retry_after } => {
-            // HTTP error from API (retry_after populated for 429 responses)
-        }
-        GenaiError::Http(e) => {
-            // Network/connection error
-        }
-        GenaiError::Timeout(duration) => {
-            // Request timed out
-        }
-        GenaiError::Json(e) => {
-            // Response parsing error
-        }
-        GenaiError::InvalidInput(msg) => {
-            // Invalid request parameters
-        }
-        GenaiError::MalformedResponse(msg) => {
-            // Unexpected API response format
-        }
-        GenaiError::Parse(msg) => {
-            // SSE stream parsing error
-        }
-        GenaiError::Utf8(e) => {
-            // UTF-8 decoding error
-        }
-        GenaiError::Internal(msg) => {
-            // Internal client error
-        }
-        GenaiError::ClientBuild(msg) => {
-            // Failed to build HTTP client
-        }
-        _ => {
-            // Future variants (non_exhaustive)
-        }
-    }
-}
-```
-
-### FunctionError
-
-Errors from function execution (client-side function calling).
-
-```rust,ignore
-use genai_rs::FunctionError;
-
-match result {
-    Err(FunctionError::ArgumentMismatch(msg)) => {
-        println!("Arguments didn't match the schema: {}", msg);
-    }
-    Err(FunctionError::ExecutionError(source)) => {
-        println!("Function failed: {}", source);
-    }
-    _ => {
-        // Future variants (non_exhaustive)
-    }
-}
-```
-
-## Handling API Errors
-
-### By Status Code
-
-```rust,ignore
-match client.interaction().create().await {
-    Err(GenaiError::Api { status_code, message, request_id, .. }) => {
-        match status_code {
-            400 => {
-                // Bad request - check your parameters
-                println!("Invalid request: {}", message);
-            }
-            401 => {
-                // Authentication failed
-                println!("Invalid API key");
-            }
-            403 => {
-                // Permission denied
-                println!("Access forbidden: {}", message);
-            }
-            404 => {
-                // Resource not found (e.g., invalid model name)
-                println!("Not found: {}", message);
-            }
-            429 => {
-                // Rate limited - implement backoff
-                println!("Rate limited, retry after backoff");
-            }
-            500..=599 => {
-                // Server error - safe to retry
-                println!("Server error ({}): {}", status_code, message);
-            }
-            _ => {
-                println!("API error {}: {}", status_code, message);
-            }
-        }
-
-        // Log request_id for debugging with Google support
-        if let Some(id) = request_id {
-            println!("Request ID: {}", id);
-        }
-    }
-    _ => {}
-}
-```
-
-For 429 responses, the `Api` variant also carries a `retry_after` field parsed
-from the `Retry-After` header; `GenaiError::retry_after()` exposes it as a
-`Duration` (see [Retry Patterns](RETRY_PATTERNS.md)).
-
-### Using request_id
-
-The `request_id` field (from `x-goog-request-id` header) is valuable for:
-- Debugging with Google support
-- Correlating logs across systems
-- Tracking specific failed requests
-
-```rust,ignore
-if let Err(GenaiError::Api { request_id: Some(id), .. }) = result {
-    log::error!("Request {} failed - save this ID for support", id);
-}
-```
-
-## Common Error Scenarios
-
-### Invalid API Key
-
-```rust,ignore
-// Error: GenaiError::Api { status_code: 401, message: "API key not valid..." }
-
-// Prevention: Validate key format before use
-let api_key = env::var("GEMINI_API_KEY")
-    .expect("GEMINI_API_KEY must be set");
-
-if api_key.is_empty() || !api_key.starts_with("AI") {
-    panic!("Invalid API key format");
-}
-```
-
-### Invalid Model Name
-
-```rust,ignore
-// Error: GenaiError::Api { status_code: 404, message: "Model not found..." }
-
-// Prevention: Use known model constants
-const MODEL: &str = genai_rs::DEFAULT_MODEL;
-```
-
-### Rate Limiting
-
-```rust,ignore
-// Error: GenaiError::Api { status_code: 429, ... }
-
-// Solution: Implement exponential backoff (see Retry Strategies below)
-```
-
-### Request Timeout
-
-```rust,ignore
-// Error: GenaiError::Timeout(Duration)
-
-// Prevention: Set appropriate timeout
-let response = client
-    .interaction()
-    .with_model(genai_rs::DEFAULT_MODEL)
-    .with_text("Complex analysis task...")
-    .with_timeout(Duration::from_secs(120))  // 2 minutes
-    .create()
-    .await?;
-```
-
-### Network Errors
-
-```rust,ignore
-// Error: GenaiError::Http(reqwest::Error)
-
-match result {
-    Err(GenaiError::Http(e)) => {
-        if e.is_connect() {
-            println!("Connection failed - check network");
-        } else if e.is_timeout() {
-            println!("Connection timed out");
-        }
-    }
-    _ => {}
-}
-```
-
-### Malformed Response
-
-```rust,ignore
-// Error: GenaiError::MalformedResponse("...")
-
-// This indicates the API returned unexpected data.
-// Usually a sign of API evolution - check for library updates.
-```
-
-## Retry Strategies
-
-### Simple Retry with Backoff
-
-```rust,ignore
-use std::time::Duration;
-use tokio::time::sleep;
-
-async fn retry_with_backoff<T, F, Fut>(
-    max_retries: u32,
-    operation: F,
-) -> Result<T, GenaiError>
-where
-    F: Fn() -> Fut,
-    Fut: std::future::Future<Output = Result<T, GenaiError>>,
-{
-    let mut last_error = None;
-
-    for attempt in 0..=max_retries {
-        match operation().await {
-            Ok(result) => return Ok(result),
-            Err(e) if should_retry(&e) && attempt < max_retries => {
-                let delay = Duration::from_secs(1 << attempt); // 1s, 2s, 4s...
-                println!("Attempt {} failed, retrying in {:?}", attempt + 1, delay);
-                last_error = Some(e);
-                sleep(delay).await;
-            }
-            Err(e) => return Err(e),
-        }
-    }
-
-    Err(last_error.unwrap())
-}
-
-fn should_retry(error: &GenaiError) -> bool {
-    match error {
-        GenaiError::Api { status_code, .. } => {
-            // Retry on rate limits and server errors
-            *status_code == 429 || *status_code >= 500
-        }
-        GenaiError::Http(e) => {
-            // Retry on connection errors
-            e.is_connect() || e.is_timeout()
-        }
-        GenaiError::Timeout(_) => true,
-        _ => false,
-    }
-}
-```
-
-### Retry on Transient Errors
-
-Some errors are known to be transient (e.g., Google's Spanner UTF-8 errors):
-
-```rust,ignore
-fn is_transient_error(err: &GenaiError) -> bool {
+fn describe(err: &GenaiError) -> String {
     match err {
-        GenaiError::Api { message, .. } => {
-            let lower = message.to_lowercase();
-            // Known transient Google backend issue
-            lower.contains("spanner") && lower.contains("utf-8")
+        GenaiError::Api { status_code, message, request_id, .. } => {
+            format!("API {status_code}: {message} (request id {request_id:?})")
+        }
+        GenaiError::Timeout(after) => format!("timed out after {after:?}"),
+        GenaiError::Http(e) if e.is_timeout() => "client-level timeout".to_string(),
+        GenaiError::InvalidInput(msg) => format!("bad request built locally: {msg}"),
+        other => other.to_string(),
+    }
+}
+# let _ = describe;
+```
+
+`Api.message` is the message from Google's error envelope, prefixed with its
+status or code (`"INVALID_ARGUMENT: ..."`, `"invalid_request: ..."`). A body
+that is not an error envelope is kept as a truncated preview. The full body is
+visible with `LOUD_WIRE=1` (see [Logging](LOGGING_STRATEGY.md)).
+
+## API status codes
+
+| Status | Usual cause | What to do |
+|--------|-------------|------------|
+| 400 | Invalid request: a bad field, an unsupported combination, a field the Gemini API rejects as Vertex-only | Read `message`; it usually names the field |
+| 401 / 403 | Missing, invalid or unauthorized API key, or a feature not enabled for the key | Check `GEMINI_API_KEY` and access |
+| 404 | Unknown model, agent, file or interaction id | Use the constants in `genai_rs` (`DEFAULT_MODEL`, ...) rather than typed ids |
+| 429 | Rate limited | Back off; honor `retry_after()` when set |
+| 5xx | Server error | Retry with backoff |
+
+`request_id` comes from the `x-goog-request-id` response header. Log it; it is
+what Google support needs to find a specific failed request.
+
+## Known transient errors
+
+`is_retryable()` covers transport errors, timeouts, 429 and 5xx. The
+integration suite also retries three error classes that `is_retryable()`
+deliberately leaves out, because they are matched on message text rather than
+status (`tests/common/mod.rs`, `is_transient_error`):
+
+| Error | Notes |
+|-------|-------|
+| `Api` whose message contains both `spanner` and `utf-8` | Google backend issue seen on stateful conversations (#60) |
+| `Api` 400 containing `invalid json syntax` | The model occasionally emits invalid JSON (structured output, or a malformed function call) |
+| `Api` 400 containing `there was a problem processing your request` | Server-side bursts that pass on re-run |
+
+If you want the same behavior, compose the two predicates:
+
+```rust
+use genai_rs::GenaiError;
+
+fn should_retry(err: &GenaiError) -> bool {
+    if err.is_retryable() {
+        return true;
+    }
+    match err {
+        GenaiError::Api { status_code, message, .. } => {
+            let m = message.to_lowercase();
+            (m.contains("spanner") && m.contains("utf-8"))
+                || (*status_code == 400 && m.contains("invalid json syntax"))
+                || (*status_code == 400
+                    && m.contains("there was a problem processing your request"))
         }
         _ => false,
     }
 }
+# let _ = should_retry;
 ```
 
-### Using the Test Utilities
+Keep the retry budget small: these matches are on message text, so an API
+wording change turns a real rejection into a few wasted retries.
 
-The `tests/common/mod.rs` module provides retry helpers you can adapt:
+## Function calling errors
 
-```rust,ignore
-// From tests/common/mod.rs - adapt for production use
-pub async fn retry_on_transient<F, Fut, T>(
-    max_retries: u32,
-    operation: F,
-) -> Result<T, GenaiError>
-where
-    F: Fn() -> Fut,
-    Fut: Future<Output = Result<T, GenaiError>>,
-{
-    // ... implementation
-}
-```
+In `create_with_auto_functions()` a failing function does **not** fail the
+loop. The error is sent back to the model as the function result, so it can
+retry or explain. Each case is logged at `warn`.
 
-## Function Calling Errors
+| Situation | Result the model receives |
+|-----------|---------------------------|
+| The model calls a function that is not registered | `{"error": "Function '<name>' is not available or not found."}` |
+| Arguments missing or of the wrong type (`#[tool]` argument extraction) | `{"error": "Argument mismatch: ..."}` |
+| A `CallableFunction::call` returns `Err(FunctionError::ExecutionError(e))` | `{"error": "Function execution error: <e>"}` |
 
-### Missing Functions
+### What a `#[tool]` function's return value becomes
 
-The auto-function loop does not fail when the model calls a function that isn't
-registered. Instead it sends an error result back to the model
-(`{"error": "Function '<name>' is not available or not found."}`) so the
-conversation can continue. A missing function is usually a typo or a missing
-`#[tool]` / `with_function()` registration — watch the logs for:
+The macro serializes the return value with `serde_json::to_value`. If the
+result is a JSON object it is sent as-is; anything else is wrapped as
+`{"result": <value>}`. So:
 
-```text
-Function not found in registry or tool service: function='...'
-```
+- Return a `Serialize` struct or a `serde_json::Value` for structured data.
+  A `String` that *contains* JSON arrives as a string,
+  `{"result": "{\"temp\": 22}"}`, which the model can read but which is not
+  structured.
+- A `Result<T, E>` is serialized by serde as `{"Ok": ...}` or `{"Err": ...}`.
+  It is *not* turned into `{"error": ...}`.
+- For a real `{"error": ...}` result, return a JSON object with an `error`
+  key, or implement `CallableFunction` yourself and return
+  `Err(FunctionError::ExecutionError(..))`.
 
-### Execution Errors
-
-```rust,ignore
+```rust
 use genai_rs_macros::tool;
+use serde_json::{json, Value};
 
-/// Fetch data from API
-#[tool(url(description = "URL to fetch"))]
-async fn fetch_data(url: String) -> Result<String, String> {
-    // Return Err for graceful failure
-    reqwest::get(&url)
-        .await
-        .map_err(|e| format!("HTTP error: {}", e))?
-        .text()
-        .await
-        .map_err(|e| format!("Read error: {}", e))
-}
-
-// The model sees: {"error": "HTTP error: connection refused"}
-// It can then inform the user or try alternative approaches
-```
-
-### Argument Parsing Errors
-
-```rust,ignore
-Err(FunctionError::ArgumentMismatch(message)) => {
-    // Model sent arguments that don't match the schema
-    log::warn!("Model sent invalid args: {}", message);
-    // Usually recoverable - model will retry with corrected args
-}
-```
-
-### Best Practices for Function Errors
-
-1. **Return `Result` from functions** - Let the model handle errors gracefully
-2. **Use descriptive error messages** - The model sees these and can adapt
-3. **Don't panic** - Return errors so the conversation can continue
-
-```rust,ignore
-use genai_rs_macros::tool;
-
-/// Get user by ID
-#[tool(id(description = "The user ID to look up"))]
-fn get_user(id: i32) -> Result<String, String> {
+/// Look up a user by id
+#[tool(id(description = "The user id, a positive integer"))]
+fn get_user(id: i64) -> Value {
     if id <= 0 {
-        return Err("User ID must be positive".to_string());
+        return json!({"error": "id must be positive"});
     }
-
-    match database.find_user(id) {
-        Some(user) => Ok(serde_json::to_string(&user).unwrap()),
-        None => Err(format!("User {} not found", id)),
-    }
+    json!({"id": id, "name": "Alice"})
 }
+# let _ = get_user_declaration();
 ```
 
-## Streaming Errors
+Don't panic inside a tool. A panic unwinds through the auto-function loop
+instead of reaching the model as a result.
 
-### Handling Stream Errors
+## Streaming errors
 
-```rust,ignore
-use futures_util::StreamExt;
+A stream from `create_stream()` can end in two ways:
 
-let mut stream = client.interaction().create_stream();
+- `Err(GenaiError)` items, for transport, parse, or timeout errors. Resume
+  from the last `event_id` if the interaction was stored; see
+  [Stream Resume](STREAMING_API.md#stream-resume).
+- A terminal `StreamChunk::Error { message, code }` event, which the server
+  sends inside the SSE stream. No events follow it.
 
-while let Some(result) = stream.next().await {
-    match result {
-        Ok(event) => {
-            // Process event
-        }
-        Err(GenaiError::Parse(msg)) => {
-            // SSE parsing error - stream may be corrupted
-            log::error!("Stream parse error: {}", msg);
-            break;
-        }
-        Err(e) => {
-            log::error!("Stream error: {}", e);
-            break;
-        }
-    }
-}
-```
+## Related
 
-### Stream Resume on Error
-
-Streams support resumption via `event_id`. Track the interaction ID (from the
-`Created` chunk) and the last received `event_id`, then resume with
-`client.get_interaction_stream(interaction_id, last_event_id)`:
-
-```rust,ignore
-let mut interaction_id: Option<String> = None;
-let mut last_event_id: Option<String> = None;
-let mut collected_text = String::new();
-
-loop {
-    let mut stream = if let (Some(id), Some(event_id)) = (&interaction_id, &last_event_id) {
-        // Resume from last known position
-        client.get_interaction_stream(id, Some(event_id))
-    } else {
-        client.interaction()
-            .with_model(genai_rs::DEFAULT_MODEL)
-            .with_text("Tell me a story")
-            .with_store_enabled()  // Required to resume by interaction ID
-            .create_stream()
-    };
-
-    while let Some(result) = stream.next().await {
-        match result {
-            Ok(event) => {
-                if let Some(id) = &event.event_id {
-                    last_event_id = Some(id.clone());
-                }
-                if let Some(text) = event.chunk.delta_text() {
-                    collected_text.push_str(text);
-                }
-                match event.chunk {
-                    StreamChunk::Created { interaction } => {
-                        interaction_id = interaction.id.clone();
-                    }
-                    StreamChunk::Completed(_) => return Ok(collected_text),
-                    _ => {}
-                }
-            }
-            Err(e) if should_retry(&e) => {
-                log::warn!("Stream error, resuming: {}", e);
-                break; // Break inner loop to retry
-            }
-            Err(e) => return Err(e),
-        }
-    }
-}
-```
-
-## Error Logging
-
-### Recommended Pattern
-
-```rust,ignore
-use log::{error, warn, info, debug};
-
-match result {
-    Ok(response) => {
-        debug!("Request succeeded: {:?}", response.id);
-    }
-    Err(GenaiError::Api { status_code: 429, request_id, .. }) => {
-        warn!("Rate limited (request: {:?}), backing off", request_id);
-    }
-    Err(GenaiError::Api { status_code, message, request_id, .. }) if status_code >= 500 => {
-        error!("Server error {} (request: {:?}): {}",
-               status_code, request_id, message);
-    }
-    Err(e) => {
-        error!("Request failed: {}", e);
-    }
-}
-```
-
-### Enable Library Logging
-
-```bash
-RUST_LOG=genai_rs=debug cargo run --example simple_interaction
-```
-
-### Wire-Level Debugging
-
-```bash
-LOUD_WIRE=1 cargo run --example simple_interaction
-```
-
-## Error Type Reference
-
-| Error | Cause | Recovery |
-|-------|-------|----------|
-| `Api { 400, .. }` | Invalid request | Fix parameters |
-| `Api { 401, .. }` | Bad API key | Check credentials |
-| `Api { 403, .. }` | Permission denied | Check API access |
-| `Api { 404, .. }` | Resource not found | Check model/file name |
-| `Api { 429, .. }` | Rate limited | Backoff and retry |
-| `Api { 5xx, .. }` | Server error | Retry with backoff |
-| `Http(_)` | Network error | Check connection, retry |
-| `Timeout(_)` | Request too slow | Increase timeout, retry |
-| `Json(_)` | Parse error | Check for API updates |
-| `InvalidInput(_)` | Bad parameters | Fix before sending |
-| `MalformedResponse(_)` | Unexpected format | Check for library updates |
-| `Parse(_)` | SSE parse error | Resume stream |
-| `ClientBuild(_)` | TLS/client init | Check environment |
+- [Reliability](RELIABILITY.md): retry primitives, `backon`, timeout semantics, cancellation
+- [Troubleshooting](../TROUBLESHOOTING.md): symptoms and fixes
+- [Logging Strategy](LOGGING_STRATEGY.md): `LOUD_WIRE`, `RUST_LOG`, wire inspectors
