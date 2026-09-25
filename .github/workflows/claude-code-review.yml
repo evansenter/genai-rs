@@ -34,6 +34,7 @@ jobs:
           else
             echo "::warning::Failed to fetch centralized prompt from $PROMPT_URL - using fallback"
             echo "use_file=false" >> "$GITHUB_OUTPUT"
+            # Post warning comment on PR
             gh pr comment ${{ github.event.pull_request.number }} --body "⚠️ **Claude Review Warning**: Could not fetch centralized review prompt from \`$PROMPT_URL\`. Using fallback inline prompt. This may result in less thorough reviews."
           fi
 
