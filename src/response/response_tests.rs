@@ -13,6 +13,10 @@
 //!   the field was removed; `total_thought_tokens` remains.
 
 use super::*;
+use crate::{
+    CodeExecutionLanguage, FileSearchResultItem, GoogleMapsResultItem, GoogleSearchResultItem,
+    Place, UrlContextResultItem,
+};
 
 // --- Response Deserialization ---
 
@@ -2361,4 +2365,310 @@ fn test_deserialize_response_webhook_config_echo() {
             .get("webhook_config")
             .is_none()
     );
+}
+
+// --- InteractionResponse Accessor and Wire-Format Tests ---
+
+fn minimal_response(usage: Option<UsageMetadata>) -> InteractionResponse {
+    InteractionResponse {
+        status: InteractionStatus::Completed,
+        usage,
+        ..Default::default()
+    }
+}
+
+fn text_response(text: &str) -> InteractionResponse {
+    InteractionResponse {
+        status: InteractionStatus::Completed,
+        steps: vec![Step::model_text(text)],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn test_token_helpers_with_usage() {
+    let response = minimal_response(Some(UsageMetadata {
+        total_input_tokens: Some(100),
+        total_output_tokens: Some(50),
+        total_tokens: Some(150),
+        total_cached_tokens: Some(25),
+        total_thought_tokens: Some(10),
+        total_tool_use_tokens: Some(5),
+        ..Default::default()
+    }));
+
+    assert_eq!(response.input_tokens(), Some(100));
+    assert_eq!(response.output_tokens(), Some(50));
+    assert_eq!(response.total_tokens(), Some(150));
+    assert_eq!(response.cached_tokens(), Some(25));
+    assert_eq!(response.thought_tokens(), Some(10));
+    assert_eq!(response.tool_use_tokens(), Some(5));
+}
+
+#[test]
+fn test_token_helpers_without_usage() {
+    let response = minimal_response(None);
+
+    assert_eq!(response.input_tokens(), None);
+    assert_eq!(response.output_tokens(), None);
+    assert_eq!(response.total_tokens(), None);
+    assert_eq!(response.cached_tokens(), None);
+    assert_eq!(response.thought_tokens(), None);
+    assert_eq!(response.tool_use_tokens(), None);
+}
+
+// =========================================================================
+// Steps-based response deserialization (wire fixtures)
+// =========================================================================
+
+#[test]
+fn test_response_deserializes_steps_wire_fixture() {
+    // Representative revision 2026-05-20 response shape. ID forms:
+    // `id`/`previous_interaction_id` are live-observed bare opaque
+    // strings (`v1_...`-style, no `interactions/` prefix);
+    // `environment_id`'s response-side form has not been observed
+    // non-None at accept-time — bare is assumed here to match the
+    // live-verified environments *resource* capture, and the
+    // inline-environment integration test defensively strips a
+    // possible prefix until the field is observed for real.
+    let json = r#"{
+            "id": "v1_abc123",
+            "model": "test-model",
+            "status": "completed",
+            "steps": [
+                {"type": "thought", "signature": "sig-1"},
+                {"type": "model_output", "content": [
+                    {"type": "text", "text": "The answer is 4."}
+                ]}
+            ],
+            "usage": {
+                "total_input_tokens": 10,
+                "total_output_tokens": 8,
+                "total_tokens": 18,
+                "grounding_tool_count": [{"type": "google_search", "count": 2}]
+            },
+            "previous_interaction_id": "v1_prev",
+            "environment_id": "38aac1ae7f30fe9bd67afe42382ea041",
+            "created": "2026-05-21T10:00:00Z"
+        }"#;
+
+    let response: InteractionResponse = serde_json::from_str(json).unwrap();
+    assert_eq!(response.id.as_deref(), Some("v1_abc123"));
+    assert_eq!(response.status, InteractionStatus::Completed);
+    assert_eq!(response.steps.len(), 2);
+    assert_eq!(response.as_text(), Some("The answer is 4."));
+    assert_eq!(
+        response.thought_signatures().collect::<Vec<_>>(),
+        vec!["sig-1"]
+    );
+    assert_eq!(
+        response.environment_id.as_deref(),
+        Some("38aac1ae7f30fe9bd67afe42382ea041")
+    );
+    let usage = response.usage.as_ref().unwrap();
+    assert_eq!(usage.grounding_count_for_tool("google_search"), Some(2));
+    assert!(response.created.is_some());
+}
+
+#[test]
+fn test_response_serializes_snake_case() {
+    let response = InteractionResponse {
+        previous_interaction_id: Some("v1_prev".into()),
+        status: InteractionStatus::Completed,
+        ..Default::default()
+    };
+    let json = serde_json::to_value(&response).unwrap();
+    assert_eq!(json["previous_interaction_id"], "v1_prev");
+    assert!(json.get("previousInteractionId").is_none());
+}
+
+#[test]
+fn test_budget_exceeded_status_roundtrip() {
+    let status: InteractionStatus = serde_json::from_str("\"budget_exceeded\"").unwrap();
+    assert_eq!(status, InteractionStatus::BudgetExceeded);
+    assert_eq!(
+        serde_json::to_string(&status).unwrap(),
+        "\"budget_exceeded\""
+    );
+}
+
+#[test]
+fn test_function_calls_over_steps() {
+    let response = InteractionResponse {
+        status: InteractionStatus::RequiresAction,
+        steps: vec![
+            Step::thought("sig"),
+            Step::function_call(
+                "call_1",
+                "get_weather",
+                serde_json::json!({"city": "Tokyo"}),
+            ),
+        ],
+        ..Default::default()
+    };
+    let calls = response.function_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].id, "call_1");
+    assert_eq!(calls[0].name, "get_weather");
+    assert_eq!(calls[0].args["city"], "Tokyo");
+    assert!(response.has_function_calls());
+    assert!(response.has_thoughts());
+}
+
+#[test]
+fn test_as_text_falls_back_to_output_text() {
+    let response = InteractionResponse {
+        status: InteractionStatus::Completed,
+        output_text: Some("fallback".into()),
+        ..Default::default()
+    };
+    assert_eq!(response.as_text(), Some("fallback"));
+    assert_eq!(response.all_text(), "fallback");
+    assert!(response.has_text());
+}
+
+#[test]
+fn test_unknown_steps_helper() {
+    let response = InteractionResponse {
+        status: InteractionStatus::Completed,
+        steps: vec![Step::Unknown {
+            step_type: "quantum".into(),
+            data: serde_json::json!({"type": "quantum", "x": 1}),
+        }],
+        ..Default::default()
+    };
+    assert!(response.has_unknown());
+    let unknown = response.unknown_steps();
+    assert_eq!(unknown.len(), 1);
+    assert_eq!(unknown[0].0, "quantum");
+}
+
+// =========================================================================
+// Image Helper Tests
+// =========================================================================
+
+fn make_response_with_image(base64_data: &str, mime_type: Option<&str>) -> InteractionResponse {
+    InteractionResponse {
+        id: Some("test-id".to_string()),
+        model: Some("test-model".to_string()),
+        steps: vec![Step::model_output(vec![Content::Image {
+            data: Some(base64_data.to_string()),
+            mime_type: mime_type.map(String::from),
+            uri: None,
+            resolution: None,
+        }])],
+        status: InteractionStatus::Completed,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn test_first_image_bytes_success() {
+    // Base64 for "test"
+    let response = make_response_with_image("dGVzdA==", Some("image/png"));
+
+    let bytes = response.first_image_bytes().unwrap();
+    assert_eq!(bytes.unwrap(), b"test");
+}
+
+#[test]
+fn test_first_image_bytes_no_images() {
+    let response = text_response("Hello");
+    assert!(response.first_image_bytes().unwrap().is_none());
+}
+
+#[test]
+fn test_first_image_bytes_invalid_base64() {
+    let response = make_response_with_image("not-valid-base64!!!", Some("image/png"));
+    let err = response.first_image_bytes().unwrap_err().to_string();
+    assert!(err.contains("Invalid base64"));
+}
+
+#[test]
+fn test_images_iterator() {
+    let response = InteractionResponse {
+        status: InteractionStatus::Completed,
+        steps: vec![Step::model_output(vec![
+            Content::image_data("dGVzdDE=", "image/png"),
+            Content::text("text between"),
+            Content::image_data("dGVzdDI=", "image/jpeg"),
+        ])],
+        ..Default::default()
+    };
+
+    let images: Vec<_> = response.images().collect();
+    assert_eq!(images.len(), 2);
+
+    assert_eq!(images[0].bytes().unwrap(), b"test1");
+    assert_eq!(images[0].mime_type(), Some("image/png"));
+    assert_eq!(images[0].extension(), "png");
+
+    assert_eq!(images[1].bytes().unwrap(), b"test2");
+    assert_eq!(images[1].extension(), "jpg");
+}
+
+#[test]
+fn test_has_images() {
+    assert!(make_response_with_image("dGVzdA==", Some("image/png")).has_images());
+    assert!(!text_response("no images").has_images());
+}
+
+#[test]
+fn test_audio_channels_and_sample_rate_exposed() {
+    let response = InteractionResponse {
+        status: InteractionStatus::Completed,
+        steps: vec![Step::model_output(vec![Content::Audio {
+            data: Some("dGVzdA==".into()),
+            uri: None,
+            mime_type: Some("audio/l16".into()),
+            sample_rate: Some(24000),
+            channels: Some(1),
+        }])],
+        ..Default::default()
+    };
+    let audio = response.first_audio().unwrap();
+    assert_eq!(audio.sample_rate(), Some(24000));
+    assert_eq!(audio.channels(), Some(1));
+    assert!(response.has_audio());
+}
+
+// =========================================================================
+// InteractionStatus Tests
+// =========================================================================
+
+#[test]
+fn test_interaction_status_incomplete_roundtrip() {
+    let json = r#""incomplete""#;
+    let status: InteractionStatus = serde_json::from_str(json).unwrap();
+    assert_eq!(status, InteractionStatus::Incomplete);
+
+    let serialized = serde_json::to_string(&status).unwrap();
+    assert_eq!(serialized, r#""incomplete""#);
+}
+
+#[cfg(not(feature = "strict-unknown"))]
+#[test]
+fn test_interaction_status_unknown_preserved() {
+    let status: InteractionStatus = serde_json::from_str("\"hibernating\"").unwrap();
+    assert!(status.is_unknown());
+    assert_eq!(status.unknown_status_type(), Some("hibernating"));
+    assert!(status.unknown_data().is_some());
+    assert_eq!(serde_json::to_string(&status).unwrap(), "\"hibernating\"");
+}
+
+#[test]
+fn interaction_echoes_labels_system_instruction_and_extras() {
+    let wire = serde_json::json!({
+        "id": "int_1",
+        "status": "completed",
+        "steps": [],
+        "system_instruction": "Be brief.",
+        "labels": {"team": "audit"},
+        "environment": {"type": "remote", "env": [{"A": {"value": "1"}}]}
+    });
+    let response: InteractionResponse = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(response.system_instruction.as_deref(), Some("Be brief."));
+    assert_eq!(response.labels.as_ref().unwrap()["team"], "audit");
+    assert_eq!(response.extra["environment"], wire["environment"]);
+    assert_eq!(serde_json::to_value(&response).unwrap(), wire);
 }

@@ -71,7 +71,7 @@ const EXPECTED_TEST_MODULES: &[&str] = &[
     "src/content/content_tests",
     "src/proptest_tests",
     "src/request_tests",
-    "src/response_tests",
+    "src/response/response_tests",
     "src/streaming_tests",
     "src/test_subscriber",
     "src/request_builder/tests",
