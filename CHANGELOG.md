@@ -26,9 +26,12 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
   sandbox never sees a credential's secret, and the egress proxy injects it
   into requests to trusted domains. Bearer `header_name`/`prefix` are
   accepted but not applied by the API yet.
-- **Environment files and forking**: `Client::list_environment_files`,
-  `Client::upload_environment_file`, `CreateEnvironmentRequest::from_environment`
-  (bare environment id only).
+- **Environment files and forking**: `client.environments().files()` lists
+  an environment's files (`.list(env, path)`, a list builder with
+  `with_recursive`) and uploads into one (`.upload(env, path, upload)` with
+  `EnvironmentFileUpload::new(data, mime_type)`, `with_overwrite` and
+  `with_extract`); `CreateEnvironmentRequest::from_environment` forks an
+  environment (bare environment id only).
 - **File Search Store management**: create, get, list and delete stores;
   upload, get, list and delete documents; `wait_for_document_active` (indexing
   is asynchronous and search returns nothing for a pending document). Types
@@ -68,19 +71,20 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
 ### Changed
 
 - **Breaking: resource methods moved from `Client` to per-resource
-  handles.** `client.webhooks()`, `.triggers()` and `.agents()` each return a
-  `Copy` handle that borrows the client. Rename `client.<verb>_<resource>(…)`
-  to `client.<resources>().<verb>(…)`. Exceptions: `run_trigger` →
-  `triggers().run`, `list_trigger_executions(id, …)` →
-  `triggers().list_executions(id)`, `ping_webhook` → `webhooks().ping`,
-  `rotate_webhook_signing_secret` → `webhooks().rotate_signing_secret`. The
-  full table is in `docs/RESOURCES.md`.
-- **Breaking: `list_webhooks`, `list_triggers`, `list_trigger_executions`
-  and `list_agents` return a builder.** The positional `page_size`,
-  `page_token` and `parent` arguments are gone. Chain `.with_page_size(n)`,
-  `.with_page_token(t)` or `.with_parent(p)` on `client.<resources>().list()`
-  (or `client.triggers().list_executions(id)`), then `.send()` for one page
-  (the same `*ListResponse`).
+  handles.** `client.webhooks()`, `.triggers()`, `.agents()` and
+  `.environments()` each return a `Copy` handle that borrows the client.
+  Rename `client.<verb>_<resource>(…)` to `client.<resources>().<verb>(…)`.
+  Exceptions: `run_trigger` → `triggers().run`,
+  `list_trigger_executions(id, …)` → `triggers().list_executions(id)`,
+  `ping_webhook` → `webhooks().ping`, `rotate_webhook_signing_secret` →
+  `webhooks().rotate_signing_secret`. The full table is in
+  `docs/RESOURCES.md`.
+- **Breaking: `list_webhooks`, `list_triggers`, `list_trigger_executions`,
+  `list_agents` and `list_environments` return a builder.** The positional
+  `page_size`, `page_token` and `parent` arguments are gone. Chain
+  `.with_page_size(n)`, `.with_page_token(t)` or `.with_parent(p)` on
+  `client.<resources>().list()` (or `client.triggers().list_executions(id)`),
+  then `.send()` for one page (the same `*ListResponse`).
 - **Breaking: `update_mask` moved onto the update value.**
   `update_webhook(id, &u, Some("state"))` →
   `webhooks().update(id, &u.with_update_mask("state"))`; `None` becomes

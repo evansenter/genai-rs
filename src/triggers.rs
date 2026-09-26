@@ -133,7 +133,7 @@ pub struct Trigger {
     /// This wire-unverified family may deliver IDs in `environments/...`
     /// resource-name form; strip such a prefix before passing the value
     /// back to an ID-taking client method (they percent-encode a slash
-    /// into the path — see [`Client::get_environment`](crate::Client::get_environment)).
+    /// into the path — see [`Environments::get`](crate::Environments::get)).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment_id: Option<String>,
     /// Output only. The current status of the trigger.

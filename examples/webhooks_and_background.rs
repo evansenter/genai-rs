@@ -170,17 +170,25 @@ async fn environment_lifecycle(
     request: &CreateEnvironmentRequest,
 ) -> Result<(), Box<dyn Error>> {
     println!("\n--- Environment ---");
-    let created = client.create_environment(request).await?;
+    let created = client.environments().create(request).await?;
     let id = created
         .id
         .filter(|id| !id.is_empty())
-        .ok_or("create_environment returned no ID")?;
+        .ok_or("environments.create returned no ID")?;
     println!("Created {id}");
 
     let result = async {
-        let listed = client.list_environments(Some(10), None).await?;
-        println!("Environments visible: {}", listed.environments.len());
-        let fetched = client.get_environment(&id).await?;
+        let listed = client
+            .environments()
+            .list()
+            .with_page_size(10)
+            .send()
+            .await?;
+        println!(
+            "Environments on the first page: {}",
+            listed.environments.len()
+        );
+        let fetched = client.environments().get(&id).await?;
         println!(
             "Fetched: status {:?}, {:?} file(s), {:?} bytes",
             fetched.status, fetched.file_count, fetched.size_bytes
@@ -190,7 +198,7 @@ async fn environment_lifecycle(
     .await;
 
     // Environments expire on their own, but repeated runs would pile up.
-    client.delete_environment(&id).await?;
+    client.environments().delete(&id).await?;
     println!("Deleted {id}");
     Ok(result?)
 }

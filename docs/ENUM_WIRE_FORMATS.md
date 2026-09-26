@@ -327,6 +327,24 @@ Gemini API but it is available on the Gemini Enterprise Agent Platform").
 probe, int64 counts arrived as protobuf-JSON strings and timestamps as ISO 8601
 with an offset.
 
+Verified live 2026-09-26 (list paging):
+
+- `GET /v1beta/environments` returns the newest environment first, 50 per
+  page by default (`page_size=1000` returned all 111 on the key in one page).
+  A page can be short or empty while a `next_page_token` remains: at
+  `page_size=1` one page mid-list was `{"environments": [], "next_page_token":
+  ...}`, and at the default size the first page held 49. The last page omits
+  the token. Tokens are URL-safe base64.
+- `GET /v1beta/environments/{id}/files/{path}` honors `page_size`; its
+  `next_page_token` is a decimal offset (`"1"`, `"2"`, ...) and is omitted on
+  the last page. A token sent without the `recursive=true` of the first
+  request answers `{}`, so `recursive` must ride on every page. A
+  non-numeric token is `400` (`Invalid page_token.`), and an offset past the
+  end is `{}`.
+- Uploading to an existing path without `overwrite=true` fails on the
+  finalizing request, after the bytes are sent: `409` with
+  `{"error": {"message": "Requested entity already exists", "code": "aborted"}}`.
+
 ### TriggerStatus and TriggerExecutionStatus
 
 | Enum | Wire values |

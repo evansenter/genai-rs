@@ -140,11 +140,17 @@ Environments are also first-class resources. Create one up front, reference
 its id from many interactions, and delete it when done. The full lifecycle
 works on a standard API key.
 
-```rust,ignore
-use genai_rs::{CreateEnvironmentRequest, EnvironmentFileUpload, EnvironmentSource};
+```rust,no_run
+use futures_util::TryStreamExt;
+use genai_rs::{
+    CreateEnvironmentRequest, Environment, EnvironmentFile, EnvironmentFileUpload,
+    EnvironmentSource,
+};
 
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let env = client
-    .create_environment(
+    .environments()
+    .create(
         &CreateEnvironmentRequest::new()
             .add_source(EnvironmentSource::inline("/workspace/.env", "MODE=ci")),
     )
@@ -152,21 +158,31 @@ let env = client
 let env_id = env.id.clone().expect("create returns an id");
 
 // Put a file in before a run, and list what the agent left afterwards
-client
-    .upload_environment_file(&env_id, "data/input.csv", b"a,b\n1,2\n".to_vec(), "text/csv",
-        EnvironmentFileUpload { overwrite: true, ..Default::default() })
+let upload = EnvironmentFileUpload::new(b"a,b\n1,2\n".to_vec(), "text/csv").with_overwrite(true);
+client.environments().files().upload(&env_id, "data/input.csv", upload).await?;
+let files: Vec<EnvironmentFile> = client
+    .environments()
+    .files()
+    .list(&env_id, "") // "" is the root
+    .with_recursive(true)
+    .items()
+    .try_collect()
     .await?;
-let files = client.list_environment_files(&env_id, "", true, None, None).await?; // path, recursive
 
 // Fork it, files included
 let fork = client
-    .create_environment(&CreateEnvironmentRequest::from_environment(&env_id))
+    .environments()
+    .create(&CreateEnvironmentRequest::from_environment(&env_id))
     .await?;
 
-let fetched = client.get_environment(&env_id).await?;
+let fetched = client.environments().get(&env_id).await?;
 println!("status={:?} files={:?}", fetched.status, fetched.file_count);
-let page = client.list_environments(Some(10), None).await?;
-client.delete_environment(&env_id).await?;
+let page = client.environments().list().with_page_size(10).send().await?;
+let all: Vec<Environment> = client.environments().list().items().try_collect().await?;
+client.environments().delete(&env_id).await?;
+# let _ = (files, fork, page, all);
+# Ok(())
+# }
 ```
 
 Environment file paths are relative to the root (`""` lists the root), and

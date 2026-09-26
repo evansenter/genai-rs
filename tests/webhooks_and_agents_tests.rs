@@ -702,9 +702,9 @@ async fn test_antigravity_config_accepted() {
         // Print both arms like the inline-environment probe: the
         // response-side environment_id form is unobserved, and a 404 here
         // is exactly the signal that the prefix assumption is wrong.
-        match client.delete_environment(bare_id).await {
+        match client.environments().delete(bare_id).await {
             Ok(()) => println!("Deleted environment {bare_id}"),
-            Err(e) => println!("delete_environment({bare_id}) failed (tolerated): {e}"),
+            Err(e) => println!("environments.delete({bare_id}) failed (tolerated): {e}"),
         }
     }
 }
@@ -787,9 +787,9 @@ async fn test_environment_crud_lifecycle() {
     // un-retried create) because environments expire on their own, bounding
     // the leak, while an un-retried create would flake the whole lifecycle.
     let created = crate::retry_request!([client, request] => {
-        client.create_environment(&request).await
+        client.environments().create(&request).await
     })
-    .expect("create_environment");
+    .expect("environments.create");
     println!(
         "Created environment: id={:?} status={:?}",
         created.id, created.status
@@ -799,8 +799,8 @@ async fn test_environment_crud_lifecycle() {
         // (until it expires). Name it loudly like the trigger and example
         // siblings instead of a bare expect.
         panic!(
-            "create_environment returned no ID (protocol violation) — the container is \
-             leaked; hunt it via list_environments"
+            "environments.create returned no ID (protocol violation) — the container is \
+             leaked; hunt it via environments.list"
         )
     });
 
@@ -812,27 +812,64 @@ async fn test_environment_crud_lifecycle() {
     let checks = async {
         // Get: counts arrive as protobuf-JSON strings and must parse.
         let fetched = crate::retry_request!([client, created_id] => {
-            client.get_environment(&created_id).await
+            client.environments().get(&created_id).await
         })
-        .expect("get_environment");
+        .expect("environments.get");
         assert_eq!(fetched.id.as_deref(), Some(created_id.as_str()));
         assert!(
             fetched.file_count.is_some(),
             "file_count should deserialize from the string wire form: {fetched:?}"
         );
 
-        // List: the created environment must appear (first page is enough —
-        // environments expire, so the list stays small).
+        // List: the newest environment comes first (live 2026-09-26), so the
+        // first page is enough.
         let listed = crate::retry_request!([client] => {
-            client.list_environments(Some(50), None).await
+            client.environments().list().with_page_size(50).send().await
         })
-        .expect("list_environments");
+        .expect("environments.list");
         assert!(
             listed
                 .environments
                 .iter()
                 .any(|e| e.id.as_deref() == Some(created_id.as_str())),
             "created environment missing from list"
+        );
+
+        // Paging: at one per page the stream still reaches it. Live pages
+        // can be empty mid-list while a token remains (2026-09-26), which
+        // the stream must follow rather than stop on. Bounded: the key can
+        // hold many environments, and other tests create them concurrently.
+        let pages: Vec<_> = crate::retry_request!([client] => {
+            client
+                .environments()
+                .list()
+                .with_page_size(1)
+                .pages()
+                .take(25)
+                .try_collect::<Vec<_>>()
+                .await
+        })
+        .expect("environments.list pages");
+        println!(
+            "Listed {} page(s) at page_size=1; page sizes {:?}",
+            pages.len(),
+            pages
+                .iter()
+                .map(|p| p.environments.len())
+                .collect::<Vec<_>>()
+        );
+        assert!(pages.len() >= 2, "expected several pages, got {pages:?}");
+        assert!(
+            pages.iter().all(|p| p.environments.len() <= 1),
+            "page_size=1 must hold on every page"
+        );
+        assert!(
+            pages
+                .iter()
+                .flat_map(|p| &p.environments)
+                .any(|e| e.id.as_deref() == Some(created_id.as_str())),
+            "created environment missing from the first {} pages",
+            pages.len()
         );
     };
     let outcome = std::panic::AssertUnwindSafe(checks);
@@ -843,12 +880,12 @@ async fn test_environment_crud_lifecycle() {
     // the diagnosis this test exists to produce — re-raise it before
     // judging the delete, so a double failure reports the real one.
     let deleted = crate::retry_request!([client, created_id] => {
-        client.delete_environment(&created_id).await
+        client.environments().delete(&created_id).await
     });
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }
-    deleted.expect("delete_environment");
+    deleted.expect("environments.delete");
     // Confirm gone with the same rigor as the trigger probe below: pin the
     // positive form — a deleted environment gets a 404 (verified live
     // 2026-08-09). A broad 4xx would also admit outcomes that say nothing
@@ -856,7 +893,7 @@ async fn test_environment_crud_lifecycle() {
     // Retry transients first so a 503 becomes a real answer rather than a
     // panic.
     let gone = crate::retry_request!([client, created_id] => {
-        client.get_environment(&created_id).await
+        client.environments().get(&created_id).await
     });
     match gone {
         Err(genai_rs::GenaiError::Api {

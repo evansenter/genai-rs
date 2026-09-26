@@ -7,7 +7,7 @@
 mod common;
 
 use common::get_client;
-use futures_util::FutureExt;
+use futures_util::{FutureExt, StreamExt, TryStreamExt};
 use genai_rs::{
     Client, CreateEnvironmentRequest, EnvironmentFileType, EnvironmentFileUpload,
     EnvironmentSource, GenaiError,
@@ -25,7 +25,7 @@ where
     let outcome = AssertUnwindSafe(body(ids.clone())).catch_unwind().await;
     let created: Vec<String> = ids.lock().expect("id list poisoned").clone();
     for id in created {
-        match client.delete_environment(&id).await {
+        match client.environments().delete(&id).await {
             Ok(())
             | Err(GenaiError::Api {
                 status_code: 404, ..
@@ -50,26 +50,24 @@ async fn test_upload_list_and_fork() {
         let client = client.clone();
         async move {
             let env = client
-                .create_environment(
+                .environments()
+                .create(
                     &CreateEnvironmentRequest::new()
                         .add_source(EnvironmentSource::inline("/etc/motd", "hello")),
                 )
                 .await
-                .expect("create_environment failed");
+                .expect("environments.create failed");
             let env_id = env.id.clone().expect("environment has no id");
             ids.lock().unwrap().push(env_id.clone());
 
             let content = b"hello from genai-rs\n".to_vec();
             let written = client
-                .upload_environment_file(
+                .environments()
+                .files()
+                .upload(
                     &env_id,
                     "genai-rs/hello.txt",
-                    content.clone(),
-                    "text/plain",
-                    EnvironmentFileUpload {
-                        overwrite: true,
-                        ..Default::default()
-                    },
+                    EnvironmentFileUpload::new(content.clone(), "text/plain").with_overwrite(true),
                 )
                 .await
                 .expect("upload failed");
@@ -78,8 +76,34 @@ async fn test_upload_list_and_fork() {
             assert_eq!(file.file_type, Some(EnvironmentFileType::File));
             assert_eq!(file.size_bytes, Some(content.len() as i64));
 
+            // Without `with_overwrite`, writing over it is a 409 (from the
+            // finalizing request, live 2026-09-26).
+            let conflict = client
+                .environments()
+                .files()
+                .upload(
+                    &env_id,
+                    "genai-rs/hello.txt",
+                    EnvironmentFileUpload::new(content.clone(), "text/plain"),
+                )
+                .await;
+            assert!(
+                matches!(
+                    conflict,
+                    Err(GenaiError::Api {
+                        status_code: 409,
+                        ..
+                    })
+                ),
+                "{conflict:?}"
+            );
+
             let root = client
-                .list_environment_files(&env_id, "", true, None, None)
+                .environments()
+                .files()
+                .list(&env_id, "")
+                .with_recursive(true)
+                .send()
                 .await
                 .expect("recursive root listing failed");
             assert!(
@@ -92,13 +116,19 @@ async fn test_upload_list_and_fork() {
             );
 
             let single = client
-                .list_environment_files(&env_id, "genai-rs/hello.txt", false, None, None)
+                .environments()
+                .files()
+                .list(&env_id, "genai-rs/hello.txt")
+                .send()
                 .await
                 .expect("single-file listing failed");
             assert_eq!(single.files.len(), 1);
 
             let missing = client
-                .list_environment_files(&env_id, "no/such/path", false, None, None)
+                .environments()
+                .files()
+                .list(&env_id, "no/such/path")
+                .send()
                 .await;
             assert!(matches!(
                 missing,
@@ -109,7 +139,8 @@ async fn test_upload_list_and_fork() {
             ));
 
             let fork = client
-                .create_environment(&CreateEnvironmentRequest::from_environment(&env_id))
+                .environments()
+                .create(&CreateEnvironmentRequest::from_environment(&env_id))
                 .await
                 .expect("fork failed");
             let fork_id = fork.id.clone().expect("fork has no id");
@@ -117,10 +148,109 @@ async fn test_upload_list_and_fork() {
             assert_ne!(fork_id, env_id);
 
             let forked = client
-                .list_environment_files(&fork_id, "genai-rs/hello.txt", false, None, None)
+                .environments()
+                .files()
+                .list(&fork_id, "genai-rs/hello.txt")
+                .send()
                 .await
                 .expect("fork does not contain the uploaded file");
             assert_eq!(forked.files.len(), 1);
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_file_list_streams_follow_every_page() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    with_environments(&client, |ids| {
+        let client = client.clone();
+        async move {
+            // A directory and three files: four entries under a recursive
+            // root listing.
+            let request = ["a", "b", "c"].into_iter().fold(
+                CreateEnvironmentRequest::new(),
+                |request, name| {
+                    request.add_source(EnvironmentSource::inline(
+                        format!("/paging/{name}.txt"),
+                        name,
+                    ))
+                },
+            );
+            let env = client
+                .environments()
+                .create(&request)
+                .await
+                .expect("environments.create failed");
+            let env_id = env.id.clone().expect("environment has no id");
+            ids.lock().unwrap().push(env_id.clone());
+
+            let whole = client
+                .environments()
+                .files()
+                .list(&env_id, "")
+                .with_recursive(true)
+                .send()
+                .await
+                .expect("one-page listing failed");
+            let expected: Vec<Option<String>> =
+                whole.files.iter().map(|f| f.path.clone()).collect();
+            println!("One page: {expected:?}");
+            assert!(
+                expected.len() >= 4,
+                "the sources are missing from {expected:?}"
+            );
+            assert!(
+                whole.next_page_token.is_none(),
+                "{:?}",
+                whole.next_page_token
+            );
+
+            // One entry per page. `recursive` must be resent with every page
+            // token: live, a token without it lists something else (`{}`).
+            let pages: Vec<_> = client
+                .environments()
+                .files()
+                .list(&env_id, "")
+                .with_recursive(true)
+                .with_page_size(1)
+                .pages()
+                .take(50)
+                .try_collect()
+                .await
+                .expect("paged listing failed");
+            println!("Listed {} page(s)", pages.len());
+            assert!(
+                pages.iter().all(|p| p.files.len() <= 1),
+                "page_size=1 must hold on every page"
+            );
+            let paged: Vec<Option<String>> = pages
+                .iter()
+                .flat_map(|p| &p.files)
+                .map(|f| f.path.clone())
+                .collect();
+            assert_eq!(paged, expected);
+            let last = pages.last().expect("at least one page");
+            assert!(last.next_page_token.is_none(), "{:?}", last.next_page_token);
+
+            let items: Vec<_> = client
+                .environments()
+                .files()
+                .list(&env_id, "")
+                .with_recursive(true)
+                .with_page_size(2)
+                .items()
+                .take(50)
+                .try_collect()
+                .await
+                .expect("streamed listing failed");
+            let streamed: Vec<Option<String>> = items.into_iter().map(|f| f.path).collect();
+            assert_eq!(streamed, expected);
         }
     })
     .await;

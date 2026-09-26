@@ -246,7 +246,7 @@ async fn test_credentials_reach_sandbox_and_egress() {
                             .await;
                     let _ = client.delete_interaction(&id).await;
                     if let Some(env_id) = created.environment_id.as_deref() {
-                        let _ = client.delete_environment(env_id).await;
+                        let _ = client.environments().delete(env_id).await;
                     }
                     let done = outcome.unwrap_or_else(|panic| std::panic::resume_unwind(panic));
 

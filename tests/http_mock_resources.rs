@@ -204,42 +204,41 @@ fn every_call(c: &genai_rs::Client) -> Vec<(&'static str, Returns, Call<'_>)> {
         ("agents.list", Resource, call(c.agents().list().send())),
         ("agents.delete", Nothing, call(c.agents().delete("a"))),
         (
-            "create_environment",
+            "environments.create",
             Resource,
             call(async move {
-                c.create_environment(&CreateEnvironmentRequest::from_environment("env-0"))
+                c.environments()
+                    .create(&CreateEnvironmentRequest::from_environment("env-0"))
                     .await
             }),
         ),
         (
-            "get_environment",
+            "environments.get",
             Resource,
-            call(c.get_environment("env-1")),
+            call(c.environments().get("env-1")),
         ),
         (
-            "list_environments",
+            "environments.list",
             Resource,
-            call(c.list_environments(None, None)),
+            call(c.environments().list().send()),
         ),
         (
-            "delete_environment",
+            "environments.delete",
             Nothing,
-            call(c.delete_environment("env-1")),
+            call(c.environments().delete("env-1")),
         ),
         (
-            "list_environment_files",
+            "environments.files.list",
             Resource,
-            call(c.list_environment_files("env-1", "", false, None, None)),
+            call(c.environments().files().list("env-1", "").send()),
         ),
         (
-            "upload_environment_file",
+            "environments.files.upload",
             Resource,
-            call(c.upload_environment_file(
+            call(c.environments().files().upload(
                 "env-1",
                 "a.txt",
-                b"x".to_vec(),
-                "text/plain",
-                EnvironmentFileUpload::default(),
+                EnvironmentFileUpload::new(b"x".to_vec(), "text/plain"),
             )),
         ),
         (
@@ -1320,7 +1319,7 @@ async fn environment_endpoints_send_the_documented_requests() {
                         .with_network(NetworkConfig::allowlist(vec![AllowlistEntry::new(
                             "pypi.org",
                         )]));
-                    c.create_environment(&request).await
+                    c.environments().create(&request).await
                 },
             ),
             // Fork: the whole body is the source environment.
@@ -1329,7 +1328,8 @@ async fn environment_endpoints_send_the_documented_requests() {
                 "/v1beta/environments",
                 Some(json!({"from_environment": "env-1"})),
                 async move {
-                    c.create_environment(&CreateEnvironmentRequest::from_environment("env-1"))
+                    c.environments()
+                        .create(&CreateEnvironmentRequest::from_environment("env-1"))
                         .await
                 },
             ),
@@ -1338,53 +1338,75 @@ async fn environment_endpoints_send_the_documented_requests() {
                 "/v1beta/environments",
                 Some(json!({"network": "disabled"})),
                 async move {
-                    c.create_environment(
-                        &CreateEnvironmentRequest::new().with_network(NetworkConfig::Disabled),
-                    )
-                    .await
+                    c.environments()
+                        .create(
+                            &CreateEnvironmentRequest::new().with_network(NetworkConfig::Disabled),
+                        )
+                        .await
                 },
             ),
             wire(
                 "GET",
                 "/v1beta/environments/env-1",
                 None,
-                c.get_environment("env-1"),
+                c.environments().get("env-1"),
             ),
             wire(
                 "GET",
                 "/v1beta/environments",
                 None,
-                c.list_environments(None, None),
+                c.environments().list().send(),
             ),
             wire(
                 "GET",
                 "/v1beta/environments?page_size=50&page_token=p%2B2",
                 None,
-                c.list_environments(Some(50), Some("p+2")),
+                c.environments()
+                    .list()
+                    .with_page_size(50)
+                    .with_page_token("p+2")
+                    .send(),
             ),
             wire(
                 "DELETE",
                 "/v1beta/environments/env-1",
                 None,
-                c.delete_environment("env-1"),
+                c.environments().delete("env-1"),
             ),
             wire(
                 "GET",
                 "/v1beta/environments/env-1/files/",
                 None,
-                c.list_environment_files("env-1", "", false, None, None),
+                c.environments().files().list("env-1", "").send(),
             ),
             wire(
                 "GET",
                 "/v1beta/environments/env-1/files/src/",
                 None,
-                c.list_environment_files("env-1", "src/", false, None, None),
+                c.environments().files().list("env-1", "src/").send(),
+            ),
+            // `with_recursive(false)` sends nothing, like the default.
+            wire(
+                "GET",
+                "/v1beta/environments/env-1/files/src",
+                None,
+                c.environments()
+                    .files()
+                    .list("env-1", "src")
+                    .with_recursive(false)
+                    .send(),
             ),
             wire(
                 "GET",
                 "/v1beta/environments/env-1/files/src/my%20file.py?page_size=5&page_token=t&recursive=true",
                 None,
-                c.list_environment_files("env-1", "/src/my file.py", true, Some(5), Some("t")),
+                c.environments()
+                    .files()
+                    .list("env-1", "/src/my file.py")
+                    .with_recursive(true)
+                    .with_page_size(5)
+                    .with_page_token("t")
+                    .send(),
             ),
         ],
     )
@@ -1414,7 +1436,7 @@ async fn environment_response_parses_string_counts_and_preserves_unknowns() {
     )])
     .await;
 
-    let env = stub.client().get_environment("env-1").await.unwrap();
+    let env = stub.client().environments().get("env-1").await.unwrap();
 
     assert_eq!(env.id.as_deref(), Some("38aac1ae7f30fe9bd67afe42382ea041"));
     let status = env.status.as_ref().unwrap();
@@ -1462,7 +1484,7 @@ async fn environment_list_parses_pages_and_the_empty_object() {
     .await;
     let client = stub.client();
 
-    let list = client.list_environments(None, None).await.unwrap();
+    let list = client.environments().list().send().await.unwrap();
     let statuses: Vec<_> = list
         .environments
         .iter()
@@ -1474,8 +1496,91 @@ async fn environment_list_parses_pages_and_the_empty_object() {
     );
     assert_eq!(list.next_page_token.as_deref(), Some("p2"));
 
-    let empty = client.list_environments(None, None).await.unwrap();
+    let empty = client.environments().list().send().await.unwrap();
     assert!(empty.environments.is_empty());
+}
+
+/// The live shape at `page_size=1` (2026-09-26): an empty page with a
+/// token mid-list, and no token on the last page.
+#[tokio::test]
+async fn environment_list_items_follow_every_page_with_the_page_size() {
+    let stub = Stub::replying(vec![
+        Reply::json(
+            200,
+            json!({"environments": [{"id": "e1"}], "next_page_token": "cjUKD4IB"}),
+        ),
+        Reply::json(
+            200,
+            json!({"environments": [], "next_page_token": "chUKDoIB"}),
+        ),
+        Reply::json(200, json!({"environments": [{"id": "e2"}]})),
+    ])
+    .await;
+    let client = stub.client();
+
+    let environments: Vec<genai_rs::Environment> = client
+        .environments()
+        .list()
+        .with_page_size(1)
+        .items()
+        .try_collect()
+        .await
+        .unwrap();
+
+    let ids: Vec<_> = environments
+        .iter()
+        .filter_map(|e| e.id.as_deref())
+        .collect();
+    assert_eq!(ids, ["e1", "e2"]);
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/environments?page_size=1",
+            "/v1beta/environments?page_size=1&page_token=cjUKD4IB",
+            "/v1beta/environments?page_size=1&page_token=chUKDoIB",
+        ]
+    );
+}
+
+/// Live, the file listing's token is an offset, and a page token sent
+/// without `recursive=true` lists something else (`{}`, 2026-09-26), so the
+/// flag must ride on every page with the path and page size.
+#[tokio::test]
+async fn environment_file_items_resend_the_path_recursive_and_page_size_on_every_page() {
+    let stub = Stub::replying(vec![
+        Reply::json(
+            200,
+            json!({
+                "files": [{"path": "probe", "type": "DIRECTORY"}, {"path": "probe/a.txt", "type": "FILE"}],
+                "next_page_token": "2"
+            }),
+        ),
+        Reply::json(200, json!({"files": [{"path": "probe/b c.txt", "type": "FILE"}]})),
+    ])
+    .await;
+    let client = stub.client();
+
+    let files: Vec<genai_rs::EnvironmentFile> = client
+        .environments()
+        .files()
+        .list("env/1", "dir name")
+        .with_recursive(true)
+        .with_page_size(2)
+        .items()
+        .try_collect()
+        .await
+        .unwrap();
+
+    let paths: Vec<_> = files.iter().filter_map(|f| f.path.as_deref()).collect();
+    assert_eq!(paths, ["probe", "probe/a.txt", "probe/b c.txt"]);
+    // The owned environment ID and path are encoded into every page's path.
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/environments/env%2F1/files/dir%20name?page_size=2&recursive=true",
+            "/v1beta/environments/env%2F1/files/dir%20name?page_size=2&page_token=2&recursive=true",
+        ]
+    );
 }
 
 #[cfg(not(feature = "strict-unknown"))]
@@ -1497,7 +1602,11 @@ async fn environment_file_list_parses_uppercase_types_and_preserves_unknowns() {
 
     let list = stub
         .client()
-        .list_environment_files("env-1", "", true, None, None)
+        .environments()
+        .files()
+        .list("env-1", "")
+        .with_recursive(true)
+        .send()
         .await
         .unwrap();
 
@@ -1519,7 +1628,7 @@ async fn environment_file_list_parses_uppercase_types_and_preserves_unknowns() {
 }
 
 #[tokio::test]
-async fn upload_environment_file_starts_a_session_then_finalizes() {
+async fn environment_file_upload_starts_a_session_then_finalizes() {
     let stub = Stub::replying(vec![
         Reply::json(200, json!({})).header("x-goog-upload-url", "{base}/upload-session/env-1"),
         Reply::json(
@@ -1531,15 +1640,14 @@ async fn upload_environment_file_starts_a_session_then_finalizes() {
 
     let written = stub
         .client()
-        .upload_environment_file(
+        .environments()
+        .files()
+        .upload(
             "env-1",
             "data/in.csv",
-            b"a,b\n1,2\n".to_vec(),
-            "text/csv",
-            EnvironmentFileUpload {
-                overwrite: true,
-                extract: true,
-            },
+            EnvironmentFileUpload::new(b"a,b\n1,2\n".to_vec(), "text/csv")
+                .with_overwrite(true)
+                .with_extract(true),
         )
         .await
         .unwrap();
@@ -1577,7 +1685,7 @@ async fn upload_environment_file_starts_a_session_then_finalizes() {
 }
 
 #[tokio::test]
-async fn upload_environment_file_without_options_sends_no_query() {
+async fn environment_file_upload_without_options_sends_no_query() {
     let stub = Stub::replying(vec![
         Reply::json(200, json!({})).header("x-goog-upload-url", "{base}/upload-session/2"),
         Reply::json(200, json!({"files": []})),
@@ -1585,12 +1693,12 @@ async fn upload_environment_file_without_options_sends_no_query() {
     .await;
 
     stub.client()
-        .upload_environment_file(
+        .environments()
+        .files()
+        .upload(
             "env-1",
             "/notes/a b.txt",
-            b"hi".to_vec(),
-            "text/plain",
-            EnvironmentFileUpload::default(),
+            EnvironmentFileUpload::new(b"hi".to_vec(), "text/plain"),
         )
         .await
         .unwrap();
@@ -1603,17 +1711,17 @@ async fn upload_environment_file_without_options_sends_no_query() {
 }
 
 #[tokio::test]
-async fn upload_environment_file_without_session_url_is_malformed_response() {
+async fn environment_file_upload_without_session_url_is_malformed_response() {
     let stub = Stub::replying(vec![Reply::json(200, json!({}))]).await;
 
     let err = stub
         .client()
-        .upload_environment_file(
+        .environments()
+        .files()
+        .upload(
             "env-1",
             "a.txt",
-            b"hi".to_vec(),
-            "text/plain",
-            EnvironmentFileUpload::default(),
+            EnvironmentFileUpload::new(b"hi".to_vec(), "text/plain"),
         )
         .await
         .unwrap_err();
@@ -1623,49 +1731,89 @@ async fn upload_environment_file_without_session_url_is_malformed_response() {
     assert_eq!(stub.requests().len(), 1, "no bytes without a session");
 }
 
+/// A missing environment is rejected at the start (live 2026-09-26).
 #[tokio::test]
-async fn upload_environment_file_start_rejection_stops_before_the_bytes() {
+async fn environment_file_upload_start_rejection_stops_before_the_bytes() {
     let stub = Stub::replying(vec![Reply::json(
-        409,
-        json!({"error": {"message": "File already exists: a.txt", "code": "already_exists"}}),
+        404,
+        json!({"error": {"message": "Requested entity was not found.", "code": "not_found"}}),
     )])
     .await;
 
     let err = stub
         .client()
-        .upload_environment_file(
+        .environments()
+        .files()
+        .upload(
             "env-1",
             "a.txt",
-            b"hi".to_vec(),
-            "text/plain",
-            EnvironmentFileUpload::default(),
+            EnvironmentFileUpload::new(b"hi".to_vec(), "text/plain"),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(&err, GenaiError::Api { status_code: 404, message, .. }
+            if message == "not_found: Requested entity was not found."),
+        "{err:?}"
+    );
+    assert_eq!(stub.requests().len(), 1);
+}
+
+/// An existing file without `overwrite` is rejected only when the bytes are
+/// finalized (live 2026-09-26).
+#[tokio::test]
+async fn environment_file_upload_conflict_surfaces_from_the_finalizing_request() {
+    let stub = Stub::replying(vec![
+        Reply::json(200, json!({})).header("x-goog-upload-url", "{base}/upload-session/3"),
+        Reply::json(
+            409,
+            json!({"error": {"message": "Requested entity already exists", "code": "aborted"}}),
+        ),
+    ])
+    .await;
+
+    let err = stub
+        .client()
+        .environments()
+        .files()
+        .upload(
+            "env-1",
+            "a.txt",
+            EnvironmentFileUpload::new(b"hi".to_vec(), "text/plain"),
         )
         .await
         .unwrap_err();
 
     assert!(
         matches!(&err, GenaiError::Api { status_code: 409, message, .. }
-            if message == "already_exists: File already exists: a.txt"),
+            if message == "aborted: Requested entity already exists"),
         "{err:?}"
     );
-    assert_eq!(stub.requests().len(), 1);
+    let [start, finish] = stub.requests().try_into().unwrap();
+    assert_eq!(
+        start.target,
+        "/upload/v1beta/environments/env-1/files/a.txt"
+    );
+    assert_eq!(finish.target, "/upload-session/3");
+    assert_eq!(finish.body, b"hi");
 }
 
 /// `RequestBuilder::header` would defer an unheaderable value to `send()`
 /// as `GenaiError::Http`, which `is_retryable()` calls transient, so a retry
 /// loop would spin on input that can never succeed.
 #[tokio::test]
-async fn upload_environment_file_rejects_an_unheaderable_mime_type_as_invalid_input() {
+async fn environment_file_upload_rejects_an_unheaderable_mime_type_as_invalid_input() {
     let stub = Stub::replying(vec![]).await;
 
     let err = stub
         .client()
-        .upload_environment_file(
+        .environments()
+        .files()
+        .upload(
             "env-1",
             "a.txt",
-            b"x".to_vec(),
-            "text/plain\nX-Injected: 1",
-            EnvironmentFileUpload::default(),
+            EnvironmentFileUpload::new(b"x".to_vec(), "text/plain\nX-Injected: 1"),
         )
         .await
         .unwrap_err();
@@ -2950,13 +3098,13 @@ async fn reserved_characters_in_ids_are_percent_encoded() {
                 "GET",
                 "/v1beta/environments/e%231",
                 None,
-                c.get_environment("e#1"),
+                c.environments().get("e#1"),
             ),
             wire(
                 "GET",
                 "/v1beta/environments/e%2F1/files/dir%20name/a%3Fb",
                 None,
-                c.list_environment_files("e/1", "dir name/a?b", false, None, None),
+                c.environments().files().list("e/1", "dir name/a?b").send(),
             ),
             wire(
                 "GET",
@@ -3035,8 +3183,7 @@ async fn empty_and_dot_segment_ids_are_rejected_before_any_request() {
     let stub = Stub::replying(vec![]).await;
     let client = stub.client();
     let c = &client;
-    let data = || b"x".to_vec();
-    let plain = EnvironmentFileUpload::default();
+    let plain = |data: &[u8]| EnvironmentFileUpload::new(data.to_vec(), "text/plain");
     let unnamed_file: FileMetadata =
         serde_json::from_value(json!({"name": "abc", "mimeType": "text/plain"})).unwrap();
     let unnamed_file = &unnamed_file;
@@ -3077,31 +3224,50 @@ async fn empty_and_dot_segment_ids_are_rejected_before_any_request() {
         ),
         ("agents.get", call(c.agents().get(""))),
         ("agents.delete", call(c.agents().delete("%2e%2e"))),
-        ("get_environment", call(c.get_environment(""))),
-        ("delete_environment", call(c.delete_environment(".."))),
+        ("environments.get", call(c.environments().get(""))),
+        ("environments.delete", call(c.environments().delete(".."))),
         (
-            "list_environment_files id",
-            call(c.list_environment_files("", "", false, None, None)),
+            "environments.files.list id",
+            call(c.environments().files().list("", "").send()),
         ),
         (
-            "list_environment_files ..",
-            call(c.list_environment_files("env-1", "a/../b", false, None, None)),
+            "environments.files.list ..",
+            call(c.environments().files().list("env-1", "a/../b").send()),
         ),
         (
-            "list_environment_files .",
-            call(c.list_environment_files("env-1", "./a", false, None, None)),
+            "environments.files.list .",
+            call(c.environments().files().list("env-1", "./a").send()),
         ),
         (
-            "upload_environment_file id",
-            call(c.upload_environment_file("", "a.txt", data(), "text/plain", plain)),
+            "environments.files.list items",
+            call(
+                c.environments()
+                    .files()
+                    .list("env-1", "../a")
+                    .with_recursive(true)
+                    .items()
+                    .try_collect::<Vec<_>>(),
+            ),
         ),
         (
-            "upload_environment_file ..",
-            call(c.upload_environment_file("env-1", "../a.txt", data(), "text/plain", plain)),
+            "environments.files.upload id",
+            call(c.environments().files().upload("", "a.txt", plain(b"x"))),
         ),
         (
-            "upload_environment_file empty data",
-            call(c.upload_environment_file("env-1", "a.txt", Vec::new(), "text/plain", plain)),
+            "environments.files.upload ..",
+            call(
+                c.environments()
+                    .files()
+                    .upload("env-1", "../a.txt", plain(b"x")),
+            ),
+        ),
+        (
+            "environments.files.upload empty data",
+            call(
+                c.environments()
+                    .files()
+                    .upload("env-1", "a.txt", plain(b"")),
+            ),
         ),
         ("get_credential", call(c.get_credential(""))),
         (
@@ -3393,19 +3559,37 @@ async fn empty_object_parses_as_an_empty_last_page_on_every_list_endpoint() {
             }),
         ),
         (
-            "list_environments",
+            "environments.list",
             Box::pin(async move {
-                let l = c.list_environments(None, None).await?;
+                let l = c.environments().list().send().await?;
                 Ok((l.environments.len(), l.next_page_token))
             }),
         ),
         (
-            "list_environment_files",
+            "environments.list items",
             Box::pin(async move {
-                let l = c
-                    .list_environment_files("env-1", "", false, None, None)
-                    .await?;
+                let items: Vec<_> = c.environments().list().items().try_collect().await?;
+                Ok((items.len(), None))
+            }),
+        ),
+        (
+            "environments.files.list",
+            Box::pin(async move {
+                let l = c.environments().files().list("env-1", "").send().await?;
                 Ok((l.files.len(), l.next_page_token))
+            }),
+        ),
+        (
+            "environments.files.list items",
+            Box::pin(async move {
+                let items: Vec<_> = c
+                    .environments()
+                    .files()
+                    .list("env-1", "")
+                    .items()
+                    .try_collect()
+                    .await?;
+                Ok((items.len(), None))
             }),
         ),
         (
@@ -3494,12 +3678,12 @@ async fn base_url_prefix_applies_to_resource_and_upload_endpoints() {
 
     client.webhooks().list().send().await.unwrap();
     client
-        .upload_environment_file(
+        .environments()
+        .files()
+        .upload(
             "env-1",
             "a.txt",
-            b"hi".to_vec(),
-            "text/plain",
-            EnvironmentFileUpload::default(),
+            EnvironmentFileUpload::new(b"hi".to_vec(), "text/plain"),
         )
         .await
         .unwrap();

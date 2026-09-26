@@ -2,9 +2,12 @@
 
 Each `/v1beta` resource is reached through a handle on `Client`:
 `client.agents()` returns an `Agents` handle, `client.webhooks()` a
-`Webhooks` handle and `client.triggers()` a `Triggers` handle, whose methods
-are the resource's verbs. Lists return a builder that ends in `.send()` (one
-page), `.pages()` or `.items()` (every page). The conventions and the paging
+`Webhooks` handle, `client.triggers()` a `Triggers` handle and
+`client.environments()` an `Environments` handle, whose methods are the
+resource's verbs. A nested resource is a plain accessor that binds no ID:
+`client.environments().files()` takes the environment ID in each method, as
+in Python. Lists return a builder that ends in `.send()` (one page),
+`.pages()` or `.items()` (every page). The conventions and the paging
 rules are in
 [Resource handles and list builders](BUILDER_API.md#resource-handles-and-list-builders),
 and the reasoning in D-016 (`DECISIONS.md`).
@@ -55,6 +58,20 @@ become `with_*` setters.
 | `client.triggers.run(trigger_id)` | `client.triggers().run(trigger_id)` |
 | `client.triggers.list_executions(trigger_id, page_size=, page_token=)` | `client.triggers().list_executions(trigger_id).with_page_size(n).with_page_token(t).send()` |
 | (no equivalent) | `client.triggers().list_executions(trigger_id).pages()` / `.items()` |
+| `client.environments.create(sources=, network=)` | `client.environments().create(&CreateEnvironmentRequest::new().add_source(s).with_network(n))` |
+| `client.environments.create(from_environment=)` | `client.environments().create(&CreateEnvironmentRequest::from_environment(id))` |
+| `client.environments.get(id)` | `client.environments().get(id)` |
+| `client.environments.list(page_size=, page_token=)` | `client.environments().list().with_page_size(n).with_page_token(t).send()` |
+| (no equivalent) | `client.environments().list().pages()` / `.items()` |
+| `client.environments.delete(id)` | `client.environments().delete(id)` |
+| `client.environments.files.list(environment, path, recursive=, page_size=, page_token=)` | `client.environments().files().list(environment_id, path).with_recursive(r).with_page_size(n).with_page_token(t).send()` |
+| (no equivalent) | `client.environments().files().list(environment_id, path).pages()` / `.items()` |
+| `client.environments.files.upload(path=, file=, environment_id=, mime_type=, overwrite=, extract=)` | `client.environments().files().upload(environment_id, path, EnvironmentFileUpload::new(data, mime_type).with_overwrite(o).with_extract(x))` |
+| `client.environments.files.download(path=, environment_id=)` | Not modeled yet |
+
+Python's `files.upload` also takes a path or a file object as `file` and
+guesses a missing `mime_type`; `EnvironmentFileUpload` takes the bytes and an
+explicit MIME type.
 
 ## From the `Client` methods (0.10)
 
@@ -81,3 +98,17 @@ A `None` positional argument becomes an omitted setter.
 | `client.delete_trigger(id)` | `client.triggers().delete(id)` |
 | `client.run_trigger(id)` | `client.triggers().run(id)` |
 | `client.list_trigger_executions(id, size, token)` | `client.triggers().list_executions(id).with_page_size(size).with_page_token(token).send()` |
+| `client.create_environment(&request)` | `client.environments().create(&request)` |
+| `client.get_environment(id)` | `client.environments().get(id)` |
+| `client.list_environments(size, token)` | `client.environments().list().with_page_size(size).with_page_token(token).send()` |
+| `client.delete_environment(id)` | `client.environments().delete(id)` |
+
+## Methods added after 0.10
+
+These were on `main` after 0.10 but never released; they moved to handles
+before their first release.
+
+| Before | Now |
+|--------|-----|
+| `client.list_environment_files(env, path, recursive, size, token)` | `client.environments().files().list(env, path).with_recursive(recursive).with_page_size(size).with_page_token(token).send()` |
+| `client.upload_environment_file(env, path, data, mime_type, EnvironmentFileUpload { overwrite, extract })` | `client.environments().files().upload(env, path, EnvironmentFileUpload::new(data, mime_type).with_overwrite(overwrite).with_extract(extract))` |
