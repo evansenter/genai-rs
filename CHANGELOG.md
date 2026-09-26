@@ -59,6 +59,14 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
 - Antigravity: `AgentBehavior` with `AgentBuilder`/`Subagent::with_agent_behavior`,
   `BuiltinTool::ReadUrlContent` (write-capable: network egress),
   `ChatResponse::stop_reason()`, `protocol::{StopReason, Modality, AgentBehavior}`.
+- List envelopes (`AgentListResponse`, `CredentialListResponse`,
+  `EnvironmentListResponse`, `FileSearchStoreListResponse`,
+  `DocumentListResponse`, `ListFilesResponse`, `TriggerListResponse`,
+  `TriggerExecutionListResponse`, `VoiceListResponse`, `WebhookListResponse`)
+  and `SigningSecret` gained a flattened `extra` map, so fields the crate
+  doesn't model yet survive a round trip. All were already
+  `#[non_exhaustive]`, so nothing breaks. `SigningSecret`'s `Debug` prints
+  only the keys of `extra`, never the values.
 
 ### Changed
 
