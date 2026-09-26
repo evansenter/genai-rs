@@ -63,7 +63,8 @@ pub struct StepError {
 /// list of content blocks (text/image). This type models all three shapes and
 /// preserves anything else (numbers, booleans, mixed arrays) in the
 /// [`FunctionResultPayload::Json`] catch-all so no data is lost.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(untagged)]
 #[non_exhaustive]
 pub enum FunctionResultPayload {
     /// A plain string result.
@@ -149,19 +150,6 @@ impl From<String> for FunctionResultPayload {
 impl From<Vec<Content>> for FunctionResultPayload {
     fn from(value: Vec<Content>) -> Self {
         Self::Contents(value)
-    }
-}
-
-impl Serialize for FunctionResultPayload {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Self::Text(t) => serializer.serialize_str(t),
-            Self::Json(v) => v.serialize(serializer),
-            Self::Contents(c) => c.serialize(serializer),
-        }
     }
 }
 

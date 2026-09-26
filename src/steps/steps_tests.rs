@@ -386,6 +386,40 @@ fn test_function_result_payload_roundtrip() {
     }
 }
 
+/// Exact strings: each variant writes its inner value directly, with no
+/// tag. `Json` goes out as whatever it holds (including a string, null or
+/// a content-shaped array), and an empty `Contents` as `[]`.
+#[test]
+fn test_function_result_payload_serialized_strings() {
+    for (payload, expected) in [
+        (FunctionResultPayload::Text(String::new()), r#""""#),
+        (FunctionResultPayload::Json(json!({"a": 1})), r#"{"a":1}"#),
+        (
+            FunctionResultPayload::Json(json!([1, "two"])),
+            r#"[1,"two"]"#,
+        ),
+        (FunctionResultPayload::Json(json!(42)), "42"),
+        (FunctionResultPayload::Json(json!("s")), r#""s""#),
+        (FunctionResultPayload::Json(serde_json::Value::Null), "null"),
+        (
+            FunctionResultPayload::Json(json!([{"type": "text"}])),
+            r#"[{"type":"text"}]"#,
+        ),
+        (FunctionResultPayload::Contents(vec![]), "[]"),
+        (
+            FunctionResultPayload::Contents(vec![Content::text("hi")]),
+            r#"[{"type":"text","text":"hi"}]"#,
+        ),
+    ] {
+        assert_eq!(
+            serde_json::to_string(&payload).unwrap(),
+            expected,
+            "{payload:?}"
+        );
+        assert_eq!(serde_json::to_value(&payload).unwrap(), payload.to_value());
+    }
+}
+
 // =========================================================================
 // processing_* / retrieval_* steps (google-genai 2.21+ / 2.24+ bindings)
 // =========================================================================
