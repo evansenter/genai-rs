@@ -17,6 +17,7 @@ pub use results::{
 pub use video_processing::{VideoProcessing, VideoProcessingBuilder};
 
 use crate::wire_enum::wire_enum;
+use serde::Serialize;
 
 wire_enum! {
     /// Programming language for code execution.
@@ -109,7 +110,8 @@ wire_enum! {
 ///     }
 /// }
 /// ```
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Content {
     /// Text content with optional source annotations.
@@ -123,52 +125,69 @@ pub enum Content {
         /// `Option<String>` because streaming may announce a text block
         /// before any text arrives. For non-streaming responses this is
         /// always `Some`.
+        #[serde(skip_serializing_if = "Option::is_none")]
         text: Option<String>,
         /// Source annotations for portions of the text.
+        #[serde(skip_serializing_if = "crate::serde_util::is_none_or_empty")]
         annotations: Option<Vec<Annotation>>,
     },
     /// Image content
     Image {
         /// Base64-encoded image data.
+        #[serde(skip_serializing_if = "Option::is_none")]
         data: Option<String>,
         /// URI reference (e.g., Files API URI).
+        #[serde(skip_serializing_if = "Option::is_none")]
         uri: Option<String>,
         /// MIME type (e.g., `image/png`).
+        #[serde(skip_serializing_if = "Option::is_none")]
         mime_type: Option<String>,
         /// Processing resolution.
+        #[serde(skip_serializing_if = "Option::is_none")]
         resolution: Option<Resolution>,
     },
     /// Audio content
     Audio {
         /// Base64-encoded audio data.
+        #[serde(skip_serializing_if = "Option::is_none")]
         data: Option<String>,
         /// URI reference (e.g., Files API URI).
+        #[serde(skip_serializing_if = "Option::is_none")]
         uri: Option<String>,
         /// MIME type (e.g., `audio/wav`).
+        #[serde(skip_serializing_if = "Option::is_none")]
         mime_type: Option<String>,
         /// Sample rate in Hz (e.g., 24000 for TTS output).
+        #[serde(skip_serializing_if = "Option::is_none")]
         sample_rate: Option<u32>,
         /// Number of audio channels (e.g., 1 for mono).
+        #[serde(skip_serializing_if = "Option::is_none")]
         channels: Option<u32>,
     },
     /// Video content
     Video {
         /// Base64-encoded video data.
+        #[serde(skip_serializing_if = "Option::is_none")]
         data: Option<String>,
         /// URI reference (e.g., Files API URI).
+        #[serde(skip_serializing_if = "Option::is_none")]
         uri: Option<String>,
         /// MIME type (e.g., `video/mp4`).
+        #[serde(skip_serializing_if = "Option::is_none")]
         mime_type: Option<String>,
         /// Processing resolution.
+        #[serde(skip_serializing_if = "Option::is_none")]
         resolution: Option<Resolution>,
         /// How the model processes this video for understanding.
         ///
         /// Controls segment clipping, frame-rate sampling, and static vs
         /// agentic processing. Has a large effect on token cost — see
         /// [`VideoProcessing`].
+        #[serde(skip_serializing_if = "Option::is_none")]
         processing: Option<VideoProcessing>,
         /// Optional label for the video. Accepted on input (verified live
         /// 2026-09-24); no effect on the output was observed.
+        #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<String>,
     },
     /// Document content for file-based inputs.
@@ -178,10 +197,13 @@ pub enum Content {
     /// HTML, and XML are processed as plain text only, losing visual structure.
     Document {
         /// Base64-encoded document data.
+        #[serde(skip_serializing_if = "Option::is_none")]
         data: Option<String>,
         /// URI reference (e.g., Files API URI).
+        #[serde(skip_serializing_if = "Option::is_none")]
         uri: Option<String>,
         /// MIME type (e.g., `application/pdf`).
+        #[serde(skip_serializing_if = "Option::is_none")]
         mime_type: Option<String>,
     },
     /// Unknown content type for forward compatibility.
@@ -196,6 +218,10 @@ pub enum Content {
     /// `"type"` field and the remaining `data` fields flattened alongside it,
     /// enabling lossless roundtrip in multi-turn conversations. Non-object
     /// `data` is placed under a `"data"` key; null data is omitted.
+    #[serde(
+        untagged,
+        serialize_with = "crate::serde_util::serialize_unknown_merged"
+    )]
     Unknown {
         /// The unrecognized type name from the API
         content_type: String,
@@ -749,6 +775,9 @@ impl Content {
 
 #[cfg(test)]
 mod binding_2_25_tests;
+
+#[cfg(test)]
+mod serialize_tests;
 
 #[cfg(test)]
 #[path = "content_tests.rs"]
