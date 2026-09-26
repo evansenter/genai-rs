@@ -361,15 +361,20 @@ impl<'de> Deserialize<'de> for NetworkConfig {
 ///         AllowlistEntry::new("*.googleapis.com"),
 ///     ]));
 /// ```
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(tag = "type", rename = "remote")]
 pub struct RemoteEnvironment {
     /// Sources mounted into the environment.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<EnvironmentSource>,
     /// Outbound network configuration. `None` allows all outbound traffic.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub network: Option<NetworkConfig>,
     /// Environment variables for the sandbox (wire `env`, sent as a map).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, EnvVar>,
     /// Additional fields not yet modeled (Evergreen forward compatibility)
+    #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
@@ -421,30 +426,6 @@ fn env_from_wire(value: &serde_json::Value) -> Option<BTreeMap<String, EnvVar>> 
         .into_iter()
         .map(|(k, v)| Some((k.clone(), serde_json::from_value(v.clone()).ok()?)))
         .collect()
-}
-
-impl Serialize for RemoteEnvironment {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        use serde::ser::SerializeMap;
-        let mut map = serializer.serialize_map(None)?;
-        map.serialize_entry("type", "remote")?;
-        if !self.sources.is_empty() {
-            map.serialize_entry("sources", &self.sources)?;
-        }
-        if let Some(network) = &self.network {
-            map.serialize_entry("network", network)?;
-        }
-        if !self.env.is_empty() {
-            map.serialize_entry("env", &self.env)?;
-        }
-        for (key, value) in &self.extra {
-            map.serialize_entry(key, value)?;
-        }
-        map.end()
-    }
 }
 
 impl<'de> Deserialize<'de> for RemoteEnvironment {
@@ -773,6 +754,48 @@ mod tests {
         let env = RemoteEnvironment::new();
         let value = serde_json::to_value(&env).unwrap();
         assert_eq!(value, json!({"type": "remote"}));
+        assert_eq!(serde_json::to_string(&env).unwrap(), r#"{"type":"remote"}"#);
+    }
+
+    /// Exact bytes, since the request body goes out through `to_vec`: the
+    /// `type` tag first, then `sources`, `network` and `env`, then every
+    /// `extra` entry, including one that sorts before `env`.
+    #[test]
+    fn test_remote_environment_serialized_key_order() {
+        let mut env = RemoteEnvironment::new()
+            .add_source(EnvironmentSource::gcs("gs://bucket", "/data"))
+            .with_network(NetworkConfig::Disabled)
+            .add_env_var("PLAIN_VAR", EnvVar::value("hello"));
+        env.extra.insert("a_first".into(), json!(1));
+        env.extra.insert("zz_last".into(), json!(true));
+        assert_eq!(
+            serde_json::to_string(&env).unwrap(),
+            concat!(
+                r#"{"type":"remote","#,
+                r#""sources":[{"type":"gcs","source":"gs://bucket","target":"/data"}],"#,
+                r#""network":"disabled","#,
+                r#""env":{"PLAIN_VAR":{"value":"hello"}},"#,
+                r#""a_first":1,"zz_last":true}"#,
+            )
+        );
+    }
+
+    /// An `env` shape the typed map cannot hold is kept in `extra` on
+    /// deserialize, so it goes back out from there, after the modeled keys.
+    #[test]
+    fn test_remote_environment_env_in_extra_serialized_position() {
+        let env: RemoteEnvironment = serde_json::from_value(json!({
+            "type": "remote",
+            "a_first": 1,
+            "env": "FOO=bar",
+            "network": "disabled"
+        }))
+        .unwrap();
+        assert!(env.env.is_empty());
+        assert_eq!(
+            serde_json::to_string(&env).unwrap(),
+            r#"{"type":"remote","network":"disabled","a_first":1,"env":"FOO=bar"}"#
+        );
     }
 
     #[test]
