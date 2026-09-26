@@ -10,6 +10,54 @@ fn probe_interaction() -> InteractionRequest {
 }
 
 #[test]
+fn list_triggers_setters_fill_the_query() {
+    let client = Client::new("k".to_string());
+    let list = client.triggers().list();
+    assert_eq!(list.page_size, None);
+    assert_eq!(list.page_token, None);
+
+    let list = list
+        .with_page_size(5)
+        .with_page_token("t1")
+        // `with_*` replaces.
+        .with_page_token("t2");
+    assert_eq!(list.page_size, Some(5));
+    assert_eq!(list.page_token.as_deref(), Some("t2"));
+}
+
+#[test]
+fn list_trigger_executions_owns_its_trigger_id_and_query() {
+    let client = Client::new("k".to_string());
+    let trigger_id = String::from("trig-1");
+    let list = client.triggers().list_executions(&trigger_id);
+    // The builder owns its ID, so the caller's string can go.
+    drop(trigger_id);
+    assert_eq!(list.trigger_id, "trig-1");
+    assert_eq!(list.page_size, None);
+    assert_eq!(list.page_token, None);
+
+    let list = list
+        .with_page_size(10)
+        .with_page_size(2)
+        .with_page_token("next");
+    assert_eq!(list.page_size, Some(2));
+    assert_eq!(list.page_token.as_deref(), Some("next"));
+}
+
+#[test]
+fn triggers_handle_and_lists_debug_redact_the_api_key() {
+    let client = Client::new("secret-api-key".to_string());
+    for debug in [
+        format!("{:?}", client.triggers()),
+        format!("{:?}", client.triggers().list().with_page_size(1)),
+        format!("{:?}", client.triggers().list_executions("trig-1")),
+    ] {
+        assert!(!debug.contains("secret-api-key"), "{debug}");
+        assert!(debug.contains("[REDACTED]"), "{debug}");
+    }
+}
+
+#[test]
 fn create_params_serialize_minimal() {
     let params = TriggerCreateParams::new("0 5 1 1 *", "UTC", probe_interaction());
     let json = serde_json::to_value(&params).unwrap();

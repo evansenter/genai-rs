@@ -91,7 +91,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     background_interaction(&client, background).await?;
     environment_lifecycle(&client, &environment).await?;
 
-    let triggers = client.list_triggers(Some(10), None).await?;
+    let triggers = client.triggers().list().with_page_size(10).send().await?;
     println!(
         "\nTriggers visible to this key: {}",
         triggers.triggers.len()

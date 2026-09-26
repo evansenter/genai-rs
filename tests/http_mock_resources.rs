@@ -25,8 +25,9 @@ use genai_rs::{
     CredentialUpdate, DocumentState, EnvironmentFileUpload, EnvironmentSource, EnvironmentSpec,
     EnvironmentStatus, FileMetadata, FileSearchDocument, GenaiError, InjectionLocation,
     InteractionInput, InteractionRequest, ListVoicesParams, NetworkConfig, RevocationBehavior,
-    StreamChunk, Tool, TriggerCreateParams, TriggerStatus, TriggerUpdate, VoiceAudio, VoicePitch,
-    VoiceType, Webhook, WebhookEvent, WebhookState, WebhookUpdate,
+    StreamChunk, Tool, Trigger, TriggerCreateParams, TriggerExecution, TriggerStatus,
+    TriggerUpdate, VoiceAudio, VoicePitch, VoiceType, Webhook, WebhookEvent, WebhookState,
+    WebhookUpdate,
 };
 #[cfg(not(feature = "strict-unknown"))]
 use genai_rs::{CredentialStatus, EnvironmentFileType, InteractionStatus, TriggerExecutionStatus};
@@ -172,26 +173,27 @@ fn every_call(c: &genai_rs::Client) -> Vec<(&'static str, Returns, Call<'_>)> {
             call(c.webhooks().rotate_signing_secret("wh-1", None)),
         ),
         (
-            "create_trigger",
+            "triggers.create",
             Resource,
-            call(async move { c.create_trigger(&trigger_params()).await }),
+            call(async move { c.triggers().create(&trigger_params()).await }),
         ),
-        ("get_trigger", Resource, call(c.get_trigger("t-1"))),
-        ("list_triggers", Resource, call(c.list_triggers(None, None))),
+        ("triggers.get", Resource, call(c.triggers().get("t-1"))),
+        ("triggers.list", Resource, call(c.triggers().list().send())),
         (
-            "update_trigger",
+            "triggers.update",
             Resource,
             call(async move {
-                c.update_trigger("t-1", &TriggerUpdate::new().with_display_name("n"))
+                c.triggers()
+                    .update("t-1", &TriggerUpdate::new().with_display_name("n"))
                     .await
             }),
         ),
-        ("delete_trigger", Nothing, call(c.delete_trigger("t-1"))),
-        ("run_trigger", Resource, call(c.run_trigger("t-1"))),
+        ("triggers.delete", Nothing, call(c.triggers().delete("t-1"))),
+        ("triggers.run", Resource, call(c.triggers().run("t-1"))),
         (
-            "list_trigger_executions",
+            "triggers.list_executions",
             Resource,
-            call(c.list_trigger_executions("t-1", None, None)),
+            call(c.triggers().list_executions("t-1").send()),
         ),
         (
             "agents.create",
@@ -697,14 +699,19 @@ async fn trigger_endpoints_send_the_documented_requests() {
                     "execution_timeout_seconds": 600,
                     "labels": {"team": "ops"}
                 })),
-                async move { c.create_trigger(&params).await },
+                async move { c.triggers().create(&params).await },
             ),
-            wire("GET", "/v1beta/triggers/t-1", None, c.get_trigger("t-1")),
+            wire("GET", "/v1beta/triggers/t-1", None, c.triggers().get("t-1")),
+            wire("GET", "/v1beta/triggers", None, c.triggers().list().send()),
             wire(
                 "GET",
                 "/v1beta/triggers?page_size=10&page_token=p2",
                 None,
-                c.list_triggers(Some(10), Some("p2")),
+                c.triggers()
+                    .list()
+                    .with_page_size(10)
+                    .with_page_token("p2")
+                    .send(),
             ),
             // No update_mask: the spec defines none for triggers.
             wire(
@@ -715,38 +722,42 @@ async fn trigger_endpoints_send_the_documented_requests() {
                     let update = TriggerUpdate::new()
                         .with_display_name("renamed")
                         .with_status(TriggerStatus::Paused);
-                    c.update_trigger("t-1", &update).await
+                    c.triggers().update("t-1", &update).await
                 },
             ),
             wire(
                 "PATCH",
                 "/v1beta/triggers/t-1",
                 Some(json!({"status": "archived", "max_consecutive_failures": "5"})),
-                async move { c.update_trigger("t-1", &unknown_update).await },
+                async move { c.triggers().update("t-1", &unknown_update).await },
             ),
             wire(
                 "DELETE",
                 "/v1beta/triggers/t-1",
                 None,
-                c.delete_trigger("t-1"),
+                c.triggers().delete("t-1"),
             ),
             wire(
                 "POST",
                 "/v1beta/triggers/t-1/executions",
                 Some(json!({})),
-                c.run_trigger("t-1"),
+                c.triggers().run("t-1"),
             ),
             wire(
                 "GET",
                 "/v1beta/triggers/t-1/executions",
                 None,
-                c.list_trigger_executions("t-1", None, None),
+                c.triggers().list_executions("t-1").send(),
             ),
             wire(
                 "GET",
                 "/v1beta/triggers/t-1/executions?page_size=2&page_token=next",
                 None,
-                c.list_trigger_executions("t-1", Some(2), Some("next")),
+                c.triggers()
+                    .list_executions("t-1")
+                    .with_page_size(2)
+                    .with_page_token("next")
+                    .send(),
             ),
         ],
     )
@@ -776,7 +787,7 @@ async fn trigger_response_parses_string_counts_timestamp_aliases_and_sparse_inte
     )])
     .await;
 
-    let trigger = stub.client().get_trigger("t-1").await.unwrap();
+    let trigger = stub.client().triggers().get("t-1").await.unwrap();
 
     assert_eq!(trigger.status, Some(TriggerStatus::Active));
     assert_eq!(trigger.max_consecutive_failures, Some(3));
@@ -816,7 +827,7 @@ async fn trigger_list_preserves_unknown_statuses() {
     .await;
     let client = stub.client();
 
-    let list = client.list_triggers(None, None).await.unwrap();
+    let list = client.triggers().list().send().await.unwrap();
     assert_eq!(list.triggers[0].status, Some(TriggerStatus::Paused));
     let unknown = list.triggers[1].status.as_ref().unwrap();
     assert_eq!(unknown.unknown_status_type(), Some("suspended_by_billing"));
@@ -826,7 +837,7 @@ async fn trigger_list_preserves_unknown_statuses() {
     );
     assert_eq!(list.next_page_token.as_deref(), Some("p2"));
 
-    let empty = client.list_triggers(None, None).await.unwrap();
+    let empty = client.triggers().list().send().await.unwrap();
     assert!(empty.triggers.is_empty() && empty.next_page_token.is_none());
 }
 
@@ -857,7 +868,7 @@ async fn trigger_execution_responses_parse_under_both_list_keys() {
     .await;
     let client = stub.client();
 
-    let run = client.run_trigger("t-1").await.unwrap();
+    let run = client.triggers().run("t-1").await.unwrap();
     assert_eq!(run.interaction_id.as_deref(), Some("int-9"));
     assert_eq!(
         run.status.as_ref().unwrap().unknown_status_type(),
@@ -867,7 +878,9 @@ async fn trigger_execution_responses_parse_under_both_list_keys() {
     assert_eq!(run.extra["attempt"], 2);
 
     let spec_key = client
-        .list_trigger_executions("t-1", None, None)
+        .triggers()
+        .list_executions("t-1")
+        .send()
         .await
         .unwrap();
     assert_eq!(
@@ -877,12 +890,83 @@ async fn trigger_execution_responses_parse_under_both_list_keys() {
     assert_eq!(spec_key.next_page_token.as_deref(), Some("n"));
 
     let alias_key = client
-        .list_trigger_executions("t-1", None, None)
+        .triggers()
+        .list_executions("t-1")
+        .send()
         .await
         .unwrap();
     let execution = &alias_key.trigger_executions[0];
     assert_eq!(execution.status, Some(TriggerExecutionStatus::TimedOut));
     assert_eq!(execution.error.as_deref(), Some("deadline exceeded"));
+}
+
+#[tokio::test]
+async fn trigger_list_items_follow_every_page_with_the_page_size() {
+    let stub = Stub::replying(vec![
+        Reply::json(
+            200,
+            json!({"triggers": [{"id": "t-1"}, {"id": "t-2"}], "next_page_token": "p2"}),
+        ),
+        Reply::json(200, json!({"triggers": [{"id": "t-3"}]})),
+    ])
+    .await;
+    let client = stub.client();
+
+    let triggers: Vec<Trigger> = client
+        .triggers()
+        .list()
+        .with_page_size(2)
+        .items()
+        .try_collect()
+        .await
+        .unwrap();
+
+    let ids: Vec<_> = triggers.iter().filter_map(|t| t.id.as_deref()).collect();
+    assert_eq!(ids, ["t-1", "t-2", "t-3"]);
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/triggers?page_size=2",
+            "/v1beta/triggers?page_size=2&page_token=p2",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn trigger_execution_items_resend_the_trigger_and_page_size_on_every_page() {
+    let stub = Stub::replying(vec![
+        Reply::json(
+            200,
+            json!({
+                "trigger_executions": [{"id": "e1"}, {"id": "e2"}],
+                "next_page_token": "p2"
+            }),
+        ),
+        // The path-segment spelling of the envelope key, on a later page.
+        Reply::json(200, json!({"executions": [{"id": "e3"}]})),
+    ])
+    .await;
+    let client = stub.client();
+
+    let executions: Vec<TriggerExecution> = client
+        .triggers()
+        .list_executions("t/1")
+        .with_page_size(2)
+        .items()
+        .try_collect()
+        .await
+        .unwrap();
+
+    let ids: Vec<_> = executions.iter().filter_map(|e| e.id.as_deref()).collect();
+    assert_eq!(ids, ["e1", "e2", "e3"]);
+    // The owned trigger ID is encoded into every page's path.
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/triggers/t%2F1/executions?page_size=2",
+            "/v1beta/triggers/t%2F1/executions?page_size=2&page_token=p2",
+        ]
+    );
 }
 
 // =============================================================================
@@ -2828,18 +2912,26 @@ async fn reserved_characters_in_ids_are_percent_encoded() {
                 None,
                 c.webhooks().get("v1.2"),
             ),
-            wire("GET", "/v1beta/triggers/t%2F1", None, c.get_trigger("t/1")),
+            wire(
+                "GET",
+                "/v1beta/triggers/t%2F1",
+                None,
+                c.triggers().get("t/1"),
+            ),
             wire(
                 "POST",
                 "/v1beta/triggers/t%2F1/executions",
                 Some(json!({})),
-                c.run_trigger("t/1"),
+                c.triggers().run("t/1"),
             ),
             wire(
                 "GET",
                 "/v1beta/triggers/t%3F1/executions?page_token=x%26y",
                 None,
-                c.list_trigger_executions("t?1", None, Some("x&y")),
+                c.triggers()
+                    .list_executions("t?1")
+                    .with_page_token("x&y")
+                    .send(),
             ),
             wire(
                 "GET",
@@ -2963,16 +3055,25 @@ async fn empty_and_dot_segment_ids_are_rejected_before_any_request() {
             "webhooks.rotate_signing_secret",
             call(c.webhooks().rotate_signing_secret("", None)),
         ),
-        ("get_trigger", call(c.get_trigger(""))),
+        ("triggers.get", call(c.triggers().get(""))),
         (
-            "update_trigger",
-            call(async move { c.update_trigger("%2E%2E", &TriggerUpdate::new()).await }),
+            "triggers.update",
+            call(async move { c.triggers().update("%2E%2E", &TriggerUpdate::new()).await }),
         ),
-        ("delete_trigger", call(c.delete_trigger(""))),
-        ("run_trigger", call(c.run_trigger("."))),
+        ("triggers.delete", call(c.triggers().delete(""))),
+        ("triggers.run", call(c.triggers().run("."))),
         (
-            "list_trigger_executions",
-            call(c.list_trigger_executions("", None, None)),
+            "triggers.list_executions",
+            call(c.triggers().list_executions("").send()),
+        ),
+        (
+            "triggers.list_executions items",
+            call(
+                c.triggers()
+                    .list_executions("..")
+                    .items()
+                    .try_collect::<Vec<_>>(),
+            ),
         ),
         ("agents.get", call(c.agents().get(""))),
         ("agents.delete", call(c.agents().delete("%2e%2e"))),
@@ -3245,17 +3346,36 @@ async fn empty_object_parses_as_an_empty_last_page_on_every_list_endpoint() {
             }),
         ),
         (
-            "list_triggers",
+            "triggers.list",
             Box::pin(async move {
-                let l = c.list_triggers(None, None).await?;
+                let l = c.triggers().list().send().await?;
                 Ok((l.triggers.len(), l.next_page_token))
             }),
         ),
         (
-            "list_trigger_executions",
+            "triggers.list items",
             Box::pin(async move {
-                let l = c.list_trigger_executions("t-1", None, None).await?;
+                let items: Vec<_> = c.triggers().list().items().try_collect().await?;
+                Ok((items.len(), None))
+            }),
+        ),
+        (
+            "triggers.list_executions",
+            Box::pin(async move {
+                let l = c.triggers().list_executions("t-1").send().await?;
                 Ok((l.trigger_executions.len(), l.next_page_token))
+            }),
+        ),
+        (
+            "triggers.list_executions items",
+            Box::pin(async move {
+                let items: Vec<_> = c
+                    .triggers()
+                    .list_executions("t-1")
+                    .items()
+                    .try_collect()
+                    .await?;
+                Ok((items.len(), None))
             }),
         ),
         (

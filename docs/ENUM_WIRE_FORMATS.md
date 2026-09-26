@@ -348,6 +348,16 @@ shapes are hedged:
   deserializer. An unexpected shape degrades to `None` with a `warn!`, rather
   than failing the list.
 
+Verified live 2026-09-26 (list paging, no triggers on the key):
+
+- `GET /v1beta/triggers?page_size=2` returns `{}`, the end of the list.
+  An unrecognized `page_token` is a `400 INVALID_ARGUMENT`.
+- `GET /v1beta/triggers/{id}/executions` returns `{}` for a trigger that does
+  not exist, not a 404; `GET /v1beta/triggers/{id}` on the same ID is a
+  `404 NOT_FOUND`. `POST .../executions` (run now) on it is a structured
+  `404 NOT_FOUND`, while an unknown sub-collection is an empty-body 404, so
+  the executions path exists server-side. Execution shapes stay unverified.
+
 ### ThinkingSummaries
 
 Sent as `"auto"` / `"none"` in both `generation_config.thinking_summaries`

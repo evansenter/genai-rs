@@ -885,9 +885,9 @@ async fn test_triggers_list_and_gated_create() {
     // deserialization path this asserts). Reads retry transients like the
     // neighbouring CRUD tests.
     let listed = crate::retry_request!([client] => {
-        client.list_triggers(Some(10), None).await
+        client.triggers().list().with_page_size(10).send().await
     })
-    .expect("list_triggers");
+    .expect("triggers.list");
     println!("Triggers listed: {}", listed.triggers.len());
 
     // Create requires a custom agent, which is gated/allowlisted on
@@ -905,15 +905,15 @@ async fn test_triggers_list_and_gated_create() {
     // a retry after a lost response could leave a second, *scheduled*
     // trigger behind with no ID to clean up. A transient create failure is
     // a legible test failure, not a flake worth papering over.
-    match client.create_trigger(&params).await {
+    match client.triggers().create(&params).await {
         Ok(trigger) => {
             println!("Trigger created (agent gate open): id={:?}", trigger.id);
             if let Some(id) = &trigger.id {
                 // A leaked trigger keeps firing on schedule — if the delete
                 // fails, say so loudly instead of leaving it silent.
-                match client.delete_trigger(id).await {
+                match client.triggers().delete(id).await {
                     Ok(()) => println!("Deleted trigger {id}"),
-                    Err(e) => println!("delete_trigger failed: {e} - delete {id} manually"),
+                    Err(e) => println!("triggers.delete failed: {e} - delete {id} manually"),
                 }
             } else {
                 // No ID means no handle to delete by — the scheduled
@@ -921,7 +921,7 @@ async fn test_triggers_list_and_gated_create() {
                 // handle (the display name) rather than fall through.
                 panic!(
                     "trigger created without an id (protocol violation) — a scheduled \
-                     trigger named {:?} is leaked; hunt it down via list_triggers",
+                     trigger named {:?} is leaked; hunt it down via triggers().list()",
                     trigger.display_name
                 );
             }
@@ -953,4 +953,66 @@ async fn test_triggers_list_and_gated_create() {
         }
         Err(e) => panic!("expected a 4xx agent-gate rejection, got: {e}"),
     }
+}
+
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_trigger_list_streams_end_on_the_last_page() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    // Trigger creation is agent-gated, so a standard key lists no triggers
+    // (`{}`, verified 2026-09-26). This pins the end-of-list rule on a real
+    // response; following several pages is covered offline in
+    // http_mock_resources.rs.
+    let pages: Vec<_> = client
+        .triggers()
+        .list()
+        .with_page_size(2)
+        .pages()
+        .take(50)
+        .try_collect()
+        .await
+        .expect("triggers.list pages");
+    println!(
+        "Listed {} page(s), {} trigger(s)",
+        pages.len(),
+        pages.iter().map(|p| p.triggers.len()).sum::<usize>()
+    );
+    let last = pages.last().expect("at least one page");
+    assert!(
+        last.next_page_token.as_deref().is_none_or(str::is_empty),
+        "the stream must end on a page without a token: {:?}",
+        last.next_page_token
+    );
+
+    let triggers: Vec<_> = client
+        .triggers()
+        .list()
+        .with_page_size(2)
+        .items()
+        .take(100)
+        .try_collect()
+        .await
+        .expect("triggers.list items");
+    println!("Streamed {} trigger(s)", triggers.len());
+
+    // The executions sub-collection answers `{}` for a trigger that does
+    // not exist (verified 2026-09-26), not a 404, so this reaches the
+    // executions path live without a trigger to create.
+    let executions: Vec<_> = client
+        .triggers()
+        .list_executions("genai-rs-no-such-trigger")
+        .with_page_size(2)
+        .items()
+        .take(100)
+        .try_collect()
+        .await
+        .expect("triggers.list_executions items");
+    assert!(
+        executions.is_empty(),
+        "a missing trigger has no executions: {executions:?}"
+    );
 }

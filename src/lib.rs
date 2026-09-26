@@ -149,8 +149,9 @@ pub use response_format::{ResponseDelivery, ResponseFormat, ResponseFormatSpec, 
 // Triggers resource (/v1beta/triggers) — server-side scheduled interactions
 pub mod triggers;
 pub use triggers::{
-    Trigger, TriggerCreateParams, TriggerExecution, TriggerExecutionListResponse,
-    TriggerExecutionStatus, TriggerListResponse, TriggerStatus, TriggerUpdate,
+    ListTriggerExecutions, ListTriggers, Trigger, TriggerCreateParams, TriggerExecution,
+    TriggerExecutionListResponse, TriggerExecutionStatus, TriggerListResponse, TriggerStatus,
+    TriggerUpdate, Triggers,
 };
 
 // Environments: the spec (environment request field, agent

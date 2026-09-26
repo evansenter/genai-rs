@@ -1,10 +1,11 @@
 # Resources
 
 Each `/v1beta` resource is reached through a handle on `Client`:
-`client.agents()` returns an `Agents` handle and `client.webhooks()` a
-`Webhooks` handle, whose methods are the resource's verbs. Lists return a
-builder that ends in `.send()` (one page), `.pages()` or `.items()` (every
-page). The conventions and the paging rules are in
+`client.agents()` returns an `Agents` handle, `client.webhooks()` a
+`Webhooks` handle and `client.triggers()` a `Triggers` handle, whose methods
+are the resource's verbs. Lists return a builder that ends in `.send()` (one
+page), `.pages()` or `.items()` (every page). The conventions and the paging
+rules are in
 [Resource handles and list builders](BUILDER_API.md#resource-handles-and-list-builders),
 and the reasoning in D-016 (`DECISIONS.md`).
 
@@ -44,6 +45,16 @@ become `with_*` setters.
 | `client.webhooks.delete(id)` | `client.webhooks().delete(id)` |
 | `client.webhooks.ping(id)` | `client.webhooks().ping(id)` |
 | `client.webhooks.rotate_signing_secret(id, revocation_behavior=)` | `client.webhooks().rotate_signing_secret(id, Some(behavior))` |
+| `client.triggers.create(schedule=, time_zone=, interaction=, display_name=, ...)` | `client.triggers().create(&TriggerCreateParams::new(schedule, time_zone, interaction).with_display_name(n))` |
+| `client.triggers.get(id)` | `client.triggers().get(id)` |
+| `client.triggers.list(page_size=, page_token=)` | `client.triggers().list().with_page_size(n).with_page_token(t).send()` |
+| `client.triggers.list(filter_=)` | Not modeled yet: the filter syntax is unverified |
+| (no equivalent) | `client.triggers().list().pages()` / `.items()` |
+| `client.triggers.update(id, display_name=, status=)` | `client.triggers().update(id, &TriggerUpdate::new().with_status(s))` |
+| `client.triggers.delete(id)` | `client.triggers().delete(id)` |
+| `client.triggers.run(trigger_id)` | `client.triggers().run(trigger_id)` |
+| `client.triggers.list_executions(trigger_id, page_size=, page_token=)` | `client.triggers().list_executions(trigger_id).with_page_size(n).with_page_token(t).send()` |
+| (no equivalent) | `client.triggers().list_executions(trigger_id).pages()` / `.items()` |
 
 ## From the `Client` methods (0.10)
 
@@ -63,3 +74,10 @@ A `None` positional argument becomes an omitted setter.
 | `client.delete_webhook(id)` | `client.webhooks().delete(id)` |
 | `client.ping_webhook(id)` | `client.webhooks().ping(id)` |
 | `client.rotate_webhook_signing_secret(id, behavior)` | `client.webhooks().rotate_signing_secret(id, behavior)` |
+| `client.create_trigger(&params)` | `client.triggers().create(&params)` |
+| `client.get_trigger(id)` | `client.triggers().get(id)` |
+| `client.list_triggers(size, token)` | `client.triggers().list().with_page_size(size).with_page_token(token).send()` |
+| `client.update_trigger(id, &update)` | `client.triggers().update(id, &update)` |
+| `client.delete_trigger(id)` | `client.triggers().delete(id)` |
+| `client.run_trigger(id)` | `client.triggers().run(id)` |
+| `client.list_trigger_executions(id, size, token)` | `client.triggers().list_executions(id).with_page_size(size).with_page_token(token).send()` |

@@ -68,17 +68,19 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
 ### Changed
 
 - **Breaking: resource methods moved from `Client` to per-resource
-  handles.** `client.webhooks()` and `.agents()` each return a `Copy` handle
-  that borrows the client. Rename `client.<verb>_<resource>(…)` to
-  `client.<resources>().<verb>(…)`. Exceptions: `ping_webhook` →
-  `webhooks().ping`, `rotate_webhook_signing_secret` →
-  `webhooks().rotate_signing_secret`. The full table is in
-  `docs/RESOURCES.md`.
-- **Breaking: `list_webhooks` and `list_agents` return a builder.** The
-  positional `page_size`, `page_token` and `parent` arguments are gone. Chain
-  `.with_page_size(n)`, `.with_page_token(t)` or `.with_parent(p)` on
-  `client.<resources>().list()`, then `.send()` for one page (the same
-  `*ListResponse`).
+  handles.** `client.webhooks()`, `.triggers()` and `.agents()` each return a
+  `Copy` handle that borrows the client. Rename `client.<verb>_<resource>(…)`
+  to `client.<resources>().<verb>(…)`. Exceptions: `run_trigger` →
+  `triggers().run`, `list_trigger_executions(id, …)` →
+  `triggers().list_executions(id)`, `ping_webhook` → `webhooks().ping`,
+  `rotate_webhook_signing_secret` → `webhooks().rotate_signing_secret`. The
+  full table is in `docs/RESOURCES.md`.
+- **Breaking: `list_webhooks`, `list_triggers`, `list_trigger_executions`
+  and `list_agents` return a builder.** The positional `page_size`,
+  `page_token` and `parent` arguments are gone. Chain `.with_page_size(n)`,
+  `.with_page_token(t)` or `.with_parent(p)` on `client.<resources>().list()`
+  (or `client.triggers().list_executions(id)`), then `.send()` for one page
+  (the same `*ListResponse`).
 - **Breaking: `update_mask` moved onto the update value.**
   `update_webhook(id, &u, Some("state"))` →
   `webhooks().update(id, &u.with_update_mask("state"))`; `None` becomes

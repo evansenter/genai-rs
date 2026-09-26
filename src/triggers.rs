@@ -4,8 +4,13 @@
 //! A [`Trigger`] runs a stored interaction request on a cron
 //! [`schedule`](Trigger::schedule) with **no client process running**: the
 //! API creates a fresh interaction per firing, and past firings are
-//! inspectable via
-//! [`list_trigger_executions`](crate::client::Client::list_trigger_executions).
+//! inspectable via [`list_executions`](Triggers::list_executions).
+//!
+//! Manage triggers through the [`Triggers`] handle from
+//! [`Client::triggers`]: [`create`](Triggers::create),
+//! [`get`](Triggers::get), [`list`](Triggers::list),
+//! [`update`](Triggers::update), [`delete`](Triggers::delete),
+//! [`run`](Triggers::run) and [`list_executions`](Triggers::list_executions).
 //!
 //! Server-side constraint (verified live 2026-08-08): the trigger's
 //! `interaction` must target a custom `agent` (an [`agents`](crate::agents)
@@ -29,9 +34,11 @@
 
 use crate::client::Client;
 use crate::errors::GenaiError;
+use crate::paging;
 use crate::request::{InteractionInput, InteractionRequest};
 use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
+use futures_util::stream::BoxStream;
 use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 
@@ -86,7 +93,8 @@ wire_enum! {
 #[non_exhaustive]
 pub struct Trigger {
     /// Output only. The ID of the trigger — the value the ID-taking
-    /// client methods (`get_trigger`, `delete_trigger`, ...) expect.
+    /// [`Triggers`] methods ([`get`](Triggers::get),
+    /// [`delete`](Triggers::delete), ...) expect.
     /// Like its siblings on this wire-unverified family (see
     /// [`Trigger::environment_id`]), it may arrive in `triggers/...`
     /// resource-name form; strip such a prefix before passing it back.
@@ -340,8 +348,8 @@ pub struct TriggerCreateParams {
     /// The interaction request created on each firing. Must target a
     /// custom `agent`; `store` is not allowed here (server-verified —
     /// [`TriggerCreateParams::new`], the deserialize path, and
-    /// `create_trigger` itself all warn when it is set, the last covering
-    /// struct literals and post-construction mutation too).
+    /// [`Triggers::create`] itself all warn when it is set, the last
+    /// covering struct literals and post-construction mutation too).
     #[serde(deserialize_with = "deserialize_interaction_with_warns")]
     pub interaction: InteractionRequest,
     /// Human-readable display name.
@@ -405,9 +413,9 @@ pub struct TriggerCreateParams {
 /// - empty input: would fire on a schedule with an empty prompt.
 ///
 /// Called from [`TriggerCreateParams::new`], the deserialize path, and
-/// `create_trigger` (which also catches struct literals and later mutation),
-/// so `new`-then-create warns twice. Warns rather than errors: the full shape
-/// can't be validated while creation is agent-gated.
+/// [`Triggers::create`] (which also catches struct literals and later
+/// mutation), so `new`-then-create warns twice. Warns rather than errors: the
+/// full shape can't be validated while creation is agent-gated.
 pub(crate) fn warn_on_interaction_footguns(interaction: &InteractionRequest) {
     if interaction.store.is_some() {
         tracing::warn!(
@@ -655,6 +663,8 @@ pub struct TriggerListResponse {
     pub next_page_token: Option<String>,
 }
 
+paging::impl_list_page!(TriggerListResponse, triggers: Trigger);
+
 /// Response from listing a trigger's executions.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -677,23 +687,76 @@ pub struct TriggerExecutionListResponse {
     pub next_page_token: Option<String>,
 }
 
-/// Triggers resource methods; see [IDs](crate::triggers#ids).
+paging::impl_list_page!(TriggerExecutionListResponse, trigger_executions: TriggerExecution);
+
 impl Client {
+    /// The `/v1beta/triggers` resource: create, inspect, update, fire and
+    /// delete server-side scheduled triggers, and list their executions.
+    ///
+    /// The handle borrows the client and is `Copy`; see
+    /// [IDs](crate::triggers#ids) for what the methods take.
+    ///
+    /// ```no_run
+    /// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+    /// let trigger = client.triggers().get("trig-123").await?;
+    /// # let _ = trigger;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn triggers(&self) -> Triggers<'_> {
+        Triggers { client: self }
+    }
+}
+
+/// The `/v1beta/triggers` resource, from [`Client::triggers`].
+///
+/// Methods take `self` by value, so each call's future holds only the client
+/// borrow, never the handle: `client.triggers().get(id)` can be stored or
+/// joined with others. See [IDs](crate::triggers#ids).
+#[derive(Clone, Copy, Debug)]
+#[must_use = "a resource handle does nothing until you call one of its methods"]
+pub struct Triggers<'a> {
+    client: &'a Client,
+}
+
+impl<'a> Triggers<'a> {
     /// Creates a server-side scheduled trigger.
     ///
     /// The trigger's `interaction` must target a custom `agent` (see
     /// [`crate::triggers`] for the live-verified constraints); trigger
     /// creation is gated with custom-agent creation on standard API keys.
+    /// Like [`TriggerCreateParams::new`], this warns when the nested
+    /// interaction sets `store`, targets no `agent`, or has empty input.
     ///
     /// # Errors
     ///
     /// Returns an error on network failure or when the API rejects the
     /// trigger definition.
-    pub async fn create_trigger(
-        &self,
-        params: &crate::TriggerCreateParams,
-    ) -> Result<crate::Trigger, GenaiError> {
-        crate::http::triggers::create_trigger(&self.http, params).await
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{Client, InteractionInput, InteractionRequest, TriggerCreateParams};
+    ///
+    /// # async fn example(client: Client) -> Result<(), genai_rs::GenaiError> {
+    /// let interaction = InteractionRequest {
+    ///     agent: Some("my-custom-agent".to_string()),
+    ///     input: InteractionInput::Text("Daily repo audit".to_string()),
+    ///     ..Default::default()
+    /// };
+    /// let trigger = client
+    ///     .triggers()
+    ///     .create(
+    ///         &TriggerCreateParams::new("0 9 * * *", "UTC", interaction)
+    ///             .with_display_name("daily-audit"),
+    ///     )
+    ///     .await?;
+    /// println!("Created {:?}, next run {:?}", trigger.id, trigger.next_run_time);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn create(self, params: &TriggerCreateParams) -> Result<Trigger, GenaiError> {
+        crate::http::triggers::create_trigger(&self.client.http, params).await
     }
 
     /// Retrieves a trigger by ID.
@@ -701,46 +764,53 @@ impl Client {
     /// # Errors
     ///
     /// Returns an error on network failure or when the trigger doesn't exist.
-    pub async fn get_trigger(&self, trigger_id: &str) -> Result<crate::Trigger, GenaiError> {
-        crate::http::triggers::get_trigger(&self.http, trigger_id).await
+    pub async fn get(self, trigger_id: &str) -> Result<Trigger, GenaiError> {
+        crate::http::triggers::get_trigger(&self.client.http, trigger_id).await
     }
 
-    /// Lists triggers, paged.
-    ///
-    /// # Arguments
-    ///
-    /// * `page_size` - Optional maximum number of triggers per page.
-    /// * `page_token` - Optional token from a previous list call.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error on network failure or an invalid page token.
-    pub async fn list_triggers(
-        &self,
-        page_size: Option<u32>,
-        page_token: Option<&str>,
-    ) -> Result<crate::TriggerListResponse, GenaiError> {
-        crate::http::triggers::list_triggers(&self.http, page_size, page_token).await
+    /// Lists triggers: configure the returned [`ListTriggers`], then call
+    /// [`send`](ListTriggers::send) for one page, or
+    /// [`pages`](ListTriggers::pages) / [`items`](ListTriggers::items) to
+    /// stream them all.
+    pub fn list(self) -> ListTriggers<'a> {
+        ListTriggers {
+            client: self.client,
+            page_size: None,
+            page_token: None,
+        }
     }
 
-    /// Updates a trigger (display name and/or status; `paused` pauses it,
-    /// `active` resumes it).
+    /// Updates a trigger with the fields set on `update` (display name
+    /// and/or status; `paused` pauses it, `active` resumes it).
     ///
-    /// # Arguments
-    ///
-    /// * `trigger_id` - The trigger to update.
-    /// * `update` - The fields to change (only set fields are sent; there
-    ///   is no `update_mask` on this endpoint — see [`crate::TriggerUpdate`]).
+    /// Only set fields are sent. There is no `update_mask` on this endpoint;
+    /// see [`TriggerUpdate`].
     ///
     /// # Errors
     ///
     /// Returns an error on network failure or when the trigger doesn't exist.
-    pub async fn update_trigger(
-        &self,
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{Client, TriggerStatus, TriggerUpdate};
+    ///
+    /// # async fn example(client: Client) -> Result<(), genai_rs::GenaiError> {
+    /// // Pause a trigger
+    /// let paused = client
+    ///     .triggers()
+    ///     .update("trig-123", &TriggerUpdate::new().with_status(TriggerStatus::Paused))
+    ///     .await?;
+    /// # let _ = paused;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn update(
+        self,
         trigger_id: &str,
-        update: &crate::TriggerUpdate,
-    ) -> Result<crate::Trigger, GenaiError> {
-        crate::http::triggers::update_trigger(&self.http, trigger_id, update).await
+        update: &TriggerUpdate,
+    ) -> Result<Trigger, GenaiError> {
+        crate::http::triggers::update_trigger(&self.client.http, trigger_id, update).await
     }
 
     /// Deletes a trigger.
@@ -748,56 +818,258 @@ impl Client {
     /// # Errors
     ///
     /// Returns an error on network failure or when the trigger doesn't exist.
-    pub async fn delete_trigger(&self, trigger_id: &str) -> Result<(), GenaiError> {
-        crate::http::triggers::delete_trigger(&self.http, trigger_id).await
+    pub async fn delete(self, trigger_id: &str) -> Result<(), GenaiError> {
+        crate::http::triggers::delete_trigger(&self.client.http, trigger_id).await
     }
 
     /// Fires a trigger immediately, outside its schedule.
     ///
-    /// **Unverified endpoint shape**: this posts to the `executions`
-    /// sub-collection (not a `:run` colon verb), a path derived from the
-    /// google-genai generated bindings rather than observed live — it
-    /// needs an existing trigger, and trigger creation is agent-gated
-    /// (see [`triggers`](crate::triggers)). The same caveat applies to
-    /// [`list_trigger_executions`](Self::list_trigger_executions).
+    /// This posts to the `executions` sub-collection (not a `:run` colon
+    /// verb), the path in the google-genai generated bindings. The path
+    /// exists server-side (live 2026-09-26: a missing trigger is a
+    /// structured `404 NOT_FOUND`), but the response shape is unverified: it
+    /// needs an existing trigger, and trigger creation is agent-gated (see
+    /// [`triggers`](crate::triggers)).
     ///
     /// # Errors
     ///
     /// Returns an error on network failure or when the trigger doesn't exist.
-    pub async fn run_trigger(
-        &self,
-        trigger_id: &str,
-    ) -> Result<crate::TriggerExecution, GenaiError> {
-        crate::http::triggers::run_trigger(&self.http, trigger_id).await
+    pub async fn run(self, trigger_id: &str) -> Result<TriggerExecution, GenaiError> {
+        crate::http::triggers::run_trigger(&self.client.http, trigger_id).await
     }
 
-    /// Lists a trigger's past executions, paged.
+    /// Lists a trigger's past executions: configure the returned
+    /// [`ListTriggerExecutions`], then call
+    /// [`send`](ListTriggerExecutions::send) for one page, or
+    /// [`pages`](ListTriggerExecutions::pages) /
+    /// [`items`](ListTriggerExecutions::items) to stream them all.
     ///
-    /// # Arguments
+    /// Reads the same `executions` sub-collection [`run`](Self::run) posts
+    /// to. A trigger that does not exist lists as an empty page, not a 404
+    /// (live 2026-09-26). The execution shape is unverified, for the reason
+    /// given on [`run`](Self::run).
+    pub fn list_executions(self, trigger_id: &str) -> ListTriggerExecutions<'a> {
+        ListTriggerExecutions {
+            client: self.client,
+            trigger_id: trigger_id.to_owned(),
+            page_size: None,
+            page_token: None,
+        }
+    }
+}
+
+/// A `GET /v1beta/triggers` request, from [`Triggers::list`].
+///
+/// End it with [`send`](Self::send) for one page, or
+/// [`pages`](Self::pages) / [`items`](Self::items) to follow
+/// `next_page_token` to the end of the list. The page size is sent with
+/// every page.
+///
+/// # Example
+///
+/// ```no_run
+/// use futures_util::TryStreamExt;
+///
+/// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+/// // One page
+/// let page = client.triggers().list().with_page_size(50).send().await?;
+/// println!("{} triggers, more: {}", page.triggers.len(), page.next_page_token.is_some());
+///
+/// // Every trigger, across pages
+/// let all: Vec<genai_rs::Trigger> = client.triggers().list().items().try_collect().await?;
+/// # let _ = all;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Clone, Debug)]
+#[must_use = "a list request does nothing until .send(), .pages() or .items()"]
+pub struct ListTriggers<'a> {
+    client: &'a Client,
+    page_size: Option<u32>,
+    page_token: Option<String>,
+}
+
+impl<'a> ListTriggers<'a> {
+    /// Sets the maximum number of triggers per page. Sent with every page.
+    pub fn with_page_size(mut self, page_size: u32) -> Self {
+        self.page_size = Some(page_size);
+        self
+    }
+
+    /// Starts from this page token, from a previous page's
+    /// `next_page_token`.
+    pub fn with_page_token(mut self, page_token: impl Into<String>) -> Self {
+        self.page_token = Some(page_token.into());
+        self
+    }
+
+    /// Sends the request and returns one page.
     ///
-    /// * `trigger_id` - The trigger whose executions to list.
-    /// * `page_size` - Optional maximum number of executions per page.
-    /// * `page_token` - Optional token from a previous list call.
-    ///
-    /// **Unverified endpoint shape**: reads the same `executions`
-    /// sub-collection [`run_trigger`](Self::run_trigger) posts to, with
-    /// the same caveat — the path comes from the google-genai generated
-    /// bindings, not live observation, because it needs an existing
-    /// trigger and trigger creation is agent-gated.
+    /// An empty collection comes back as an empty page with no
+    /// `next_page_token` (the API answers `{}`).
     ///
     /// # Errors
     ///
-    /// Returns an error on network failure or when the trigger doesn't exist.
-    pub async fn list_trigger_executions(
-        &self,
-        trigger_id: &str,
-        page_size: Option<u32>,
-        page_token: Option<&str>,
-    ) -> Result<crate::TriggerExecutionListResponse, GenaiError> {
-        crate::http::triggers::list_trigger_executions(
-            &self.http, trigger_id, page_size, page_token,
+    /// Returns an error on network failure, an invalid page token, or a
+    /// response that fails to parse.
+    pub async fn send(self) -> Result<TriggerListResponse, GenaiError> {
+        crate::http::triggers::list_triggers(
+            &self.client.http,
+            self.page_size,
+            self.page_token.as_deref(),
         )
         .await
+    }
+
+    /// Streams every page, starting at [`with_page_token`](Self::with_page_token)
+    /// or the first page.
+    ///
+    /// Nothing is sent until the stream is polled. It ends after a page
+    /// without a `next_page_token`; an error is yielded once and ends it. A
+    /// page whose token was already requested (the starting token included)
+    /// is yielded, then [`GenaiError::MalformedResponse`]. The stream owns a
+    /// clone of the client, so it can be stored or spawned.
+    #[must_use = "streams do nothing unless polled"]
+    pub fn pages(self) -> BoxStream<'static, Result<TriggerListResponse, GenaiError>> {
+        let Self {
+            client,
+            page_size,
+            page_token,
+        } = self;
+        let client = client.clone();
+        paging::pages("triggers", page_token, move |token| {
+            let client = client.clone();
+            async move {
+                crate::http::triggers::list_triggers(&client.http, page_size, token.as_deref())
+                    .await
+            }
+        })
+    }
+
+    /// Streams every trigger across pages, in server order. Same rules as
+    /// [`pages`](Self::pages).
+    #[must_use = "streams do nothing unless polled"]
+    pub fn items(self) -> BoxStream<'static, Result<Trigger, GenaiError>> {
+        paging::items(self.pages())
+    }
+}
+
+/// A `GET /v1beta/triggers/{id}/executions` request, from
+/// [`Triggers::list_executions`].
+///
+/// End it with [`send`](Self::send) for one page, or
+/// [`pages`](Self::pages) / [`items`](Self::items) to follow
+/// `next_page_token` to the end of the list. The page size is sent with
+/// every page. An empty or dot-segment trigger ID fails with
+/// [`GenaiError::InvalidInput`] before any request (from `.send()`, or as
+/// the streams' only item).
+///
+/// # Example
+///
+/// ```no_run
+/// use futures_util::TryStreamExt;
+///
+/// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+/// // The ten most recent firings
+/// let page = client
+///     .triggers()
+///     .list_executions("trig-123")
+///     .with_page_size(10)
+///     .send()
+///     .await?;
+/// for execution in &page.trigger_executions {
+///     println!("{:?}: {:?}", execution.scheduled_time, execution.status);
+/// }
+///
+/// // Every firing, across pages
+/// let all: Vec<genai_rs::TriggerExecution> = client
+///     .triggers()
+///     .list_executions("trig-123")
+///     .items()
+///     .try_collect()
+///     .await?;
+/// # let _ = all;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Clone, Debug)]
+#[must_use = "a list request does nothing until .send(), .pages() or .items()"]
+pub struct ListTriggerExecutions<'a> {
+    client: &'a Client,
+    trigger_id: String,
+    page_size: Option<u32>,
+    page_token: Option<String>,
+}
+
+impl<'a> ListTriggerExecutions<'a> {
+    /// Sets the maximum number of executions per page. Sent with every page.
+    pub fn with_page_size(mut self, page_size: u32) -> Self {
+        self.page_size = Some(page_size);
+        self
+    }
+
+    /// Starts from this page token, from a previous page's
+    /// `next_page_token`.
+    pub fn with_page_token(mut self, page_token: impl Into<String>) -> Self {
+        self.page_token = Some(page_token.into());
+        self
+    }
+
+    /// Sends the request and returns one page.
+    ///
+    /// No executions, and a trigger that does not exist, both come back as
+    /// an empty page with no `next_page_token` (the API answers `{}`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid trigger ID or page token, on network
+    /// failure, or when the response fails to parse.
+    pub async fn send(self) -> Result<TriggerExecutionListResponse, GenaiError> {
+        crate::http::triggers::list_trigger_executions(
+            &self.client.http,
+            &self.trigger_id,
+            self.page_size,
+            self.page_token.as_deref(),
+        )
+        .await
+    }
+
+    /// Streams every page, starting at [`with_page_token`](Self::with_page_token)
+    /// or the first page.
+    ///
+    /// Nothing is sent until the stream is polled. It ends after a page
+    /// without a `next_page_token`; an error is yielded once and ends it. A
+    /// page whose token was already requested (the starting token included)
+    /// is yielded, then [`GenaiError::MalformedResponse`]. The stream owns a
+    /// clone of the client, so it can be stored or spawned.
+    #[must_use = "streams do nothing unless polled"]
+    pub fn pages(self) -> BoxStream<'static, Result<TriggerExecutionListResponse, GenaiError>> {
+        let Self {
+            client,
+            trigger_id,
+            page_size,
+            page_token,
+        } = self;
+        let client = client.clone();
+        paging::pages("trigger executions", page_token, move |token| {
+            let (client, trigger_id) = (client.clone(), trigger_id.clone());
+            async move {
+                crate::http::triggers::list_trigger_executions(
+                    &client.http,
+                    &trigger_id,
+                    page_size,
+                    token.as_deref(),
+                )
+                .await
+            }
+        })
+    }
+
+    /// Streams every execution across pages, in server order. Same rules as
+    /// [`pages`](Self::pages).
+    #[must_use = "streams do nothing unless polled"]
+    pub fn items(self) -> BoxStream<'static, Result<TriggerExecution, GenaiError>> {
+        paging::items(self.pages())
     }
 }
 

@@ -203,9 +203,14 @@ nested interaction must target a **custom agent**: a model-only interaction
 is rejected. Since custom-agent creation is gated, most accounts can list
 triggers but not create them.
 
-```rust,ignore
-use genai_rs::{InteractionInput, InteractionRequest, TriggerCreateParams, TriggerStatus, TriggerUpdate};
+```rust,no_run
+use futures_util::TryStreamExt;
+use genai_rs::{
+    InteractionInput, InteractionRequest, TriggerCreateParams, TriggerExecution, TriggerStatus,
+    TriggerUpdate,
+};
 
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let interaction = InteractionRequest {
     agent: Some("my-custom-agent".to_string()),
     input: InteractionInput::Text("Summarize yesterday's alerts".to_string()),
@@ -216,20 +221,25 @@ let interaction = InteractionRequest {
 let params = TriggerCreateParams::new("0 9 * * 1-5", "America/Los_Angeles", interaction)
     .with_display_name("weekday-briefing")
     .with_environment_id("env-id"); // optional
-let trigger = client.create_trigger(&params).await?;
+let trigger = client.triggers().create(&params).await?;
 
 let id = trigger.id.clone().expect("created trigger has an id");
-let execution = client.run_trigger(&id).await?; // fire now
-let runs = client.list_trigger_executions(&id, Some(10), None).await?;
-client.update_trigger(&id, &TriggerUpdate::new().with_status(TriggerStatus::Paused)).await?;
-client.delete_trigger(&id).await?;
+let execution = client.triggers().run(&id).await?; // fire now
+let recent = client.triggers().list_executions(&id).with_page_size(10).send().await?;
+let all: Vec<TriggerExecution> = client.triggers().list_executions(&id).items().try_collect().await?;
+client.triggers().update(&id, &TriggerUpdate::new().with_status(TriggerStatus::Paused)).await?;
+client.triggers().delete(&id).await?;
+# let _ = (execution, recent, all);
+# Ok(())
+# }
 ```
 
 The nested request must not set `store`: the API rejects it there.
 `TriggerUpdate` omits unset fields from the PATCH body. The endpoint takes no
 `update_mask`, so partial-update behavior rests on that omission, and it is
 unverified until trigger updates can be live-tested. `TriggerExecutionStatus`
-lists the execution outcomes.
+lists the execution outcomes. `list_executions` on a trigger ID that does not
+exist returns an empty list, not a 404 (live, 2026-09-26).
 
 ## Background execution
 
