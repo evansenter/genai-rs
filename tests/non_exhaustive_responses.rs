@@ -68,7 +68,7 @@ const REQUEST_SIDE: &[&str] = &[
 /// Test-only modules declared out of line; finding them proves the gate
 /// detection works, since otherwise test files would be scanned as API.
 const EXPECTED_TEST_MODULES: &[&str] = &[
-    "src/content_tests",
+    "src/content/content_tests",
     "src/proptest_tests",
     "src/request_tests",
     "src/response_tests",
