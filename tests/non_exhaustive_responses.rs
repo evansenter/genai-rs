@@ -164,6 +164,11 @@ fn analyze(sources: &[(String, String)], exemptions: &[&str]) -> Report {
     for (rel, file) in &parsed {
         let mut finder = GatedModules {
             dir: child_module_dir(rel),
+            file_dir: Path::new(rel)
+                .parent()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
             found: &mut report.test_modules,
         };
         finder.visit_file(file);
@@ -265,6 +270,20 @@ fn child_module_dir(rel: &str) -> String {
     }
 }
 
+/// The value of a `#[path = "..."]` attribute, if present.
+fn path_attr(attrs: &[Attribute]) -> Option<String> {
+    attrs.iter().find_map(|attr| match &attr.meta {
+        Meta::NameValue(nv) if nv.path.is_ident("path") => match &nv.value {
+            syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(s),
+                ..
+            }) => Some(s.value()),
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
 /// A file is test-only if a gated `mod` declared it: `<m>.rs`, `<m>/mod.rs`,
 /// or anything below `<m>/`.
 fn is_test_only_path(rel: &str, test_modules: &BTreeSet<String>) -> bool {
@@ -273,16 +292,28 @@ fn is_test_only_path(rel: &str, test_modules: &BTreeSet<String>) -> bool {
         .any(|m| rel == format!("{m}.rs") || rel.starts_with(&format!("{m}/")))
 }
 
-/// Collects out-of-line `#[cfg(test)] mod x;` declarations.
+/// Collects out-of-line `#[cfg(test)] mod x;` declarations, following a
+/// `#[path = "x_tests.rs"]` attribute when there is one.
 struct GatedModules<'a> {
+    /// Where an unattributed `mod x;` resolves (see [`child_module_dir`]).
     dir: String,
+    /// The declaring file's own directory, which a top-level `#[path]` is
+    /// relative to.
+    file_dir: String,
     found: &'a mut BTreeSet<String>,
 }
 
 impl<'ast> Visit<'ast> for GatedModules<'_> {
     fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
         if module.content.is_none() && is_test_gated(&module.attrs) {
-            self.found.insert(format!("{}/{}", self.dir, module.ident));
+            let target = match path_attr(&module.attrs) {
+                Some(path) => {
+                    let path = path.strip_suffix(".rs").unwrap_or(&path).to_owned();
+                    format!("{}/{path}", self.file_dir)
+                }
+                None => format!("{}/{}", self.dir, module.ident),
+            };
+            self.found.insert(target);
         }
         // Inline modules are not followed: an out-of-line `mod` inside one
         // would resolve to a nested directory, and `src/` has none.
