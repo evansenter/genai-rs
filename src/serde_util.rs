@@ -107,13 +107,6 @@ where
 /// variant whose wire form is `data` exactly as captured; the type string is
 /// ignored (it was read out of `data` on deserialize). Same argument order
 /// as [`serialize_unknown_merged`].
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "staged for the next Derive Serialize conversions; drop this once one uses it"
-    )
-)]
 pub(crate) fn serialize_unknown_data<S>(
     _type_name: &str,
     data: &serde_json::Value,
