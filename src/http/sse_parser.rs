@@ -34,7 +34,11 @@ where
 {
     try_stream! {
         futures_util::pin_mut!(byte_stream);
-        let mut buffer = Vec::new();
+        let mut buffer: Vec<u8> = Vec::new();
+        // Leading bytes of `buffer` already searched for a newline. Without
+        // it, a multi-megabyte event (image output) arriving in 8 KB chunks
+        // is rescanned from the start on every chunk: quadratic.
+        let mut scanned = 0;
         let mut event = PendingEvent::default();
 
         loop {
@@ -51,9 +55,14 @@ where
                 }
             };
 
-            while let Some(newline_pos) = buffer.iter().position(|&b| b == b'\n') {
-                let line_bytes: Vec<u8> = buffer.drain(..=newline_pos).collect();
-                let line = str::from_utf8(&line_bytes)?.trim_end_matches(['\n', '\r']);
+            // Walk the complete lines by offset, then drop them in one drain,
+            // rather than shifting the buffer down after every line.
+            let mut start = 0;
+            while let Some(offset) = memchr::memchr(b'\n', &buffer[start + scanned..]) {
+                let end = start + scanned + offset;
+                scanned = 0;
+                let line = str::from_utf8(&buffer[start..end])?.trim_end_matches('\r');
+                start = end + 1;
                 if line.is_empty() {
                     if let Some(parsed) = event.dispatch(ctx, request_id)? {
                         yield parsed;
@@ -62,6 +71,8 @@ where
                     event.push_line(line);
                 }
             }
+            buffer.drain(..start);
+            scanned = buffer.len();
 
             if finished {
                 if let Some(parsed) = event.dispatch(ctx, request_id)? {
@@ -454,5 +465,47 @@ mod tests {
         let message = parsed_stream.next().await.unwrap().unwrap();
         // The JSON parser should decode \u sequences to actual Unicode characters
         assert_eq!(message.text, "Hello 世界 🌍");
+    }
+
+    /// A body exercising every framing rule, with an event large enough to
+    /// span many chunks and multi-byte UTF-8 for cuts to land inside.
+    fn framing_corpus() -> (Vec<u8>, Vec<String>) {
+        let big = "é".repeat(20_000);
+        let body = format!(
+            ": comment\n\
+             event: message\ndata: {{\"text\":\"a\"}}\n\n\
+             data: {{\"text\":\r\ndata: \"b\"}}\r\n\r\n\
+             data:{{\"text\":\"{big}\"}}\n\n\
+             data: [DONE]\n\n\
+             data: {{\"text\":\"日本\"}}"
+        );
+        let expected = vec!["a".to_string(), "b".to_string(), big, "日本".to_string()];
+        (body.into_bytes(), expected)
+    }
+
+    proptest::proptest! {
+        /// Where the chunk boundaries fall (including empty chunks) must not
+        /// change which events come out.
+        #[test]
+        fn chunk_boundaries_do_not_change_events(
+            cuts in proptest::collection::vec(proptest::num::usize::ANY, 0..64)
+        ) {
+            let (body, expected) = framing_corpus();
+            let mut cuts: Vec<usize> = cuts.into_iter().map(|c| c % (body.len() + 1)).collect();
+            cuts.sort_unstable();
+            let mut chunks: Vec<Result<Bytes, reqwest::Error>> = Vec::new();
+            let mut from = 0;
+            for cut in cuts.into_iter().chain([body.len()]) {
+                chunks.push(Ok(Bytes::copy_from_slice(&body[from..cut])));
+                from = cut;
+            }
+
+            let ctx = test_ctx();
+            let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+            let results = runtime.block_on(
+                parse_sse_stream::<TestMessage>(stream::iter(chunks), &ctx, 0).collect(),
+            );
+            proptest::prop_assert_eq!(texts(results), expected);
+        }
     }
 }

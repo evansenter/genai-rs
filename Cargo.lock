@@ -444,6 +444,7 @@ dependencies = [
  "genai-rs-macros",
  "inventory",
  "libc",
+ "memchr",
  "proptest",
  "regex",
  "reqwest",

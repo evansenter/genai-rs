@@ -32,6 +32,9 @@ async fn main() -> Result<(), genai_rs::GenaiError> {
 }
 ```
 
+`Client` holds a connection pool: build one and reuse it (clones share the
+pool), rather than building one per request.
+
 ## Features
 
 ### Core Capabilities
