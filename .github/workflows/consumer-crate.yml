@@ -1,8 +1,11 @@
 name: Fresh Consumer Crate
 
-# Compiles `#[tool]` from a throwaway crate outside this workspace. The macro's
-# consumer requirements (#402) can only fail there: inside the workspace
-# `async-trait`, `serde_json` and `CallableFunction` always resolve.
+# Compiles `#[tool]` from a throwaway crate outside this workspace, with
+# exactly README.md's dependency set and no trait import. A missing
+# *dependency* can only fail there: inside the workspace `async-trait` and
+# `serde_json` always resolve. The trait-import half is also pinned on every
+# PR by `tests/ui/pass_no_consumer_imports.rs`; trybuild gives a separate
+# crate, but not a separate dependency resolve, so it cannot replace this.
 
 on:
   schedule:
@@ -108,10 +111,9 @@ jobs:
             cat deps.toml
           } > consumer/Cargo.toml
 
-          # Required because generated code calls `declaration()` unqualified
-          # (see `generate_declaration_function`). Remove when #402 lands.
+          # No `use genai_rs::CallableFunction;`: the README promises `#[tool]`
+          # needs none, so importing it here would let a regression through.
           cat > consumer/src/main.rs <<'RUST'
-          use genai_rs::CallableFunction;
           use genai_rs_macros::tool;
 
           /// Gets the current weather for a city.
@@ -135,29 +137,19 @@ jobs:
               let factory = get_weather_callable_factory();
               assert_eq!(factory.declaration().name(), "get_weather");
 
-              // The documented migration for #430's `#[non_exhaustive]`
-              // response structs, asserted from where the attribute
-              // actually applies. `#[non_exhaustive]` only bites outside
-              // the defining crate, so no in-workspace test can catch a
-              // regression here — and `docs/ENUM_WIRE_FORMATS.md` tells
-              // users this exact route still works. It was verified once
-              // by hand; this keeps it verified by a compiler.
+              // The out-of-crate claims `#[non_exhaustive]` makes: the
+              // documented migration, and the constructors that exist because
+              // closing a type took literal syntax away. Pinned on every PR by
+              // `tests/ui/pass_interaction_response_migration.rs` and
+              // `pass_closed_type_constructors.rs`; repeated here because
+              // only this job builds them from a fresh dependency resolve.
               let mut response = genai_rs::InteractionResponse::default();
               response.id = Some("x".into());
               assert_eq!(response.id.as_deref(), Some("x"));
 
-              // `ModalityTokens::new()` exists *only* because closing the
-              // type left serde as the only way for a downstream crate to
-              // build one — that is the reason given in its own doc and in
-              // `docs/ENUM_WIRE_FORMATS.md`. Its unit test cannot check that
-              // claim, because the attribute is inert inside the defining
-              // crate, so this is the only place the constructor's reason for
-              // existing is verified rather than asserted.
               let modality = genai_rs::ModalityTokens::new("text", 1);
               assert_eq!(modality.tokens, 1);
 
-              // Same for the read-write resources: `ENUM_WIRE_FORMATS.md`
-              // says closing them costs nothing *because* these exist.
               let agent = genai_rs::Agent::new("agents/x");
               assert_eq!(agent.id.as_deref(), Some("agents/x"));
 
@@ -190,104 +182,4 @@ jobs:
           echo "::error::A fresh consumer crate failed to compile a #[tool] function."
           echo "This is the failure class that cannot reproduce inside the workspace."
           echo "Check genai-rs-macros/src/codegen.rs emitted paths against README.md's"
-          echo "documented requirements (dependencies + 'use genai_rs::CallableFunction')."
-
-  minimal-requirements:
-    name: Minimal deps compile (tracks #402)
-    runs-on: ubuntu-latest
-    # Expected to fail until #402 lands; reports whether its requirements are
-    # really gone. Off PRs, where its red check would read as a real failure.
-    # Once green, make it a PR gate and drop `continue-on-error`.
-    if: github.event_name != 'pull_request'
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          path: genai-rs
-      - uses: dtolnay/rust-toolchain@stable
-      # Same mold setup as the job above.
-      - uses: ./genai-rs/.github/actions/setup-mold
-        id: mold
-        continue-on-error: true
-        with:
-          enable-config: "false"
-
-      # Same outcome split as the job above.
-      - name: Warn when the mold step failed
-        if: ${{ !cancelled() && steps.mold.outcome == 'failure' }}
-        run: |
-          echo "::warning::setup-mold failed, so this job built with the default linker (slower; nothing else changes). Three causes look identical from here: enable-config was neither true nor false, the action path did not resolve, or apt could not reach a mirror. See the log lines below."
-          echo "Listed in order of how cheap they are to fix:"
-          echo " 1. A bad 'enable-config' value — the composite logs an"
-          echo "    ::error:: naming it. A typo in this file; fix and re-run."
-          echo " 2. An unresolvable path — a local 'uses:' resolves against"
-          echo "    \$GITHUB_WORKSPACE, and this job checks out to genai-rs/,"
-          echo "    so the path needs that prefix."
-          echo " 3. An apt mirror outage — transient, and the only one of the"
-          echo "    three that is not a mistake in this repo."
-      - name: Note when mold is deliberately skipped
-        if: ${{ !cancelled() && steps.mold.outcome == 'success' && steps.mold.outputs.have-mold == '' }}
-        run: |
-          echo "::notice::mold is not applicable on this runner, so this job built with the default linker. Expected off Linux; nothing is wrong."
-
-      - name: Scaffold a minimal consumer (no async-trait, no serde_json, no trait import)
-        run: |
-          set -euo pipefail
-          mkdir -p minimal/src
-
-          cat > minimal/Cargo.toml <<'TOML'
-          [package]
-          name = "minimal"
-          version = "0.1.0"
-          edition = "2024"
-
-          [dependencies]
-          genai-rs = { path = "../genai-rs" }
-          genai-rs-macros = { path = "../genai-rs/genai-rs-macros" }
-          TOML
-
-          cat > minimal/src/main.rs <<'RUST'
-          use genai_rs_macros::tool;
-
-          /// Gets the current weather for a city.
-          #[tool]
-          fn get_weather(city: String) -> String {
-              format!("Sunny in {city}")
-          }
-
-          fn main() {
-              println!("ok: {}", get_weather_declaration().name());
-          }
-          RUST
-
-      # Same cache target fix as the job above.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: minimal -> target
-          # The build is expected to fail, and rust-cache skips saving on
-          # failure by default.
-          cache-on-failure: true
-      - name: Build
-        id: build
-        working-directory: minimal
-        env:
-          # Same config-discovery gap and #428 guard as the job above.
-          RUSTFLAGS: ${{ steps.mold.outputs.have-mold == '1' && '-C link-arg=-fuse-ld=mold' || '' }}
-        run: cargo build
-
-      - name: Report status
-        if: always()
-        run: |
-          # Three states: `outcome` is also `skipped` after an earlier failure
-          # or a cancel, which says nothing about the compiler.
-          case "${{ steps.build.outcome }}" in
-            success)
-              echo "::notice::A minimal two-dependency consumer compiles — #402's requirements are gone. Drop this job's continue-on-error and its PR exclusion, make it a gate, and remove the README's dependency note."
-              ;;
-            failure)
-              echo "::notice::Minimal consumer still fails, as expected while #402 is open. The README job above is the binding check."
-              ;;
-            *)
-              echo "::warning::The minimal build did not run (outcome: ${{ steps.build.outcome }}), so this run says nothing about #402."
-              ;;
-          esac
+          echo "promise: the Installation snippet's dependencies, and no trait import."
