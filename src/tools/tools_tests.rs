@@ -408,3 +408,189 @@ fn test_tool_retrieval_minimal_serializes_type_only() {
     assert!(matches!(parsed, Tool::Retrieval { .. }));
     assert!(!parsed.is_unknown());
 }
+
+// =============================================================================
+// Exact serialized form: key order, skip rules, Unknown merging
+// =============================================================================
+
+fn to_json(tool: &Tool) -> String {
+    serde_json::to_string(tool).expect("Serialization failed")
+}
+
+#[test]
+fn test_tool_serializes_type_first_then_fields_in_order() {
+    assert_eq!(
+        to_json(&Tool::Function {
+            name: "get_weather".to_string(),
+            description: "Weather".to_string(),
+            parameters: FunctionParameters::new(
+                "object".to_string(),
+                serde_json::json!({}),
+                vec![]
+            ),
+        }),
+        r#"{"type":"function","name":"get_weather","description":"Weather","parameters":{"type":"object","properties":{}}}"#
+    );
+    assert_eq!(
+        to_json(&Tool::GoogleSearch {
+            search_types: Some(vec![SearchType::WebSearch]),
+        }),
+        r#"{"type":"google_search","search_types":["web_search"]}"#
+    );
+    assert_eq!(
+        to_json(&Tool::GoogleMaps {
+            enable_widget: Some(true),
+            latitude: Some(1.5),
+            longitude: Some(-2.25),
+        }),
+        r#"{"type":"google_maps","enable_widget":true,"latitude":1.5,"longitude":-2.25}"#
+    );
+    assert_eq!(
+        to_json(&Tool::CodeExecution),
+        r#"{"type":"code_execution"}"#
+    );
+    assert_eq!(to_json(&Tool::UrlContext), r#"{"type":"url_context"}"#);
+    assert_eq!(
+        to_json(&Tool::ComputerUse {
+            environment: "browser".to_string(),
+            excluded_predefined_functions: vec!["drag".to_string()],
+            enable_prompt_injection_detection: Some(false),
+            disabled_safety_policies: vec!["account_creation".to_string()],
+        }),
+        r#"{"type":"computer_use","environment":"browser","excluded_predefined_functions":["drag"],"enable_prompt_injection_detection":false,"disabled_safety_policies":["account_creation"]}"#
+    );
+    assert_eq!(
+        to_json(&Tool::McpServer {
+            name: "srv".to_string(),
+            url: "https://mcp.example".to_string(),
+            allowed_tools: Some(vec![AllowedTools {
+                mode: None,
+                tools: vec!["t".to_string()],
+            }]),
+            headers: Some(HashMap::from([("X-Key".to_string(), "k".to_string())])),
+        }),
+        r#"{"type":"mcp_server","name":"srv","url":"https://mcp.example","allowed_tools":[{"tools":["t"]}],"headers":{"X-Key":"k"}}"#
+    );
+    assert_eq!(
+        to_json(&Tool::FileSearch {
+            store_names: vec!["fileSearchStores/a".to_string()],
+            top_k: Some(3),
+            metadata_filter: Some("x = 1".to_string()),
+        }),
+        r#"{"type":"file_search","file_search_store_names":["fileSearchStores/a"],"top_k":3,"metadata_filter":"x = 1"}"#
+    );
+    assert_eq!(
+        to_json(&Tool::Retrieval {
+            retrieval_types: Some(vec![RetrievalType::ExaAiSearch]),
+            vertex_ai_search_config: None,
+            exa_ai_search_config: Some(ExaAiSearchConfig::new("key")),
+            parallel_ai_search_config: None,
+            rag_store_config: None,
+        }),
+        r#"{"type":"retrieval","retrieval_types":["exa_ai_search"],"exa_ai_search_config":{"api_key":"key"}}"#
+    );
+}
+
+#[test]
+fn test_tool_omits_none_and_empty_optional_fields() {
+    // `Some(empty)` optional collections are omitted, not sent as [] or {}.
+    assert_eq!(
+        to_json(&Tool::GoogleSearch {
+            search_types: Some(vec![]),
+        }),
+        r#"{"type":"google_search"}"#
+    );
+    assert_eq!(
+        to_json(&Tool::GoogleMaps {
+            enable_widget: None,
+            latitude: None,
+            longitude: None,
+        }),
+        r#"{"type":"google_maps"}"#
+    );
+    assert_eq!(
+        to_json(&Tool::ComputerUse {
+            environment: "browser".to_string(),
+            excluded_predefined_functions: vec![],
+            enable_prompt_injection_detection: None,
+            disabled_safety_policies: vec![],
+        }),
+        r#"{"type":"computer_use","environment":"browser"}"#
+    );
+    for (allowed_tools, headers) in [(None, None), (Some(vec![]), Some(HashMap::new()))] {
+        assert_eq!(
+            to_json(&Tool::McpServer {
+                name: "srv".to_string(),
+                url: "https://mcp.example".to_string(),
+                allowed_tools,
+                headers,
+            }),
+            r#"{"type":"mcp_server","name":"srv","url":"https://mcp.example"}"#
+        );
+    }
+    assert_eq!(
+        to_json(&Tool::Retrieval {
+            retrieval_types: Some(vec![]),
+            vertex_ai_search_config: None,
+            exa_ai_search_config: None,
+            parallel_ai_search_config: None,
+            rag_store_config: None,
+        }),
+        r#"{"type":"retrieval"}"#
+    );
+}
+
+#[test]
+fn test_tool_file_search_always_writes_store_names() {
+    // Unlike the optional collections, the store list is written even empty.
+    assert_eq!(
+        to_json(&Tool::FileSearch {
+            store_names: vec![],
+            top_k: None,
+            metadata_filter: None,
+        }),
+        r#"{"type":"file_search","file_search_store_names":[]}"#
+    );
+}
+
+#[test]
+fn test_tool_unknown_serializes_type_merged_into_data() {
+    let unknown = |data| Tool::Unknown {
+        tool_type: "future_tool".to_string(),
+        data,
+    };
+    // `tool_type` goes first and wins over a stale "type" inside `data`; the
+    // other entries follow in the data map's order.
+    assert_eq!(
+        to_json(&unknown(serde_json::json!({
+            "type": "stale",
+            "zeta": 1,
+            "alpha": {"on": true}
+        }))),
+        r#"{"type":"future_tool","alpha":{"on":true},"zeta":1}"#
+    );
+    // A hand-built unknown tool without "type" in its data still sends one.
+    assert_eq!(
+        to_json(&unknown(serde_json::json!({"setting": 123}))),
+        r#"{"type":"future_tool","setting":123}"#
+    );
+    // Non-object data nests under "data"; null data leaves just the type.
+    assert_eq!(
+        to_json(&unknown(serde_json::json!(["a", 1]))),
+        r#"{"type":"future_tool","data":["a",1]}"#
+    );
+    assert_eq!(
+        to_json(&unknown(serde_json::json!("raw"))),
+        r#"{"type":"future_tool","data":"raw"}"#
+    );
+    assert_eq!(
+        to_json(&unknown(serde_json::Value::Null)),
+        r#"{"type":"future_tool"}"#
+    );
+
+    // A type-less object parses to Unknown with the "<missing type>"
+    // sentinel, which the merge then writes back as the type.
+    let parsed: Tool = serde_json::from_str(r#"{"setting":1}"#).expect("Deserialization failed");
+    assert_eq!(parsed.unknown_tool_type(), Some("<missing type>"));
+    assert_eq!(to_json(&parsed), r#"{"type":"<missing type>","setting":1}"#);
+}

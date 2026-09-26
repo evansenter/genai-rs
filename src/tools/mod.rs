@@ -35,7 +35,8 @@ use std::collections::HashMap;
 /// captured as `Tool::Unknown` rather than causing a deserialization error.
 /// This follows the [Evergreen spec](https://github.com/google-deepmind/evergreen-spec)
 /// philosophy of graceful degradation.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Tool {
     /// A custom function that the model can call
@@ -50,15 +51,19 @@ pub enum Tool {
     GoogleSearch {
         /// Types of search to perform (e.g., web search, image search).
         /// When `None`, the API defaults to web search only.
+        #[serde(skip_serializing_if = "crate::serde_util::is_none_or_empty")]
         search_types: Option<Vec<SearchType>>,
     },
     /// Built-in Google Maps tool for location-grounded responses
     GoogleMaps {
         /// Whether to enable the widget context token in the response
+        #[serde(skip_serializing_if = "Option::is_none")]
         enable_widget: Option<bool>,
         /// Latitude bias for location grounding
+        #[serde(skip_serializing_if = "Option::is_none")]
         latitude: Option<f64>,
         /// Longitude bias for location grounding
+        #[serde(skip_serializing_if = "Option::is_none")]
         longitude: Option<f64>,
     },
     /// Built-in code execution tool
@@ -74,13 +79,16 @@ pub enum Tool {
         environment: String,
         /// List of predefined functions to exclude from model access
         /// (wire: `excluded_predefined_functions`).
+        #[serde(skip_serializing_if = "Vec::is_empty")]
         excluded_predefined_functions: Vec<String>,
         /// Whether to enable prompt injection detection for this request.
+        #[serde(skip_serializing_if = "Option::is_none")]
         enable_prompt_injection_detection: Option<bool>,
         /// Safety policies to disable. Known values include
         /// `financial_transactions`, `sensitive_data_modification`,
         /// `communication_tool`, `account_creation`, `data_modification`,
         /// `user_consent_management`, `legal_terms_and_agreements`.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
         disabled_safety_policies: Vec<String>,
     },
     /// Model Context Protocol (MCP) server
@@ -89,17 +97,22 @@ pub enum Tool {
         url: String,
         /// Optional per-mode restrictions on which server tools the model may
         /// call (wire: `allowed_tools: [{mode, tools}]`).
+        #[serde(skip_serializing_if = "crate::serde_util::is_none_or_empty")]
         allowed_tools: Option<Vec<AllowedTools>>,
         /// Optional headers for authentication or configuration
+        #[serde(skip_serializing_if = "crate::serde_util::is_none_or_empty")]
         headers: Option<HashMap<String, String>>,
     },
     /// Built-in file search tool for semantic retrieval over document stores
     FileSearch {
         /// Names of file search stores to query (wire: `file_search_store_names`)
+        #[serde(rename = "file_search_store_names")]
         store_names: Vec<String>,
         /// Number of semantic retrieval chunks to retrieve
+        #[serde(skip_serializing_if = "Option::is_none")]
         top_k: Option<i32>,
         /// Metadata filter for documents and chunks
+        #[serde(skip_serializing_if = "Option::is_none")]
         metadata_filter: Option<String>,
     },
     /// Built-in retrieval tool for grounding over external retrieval
@@ -116,17 +129,22 @@ pub enum Tool {
     /// `computer_use`, `code_execution`, and `url_context`.
     Retrieval {
         /// The retrieval backends to enable.
+        #[serde(skip_serializing_if = "crate::serde_util::is_none_or_empty")]
         retrieval_types: Option<Vec<RetrievalType>>,
         /// Configuration for Vertex AI Search.
+        #[serde(skip_serializing_if = "Option::is_none")]
         vertex_ai_search_config: Option<VertexAiSearchConfig>,
         /// Configuration for Exa.ai search.
+        #[serde(skip_serializing_if = "Option::is_none")]
         exa_ai_search_config: Option<ExaAiSearchConfig>,
         /// Configuration for Parallel.ai search.
+        #[serde(skip_serializing_if = "Option::is_none")]
         parallel_ai_search_config: Option<ParallelAiSearchConfig>,
         /// Configuration for RAG Store retrieval.
         ///
         /// Boxed to keep the `Tool` enum small (this is the largest tool
         /// configuration).
+        #[serde(skip_serializing_if = "Option::is_none")]
         rag_store_config: Option<Box<RagStoreConfig>>,
     },
     /// Unknown tool type for forward compatibility.
@@ -137,180 +155,19 @@ pub enum Tool {
     ///
     /// The `tool_type` field contains the unrecognized type string from the API,
     /// and `data` contains the full JSON object for inspection or debugging.
+    // Serializes as `"type": tool_type` merged with the other entries of
+    // `data` (see `serialize_unknown_merged`), so a hand-built unknown tool
+    // still goes out with its type.
+    #[serde(
+        untagged,
+        serialize_with = "crate::serde_util::serialize_unknown_merged"
+    )]
     Unknown {
         /// The unrecognized tool type name from the API
         tool_type: String,
         /// The full JSON data for this tool, preserved for debugging
         data: serde_json::Value,
     },
-}
-
-// Custom Serialize implementation for Tool.
-// This handles the Unknown variant by merging tool_type into the data.
-impl Serialize for Tool {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeMap;
-
-        match self {
-            Self::Function {
-                name,
-                description,
-                parameters,
-            } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "function")?;
-                map.serialize_entry("name", name)?;
-                map.serialize_entry("description", description)?;
-                map.serialize_entry("parameters", parameters)?;
-                map.end()
-            }
-            Self::GoogleSearch { search_types } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "google_search")?;
-                if let Some(types) = search_types
-                    && !types.is_empty()
-                {
-                    map.serialize_entry("search_types", types)?;
-                }
-                map.end()
-            }
-            Self::GoogleMaps {
-                enable_widget,
-                latitude,
-                longitude,
-            } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "google_maps")?;
-                if let Some(ew) = enable_widget {
-                    map.serialize_entry("enable_widget", ew)?;
-                }
-                if let Some(lat) = latitude {
-                    map.serialize_entry("latitude", lat)?;
-                }
-                if let Some(lng) = longitude {
-                    map.serialize_entry("longitude", lng)?;
-                }
-                map.end()
-            }
-            Self::CodeExecution => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "code_execution")?;
-                map.end()
-            }
-            Self::UrlContext => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "url_context")?;
-                map.end()
-            }
-            Self::ComputerUse {
-                environment,
-                excluded_predefined_functions,
-                enable_prompt_injection_detection,
-                disabled_safety_policies,
-            } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "computer_use")?;
-                map.serialize_entry("environment", environment)?;
-                if !excluded_predefined_functions.is_empty() {
-                    map.serialize_entry(
-                        "excluded_predefined_functions",
-                        excluded_predefined_functions,
-                    )?;
-                }
-                if let Some(detect) = enable_prompt_injection_detection {
-                    map.serialize_entry("enable_prompt_injection_detection", detect)?;
-                }
-                if !disabled_safety_policies.is_empty() {
-                    map.serialize_entry("disabled_safety_policies", disabled_safety_policies)?;
-                }
-                map.end()
-            }
-            Self::McpServer {
-                name,
-                url,
-                allowed_tools,
-                headers,
-            } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "mcp_server")?;
-                map.serialize_entry("name", name)?;
-                map.serialize_entry("url", url)?;
-                if let Some(tools) = allowed_tools
-                    && !tools.is_empty()
-                {
-                    map.serialize_entry("allowed_tools", tools)?;
-                }
-                if let Some(hdrs) = headers
-                    && !hdrs.is_empty()
-                {
-                    map.serialize_entry("headers", hdrs)?;
-                }
-                map.end()
-            }
-            Self::FileSearch {
-                store_names,
-                top_k,
-                metadata_filter,
-            } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "file_search")?;
-                map.serialize_entry("file_search_store_names", store_names)?;
-                if let Some(k) = top_k {
-                    map.serialize_entry("top_k", k)?;
-                }
-                if let Some(filter) = metadata_filter {
-                    map.serialize_entry("metadata_filter", filter)?;
-                }
-                map.end()
-            }
-            Self::Retrieval {
-                retrieval_types,
-                vertex_ai_search_config,
-                exa_ai_search_config,
-                parallel_ai_search_config,
-                rag_store_config,
-            } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "retrieval")?;
-                if let Some(types) = retrieval_types
-                    && !types.is_empty()
-                {
-                    map.serialize_entry("retrieval_types", types)?;
-                }
-                if let Some(config) = vertex_ai_search_config {
-                    map.serialize_entry("vertex_ai_search_config", config)?;
-                }
-                if let Some(config) = exa_ai_search_config {
-                    map.serialize_entry("exa_ai_search_config", config)?;
-                }
-                if let Some(config) = parallel_ai_search_config {
-                    map.serialize_entry("parallel_ai_search_config", config)?;
-                }
-                if let Some(config) = rag_store_config {
-                    map.serialize_entry("rag_store_config", config)?;
-                }
-                map.end()
-            }
-            Self::Unknown { tool_type, data } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", tool_type)?;
-                // Flatten the data fields into the map if it's an object
-                if let serde_json::Value::Object(obj) = data {
-                    for (key, value) in obj {
-                        if key != "type" {
-                            map.serialize_entry(key, value)?;
-                        }
-                    }
-                } else if !data.is_null() {
-                    map.serialize_entry("data", data)?;
-                }
-                map.end()
-            }
-        }
-    }
 }
 
 // Custom Deserialize implementation to handle unknown tool types gracefully.
