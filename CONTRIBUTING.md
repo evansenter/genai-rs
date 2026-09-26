@@ -122,3 +122,11 @@ fixes, deprecations. Internal refactors and CI changes don't need entries.
 
 Breaking changes are permitted and preferred over compatibility shims (D-007);
 say plainly what breaks and what the migration is.
+
+When `[Unreleased]` conflicts, "keep both" preserves every line but not the
+heading each was written under — check the merged result, not the diff. CI's
+`shell-scripts` job lints the structure (duplicate `###` headings in
+`[Unreleased]` or the current version, a duplicated `## [...]` section,
+conflict markers, a missing blank line before a heading, an unclosed code
+fence) via `.github/scripts/check_changelog.sh`; it cannot tell whether an
+entry sits under the *right* heading.
