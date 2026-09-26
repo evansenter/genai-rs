@@ -169,7 +169,8 @@ pub struct TranscriptionConfig {
 /// Serializes as the tagged object (`{"type": "smart"}`,
 /// `{"type": "verbatim", ...}`); the bare strings `"smart"` / `"verbatim"`
 /// the API also accepts deserialize to the same variants.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum TranscriptionMode {
     /// Smart transcription.
@@ -177,11 +178,17 @@ pub enum TranscriptionMode {
     /// Verbatim transcription.
     Verbatim {
         /// Speaker diarization; `"speaker"` is the documented value.
+        #[serde(skip_serializing_if = "Option::is_none")]
         diarization_mode: Option<String>,
         /// Timestamp granularities; `"word"` is the documented value.
+        #[serde(skip_serializing_if = "Option::is_none")]
         timestamp_granularities: Option<Vec<String>>,
     },
     /// Unknown variant for forward compatibility (Evergreen pattern).
+    // Serializes as `data` exactly as captured; `mode_type` is ignored (see
+    // `serialize_unknown_data`), so an unknown mode read as a bare string
+    // goes back out as that string.
+    #[serde(untagged, serialize_with = "crate::serde_util::serialize_unknown_data")]
     Unknown {
         /// The unrecognized mode type from the API.
         mode_type: String,
@@ -212,34 +219,6 @@ impl TranscriptionMode {
         match self {
             Self::Unknown { data, .. } => Some(data),
             _ => None,
-        }
-    }
-}
-
-impl Serialize for TranscriptionMode {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap;
-        match self {
-            Self::Smart => {
-                let mut map = serializer.serialize_map(Some(1))?;
-                map.serialize_entry("type", "smart")?;
-                map.end()
-            }
-            Self::Verbatim {
-                diarization_mode,
-                timestamp_granularities,
-            } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "verbatim")?;
-                if let Some(d) = diarization_mode {
-                    map.serialize_entry("diarization_mode", d)?;
-                }
-                if let Some(t) = timestamp_granularities {
-                    map.serialize_entry("timestamp_granularities", t)?;
-                }
-                map.end()
-            }
-            Self::Unknown { data, .. } => data.serialize(serializer),
         }
     }
 }

@@ -62,6 +62,65 @@ fn test_transcription_mode_wire_forms() {
     );
 }
 
+/// Exact serialized strings: the tag comes first, `None` fields are
+/// omitted, `Some(vec![])` is still written, and fields keep their order.
+#[test]
+fn test_transcription_mode_serialized_strings() {
+    let verbatim = |diarization_mode: Option<&str>, granularities: Option<Vec<&str>>| {
+        TranscriptionMode::Verbatim {
+            diarization_mode: diarization_mode.map(String::from),
+            timestamp_granularities: granularities
+                .map(|g| g.into_iter().map(String::from).collect()),
+        }
+    };
+    for (mode, expected) in [
+        (TranscriptionMode::Smart, r#"{"type":"smart"}"#),
+        (verbatim(None, None), r#"{"type":"verbatim"}"#),
+        (
+            verbatim(Some("speaker"), None),
+            r#"{"type":"verbatim","diarization_mode":"speaker"}"#,
+        ),
+        (
+            verbatim(None, Some(vec![])),
+            r#"{"type":"verbatim","timestamp_granularities":[]}"#,
+        ),
+        (
+            verbatim(Some("speaker"), Some(vec!["word"])),
+            r#"{"type":"verbatim","diarization_mode":"speaker","timestamp_granularities":["word"]}"#,
+        ),
+    ] {
+        assert_eq!(serde_json::to_string(&mode).unwrap(), expected, "{mode:?}");
+    }
+}
+
+/// An unknown mode re-serializes as its `data`, verbatim: `mode_type` is
+/// not merged in, so data without a `"type"` stays without one, a stale
+/// `"type"` is kept, and non-object or null data is written as-is.
+#[test]
+fn test_transcription_mode_unknown_serializes_data_verbatim() {
+    let unknown = |data: serde_json::Value| TranscriptionMode::Unknown {
+        mode_type: "future".into(),
+        data,
+    };
+    for (mode, expected) in [
+        (unknown(serde_json::json!({"x": 1})), r#"{"x":1}"#),
+        (
+            unknown(serde_json::json!({"type": "stale", "x": 1})),
+            r#"{"type":"stale","x":1}"#,
+        ),
+        (unknown(serde_json::json!("future")), r#""future""#),
+        (unknown(serde_json::json!([1, 2])), "[1,2]"),
+        (unknown(serde_json::Value::Null), "null"),
+    ] {
+        assert_eq!(serde_json::to_string(&mode).unwrap(), expected, "{mode:?}");
+    }
+
+    // A bare-string unknown read off the wire goes back out as that string.
+    let read: TranscriptionMode = serde_json::from_str(r#""future""#).unwrap();
+    assert_eq!(read.unknown_mode_type(), Some("future"));
+    assert_eq!(serde_json::to_string(&read).unwrap(), r#""future""#);
+}
+
 #[test]
 fn test_speech_config_for_speaker() {
     let config = SpeechConfig::for_speaker("Bob", "Puck", "en-US");
