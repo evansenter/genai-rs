@@ -15,8 +15,12 @@
 #   2. No merge-conflict markers, anywhere in the file.
 #   3. Every `##`/`###` heading after the first line is preceded by a blank
 #      line — the artifact a hand-relocated section leaves behind.
+#   4. No `## [...]` heading appears twice, anywhere. A keep-both merge can
+#      produce two `## [Unreleased]`; rule 1 would then check each copy
+#      separately, and extract_changelog_section.sh ships only one of them.
 #
-# Fenced code blocks are skipped for all three.
+# Fenced code blocks are skipped for all four. An unclosed fence is itself
+# reported: otherwise everything after it would go unchecked and pass.
 #
 # Output: one `<file>:<line>: <problem>` per violation, on stdout.
 # Exit codes:
@@ -44,7 +48,12 @@ awk -v file="$changelog" -v want="## [$version]" -v have_version="${version:+1}"
     function report(msg) { printf "%s:%d: %s\n", file, NR, msg; bad = 1 }
 
     # Fences toggle on their own line; nothing inside one is structure.
-    /^[[:space:]]*```/ { fenced = !fenced; prev = $0; next }
+    /^[[:space:]]*```/ {
+        fenced = !fenced
+        if (fenced) { fence_line = NR }
+        prev = $0
+        next
+    }
     fenced { prev = $0; next }
 
     /^(<<<<<<< |<<<<<<<$|=======$|>>>>>>> |>>>>>>>$)/ {
@@ -64,6 +73,11 @@ awk -v file="$changelog" -v want="## [$version]" -v have_version="${version:+1}"
         head = close_bracket > 0 ? substr($0, 1, close_bracket) : $0
         checked = (head == "## [Unreleased]") || (have_version && head == want)
         section = head
+        if (head in seen_section) {
+            report("duplicate section \"" head "\" (first at line " seen_section[head] ")")
+        } else {
+            seen_section[head] = NR
+        }
         delete seen
     }
 
@@ -79,5 +93,11 @@ awk -v file="$changelog" -v want="## [$version]" -v have_version="${version:+1}"
 
     { prev = $0 }
 
-    END { exit bad ? 1 : 0 }
+    END {
+        if (fenced) {
+            printf "%s:%d: unclosed code fence; nothing after it was checked\n", file, fence_line
+            bad = 1
+        }
+        exit bad ? 1 : 0
+    }
 ' "$changelog"

@@ -199,6 +199,57 @@ cat >"$work/fenced.md" <<'EOF'
 EOF
 expect "structure inside a fence is ignored" 0 "" "$work/fenced.md"
 
+# --- rule 4: duplicate section headings ------------------------------------
+
+# A keep-both merge that re-adds `## [Unreleased]`. Each copy alone is clean,
+# so only the section-level rule can see it.
+cat >"$work/dup_section.md" <<'EOF'
+# Changelog
+
+## [Unreleased]
+
+### Added
+
+- a
+
+## [Unreleased]
+
+### Added
+
+- b
+
+## [0.2.0] - 2026-07-01
+
+- c
+
+## [0.2.0] - 2026-07-02
+
+- d
+EOF
+expect "duplicate section headings, including released ones" 1 \
+    "$work/dup_section.md:9: duplicate section \"## [Unreleased]\" (first at line 3)
+$work/dup_section.md:19: duplicate section \"## [0.2.0]\" (first at line 15)" \
+    "$work/dup_section.md"
+
+# --- unclosed fence ---------------------------------------------------------
+
+# A merge that drops one side of a fence would otherwise switch every rule
+# off for the rest of the file, conflict markers included, and exit 0.
+cat >"$work/unclosed_fence.md" <<'EOF'
+# Changelog
+
+## [Unreleased]
+
+```text
+example
+
+<<<<<<< HEAD
+- ours
+EOF
+expect "unclosed fence" 1 \
+    "$work/unclosed_fence.md:5: unclosed code fence; nothing after it was checked" \
+    "$work/unclosed_fence.md"
+
 # --- usage ------------------------------------------------------------------
 
 expect "no arguments" 2 ""
