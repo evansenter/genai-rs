@@ -69,11 +69,13 @@ const REQUEST_SIDE: &[&str] = &[
 /// detection works, since otherwise test files would be scanned as API.
 const EXPECTED_TEST_MODULES: &[&str] = &[
     "src/content/content_tests",
+    "src/files_tests",
     "src/proptest_tests",
     "src/request/request_tests",
     "src/response/response_tests",
     "src/streaming_tests",
     "src/test_subscriber",
+    "src/triggers_tests",
     "src/request_builder/tests",
 ];
 
