@@ -140,6 +140,17 @@ impl TurnContent {
 /// - `Steps`: Array of [`Step`]s — the canonical multi-turn/history form
 ///   under API revision 2026-05-20 (replaces the deprecated `Turn` array)
 ///
+/// # Serialization
+///
+/// The type's own `Serialize` is faithful to the variant: a string, a bare
+/// content array, or a step array. The request-side wrap of `Content` into
+/// a `user_input` step lives on [`InteractionRequest::input`] instead,
+/// because it is a decision about authoring a request, not a property of
+/// the type. `InteractionInput` is also what
+/// [`InteractionResponse::input`](crate::InteractionResponse::input) echoes
+/// back, and re-serializing server data into a shape the server did not
+/// send would work against the Evergreen roundtrip principle.
+///
 /// # Example
 ///
 /// ```
@@ -156,7 +167,8 @@ impl TurnContent {
 /// ];
 /// let input = InteractionInput::Steps(steps);
 /// ```
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(untagged)]
 #[non_exhaustive]
 pub enum InteractionInput {
     /// Simple text input
@@ -180,26 +192,6 @@ impl Default for InteractionInput {
     /// before sending.
     fn default() -> Self {
         Self::Text(String::new())
-    }
-}
-
-impl Serialize for InteractionInput {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        // Faithful to the variant, including the bare content array. The
-        // request-side wrap lives on [`InteractionRequest::input`] instead —
-        // see [`serialize_request_input`] — because it is a decision about
-        // authoring a request, not a property of the type. `InteractionInput`
-        // is also what [`InteractionResponse::input`] echoes back, and
-        // re-serializing server data into a shape the server did not send
-        // would work against the Evergreen roundtrip principle.
-        match self {
-            Self::Text(t) => serializer.serialize_str(t),
-            Self::Content(c) => c.serialize(serializer),
-            Self::Steps(s) => s.serialize(serializer),
-        }
     }
 }
 

@@ -181,3 +181,30 @@ fn test_bare_input_serialization_is_unwrapped() {
         "the type's own Serialize must not wrap"
     );
 }
+
+/// Exact strings for each variant, including the empty ones: each writes
+/// its inner value directly (a string or a bare array), with no tag or
+/// wrapper, so `Content(vec![])` and `Steps(vec![])` both go out as `[]`.
+#[test]
+fn test_interaction_input_serialized_strings() {
+    for (input, expected) in [
+        (InteractionInput::Text(String::new()), r#""""#),
+        (InteractionInput::Text("a \"b\"".into()), r#""a \"b\"""#),
+        (InteractionInput::Content(vec![]), "[]"),
+        (
+            InteractionInput::Content(vec![Content::text("hi")]),
+            r#"[{"type":"text","text":"hi"}]"#,
+        ),
+        (InteractionInput::Steps(vec![]), "[]"),
+        (
+            InteractionInput::Steps(vec![Step::user_text("hi")]),
+            r#"[{"type":"user_input","content":[{"type":"text","text":"hi"}]}]"#,
+        ),
+    ] {
+        assert_eq!(
+            serde_json::to_string(&input).unwrap(),
+            expected,
+            "{input:?}"
+        );
+    }
+}
