@@ -683,6 +683,14 @@ Verified live 2026-07 (full CRUD, `:ping`, `:rotateSigningSecret`):
   echoed verbatim in the create response (modeled as
   `InteractionResponse::webhook_config`).
 
+Verified live 2026-09-26 (list paging, three webhooks at `page_size=1`):
+
+- `page_size` is honored, and `next_page_token` is present only while more
+  webhooks remain; the last page omits it. An empty collection is `{}`.
+- The token is raw bytes with control characters, not base64 (shape
+  `"rC\n\x19B\x17<name>\n&B$<id>"`), so it must be percent-encoded byte for
+  byte when resent. The `webhooks_and_agents_tests` paging test covers this.
+
 ### Environment
 
 `environment` (request) and `base_environment` (agent) take an environment id

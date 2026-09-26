@@ -141,29 +141,35 @@ fn every_call(c: &genai_rs::Client) -> Vec<(&'static str, Returns, Call<'_>)> {
     use Returns::{Nothing, Resource};
     vec![
         (
-            "create_webhook",
+            "webhooks.create",
             Resource,
             call(async move {
-                c.create_webhook(&Webhook::new("https://example.com/h", vec![]))
+                c.webhooks()
+                    .create(&Webhook::new("https://example.com/h", vec![]))
                     .await
             }),
         ),
-        ("get_webhook", Resource, call(c.get_webhook("wh-1"))),
-        ("list_webhooks", Resource, call(c.list_webhooks(None, None))),
+        ("webhooks.get", Resource, call(c.webhooks().get("wh-1"))),
+        ("webhooks.list", Resource, call(c.webhooks().list().send())),
         (
-            "update_webhook",
+            "webhooks.update",
             Resource,
             call(async move {
-                c.update_webhook("wh-1", &WebhookUpdate::new().with_name("n"), None)
+                c.webhooks()
+                    .update("wh-1", &WebhookUpdate::new().with_name("n"))
                     .await
             }),
         ),
-        ("delete_webhook", Nothing, call(c.delete_webhook("wh-1"))),
-        ("ping_webhook", Nothing, call(c.ping_webhook("wh-1"))),
         (
-            "rotate_webhook_signing_secret",
+            "webhooks.delete",
+            Nothing,
+            call(c.webhooks().delete("wh-1")),
+        ),
+        ("webhooks.ping", Nothing, call(c.webhooks().ping("wh-1"))),
+        (
+            "webhooks.rotate_signing_secret",
             Resource,
-            call(c.rotate_webhook_signing_secret("wh-1", None)),
+            call(c.webhooks().rotate_signing_secret("wh-1", None)),
         ),
         (
             "create_trigger",
@@ -406,27 +412,38 @@ async fn webhook_endpoints_send_the_documented_requests() {
                     "name": "hook"
                 })),
                 async move {
-                    c.create_webhook(
-                        &Webhook::new(
-                            "https://example.com/hook",
-                            vec![
-                                WebhookEvent::InteractionCompleted,
-                                WebhookEvent::BatchFailed,
-                            ],
+                    c.webhooks()
+                        .create(
+                            &Webhook::new(
+                                "https://example.com/hook",
+                                vec![
+                                    WebhookEvent::InteractionCompleted,
+                                    WebhookEvent::BatchFailed,
+                                ],
+                            )
+                            .with_name("hook"),
                         )
-                        .with_name("hook"),
-                    )
-                    .await
+                        .await
                 },
             ),
-            wire("GET", "/v1beta/webhooks/wh-1", None, c.get_webhook("wh-1")),
-            wire("GET", "/v1beta/webhooks", None, c.list_webhooks(None, None)),
+            wire(
+                "GET",
+                "/v1beta/webhooks/wh-1",
+                None,
+                c.webhooks().get("wh-1"),
+            ),
+            wire("GET", "/v1beta/webhooks", None, c.webhooks().list().send()),
             wire(
                 "GET",
                 "/v1beta/webhooks?page_size=5&page_token=a%2Fb%3D",
                 None,
-                c.list_webhooks(Some(5), Some("a/b=")),
+                c.webhooks()
+                    .list()
+                    .with_page_size(5)
+                    .with_page_token("a/b=")
+                    .send(),
             ),
+            // The mask rides in the query; the body holds only the fields.
             wire(
                 "PATCH",
                 "/v1beta/webhooks/wh-1?update_mask=uri%2Cstate",
@@ -434,8 +451,9 @@ async fn webhook_endpoints_send_the_documented_requests() {
                 async move {
                     let update = WebhookUpdate::new()
                         .with_uri("https://example.com/v2")
-                        .with_state(WebhookState::Disabled);
-                    c.update_webhook("wh-1", &update, Some("uri,state")).await
+                        .with_state(WebhookState::Disabled)
+                        .with_update_mask("uri,state");
+                    c.webhooks().update("wh-1", &update).await
                 },
             ),
             wire(
@@ -445,32 +463,32 @@ async fn webhook_endpoints_send_the_documented_requests() {
                 async move {
                     let update = WebhookUpdate::new()
                         .with_subscribed_events(vec![WebhookEvent::VideoGenerated]);
-                    c.update_webhook("wh-1", &update, None).await
+                    c.webhooks().update("wh-1", &update).await
                 },
             ),
             wire(
                 "DELETE",
                 "/v1beta/webhooks/wh-1",
                 None,
-                c.delete_webhook("wh-1"),
+                c.webhooks().delete("wh-1"),
             ),
             wire(
                 "POST",
                 "/v1beta/webhooks/wh-1:ping",
                 Some(json!({})),
-                c.ping_webhook("wh-1"),
+                c.webhooks().ping("wh-1"),
             ),
             wire(
                 "POST",
                 "/v1beta/webhooks/wh-1:rotateSigningSecret",
                 Some(json!({})),
-                c.rotate_webhook_signing_secret("wh-1", None),
+                c.webhooks().rotate_signing_secret("wh-1", None),
             ),
             wire(
                 "POST",
                 "/v1beta/webhooks/wh-1:rotateSigningSecret",
                 Some(json!({"revocation_behavior": "revoke_previous_secrets_immediately"})),
-                c.rotate_webhook_signing_secret(
+                c.webhooks().rotate_signing_secret(
                     "wh-1",
                     Some(RevocationBehavior::RevokePreviousSecretsImmediately),
                 ),
@@ -499,7 +517,8 @@ async fn webhook_create_response_parses_the_secret_and_preserves_unknowns() {
 
     let webhook = stub
         .client()
-        .create_webhook(&Webhook::new("https://example.com/hook", vec![]))
+        .webhooks()
+        .create(&Webhook::new("https://example.com/hook", vec![]))
         .await
         .unwrap();
 
@@ -542,7 +561,14 @@ async fn webhook_list_keeps_the_page_token_and_drops_only_undeserializable_entri
     )])
     .await;
 
-    let list = stub.client().list_webhooks(Some(3), None).await.unwrap();
+    let list = stub
+        .client()
+        .webhooks()
+        .list()
+        .with_page_size(3)
+        .send()
+        .await
+        .unwrap();
 
     let ids: Vec<_> = list
         .webhooks
@@ -565,6 +591,49 @@ async fn webhook_list_keeps_the_page_token_and_drops_only_undeserializable_entri
     assert_eq!(list.next_page_token.as_deref(), Some("page-2"));
 }
 
+#[tokio::test]
+async fn webhook_list_items_resend_raw_byte_page_tokens_percent_encoded() {
+    // Live webhook page tokens are raw bytes, control characters included
+    // (observed 2026-09-26: "rC\n\x19B\x17<name>\n&B$<id>"). The next
+    // request must carry them percent-encoded byte for byte, or the server
+    // restarts the list.
+    let token = "rC\n\u{19}B\u{17}hook-1\n&B$wh-1";
+    let stub = Stub::replying(vec![
+        Reply::json(
+            200,
+            json!({
+                "webhooks": [{"id": "wh-1", "uri": "https://a.example"}],
+                "next_page_token": token
+            }),
+        ),
+        Reply::json(
+            200,
+            json!({"webhooks": [{"id": "wh-2", "uri": "https://b.example"}]}),
+        ),
+    ])
+    .await;
+    let client = stub.client();
+
+    let webhooks: Vec<Webhook> = client
+        .webhooks()
+        .list()
+        .with_page_size(1)
+        .items()
+        .try_collect()
+        .await
+        .unwrap();
+
+    let ids: Vec<_> = webhooks.iter().filter_map(|w| w.id.as_deref()).collect();
+    assert_eq!(ids, ["wh-1", "wh-2"]);
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/webhooks?page_size=1",
+            "/v1beta/webhooks?page_size=1&page_token=rC%0A%19B%17hook-1%0A%26B%24wh-1",
+        ]
+    );
+}
+
 #[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
 async fn rotate_signing_secret_sends_unknown_behaviors_verbatim_and_returns_the_secret() {
@@ -575,7 +644,8 @@ async fn rotate_signing_secret_sends_unknown_behaviors_verbatim_and_returns_the_
 
     let rotated = stub
         .client()
-        .rotate_webhook_signing_secret("wh-1", Some(behavior))
+        .webhooks()
+        .rotate_signing_secret("wh-1", Some(behavior))
         .await
         .unwrap();
 
@@ -2730,29 +2800,34 @@ async fn reserved_characters_in_ids_are_percent_encoded() {
                 "GET",
                 "/v1beta/webhooks/a%2Fb%3Fc%23d",
                 None,
-                c.get_webhook("a/b?c#d"),
+                c.webhooks().get("a/b?c#d"),
             ),
             // The colon verb stays outside the encoded ID.
             wire(
                 "POST",
                 "/v1beta/webhooks/wh%3A1:ping",
                 Some(json!({})),
-                c.ping_webhook("wh:1"),
+                c.webhooks().ping("wh:1"),
             ),
             wire(
                 "POST",
                 "/v1beta/webhooks/wh%3A1:rotateSigningSecret",
                 Some(json!({})),
-                c.rotate_webhook_signing_secret("wh:1", None),
+                c.webhooks().rotate_signing_secret("wh:1", None),
             ),
             wire(
                 "DELETE",
                 "/v1beta/webhooks/a%20b",
                 None,
-                c.delete_webhook("a b"),
+                c.webhooks().delete("a b"),
             ),
             // Dots inside an ID are not dot segments.
-            wire("GET", "/v1beta/webhooks/v1.2", None, c.get_webhook("v1.2")),
+            wire(
+                "GET",
+                "/v1beta/webhooks/v1.2",
+                None,
+                c.webhooks().get("v1.2"),
+            ),
             wire("GET", "/v1beta/triggers/t%2F1", None, c.get_trigger("t/1")),
             wire(
                 "POST",
@@ -2876,17 +2951,17 @@ async fn empty_and_dot_segment_ids_are_rejected_before_any_request() {
     let second = Duration::from_secs(1);
 
     let cases: Vec<(&str, Call<'_>)> = vec![
-        ("get_webhook empty", call(c.get_webhook(""))),
-        ("get_webhook ..", call(c.get_webhook(".."))),
+        ("webhooks.get empty", call(c.webhooks().get(""))),
+        ("webhooks.get ..", call(c.webhooks().get(".."))),
         (
-            "update_webhook",
-            call(async move { c.update_webhook("", &WebhookUpdate::new(), None).await }),
+            "webhooks.update",
+            call(async move { c.webhooks().update("", &WebhookUpdate::new()).await }),
         ),
-        ("delete_webhook", call(c.delete_webhook(""))),
-        ("ping_webhook", call(c.ping_webhook("."))),
+        ("webhooks.delete", call(c.webhooks().delete(""))),
+        ("webhooks.ping", call(c.webhooks().ping("."))),
         (
-            "rotate_webhook_signing_secret",
-            call(c.rotate_webhook_signing_secret("", None)),
+            "webhooks.rotate_signing_secret",
+            call(c.webhooks().rotate_signing_secret("", None)),
         ),
         ("get_trigger", call(c.get_trigger(""))),
         (
@@ -3156,10 +3231,17 @@ async fn empty_object_parses_as_an_empty_last_page_on_every_list_endpoint() {
 
     let pages: Vec<(&str, Page<'_>)> = vec![
         (
-            "list_webhooks",
+            "webhooks.list",
             Box::pin(async move {
-                let l = c.list_webhooks(None, None).await?;
+                let l = c.webhooks().list().send().await?;
                 Ok((l.webhooks.len(), l.next_page_token))
+            }),
+        ),
+        (
+            "webhooks.list items",
+            Box::pin(async move {
+                let items: Vec<_> = c.webhooks().list().items().try_collect().await?;
+                Ok((items.len(), None))
             }),
         ),
         (
@@ -3260,7 +3342,7 @@ async fn client_timeout_applies_to_resource_calls() {
         .unwrap();
 
     let started = std::time::Instant::now();
-    let err = client.get_webhook("wh-1").await.unwrap_err();
+    let err = client.webhooks().get("wh-1").await.unwrap_err();
 
     assert!(
         matches!(err, GenaiError::Http(ref e) if e.is_timeout()),
@@ -3290,7 +3372,7 @@ async fn base_url_prefix_applies_to_resource_and_upload_endpoints() {
         .unwrap();
     let (_dir, path) = temp_file("notes.txt", b"hello");
 
-    client.list_webhooks(None, None).await.unwrap();
+    client.webhooks().list().send().await.unwrap();
     client
         .upload_environment_file(
             "env-1",

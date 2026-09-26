@@ -263,10 +263,12 @@ and `video.generated`.
 
 Register once for all matching events:
 
-```rust,ignore
+```rust,no_run
+use futures_util::TryStreamExt;
 use genai_rs::{Webhook, WebhookEvent, WebhookState, WebhookUpdate};
 
-let webhook = client.create_webhook(
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+let webhook = client.webhooks().create(
     &Webhook::new(
         "https://example.com/hooks/genai",
         vec![WebhookEvent::InteractionCompleted, WebhookEvent::InteractionFailed],
@@ -278,11 +280,19 @@ let webhook = client.create_webhook(
 let signing_secret = webhook.new_signing_secret.clone().expect("returned on create");
 let id = webhook.id.clone().expect("created webhook has an id");
 
-client.ping_webhook(&id).await?;                                  // test delivery
-let rotated = client.rotate_webhook_signing_secret(&id, None).await?;
-client.update_webhook(&id, &WebhookUpdate::new().with_state(WebhookState::Disabled), Some("state")).await?;
-client.delete_webhook(&id).await?;
+client.webhooks().ping(&id).await?;                                   // test delivery
+let rotated = client.webhooks().rotate_signing_secret(&id, None).await?;
+client.webhooks().update(&id, &WebhookUpdate::new().with_state(WebhookState::Disabled)).await?;
+let all: Vec<Webhook> = client.webhooks().list().items().try_collect().await?; // every page
+client.webhooks().delete(&id).await?;
+# let _ = (signing_secret, rotated, all);
+# Ok(())
+# }
 ```
+
+`update()` applies the fields set on the `WebhookUpdate`;
+`.with_update_mask("state")` adds the optional `update_mask` query parameter,
+which the API was observed to ignore (2026-07).
 
 Or route one request, which overrides the registered webhooks for it and
 echoes `user_metadata` on every event:

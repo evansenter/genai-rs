@@ -4,9 +4,12 @@
 //! Webhooks let the API push events (batch completion, interaction lifecycle,
 //! video generation) to your HTTPS endpoint instead of requiring polling.
 //!
-//! - Manage registered webhooks with the [`Client`] methods
-//!   `create_webhook`, `get_webhook`, `list_webhooks`, `update_webhook`,
-//!   `delete_webhook`, `ping_webhook`, and `rotate_webhook_signing_secret`.
+//! - Manage registered webhooks through the [`Webhooks`] handle from
+//!   [`Client::webhooks`]: [`create`](Webhooks::create),
+//!   [`get`](Webhooks::get), [`list`](Webhooks::list),
+//!   [`update`](Webhooks::update), [`delete`](Webhooks::delete),
+//!   [`ping`](Webhooks::ping) and
+//!   [`rotate_signing_secret`](Webhooks::rotate_signing_secret).
 //! - Route a single request's events to ad-hoc URIs with
 //!   [`WebhookConfig`] via
 //!   [`InteractionBuilder::with_webhook_config()`](crate::InteractionBuilder::with_webhook_config).
@@ -24,8 +27,10 @@
 
 use crate::client::Client;
 use crate::errors::GenaiError;
+use crate::paging;
 use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
+use futures_util::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 
 wire_enum! {
@@ -92,9 +97,9 @@ pub struct SigningSecret {
 
 /// A Webhook resource.
 ///
-/// Create with [`Webhook::new()`] and register it via
-/// [`Client::create_webhook()`](crate::Client::create_webhook). Fields marked
-/// "output only" are populated by the API and ignored on create.
+/// Create with [`Webhook::new()`] and register it via [`Webhooks::create`].
+/// Fields marked "output only" are populated by the API and ignored on
+/// create.
 ///
 /// # Example
 ///
@@ -157,8 +162,8 @@ pub struct Webhook {
     /// unrecoverable. The resource was live-verified 2026-07, but verification is a
     /// point-in-time snapshot, not a guarantee the shape stays fixed.
     ///
-    /// **Also read on serialize into a request body.** `create_webhook` sends
-    /// this whole struct, so `extra` is an *outbound* escape hatch too —
+    /// **Also read on serialize into a request body.** [`Webhooks::create`]
+    /// sends this whole struct, so `extra` is an *outbound* escape hatch too —
     /// a way to send a field the crate has not modeled yet, exactly like
     /// [`CreateEnvironmentRequest::extra`](crate::CreateEnvironmentRequest::extra).
     /// It also means a get-modify-create cycle echoes unmodeled server
@@ -216,11 +221,27 @@ impl Webhook {
     }
 }
 
-/// A partial update for a webhook (`PATCH /v1beta/webhooks/{id}`).
+/// A partial update for a webhook (`PATCH /v1beta/webhooks/{id}`), sent with
+/// [`Webhooks::update`].
 ///
-/// Only the set fields are updated. Pair with an `update_mask` in
-/// [`Client::update_webhook()`](crate::Client::update_webhook) to control
-/// which fields the server applies.
+/// Only the set fields are sent, and the server applies exactly those.
+/// [`with_update_mask`](Self::with_update_mask) adds an `update_mask` query
+/// parameter naming the fields to apply.
+///
+/// # Example
+///
+/// ```
+/// use genai_rs::{WebhookState, WebhookUpdate};
+///
+/// let update = WebhookUpdate::new()
+///     .with_state(WebhookState::Disabled)
+///     .with_update_mask("state");
+/// // The mask travels in the query string, not the body.
+/// assert_eq!(
+///     serde_json::to_value(&update).unwrap(),
+///     serde_json::json!({"state": "disabled"})
+/// );
+/// ```
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WebhookUpdate {
@@ -236,6 +257,16 @@ pub struct WebhookUpdate {
     /// New state (`enabled` / `disabled`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<WebhookState>,
+    /// Comma-separated fields for the server to apply (e.g.
+    /// `"uri,subscribed_events"`). [`Webhooks::update`] sends it as the
+    /// `update_mask` query parameter; it is never part of the body. `None`
+    /// omits the parameter.
+    ///
+    /// Live behavior note (2026-07): the mask is not required, and it was
+    /// observed to be ignored when supplied (fields outside it still
+    /// updated), so scope an update by the fields you set.
+    #[serde(skip)]
+    pub update_mask: Option<String>,
 }
 
 impl WebhookUpdate {
@@ -272,6 +303,14 @@ impl WebhookUpdate {
         self.state = Some(state);
         self
     }
+
+    /// Sets the `update_mask` query parameter: comma-separated field names
+    /// such as `"uri,state"`. See [`update_mask`](Self::update_mask).
+    #[must_use]
+    pub fn with_update_mask(mut self, mask: impl Into<String>) -> Self {
+        self.update_mask = Some(mask.into());
+        self
+    }
 }
 
 wire_enum! {
@@ -303,6 +342,8 @@ pub struct WebhookListResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_page_token: Option<String>,
 }
+
+paging::impl_list_page!(WebhookListResponse, webhooks: Webhook);
 
 /// Response for `POST /v1beta/webhooks/{id}:rotateSigningSecret`.
 #[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -374,8 +415,37 @@ impl WebhookConfig {
     }
 }
 
-/// Webhooks resource methods; see [IDs](crate::webhooks#ids).
 impl Client {
+    /// The `/v1beta/webhooks` resource: register, inspect, update, test and
+    /// delete webhooks, and rotate their signing secrets.
+    ///
+    /// The handle borrows the client and is `Copy`; see
+    /// [IDs](crate::webhooks#ids) for what the methods take.
+    ///
+    /// ```no_run
+    /// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+    /// let webhook = client.webhooks().get("wh-123").await?;
+    /// # let _ = webhook;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn webhooks(&self) -> Webhooks<'_> {
+        Webhooks { client: self }
+    }
+}
+
+/// The `/v1beta/webhooks` resource, from [`Client::webhooks`].
+///
+/// Methods take `self` by value, so each call's future holds only the client
+/// borrow, never the handle: `client.webhooks().get(id)` can be stored or
+/// joined with others. See [IDs](crate::webhooks#ids).
+#[derive(Clone, Copy, Debug)]
+#[must_use = "a resource handle does nothing until you call one of its methods"]
+pub struct Webhooks<'a> {
+    client: &'a Client,
+}
+
+impl<'a> Webhooks<'a> {
     /// Registers a new webhook.
     ///
     /// The returned webhook includes `new_signing_secret` — only populated on
@@ -395,23 +465,23 @@ impl Client {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::new("api-key".to_string());
     ///
-    /// let webhook = client.create_webhook(
-    ///     &Webhook::new(
-    ///         "https://example.com/hooks/genai",
-    ///         vec![WebhookEvent::InteractionCompleted, WebhookEvent::InteractionFailed],
+    /// let webhook = client
+    ///     .webhooks()
+    ///     .create(
+    ///         &Webhook::new(
+    ///             "https://example.com/hooks/genai",
+    ///             vec![WebhookEvent::InteractionCompleted, WebhookEvent::InteractionFailed],
+    ///         )
+    ///         .with_name("my-hook"),
     ///     )
-    ///     .with_name("my-hook"),
-    /// ).await?;
+    ///     .await?;
     ///
     /// println!("Created {:?}; secret: {:?}", webhook.id, webhook.new_signing_secret);
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn create_webhook(
-        &self,
-        webhook: &crate::Webhook,
-    ) -> Result<crate::Webhook, GenaiError> {
-        crate::http::webhooks::create_webhook(&self.http, webhook).await
+    pub async fn create(self, webhook: &Webhook) -> Result<Webhook, GenaiError> {
+        crate::http::webhooks::create_webhook(&self.client.http, webhook).await
     }
 
     /// Retrieves a registered webhook by ID.
@@ -420,36 +490,25 @@ impl Client {
     ///
     /// Returns an error if the webhook doesn't exist, the HTTP request fails,
     /// or response parsing fails.
-    pub async fn get_webhook(&self, webhook_id: &str) -> Result<crate::Webhook, GenaiError> {
-        crate::http::webhooks::get_webhook(&self.http, webhook_id).await
+    pub async fn get(self, webhook_id: &str) -> Result<Webhook, GenaiError> {
+        crate::http::webhooks::get_webhook(&self.client.http, webhook_id).await
     }
 
-    /// Lists registered webhooks.
-    ///
-    /// # Arguments
-    ///
-    /// * `page_size` - Optional maximum number of webhooks per page.
-    /// * `page_token` - Optional token from a previous list call.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the HTTP request fails or response parsing fails.
-    pub async fn list_webhooks(
-        &self,
-        page_size: Option<u32>,
-        page_token: Option<&str>,
-    ) -> Result<crate::WebhookListResponse, GenaiError> {
-        crate::http::webhooks::list_webhooks(&self.http, page_size, page_token).await
+    /// Lists registered webhooks: configure the returned [`ListWebhooks`],
+    /// then call [`send`](ListWebhooks::send) for one page, or
+    /// [`pages`](ListWebhooks::pages) / [`items`](ListWebhooks::items) to
+    /// stream them all.
+    pub fn list(self) -> ListWebhooks<'a> {
+        ListWebhooks {
+            client: self.client,
+            page_size: None,
+            page_token: None,
+        }
     }
 
-    /// Updates a registered webhook.
-    ///
-    /// # Arguments
-    ///
-    /// * `webhook_id` - The webhook to update.
-    /// * `update` - The fields to change (only set fields are sent).
-    /// * `update_mask` - Optional comma-separated list of fields to update
-    ///   (e.g. `"uri,subscribed_events"`).
+    /// Updates a registered webhook with the fields set on `update`, sending
+    /// its [`update_mask`](WebhookUpdate::update_mask), if any, as the
+    /// `update_mask` query parameter.
     ///
     /// Live behavior note (2026-07): `update_mask` is not required — PATCH
     /// applies exactly the fields present in the body. The mask was also
@@ -469,21 +528,30 @@ impl Client {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let client = Client::new("api-key".to_string());
     /// // Temporarily disable a webhook
-    /// let updated = client.update_webhook(
-    ///     "wh-123",
-    ///     &WebhookUpdate::new().with_state(WebhookState::Disabled),
-    ///     Some("state"),
-    /// ).await?;
+    /// let updated = client
+    ///     .webhooks()
+    ///     .update(
+    ///         "wh-123",
+    ///         &WebhookUpdate::new()
+    ///             .with_state(WebhookState::Disabled)
+    ///             .with_update_mask("state"),
+    ///     )
+    ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn update_webhook(
-        &self,
+    pub async fn update(
+        self,
         webhook_id: &str,
-        update: &crate::WebhookUpdate,
-        update_mask: Option<&str>,
-    ) -> Result<crate::Webhook, GenaiError> {
-        crate::http::webhooks::update_webhook(&self.http, webhook_id, update, update_mask).await
+        update: &WebhookUpdate,
+    ) -> Result<Webhook, GenaiError> {
+        crate::http::webhooks::update_webhook(
+            &self.client.http,
+            webhook_id,
+            update,
+            update.update_mask.as_deref(),
+        )
+        .await
     }
 
     /// Deletes a registered webhook.
@@ -491,8 +559,8 @@ impl Client {
     /// # Errors
     ///
     /// Returns an error if the webhook doesn't exist or the HTTP request fails.
-    pub async fn delete_webhook(&self, webhook_id: &str) -> Result<(), GenaiError> {
-        crate::http::webhooks::delete_webhook(&self.http, webhook_id).await
+    pub async fn delete(self, webhook_id: &str) -> Result<(), GenaiError> {
+        crate::http::webhooks::delete_webhook(&self.client.http, webhook_id).await
     }
 
     /// Sends a test event to a webhook (`:ping`).
@@ -507,8 +575,8 @@ impl Client {
     /// # Errors
     ///
     /// Returns an error if the webhook doesn't exist or the HTTP request fails.
-    pub async fn ping_webhook(&self, webhook_id: &str) -> Result<(), GenaiError> {
-        crate::http::webhooks::ping_webhook(&self.http, webhook_id).await
+    pub async fn ping(self, webhook_id: &str) -> Result<(), GenaiError> {
+        crate::http::webhooks::ping_webhook(&self.client.http, webhook_id).await
     }
 
     /// Rotates a webhook's signing secret (`:rotateSigningSecret`).
@@ -516,19 +584,118 @@ impl Client {
     /// Returns the newly generated secret. Pass a
     /// [`RevocationBehavior`] to control whether
     /// previous secrets stay valid for 24 hours (safe rollover) or are
-    /// revoked immediately; `None` uses the API default.
+    /// revoked immediately; `None` sends `{}` and uses the API default.
     ///
     /// # Errors
     ///
     /// Returns an error if the webhook doesn't exist, the HTTP request fails,
     /// or response parsing fails.
-    pub async fn rotate_webhook_signing_secret(
-        &self,
+    pub async fn rotate_signing_secret(
+        self,
         webhook_id: &str,
-        revocation_behavior: Option<crate::RevocationBehavior>,
-    ) -> Result<crate::RotateSigningSecretResponse, GenaiError> {
-        crate::http::webhooks::rotate_signing_secret(&self.http, webhook_id, revocation_behavior)
-            .await
+        revocation_behavior: Option<RevocationBehavior>,
+    ) -> Result<RotateSigningSecretResponse, GenaiError> {
+        crate::http::webhooks::rotate_signing_secret(
+            &self.client.http,
+            webhook_id,
+            revocation_behavior,
+        )
+        .await
+    }
+}
+
+/// A `GET /v1beta/webhooks` request, from [`Webhooks::list`].
+///
+/// End it with [`send`](Self::send) for one page, or
+/// [`pages`](Self::pages) / [`items`](Self::items) to follow
+/// `next_page_token` to the end of the list. The page size is sent with
+/// every page.
+///
+/// # Example
+///
+/// ```no_run
+/// use futures_util::TryStreamExt;
+///
+/// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+/// // One page
+/// let page = client.webhooks().list().with_page_size(50).send().await?;
+/// println!("{} webhooks, more: {}", page.webhooks.len(), page.next_page_token.is_some());
+///
+/// // Every webhook, across pages
+/// let all: Vec<genai_rs::Webhook> = client.webhooks().list().items().try_collect().await?;
+/// # let _ = all;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Clone, Debug)]
+#[must_use = "a list request does nothing until .send(), .pages() or .items()"]
+pub struct ListWebhooks<'a> {
+    client: &'a Client,
+    page_size: Option<u32>,
+    page_token: Option<String>,
+}
+
+impl<'a> ListWebhooks<'a> {
+    /// Sets the maximum number of webhooks per page. Sent with every page.
+    pub fn with_page_size(mut self, page_size: u32) -> Self {
+        self.page_size = Some(page_size);
+        self
+    }
+
+    /// Starts from this page token, from a previous page's
+    /// `next_page_token`.
+    pub fn with_page_token(mut self, page_token: impl Into<String>) -> Self {
+        self.page_token = Some(page_token.into());
+        self
+    }
+
+    /// Sends the request and returns one page.
+    ///
+    /// An empty collection comes back as an empty page with no
+    /// `next_page_token`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails or response parsing fails.
+    pub async fn send(self) -> Result<WebhookListResponse, GenaiError> {
+        crate::http::webhooks::list_webhooks(
+            &self.client.http,
+            self.page_size,
+            self.page_token.as_deref(),
+        )
+        .await
+    }
+
+    /// Streams every page, starting at [`with_page_token`](Self::with_page_token)
+    /// or the first page.
+    ///
+    /// Nothing is sent until the stream is polled. It ends after a page
+    /// without a `next_page_token`; an error is yielded once and ends it. A
+    /// page whose token was already requested (the starting token included)
+    /// is yielded, then [`GenaiError::MalformedResponse`]. The stream owns a
+    /// clone of the client, so it can be stored or spawned.
+    #[must_use = "streams do nothing unless polled"]
+    pub fn pages(self) -> BoxStream<'static, Result<WebhookListResponse, GenaiError>> {
+        let Self {
+            client,
+            page_size,
+            page_token,
+        } = self;
+        let client = client.clone();
+        paging::pages("webhooks", page_token, move |token| {
+            let client = client.clone();
+            async move {
+                crate::http::webhooks::list_webhooks(&client.http, page_size, token.as_deref())
+                    .await
+            }
+        })
+    }
+
+    /// Streams every webhook across pages, in server order. Same rules as
+    /// [`pages`](Self::pages).
+    #[must_use = "streams do nothing unless polled"]
+    pub fn items(self) -> BoxStream<'static, Result<Webhook, GenaiError>> {
+        paging::items(self.pages())
     }
 }
 
@@ -692,6 +859,56 @@ mod tests {
         let update = WebhookUpdate::new().with_state(WebhookState::Disabled);
         let value = serde_json::to_value(&update).unwrap();
         assert_eq!(value, json!({"state": "disabled"}));
+    }
+
+    #[test]
+    fn with_update_mask_sets_the_mask_but_not_the_body() {
+        let update = WebhookUpdate::new();
+        assert_eq!(update.update_mask, None);
+
+        let update = update
+            .with_uri("https://example.com/v2")
+            .with_update_mask("state")
+            // `with_*` replaces.
+            .with_update_mask("uri,state");
+        assert_eq!(update.update_mask.as_deref(), Some("uri,state"));
+        // The mask is a query parameter: it never reaches the PATCH body.
+        assert_eq!(
+            serde_json::to_value(&update).unwrap(),
+            json!({"uri": "https://example.com/v2"})
+        );
+        assert_eq!(
+            serde_json::to_value(WebhookUpdate::new().with_update_mask("state")).unwrap(),
+            json!({})
+        );
+    }
+
+    #[test]
+    fn list_webhooks_setters_fill_the_query() {
+        let client = Client::new("k".to_string());
+        let list = client.webhooks().list();
+        assert_eq!(list.page_size, None);
+        assert_eq!(list.page_token, None);
+
+        let list = list
+            .with_page_size(5)
+            .with_page_token("t1")
+            // `with_*` replaces.
+            .with_page_token("t2");
+        assert_eq!(list.page_size, Some(5));
+        assert_eq!(list.page_token.as_deref(), Some("t2"));
+    }
+
+    #[test]
+    fn webhooks_handle_and_list_debug_redact_the_api_key() {
+        let client = Client::new("secret-api-key".to_string());
+        for debug in [
+            format!("{:?}", client.webhooks()),
+            format!("{:?}", client.webhooks().list().with_page_size(1)),
+        ] {
+            assert!(!debug.contains("secret-api-key"), "{debug}");
+            assert!(debug.contains("[REDACTED]"), "{debug}");
+        }
     }
 
     #[test]

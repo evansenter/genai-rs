@@ -502,8 +502,9 @@ impl TriggerCreateParams {
 /// Update payload for a [`Trigger`] — unset fields are omitted from the
 /// PATCH body.
 ///
-/// Unlike [`Client::update_webhook`](crate::client::Client::update_webhook),
-/// the SDK spec exposes **no `update_mask` parameter** for trigger updates
+/// Unlike webhook updates
+/// ([`WebhookUpdate::update_mask`](crate::WebhookUpdate::update_mask)), the
+/// SDK spec exposes **no `update_mask` parameter** for trigger updates
 /// (google-genai 2.17.0: `triggers.update(id, display_name, status)` only),
 /// so field omission is the only scoping mechanism available. The sibling
 /// webhooks PATCH was observed live (2026-07) to apply exactly the fields

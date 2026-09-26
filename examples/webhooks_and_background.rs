@@ -106,11 +106,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 async fn webhook_lifecycle(client: &Client, webhook: &Webhook) -> Result<(), Box<dyn Error>> {
     println!("--- Webhook ---");
-    let created = client.create_webhook(webhook).await?;
+    let created = client.webhooks().create(webhook).await?;
     let id = created
         .id
         .filter(|id| !id.is_empty())
-        .ok_or("create_webhook returned no ID")?;
+        .ok_or("webhooks().create returned no ID")?;
     // The secret is only ever returned here; store it.
     println!(
         "Created {id}; signing secret returned: {}",
@@ -118,29 +118,31 @@ async fn webhook_lifecycle(client: &Client, webhook: &Webhook) -> Result<(), Box
     );
 
     let result = async {
-        let listed = client.list_webhooks(Some(10), None).await?;
+        let listed = client.webhooks().list().with_page_size(10).send().await?;
         println!("Registered webhooks: {}", listed.webhooks.len());
 
         let updated = client
-            .update_webhook(
+            .webhooks()
+            .update(
                 &id,
-                &WebhookUpdate::new().with_state(WebhookState::Disabled),
-                Some("state"),
+                &WebhookUpdate::new()
+                    .with_state(WebhookState::Disabled)
+                    .with_update_mask("state"),
             )
             .await?;
         println!("Updated state: {:?}", updated.state);
 
-        client.ping_webhook(&id).await?;
+        client.webhooks().ping(&id).await?;
         println!("Ping sent");
 
         // The previous secret stays valid for a grace period by default.
-        let rotated = client.rotate_webhook_signing_secret(&id, None).await?;
+        let rotated = client.webhooks().rotate_signing_secret(&id, None).await?;
         println!("Rotated; new secret returned: {}", rotated.secret.is_some());
         Ok::<_, genai_rs::GenaiError>(())
     }
     .await;
 
-    client.delete_webhook(&id).await?;
+    client.webhooks().delete(&id).await?;
     println!("Deleted {id}");
     Ok(result?)
 }

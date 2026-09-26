@@ -12,7 +12,7 @@
 mod common;
 
 use common::{TINY_WAV_BASE64, get_client};
-use futures_util::TryStreamExt;
+use futures_util::{StreamExt, TryStreamExt};
 use genai_rs::{
     Agent, Content, DeepResearchConfig, InteractionInput, ResponseFormat, RetrievalConfig,
     SpeechConfig, Tool, Visualization, Webhook, WebhookConfig, WebhookEvent, WebhookState,
@@ -38,7 +38,8 @@ async fn test_webhook_crud_lifecycle() {
     // Not retried: a retry after a lost response would leak a webhook with no
     // id to delete it by.
     let created = client
-        .create_webhook(
+        .webhooks()
+        .create(
             &Webhook::new(
                 TEST_WEBHOOK_URI,
                 vec![
@@ -49,7 +50,7 @@ async fn test_webhook_crud_lifecycle() {
             .with_name("genai-rs-integration-test"),
         )
         .await
-        .expect("create_webhook");
+        .expect("webhooks.create");
     let id = created.id.clone().expect("created webhook has an id");
 
     // Run the checks under catch_unwind so a failed assertion still deletes
@@ -64,16 +65,19 @@ async fn test_webhook_crud_lifecycle() {
         assert_eq!(created.state, Some(WebhookState::Enabled));
 
         // Get echoes what create sent; the full secret is create-only.
-        let fetched = client.get_webhook(&id).await.expect("get_webhook");
+        let fetched = client.webhooks().get(&id).await.expect("webhooks.get");
         assert_eq!(fetched.uri, TEST_WEBHOOK_URI);
         assert_eq!(fetched.subscribed_events, created.subscribed_events);
         assert_eq!(fetched.name, created.name);
         assert!(fetched.new_signing_secret.is_none());
 
         let list = client
-            .list_webhooks(Some(50), None)
+            .webhooks()
+            .list()
+            .with_page_size(50)
+            .send()
             .await
-            .expect("list_webhooks");
+            .expect("webhooks.list");
         assert!(
             list.webhooks
                 .iter()
@@ -84,13 +88,13 @@ async fn test_webhook_crud_lifecycle() {
         // The PATCH applies exactly the fields in the body; update_mask is
         // optional and observed to be ignored (verified live 2026-07).
         let updated = client
-            .update_webhook(
+            .webhooks()
+            .update(
                 &id,
                 &WebhookUpdate::new().with_state(WebhookState::Disabled),
-                None,
             )
             .await
-            .expect("update_webhook");
+            .expect("webhooks.update");
         assert_eq!(updated.state, Some(WebhookState::Disabled));
         assert_eq!(
             updated.uri, TEST_WEBHOOK_URI,
@@ -99,14 +103,16 @@ async fn test_webhook_crud_lifecycle() {
 
         // Accepted even though the URI is unreachable: delivery fails later.
         client
-            .ping_webhook(&id)
+            .webhooks()
+            .ping(&id)
             .await
-            .expect("ping_webhook should be accepted with an empty JSON body");
+            .expect("webhooks.ping should be accepted with an empty JSON body");
 
         let rotated = client
-            .rotate_webhook_signing_secret(&id, None)
+            .webhooks()
+            .rotate_signing_secret(&id, None)
             .await
-            .expect("rotate_webhook_signing_secret");
+            .expect("webhooks.rotate_signing_secret");
         let rotated_secret = rotated.secret.expect("rotate returns the new secret");
         assert_ne!(
             Some(rotated_secret.as_str()),
@@ -115,7 +121,7 @@ async fn test_webhook_crud_lifecycle() {
         );
 
         // The old secret stays listed with a 24h expiry.
-        let after_rotate = client.get_webhook(&id).await.expect("get after rotate");
+        let after_rotate = client.webhooks().get(&id).await.expect("get after rotate");
         assert!(
             after_rotate.signing_secrets.map_or(0, |s| s.len()) >= 2,
             "expected old + new signing secrets after rotation"
@@ -123,11 +129,103 @@ async fn test_webhook_crud_lifecycle() {
     };
     let outcome = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(checks)).await;
 
-    let deleted = client.delete_webhook(&id).await;
+    let deleted = client.webhooks().delete(&id).await;
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }
-    deleted.expect("delete_webhook");
+    deleted.expect("webhooks.delete");
+}
+
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_webhook_list_streams_follow_every_page() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    // Two webhooks at one per page force at least one page-token round
+    // trip. Live tokens are raw bytes with control characters (observed
+    // 2026-09-26), so this also checks they survive being resent.
+    let mut ids = Vec::new();
+    for n in 1..=2 {
+        // Not retried: a retry after a lost response would leak a webhook
+        // with no id to delete it by.
+        let created = client
+            .webhooks()
+            .create(
+                &Webhook::new(TEST_WEBHOOK_URI, vec![WebhookEvent::InteractionCompleted])
+                    .with_name(format!("genai-rs-paging-test-{n}")),
+            )
+            .await;
+        match created.map(|w| w.id) {
+            Ok(Some(id)) => ids.push(id),
+            outcome => {
+                for id in &ids {
+                    let _ = client.webhooks().delete(id).await;
+                }
+                panic!("webhooks.create: {outcome:?}");
+            }
+        }
+    }
+
+    let checks = async {
+        // Bounded, in case other webhooks exist on this key.
+        let pages: Vec<_> = client
+            .webhooks()
+            .list()
+            .with_page_size(1)
+            .pages()
+            .take(50)
+            .try_collect()
+            .await
+            .expect("webhooks.list pages");
+        println!("Listed {} page(s)", pages.len());
+        assert!(pages.len() >= 2, "expected several pages, got {pages:?}");
+        assert!(
+            pages.iter().all(|p| p.webhooks.len() <= 1),
+            "page_size=1 must hold on every page"
+        );
+        let paged: Vec<&str> = pages
+            .iter()
+            .flat_map(|p| &p.webhooks)
+            .filter_map(|w| w.id.as_deref())
+            .collect();
+        for id in &ids {
+            assert!(paged.contains(&id.as_str()), "{id} missing from {paged:?}");
+        }
+
+        let items: Vec<_> = client
+            .webhooks()
+            .list()
+            .with_page_size(1)
+            .items()
+            .take(50)
+            .try_collect()
+            .await
+            .expect("webhooks.list items");
+        // Not compared to `paged`: the lifecycle test may add or remove its
+        // webhook between the two listings.
+        let streamed: Vec<&str> = items.iter().filter_map(|w| w.id.as_deref()).collect();
+        for id in &ids {
+            assert!(
+                streamed.contains(&id.as_str()),
+                "{id} missing from {streamed:?}"
+            );
+        }
+    };
+    let outcome = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(checks)).await;
+
+    let mut deleted = Vec::new();
+    for id in &ids {
+        deleted.push(client.webhooks().delete(id).await);
+    }
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    for result in deleted {
+        result.expect("webhooks.delete");
+    }
 }
 
 // =============================================================================

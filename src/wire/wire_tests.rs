@@ -232,7 +232,7 @@ fn test_redact_fields_null_api_key_left_null() {
 
 #[test]
 fn test_redact_fields_webhook_signing_secrets() {
-    // create_webhook returns new_signing_secret; rotate returns secret.
+    // `webhooks().create` returns new_signing_secret; rotate returns secret.
     // Both are one-time values and must never reach inspector output.
     let mut value = serde_json::json!({
         "id": "wh1bare0pq",

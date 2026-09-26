@@ -68,14 +68,22 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
 ### Changed
 
 - **Breaking: resource methods moved from `Client` to per-resource
-  handles.** `client.agents()` returns a `Copy` handle that borrows the
-  client. Rename `client.<verb>_agent(…)` to `client.agents().<verb>(…)`.
-  The full table is in `docs/RESOURCES.md`.
-- **Breaking: `list_agents` returns a builder.** The positional
-  `page_size`, `page_token` and `parent` arguments are gone. Chain
+  handles.** `client.webhooks()` and `.agents()` each return a `Copy` handle
+  that borrows the client. Rename `client.<verb>_<resource>(…)` to
+  `client.<resources>().<verb>(…)`. Exceptions: `ping_webhook` →
+  `webhooks().ping`, `rotate_webhook_signing_secret` →
+  `webhooks().rotate_signing_secret`. The full table is in
+  `docs/RESOURCES.md`.
+- **Breaking: `list_webhooks` and `list_agents` return a builder.** The
+  positional `page_size`, `page_token` and `parent` arguments are gone. Chain
   `.with_page_size(n)`, `.with_page_token(t)` or `.with_parent(p)` on
-  `client.agents().list()`, then `.send()` for one page (the same
-  `AgentListResponse`).
+  `client.<resources>().list()`, then `.send()` for one page (the same
+  `*ListResponse`).
+- **Breaking: `update_mask` moved onto the update value.**
+  `update_webhook(id, &u, Some("state"))` →
+  `webhooks().update(id, &u.with_update_mask("state"))`; `None` becomes
+  `webhooks().update(id, &u)`. `WebhookUpdate` gained a public
+  `update_mask` field, sent as the query parameter and never in the body.
 - **Breaking:** `genai_rs::environment` and `genai_rs::environment_files` are
   merged into `genai_rs::environments`, and the Files API types moved to a
   public `genai_rs::files` module (`FileUploadResponse` is now exported). Root

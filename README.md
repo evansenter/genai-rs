@@ -228,7 +228,7 @@ if response.has_thoughts() {
 use genai_rs::{Webhook, WebhookConfig, WebhookEvent};
 
 // Register a managed webhook once...
-let webhook = client.create_webhook(&Webhook::new(
+let webhook = client.webhooks().create(&Webhook::new(
     "https://example.com/hooks/genai",
     vec![WebhookEvent::InteractionCompleted, WebhookEvent::InteractionFailed],
 )).await?;

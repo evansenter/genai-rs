@@ -194,8 +194,8 @@ pub use voices::{
 // Webhooks resource (/v1beta/webhooks) and per-request webhook_config
 pub mod webhooks;
 pub use webhooks::{
-    RevocationBehavior, RotateSigningSecretResponse, SigningSecret, Webhook, WebhookConfig,
-    WebhookEvent, WebhookListResponse, WebhookState, WebhookUpdate,
+    ListWebhooks, RevocationBehavior, RotateSigningSecretResponse, SigningSecret, Webhook,
+    WebhookConfig, WebhookEvent, WebhookListResponse, WebhookState, WebhookUpdate, Webhooks,
 };
 
 // Response types
