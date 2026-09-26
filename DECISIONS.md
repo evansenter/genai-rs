@@ -389,3 +389,44 @@ logged under `genai_rs::antigravity::protocol` now logs under
 `genai_rs::antigravity::protocol::enums`); `EnvFilter` directives match by
 prefix, so existing filters still select them.
 
+---
+
+## D-015 — Derive `Serialize`; keep `Deserialize` hand-written (2026-09-26)
+
+**Context.** Evergreen unions such as `Tool`, `Content` and `Annotation` wrote
+each variant list three times: the public enum, a private `Known*` shadow that
+`Deserialize` parses into, and a manual `serialize_map`. A prototype showed a
+full derive can reproduce the `Unknown` fallback (an `untagged` last variant
+with `deserialize_with`), and a read-only survey of all 21 hand-written impls
+then compared it against current behavior in detail.
+
+**Decision.** Derive `Serialize` wherever the output is byte-identical to the
+manual impl, with shared helpers in `src/serde_util.rs`
+(`is_none_or_empty`, `serialize_unknown_merged`, `serialize_unknown_data`).
+Keep every `Deserialize` hand-written. Deriving it would change behavior in
+edge cases:
+
+- an integer `"type"` tag parses as a variant index, so `{"type": 1}` becomes
+  a known variant with defaulted fields and loses the rest of its data
+  (serde buffers the input for the untagged fallback, and its buffered
+  identifier accepts integers);
+- duplicate JSON keys fall to `Unknown` instead of last-one-wins;
+- the fallback warning can no longer include the parse error, which is how a
+  malformed known variant is told apart from a new one.
+
+Converted: `Tool`, `Annotation`, `Content`, `ResponseFormat`,
+`TranscriptionMode`, `InteractionInput`, `FunctionResultPayload`,
+`RemoteEnvironment`, plus both halves of `ResponseFormatSpec` (an untagged
+`List`-then-`Single` derive, equivalent because `ResponseFormat`'s
+`Deserialize` never fails). Each was checked against the removed impl by a
+temporary 4,096-case property test per variant, and exact-JSON tests now pin
+key order, skip rules and `Unknown` merging. `Step`, `StepDelta`,
+`ToolChoice`, `VideoProcessing` and the stream types reshape the wire, so they
+stay manual.
+
+**Consequences.** One variant list per type is gone and a new field's skip
+rule now sits on the field. The derived impls call `serialize_struct` where
+the manual ones called `serialize_map`; serde_json output is identical, but a
+non-JSON serializer could tell them apart. Field declaration order is now
+wire order for these types, so reordering fields is a wire change.
+

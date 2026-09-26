@@ -135,8 +135,9 @@ impl TurnContent {
 /// # Variants
 ///
 /// - `Text`: Simple text input for single-turn conversations
-/// - `Content`: Array of content blocks for multimodal input — sent as a
-///   single `user_input` step, not as a bare array
+/// - `Content`: Array of content blocks for multimodal input. A request
+///   sends it as a single `user_input` step rather than a bare array (see
+///   Serialization below)
 /// - `Steps`: Array of [`Step`]s — the canonical multi-turn/history form
 ///   under API revision 2026-05-20 (replaces the deprecated `Turn` array)
 ///
