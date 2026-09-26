@@ -4,8 +4,9 @@
 //! Each endpoint is pinned on its HTTP method, path (percent-encoding
 //! included), query, and JSON body, and a realistic response is parsed into
 //! the typed result with Evergreen `Unknown` and `extra` preservation. Error
-//! mapping and the wait helpers' success, failure and timeout paths are
-//! covered too.
+//! mapping, the wait helpers' success, failure and timeout paths, and list
+//! paging (`.pages()` / `.items()` across several stub pages) are covered
+//! too.
 //!
 //! Tests whose replies carry unknown enum values are compiled out under
 //! `strict-unknown`, which rejects those values by design.
@@ -17,7 +18,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use common::http_stub::{Reply, Stub};
-use futures_util::StreamExt;
+use futures_util::{StreamExt, TryStreamExt};
 use genai_rs::{
     Agent, AllowlistEntry, CreateCredentialRequest, CreateEnvironmentRequest,
     CreateFileSearchStoreRequest, CreateVoiceRequest, CredentialConfig, CredentialType,
@@ -187,17 +188,13 @@ fn every_call(c: &genai_rs::Client) -> Vec<(&'static str, Returns, Call<'_>)> {
             call(c.list_trigger_executions("t-1", None, None)),
         ),
         (
-            "create_agent",
+            "agents.create",
             Resource,
-            call(async move { c.create_agent(&Agent::new("a")).await }),
+            call(async move { c.agents().create(&Agent::new("a")).await }),
         ),
-        ("get_agent", Resource, call(c.get_agent("a"))),
-        (
-            "list_agents",
-            Resource,
-            call(c.list_agents(None, None, None)),
-        ),
-        ("delete_agent", Nothing, call(c.delete_agent("a"))),
+        ("agents.get", Resource, call(c.agents().get("a"))),
+        ("agents.list", Resource, call(c.agents().list().send())),
+        ("agents.delete", Nothing, call(c.agents().delete("a"))),
         (
             "create_environment",
             Resource,
@@ -848,39 +845,39 @@ async fn agent_endpoints_send_the_documented_requests() {
                         .with_description("A test agent")
                         .add_tool(Tool::CodeExecution)
                         .with_base_environment("env-1");
-                    c.create_agent(&agent).await
+                    c.agents().create(&agent).await
                 },
             ),
             wire(
                 "GET",
                 "/v1beta/agents/my-agent",
                 None,
-                c.get_agent("my-agent"),
+                c.agents().get("my-agent"),
             ),
-            wire(
-                "GET",
-                "/v1beta/agents",
-                None,
-                c.list_agents(None, None, None),
-            ),
+            wire("GET", "/v1beta/agents", None, c.agents().list().send()),
             wire(
                 "GET",
                 "/v1beta/agents?page_size=5&page_token=t&parent=projects%2Fp%201",
                 None,
-                c.list_agents(Some(5), Some("t"), Some("projects/p 1")),
+                c.agents()
+                    .list()
+                    .with_page_size(5)
+                    .with_page_token("t")
+                    .with_parent("projects/p 1")
+                    .send(),
             ),
             // With no paging, the filter takes the leading `?`.
             wire(
                 "GET",
                 "/v1beta/agents?parent=p",
                 None,
-                c.list_agents(None, None, Some("p")),
+                c.agents().list().with_parent("p").send(),
             ),
             wire(
                 "DELETE",
                 "/v1beta/agents/my-agent",
                 None,
-                c.delete_agent("my-agent"),
+                c.agents().delete("my-agent"),
             ),
         ],
     )
@@ -906,7 +903,7 @@ async fn agent_responses_parse_tools_and_preserve_unknown_environments() {
     .await;
     let client = stub.client();
 
-    let fetched = client.get_agent("my-agent").await.unwrap();
+    let fetched = client.agents().get("my-agent").await.unwrap();
     assert!(matches!(
         fetched.tools.as_deref(),
         Some([Tool::CodeExecution, Tool::UrlContext])
@@ -920,13 +917,221 @@ async fn agent_responses_parse_tools_and_preserve_unknown_environments() {
         json!({"type": "gpu_sandbox", "accelerator": "l4"})
     );
 
-    let list = client.list_agents(None, None, None).await.unwrap();
+    let list = client.agents().list().send().await.unwrap();
     assert_eq!(list.agents.len(), 2);
     assert_eq!(
         list.agents[1].base_environment,
         Some(EnvironmentSpec::Id("env-9".to_string()))
     );
     assert_eq!(list.next_page_token.as_deref(), Some("p2"));
+}
+
+// =============================================================================
+// List paging: `.pages()` / `.items()` over the stub (D-016)
+// =============================================================================
+
+fn agents_page(ids: &[&str], next: Option<&str>) -> Reply {
+    let agents: Vec<Value> = ids.iter().map(|id| json!({"id": id})).collect();
+    let mut body = json!({"agents": agents});
+    if let Some(next) = next {
+        body["next_page_token"] = json!(next);
+    }
+    Reply::json(200, body)
+}
+
+fn agent_ids(agents: &[Agent]) -> Vec<&str> {
+    agents.iter().filter_map(|a| a.id.as_deref()).collect()
+}
+
+fn targets(stub: &Stub) -> Vec<String> {
+    stub.requests().into_iter().map(|r| r.target).collect()
+}
+
+#[tokio::test]
+async fn list_items_follow_every_page_and_resend_the_query() {
+    let stub = Stub::replying(vec![
+        agents_page(&["a1", "a2"], Some("p2")),
+        // An empty page with a token is followed, not taken as the end.
+        agents_page(&[], Some("p/3")),
+        agents_page(&["a3"], Some("")),
+    ])
+    .await;
+    let client = stub.client();
+
+    let agents: Vec<Agent> = client
+        .agents()
+        .list()
+        .with_page_size(2)
+        .with_parent("projects/p")
+        .items()
+        .try_collect()
+        .await
+        .unwrap();
+
+    assert_eq!(agent_ids(&agents), ["a1", "a2", "a3"]);
+    // Page size and filter ride on every page; only the token changes.
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/agents?page_size=2&parent=projects%2Fp",
+            "/v1beta/agents?page_size=2&page_token=p2&parent=projects%2Fp",
+            "/v1beta/agents?page_size=2&page_token=p%2F3&parent=projects%2Fp",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn list_pages_resume_from_with_page_token() {
+    let stub = Stub::replying(vec![
+        agents_page(&["a3"], Some("p3")),
+        agents_page(&["a4"], None),
+    ])
+    .await;
+    let client = stub.client();
+
+    let pages: Vec<_> = client
+        .agents()
+        .list()
+        .with_page_token("p2")
+        .pages()
+        .try_collect()
+        .await
+        .unwrap();
+
+    assert_eq!(pages.len(), 2);
+    assert_eq!(agent_ids(&pages[0].agents), ["a3"]);
+    assert_eq!(pages[1].next_page_token, None);
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/agents?page_token=p2",
+            "/v1beta/agents?page_token=p3"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn list_send_fetches_exactly_one_page() {
+    let stub = Stub::replying(vec![agents_page(&["a1"], Some("p2"))]).await;
+    let client = stub.client();
+
+    let page = client.agents().list().send().await.unwrap();
+
+    assert_eq!(agent_ids(&page.agents), ["a1"]);
+    assert_eq!(page.next_page_token.as_deref(), Some("p2"));
+    assert_eq!(targets(&stub), ["/v1beta/agents"]);
+}
+
+#[tokio::test]
+async fn list_items_stop_on_a_repeated_page_token() {
+    let stub = Stub::replying(vec![
+        agents_page(&["a1"], Some("same")),
+        agents_page(&["a2"], Some("same")),
+    ])
+    .await;
+    let client = stub.client();
+
+    let results: Vec<_> = client.agents().list().items().collect().await;
+
+    assert_eq!(results.len(), 3, "{results:?}");
+    assert_eq!(results[0].as_ref().unwrap().id.as_deref(), Some("a1"));
+    // The repeating page's items are still delivered, then the error.
+    assert_eq!(results[1].as_ref().unwrap().id.as_deref(), Some("a2"));
+    assert!(
+        matches!(&results[2], Err(GenaiError::MalformedResponse(m)) if m.contains("\"same\"")),
+        "{:?}",
+        results[2]
+    );
+    assert_eq!(
+        stub.requests().len(),
+        2,
+        "the repeated token is not fetched"
+    );
+}
+
+#[tokio::test]
+async fn list_items_end_at_the_first_error() {
+    // The stub answers a third request with 500, which would show up here.
+    let stub = Stub::replying(vec![agents_page(&["a1"], Some("p2")), not_found()]).await;
+    let client = stub.client();
+
+    let results: Vec<_> = client.agents().list().items().collect().await;
+
+    assert_eq!(results.len(), 2, "{results:?}");
+    assert!(results[0].is_ok());
+    assert!(
+        matches!(
+            results[1],
+            Err(GenaiError::Api {
+                status_code: 404,
+                ..
+            })
+        ),
+        "{:?}",
+        results[1]
+    );
+    assert_eq!(stub.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn list_streams_send_nothing_until_polled() {
+    let stub = Stub::replying(vec![agents_page(&["a1"], None)]).await;
+    let client = stub.client();
+
+    let mut items = client.agents().list().items();
+    let pages = client.agents().list().pages();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        stub.requests().is_empty(),
+        "a request before the first poll"
+    );
+
+    drop(pages);
+    let first = items.next().await.unwrap().unwrap();
+    assert_eq!(first.id.as_deref(), Some("a1"));
+    assert!(items.next().await.is_none());
+    assert_eq!(stub.requests().len(), 1);
+}
+
+/// Compile guard for D-016. Handle methods take `self`, so a call's future
+/// holds the client borrow rather than the temporary handle (an `&self`
+/// receiver fails these with E0515), and list streams own a client clone,
+/// so one built from a temporary client can be spawned.
+#[tokio::test]
+async fn handle_futures_and_list_streams_outlive_their_temporaries() {
+    fn assert_send<T: Send>(_: &T) {}
+
+    let stub = Stub::start(|request, _| {
+        if request.target.starts_with("/v1beta/agents?") || request.target == "/v1beta/agents" {
+            agents_page(&["listed"], None)
+        } else {
+            let id = request.target.rsplit('/').next().unwrap_or_default();
+            Reply::json(200, json!({"id": id}))
+        }
+    })
+    .await;
+    let client = stub.client();
+    let c = &client;
+
+    let ids = ["a1".to_string(), "a2".to_string()];
+    let fetched = futures_util::future::join_all(ids.iter().map(|id| c.agents().get(id))).await;
+    let fetched: Vec<Agent> = fetched.into_iter().collect::<Result<_, _>>().unwrap();
+    assert_eq!(agent_ids(&fetched), ["a1", "a2"]);
+
+    let stored = c.agents().get("a3");
+    assert_send(&stored);
+    assert_eq!(stored.await.unwrap().id.as_deref(), Some("a3"));
+
+    // The client this stream came from is a temporary, gone before the
+    // stream is first polled on another task.
+    let items = stub.client().agents().list().items();
+    assert_send(&items);
+    let listed: Vec<Agent> = tokio::spawn(items.try_collect()).await.unwrap().unwrap();
+    assert_eq!(agent_ids(&listed), ["listed"]);
+
+    let pages = c.agents().list().with_page_size(1).pages();
+    let spawned = tokio::spawn(async move { pages.try_collect::<Vec<_>>().await });
+    assert_eq!(spawned.await.unwrap().unwrap().len(), 1);
 }
 
 // =============================================================================
@@ -2565,14 +2770,14 @@ async fn reserved_characters_in_ids_are_percent_encoded() {
                 "GET",
                 "/v1beta/agents/team%2Fagent",
                 None,
-                c.get_agent("team/agent"),
+                c.agents().get("team/agent"),
             ),
             // An already-encoded traversal is encoded again, not decoded.
             wire(
                 "DELETE",
                 "/v1beta/agents/%252e%252e%252f",
                 None,
-                c.delete_agent("%2e%2e%2f"),
+                c.agents().delete("%2e%2e%2f"),
             ),
             wire(
                 "GET",
@@ -2694,8 +2899,8 @@ async fn empty_and_dot_segment_ids_are_rejected_before_any_request() {
             "list_trigger_executions",
             call(c.list_trigger_executions("", None, None)),
         ),
-        ("get_agent", call(c.get_agent(""))),
-        ("delete_agent", call(c.delete_agent("%2e%2e"))),
+        ("agents.get", call(c.agents().get(""))),
+        ("agents.delete", call(c.agents().delete("%2e%2e"))),
         ("get_environment", call(c.get_environment(""))),
         ("delete_environment", call(c.delete_environment(".."))),
         (
@@ -2972,10 +3177,17 @@ async fn empty_object_parses_as_an_empty_last_page_on_every_list_endpoint() {
             }),
         ),
         (
-            "list_agents",
+            "agents.list",
             Box::pin(async move {
-                let l = c.list_agents(None, None, None).await?;
+                let l = c.agents().list().send().await?;
                 Ok((l.agents.len(), l.next_page_token))
+            }),
+        ),
+        (
+            "agents.list items",
+            Box::pin(async move {
+                let items: Vec<_> = c.agents().list().items().try_collect().await?;
+                Ok((items.len(), None))
             }),
         ),
         (

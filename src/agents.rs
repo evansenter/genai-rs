@@ -4,8 +4,9 @@
 //! environment under a reusable ID. Once created, run them with
 //! [`InteractionBuilder::with_agent()`](crate::InteractionBuilder::with_agent).
 //!
-//! Manage agents with the [`Client`] methods `create_agent`,
-//! `get_agent`, `list_agents`, and `delete_agent`.
+//! Manage agents through the [`Agents`] handle from [`Client::agents`]:
+//! [`create`](Agents::create), [`get`](Agents::get),
+//! [`list`](Agents::list) and [`delete`](Agents::delete).
 //!
 //! See `docs/AGENTS_AND_BACKGROUND.md` for the full agents flow and the list
 //! of managed agent IDs.
@@ -20,6 +21,8 @@
 
 use crate::client::Client;
 use crate::errors::GenaiError;
+use crate::paging;
+use futures_util::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 
 use crate::environments::EnvironmentSpec;
@@ -77,8 +80,8 @@ pub struct Agent {
     /// unrecoverable. Agent creation is gated on a standard API key, so only the
     /// GET/LIST shapes have been observed.
     ///
-    /// **Also read on serialize into a request body.** `create_agent` sends
-    /// this whole struct, so `extra` is an *outbound* escape hatch too —
+    /// **Also read on serialize into a request body.** [`Agents::create`]
+    /// sends this whole struct, so `extra` is an *outbound* escape hatch too —
     /// a way to send a field the crate has not modeled yet, exactly like
     /// [`CreateEnvironmentRequest::extra`](crate::CreateEnvironmentRequest::extra).
     /// It also means a get-modify-create cycle echoes unmodeled server
@@ -155,8 +158,39 @@ pub struct AgentListResponse {
     pub next_page_token: Option<String>,
 }
 
-/// Agents resource methods; see [IDs](crate::agents#ids).
+paging::impl_list_page!(AgentListResponse, agents: Agent);
+
 impl Client {
+    /// The `/v1beta/agents` resource: create, get, list and delete custom
+    /// agents.
+    ///
+    /// The handle borrows the client and is `Copy`; see
+    /// [IDs](crate::agents#ids) for what the methods take.
+    ///
+    /// ```no_run
+    /// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+    /// let agent = client.agents().get("customer-sentinel").await?;
+    /// # let _ = agent;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn agents(&self) -> Agents<'_> {
+        Agents { client: self }
+    }
+}
+
+/// The `/v1beta/agents` resource, from [`Client::agents`].
+///
+/// Methods take `self` by value, so each call's future holds only the client
+/// borrow, never the handle: `client.agents().get(id)` can be stored or
+/// joined with others. See [IDs](crate::agents#ids).
+#[derive(Clone, Copy, Debug)]
+#[must_use = "a resource handle does nothing until you call one of its methods"]
+pub struct Agents<'a> {
+    client: &'a Client,
+}
+
+impl<'a> Agents<'a> {
     /// Creates a custom agent.
     ///
     /// Once created, run the agent with
@@ -188,11 +222,14 @@ impl Client {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::new("api-key".to_string());
     ///
-    /// let agent = client.create_agent(
-    ///     &Agent::new("customer-sentinel")
-    ///         .with_system_instruction("You monitor customer feedback.")
-    ///         .add_tool(Tool::CodeExecution),
-    /// ).await?;
+    /// let agent = client
+    ///     .agents()
+    ///     .create(
+    ///         &Agent::new("customer-sentinel")
+    ///             .with_system_instruction("You monitor customer feedback.")
+    ///             .add_tool(Tool::CodeExecution),
+    ///     )
+    ///     .await?;
     ///
     /// // Run it
     /// let response = client.interaction()
@@ -203,8 +240,8 @@ impl Client {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn create_agent(&self, agent: &crate::Agent) -> Result<crate::Agent, GenaiError> {
-        crate::http::agents::create_agent(&self.http, agent).await
+    pub async fn create(self, agent: &Agent) -> Result<Agent, GenaiError> {
+        crate::http::agents::create_agent(&self.client.http, agent).await
     }
 
     /// Retrieves an agent by ID.
@@ -213,28 +250,21 @@ impl Client {
     ///
     /// Returns an error if the agent doesn't exist, the HTTP request fails,
     /// or response parsing fails.
-    pub async fn get_agent(&self, agent_id: &str) -> Result<crate::Agent, GenaiError> {
-        crate::http::agents::get_agent(&self.http, agent_id).await
+    pub async fn get(self, agent_id: &str) -> Result<Agent, GenaiError> {
+        crate::http::agents::get_agent(&self.client.http, agent_id).await
     }
 
-    /// Lists agents.
-    ///
-    /// # Arguments
-    ///
-    /// * `page_size` - Optional maximum number of agents per page.
-    /// * `page_token` - Optional token from a previous list call.
-    /// * `parent` - Optional parent resource filter.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the HTTP request fails or response parsing fails.
-    pub async fn list_agents(
-        &self,
-        page_size: Option<u32>,
-        page_token: Option<&str>,
-        parent: Option<&str>,
-    ) -> Result<crate::AgentListResponse, GenaiError> {
-        crate::http::agents::list_agents(&self.http, page_size, page_token, parent).await
+    /// Lists agents: configure the returned [`ListAgents`], then call
+    /// [`send`](ListAgents::send) for one page, or
+    /// [`pages`](ListAgents::pages) / [`items`](ListAgents::items) to
+    /// stream them all.
+    pub fn list(self) -> ListAgents<'a> {
+        ListAgents {
+            client: self.client,
+            page_size: None,
+            page_token: None,
+            parent: None,
+        }
     }
 
     /// Deletes an agent by ID.
@@ -242,8 +272,117 @@ impl Client {
     /// # Errors
     ///
     /// Returns an error if the agent doesn't exist or the HTTP request fails.
-    pub async fn delete_agent(&self, agent_id: &str) -> Result<(), GenaiError> {
-        crate::http::agents::delete_agent(&self.http, agent_id).await
+    pub async fn delete(self, agent_id: &str) -> Result<(), GenaiError> {
+        crate::http::agents::delete_agent(&self.client.http, agent_id).await
+    }
+}
+
+/// A `GET /v1beta/agents` request, from [`Agents::list`].
+///
+/// End it with [`send`](Self::send) for one page, or
+/// [`pages`](Self::pages) / [`items`](Self::items) to follow
+/// `next_page_token` to the end of the list. The page size and `parent`
+/// filter are sent with every page.
+///
+/// # Example
+///
+/// ```no_run
+/// use futures_util::TryStreamExt;
+///
+/// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+/// // One page
+/// let page = client.agents().list().with_page_size(50).send().await?;
+/// println!("{} agents, more: {}", page.agents.len(), page.next_page_token.is_some());
+///
+/// // Every agent, across pages
+/// let all: Vec<genai_rs::Agent> = client.agents().list().items().try_collect().await?;
+/// # let _ = all;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Clone, Debug)]
+#[must_use = "a list request does nothing until .send(), .pages() or .items()"]
+pub struct ListAgents<'a> {
+    client: &'a Client,
+    page_size: Option<u32>,
+    page_token: Option<String>,
+    parent: Option<String>,
+}
+
+impl<'a> ListAgents<'a> {
+    /// Sets the maximum number of agents per page. Sent with every page.
+    pub fn with_page_size(mut self, page_size: u32) -> Self {
+        self.page_size = Some(page_size);
+        self
+    }
+
+    /// Starts from this page token, from a previous page's
+    /// `next_page_token`.
+    pub fn with_page_token(mut self, page_token: impl Into<String>) -> Self {
+        self.page_token = Some(page_token.into());
+        self
+    }
+
+    /// Sets the `parent` resource filter. Sent with every page.
+    pub fn with_parent(mut self, parent: impl Into<String>) -> Self {
+        self.parent = Some(parent.into());
+        self
+    }
+
+    /// Sends the request and returns one page.
+    ///
+    /// An empty collection comes back as an empty page with no
+    /// `next_page_token`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails or response parsing fails.
+    pub async fn send(self) -> Result<AgentListResponse, GenaiError> {
+        crate::http::agents::list_agents(
+            &self.client.http,
+            self.page_size,
+            self.page_token.as_deref(),
+            self.parent.as_deref(),
+        )
+        .await
+    }
+
+    /// Streams every page, starting at [`with_page_token`](Self::with_page_token)
+    /// or the first page.
+    ///
+    /// Nothing is sent until the stream is polled. It ends after a page
+    /// without a `next_page_token`; an error is yielded once and ends it. A
+    /// page whose token was already requested (the starting token included)
+    /// is yielded, then [`GenaiError::MalformedResponse`]. The stream owns a
+    /// clone of the client, so it can be stored or spawned.
+    #[must_use = "streams do nothing unless polled"]
+    pub fn pages(self) -> BoxStream<'static, Result<AgentListResponse, GenaiError>> {
+        let Self {
+            client,
+            page_size,
+            page_token,
+            parent,
+        } = self;
+        let client = client.clone();
+        paging::pages("agents", page_token, move |token| {
+            let (client, parent) = (client.clone(), parent.clone());
+            async move {
+                crate::http::agents::list_agents(
+                    &client.http,
+                    page_size,
+                    token.as_deref(),
+                    parent.as_deref(),
+                )
+                .await
+            }
+        })
+    }
+
+    /// Streams every agent across pages, in server order. Same rules as
+    /// [`pages`](Self::pages).
+    #[must_use = "streams do nothing unless polled"]
+    pub fn items(self) -> BoxStream<'static, Result<Agent, GenaiError>> {
+        paging::items(self.pages())
     }
 }
 
@@ -252,6 +391,37 @@ mod tests {
     use super::*;
     use crate::environments::{EnvironmentSource, RemoteEnvironment};
     use serde_json::json;
+
+    #[test]
+    fn list_agents_setters_fill_the_query() {
+        let client = Client::new("k".to_string());
+        let list = client.agents().list();
+        assert_eq!(list.page_size, None);
+        assert_eq!(list.page_token, None);
+        assert_eq!(list.parent, None);
+
+        let list = list
+            .with_page_size(5)
+            .with_page_token("t1")
+            .with_parent("projects/p")
+            // `with_*` replaces.
+            .with_page_token("t2");
+        assert_eq!(list.page_size, Some(5));
+        assert_eq!(list.page_token.as_deref(), Some("t2"));
+        assert_eq!(list.parent.as_deref(), Some("projects/p"));
+    }
+
+    #[test]
+    fn agents_handle_and_list_debug_redact_the_api_key() {
+        let client = Client::new("secret-api-key".to_string());
+        for debug in [
+            format!("{:?}", client.agents()),
+            format!("{:?}", client.agents().list().with_parent("p")),
+        ] {
+            assert!(!debug.contains("secret-api-key"), "{debug}");
+            assert!(debug.contains("[REDACTED]"), "{debug}");
+        }
+    }
 
     #[test]
     fn test_agent_serialization_matches_spec_shape() {

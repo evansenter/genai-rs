@@ -27,6 +27,14 @@ pub struct Client {
     pub(crate) http: HttpContext,
 }
 
+// Resource handles hand out futures and `'static` list streams that carry the
+// client (or a clone of it) across tasks, so it must stay `Send + Sync`
+// (D-016).
+const _: () = {
+    const fn assert<T: Send + Sync>() {}
+    assert::<Client>();
+};
+
 // Custom Debug implementation that redacts the API key for security.
 // This prevents accidental exposure of credentials in logs, error messages, or debug output.
 impl std::fmt::Debug for Client {

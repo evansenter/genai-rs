@@ -12,6 +12,11 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
 
 ### Added
 
+- `.pages()` / `.items()` on every list builder stream all pages. They
+  require `futures_util::{StreamExt, TryStreamExt}`, keep filters and page
+  size on every request, stop on an empty token, and fail with
+  `MalformedResponse` if a token repeats. The streams own a clone of the
+  client, so they can be spawned.
 - **Voices API**: `Client::{list_voices, get_voice, create_voice,
   delete_voice}`, `CreateVoiceRequest`, `ListVoicesParams`. A custom voice id
   works as `SpeechConfig::voice` on 3.8 TTS models.
@@ -62,6 +67,15 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
 
 ### Changed
 
+- **Breaking: resource methods moved from `Client` to per-resource
+  handles.** `client.agents()` returns a `Copy` handle that borrows the
+  client. Rename `client.<verb>_agent(…)` to `client.agents().<verb>(…)`.
+  The full table is in `docs/RESOURCES.md`.
+- **Breaking: `list_agents` returns a builder.** The positional
+  `page_size`, `page_token` and `parent` arguments are gone. Chain
+  `.with_page_size(n)`, `.with_page_token(t)` or `.with_parent(p)` on
+  `client.agents().list()`, then `.send()` for one page (the same
+  `AgentListResponse`).
 - **Breaking:** `genai_rs::environment` and `genai_rs::environment_files` are
   merged into `genai_rs::environments`, and the Files API types moved to a
   public `genai_rs::files` module (`FileUploadResponse` is now exported). Root

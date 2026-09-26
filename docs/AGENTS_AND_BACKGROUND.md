@@ -64,10 +64,12 @@ A custom agent bundles an id, a system instruction, tools (a subset:
 `code_execution`, `url_context`, `google_search`, `mcp_server`) and a base
 environment. Creating custom agents is gated on standard API keys.
 
-```rust,ignore
+```rust,no_run
+use futures_util::TryStreamExt;
 use genai_rs::{Agent, EnvironmentSource, RemoteEnvironment, Tool};
 
-let agent = client.create_agent(
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+let agent = client.agents().create(
     &Agent::new("customer-sentinel")
         .with_system_instruction("You monitor customer feedback.")
         .with_description("Watches feedback channels and summarizes sentiment")
@@ -79,10 +81,17 @@ let agent = client.create_agent(
 
 // Run it like any agent: .with_agent("customer-sentinel").with_background(true)
 
-let fetched = client.get_agent("customer-sentinel").await?;
-let page = client.list_agents(Some(50), None, None).await?; // page_size, page_token, parent
-client.delete_agent("customer-sentinel").await?;
+let fetched = client.agents().get("customer-sentinel").await?;
+let page = client.agents().list().with_page_size(50).send().await?; // one page
+let all: Vec<Agent> = client.agents().list().items().try_collect().await?; // every page
+client.agents().delete("customer-sentinel").await?;
+# Ok(())
+# }
 ```
+
+`list()` returns a builder: `.with_page_size()`, `.with_page_token()` and
+`.with_parent()` configure it, and `.send()`, `.pages()` or `.items()` run it
+(see [Resource handles and list builders](BUILDER_API.md#resource-handles-and-list-builders)).
 
 ## Environments
 

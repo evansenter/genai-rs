@@ -12,6 +12,7 @@
 mod common;
 
 use common::{TINY_WAV_BASE64, get_client};
+use futures_util::TryStreamExt;
 use genai_rs::{
     Agent, Content, DeepResearchConfig, InteractionInput, ResponseFormat, RetrievalConfig,
     SpeechConfig, Tool, Visualization, Webhook, WebhookConfig, WebhookEvent, WebhookState,
@@ -207,7 +208,7 @@ async fn test_agent_crud_lifecycle() {
         .with_description("Integration-test agent created by genai-rs")
         .add_tool(Tool::CodeExecution);
 
-    let created = match client.create_agent(&agent).await {
+    let created = match client.agents().create(&agent).await {
         Ok(agent) => agent,
         // The gate: a generic 400 for a schema-valid payload. A schema
         // rejection names the field, so it does not match.
@@ -224,7 +225,7 @@ async fn test_agent_crud_lifecycle() {
     println!("Created agent: id={:?}", created.id);
 
     // Get: the tools subset must round-trip intact.
-    let fetched = client.get_agent(agent_id).await.expect("get_agent");
+    let fetched = client.agents().get(agent_id).await.expect("agents.get");
     assert_eq!(fetched.id.as_deref(), Some(agent_id));
     assert!(
         matches!(fetched.tools.as_deref(), Some([Tool::CodeExecution])),
@@ -238,9 +239,12 @@ async fn test_agent_crud_lifecycle() {
 
     // List
     let list = client
-        .list_agents(Some(50), None, None)
+        .agents()
+        .list()
+        .with_page_size(50)
+        .send()
         .await
-        .expect("list_agents");
+        .expect("agents.list");
     println!("Listed {} agents", list.agents.len());
     assert!(
         list.agents
@@ -250,8 +254,54 @@ async fn test_agent_crud_lifecycle() {
     );
 
     // Delete (cleanup)
-    client.delete_agent(agent_id).await.expect("delete_agent");
+    client
+        .agents()
+        .delete(agent_id)
+        .await
+        .expect("agents.delete");
     println!("Deleted agent {agent_id}");
+}
+
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_agent_list_streams_end_on_the_last_page() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    // A standard key lists no agents (`{"agents": []}`, verified
+    // 2026-09-26), so this pins the end-of-list rule on a real response.
+    // Following several pages is covered offline in http_mock_resources.rs.
+    let pages: Vec<_> = client
+        .agents()
+        .list()
+        .with_page_size(2)
+        .pages()
+        .try_collect()
+        .await
+        .expect("agents.list pages");
+    println!(
+        "Listed {} page(s), {} agent(s)",
+        pages.len(),
+        pages.iter().map(|p| p.agents.len()).sum::<usize>()
+    );
+    let last = pages.last().expect("at least one page");
+    assert!(
+        last.next_page_token.as_deref().is_none_or(str::is_empty),
+        "the stream must end on a page without a token: {:?}",
+        last.next_page_token
+    );
+
+    let agents: Vec<_> = client
+        .agents()
+        .list()
+        .with_page_size(2)
+        .items()
+        .try_collect()
+        .await
+        .expect("agents.list items");
+    println!("Streamed {} agent(s)", agents.len());
 }
 
 // =============================================================================

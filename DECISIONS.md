@@ -430,3 +430,71 @@ the manual ones called `serialize_map`; serde_json output is identical, but a
 non-JSON serializer could tell them apart. Field declaration order is now
 wire order for these types, so reordering fields is a wire change.
 
+
+---
+
+## D-016 — Resource handles (2026-09-26)
+
+**Context.** Each `/v1beta` resource added its methods straight onto `Client`
+(`create_webhook`, `list_trigger_executions`,
+`upload_to_file_search_store_with_mime`, ...), so one type carried dozens of
+`<verb>_<resource>` names. Optional inputs were positional
+(`list_agents(None, None, Some(p))`, `update_webhook(id, &u, None)`), and
+every list returned one page, leaving each caller to write its own
+`next_page_token` loop. The Python SDK groups the same calls per resource
+(`client.agents.list(...)`).
+
+**Decision.** Resource methods move to per-resource handles, under these
+rules:
+
+1. **Handles.** Each resource has an accessor
+   `Client::<resources>(&self) -> <Handle><'_>`. A handle is
+   `#[derive(Clone, Copy, Debug)]` and holds only `&'a Client`, so its
+   `Debug` is the client's key-redacting one.
+2. **Receivers are `self`, never `&self`.** The future of an
+   `async fn(&self)` borrows the temporary handle, so storing
+   `client.files().get(id)` or writing
+   `join_all(ids.map(|id| c.files().get(id)))` fails with E0515 (a
+   returned value references a temporary). Taken by value, the handle is
+   moved into the future, which then holds only the client borrow.
+3. **Required arguments are positional; optional inputs live on a value**
+   (`&WebhookUpdate`, `FileUpload`, `PollOptions`, ...). Only lists are
+   builders. A single typed trailing `Option<RevocationBehavior>` is the one
+   exception, and a `bool` flag becomes its own verb (`force_delete`).
+4. **Nested resources** (`environments().files()`,
+   `file_search_stores().documents()`) are plain accessors that bind no id:
+   the parent id or full name is a method argument, as in Python.
+5. **Lists.** `list(..)` returns a `List*<'a>` builder that owns its ids and
+   query state. It is configured with `with_*` and ends in `.send()` (one
+   page, the existing `*ListResponse`), `.pages()` or `.items()`. The
+   streams send nothing until polled, send the page size and filters with
+   every page, end after a page whose token is absent or empty, follow an
+   empty page that has a token, and stop on the first error without
+   retrying. A token already requested (including the starting one) yields
+   its page, then `MalformedResponse`, rather than looping forever. An empty
+   object is an empty last page. No handle method returns `impl Trait`, so
+   the edition-2024 capture rules never come up.
+6. **`#[must_use]` goes on the handle and builder types**, each with a
+   reason, and on `pages()` / `items()`. Accessors, `list()` and `with_*`
+   carry none: a bare `#[must_use]` on a function returning a `#[must_use]`
+   type trips `clippy::double_must_use`, which `-D warnings` makes an error.
+7. **Streams own a clone of the client.** `pages()` and `items()` return
+   `BoxStream<'static, _>`: the builder clones the `Client` (an `Arc`'d
+   reqwest client and two strings) and its query state into the stream, so
+   a stream can be stored or spawned even when built from a temporary. A
+   compile-time assertion keeps `Client: Send + Sync`. The engine is the
+   private `src/paging.rs`.
+
+This amends D-013's placement: a resource module holds its accessor,
+handle(s), list builders and `impl_list_page!` invocation instead of an
+`impl Client` block. `client.interaction()`, `execute` and `execute_stream`
+stay on `Client`. The change lands one resource per commit, agents first.
+
+**Consequences.** Breaking for every resource call (D-007); the old-to-new
+table is in `docs/RESOURCES.md`. Each resource is one rustdoc page and one
+completion list, and lists no longer need hand-written token loops. A
+paging stream clones the `Client` once per page request. Adding a list
+filter setter, or `IntoFuture` on the builders, is not breaking later.
+Streams borrowing the client would avoid those clones, but switching to
+owned streams afterwards would change the handle types, so owned streams
+were chosen up front.

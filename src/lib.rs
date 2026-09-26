@@ -56,6 +56,7 @@
 // Internal HTTP Layer (pub(crate))
 // =============================================================================
 pub(crate) mod http;
+pub(crate) mod paging;
 pub(crate) mod serde_util;
 #[cfg(test)]
 pub(crate) mod test_subscriber;
@@ -176,7 +177,7 @@ pub use safety::{HarmCategory, SafetyMethod, SafetySetting, SafetyThreshold};
 
 // Agents resource (/v1beta/agents)
 pub mod agents;
-pub use agents::{Agent, AgentListResponse};
+pub use agents::{Agent, AgentListResponse, Agents, ListAgents};
 
 pub mod credentials;
 pub use credentials::{
@@ -339,6 +340,7 @@ mod doc_tests {
     doc_comment!(include_str!("../docs/MULTIMODAL.md"));
     doc_comment!(include_str!("../docs/OUTPUT_MODALITIES.md"));
     doc_comment!(include_str!("../docs/RELIABILITY.md"));
+    doc_comment!(include_str!("../docs/RESOURCES.md"));
     doc_comment!(include_str!("../docs/STREAMING_API.md"));
     doc_comment!(include_str!("../docs/TESTING.md"));
     doc_comment!(include_str!("../docs/THINKING_MODE.md"));

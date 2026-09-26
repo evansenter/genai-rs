@@ -70,6 +70,7 @@ const REQUEST_SIDE: &[&str] = &[
 const EXPECTED_TEST_MODULES: &[&str] = &[
     "src/content/content_tests",
     "src/files_tests",
+    "src/paging_tests",
     "src/proptest_tests",
     "src/request/request_tests",
     "src/response/response_tests",
