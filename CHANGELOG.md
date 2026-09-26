@@ -158,6 +158,12 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
 
 ### Fixed
 
+- The SSE parser rescanned its whole buffer on every network chunk, so a
+  multi-megabyte event (image output) cost quadratic CPU: about 200 ms of
+  CPU per image stream, now about 50 ms. Text streams parse 15–40% faster.
+- `upload_to_file_search_store` read the whole file into memory (up to the
+  2 GB limit). It now streams from disk, as Files API uploads do: a 200 MB
+  upload peaked at 17 MB of memory instead of 211 MB.
 - An upload MIME type that cannot be a header value returns `InvalidInput`
   (not retryable) instead of a retryable `GenaiError::Http`, for every upload
   path.

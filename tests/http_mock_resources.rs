@@ -1524,6 +1524,8 @@ async fn upload_to_file_search_store_sends_raw_bytes_then_reads_the_document_bac
     assert_eq!(upload.header("x-goog-upload-protocol"), Some("raw"));
     assert_eq!(upload.header("x-goog-upload-file-name"), Some("notes.txt"));
     assert_eq!(upload.header("content-type"), Some("text/plain"));
+    // The body is streamed from disk, so the length comes from the file.
+    assert_eq!(upload.header("content-length"), Some("12"));
     assert_eq!(upload.body, b"hello search");
     assert_eq!(read_back.method, "GET");
     assert_eq!(

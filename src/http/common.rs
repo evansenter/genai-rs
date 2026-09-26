@@ -145,6 +145,20 @@ pub(crate) fn mime_type_header(
     })
 }
 
+/// Read-buffer size for streaming an upload from disk, which bounds memory
+/// use per upload.
+const FILE_READ_BUFFER_SIZE: usize = 8 * 1024 * 1024;
+
+/// A request body that streams `file` from disk instead of reading it into
+/// memory. A streamed body has no length of its own, so the caller sets
+/// `Content-Length`.
+pub(crate) fn file_body(file: tokio::fs::File) -> reqwest::Body {
+    reqwest::Body::wrap_stream(tokio_util::io::ReaderStream::with_capacity(
+        file,
+        FILE_READ_BUFFER_SIZE,
+    ))
+}
+
 /// Appends percent-encoded query params to `url`, skipping `None` values.
 ///
 /// Joins with `&` when `url` already carries a query string.
