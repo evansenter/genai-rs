@@ -127,7 +127,7 @@ the bindings is modeled until it is probed. From the 2.25.0 sweep:
 ## Verification protocol
 
 New surface lands with wire-fixture unit tests taken from the bindings,
-next to the type (`src/steps.rs`, `src/voices.rs`, ...). It also gets a
+next to the type (`src/steps/`, `src/voices.rs`, ...). It also gets a
 strict live test that cleans up after itself and is registered in the
 `rust.yml` integration matrix (`tests/ci_coverage.rs` enforces this).
 Before a release, run the integration suite with `LOUD_WIRE=1` and update

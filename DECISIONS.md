@@ -346,3 +346,46 @@ The bare-ID rules are stated once, in each module's `# IDs` section.
 **Consequences.** Every root re-export (`genai_rs::X`) is unchanged. The
 module paths `genai_rs::environment::*` and `genai_rs::environment_files::*`
 are gone; use `genai_rs::environments::*` or the root.
+
+---
+
+## D-014 — Split oversized modules; tests in sibling files (2026-09-26)
+
+**Context.** Nine source files had grown past 1,100 lines excluding tests,
+with `steps.rs` near 2,900 and `InteractionBuilder` a single 62-method
+`impl`. Large files attract unrelated changes and make review diffs hard to
+place. The structure audit compared the crate with the codex workspace
+(`evansenter/codex`), which targets modules under 500 lines and moves new
+code into a new module once a file passes about 800.
+
+**Decision.** Split each along the seams its own section banners already
+marked, as pure moves (no logic, signature or public-path change). Per D-011:
+
+| From | To |
+|------|----|
+| `src/steps.rs` | `src/steps/`: `mod.rs` (`Step`), `step_serde.rs`, `delta.rs`, `delta_serde.rs`, `accumulator.rs` |
+| `src/request_builder/mod.rs` | `src/request_builder/`: `input.rs`, `tools.rs`, `output.rs`, `generation.rs`, `conversation.rs` beside `mod.rs` |
+| `src/antigravity/mod.rs` | `src/antigravity/`: `error.rs`, `builder.rs`, `agent.rs`, `hook_mapping.rs`, `turn.rs` beside `mod.rs` |
+| `src/antigravity/protocol.rs` | `src/antigravity/protocol/`: `mod.rs`, `enums.rs`, `config.rs`, `input.rs`, `output.rs`, `step_update.rs` |
+| `src/content.rs`, `src/content_tests.rs` | `src/content/`: `mod.rs`, `serde_impls.rs`, `annotation.rs`, `results.rs`, `video_processing.rs`, `content_tests.rs` |
+| `src/response.rs`, `src/response_tests.rs` | `src/response/`: `mod.rs`, `usage.rs`, `views.rs`, `tool_steps.rs`, `step_summary.rs`, `response_tests.rs` |
+| `src/tools.rs` | `src/tools/`: `mod.rs` (`Tool`), `function.rs`, `choice.rs`, `retrieval.rs`, `builtin.rs` |
+| `src/request.rs`, `src/request_tests.rs` | `src/request/`: `mod.rs`, `generation_config.rs`, `agent_config.rs`, `request_tests.rs` |
+| `src/wire.rs` | `src/wire/`: `mod.rs`, `printer.rs`, `tracing_forwarder.rs` |
+
+New submodules are private and re-exported explicitly from their `mod.rs`,
+so every public path (`genai_rs::steps::StepDelta`, root re-exports) is
+unchanged; the rustdoc page set was compared before and after. Unit tests
+moved with their code into sibling `<module>_tests.rs` files declared with
+`#[path]`, the codex convention, and `tests/non_exhaustive_responses.rs`
+now follows `#[path]` so those files are not scanned as API.
+
+**Consequences.** New code has an obvious home, and a file's size is a signal
+worth acting on. The cost is more files and a directory hop for readers who
+knew the old layout; links to `src/<file>.rs:<line>` in issues written
+before 2026-09-26 point at the pre-split layout. `tracing` targets come from
+`module_path!()`, so events from moved code gain a segment (a warning once
+logged under `genai_rs::antigravity::protocol` now logs under
+`genai_rs::antigravity::protocol::enums`); `EnvFilter` directives match by
+prefix, so existing filters still select them.
+
