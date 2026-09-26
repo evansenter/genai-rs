@@ -509,7 +509,7 @@ while let Some(event) = stream.next().await {
 ### Event decisions, trajectory identity, and error severity
 
 - **`ToolAction { action, decision, trajectory_id }`** — `decision` is a
-  [`ToolDecision`] (`Allowed`, or `Denied { reason }`): a policy- or
+  `ToolDecision` (`Allowed`, or `Denied { reason }`): a policy- or
   hook-blocked harness action is otherwise indistinguishable from an executed
   one. A call blocked at the pre-tool hook never ran, so there is no action
   record for it: harness 0.1.18 reports it as an error step, which arrives
@@ -522,7 +522,7 @@ while let Some(event) = stream.next().await {
   each tool step's one-line label (`"Weather check"`) — so text deltas are
   taken only from model steps directed at the user (the reference SDK's
   filter), and thinking deltas from any model step.
-- **`Error { message, severity }`** — `severity` is an [`ErrorSeverity`].
+- **`Error { message, severity }`** — `severity` is an `ErrorSeverity`.
   Transient errors are harness-internal noise (retried internally; the turn
   continues) — essentially every error event today. `Severe` marks a
   serious mid-turn error (e.g. a fatal model-backend status that did not abort
