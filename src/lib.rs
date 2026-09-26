@@ -294,8 +294,6 @@ pub use multimodal::{
 #[cfg(test)]
 mod proptest_tests;
 #[cfg(test)]
-mod request_tests;
-#[cfg(test)]
 mod streaming_tests;
 
 // =============================================================================

@@ -31,13 +31,13 @@ use syn::{Attribute, Item, Meta, Token};
 /// by accident.
 const REQUEST_SIDE: &[&str] = &[
     // Interaction request and its config tree.
-    "src/request.rs:InteractionRequest",
-    "src/request.rs:GenerationConfig",
-    "src/request.rs:TranscriptionConfig",
-    "src/request.rs:SpeechConfig",
-    "src/request.rs:ImageConfig",
-    "src/request.rs:VideoConfig",
-    "src/request.rs:AgentConfig",
+    "src/request/mod.rs:InteractionRequest",
+    "src/request/generation_config.rs:GenerationConfig",
+    "src/request/generation_config.rs:TranscriptionConfig",
+    "src/request/generation_config.rs:SpeechConfig",
+    "src/request/generation_config.rs:ImageConfig",
+    "src/request/generation_config.rs:VideoConfig",
+    "src/request/agent_config.rs:AgentConfig",
     "src/safety.rs:SafetySetting",
     // Tool declarations and configs the caller builds.
     "src/tools/function.rs:FunctionDeclaration",
@@ -70,7 +70,7 @@ const REQUEST_SIDE: &[&str] = &[
 const EXPECTED_TEST_MODULES: &[&str] = &[
     "src/content/content_tests",
     "src/proptest_tests",
-    "src/request_tests",
+    "src/request/request_tests",
     "src/response/response_tests",
     "src/streaming_tests",
     "src/test_subscriber",
