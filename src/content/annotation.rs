@@ -53,14 +53,17 @@ pub struct ReviewSnippet {
 ///     }
 /// }
 /// ```
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Annotation {
     /// A citation of a web source (`type: "url_citation"`).
     UrlCitation {
         /// The cited URL.
+        #[serde(skip_serializing_if = "Option::is_none")]
         url: Option<String>,
         /// Title of the cited page.
+        #[serde(skip_serializing_if = "Option::is_none")]
         title: Option<String>,
         /// Start of the cited span (UTF-8 byte offset, inclusive).
         start_index: usize,
@@ -70,16 +73,22 @@ pub enum Annotation {
     /// A citation of an uploaded/retrieved document (`type: "file_citation"`).
     FileCitation {
         /// URI of the cited document.
+        #[serde(skip_serializing_if = "Option::is_none")]
         document_uri: Option<String>,
         /// Name of the cited file.
+        #[serde(skip_serializing_if = "Option::is_none")]
         file_name: Option<String>,
         /// Source store or origin of the file.
+        #[serde(skip_serializing_if = "Option::is_none")]
         source: Option<String>,
         /// Custom metadata attached to the document.
+        #[serde(skip_serializing_if = "Option::is_none")]
         custom_metadata: Option<serde_json::Value>,
         /// Page number of the citation, if applicable.
+        #[serde(skip_serializing_if = "Option::is_none")]
         page_number: Option<u32>,
         /// Media identifier within the document.
+        #[serde(skip_serializing_if = "Option::is_none")]
         media_id: Option<String>,
         /// Start of the cited span (UTF-8 byte offset, inclusive).
         start_index: usize,
@@ -89,12 +98,16 @@ pub enum Annotation {
     /// A citation of a Google Maps place (`type: "place_citation"`).
     PlaceCitation {
         /// Google Maps place identifier.
+        #[serde(skip_serializing_if = "Option::is_none")]
         place_id: Option<String>,
         /// Name of the place.
+        #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<String>,
         /// URL of the place.
+        #[serde(skip_serializing_if = "Option::is_none")]
         url: Option<String>,
         /// Review snippets supporting the citation.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
         review_snippets: Vec<ReviewSnippet>,
         /// Start of the cited span (UTF-8 byte offset, inclusive).
         start_index: usize,
@@ -112,30 +125,47 @@ pub enum Annotation {
     /// tile the text without gaps. See [`Content::speaker_text`](crate::Content::speaker_text).
     SpeechMetadata {
         /// Speaker name, matching a `speaker` in `speech_config`.
+        #[serde(skip_serializing_if = "Option::is_none")]
         speaker: Option<String>,
         /// Delivery instruction, e.g. `"whisper"`.
+        #[serde(skip_serializing_if = "Option::is_none")]
         style: Option<String>,
         /// Start of the span (UTF-8 byte offset, inclusive).
+        #[serde(skip_serializing_if = "Option::is_none")]
         start_index: Option<usize>,
         /// End of the span (UTF-8 byte offset, exclusive).
+        #[serde(skip_serializing_if = "Option::is_none")]
         end_index: Option<usize>,
     },
     /// Per-word transcription detail (`type: "word_info"`).
     WordInfo {
         /// The word.
+        #[serde(skip_serializing_if = "Option::is_none")]
         text: Option<String>,
         /// Diarized speaker label.
+        #[serde(skip_serializing_if = "Option::is_none")]
         speaker: Option<String>,
         /// Start time within the audio, as a duration string (e.g. `"1.2s"`).
+        #[serde(skip_serializing_if = "Option::is_none")]
         start_offset: Option<String>,
         /// End time within the audio, as a duration string.
+        #[serde(skip_serializing_if = "Option::is_none")]
         end_offset: Option<String>,
         /// Start of the span (UTF-8 byte offset, inclusive).
+        #[serde(skip_serializing_if = "Option::is_none")]
         start_index: Option<usize>,
         /// End of the span (UTF-8 byte offset, exclusive).
+        #[serde(skip_serializing_if = "Option::is_none")]
         end_index: Option<usize>,
     },
     /// Unknown annotation type for forward compatibility.
+    // Serializes as `"type": annotation_type` merged with the other entries
+    // of `data` (see `serialize_unknown_merged`), so a hand-built unknown
+    // annotation still goes out with its type.
+    #[serde(
+        untagged,
+        serialize_with = "crate::serde_util::serialize_unknown_merged"
+    )]
     Unknown {
         /// The unrecognized type name from the API.
         annotation_type: String,
@@ -283,159 +313,6 @@ impl Annotation {
         } else {
             None
         }
-    }
-}
-
-impl Serialize for Annotation {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeMap;
-
-        let mut map = serializer.serialize_map(None)?;
-        match self {
-            Self::UrlCitation {
-                url,
-                title,
-                start_index,
-                end_index,
-            } => {
-                map.serialize_entry("type", "url_citation")?;
-                if let Some(u) = url {
-                    map.serialize_entry("url", u)?;
-                }
-                if let Some(t) = title {
-                    map.serialize_entry("title", t)?;
-                }
-                map.serialize_entry("start_index", start_index)?;
-                map.serialize_entry("end_index", end_index)?;
-            }
-            Self::FileCitation {
-                document_uri,
-                file_name,
-                source,
-                custom_metadata,
-                page_number,
-                media_id,
-                start_index,
-                end_index,
-            } => {
-                map.serialize_entry("type", "file_citation")?;
-                if let Some(d) = document_uri {
-                    map.serialize_entry("document_uri", d)?;
-                }
-                if let Some(f) = file_name {
-                    map.serialize_entry("file_name", f)?;
-                }
-                if let Some(s) = source {
-                    map.serialize_entry("source", s)?;
-                }
-                if let Some(c) = custom_metadata {
-                    map.serialize_entry("custom_metadata", c)?;
-                }
-                if let Some(p) = page_number {
-                    map.serialize_entry("page_number", p)?;
-                }
-                if let Some(m) = media_id {
-                    map.serialize_entry("media_id", m)?;
-                }
-                map.serialize_entry("start_index", start_index)?;
-                map.serialize_entry("end_index", end_index)?;
-            }
-            Self::PlaceCitation {
-                place_id,
-                name,
-                url,
-                review_snippets,
-                start_index,
-                end_index,
-            } => {
-                map.serialize_entry("type", "place_citation")?;
-                if let Some(p) = place_id {
-                    map.serialize_entry("place_id", p)?;
-                }
-                if let Some(n) = name {
-                    map.serialize_entry("name", n)?;
-                }
-                if let Some(u) = url {
-                    map.serialize_entry("url", u)?;
-                }
-                if !review_snippets.is_empty() {
-                    map.serialize_entry("review_snippets", review_snippets)?;
-                }
-                map.serialize_entry("start_index", start_index)?;
-                map.serialize_entry("end_index", end_index)?;
-            }
-            Self::SpeechMetadata {
-                speaker,
-                style,
-                start_index,
-                end_index,
-            } => {
-                map.serialize_entry("type", "speech_metadata")?;
-                if let Some(s) = speaker {
-                    map.serialize_entry("speaker", s)?;
-                }
-                if let Some(s) = style {
-                    map.serialize_entry("style", s)?;
-                }
-                if let Some(i) = start_index {
-                    map.serialize_entry("start_index", i)?;
-                }
-                if let Some(i) = end_index {
-                    map.serialize_entry("end_index", i)?;
-                }
-            }
-            Self::WordInfo {
-                text,
-                speaker,
-                start_offset,
-                end_offset,
-                start_index,
-                end_index,
-            } => {
-                map.serialize_entry("type", "word_info")?;
-                if let Some(t) = text {
-                    map.serialize_entry("text", t)?;
-                }
-                if let Some(s) = speaker {
-                    map.serialize_entry("speaker", s)?;
-                }
-                if let Some(o) = start_offset {
-                    map.serialize_entry("start_offset", o)?;
-                }
-                if let Some(o) = end_offset {
-                    map.serialize_entry("end_offset", o)?;
-                }
-                if let Some(i) = start_index {
-                    map.serialize_entry("start_index", i)?;
-                }
-                if let Some(i) = end_index {
-                    map.serialize_entry("end_index", i)?;
-                }
-            }
-            Self::Unknown {
-                annotation_type,
-                data,
-            } => {
-                map.serialize_entry("type", annotation_type)?;
-                match data {
-                    serde_json::Value::Object(obj) => {
-                        for (key, value) in obj {
-                            if key != "type" {
-                                map.serialize_entry(key, value)?;
-                            }
-                        }
-                    }
-                    other if !other.is_null() => {
-                        map.serialize_entry("data", other)?;
-                    }
-                    _ => {}
-                }
-            }
-        }
-        map.end()
     }
 }
 
@@ -614,3 +491,7 @@ impl<'de> Deserialize<'de> for Annotation {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "annotation_tests.rs"]
+mod tests;
