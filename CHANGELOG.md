@@ -203,6 +203,10 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
   and environment `env` maps. Custom `WireInspector`s still receive raw bodies.
 - Antigravity policy bypass on the pre-tool hook path (see Fixed): `deny`
   rules for MCP tools and `start_subagent` were not applied.
+- `Debug` on `CredentialConfig`, `CreateCredentialRequest` and
+  `CredentialUpdate` printed tokens, values and OAuth2 secrets in full; it now
+  prints `[REDACTED]` for every write-only field, as `Client` does for the API
+  key.
 
 
 ## [0.10.0] - 2026-08-16

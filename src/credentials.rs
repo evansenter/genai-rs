@@ -114,7 +114,9 @@ pub struct CredentialListResponse {
 }
 
 /// The secret material of a new credential, tagged by `type` on the wire.
-#[derive(Clone, Debug, Serialize, PartialEq)]
+///
+/// `Debug` prints the write-only secrets as `[REDACTED]`.
+#[derive(Clone, Serialize, PartialEq)]
 #[serde(tag = "type")]
 #[non_exhaustive]
 pub enum CredentialConfig {
@@ -164,7 +166,52 @@ pub enum CredentialConfig {
     },
 }
 
-/// Request body for [`Client::create_credential`].
+// Custom Debug that redacts the write-only secrets (mirrors the api_key
+// redaction on `Client`), so `dbg!` or `tracing::debug!(?request)` cannot
+// undo the LOUD_WIRE redaction.
+impl std::fmt::Debug for CredentialConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BearerToken {
+                token: _,
+                header_name,
+                prefix,
+            } => f
+                .debug_struct("BearerToken")
+                .field("token", &"[REDACTED]")
+                .field("header_name", header_name)
+                .field("prefix", prefix)
+                .finish(),
+            Self::EnvironmentVariable {
+                value: _,
+                injection_location,
+                trusted_domains,
+            } => f
+                .debug_struct("EnvironmentVariable")
+                .field("value", &"[REDACTED]")
+                .field("injection_location", injection_location)
+                .field("trusted_domains", trusted_domains)
+                .finish(),
+            Self::OAuth2 {
+                client_id,
+                client_secret: _,
+                refresh_token: _,
+                token_url,
+                scopes,
+            } => f
+                .debug_struct("OAuth2")
+                .field("client_id", client_id)
+                .field("client_secret", &"[REDACTED]")
+                .field("refresh_token", &"[REDACTED]")
+                .field("token_url", token_url)
+                .field("scopes", scopes)
+                .finish(),
+        }
+    }
+}
+
+/// Request body for [`Client::create_credential`]. `Debug` redacts the
+/// secret (see [`CredentialConfig`]).
 ///
 /// ```
 /// use genai_rs::CreateCredentialRequest;
@@ -221,6 +268,7 @@ impl CreateCredentialRequest {
 
 /// Request body for [`Client::update_credential`]. `credential_type` must
 /// match the stored credential's type; set only the fields to change.
+/// `Debug` prints the write-only secrets as `[REDACTED]`.
 ///
 /// ```
 /// use genai_rs::{CredentialType, CredentialUpdate};
@@ -230,7 +278,7 @@ impl CreateCredentialRequest {
 ///     ..CredentialUpdate::new(CredentialType::BearerToken)
 /// };
 /// ```
-#[derive(Clone, Debug, Serialize, PartialEq)]
+#[derive(Clone, Serialize, PartialEq)]
 pub struct CredentialUpdate {
     /// Type of the credential being updated.
     #[serde(rename = "type")]
@@ -268,6 +316,27 @@ pub struct CredentialUpdate {
     /// OAuth2 scopes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scopes: Option<Vec<String>>,
+}
+
+// Custom Debug that redacts the write-only secrets, like `CredentialConfig`.
+impl std::fmt::Debug for CredentialUpdate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redact = |secret: &Option<String>| secret.as_ref().map(|_| "[REDACTED]");
+        f.debug_struct("CredentialUpdate")
+            .field("credential_type", &self.credential_type)
+            .field("token", &redact(&self.token))
+            .field("header_name", &self.header_name)
+            .field("prefix", &self.prefix)
+            .field("value", &redact(&self.value))
+            .field("injection_location", &self.injection_location)
+            .field("trusted_domains", &self.trusted_domains)
+            .field("client_id", &self.client_id)
+            .field("client_secret", &redact(&self.client_secret))
+            .field("refresh_token", &redact(&self.refresh_token))
+            .field("token_url", &self.token_url)
+            .field("scopes", &self.scopes)
+            .finish()
+    }
 }
 
 impl CredentialUpdate {
@@ -358,6 +427,50 @@ impl Client {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn debug_redacts_every_create_secret() {
+        let requests = [
+            CreateCredentialRequest::bearer_token("secret-token").with_id("id-1"),
+            CreateCredentialRequest::environment_variable(
+                "secret-value",
+                vec![InjectionLocation::Header],
+            ),
+            CreateCredentialRequest::new(CredentialConfig::OAuth2 {
+                client_id: "visible-client".into(),
+                client_secret: "secret-client".into(),
+                refresh_token: "secret-refresh".into(),
+                token_url: "https://oauth.example/token".into(),
+                scopes: None,
+            }),
+        ];
+        for request in &requests {
+            let out = format!("{request:?}");
+            assert!(!out.contains("secret-"), "secret leaked: {out}");
+            assert!(out.contains("[REDACTED]"), "{out}");
+        }
+        // Non-secret fields stay visible.
+        let oauth = format!("{:?}", requests[2]);
+        assert!(oauth.contains("visible-client") && oauth.contains("oauth.example"));
+        assert!(format!("{:?}", requests[0]).contains("id-1"));
+    }
+
+    #[test]
+    fn debug_redacts_update_secrets_only_when_set() {
+        let update = CredentialUpdate {
+            token: Some("secret-token".into()),
+            client_secret: Some("secret-client".into()),
+            header_name: Some("X-Visible".into()),
+            ..CredentialUpdate::new(CredentialType::BearerToken)
+        };
+        let out = format!("{update:?}");
+        assert!(!out.contains("secret-"), "secret leaked: {out}");
+        assert!(out.contains(r#"token: Some("[REDACTED]")"#), "{out}");
+        assert!(out.contains("X-Visible"), "{out}");
+        // An unset secret reads as None, so the output still says what an
+        // update will change.
+        assert!(out.contains("value: None"), "{out}");
+    }
 
     /// Captured from a live `POST /v1beta/credentials` (2026-09-24).
     #[test]
