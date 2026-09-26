@@ -319,22 +319,38 @@ pub struct CredentialUpdate {
 }
 
 // Custom Debug that redacts the write-only secrets, like `CredentialConfig`.
+// Destructured with no `..`, so adding a field is a compile error here until
+// someone decides whether it needs redacting.
 impl std::fmt::Debug for CredentialUpdate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            credential_type,
+            token,
+            header_name,
+            prefix,
+            value,
+            injection_location,
+            trusted_domains,
+            client_id,
+            client_secret,
+            refresh_token,
+            token_url,
+            scopes,
+        } = self;
         let redact = |secret: &Option<String>| secret.as_ref().map(|_| "[REDACTED]");
         f.debug_struct("CredentialUpdate")
-            .field("credential_type", &self.credential_type)
-            .field("token", &redact(&self.token))
-            .field("header_name", &self.header_name)
-            .field("prefix", &self.prefix)
-            .field("value", &redact(&self.value))
-            .field("injection_location", &self.injection_location)
-            .field("trusted_domains", &self.trusted_domains)
-            .field("client_id", &self.client_id)
-            .field("client_secret", &redact(&self.client_secret))
-            .field("refresh_token", &redact(&self.refresh_token))
-            .field("token_url", &self.token_url)
-            .field("scopes", &self.scopes)
+            .field("credential_type", credential_type)
+            .field("token", &redact(token))
+            .field("header_name", header_name)
+            .field("prefix", prefix)
+            .field("value", &redact(value))
+            .field("injection_location", injection_location)
+            .field("trusted_domains", trusted_domains)
+            .field("client_id", client_id)
+            .field("client_secret", &redact(client_secret))
+            .field("refresh_token", &redact(refresh_token))
+            .field("token_url", token_url)
+            .field("scopes", scopes)
             .finish()
     }
 }
