@@ -11,7 +11,7 @@
 //!
 //! See `docs/OUTPUT_MODALITIES.md` for delivery modes and per-modality options.
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::request::{ImageAspectRatio, ImageSize};
 use crate::wire_enum::wire_enum;
@@ -360,13 +360,20 @@ impl<'de> Deserialize<'de> for ResponseFormat {
 /// (list).
 ///
 /// This enum is marked `#[non_exhaustive]` for forward compatibility.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
 #[non_exhaustive]
 pub enum ResponseFormatSpec {
-    /// A single response format (serialized as a bare object).
-    Single(ResponseFormat),
+    // The variant order is load-bearing for Deserialize: untagged variants
+    // are tried in declaration order, and `ResponseFormat` would also accept
+    // an array (its tagged sequence form, else `Unknown`), so `List` must
+    // come first to claim every array. Anything else fails `List` without
+    // parsing and lands in `Single`, which relies on `ResponseFormat`
+    // deserialization never failing (it falls back to `Unknown`).
     /// A list of response formats (serialized as an array).
     List(Vec<ResponseFormat>),
+    /// A single response format (serialized as a bare object).
+    Single(ResponseFormat),
 }
 
 impl From<ResponseFormat> for ResponseFormatSpec {
@@ -384,44 +391,6 @@ impl From<Vec<ResponseFormat>> for ResponseFormatSpec {
 impl From<serde_json::Value> for ResponseFormatSpec {
     fn from(value: serde_json::Value) -> Self {
         Self::Single(value.into())
-    }
-}
-
-impl Serialize for ResponseFormatSpec {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            Self::Single(format) => format.serialize(serializer),
-            Self::List(formats) => formats.serialize(serializer),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for ResponseFormatSpec {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value {
-            serde_json::Value::Array(items) => {
-                let formats = items
-                    .into_iter()
-                    .map(|item| {
-                        serde_json::from_value::<ResponseFormat>(item)
-                            .expect("ResponseFormat deserialization is infallible")
-                    })
-                    .collect();
-                Ok(Self::List(formats))
-            }
-            other => {
-                let format = serde_json::from_value::<ResponseFormat>(other)
-                    .expect("ResponseFormat deserialization is infallible");
-                Ok(Self::Single(format))
-            }
-        }
     }
 }
 
@@ -795,6 +764,82 @@ mod tests {
         let json = serde_json::to_string(&list).unwrap();
         let parsed: ResponseFormatSpec = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, list);
+    }
+
+    #[test]
+    fn test_response_format_spec_wire_shape() {
+        // Single is the bare format object; List is a plain array, even
+        // when empty.
+        let single = ResponseFormatSpec::Single(ResponseFormat::text_plain());
+        assert_eq!(
+            serde_json::to_string(&single).unwrap(),
+            r#"{"type":"text","mime_type":"text/plain"}"#
+        );
+        let empty = ResponseFormatSpec::List(vec![]);
+        assert_eq!(serde_json::to_string(&empty).unwrap(), "[]");
+        let list = ResponseFormatSpec::List(vec![
+            ResponseFormat::text_plain(),
+            ResponseFormat::Audio {
+                mime_type: None,
+                delivery: None,
+                sample_rate: Some(24000),
+                bit_rate: None,
+            },
+        ]);
+        assert_eq!(
+            serde_json::to_string(&list).unwrap(),
+            r#"[{"type":"text","mime_type":"text/plain"},{"type":"audio","sample_rate":24000}]"#
+        );
+    }
+
+    #[test]
+    fn test_response_format_spec_deserialize_shapes() {
+        let parse = |wire: &str| serde_json::from_str::<ResponseFormatSpec>(wire).unwrap();
+        let missing = |data: serde_json::Value| ResponseFormat::Unknown {
+            format_type: "<missing type>".to_string(),
+            data,
+        };
+        let bare_text = ResponseFormat::Text {
+            mime_type: None,
+            schema: None,
+        };
+
+        // Every array is a List, however its elements parse; a nested
+        // array is one element, preserved as Unknown.
+        assert_eq!(parse("[]"), ResponseFormatSpec::List(vec![]));
+        assert_eq!(
+            parse("[{}]"),
+            ResponseFormatSpec::List(vec![missing(json!({}))])
+        );
+        assert_eq!(
+            parse(r#"[{"type":"text"},{"type":"hologram"}]"#),
+            ResponseFormatSpec::List(vec![
+                bare_text.clone(),
+                ResponseFormat::Unknown {
+                    format_type: "hologram".to_string(),
+                    data: json!({"type": "hologram"}),
+                },
+            ])
+        );
+        assert_eq!(
+            parse(r#"[[{"type":"text"}]]"#),
+            ResponseFormatSpec::List(vec![missing(json!([{"type": "text"}]))])
+        );
+
+        // Anything else is a Single.
+        assert_eq!(
+            parse(r#"{"type":"text"}"#),
+            ResponseFormatSpec::Single(bare_text)
+        );
+        assert_eq!(
+            parse("null"),
+            ResponseFormatSpec::Single(missing(serde_json::Value::Null))
+        );
+        assert_eq!(
+            parse(r#""x""#),
+            ResponseFormatSpec::Single(missing(json!("x")))
+        );
+        assert_eq!(parse("3"), ResponseFormatSpec::Single(missing(json!(3))));
     }
 
     #[test]
