@@ -347,6 +347,9 @@ The bare-ID rules are stated once, in each module's `# IDs` section.
 module paths `genai_rs::environment::*` and `genai_rs::environment_files::*`
 are gone; use `genai_rs::environments::*` or the root.
 
+Amended by D-016: a resource module holds its accessor, handle(s) and list
+builders. The interaction methods left `client.rs` in D-017.
+
 ---
 
 ## D-014 — Split oversized modules; tests in sibling files (2026-09-26)

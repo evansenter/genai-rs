@@ -94,6 +94,8 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
   owns a clone of the client, so it can be spawned), and the Files uploads
   and `wait_for_file_ready` (below). `client.interaction()`, `execute` and
   `execute_stream` are unchanged. The full table is in `docs/RESOURCES.md`.
+  The handle types (`Webhooks`, `Files`, ...), the `List*` builders,
+  `FileUpload` and `PollOptions` are exported at the crate root.
 - **Breaking: `list_webhooks`, `list_triggers`, `list_trigger_executions`,
   `list_agents`, `list_environments` and `list_files` return a builder.**
   The positional `page_size`, `page_token` and `parent` arguments are gone.
@@ -107,6 +109,11 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
   `files().upload(FileUpload::from_bytes(d, m).with_display_name(n))`
   (drop `with_display_name` for `None`). The error for an extension with no
   known MIME type now points at `FileUpload::with_mime_type()`.
+- **Breaking:** path uploads (`files().upload(FileUpload::from_path(p))`,
+  formerly `upload_file` / `upload_file_with_mime`) stream from disk with
+  bounded memory. `upload_file_chunked*`, `ResumableUpload` and
+  `DEFAULT_CHUNK_SIZE` are removed: the handle was only returned after a
+  successful upload, so it could never resume anything.
 - **Breaking: `wait_for_file_ready(&f, poll, timeout)`** →
   `files().wait_until_active(&f.name, PollOptions::new().with_poll_interval(poll).with_timeout(timeout))`.
   It takes the file name rather than the metadata, and either option can be
@@ -120,11 +127,6 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
   merged into `genai_rs::environments`, and the Files API types moved to a
   public `genai_rs::files` module (`FileUploadResponse` is now exported). Root
   re-exports are unchanged.
-- **Breaking:** path uploads (`files().upload(FileUpload::from_path(p))`,
-  formerly `upload_file` / `upload_file_with_mime`) stream from disk with
-  bounded memory. `upload_file_chunked*`, `ResumableUpload` and
-  `DEFAULT_CHUNK_SIZE` are removed: the handle was only returned after a
-  successful upload, so it could never resume anything.
 - **Breaking:** `InteractionStreamEvent`, `StreamMetadata` and `StreamError` are
   no longer public; no public API took or returned them.
 - **Breaking:** `strict-unknown` now rejects unknown values of every string
@@ -133,7 +135,6 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
 - **Breaking:** `From<serde_json::Value> for FunctionResultPayload` wraps a
   non-object value as `{"result": value}` (the API rejects a top-level array
   as a function result).
-
 - **Breaking:** `DEFAULT_MODEL` is `gemini-3.8-flash` (was `gemini-3.7-flash`).
   It rejects `ThinkingLevel::Minimal`; use `MINIMAL_THINKING_MODEL`.
 - **Breaking:** `DEFAULT_TTS_MODEL` is `gemini-3.8-flash-tts` (was
@@ -217,7 +218,6 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
 - File search store, document and Files list responses drop only an
   undeserializable entry (with a warning) and treat a `null` list as empty,
   like every other resource list, instead of failing the whole page.
-
 - **Antigravity policies were bypassed on the pre-tool hook path** for MCP
   tools (`mcp_<server>_<tool>`) and `start_subagent`, because the harness names
   them differently there; on 0.1.18 that hook is the only gate. Hook-denied

@@ -1,23 +1,35 @@
 # Resources
 
-Each `/v1beta` resource is reached through a handle on `Client`:
-`client.agents()` returns an `Agents` handle, `client.webhooks()` a
-`Webhooks` handle, `client.triggers()` a `Triggers` handle,
-`client.environments()` an `Environments` handle, `client.credentials()` a
-`Credentials` handle, `client.voices()` a `Voices` handle, `client.files()` a
-`Files` handle, `client.file_search_stores()` a `FileSearchStores`
-handle and `client.interactions()` an `Interactions` handle, whose methods are the resource's verbs. A nested resource is a plain
-accessor that binds no ID: `client.environments().files()` takes the
-environment ID in each method, as in Python, and
-`client.file_search_stores().documents()` takes the store name to list and
-a document's full name otherwise. Lists return a builder that ends in `.send()` (one page),
-`.pages()` or `.items()` (every page). The conventions and the paging
-rules are in
+Every `/v1beta` resource is reached through a handle on `Client`, whose
+methods are the resource's verbs:
+
+| Accessor | Handle | Resource |
+|----------|--------|----------|
+| `client.agents()` | `Agents` | `/v1beta/agents` |
+| `client.interactions()` | `Interactions` | a stored interaction, by id |
+| `client.webhooks()` | `Webhooks` | `/v1beta/webhooks` |
+| `client.triggers()` | `Triggers` | `/v1beta/triggers` and their executions |
+| `client.environments()` | `Environments` | `/v1beta/environments` |
+| `client.environments().files()` | `EnvironmentFiles` | an environment's files |
+| `client.credentials()` | `Credentials` | `/v1beta/credentials` |
+| `client.voices()` | `Voices` | `/v1beta/voices` |
+| `client.files()` | `Files` | `/v1beta/files` (the Files API) |
+| `client.file_search_stores()` | `FileSearchStores` | `/v1beta/fileSearchStores` |
+| `client.file_search_stores().documents()` | `FileSearchDocuments` | a store's documents |
+
+A nested resource is a plain accessor that binds no ID:
+`client.environments().files()` takes the environment ID in each method, as
+in Python, and `client.file_search_stores().documents()` takes the store
+name to list and a document's full name otherwise. Lists return a builder
+that ends in `.send()` (one page), `.pages()` or `.items()` (every page);
+the two streams own a clone of the client, so they can be stored or
+spawned. The conventions and the paging rules are in
 [Resource handles and list builders](BUILDER_API.md#resource-handles-and-list-builders),
 and the reasoning in D-016 (`DECISIONS.md`).
 
-Resources not listed below still use `Client` methods; see their module
-documentation.
+Creating an interaction is not a handle method: `client.interaction()` (the
+builder), `client.execute(request)` and `client.execute_stream(request)`
+stay on `Client`.
 
 ```rust,no_run
 use futures_util::TryStreamExt;

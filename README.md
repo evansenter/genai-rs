@@ -323,6 +323,7 @@ agentic code-review application with subagents and a structured report.
 | Document | Description |
 |----------|-------------|
 | [Builder API](docs/BUILDER_API.md) | Method naming conventions, validation |
+| [Resources](docs/RESOURCES.md) | Resource handles, list paging, Python-to-Rust and old-to-new method maps |
 | [Error Handling](docs/ERROR_HANDLING.md) | Error types, recovery patterns |
 | [Reliability](docs/RELIABILITY.md) | Retries, timeouts, cancellation, service tiers |
 | [Logging Strategy](docs/LOGGING_STRATEGY.md) | Log levels, `LOUD_WIRE` debugging |
