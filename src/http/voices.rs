@@ -4,7 +4,7 @@ use super::common::{NO_BODY, path_segment, require_id, send_and_read, with_pagin
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
 use crate::errors::GenaiError;
-use crate::voices::{CreateVoiceRequest, ListVoicesParams, Voice, VoiceListResponse};
+use crate::voices::{CreateVoiceRequest, Voice, VoiceFilters, VoiceListResponse};
 
 fn voices_url(ctx: &HttpContext) -> String {
     ctx.api_url("voices")
@@ -14,27 +14,33 @@ fn voice_url(ctx: &HttpContext, id: &str) -> String {
     ctx.api_url(&format!("voices/{}", path_segment(id)))
 }
 
-fn list_url(ctx: &HttpContext, params: &ListVoicesParams) -> String {
-    let filters = params.filters();
-    let query: Vec<(&str, Option<&str>)> = filters
+/// The list URL: paging first, then the filters in wire names.
+fn list_url(
+    ctx: &HttpContext,
+    filters: &VoiceFilters,
+    page_size: Option<u32>,
+    page_token: Option<&str>,
+) -> String {
+    let pairs = filters.query_pairs();
+    let query: Vec<(&str, Option<&str>)> = pairs
         .iter()
         .map(|(key, value)| (*key, Some(value.as_str())))
         .collect();
-    let url = with_paging(
-        voices_url(ctx),
-        params.page_size,
-        params.page_token.as_deref(),
-    );
-    with_query(url, &query)
+    with_query(with_paging(voices_url(ctx), page_size, page_token), &query)
 }
 
 /// Lists voices (`GET /v1beta/voices`).
 pub async fn list_voices(
     ctx: &HttpContext,
-    params: &ListVoicesParams,
+    filters: &VoiceFilters,
+    page_size: Option<u32>,
+    page_token: Option<&str>,
 ) -> Result<VoiceListResponse, GenaiError> {
-    tracing::debug!("Listing voices: {params:?}");
-    let text = send_and_read(ctx, reqwest::Method::GET, &list_url(ctx, params), NO_BODY).await?;
+    tracing::debug!(
+        "Listing voices: filters={filters:?}, page_size={page_size:?}, page_token={page_token:?}"
+    );
+    let url = list_url(ctx, filters, page_size, page_token);
+    let text = send_and_read(ctx, reqwest::Method::GET, &url, NO_BODY).await?;
     deserialize_with_context(&text, "VoiceListResponse")
 }
 
@@ -104,15 +110,20 @@ mod tests {
 
     #[test]
     fn list_url_carries_filters_and_paging() {
-        let params = ListVoicesParams::new()
-            .with_page_size(5)
-            .with_search("warm voice")
-            .with_voice_type(VoiceType::Prebuilt)
-            .with_pitch(VoicePitch::High);
+        let filters = VoiceFilters {
+            search: Some("warm voice".into()),
+            voice_type: Some(VoiceType::Prebuilt),
+            pitch: Some(VoicePitch::High),
+            ..Default::default()
+        };
         assert_eq!(
-            list_url(&ctx(), &params),
+            list_url(&ctx(), &filters, Some(5), Some("t/1")),
             "https://generativelanguage.googleapis.com/v1beta/voices\
-             ?page_size=5&search=warm%20voice&type=prebuilt&pitch=high"
+             ?page_size=5&page_token=t%2F1&search=warm%20voice&type=prebuilt&pitch=high"
+        );
+        assert_eq!(
+            list_url(&ctx(), &VoiceFilters::default(), None, None),
+            "https://generativelanguage.googleapis.com/v1beta/voices"
         );
     }
 }

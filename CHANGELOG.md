@@ -17,9 +17,11 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
   size on every request, stop on an empty token, and fail with
   `MalformedResponse` if a token repeats. The streams own a clone of the
   client, so they can be spawned.
-- **Voices API**: `Client::{list_voices, get_voice, create_voice,
-  delete_voice}`, `CreateVoiceRequest`, `ListVoicesParams`. A custom voice id
-  works as `SpeechConfig::voice` on 3.8 TTS models.
+- **Voices API**: `client.voices()` lists the voice catalog (a list builder
+  with `with_search`, `with_voice_type`, `with_gender`, `with_language_code`,
+  `with_region_code`, `with_accent`, `with_persona`, `with_context` and
+  `with_pitch`), and creates (`CreateVoiceRequest`), gets and deletes custom
+  voices. A custom voice id works as `SpeechConfig::voice` on 3.8 TTS models.
 - **Credentials API**: `client.credentials()` creates, gets, lists (a list
   builder), updates and deletes credentials; `CredentialUpdate::with_update_mask`
   sets the `update_mask` query parameter. `RemoteEnvironment::add_env_var` /

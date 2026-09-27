@@ -3,11 +3,11 @@
 Each `/v1beta` resource is reached through a handle on `Client`:
 `client.agents()` returns an `Agents` handle, `client.webhooks()` a
 `Webhooks` handle, `client.triggers()` a `Triggers` handle,
-`client.environments()` an `Environments` handle and
-`client.credentials()` a `Credentials` handle, whose methods are the
-resource's verbs. A nested resource is a plain accessor that binds no ID:
-`client.environments().files()` takes the environment ID in each method, as
-in Python. Lists return a builder that ends in `.send()` (one page),
+`client.environments()` an `Environments` handle, `client.credentials()` a
+`Credentials` handle and `client.voices()` a `Voices` handle, whose methods
+are the resource's verbs. A nested resource is a plain accessor that binds
+no ID: `client.environments().files()` takes the environment ID in each
+method, as in Python. Lists return a builder that ends in `.send()` (one page),
 `.pages()` or `.items()` (every page). The conventions and the paging
 rules are in
 [Resource handles and list builders](BUILDER_API.md#resource-handles-and-list-builders),
@@ -76,10 +76,21 @@ become `with_*` setters.
 | (no equivalent) | `client.credentials().list().pages()` / `.items()` |
 | `client.credentials.update(id, update_mask=, type_=, token=, ...)` | `client.credentials().update(id, &CredentialUpdate { token: Some(t), ..CredentialUpdate::new(type) }.with_update_mask(m))` |
 | `client.credentials.delete(id)` | `client.credentials().delete(id)` |
+| `client.voices.create(voice={"type": "prompted", ...}, store=True)` | `client.voices().create(&CreateVoiceRequest::prompted(prompt).with_display_name(n))` |
+| `client.voices.create(voice={"type": "replicated", ...}, store=)` | `client.voices().create(&CreateVoiceRequest::replicated(source, consent).with_store(s))` |
+| `client.voices.get(id)` | `client.voices().get(id)` |
+| `client.voices.list(page_size=, page_token=, search=, type_=, gender=, language_code=, region_code=, accent=, persona=, contexts=, pitch=)` | `client.voices().list().with_page_size(n).with_page_token(t).with_search(q).with_voice_type(v).with_gender(g).with_language_code(l).with_region_code(r).with_accent(a).with_persona(p).with_context(c).with_pitch(p).send()` |
+| (no equivalent) | `client.voices().list().pages()` / `.items()` |
+| `client.voices.delete(id)` | `client.voices().delete(id)` |
 
 Python's `files.upload` also takes a path or a file object as `file` and
 guesses a missing `mime_type`; `EnvironmentFileUpload` takes the bytes and an
 explicit MIME type.
+
+Python's `voices.list` takes a list of values for each filter, and the API
+matches any of them (verified live 2026-09-27). genai-rs sends one value per
+filter, and a second `with_*` call replaces the first. Python's `contexts`
+argument is the `context` query parameter, set by `with_context`.
 
 ## From the `Client` methods (0.10)
 
@@ -126,3 +137,7 @@ before their first release.
 | `client.update_credential(id, &update, Some(mask))` | `client.credentials().update(id, &update.with_update_mask(mask))` |
 | `client.update_credential(id, &update, None)` | `client.credentials().update(id, &update)` |
 | `client.delete_credential(id)` | `client.credentials().delete(id)` |
+| `client.create_voice(&request)` | `client.voices().create(&request)` |
+| `client.get_voice(id)` | `client.voices().get(id)` |
+| `client.list_voices(&ListVoicesParams::new().with_search(q).with_page_size(size))` | `client.voices().list().with_search(q).with_page_size(size).send()` |
+| `client.delete_voice(id)` | `client.voices().delete(id)` |

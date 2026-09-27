@@ -189,8 +189,8 @@ pub use credentials::{
 
 pub mod voices;
 pub use voices::{
-    CreateVoiceRequest, ListVoicesParams, PromptedVoice, ReplicatedVoice, Voice, VoiceAudio,
-    VoiceListResponse, VoicePitch, VoiceSpec, VoiceType,
+    CreateVoiceRequest, ListVoices, PromptedVoice, ReplicatedVoice, Voice, VoiceAudio,
+    VoiceListResponse, VoicePitch, VoiceSpec, VoiceType, Voices,
 };
 
 // Webhooks resource (/v1beta/webhooks) and per-request webhook_config

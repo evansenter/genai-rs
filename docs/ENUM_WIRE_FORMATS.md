@@ -777,6 +777,29 @@ Verified live 2026-09-27 (IDs and list paging, three bearer credentials at
   the last listed ID, and the last page omits it. An unrecognized token is a
   400 (`Precondition check failed.`). An empty collection is `{}`.
 
+### Voices
+
+`VoiceType` is the voice's `type` field and the `type` list filter;
+`VoicePitch` is its `pitch` field and filter. The resource is in
+`src/voices.rs`.
+
+Verified live 2026-09-27 (list paging and IDs):
+
+- The catalog lists in ID order, 50 voices per page by default. The last
+  page has no `next_page_token`, even when it is exactly full. A query that
+  matches nothing is `{}`.
+- `next_page_token` is unpadded URL-safe base64 of a value that ends in the
+  last listed voice's `<id>|<language_code>`. It is bound to the filters:
+  sending it with a filter dropped or changed is a 400 (`Filter parameters do
+  not match the filter parameters used in the request that returned this
+  page_token.`), while `page_size` may change. An unrecognized token is a
+  400 (`Invalid page token.`).
+- A filter repeated with several values (`gender=female&gender=male`)
+  matches any of them. The crate sends one value per filter.
+- `GET /v1beta/voices/{id}` finds stored custom voices (`voice_...`) only.
+  Prebuilt IDs (`achernar`, `kore`, `en-gb-storyteller-1`), an upper-cased
+  custom ID and a percent-encoded `voices/<id>` resource name are 404s.
+
 ### ResponseFormat
 
 `response_format` takes one object or a list (one per output modality):
