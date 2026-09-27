@@ -2,8 +2,9 @@
 
 Each `/v1beta` resource is reached through a handle on `Client`:
 `client.agents()` returns an `Agents` handle, `client.webhooks()` a
-`Webhooks` handle, `client.triggers()` a `Triggers` handle and
-`client.environments()` an `Environments` handle, whose methods are the
+`Webhooks` handle, `client.triggers()` a `Triggers` handle,
+`client.environments()` an `Environments` handle and
+`client.credentials()` a `Credentials` handle, whose methods are the
 resource's verbs. A nested resource is a plain accessor that binds no ID:
 `client.environments().files()` takes the environment ID in each method, as
 in Python. Lists return a builder that ends in `.send()` (one page),
@@ -68,6 +69,13 @@ become `with_*` setters.
 | (no equivalent) | `client.environments().files().list(environment_id, path).pages()` / `.items()` |
 | `client.environments.files.upload(path=, file=, environment_id=, mime_type=, overwrite=, extract=)` | `client.environments().files().upload(environment_id, path, EnvironmentFileUpload::new(data, mime_type).with_overwrite(o).with_extract(x))` |
 | `client.environments.files.download(path=, environment_id=)` | Not modeled yet |
+| `client.credentials.create(id=, type_="bearer_token", token=, ...)` | `client.credentials().create(&CreateCredentialRequest::bearer_token(token).with_id(id))` |
+| `client.credentials.create(type_=, ...)` (any type) | `client.credentials().create(&CreateCredentialRequest::new(CredentialConfig::...))` |
+| `client.credentials.get(id)` | `client.credentials().get(id)` |
+| `client.credentials.list(page_size=, page_token=)` | `client.credentials().list().with_page_size(n).with_page_token(t).send()` |
+| (no equivalent) | `client.credentials().list().pages()` / `.items()` |
+| `client.credentials.update(id, update_mask=, type_=, token=, ...)` | `client.credentials().update(id, &CredentialUpdate { token: Some(t), ..CredentialUpdate::new(type) }.with_update_mask(m))` |
+| `client.credentials.delete(id)` | `client.credentials().delete(id)` |
 
 Python's `files.upload` also takes a path or a file object as `file` and
 guesses a missing `mime_type`; `EnvironmentFileUpload` takes the bytes and an
@@ -112,3 +120,9 @@ before their first release.
 |--------|-----|
 | `client.list_environment_files(env, path, recursive, size, token)` | `client.environments().files().list(env, path).with_recursive(recursive).with_page_size(size).with_page_token(token).send()` |
 | `client.upload_environment_file(env, path, data, mime_type, EnvironmentFileUpload { overwrite, extract })` | `client.environments().files().upload(env, path, EnvironmentFileUpload::new(data, mime_type).with_overwrite(overwrite).with_extract(extract))` |
+| `client.create_credential(&request)` | `client.credentials().create(&request)` |
+| `client.get_credential(id)` | `client.credentials().get(id)` |
+| `client.list_credentials(size, token)` | `client.credentials().list().with_page_size(size).with_page_token(token).send()` |
+| `client.update_credential(id, &update, Some(mask))` | `client.credentials().update(id, &update.with_update_mask(mask))` |
+| `client.update_credential(id, &update, None)` | `client.credentials().update(id, &update)` |
+| `client.delete_credential(id)` | `client.credentials().delete(id)` |

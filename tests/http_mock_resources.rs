@@ -242,35 +242,40 @@ fn every_call(c: &genai_rs::Client) -> Vec<(&'static str, Returns, Call<'_>)> {
             )),
         ),
         (
-            "create_credential",
+            "credentials.create",
             Resource,
             call(async move {
-                c.create_credential(&CreateCredentialRequest::bearer_token("t"))
+                c.credentials()
+                    .create(&CreateCredentialRequest::bearer_token("t"))
                     .await
             }),
         ),
-        ("get_credential", Resource, call(c.get_credential("cred-1"))),
         (
-            "list_credentials",
+            "credentials.get",
             Resource,
-            call(c.list_credentials(None, None)),
+            call(c.credentials().get("cred-1")),
         ),
         (
-            "update_credential",
+            "credentials.list",
+            Resource,
+            call(c.credentials().list().send()),
+        ),
+        (
+            "credentials.update",
             Resource,
             call(async move {
-                c.update_credential(
-                    "cred-1",
-                    &CredentialUpdate::new(CredentialType::BearerToken),
-                    None,
-                )
-                .await
+                c.credentials()
+                    .update(
+                        "cred-1",
+                        &CredentialUpdate::new(CredentialType::BearerToken),
+                    )
+                    .await
             }),
         ),
         (
-            "delete_credential",
+            "credentials.delete",
             Nothing,
-            call(c.delete_credential("cred-1")),
+            call(c.credentials().delete("cred-1")),
         ),
         (
             "list_voices",
@@ -2482,7 +2487,7 @@ async fn credential_endpoints_send_the_documented_requests() {
                         prefix: Some("Bearer".into()),
                     })
                     .with_id("gh-token");
-                    c.create_credential(&request).await
+                    c.credentials().create(&request).await
                 },
             ),
             wire(
@@ -2498,7 +2503,7 @@ async fn credential_endpoints_send_the_documented_requests() {
                         "v4lue",
                         vec![InjectionLocation::Header, InjectionLocation::Query],
                     );
-                    c.create_credential(&request).await
+                    c.credentials().create(&request).await
                 },
             ),
             wire(
@@ -2520,30 +2525,35 @@ async fn credential_endpoints_send_the_documented_requests() {
                         token_url: "https://oauth.example/token".into(),
                         scopes: Some(vec!["repo".into()]),
                     });
-                    c.create_credential(&request).await
+                    c.credentials().create(&request).await
                 },
             ),
             wire(
                 "GET",
                 "/v1beta/credentials/gh-token",
                 None,
-                c.get_credential("gh-token"),
+                c.credentials().get("gh-token"),
             ),
             wire(
                 "GET",
                 "/v1beta/credentials?page_size=10&page_token=n",
                 None,
-                c.list_credentials(Some(10), Some("n")),
+                c.credentials()
+                    .list()
+                    .with_page_size(10)
+                    .with_page_token("n")
+                    .send(),
             ),
             wire(
                 "PATCH",
-                "/v1beta/credentials/gh-token?update_mask=token",
-                Some(json!({"type": "bearer_token", "token": "rotated"})),
+                "/v1beta/credentials/gh-token?update_mask=token%2Cprefix",
+                Some(json!({"type": "bearer_token", "token": "rotated", "prefix": ""})),
                 async move {
-                    let mut update = CredentialUpdate::new(CredentialType::BearerToken);
+                    let mut update = CredentialUpdate::new(CredentialType::BearerToken)
+                        .with_update_mask("token,prefix");
                     update.token = Some("rotated".into());
-                    c.update_credential("gh-token", &update, Some("token"))
-                        .await
+                    update.prefix = Some(String::new());
+                    c.credentials().update("gh-token", &update).await
                 },
             ),
             wire(
@@ -2553,14 +2563,14 @@ async fn credential_endpoints_send_the_documented_requests() {
                 async move {
                     let mut update = CredentialUpdate::new(CredentialType::EnvironmentVariable);
                     update.trusted_domains = Some(vec!["api.example".into()]);
-                    c.update_credential("gh-token", &update, None).await
+                    c.credentials().update("gh-token", &update).await
                 },
             ),
             wire(
                 "DELETE",
                 "/v1beta/credentials/gh-token",
                 None,
-                c.delete_credential("gh-token"),
+                c.credentials().delete("gh-token"),
             ),
         ],
     )
@@ -2583,7 +2593,7 @@ async fn credential_responses_parse_and_preserve_unknowns() {
     )])
     .await;
 
-    let list = stub.client().list_credentials(None, None).await.unwrap();
+    let list = stub.client().credentials().list().send().await.unwrap();
 
     let bearer = &list.credentials[0];
     assert_eq!(bearer.credential_type, Some(CredentialType::BearerToken));
@@ -2603,6 +2613,46 @@ async fn credential_responses_parse_and_preserve_unknowns() {
     );
     assert_eq!(ssh.extra["fingerprint"], "SHA256:abc");
     assert_eq!(list.next_page_token.as_deref(), Some("n"));
+}
+
+/// The live shape at `page_size=1` (2026-09-27): URL-safe base64 tokens,
+/// and no token on the last page.
+#[tokio::test]
+async fn credential_list_items_follow_every_page_with_the_page_size() {
+    let stub = Stub::replying(vec![
+        Reply::json(
+            200,
+            json!({
+                "credentials": [{"id": "cred-1", "type": "bearer_token"}],
+                "next_page_token": "cgoKCEIGY3JlZC0x"
+            }),
+        ),
+        Reply::json(
+            200,
+            json!({"credentials": [{"id": "cred-2", "type": "environment_variable"}]}),
+        ),
+    ])
+    .await;
+    let client = stub.client();
+
+    let credentials: Vec<genai_rs::Credential> = client
+        .credentials()
+        .list()
+        .with_page_size(1)
+        .items()
+        .try_collect()
+        .await
+        .unwrap();
+
+    let ids: Vec<_> = credentials.iter().filter_map(|c| c.id.as_deref()).collect();
+    assert_eq!(ids, ["cred-1", "cred-2"]);
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/credentials?page_size=1",
+            "/v1beta/credentials?page_size=1&page_token=cgoKCEIGY3JlZC0x",
+        ]
+    );
 }
 
 /// Set in the child process `loud_wire_redacts_credential_secrets` spawns.
@@ -2639,14 +2689,15 @@ async fn loud_wire_redacts_credential_secrets() {
             }),
         ];
         for request in &requests {
-            client.create_credential(request).await.unwrap();
+            client.credentials().create(request).await.unwrap();
         }
         let update = CredentialUpdate {
             value: Some(SECRETS[4].into()),
             ..CredentialUpdate::new(CredentialType::EnvironmentVariable)
         };
         client
-            .update_credential("cred-1", &update, None)
+            .credentials()
+            .update("cred-1", &update)
             .await
             .unwrap();
         return;
@@ -3110,7 +3161,18 @@ async fn reserved_characters_in_ids_are_percent_encoded() {
                 "GET",
                 "/v1beta/credentials/a%3Fb",
                 None,
-                c.get_credential("a?b"),
+                c.credentials().get("a?b"),
+            ),
+            // A resource name stays one segment (the API answers it 400).
+            wire(
+                "PATCH",
+                "/v1beta/credentials/credentials%2Fgh?update_mask=token%26x%3D1",
+                Some(json!({"type": "bearer_token"})),
+                async move {
+                    let update = CredentialUpdate::new(CredentialType::BearerToken)
+                        .with_update_mask("token&x=1");
+                    c.credentials().update("credentials/gh", &update).await
+                },
             ),
             wire(
                 "GET",
@@ -3269,19 +3331,16 @@ async fn empty_and_dot_segment_ids_are_rejected_before_any_request() {
                     .upload("env-1", "a.txt", plain(b"")),
             ),
         ),
-        ("get_credential", call(c.get_credential(""))),
+        ("credentials.get", call(c.credentials().get(""))),
         (
-            "update_credential",
+            "credentials.update",
             call(async move {
-                c.update_credential(
-                    "",
-                    &CredentialUpdate::new(CredentialType::BearerToken),
-                    None,
-                )
-                .await
+                c.credentials()
+                    .update("", &CredentialUpdate::new(CredentialType::BearerToken))
+                    .await
             }),
         ),
-        ("delete_credential", call(c.delete_credential("."))),
+        ("credentials.delete", call(c.credentials().delete("."))),
         ("get_voice", call(c.get_voice(""))),
         ("delete_voice", call(c.delete_voice(".."))),
         ("get_interaction", call(c.get_interaction(""))),
@@ -3593,10 +3652,17 @@ async fn empty_object_parses_as_an_empty_last_page_on_every_list_endpoint() {
             }),
         ),
         (
-            "list_credentials",
+            "credentials.list",
             Box::pin(async move {
-                let l = c.list_credentials(None, None).await?;
+                let l = c.credentials().list().send().await?;
                 Ok((l.credentials.len(), l.next_page_token))
+            }),
+        ),
+        (
+            "credentials.list items",
+            Box::pin(async move {
+                let items: Vec<_> = c.credentials().list().items().try_collect().await?;
+                Ok((items.len(), None))
             }),
         ),
         (

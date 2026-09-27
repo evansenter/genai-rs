@@ -6,6 +6,11 @@
 //! rule ([`AllowlistEntry::with_credential`](crate::AllowlistEntry::with_credential)).
 //! Secret material is write-only; reads return only metadata.
 //!
+//! Manage them through the [`Credentials`] handle from
+//! [`Client::credentials`]: [`create`](Credentials::create),
+//! [`get`](Credentials::get), [`list`](Credentials::list),
+//! [`update`](Credentials::update) and [`delete`](Credentials::delete).
+//!
 //! Verified live 2026-09-24: create (bearer token, environment variable),
 //! get, list, patch (with and without `update_mask`), delete; the ID is
 //! optional on create (a UUID is assigned). OAuth2 creation validates that
@@ -18,12 +23,23 @@
 //! egress proxy substitutes the secret into requests to its `trusted_domains`
 //! at its `injection_location`s. A bearer credential on an allowlist entry is
 //! injected into requests to that domain.
+//!
+//! # IDs
+//!
+//! Methods take the bare ID ([`Credential::id`]), not a `credentials/...`
+//! resource name: the ID is percent-encoded into a single path segment, and
+//! the API rejects a resource name there with a 400 (verified live
+//! 2026-09-27). The API allows letters, digits and hyphens, up to 63
+//! characters, and checks this on create too. An empty or dot-segment ID
+//! fails locally with [`GenaiError::InvalidInput`] before any request.
 
 use crate::client::Client;
 use crate::errors::GenaiError;
+use crate::paging;
 use crate::serde_util::{ResourceName, deserialize_lenient_timestamp};
 use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
+use futures_util::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 
 struct ForCredential;
@@ -113,6 +129,8 @@ pub struct CredentialListResponse {
     pub next_page_token: Option<String>,
 }
 
+paging::impl_list_page!(CredentialListResponse, credentials: Credential);
+
 /// The secret material of a new credential, tagged by `type` on the wire.
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(tag = "type")]
@@ -164,7 +182,7 @@ pub enum CredentialConfig {
     },
 }
 
-/// Request body for [`Client::create_credential`].
+/// Request body for [`Credentials::create`].
 ///
 /// ```
 /// use genai_rs::CreateCredentialRequest;
@@ -219,8 +237,11 @@ impl CreateCredentialRequest {
     }
 }
 
-/// Request body for [`Client::update_credential`]. `credential_type` must
+/// Request body for [`Credentials::update`]. `credential_type` must
 /// match the stored credential's type; set only the fields to change.
+///
+/// [`with_update_mask`](Self::with_update_mask) adds an `update_mask` query
+/// parameter naming the fields to apply.
 ///
 /// ```
 /// use genai_rs::{CredentialType, CredentialUpdate};
@@ -228,7 +249,13 @@ impl CreateCredentialRequest {
 /// let update = CredentialUpdate {
 ///     token: Some("rotated".into()),
 ///     ..CredentialUpdate::new(CredentialType::BearerToken)
-/// };
+/// }
+/// .with_update_mask("token");
+/// // The mask travels in the query string, not the body.
+/// assert_eq!(
+///     serde_json::to_value(&update).unwrap(),
+///     serde_json::json!({"type": "bearer_token", "token": "rotated"})
+/// );
 /// ```
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct CredentialUpdate {
@@ -268,6 +295,14 @@ pub struct CredentialUpdate {
     /// OAuth2 scopes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scopes: Option<Vec<String>>,
+    /// Comma-separated fields for the server to apply (e.g. `"token"`).
+    /// [`Credentials::update`] sends it as the `update_mask` query
+    /// parameter; it is never part of the body. `None` omits the parameter.
+    ///
+    /// Verified live 2026-09-24: an update is accepted with and without a
+    /// mask.
+    #[serde(skip)]
+    pub update_mask: Option<String>,
 }
 
 impl CredentialUpdate {
@@ -287,61 +322,143 @@ impl CredentialUpdate {
             refresh_token: None,
             token_url: None,
             scopes: None,
+            update_mask: None,
         }
+    }
+
+    /// Sets the `update_mask` query parameter: comma-separated field names
+    /// such as `"token,prefix"`. See [`update_mask`](Self::update_mask).
+    #[must_use]
+    pub fn with_update_mask(mut self, mask: impl Into<String>) -> Self {
+        self.update_mask = Some(mask.into());
+        self
     }
 }
 
 impl Client {
+    /// The `/v1beta/credentials` resource: create, get, list, update and
+    /// delete the secrets an environment can reference.
+    ///
+    /// The handle borrows the client and is `Copy`; see
+    /// [IDs](crate::credentials#ids) for what the methods take.
+    ///
+    /// ```no_run
+    /// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+    /// let credential = client.credentials().get("github-token").await?;
+    /// # let _ = credential;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn credentials(&self) -> Credentials<'_> {
+        Credentials { client: self }
+    }
+}
+
+/// The `/v1beta/credentials` resource, from [`Client::credentials`].
+///
+/// Methods take `self` by value, so each call's future holds only the client
+/// borrow, never the handle: `client.credentials().get(id)` can be stored or
+/// joined with others. See [IDs](crate::credentials#ids).
+#[derive(Clone, Copy, Debug)]
+#[must_use = "a resource handle does nothing until you call one of its methods"]
+pub struct Credentials<'a> {
+    client: &'a Client,
+}
+
+impl<'a> Credentials<'a> {
     /// Creates a credential.
+    ///
+    /// The response carries only metadata: the secret is write-only and is
+    /// never returned.
     ///
     /// # Errors
     ///
     /// Returns an error if the ID already exists (409), the config is
     /// invalid, or the request fails.
-    pub async fn create_credential(
-        &self,
-        request: &CreateCredentialRequest,
-    ) -> Result<Credential, GenaiError> {
-        crate::http::credentials::create_credential(&self.http, request).await
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{AllowlistEntry, CreateCredentialRequest, NetworkConfig, RemoteEnvironment};
+    ///
+    /// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+    /// let credential = client
+    ///     .credentials()
+    ///     .create(&CreateCredentialRequest::bearer_token("s3cret").with_id("github-token"))
+    ///     .await?;
+    ///
+    /// // Reference it by ID: requests to the domain carry the token.
+    /// let env = RemoteEnvironment::new().with_network(NetworkConfig::allowlist(vec![
+    ///     AllowlistEntry::new("api.github.com").with_credential("github-token"),
+    /// ]));
+    /// # let _ = (credential, env);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn create(self, request: &CreateCredentialRequest) -> Result<Credential, GenaiError> {
+        crate::http::credentials::create_credential(&self.client.http, request).await
     }
 
-    /// Retrieves a credential's metadata by bare ID.
+    /// Retrieves a credential's metadata by ID.
     ///
     /// # Errors
     ///
     /// Returns an error if the credential doesn't exist or the request fails.
-    pub async fn get_credential(&self, credential_id: &str) -> Result<Credential, GenaiError> {
-        crate::http::credentials::get_credential(&self.http, credential_id).await
+    pub async fn get(self, credential_id: &str) -> Result<Credential, GenaiError> {
+        crate::http::credentials::get_credential(&self.client.http, credential_id).await
     }
 
-    /// Lists credentials, paged.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error on network failure or a non-success status.
-    pub async fn list_credentials(
-        &self,
-        page_size: Option<u32>,
-        page_token: Option<&str>,
-    ) -> Result<CredentialListResponse, GenaiError> {
-        crate::http::credentials::list_credentials(&self.http, page_size, page_token).await
+    /// Lists credentials: configure the returned [`ListCredentials`], then
+    /// call [`send`](ListCredentials::send) for one page, or
+    /// [`pages`](ListCredentials::pages) / [`items`](ListCredentials::items)
+    /// to stream them all.
+    pub fn list(self) -> ListCredentials<'a> {
+        ListCredentials {
+            client: self.client,
+            page_size: None,
+            page_token: None,
+        }
     }
 
-    /// Updates a credential. `update_mask` optionally names the fields to
-    /// change (comma-separated).
+    /// Updates a credential with the fields set on `update`, sending its
+    /// [`update_mask`](CredentialUpdate::update_mask), if any, as the
+    /// `update_mask` query parameter.
     ///
     /// # Errors
     ///
     /// Returns an error if the credential doesn't exist, the type doesn't
-    /// match, or the request fails.
-    pub async fn update_credential(
-        &self,
+    /// match (400), or the request fails.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{CredentialType, CredentialUpdate};
+    ///
+    /// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+    /// let update = CredentialUpdate {
+    ///     token: Some("rotated".into()),
+    ///     ..CredentialUpdate::new(CredentialType::BearerToken)
+    /// };
+    /// let updated = client
+    ///     .credentials()
+    ///     .update("github-token", &update.with_update_mask("token"))
+    ///     .await?;
+    /// # let _ = updated;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn update(
+        self,
         credential_id: &str,
         update: &CredentialUpdate,
-        update_mask: Option<&str>,
     ) -> Result<Credential, GenaiError> {
-        crate::http::credentials::update_credential(&self.http, credential_id, update, update_mask)
-            .await
+        crate::http::credentials::update_credential(
+            &self.client.http,
+            credential_id,
+            update,
+            update.update_mask.as_deref(),
+        )
+        .await
     }
 
     /// Deletes a credential.
@@ -349,8 +466,108 @@ impl Client {
     /// # Errors
     ///
     /// Returns an error if the credential doesn't exist or the request fails.
-    pub async fn delete_credential(&self, credential_id: &str) -> Result<(), GenaiError> {
-        crate::http::credentials::delete_credential(&self.http, credential_id).await
+    pub async fn delete(self, credential_id: &str) -> Result<(), GenaiError> {
+        crate::http::credentials::delete_credential(&self.client.http, credential_id).await
+    }
+}
+
+/// A `GET /v1beta/credentials` request, from [`Credentials::list`].
+///
+/// End it with [`send`](Self::send) for one page, or
+/// [`pages`](Self::pages) / [`items`](Self::items) to follow
+/// `next_page_token` to the end of the list. The page size is sent with
+/// every page.
+///
+/// # Example
+///
+/// ```no_run
+/// use futures_util::TryStreamExt;
+///
+/// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+/// // One page
+/// let page = client.credentials().list().with_page_size(50).send().await?;
+/// println!("{} credentials, more: {}", page.credentials.len(), page.next_page_token.is_some());
+///
+/// // Every credential, across pages
+/// let all: Vec<genai_rs::Credential> = client.credentials().list().items().try_collect().await?;
+/// # let _ = all;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Clone, Debug)]
+#[must_use = "a list request does nothing until .send(), .pages() or .items()"]
+pub struct ListCredentials<'a> {
+    client: &'a Client,
+    page_size: Option<u32>,
+    page_token: Option<String>,
+}
+
+impl<'a> ListCredentials<'a> {
+    /// Sets the maximum number of credentials per page. Sent with every
+    /// page.
+    pub fn with_page_size(mut self, page_size: u32) -> Self {
+        self.page_size = Some(page_size);
+        self
+    }
+
+    /// Starts from this page token, from a previous page's
+    /// `next_page_token`.
+    pub fn with_page_token(mut self, page_token: impl Into<String>) -> Self {
+        self.page_token = Some(page_token.into());
+        self
+    }
+
+    /// Sends the request and returns one page.
+    ///
+    /// An empty collection comes back as an empty page with no
+    /// `next_page_token`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails or response parsing fails.
+    pub async fn send(self) -> Result<CredentialListResponse, GenaiError> {
+        crate::http::credentials::list_credentials(
+            &self.client.http,
+            self.page_size,
+            self.page_token.as_deref(),
+        )
+        .await
+    }
+
+    /// Streams every page, starting at [`with_page_token`](Self::with_page_token)
+    /// or the first page.
+    ///
+    /// Nothing is sent until the stream is polled. It ends after a page
+    /// without a `next_page_token`; an error is yielded once and ends it. A
+    /// page whose token was already requested (the starting token included)
+    /// is yielded, then [`GenaiError::MalformedResponse`]. The stream owns a
+    /// clone of the client, so it can be stored or spawned.
+    #[must_use = "streams do nothing unless polled"]
+    pub fn pages(self) -> BoxStream<'static, Result<CredentialListResponse, GenaiError>> {
+        let Self {
+            client,
+            page_size,
+            page_token,
+        } = self;
+        let client = client.clone();
+        paging::pages("credentials", page_token, move |token| {
+            let client = client.clone();
+            async move {
+                crate::http::credentials::list_credentials(
+                    &client.http,
+                    page_size,
+                    token.as_deref(),
+                )
+                .await
+            }
+        })
+    }
+
+    /// Streams every credential across pages, in server order. Same rules
+    /// as [`pages`](Self::pages).
+    #[must_use = "streams do nothing unless polled"]
+    pub fn items(self) -> BoxStream<'static, Result<Credential, GenaiError>> {
+        paging::items(self.pages())
     }
 }
 
@@ -420,6 +637,61 @@ mod tests {
             serde_json::to_value(update).unwrap(),
             json!({"type": "bearer_token", "prefix": ""})
         );
+    }
+
+    #[test]
+    fn with_update_mask_sets_the_mask_but_not_the_body() {
+        let update = CredentialUpdate::new(CredentialType::BearerToken);
+        assert_eq!(update.update_mask, None);
+
+        let update = CredentialUpdate {
+            token: Some("rotated".into()),
+            ..update
+        }
+        .with_update_mask("prefix")
+        // `with_*` replaces.
+        .with_update_mask("token,prefix");
+        assert_eq!(update.update_mask.as_deref(), Some("token,prefix"));
+        // The mask is a query parameter: it never reaches the PATCH body.
+        assert_eq!(
+            serde_json::to_value(&update).unwrap(),
+            json!({"type": "bearer_token", "token": "rotated"})
+        );
+        assert_eq!(
+            serde_json::to_value(
+                CredentialUpdate::new(CredentialType::OAuth2).with_update_mask("scopes")
+            )
+            .unwrap(),
+            json!({"type": "oauth2"})
+        );
+    }
+
+    #[test]
+    fn list_credentials_setters_fill_the_query() {
+        let client = Client::new("k".to_string());
+        let list = client.credentials().list();
+        assert_eq!(list.page_size, None);
+        assert_eq!(list.page_token, None);
+
+        let list = list
+            .with_page_size(5)
+            .with_page_token("t1")
+            // `with_*` replaces.
+            .with_page_token("t2");
+        assert_eq!(list.page_size, Some(5));
+        assert_eq!(list.page_token.as_deref(), Some("t2"));
+    }
+
+    #[test]
+    fn credentials_handle_and_list_debug_redact_the_api_key() {
+        let client = Client::new("secret-api-key".to_string());
+        for debug in [
+            format!("{:?}", client.credentials()),
+            format!("{:?}", client.credentials().list().with_page_size(1)),
+        ] {
+            assert!(!debug.contains("secret-api-key"), "{debug}");
+            assert!(debug.contains("[REDACTED]"), "{debug}");
+        }
     }
 
     #[test]

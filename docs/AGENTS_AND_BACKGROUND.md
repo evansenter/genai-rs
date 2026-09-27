@@ -197,20 +197,48 @@ instead of carrying it inline. Reference it with `EnvVar::credential(id)`
 (an environment variable) or `AllowlistEntry::with_credential(id)` (a header
 on matching egress). Secret material is write-only: reads return metadata.
 
-```rust,ignore
-use genai_rs::{CreateCredentialRequest, EnvVar, RemoteEnvironment};
+```rust,no_run
+use futures_util::TryStreamExt;
+use genai_rs::{
+    AllowlistEntry, CreateCredentialRequest, Credential, CredentialType, CredentialUpdate,
+    NetworkConfig, RemoteEnvironment,
+};
 
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let cred = client
-    .create_credential(&CreateCredentialRequest::bearer_token("s3cret").with_id("github-token"))
+    .credentials()
+    .create(&CreateCredentialRequest::bearer_token("s3cret").with_id("github-token"))
     .await?;
 
-let env = RemoteEnvironment::new().add_env_var("GITHUB_TOKEN", EnvVar::credential("github-token"));
+// Requests from the sandbox to api.github.com carry the token.
+let env = RemoteEnvironment::new().with_network(NetworkConfig::allowlist(vec![
+    AllowlistEntry::new("api.github.com").with_credential("github-token"),
+]));
+
+// Rotate the secret; the mask travels as the `update_mask` query parameter.
+let rotated = CredentialUpdate {
+    token: Some("n3w-s3cret".into()),
+    ..CredentialUpdate::new(CredentialType::BearerToken)
+};
+client
+    .credentials()
+    .update("github-token", &rotated.with_update_mask("token"))
+    .await?;
+
+let all: Vec<Credential> = client.credentials().list().items().try_collect().await?;
+client.credentials().delete("github-token").await?;
+# let _ = (cred, env, all);
+# Ok(())
+# }
 ```
 
 CRUD was verified live (2026-09-24): create, get, list, update with and
-without `update_mask`, and delete. **The references have no observed effect
-yet.** The API accepts and echoes them, but an Antigravity sandbox saw
-neither the variable nor an injected header.
+without `update_mask`, and delete. Both references take effect at runtime
+(verified live 2026-09-24): a bearer credential on an allowlist entry is
+injected into requests to that domain, and an `environment_variable`
+credential behind `EnvVar::credential` shows the sandbox only a placeholder,
+which the egress proxy replaces with the secret in requests to its
+`trusted_domains`. `tests/credentials_tests.rs` pins both.
 
 ## Scheduled triggers (`/v1beta/triggers`)
 

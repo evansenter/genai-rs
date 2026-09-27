@@ -759,6 +759,24 @@ source, `"disabled"`, an allowlist with `transform`, and the id string form.
 `gcs`, `repository` and `skill_registry` sources and `base_environment` were
 not exercised.
 
+### Credentials
+
+`CredentialType` tags create bodies (`{"type": "bearer_token", "token": ...}`)
+and is required on updates; the credential resource itself is in
+`src/credentials.rs`.
+
+Verified live 2026-09-27 (IDs and list paging, three bearer credentials at
+`page_size=1`):
+
+- IDs are letters, digits and hyphens, up to 63 characters. Create rejects
+  anything else with a 400 (`Credential ids should be alphanumeric with
+  hyphens, up to 63 characters.`), and a `GET` on a percent-encoded
+  `credentials/<id>` resource name gets the same 400.
+- The list runs in creation (and ID) order, one credential per page at
+  `page_size=1`. `next_page_token` is unpadded URL-safe base64 that encodes
+  the last listed ID, and the last page omits it. An unrecognized token is a
+  400 (`Precondition check failed.`). An empty collection is `{}`.
+
 ### ResponseFormat
 
 `response_format` takes one object or a list (one per output modality):

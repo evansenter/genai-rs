@@ -183,7 +183,8 @@ pub use agents::{Agent, AgentListResponse, Agents, ListAgents};
 pub mod credentials;
 pub use credentials::{
     CreateCredentialRequest, Credential, CredentialConfig, CredentialListResponse,
-    CredentialStatus, CredentialType, CredentialUpdate, InjectionLocation,
+    CredentialStatus, CredentialType, CredentialUpdate, Credentials, InjectionLocation,
+    ListCredentials,
 };
 
 pub mod voices;

@@ -8,7 +8,7 @@
 mod common;
 
 use common::{get_client, poll_until_done};
-use futures_util::FutureExt;
+use futures_util::{FutureExt, StreamExt, TryStreamExt};
 use genai_rs::{
     AllowlistEntry, Client, CreateCredentialRequest, CredentialConfig, CredentialStatus,
     CredentialType, CredentialUpdate, EnvVar, EnvironmentSource, GenaiError, InjectionLocation,
@@ -33,21 +33,22 @@ where
     Fut: std::future::Future<Output = ()>,
 {
     let created = client
-        .create_credential(&request)
+        .credentials()
+        .create(&request)
         .await
-        .expect("create_credential failed");
+        .expect("credentials.create failed");
     let id = created.id.clone().expect("created credential has no id");
 
     let outcome = AssertUnwindSafe(body(id.clone())).catch_unwind().await;
 
     let already_gone = matches!(
-        client.get_credential(&id).await,
+        client.credentials().get(&id).await,
         Err(GenaiError::Api {
             status_code: 404,
             ..
         })
     );
-    if !already_gone && let Err(e) = client.delete_credential(&id).await {
+    if !already_gone && let Err(e) = client.credentials().delete(&id).await {
         eprintln!("cleanup failed for credential {id}: {e:?}");
     }
     if let Err(panic) = outcome {
@@ -70,12 +71,15 @@ async fn test_bearer_credential_lifecycle() {
         |id| {
             let client = client.clone();
             async move {
-                let fetched = client.get_credential(&id).await.expect("get failed");
+                let fetched = client.credentials().get(&id).await.expect("get failed");
                 assert_eq!(fetched.credential_type, Some(CredentialType::BearerToken));
                 assert_eq!(fetched.status, Some(CredentialStatus::Active));
 
                 let listed = client
-                    .list_credentials(Some(50), None)
+                    .credentials()
+                    .list()
+                    .with_page_size(50)
+                    .send()
                     .await
                     .expect("list failed");
                 assert!(
@@ -91,13 +95,15 @@ async fn test_bearer_credential_lifecycle() {
                     ..CredentialUpdate::new(CredentialType::BearerToken)
                 };
                 let updated = client
-                    .update_credential(&id, &update, Some("prefix"))
+                    .credentials()
+                    .update(&id, &update.with_update_mask("prefix"))
                     .await
                     .expect("update failed");
                 assert!(updated.update_time >= fetched.update_time);
 
                 let mismatched = client
-                    .update_credential(&id, &CredentialUpdate::new(CredentialType::OAuth2), None)
+                    .credentials()
+                    .update(&id, &CredentialUpdate::new(CredentialType::OAuth2))
                     .await
                     .expect_err("type-mismatched update was accepted");
                 assert!(matches!(
@@ -108,9 +114,13 @@ async fn test_bearer_credential_lifecycle() {
                     }
                 ));
 
-                client.delete_credential(&id).await.expect("delete failed");
+                client
+                    .credentials()
+                    .delete(&id)
+                    .await
+                    .expect("delete failed");
                 assert!(matches!(
-                    client.get_credential(&id).await,
+                    client.credentials().get(&id).await,
                     Err(GenaiError::Api {
                         status_code: 404,
                         ..
@@ -139,7 +149,8 @@ async fn test_duplicate_credential_id_conflicts() {
             let client = client.clone();
             async move {
                 let err = client
-                    .create_credential(&CreateCredentialRequest::bearer_token("t").with_id(&id))
+                    .credentials()
+                    .create(&CreateCredentialRequest::bearer_token("t").with_id(&id))
                     .await
                     .expect_err("duplicate id was accepted");
                 assert!(
@@ -155,6 +166,79 @@ async fn test_duplicate_credential_id_conflicts() {
             }
         },
     )
+    .await;
+}
+
+/// Two credentials at one per page force at least one page-token round
+/// trip. Live, the list runs in creation (and ID) order, and the token is
+/// URL-safe base64 of the last listed ID; the last page omits it
+/// (2026-09-27).
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_credential_list_streams_follow_every_page() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+    let first = CreateCredentialRequest::bearer_token("t1").with_id(unique_id("page-a"));
+    let second = CreateCredentialRequest::bearer_token("t2").with_id(unique_id("page-b"));
+
+    with_credential(&client, first, |first_id| {
+        let client = client.clone();
+        async move {
+            with_credential(&client, second, |second_id| {
+                let client = client.clone();
+                async move {
+                    let ids = [first_id, second_id];
+                    // Bounded, in case other credentials exist on this key.
+                    let pages: Vec<_> = client
+                        .credentials()
+                        .list()
+                        .with_page_size(1)
+                        .pages()
+                        .take(50)
+                        .try_collect()
+                        .await
+                        .expect("credentials.list pages");
+                    println!("Listed {} page(s)", pages.len());
+                    assert!(pages.len() >= 2, "expected several pages, got {pages:?}");
+                    assert!(
+                        pages.iter().all(|p| p.credentials.len() <= 1),
+                        "page_size=1 must hold on every page"
+                    );
+                    let paged: Vec<&str> = pages
+                        .iter()
+                        .flat_map(|p| &p.credentials)
+                        .filter_map(|c| c.id.as_deref())
+                        .collect();
+                    for id in &ids {
+                        assert!(paged.contains(&id.as_str()), "{id} missing from {paged:?}");
+                    }
+
+                    let items: Vec<_> = client
+                        .credentials()
+                        .list()
+                        .with_page_size(1)
+                        .items()
+                        .take(50)
+                        .try_collect()
+                        .await
+                        .expect("credentials.list items");
+                    // Not compared to `paged`: the other tests in this file
+                    // may add or remove credentials between the listings.
+                    let streamed: Vec<&str> =
+                        items.iter().filter_map(|c| c.id.as_deref()).collect();
+                    for id in &ids {
+                        assert!(
+                            streamed.contains(&id.as_str()),
+                            "{id} missing from {streamed:?}"
+                        );
+                    }
+                }
+            })
+            .await;
+        }
+    })
     .await;
 }
 
