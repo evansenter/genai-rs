@@ -5,8 +5,8 @@ Each `/v1beta` resource is reached through a handle on `Client`:
 `Webhooks` handle, `client.triggers()` a `Triggers` handle,
 `client.environments()` an `Environments` handle, `client.credentials()` a
 `Credentials` handle, `client.voices()` a `Voices` handle, `client.files()` a
-`Files` handle and `client.file_search_stores()` a `FileSearchStores`
-handle, whose methods are the resource's verbs. A nested resource is a plain
+`Files` handle, `client.file_search_stores()` a `FileSearchStores`
+handle and `client.interactions()` an `Interactions` handle, whose methods are the resource's verbs. A nested resource is a plain
 accessor that binds no ID: `client.environments().files()` takes the
 environment ID in each method, as in Python, and
 `client.file_search_stores().documents()` takes the store name to list and
@@ -44,6 +44,14 @@ become `with_*` setters.
 | `client.agents.list(page_size=, page_token=, parent=)` | `client.agents().list().with_page_size(n).with_page_token(t).with_parent(p).send()` |
 | (no equivalent) | `client.agents().list().pages()` / `.items()` |
 | `client.agents.delete(id)` | `client.agents().delete(id)` |
+| `client.interactions.create(...)` | `client.interaction()...create()` (the builder) or `client.execute(request)`; unchanged, on `Client` |
+| `client.interactions.create(..., stream=True)` | `client.interaction()...create_stream()` or `client.execute_stream(request)`; unchanged, on `Client` |
+| `client.interactions.get(id)` | `client.interactions().get(id)` |
+| `client.interactions.get(id, include_input=True)` | `client.interactions().get_with_input(id)` |
+| `client.interactions.get(id, stream=True)` | `client.interactions().stream(id)` |
+| `client.interactions.get(id, stream=True, last_event_id=e)` | `client.interactions().resume_stream(id, e)` |
+| `client.interactions.cancel(id)` | `client.interactions().cancel(id)` |
+| `client.interactions.delete(id)` | `client.interactions().delete(id)` |
 | `client.webhooks.create(uri=, subscribed_events=, name=)` | `client.webhooks().create(&Webhook::new(uri, events).with_name(n))` |
 | `client.webhooks.get(id)` | `client.webhooks().get(id)` |
 | `client.webhooks.list(page_size=, page_token=)` | `client.webhooks().list().with_page_size(n).with_page_token(t).send()` |
@@ -141,6 +149,12 @@ A `None` positional argument becomes an omitted setter.
 | `client.get_agent(id)` | `client.agents().get(id)` |
 | `client.list_agents(size, token, parent)` | `client.agents().list().with_page_size(size).with_page_token(token).with_parent(parent).send()` |
 | `client.delete_agent(id)` | `client.agents().delete(id)` |
+| `client.get_interaction(id)` | `client.interactions().get(id)` |
+| `client.get_interaction_with_input(id)` | `client.interactions().get_with_input(id)` |
+| `client.get_interaction_stream(id, None)` | `client.interactions().stream(id)` |
+| `client.get_interaction_stream(id, Some(last_event_id))` | `client.interactions().resume_stream(id, last_event_id)` |
+| `client.cancel_interaction(id)` | `client.interactions().cancel(id)` |
+| `client.delete_interaction(id)` | `client.interactions().delete(id)` |
 | `client.create_webhook(&webhook)` | `client.webhooks().create(&webhook)` |
 | `client.get_webhook(id)` | `client.webhooks().get(id)` |
 | `client.list_webhooks(size, token)` | `client.webhooks().list().with_page_size(size).with_page_token(token).send()` |

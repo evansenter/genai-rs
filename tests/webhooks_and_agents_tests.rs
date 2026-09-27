@@ -692,9 +692,9 @@ async fn test_antigravity_config_accepted() {
         // Print both arms: a failed cancel leaves a background agent
         // running against the account's budget — the larger of this
         // test's two possible leaks, so it must not be silent.
-        match client.cancel_interaction(id).await {
+        match client.interactions().cancel(id).await {
             Ok(_) => println!("Cancelled interaction {id}"),
-            Err(e) => println!("cancel_interaction({id}) failed (tolerated): {e}"),
+            Err(e) => println!("interactions().cancel({id}) failed (tolerated): {e}"),
         }
     }
     if let Some(env_id) = &response.environment_id {
@@ -756,7 +756,7 @@ async fn test_deep_research_config_knobs_accepted() {
                 response.status
             );
             if let Some(id) = &response.id {
-                let _ = client.cancel_interaction(id).await;
+                let _ = client.interactions().cancel(id).await;
             }
         }
         Err(e) => panic!("Deep Research config knobs rejected: {e}"),

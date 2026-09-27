@@ -338,31 +338,31 @@ fn every_call(c: &genai_rs::Client) -> Vec<(&'static str, Returns, Call<'_>)> {
         ("files.list", Resource, call(c.files().list().send())),
         ("files.delete", Nothing, call(c.files().delete("files/abc"))),
         (
-            "get_interaction",
+            "interactions.get",
             Resource,
-            call(c.get_interaction("int-1")),
+            call(c.interactions().get("int-1")),
         ),
         (
-            "get_interaction_with_input",
+            "interactions.get_with_input",
             Resource,
-            call(c.get_interaction_with_input("int-1")),
+            call(c.interactions().get_with_input("int-1")),
         ),
         (
-            "delete_interaction",
+            "interactions.delete",
             Nothing,
-            call(c.delete_interaction("int-1")),
+            call(c.interactions().delete("int-1")),
         ),
         (
-            "cancel_interaction",
+            "interactions.cancel",
             Resource,
-            call(c.cancel_interaction("int-1")),
+            call(c.interactions().cancel("int-1")),
         ),
         // A stream's first item; a body without SSE frames is just empty.
         (
-            "get_interaction_stream",
+            "interactions.stream",
             Nothing,
             call(async move {
-                match c.get_interaction_stream("int-1", None).next().await {
+                match c.interactions().stream("int-1").next().await {
                     Some(item) => item.map(drop),
                     None => Ok(()),
                 }
@@ -3114,25 +3114,25 @@ async fn interaction_endpoints_send_the_documented_requests() {
                 "GET",
                 "/v1beta/interactions/int-1",
                 None,
-                c.get_interaction("int-1"),
+                c.interactions().get("int-1"),
             ),
             wire(
                 "GET",
                 "/v1beta/interactions/int-1?include_input=true",
                 None,
-                c.get_interaction_with_input("int-1"),
+                c.interactions().get_with_input("int-1"),
             ),
             wire(
                 "DELETE",
                 "/v1beta/interactions/int-1",
                 None,
-                c.delete_interaction("int-1"),
+                c.interactions().delete("int-1"),
             ),
             wire(
                 "POST",
                 "/v1beta/interactions/int-1/cancel",
                 Some(json!({})),
-                c.cancel_interaction("int-1"),
+                c.interactions().cancel("int-1"),
             ),
         ],
     )
@@ -3160,7 +3160,7 @@ async fn interaction_response_preserves_unknown_status_input_and_extras() {
     .await;
     let client = stub.client();
 
-    let response = client.get_interaction_with_input("int-1").await.unwrap();
+    let response = client.interactions().get_with_input("int-1").await.unwrap();
     assert_eq!(
         response.status.unknown_status_type(),
         Some("paused_for_review")
@@ -3173,12 +3173,12 @@ async fn interaction_response_preserves_unknown_status_input_and_extras() {
     assert_eq!(back["status"], "paused_for_review");
     assert_eq!(back["region"], "eu");
 
-    let cancelled = client.cancel_interaction("int-1").await.unwrap();
+    let cancelled = client.interactions().cancel("int-1").await.unwrap();
     assert_eq!(cancelled.status, InteractionStatus::Cancelled);
 }
 
 #[tokio::test]
-async fn get_interaction_stream_without_resume_token_streams_the_lifecycle() {
+async fn interactions_stream_without_resume_token_streams_the_lifecycle() {
     let stub = Stub::replying(vec![Reply::sse(&[
         "data: {\"event_type\":\"interaction.created\",\"interaction\":{\"id\":\"int-1\",\"status\":\"in_progress\"},\"event_id\":\"e1\"}\n\n",
         "data: {\"event_type\":\"step.start\",\"index\":0,\"step\":{\"type\":\"model_output\",\"content\":[]},\"event_id\":\"e2\"}\n\n",
@@ -3190,7 +3190,8 @@ async fn get_interaction_stream_without_resume_token_streams_the_lifecycle() {
 
     let events: Vec<_> = stub
         .client()
-        .get_interaction_stream("int-1", None)
+        .interactions()
+        .stream("int-1")
         .map(Result::unwrap)
         .collect()
         .await;
@@ -3217,7 +3218,7 @@ async fn get_interaction_stream_without_resume_token_streams_the_lifecycle() {
 }
 
 #[tokio::test]
-async fn get_interaction_stream_preserves_unknown_events() {
+async fn interactions_stream_preserves_unknown_events() {
     let stub = Stub::replying(vec![Reply::sse(&[
         "data: {\"event_type\":\"interaction.paused\",\"reason\":\"maintenance\",\"event_id\":\"e9\"}\n\n",
     ])])
@@ -3225,7 +3226,8 @@ async fn get_interaction_stream_preserves_unknown_events() {
 
     let events: Vec<_> = stub
         .client()
-        .get_interaction_stream("int-1", Some("e8"))
+        .interactions()
+        .resume_stream("int-1", "e8")
         .collect()
         .await;
 
@@ -3238,14 +3240,10 @@ async fn get_interaction_stream_preserves_unknown_events() {
 }
 
 #[tokio::test]
-async fn get_interaction_stream_http_error_is_the_only_item() {
+async fn interactions_stream_http_error_is_the_only_item() {
     let stub = Stub::replying(vec![not_found()]).await;
 
-    let events: Vec<_> = stub
-        .client()
-        .get_interaction_stream("int-1", None)
-        .collect()
-        .await;
+    let events: Vec<_> = stub.client().interactions().stream("int-1").collect().await;
 
     assert!(
         matches!(
@@ -3255,6 +3253,42 @@ async fn get_interaction_stream_http_error_is_the_only_item() {
         ),
         "{events:?}"
     );
+}
+
+#[tokio::test]
+async fn interactions_stream_is_lazy_owned_and_spawnable() {
+    fn assert_send<T: Send>(_: &T) {}
+
+    let stub = Stub::replying(vec![Reply::sse(&[
+        "data: {\"event_type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"b\"},\"event_id\":\"e2\"}\n\n",
+    ])])
+    .await;
+
+    // Built from a temporary client and ID, both gone before the first poll.
+    let stream = {
+        let id = String::from("int-1");
+        let last = String::from("e1");
+        stub.client().interactions().resume_stream(&id, &last)
+    };
+    assert_send(&stream);
+    assert!(stub.requests().is_empty(), "nothing is sent before a poll");
+
+    let events: Vec<_> = tokio::spawn(stream.collect::<Vec<_>>()).await.unwrap();
+    let [Ok(event)] = events.as_slice() else {
+        panic!("expected one event, got {events:?}");
+    };
+    assert_eq!(event.event_id.as_deref(), Some("e2"));
+    let [request] = stub.requests().try_into().unwrap();
+    assert_eq!(
+        request.target,
+        "/v1beta/interactions/int-1?alt=sse&stream=true&last_event_id=e1"
+    );
+
+    // A handle future holds only the client borrow, so it can be stored.
+    let client = stub.client();
+    let stored = client.interactions().get("int-1");
+    assert_send(&stored);
+    drop(stored);
 }
 
 // =============================================================================
@@ -3707,26 +3741,27 @@ async fn reserved_characters_in_ids_are_percent_encoded() {
                 "GET",
                 "/v1beta/interactions/int%2F1",
                 None,
-                c.get_interaction("int/1"),
+                c.interactions().get("int/1"),
             ),
             wire(
                 "POST",
                 "/v1beta/interactions/int%2F1/cancel",
                 Some(json!({})),
-                c.cancel_interaction("int/1"),
+                c.interactions().cancel("int/1"),
             ),
             wire(
                 "DELETE",
                 "/v1beta/interactions/int%3F1",
                 None,
-                c.delete_interaction("int?1"),
+                c.interactions().delete("int?1"),
             ),
             wire(
                 "GET",
                 "/v1beta/interactions/int%2F1?alt=sse&stream=true&last_event_id=evt%2B1%26x",
                 None,
                 async move {
-                    c.get_interaction_stream("int/1", Some("evt+1&x"))
+                    c.interactions()
+                        .resume_stream("int/1", "evt+1&x")
                         .collect::<Vec<_>>()
                         .await
                         .into_iter()
@@ -3873,17 +3908,17 @@ async fn empty_and_dot_segment_ids_are_rejected_before_any_request() {
         ("credentials.delete", call(c.credentials().delete("."))),
         ("voices.get", call(c.voices().get(""))),
         ("voices.delete", call(c.voices().delete(".."))),
-        ("get_interaction", call(c.get_interaction(""))),
+        ("interactions.get", call(c.interactions().get(""))),
         (
-            "get_interaction_with_input",
-            call(c.get_interaction_with_input("..")),
+            "interactions.get_with_input",
+            call(c.interactions().get_with_input("..")),
         ),
-        ("delete_interaction", call(c.delete_interaction(""))),
-        ("cancel_interaction", call(c.cancel_interaction(""))),
+        ("interactions.delete", call(c.interactions().delete(""))),
+        ("interactions.cancel", call(c.interactions().cancel(""))),
         (
-            "get_interaction_stream",
+            "interactions.stream",
             call(async move {
-                let items: Vec<_> = c.get_interaction_stream("", None).collect().await;
+                let items: Vec<_> = c.interactions().stream("").collect().await;
                 assert_eq!(items.len(), 1, "the error is the stream's only item");
                 items.into_iter().next().unwrap().map(drop)
             }),

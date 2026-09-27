@@ -498,3 +498,41 @@ filter setter, or `IntoFuture` on the builders, is not breaking later.
 Streams borrowing the client would avoid those clones, but switching to
 owned streams afterwards would change the handle types, so owned streams
 were chosen up front.
+
+---
+
+## D-017 — Interaction methods move to `src/interactions.rs` (2026-09-27)
+
+**Context.** After D-016 every `/v1beta` resource was a handle except
+stored interactions: `src/client.rs` still carried five id-based methods
+(`get_interaction`, `get_interaction_with_input`, `get_interaction_stream`,
+`cancel_interaction`, `delete_interaction`) next to `Client` and
+`ClientBuilder`. `get_interaction_stream(id, Option<&str>)` also borrowed
+the client, so its stream could not be spawned, unlike the D-016 list
+streams.
+
+**Decision.** Moved, per D-011:
+
+| From | To |
+|------|----|
+| `Client::get_interaction` in `src/client.rs` | `Interactions::get` in `src/interactions.rs` |
+| `Client::get_interaction_with_input` | `Interactions::get_with_input` |
+| `Client::get_interaction_stream(id, None)` | `Interactions::stream(id)` |
+| `Client::get_interaction_stream(id, Some(e))` | `Interactions::resume_stream(id, e)` |
+| `Client::cancel_interaction` | `Interactions::cancel` |
+| `Client::delete_interaction` | `Interactions::delete` |
+
+`src/interactions.rs` is a private module holding the `Client::interactions`
+accessor and the handle; the root re-exports `Interactions`. It is not a
+public module, so it does not echo the removed `interactions_api`. The
+handle follows D-016's rules. Both streams return
+`BoxStream<'static, _>`, owning a clone of the client and of the IDs, like
+the list streams; nothing is sent until the first poll, and an invalid ID is
+still the stream's only item. Creating an interaction stays on `Client`:
+`client.interaction()` (the builder), `execute` and `execute_stream`, which
+are not id-based. `client.rs`'s `log_body` became `pub(crate)` for the
+handle.
+
+**Consequences.** Breaking for the five methods (D-007); the table above is
+also in `docs/RESOURCES.md`. `src/client.rs` holds only `Client`,
+`ClientBuilder`, the builder entry point and `execute`/`execute_stream`.

@@ -139,9 +139,12 @@ println!("{}", serde_json::to_string_pretty(&request)?);
 
 | Method | Behavior |
 |--------|----------|
-| `client.get_interaction(id)` | Fetches the interaction; the response's `input` is `None` |
-| `client.get_interaction_with_input(id)` | Fetches with `include_input=true`, so `input` is populated |
-| `client.get_interaction_stream(id, last_event_id)` | Streams it, optionally resuming after an event id (see [Streaming API](STREAMING_API.md#stream-resume)) |
+| `client.interactions().get(id)` | Fetches the interaction; the response's `input` is `None` |
+| `client.interactions().get_with_input(id)` | Fetches with `include_input=true`, so `input` is populated |
+| `client.interactions().stream(id)` | Streams a background interaction from the start |
+| `client.interactions().resume_stream(id, last_event_id)` | Resumes its stream after an event id (see [Streaming API](STREAMING_API.md#stream-resume)) |
+| `client.interactions().cancel(id)` | Cancels a background interaction that is still in progress |
+| `client.interactions().delete(id)` | Deletes the stored interaction |
 
 ## Resource handles and list builders
 

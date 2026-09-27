@@ -82,14 +82,18 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
 
 - **Breaking: resource methods moved from `Client` to per-resource
   handles.** `client.webhooks()`, `.triggers()`, `.agents()`,
-  `.environments()` and `.files()` each return a `Copy` handle that borrows
-  the client. Rename `client.<verb>_<resource>(…)` to
+  `.environments()`, `.files()` and `.interactions()` each return a `Copy`
+  handle that borrows the client. Rename `client.<verb>_<resource>(…)` to
   `client.<resources>().<verb>(…)`: `get_file(name)` →
   `files().get(name)`. Exceptions: `run_trigger` → `triggers().run`,
   `list_trigger_executions(id, …)` → `triggers().list_executions(id)`,
   `ping_webhook` → `webhooks().ping`, `rotate_webhook_signing_secret` →
-  `webhooks().rotate_signing_secret`, and the Files uploads and
-  `wait_for_file_ready` (below). The full table is in `docs/RESOURCES.md`.
+  `webhooks().rotate_signing_secret`, `get_interaction_with_input` →
+  `interactions().get_with_input`, `get_interaction_stream(id, None | Some(e))`
+  → `interactions().stream(id)` / `resume_stream(id, e)` (the stream now
+  owns a clone of the client, so it can be spawned), and the Files uploads
+  and `wait_for_file_ready` (below). `client.interaction()`, `execute` and
+  `execute_stream` are unchanged. The full table is in `docs/RESOURCES.md`.
 - **Breaking: `list_webhooks`, `list_triggers`, `list_trigger_executions`,
   `list_agents`, `list_environments` and `list_files` return a builder.**
   The positional `page_size`, `page_token` and `parent` arguments are gone.
@@ -183,7 +187,7 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
   `Api-Revision` header too (the server currently ignores its value).
 - Examples: every example runs live, exits non-zero when what it
   demonstrates didn't happen, and cleans up; a subset runs in CI. New
-  coverage for stream resume, `delete_interaction`, `VideoProcessing::segment`
+  coverage for stream resume, `interactions().delete`, `VideoProcessing::segment`
   and `with_image_config`.
 
 ### Removed
@@ -220,7 +224,8 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
   calls now surface as `ToolDecision::Denied`, `on_post_tool` fires once per
   custom call, and every builtin toggle is sent explicitly (0.1.10 silently
   exposed `manage_task` / `schedule`).
-- **`get_interaction_stream` never streamed** — it omitted `stream=true`, so
+- **Streaming a stored interaction never streamed** (`interactions().stream`,
+  formerly `get_interaction_stream`) — it omitted `stream=true`, so
   the server returned plain JSON and the stream ended empty. It works now,
   for background interactions (the only kind the API streams on GET).
 - **Streamed `processing_call` / `processing_result` signatures were dropped**,

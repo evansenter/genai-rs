@@ -101,7 +101,7 @@ retry only the API call.
 A stream cannot be retried mid-flight: re-sending the request starts a new
 generation. For stored interactions (store is on by default), resume the
 *same* generation from the last `event_id` with
-`client.get_interaction_stream(interaction_id, Some(last_event_id))`; see
+`client.interactions().resume_stream(interaction_id, last_event_id)`; see
 [Stream Resume](STREAMING_API.md#stream-resume). `event_id` is optional per
 the API spec, so resume only works when the server sent one.
 
@@ -164,13 +164,13 @@ execution and poll or use webhooks instead of a long timeout; see
 
 ## Cancellation
 
-`client.cancel_interaction(id)` stops a **background** interaction that is
+`client.interactions().cancel(id)` stops a **background** interaction that is
 still `InProgress` and returns it with status `Cancelled`. It errors if the
 interaction is not background, or has already finished.
 
 To cancel from user action, race your cancel signal against the poll loop
-with `tokio::select!`, and call `cancel_interaction` on the signal branch.
-Dropping a future only ends your wait. `cancel_interaction` is what stops a
+with `tokio::select!`, and call `interactions().cancel` on the signal branch.
+Dropping a future only ends your wait. `interactions().cancel` is what stops a
 background interaction on the server.
 
 ## Service tiers

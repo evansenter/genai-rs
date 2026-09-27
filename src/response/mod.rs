@@ -81,7 +81,7 @@ pub struct InteractionResponse {
     /// The input that was provided.
     ///
     /// Only populated when the interaction is retrieved with
-    /// `include_input=true` (see [`Client::get_interaction_with_input`](crate::Client::get_interaction_with_input)).
+    /// `include_input=true` (see [`Interactions::get_with_input`](crate::Interactions::get_with_input)).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input: Option<InteractionInput>,
 

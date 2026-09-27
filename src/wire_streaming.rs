@@ -470,15 +470,23 @@ impl<'de> Deserialize<'de> for StreamChunk {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// use futures_util::StreamExt;
+/// use genai_rs::{Client, StreamChunk};
+///
+/// # async fn example(client: Client) -> Result<(), genai_rs::GenaiError> {
+/// let mut interaction_id = None;
 /// let mut last_event_id = None;
 /// let mut stream = client.interaction().with_model(genai_rs::DEFAULT_MODEL)
 ///     .with_text("Count to 100").create_stream();
 ///
 /// while let Some(result) = stream.next().await {
 ///     let event = result?;
-///     last_event_id = event.event_id.clone();  // Track for resume
+///     if event.event_id.is_some() {
+///         last_event_id = event.event_id.clone(); // Track for resume
+///     }
 ///     match event.chunk {
+///         StreamChunk::Created { interaction } => interaction_id = interaction.id,
 ///         StreamChunk::StepDelta { delta, .. } => { /* process */ }
 ///         StreamChunk::Completed(response) => { /* done */ }
 ///         _ => {}
@@ -486,7 +494,12 @@ impl<'de> Deserialize<'de> for StreamChunk {
 /// }
 ///
 /// // If interrupted, resume from last_event_id:
-/// let resumed_stream = client.get_interaction_stream(&interaction_id, last_event_id.as_deref());
+/// if let (Some(id), Some(last)) = (&interaction_id, &last_event_id) {
+///     let resumed_stream = client.interactions().resume_stream(id, last);
+/// #   drop(resumed_stream);
+/// }
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Clone, Debug)]
 #[non_exhaustive]
@@ -496,8 +509,8 @@ pub struct StreamEvent {
 
     /// Event ID for stream resumption.
     ///
-    /// Pass this to `last_event_id` when calling `get_interaction_stream()` to resume
-    /// the stream after this point. Only background interactions' streams carry
+    /// Pass this to [`Interactions::resume_stream`](crate::Interactions::resume_stream)
+    /// to resume the stream after this point. Only background interactions' streams carry
     /// it (and only they can be resumed); otherwise it is `None`.
     pub event_id: Option<String>,
 }
@@ -654,7 +667,7 @@ pub(crate) struct InteractionStreamEvent {
 
     /// Event ID for stream resumption.
     ///
-    /// Pass this to `last_event_id` when calling `get_interaction_stream()` to resume
+    /// Pass this to `Interactions::resume_stream` to resume
     /// the stream from this point after a network interruption.
     pub event_id: Option<String>,
 

@@ -160,7 +160,7 @@ async fn execute_stream_sends_stream_true() {
 }
 
 #[tokio::test]
-async fn get_interaction_stream_asks_for_sse_and_resumes() {
+async fn interactions_resume_stream_asks_for_sse_and_resumes() {
     let stub = Stub::replying(vec![Reply::sse(&[
         "data: {\"event_type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"b\"},\"event_id\":\"evt-4\"}\n\n",
     ])])
@@ -168,7 +168,8 @@ async fn get_interaction_stream_asks_for_sse_and_resumes() {
     let client = stub.client();
 
     let events: Vec<_> = client
-        .get_interaction_stream("int-1", Some("evt-3"))
+        .interactions()
+        .resume_stream("int-1", "evt-3")
         .collect()
         .await;
     assert_eq!(events.len(), 1);
@@ -274,7 +275,7 @@ async fn api_error_carries_request_id_retry_after_and_envelope_message() {
     ])
     .await;
 
-    let err = stub.client().get_interaction("int-1").await.unwrap_err();
+    let err = stub.client().interactions().get("int-1").await.unwrap_err();
     match &err {
         GenaiError::Api {
             status_code,
@@ -309,7 +310,7 @@ async fn api_error_standard_envelope_and_raw_bodies() {
     .await;
     let client = stub.client();
 
-    let err = client.get_interaction("int-1").await.unwrap_err();
+    let err = client.interactions().get("int-1").await.unwrap_err();
     assert!(
         matches!(&err, GenaiError::Api { status_code: 400, message, .. }
             if *message == format!("INVALID_ARGUMENT: {long_message}")),
@@ -317,7 +318,7 @@ async fn api_error_standard_envelope_and_raw_bodies() {
     );
     assert!(!err.is_retryable());
 
-    let err = client.get_interaction("int-1").await.unwrap_err();
+    let err = client.interactions().get("int-1").await.unwrap_err();
     assert!(
         matches!(&err, GenaiError::Api { status_code: 502, message, .. }
             if message == "<html>Bad Gateway</html>"),
@@ -334,9 +335,9 @@ async fn unparseable_success_body_is_malformed_response() {
     ])
     .await;
     let client = stub.client();
-    let err = client.get_interaction("int-1").await.unwrap_err();
+    let err = client.interactions().get("int-1").await.unwrap_err();
     assert!(matches!(err, GenaiError::MalformedResponse(_)), "{err:?}");
-    let err = client.get_interaction("int-1").await.unwrap_err();
+    let err = client.interactions().get("int-1").await.unwrap_err();
     assert!(matches!(err, GenaiError::MalformedResponse(_)), "{err:?}");
     assert!(!err.is_retryable());
 }

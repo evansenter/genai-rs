@@ -370,7 +370,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// When storage is enabled:
     /// - The response will include an `id` field
-    /// - The interaction can be retrieved later with `get_interaction()`
+    /// - The interaction can be retrieved later with `client.interactions().get(id)`
     /// - The interaction can be referenced via `with_previous_interaction()` in follow-up requests
     /// - Auto-function calling (`create_with_auto_functions()`) will work
     ///

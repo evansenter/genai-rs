@@ -246,6 +246,9 @@ pub use files::{
 pub mod client;
 pub use client::{Client, ClientBuilder};
 
+mod interactions;
+pub use interactions::Interactions;
+
 pub mod request_builder;
 pub use request_builder::{ConversationBuilder, InteractionBuilder};
 

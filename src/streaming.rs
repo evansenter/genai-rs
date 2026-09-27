@@ -381,8 +381,9 @@ impl<'de> Deserialize<'de> for AutoFunctionStreamChunk {
 /// # Stream Resumption
 ///
 /// Save the `event_id` from each event. If the connection drops, you can resume
-/// the stream from the last received event by calling `get_interaction_stream()`
-/// with the saved `event_id`.
+/// the stream from the last received event by calling
+/// [`Interactions::resume_stream`](crate::Interactions::resume_stream) with the
+/// saved `event_id`.
 ///
 /// **Note**: The auto-function streaming loop is client-side. If interrupted during
 /// function execution, you may need to restart the full loop rather than resuming.

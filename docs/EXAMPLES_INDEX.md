@@ -30,7 +30,7 @@ clean exit means it worked. A cheap subset is smoke-run in CI
 | Example | Shows |
 |---------|-------|
 | `simple_interaction` | `create()`, reading text and usage |
-| `streaming` | `create_stream()` and every `StreamChunk` variant; resuming with `get_interaction_stream(id, Some(last_event_id))` |
+| `streaming` | `create_stream()` and every `StreamChunk` variant; resuming with `interactions().resume_stream(id, last_event_id)` |
 | `system_instructions` | `with_system_instruction()`; resending it each turn, since it is not inherited |
 | `retry_with_backoff` | `build()` + `execute()`, `is_retryable()` / `retry_after()` with `backon` |
 
@@ -38,7 +38,7 @@ clean exit means it worked. A cheap subset is smoke-run in CI
 
 | Example | Shows |
 |---------|-------|
-| `stateful_interaction` | Server-side history via `with_previous_interaction()`; `get_interaction_with_input()`; `delete_interaction()` |
+| `stateful_interaction` | Server-side history via `with_previous_interaction()`; `interactions().get_with_input()`; `interactions().delete()` |
 | `explicit_turns` | Client-side history: `conversation()`, `with_history()`, replaying `output_steps()` with signed thoughts under `with_store_disabled()` |
 
 ## Function Calling
@@ -84,7 +84,7 @@ clean exit means it worked. A cheap subset is smoke-run in CI
 
 | Example | Shows |
 |---------|-------|
-| `deep_research` | `DEFAULT_DEEP_RESEARCH_AGENT` in the background, polling with backoff, `cancel_interaction()` when the wait budget runs out |
+| `deep_research` | `DEFAULT_DEEP_RESEARCH_AGENT` in the background, polling with backoff, `interactions().cancel()` when the wait budget runs out |
 | `webhooks_and_background` | Webhook CRUD / ping / secret rotation, per-request `webhook_config`, environments CRUD, `triggers().list()`. Without a key it prints the request shapes instead. |
 
 ## Applications

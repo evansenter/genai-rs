@@ -366,7 +366,7 @@ let response = client
     )
     .create()
     .await?;
-// On interaction.completed: client.get_interaction(&id_from_event).await?
+// On interaction.completed: client.interactions().get(&id_from_event).await?
 ```
 
 Verify delivery signatures with the signing secret before trusting a
@@ -388,7 +388,7 @@ async fn poll_until_done(
     let start = Instant::now();
     let mut delay = Duration::from_secs(2);
     loop {
-        let response = client.get_interaction(id).await?;
+        let response = client.interactions().get(id).await?;
         match response.status {
             InteractionStatus::Completed => return Ok(response),
             InteractionStatus::Failed
@@ -421,20 +421,20 @@ async fn poll_until_done(
 | `BudgetExceeded` | The configured budget ran out; inspect partial results |
 
 Persist the interaction id as soon as `create()` returns, so a restart can
-resume with `get_interaction(&id)`. `response.steps` can be non-empty while
+resume with `client.interactions().get(&id)`. `response.steps` can be non-empty while
 the run is still `InProgress`, and `response.output_steps()` folds those
 partial results into a history.
 
 ### Streaming a background interaction
 
-`client.get_interaction_stream(&id, None)` streams a running interaction from
-the start. Pass a `last_event_id` to resume; see
+`client.interactions().stream(&id)` streams a running interaction from
+the start; `resume_stream(&id, last_event_id)` resumes after an event. See
 [Streaming API](STREAMING_API.md#stream-resume).
 
 ```rust,ignore
 use futures_util::StreamExt;
 
-let mut stream = client.get_interaction_stream(&interaction_id, None);
+let mut stream = client.interactions().stream(&interaction_id);
 while let Some(event) = stream.next().await {
     let event = event?;
     if let Some(text) = event.chunk.delta_text() {
@@ -448,6 +448,6 @@ while let Some(event) = stream.next().await {
 
 ### Cancellation
 
-`client.cancel_interaction(&id)` stops a background interaction that is still
+`client.interactions().cancel(&id)` stops a background interaction that is still
 `InProgress`, and returns it with status `Cancelled`. It errors if the
 interaction is not background or has already finished.

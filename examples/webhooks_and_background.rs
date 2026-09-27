@@ -160,7 +160,7 @@ async fn background_interaction(
     );
 
     // Don't leave a research agent running on the example's behalf.
-    let cancelled = client.cancel_interaction(&id).await?;
+    let cancelled = client.interactions().cancel(&id).await?;
     println!("Cancelled: status {:?}", cancelled.status);
     Ok(())
 }

@@ -2,7 +2,7 @@
 //!
 //! Part 1 handles every `StreamChunk` variant. Part 2 abandons a stream
 //! partway through (standing in for a dropped connection) and picks it up
-//! again with `get_interaction_stream(id, Some(last_event_id))`.
+//! again with `client.interactions().resume_stream(id, last_event_id)`.
 //!
 //! Resuming needs a background interaction: only then does the server keep
 //! generating after the client disconnects and tag events with IDs. A GET
@@ -106,7 +106,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let last_event_id = last_event_id.ok_or("stream carried no event IDs to resume from")?;
     eprintln!("\n[connection dropped after event {last_event_id}; resuming]");
 
-    let mut resumed = client.get_interaction_stream(&interaction_id, Some(&last_event_id));
+    let mut resumed = client
+        .interactions()
+        .resume_stream(&interaction_id, &last_event_id);
     let mut completed = false;
     while let Some(event) = resumed.next().await {
         match event?.chunk {

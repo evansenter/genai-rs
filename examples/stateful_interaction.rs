@@ -41,8 +41,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         ids.push(response.id.ok_or("stored interaction returned no ID")?);
     }
 
-    // `get_interaction_with_input` also returns what was sent, not just the output.
-    let first = client.get_interaction_with_input(&ids[0]).await?;
+    // `interactions().get_with_input` also returns what was sent, not just the output.
+    let first = client.interactions().get_with_input(&ids[0]).await?;
     println!(
         "Retrieved {}: status={:?}, input present={}, {} step(s)",
         ids[0],
@@ -54,9 +54,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Stored interactions count against your storage until they expire;
     // delete them once the conversation is over.
     for id in &ids {
-        client.delete_interaction(id).await?;
+        client.interactions().delete(id).await?;
     }
-    match client.get_interaction(&ids[0]).await {
+    match client.interactions().get(&ids[0]).await {
         Err(GenaiError::Api { status_code, .. }) => {
             println!(
                 "Deleted {} interactions; a read now returns HTTP {status_code}",

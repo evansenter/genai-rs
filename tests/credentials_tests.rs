@@ -328,7 +328,7 @@ async fn test_credentials_reach_sandbox_and_egress() {
                         AssertUnwindSafe(poll_until_done(&client, &id, Duration::from_secs(300)))
                             .catch_unwind()
                             .await;
-                    let _ = client.delete_interaction(&id).await;
+                    let _ = client.interactions().delete(&id).await;
                     if let Some(env_id) = created.environment_id.as_deref() {
                         let _ = client.environments().delete(env_id).await;
                     }
