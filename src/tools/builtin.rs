@@ -280,7 +280,7 @@ impl From<ComputerUseConfig> for Tool {
 /// Configuration for the File Search built-in tool.
 ///
 /// Store names are full resource names (`fileSearchStores/<id>`), as returned
-/// by [`create_file_search_store`](crate::Client::create_file_search_store).
+/// by [`FileSearchStores::create`](crate::FileSearchStores::create).
 /// The store-management methods reject a bare ID locally; whether the
 /// Interactions API does the same for this field has not been probed, so
 /// pass the full name here too.

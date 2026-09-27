@@ -286,42 +286,53 @@ fn every_call(c: &genai_rs::Client) -> Vec<(&'static str, Returns, Call<'_>)> {
         ),
         ("voices.delete", Nothing, call(c.voices().delete("voice_1"))),
         (
-            "create_file_search_store",
+            "file_search_stores.create",
             Resource,
             call(async move {
-                c.create_file_search_store(&CreateFileSearchStoreRequest::new())
+                c.file_search_stores()
+                    .create(&CreateFileSearchStoreRequest::new())
                     .await
             }),
         ),
         (
-            "get_file_search_store",
+            "file_search_stores.get",
             Resource,
-            call(c.get_file_search_store(STORE)),
+            call(c.file_search_stores().get(STORE)),
         ),
         (
-            "list_file_search_stores",
+            "file_search_stores.list",
             Resource,
-            call(c.list_file_search_stores(None, None)),
+            call(c.file_search_stores().list().send()),
         ),
         (
-            "delete_file_search_store",
+            "file_search_stores.delete",
             Nothing,
-            call(c.delete_file_search_store(STORE, true)),
+            call(c.file_search_stores().delete(STORE)),
         ),
         (
-            "list_file_search_documents",
-            Resource,
-            call(c.list_file_search_documents(STORE, None, None)),
-        ),
-        (
-            "get_file_search_document",
-            Resource,
-            call(c.get_file_search_document(DOC)),
-        ),
-        (
-            "delete_file_search_document",
+            "file_search_stores.force_delete",
             Nothing,
-            call(c.delete_file_search_document(DOC, true)),
+            call(c.file_search_stores().force_delete(STORE)),
+        ),
+        (
+            "file_search_stores.documents.list",
+            Resource,
+            call(c.file_search_stores().documents().list(STORE).send()),
+        ),
+        (
+            "file_search_stores.documents.get",
+            Resource,
+            call(c.file_search_stores().documents().get(DOC)),
+        ),
+        (
+            "file_search_stores.documents.delete",
+            Nothing,
+            call(c.file_search_stores().documents().delete(DOC)),
+        ),
+        (
+            "file_search_stores.documents.force_delete",
+            Nothing,
+            call(c.file_search_stores().documents().force_delete(DOC)),
         ),
         ("files.get", Resource, call(c.files().get("files/abc"))),
         ("files.list", Resource, call(c.files().list().send())),
@@ -1287,6 +1298,14 @@ async fn handle_futures_and_list_streams_outlive_their_temporaries() {
     assert_eq!(file_names(&files), ["files/f1", "files/f2"]);
     let waiting = c.files().wait_until_active("files/f3", PollOptions::new());
     assert_send(&waiting);
+    // A nested handle's future holds only the client borrow too.
+    let indexing = c
+        .file_search_stores()
+        .documents()
+        .wait_until_active(DOC, PollOptions::new());
+    assert_send(&indexing);
+    let documents = c.file_search_stores().documents().list(STORE).items();
+    assert_send(&documents);
 
     // The client this stream came from is a temporary, gone before the
     // stream is first polled on another task.
@@ -1876,56 +1895,80 @@ async fn file_search_store_endpoints_send_the_documented_requests() {
                     let request = CreateFileSearchStoreRequest::new()
                         .with_display_name("Docs")
                         .with_extra("embeddingModel", "models/text-embedding");
-                    c.create_file_search_store(&request).await
+                    c.file_search_stores().create(&request).await
                 },
             ),
             wire(
                 "GET",
                 "/v1beta/fileSearchStores/abc",
                 None,
-                c.get_file_search_store(STORE),
+                c.file_search_stores().get(STORE),
+            ),
+            wire(
+                "GET",
+                "/v1beta/fileSearchStores",
+                None,
+                c.file_search_stores().list().send(),
             ),
             wire(
                 "GET",
                 "/v1beta/fileSearchStores?page_size=20&page_token=t",
                 None,
-                c.list_file_search_stores(Some(20), Some("t")),
+                c.file_search_stores()
+                    .list()
+                    .with_page_size(20)
+                    .with_page_token("t")
+                    .send(),
             ),
             wire(
                 "DELETE",
                 "/v1beta/fileSearchStores/abc",
                 None,
-                c.delete_file_search_store(STORE, false),
+                c.file_search_stores().delete(STORE),
             ),
             wire(
                 "DELETE",
                 "/v1beta/fileSearchStores/abc?force=true",
                 None,
-                c.delete_file_search_store(STORE, true),
+                c.file_search_stores().force_delete(STORE),
             ),
             wire(
                 "GET",
                 "/v1beta/fileSearchStores/abc/documents?page_size=2",
                 None,
-                c.list_file_search_documents(STORE, Some(2), None),
+                c.file_search_stores()
+                    .documents()
+                    .list(STORE)
+                    .with_page_size(2)
+                    .send(),
+            ),
+            wire(
+                "GET",
+                "/v1beta/fileSearchStores/abc/documents?page_token=d2",
+                None,
+                c.file_search_stores()
+                    .documents()
+                    .list(STORE)
+                    .with_page_token("d2")
+                    .send(),
             ),
             wire(
                 "GET",
                 "/v1beta/fileSearchStores/abc/documents/doc-1",
                 None,
-                c.get_file_search_document(DOC),
+                c.file_search_stores().documents().get(DOC),
             ),
             wire(
                 "DELETE",
                 "/v1beta/fileSearchStores/abc/documents/doc-1",
                 None,
-                c.delete_file_search_document(DOC, false),
+                c.file_search_stores().documents().delete(DOC),
             ),
             wire(
                 "DELETE",
                 "/v1beta/fileSearchStores/abc/documents/doc-1?force=true",
                 None,
-                c.delete_file_search_document(DOC, true),
+                c.file_search_stores().documents().force_delete(DOC),
             ),
         ],
     )
@@ -1952,7 +1995,7 @@ async fn file_search_store_responses_are_camel_case_and_keep_extras() {
     .await;
     let client = stub.client();
 
-    let fetched = client.get_file_search_store(STORE).await.unwrap();
+    let fetched = client.file_search_stores().get(STORE).await.unwrap();
     assert_eq!(fetched.name, "fileSearchStores/abc");
     assert_eq!(fetched.display_name.as_deref(), Some("Docs"));
     assert_eq!(
@@ -1965,7 +2008,7 @@ async fn file_search_store_responses_are_camel_case_and_keep_extras() {
     assert_eq!(back["displayName"], "Docs");
     assert_eq!(back["activeDocumentsCount"], "3");
 
-    let list = client.list_file_search_stores(None, None).await.unwrap();
+    let list = client.file_search_stores().list().send().await.unwrap();
     let names: Vec<_> = list.stores.iter().map(|s| s.name.as_str()).collect();
     assert_eq!(names, ["fileSearchStores/abc", "fileSearchStores/def"]);
     assert_eq!(list.next_page_token.as_deref(), Some("p2"));
@@ -1989,7 +2032,10 @@ async fn document_list_parses_states_sizes_and_unknown_states() {
 
     let list = stub
         .client()
-        .list_file_search_documents(STORE, None, None)
+        .file_search_stores()
+        .documents()
+        .list(STORE)
+        .send()
         .await
         .unwrap();
 
@@ -2005,6 +2051,159 @@ async fn document_list_parses_states_sizes_and_unknown_states() {
     assert_eq!(archived.unknown_state_type(), Some("STATE_ARCHIVED"));
     assert_eq!(serde_json::to_value(archived).unwrap(), "STATE_ARCHIVED");
     assert_eq!(list.next_page_token.as_deref(), Some("n"));
+}
+
+/// The live list shape at `page_size=1` (2026-09-27): oldest first,
+/// unpadded URL-safe base64 tokens, and no token on the last page.
+#[tokio::test]
+async fn file_search_store_list_items_follow_every_page_with_the_page_size() {
+    let store = |name: &str| json!({"name": name, "displayName": name});
+    let stub = Stub::replying(vec![
+        Reply::json(
+            200,
+            json!({
+                "fileSearchStores": [store("fileSearchStores/one-0pk6lx0oxgg5")],
+                "nextPageToken": "cjEKD4IBDAi07uHVBhColM-EAQoeQhxnZW5haXJzcHJvYmVjODEtMHBrNmx4MG94Z2c1"
+            }),
+        ),
+        Reply::json(
+            200,
+            json!({"fileSearchStores": [store("fileSearchStores/two-avyyk8egynb4")]}),
+        ),
+    ])
+    .await;
+
+    let stores: Vec<genai_rs::FileSearchStore> = stub
+        .client()
+        .file_search_stores()
+        .list()
+        .with_page_size(1)
+        .items()
+        .try_collect()
+        .await
+        .unwrap();
+
+    let names: Vec<_> = stores.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "fileSearchStores/one-0pk6lx0oxgg5",
+            "fileSearchStores/two-avyyk8egynb4"
+        ]
+    );
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/fileSearchStores?page_size=1",
+            "/v1beta/fileSearchStores?page_size=1&page_token=cjEKD4IBDAi07uHVBhColM-EAQoeQhxnZW5haXJzcHJvYmVjODEtMHBrNmx4MG94Z2c1",
+        ]
+    );
+}
+
+fn documents_page(ids: &[&str], next: Option<&str>) -> Reply {
+    let documents: Vec<Value> = ids
+        .iter()
+        .map(|id| json!({"name": format!("{STORE}/documents/{id}"), "state": "STATE_ACTIVE"}))
+        .collect();
+    let mut body = json!({"documents": documents});
+    if let Some(next) = next {
+        body["nextPageToken"] = json!(next);
+    }
+    Reply::json(200, body)
+}
+
+fn document_ids(documents: &[FileSearchDocument]) -> Vec<&str> {
+    documents
+        .iter()
+        .filter_map(|d| d.name.rsplit_once("/documents/").map(|(_, id)| id))
+        .collect()
+}
+
+#[tokio::test]
+async fn file_search_document_items_resend_the_store_and_page_size_on_every_page() {
+    let stub = Stub::replying(vec![
+        documents_page(
+            &["d1"],
+            Some("cigKD4IBDAjO7uHVBhCQ0MCZAwoVQhN1cGxvYWQtMDh2emdrdmdhcmhq"),
+        ),
+        // An empty page with a token is followed.
+        documents_page(&[], Some("p+3")),
+        documents_page(&["d2"], None),
+    ])
+    .await;
+
+    let documents: Vec<FileSearchDocument> = stub
+        .client()
+        .file_search_stores()
+        .documents()
+        .list(STORE)
+        .with_page_size(1)
+        .items()
+        .try_collect()
+        .await
+        .unwrap();
+
+    assert_eq!(document_ids(&documents), ["d1", "d2"]);
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/fileSearchStores/abc/documents?page_size=1",
+            "/v1beta/fileSearchStores/abc/documents?page_size=1&page_token=cigKD4IBDAjO7uHVBhCQ0MCZAwoVQhN1cGxvYWQtMDh2emdrdmdhcmhq",
+            "/v1beta/fileSearchStores/abc/documents?page_size=1&page_token=p%2B3",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn file_search_document_pages_resume_from_with_page_token() {
+    let stub = Stub::replying(vec![
+        documents_page(&["d3"], Some("p3")),
+        documents_page(&["d4"], None),
+    ])
+    .await;
+
+    let pages: Vec<_> = stub
+        .client()
+        .file_search_stores()
+        .documents()
+        .list(STORE)
+        .with_page_token("p2")
+        .pages()
+        .try_collect()
+        .await
+        .unwrap();
+
+    assert_eq!(pages.len(), 2);
+    assert_eq!(document_ids(&pages[0].documents), ["d3"]);
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/fileSearchStores/abc/documents?page_token=p2",
+            "/v1beta/fileSearchStores/abc/documents?page_token=p3"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn file_search_document_items_for_a_malformed_store_name_yield_only_the_error() {
+    let stub = Stub::replying(vec![]).await;
+
+    let results: Vec<_> = stub
+        .client()
+        .file_search_stores()
+        .documents()
+        .list("abc")
+        .items()
+        .collect()
+        .await;
+
+    assert_eq!(results.len(), 1, "{results:?}");
+    assert!(
+        matches!(&results[0], Err(GenaiError::InvalidInput(m)) if m.contains("fileSearchStores/<id>")),
+        "{:?}",
+        results[0]
+    );
+    assert!(stub.requests().is_empty());
 }
 
 /// The API's upload answer: an operation naming the created document.
@@ -2026,13 +2225,17 @@ fn temp_file(name: &str, contents: &[u8]) -> (tempfile::TempDir, std::path::Path
 }
 
 #[tokio::test]
-async fn upload_to_file_search_store_sends_raw_bytes_then_reads_the_document_back() {
+async fn file_search_store_path_upload_sends_raw_bytes_then_reads_the_document_back() {
     let stub = Stub::replying(vec![upload_operation(), document(Some("STATE_PENDING"))]).await;
     let (_dir, path) = temp_file("notes.txt", b"hello search");
 
     let doc = stub
         .client()
-        .upload_to_file_search_store(STORE, &path, Some("My Doc"))
+        .file_search_stores()
+        .upload(
+            STORE,
+            FileUpload::from_path(&path).with_display_name("My Doc"),
+        )
         .await
         .unwrap();
     assert_eq!(doc.name, DOC);
@@ -2057,12 +2260,16 @@ async fn upload_to_file_search_store_sends_raw_bytes_then_reads_the_document_bac
 }
 
 #[tokio::test]
-async fn upload_to_file_search_store_with_mime_and_no_display_name_sends_no_query() {
+async fn file_search_store_path_upload_with_a_mime_type_and_no_display_name_sends_no_query() {
     let stub = Stub::replying(vec![upload_operation(), document(None)]).await;
     let (_dir, path) = temp_file("report.data", b"# Report");
 
     stub.client()
-        .upload_to_file_search_store_with_mime(STORE, &path, None, "text/markdown")
+        .file_search_stores()
+        .upload(
+            STORE,
+            FileUpload::from_path(&path).with_mime_type("text/markdown"),
+        )
         .await
         .unwrap();
 
@@ -2072,14 +2279,70 @@ async fn upload_to_file_search_store_with_mime_and_no_display_name_sends_no_quer
         "/upload/v1beta/fileSearchStores/abc:uploadToFileSearchStore"
     );
     assert_eq!(requests[0].header("content-type"), Some("text/markdown"));
+    // Without `display_name` the API names the document after this header
+    // (live 2026-09-27), so a path upload is named after its file.
     assert_eq!(
         requests[0].header("x-goog-upload-file-name"),
         Some("report.data")
     );
 }
 
+/// In-memory uploads use the same raw protocol, verified live 2026-09-27.
+/// They send no file-name header: the API would take it as the display name.
 #[tokio::test]
-async fn upload_to_file_search_store_unresolved_operation_is_malformed_response() {
+async fn file_search_store_bytes_upload_sends_the_data_and_display_name_without_a_file_name() {
+    let stub = Stub::replying(vec![upload_operation(), document(Some("STATE_PENDING"))]).await;
+
+    let doc = stub
+        .client()
+        .file_search_stores()
+        .upload(
+            STORE,
+            FileUpload::from_bytes(b"in memory".to_vec(), "text/csv").with_display_name("Q4 memo"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(doc.name, DOC);
+
+    let [upload, read_back] = stub.requests().try_into().unwrap();
+    assert_eq!(
+        upload.target,
+        "/upload/v1beta/fileSearchStores/abc:uploadToFileSearchStore?display_name=Q4%20memo"
+    );
+    assert_eq!(upload.header("x-goog-upload-protocol"), Some("raw"));
+    assert_eq!(upload.header("x-goog-upload-file-name"), None);
+    assert_eq!(upload.header("content-type"), Some("text/csv"));
+    assert_eq!(upload.body, b"in memory");
+    assert_eq!(
+        read_back.target,
+        "/v1beta/fileSearchStores/abc/documents/doc-1"
+    );
+}
+
+#[tokio::test]
+async fn file_search_store_bytes_upload_without_a_display_name_sends_no_name_at_all() {
+    let stub = Stub::replying(vec![upload_operation(), document(None)]).await;
+
+    stub.client()
+        .file_search_stores()
+        .upload(
+            STORE,
+            FileUpload::from_bytes(b"unnamed".to_vec(), "text/plain"),
+        )
+        .await
+        .unwrap();
+
+    let upload = &stub.requests()[0];
+    assert_eq!(
+        upload.target,
+        "/upload/v1beta/fileSearchStores/abc:uploadToFileSearchStore"
+    );
+    assert_eq!(upload.header("x-goog-upload-file-name"), None);
+    assert_eq!(upload.body, b"unnamed");
+}
+
+#[tokio::test]
+async fn file_search_store_upload_unresolved_operation_is_malformed_response() {
     let stub = Stub::replying(vec![Reply::json(
         200,
         json!({"name": "fileSearchStores/abc/upload/operations/op-7", "done": false}),
@@ -2089,7 +2352,8 @@ async fn upload_to_file_search_store_unresolved_operation_is_malformed_response(
 
     let err = stub
         .client()
-        .upload_to_file_search_store(STORE, &path, None)
+        .file_search_stores()
+        .upload(STORE, FileUpload::from_path(&path))
         .await
         .unwrap_err();
 
@@ -2102,7 +2366,7 @@ async fn upload_to_file_search_store_unresolved_operation_is_malformed_response(
 }
 
 #[tokio::test]
-async fn upload_to_file_search_store_read_back_failure_names_the_document() {
+async fn file_search_store_upload_read_back_failure_names_the_document() {
     let unavailable = || {
         Reply::json(
             503,
@@ -2121,7 +2385,8 @@ async fn upload_to_file_search_store_read_back_failure_names_the_document() {
         let stub = Stub::replying(vec![upload_operation(), read_back]).await;
         let err = stub
             .client()
-            .upload_to_file_search_store(STORE, &path, None)
+            .file_search_stores()
+            .upload(STORE, FileUpload::from_path(&path))
             .await
             .unwrap_err();
 
@@ -2142,9 +2407,10 @@ async fn upload_to_file_search_store_read_back_failure_names_the_document() {
 }
 
 #[tokio::test]
-async fn upload_to_file_search_store_rejects_bad_input_before_any_request() {
+async fn file_search_store_upload_rejects_bad_input_before_any_request() {
     let stub = Stub::replying(vec![]).await;
     let client = stub.client();
+    let stores = client.file_search_stores();
     let (dir, text) = temp_file("notes.txt", b"hello");
     let empty = dir.path().join("empty.txt");
     std::fs::write(&empty, b"").unwrap();
@@ -2155,28 +2421,41 @@ async fn upload_to_file_search_store_rejects_bad_input_before_any_request() {
     let cases: Vec<(&str, Call<'_>)> = vec![
         (
             "empty file",
-            call(client.upload_to_file_search_store(STORE, &empty, None)),
+            call(stores.upload(STORE, FileUpload::from_path(&empty))),
         ),
         (
             "missing file",
-            call(client.upload_to_file_search_store(STORE, &missing, None)),
+            call(stores.upload(STORE, FileUpload::from_path(&missing))),
         ),
         (
             "unknown extension",
-            call(client.upload_to_file_search_store(STORE, &unknown_ext, None)),
+            call(stores.upload(STORE, FileUpload::from_path(&unknown_ext))),
         ),
         (
             "unheaderable mime type",
-            call(client.upload_to_file_search_store_with_mime(
+            call(stores.upload(
                 STORE,
-                &text,
-                None,
-                "text/plain\nX-Injected: 1",
+                FileUpload::from_path(&text).with_mime_type("text/plain\nX-Injected: 1"),
+            )),
+        ),
+        (
+            "empty bytes",
+            call(stores.upload(STORE, FileUpload::from_bytes(Vec::new(), "text/plain"))),
+        ),
+        (
+            "unheaderable mime type for bytes",
+            call(stores.upload(
+                STORE,
+                FileUpload::from_bytes(b"x".to_vec(), "text/plain\r\nX-Injected: 1"),
             )),
         ),
         (
             "bare store id",
-            call(client.upload_to_file_search_store("abc", &text, None)),
+            call(stores.upload("abc", FileUpload::from_path(&text))),
+        ),
+        (
+            "bare store id for bytes",
+            call(stores.upload("abc", FileUpload::from_bytes(b"x".to_vec(), "text/plain"))),
         ),
     ];
     for (label, call) in cases {
@@ -2194,16 +2473,21 @@ async fn wait_for_document(
     timeout: Duration,
 ) -> (Result<FileSearchDocument, GenaiError>, Vec<String>) {
     let stub = Stub::replying(replies).await;
+    let poll = PollOptions::new()
+        .with_timeout(timeout)
+        .with_poll_interval(Duration::from_millis(5));
     let result = stub
         .client()
-        .wait_for_document_active(DOC, Some(timeout), Some(Duration::from_millis(5)))
+        .file_search_stores()
+        .documents()
+        .wait_until_active(DOC, poll)
         .await;
     let targets = stub.requests().into_iter().map(|r| r.target).collect();
     (result, targets)
 }
 
 #[tokio::test]
-async fn wait_for_document_active_polls_until_active() {
+async fn document_wait_until_active_polls_until_active() {
     let (result, targets) = wait_for_document(
         vec![
             document(Some("STATE_PENDING")),
@@ -2224,7 +2508,7 @@ async fn wait_for_document_active_polls_until_active() {
 }
 
 #[tokio::test]
-async fn wait_for_document_active_failed_state_is_terminal() {
+async fn document_wait_until_active_failed_state_is_terminal() {
     let (result, targets) =
         wait_for_document(vec![document(Some("STATE_FAILED"))], Duration::from_secs(5)).await;
 
@@ -2236,16 +2520,17 @@ async fn wait_for_document_active_failed_state_is_terminal() {
 }
 
 #[tokio::test]
-async fn wait_for_document_active_times_out_with_the_last_state() {
+async fn document_wait_until_active_times_out_with_the_last_state() {
     let stub = Stub::start(|_, _| document(Some("STATE_PENDING"))).await;
+    let poll = PollOptions::new()
+        .with_timeout(Duration::from_millis(60))
+        .with_poll_interval(Duration::from_millis(10));
 
     let err = stub
         .client()
-        .wait_for_document_active(
-            DOC,
-            Some(Duration::from_millis(60)),
-            Some(Duration::from_millis(10)),
-        )
+        .file_search_stores()
+        .documents()
+        .wait_until_active(DOC, poll)
         .await
         .unwrap_err();
 
@@ -2262,7 +2547,7 @@ async fn wait_for_document_active_times_out_with_the_last_state() {
 
 #[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
-async fn wait_for_document_active_keeps_polling_through_unknown_and_missing_states() {
+async fn document_wait_until_active_keeps_polling_through_unknown_and_missing_states() {
     let (result, targets) = wait_for_document(
         vec![
             document(Some("STATE_REINDEXING")),
@@ -2278,7 +2563,7 @@ async fn wait_for_document_active_keeps_polling_through_unknown_and_missing_stat
 }
 
 #[tokio::test]
-async fn wait_for_document_active_propagates_api_errors() {
+async fn document_wait_until_active_propagates_api_errors() {
     let (result, targets) = wait_for_document(
         vec![document(Some("STATE_PENDING")), not_found()],
         Duration::from_secs(5),
@@ -3452,19 +3737,24 @@ async fn reserved_characters_in_ids_are_percent_encoded() {
                 "GET",
                 "/v1beta/fileSearchStores/a%20b",
                 None,
-                c.get_file_search_store("fileSearchStores/a b"),
+                c.file_search_stores().get("fileSearchStores/a b"),
             ),
             wire(
                 "GET",
                 "/v1beta/fileSearchStores/a%23b/documents",
                 None,
-                c.list_file_search_documents("fileSearchStores/a#b", None, None),
+                c.file_search_stores()
+                    .documents()
+                    .list("fileSearchStores/a#b")
+                    .send(),
             ),
             wire(
                 "GET",
                 "/v1beta/fileSearchStores/a%20b/documents/c%3Fd",
                 None,
-                c.get_file_search_document("fileSearchStores/a b/documents/c?d"),
+                c.file_search_stores()
+                    .documents()
+                    .get("fileSearchStores/a b/documents/c?d"),
             ),
             wire(
                 "GET",
@@ -3605,24 +3895,48 @@ async fn empty_and_dot_segment_ids_are_rejected_before_any_request() {
             call(c.files().wait_until_active("files/", poll_once)),
         ),
         (
-            "get_file_search_store",
-            call(c.get_file_search_store("fileSearchStores/")),
+            "file_search_stores.get",
+            call(c.file_search_stores().get("fileSearchStores/")),
         ),
         (
-            "delete_file_search_store",
-            call(c.delete_file_search_store("fileSearchStores/..", true)),
+            "file_search_stores.delete",
+            call(c.file_search_stores().delete("fileSearchStores/..")),
         ),
         (
-            "get_file_search_document",
-            call(c.get_file_search_document("fileSearchStores/abc/documents/")),
+            "file_search_stores.force_delete",
+            call(c.file_search_stores().force_delete("fileSearchStores/..")),
         ),
         (
-            "delete_file_search_document",
-            call(c.delete_file_search_document("fileSearchStores//documents/doc-1", true)),
+            "file_search_stores.documents.get",
+            call(
+                c.file_search_stores()
+                    .documents()
+                    .get("fileSearchStores/abc/documents/"),
+            ),
         ),
         (
-            "wait_for_document_active",
-            call(c.wait_for_document_active("fileSearchStores/abc/documents/..", None, None)),
+            "file_search_stores.documents.delete",
+            call(
+                c.file_search_stores()
+                    .documents()
+                    .delete("fileSearchStores//documents/doc-1"),
+            ),
+        ),
+        (
+            "file_search_stores.documents.force_delete",
+            call(
+                c.file_search_stores()
+                    .documents()
+                    .force_delete("fileSearchStores//documents/doc-1"),
+            ),
+        ),
+        (
+            "file_search_stores.documents.wait_until_active",
+            call(
+                c.file_search_stores()
+                    .documents()
+                    .wait_until_active("fileSearchStores/abc/documents/..", poll_once),
+            ),
         ),
     ];
     for (label, call) in cases {
@@ -3659,39 +3973,56 @@ async fn malformed_resource_names_are_rejected_before_any_request() {
             call(c.files().wait_until_active("abc", PollOptions::new())),
         ),
         (
-            "get_file_search_store",
+            "file_search_stores.get",
             "bare id",
-            call(c.get_file_search_store("abc")),
+            call(c.file_search_stores().get("abc")),
         ),
         (
-            "get_file_search_store",
+            "file_search_stores.get",
             "extra segment",
-            call(c.get_file_search_store("fileSearchStores/abc/documents")),
+            call(c.file_search_stores().get("fileSearchStores/abc/documents")),
         ),
         (
-            "list_file_search_documents",
+            "file_search_stores.documents.list",
             "bare id",
-            call(c.list_file_search_documents("abc", None, None)),
+            call(c.file_search_stores().documents().list("abc").send()),
         ),
         (
-            "get_file_search_document",
+            "file_search_stores.documents.get",
             "store name only",
-            call(c.get_file_search_document(STORE)),
+            call(c.file_search_stores().documents().get(STORE)),
         ),
         (
-            "get_file_search_document",
+            "file_search_stores.documents.get",
             "no store prefix",
-            call(c.get_file_search_document("documents/doc-1")),
+            call(c.file_search_stores().documents().get("documents/doc-1")),
         ),
         (
-            "get_file_search_document",
+            "file_search_stores.documents.get",
             "nested store",
-            call(c.get_file_search_document("fileSearchStores/a/b/documents/doc-1")),
+            call(
+                c.file_search_stores()
+                    .documents()
+                    .get("fileSearchStores/a/b/documents/doc-1"),
+            ),
         ),
         (
-            "delete_file_search_document",
+            "file_search_stores.documents.delete",
             "nested document",
-            call(c.delete_file_search_document("fileSearchStores/abc/documents/d/e", false)),
+            call(
+                c.file_search_stores()
+                    .documents()
+                    .delete("fileSearchStores/abc/documents/d/e"),
+            ),
+        ),
+        (
+            "file_search_stores.documents.wait_until_active",
+            "store name only",
+            call(
+                c.file_search_stores()
+                    .documents()
+                    .wait_until_active(STORE, PollOptions::new()),
+            ),
         ),
     ];
     for (method, shape, call) in cases {
@@ -3929,17 +4260,42 @@ async fn empty_object_parses_as_an_empty_last_page_on_every_list_endpoint() {
             }),
         ),
         (
-            "list_file_search_stores",
+            "file_search_stores.list",
             Box::pin(async move {
-                let l = c.list_file_search_stores(None, None).await?;
+                let l = c.file_search_stores().list().send().await?;
                 Ok((l.stores.len(), l.next_page_token))
             }),
         ),
         (
-            "list_file_search_documents",
+            "file_search_stores.list items",
             Box::pin(async move {
-                let l = c.list_file_search_documents(STORE, None, None).await?;
+                let items: Vec<_> = c.file_search_stores().list().items().try_collect().await?;
+                Ok((items.len(), None))
+            }),
+        ),
+        (
+            "file_search_stores.documents.list",
+            Box::pin(async move {
+                let l = c
+                    .file_search_stores()
+                    .documents()
+                    .list(STORE)
+                    .send()
+                    .await?;
                 Ok((l.documents.len(), l.next_page_token))
+            }),
+        ),
+        (
+            "file_search_stores.documents.list items",
+            Box::pin(async move {
+                let items: Vec<_> = c
+                    .file_search_stores()
+                    .documents()
+                    .list(STORE)
+                    .items()
+                    .try_collect()
+                    .await?;
+                Ok((items.len(), None))
             }),
         ),
         (
@@ -4017,7 +4373,8 @@ async fn base_url_prefix_applies_to_resource_and_upload_endpoints() {
         .await
         .unwrap();
     client
-        .upload_to_file_search_store(STORE, &path, None)
+        .file_search_stores()
+        .upload(STORE, FileUpload::from_path(&path))
         .await
         .unwrap();
 

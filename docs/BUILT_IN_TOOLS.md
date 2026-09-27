@@ -221,25 +221,40 @@ Semantic search over *file search stores* (resource names like
 `fileSearchStores/my-store-123`), not over Files API uploads. Create a store,
 upload documents into it, and wait for indexing before searching:
 
-```rust,ignore
-use genai_rs::CreateFileSearchStoreRequest;
+```rust,no_run
+use genai_rs::{CreateFileSearchStoreRequest, FileUpload, PollOptions};
 
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let store = client
-    .create_file_search_store(&CreateFileSearchStoreRequest::new().with_display_name("my-docs"))
+    .file_search_stores()
+    .create(&CreateFileSearchStoreRequest::new().with_display_name("my-docs"))
     .await?;
 
+// From disk (MIME type from the extension), or from memory with
+// `FileUpload::from_bytes(data, mime_type)`
 let document = client
-    .upload_to_file_search_store(&store.name, "handbook.pdf", Some("handbook"))
+    .file_search_stores()
+    .upload(&store.name, FileUpload::from_path("handbook.pdf").with_display_name("handbook"))
     .await?;
 
 // Required. A document still in STATE_PENDING is not an error — file search
 // just returns no matches for it, so an upload-then-query sequence silently
-// finds nothing without this.
-client.wait_for_document_active(&document.name, None, None).await?;
+// finds nothing without this. The default waits up to 60 s, polling every
+// 500 ms.
+client
+    .file_search_stores()
+    .documents()
+    .wait_until_active(&document.name, PollOptions::new())
+    .await?;
+# Ok(())
+# }
 ```
 
 A store created in Google AI Studio works the same way; pass its resource
-name. `examples/file_search.rs` shows the full lifecycle, including cleanup.
+name. `client.file_search_stores().list()` and `.documents().list(store)` list
+stores and documents (`.send()` for one page, `.items()` for all), and
+`force_delete` removes a store or document with its contents.
+`examples/file_search.rs` shows the full lifecycle, including cleanup.
 
 ```rust,ignore
 use genai_rs::FileSearchConfig;

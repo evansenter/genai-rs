@@ -37,10 +37,15 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
   `EnvironmentFileUpload::new(data, mime_type)`, `with_overwrite` and
   `with_extract`); `CreateEnvironmentRequest::from_environment` forks an
   environment (bare environment id only).
-- **File Search Store management**: create, get, list and delete stores;
-  upload, get, list and delete documents; `wait_for_document_active` (indexing
-  is asynchronous and search returns nothing for a pending document). Types
-  `FileSearchStore`, `FileSearchDocument`, `DocumentState`.
+- **File Search Store management**: `client.file_search_stores()` creates
+  (`CreateFileSearchStoreRequest`), gets, lists (a list builder), deletes and
+  force-deletes stores, and uploads documents into them
+  (`.upload(store, FileUpload)`, from a path or from bytes);
+  `.documents()` lists (`.list(store)`, a list builder), gets, deletes and
+  force-deletes documents, and `wait_until_active` waits for indexing
+  (search returns nothing for a pending document; by default it waits up to
+  60 s, polling every 500 ms). Types `FileSearchStore`,
+  `FileSearchDocument`, `DocumentState`.
 - **Video `processing`**: `Content::with_processing()` and
   `VideoProcessing::segment()` for clip windows, `fps` sampling and agentic
   mode. A segment window is the main token-cost lever (16,198 vs 57,778 video
@@ -148,7 +153,6 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
   `with_google_search` / `with_google_maps` / `with_code_execution` /
   `with_url_context` now replace an existing tool of the same kind instead of
   appending a duplicate.
-- **Breaking:** `create_file_search_store` takes `&CreateFileSearchStoreRequest`.
 - **Breaking:** `Api.message` is the parsed error envelope,
   `"STATUS_OR_CODE: message"`, no longer the raw body cut at 200 characters.
   A 2xx body that fails to parse is `MalformedResponse` (was `Json`); an upload
@@ -194,7 +198,6 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
   `Content::{image,video}_{data,uri}_with_resolution` (use
   `.with_resolution()`); `InteractionResponse::{created, updated,
   code_execution_call, google_search_call, url_context_call_id}`;
-  `create_file_search_store_with_request`;
   the `excludedPredefinedFunctions` alias.
 - Examples that demonstrated nothing real: `rag_system`, `web_scraper_agent`,
   `code_assistant`, `testing_assistant`, `multi_turn_agent_manual`,

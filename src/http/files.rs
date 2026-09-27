@@ -18,7 +18,10 @@ use tokio_util::io::ReaderStream;
 const MAX_FILE_SIZE: u64 = 2_147_483_648;
 
 /// Rejects an empty or oversized upload before any request is made.
-fn check_upload_size(file_size: u64) -> Result<(), GenaiError> {
+///
+/// File search store uploads borrow the 2 GB ceiling too, unverified for
+/// that resource.
+pub(super) fn check_upload_size(file_size: u64) -> Result<(), GenaiError> {
     if file_size == 0 {
         return Err(GenaiError::InvalidInput(
             "Cannot upload empty file".to_string(),

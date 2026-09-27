@@ -4,11 +4,13 @@ Each `/v1beta` resource is reached through a handle on `Client`:
 `client.agents()` returns an `Agents` handle, `client.webhooks()` a
 `Webhooks` handle, `client.triggers()` a `Triggers` handle,
 `client.environments()` an `Environments` handle, `client.credentials()` a
-`Credentials` handle, `client.voices()` a `Voices` handle and
-`client.files()` a `Files` handle, whose methods are the resource's verbs. A
-nested resource is a plain accessor that binds no ID:
-`client.environments().files()` takes the environment ID in each method, as
-in Python. Lists return a builder that ends in `.send()` (one page),
+`Credentials` handle, `client.voices()` a `Voices` handle, `client.files()` a
+`Files` handle and `client.file_search_stores()` a `FileSearchStores`
+handle, whose methods are the resource's verbs. A nested resource is a plain
+accessor that binds no ID: `client.environments().files()` takes the
+environment ID in each method, as in Python, and
+`client.file_search_stores().documents()` takes the store name to list and
+a document's full name otherwise. Lists return a builder that ends in `.send()` (one page),
 `.pages()` or `.items()` (every page). The conventions and the paging
 rules are in
 [Resource handles and list builders](BUILDER_API.md#resource-handles-and-list-builders),
@@ -92,6 +94,23 @@ become `with_*` setters.
 | `client.files.delete(name=)` | `client.files().delete(name)` |
 | (no equivalent) | `client.files().wait_until_active(name, PollOptions::new())` |
 | `client.files.download(file=)`, `client.files.register_files(uris=)` | Not modeled yet |
+| `client.file_search_stores.create(config={"display_name": n})` | `client.file_search_stores().create(&CreateFileSearchStoreRequest::new().with_display_name(n))` |
+| `client.file_search_stores.create(config={"embedding_model": "models/<m>"})` | `client.file_search_stores().create(&CreateFileSearchStoreRequest::new().with_extra("embeddingModel", "models/<m>"))` |
+| `client.file_search_stores.get(name=)` | `client.file_search_stores().get(name)` |
+| `client.file_search_stores.list(config={"page_size": n, "page_token": t})` (one page) | `client.file_search_stores().list().with_page_size(n).with_page_token(t).send()` |
+| iterating `client.file_search_stores.list()` | `client.file_search_stores().list().items()` (or `.pages()`) |
+| `client.file_search_stores.delete(name=)` | `client.file_search_stores().delete(name)` |
+| `client.file_search_stores.delete(name=, config={"force": True})` | `client.file_search_stores().force_delete(name)` |
+| `client.file_search_stores.upload_to_file_search_store(file_search_store_name=, file=path, config={"display_name": n, "mime_type": m})` | `client.file_search_stores().upload(store_name, FileUpload::from_path(path).with_display_name(n).with_mime_type(m))` |
+| `client.file_search_stores.upload_to_file_search_store(file_search_store_name=, file=io_object, config={"mime_type": m})` | `client.file_search_stores().upload(store_name, FileUpload::from_bytes(data, m))` |
+| `upload_to_file_search_store(config={"custom_metadata": ..., "chunking_config": ...})` | Not modeled yet |
+| `client.file_search_stores.import_file(file_search_store_name=, file_name=)`, `client.file_search_stores.download_media(media_id=)` | Not modeled yet |
+| `client.file_search_stores.documents.list(parent=, config={"page_size": n, "page_token": t})` (one page) | `client.file_search_stores().documents().list(store_name).with_page_size(n).with_page_token(t).send()` |
+| iterating `client.file_search_stores.documents.list(parent=)` | `client.file_search_stores().documents().list(store_name).items()` (or `.pages()`) |
+| `client.file_search_stores.documents.get(name=)` | `client.file_search_stores().documents().get(name)` |
+| `client.file_search_stores.documents.delete(name=)` | `client.file_search_stores().documents().delete(name)` |
+| `client.file_search_stores.documents.delete(name=, config={"force": True})` | `client.file_search_stores().documents().force_delete(name)` |
+| (no equivalent) | `client.file_search_stores().documents().wait_until_active(name, PollOptions::new())` |
 
 Python's `environments.files.upload` also takes a path or a file object as
 `file` and guesses a missing `mime_type`; `EnvironmentFileUpload` takes the
@@ -101,6 +120,11 @@ Python's `files.upload` guesses a missing `mime_type` from a path, as
 `FileUpload::from_path` does from the extension, and needs one for a file
 object, as `FileUpload::from_bytes` does. A path upload's display name
 defaults to the file name.
+
+Python's `file_search_stores.upload_to_file_search_store` returns the
+upload operation; `upload` resolves it and returns the new
+`FileSearchDocument`. A document is named by its display name, else a path
+upload's file name; an in-memory upload without one is unnamed.
 
 Python's `voices.list` takes a list of values for each filter, and the API
 matches any of them (verified live 2026-09-27). genai-rs sends one value per
@@ -165,3 +189,16 @@ before their first release.
 | `client.get_voice(id)` | `client.voices().get(id)` |
 | `client.list_voices(&ListVoicesParams::new().with_search(q).with_page_size(size))` | `client.voices().list().with_search(q).with_page_size(size).send()` |
 | `client.delete_voice(id)` | `client.voices().delete(id)` |
+| `client.create_file_search_store(&request)` | `client.file_search_stores().create(&request)` |
+| `client.get_file_search_store(name)` | `client.file_search_stores().get(name)` |
+| `client.list_file_search_stores(size, token)` | `client.file_search_stores().list().with_page_size(size).with_page_token(token).send()` |
+| `client.delete_file_search_store(name, false)` | `client.file_search_stores().delete(name)` |
+| `client.delete_file_search_store(name, true)` | `client.file_search_stores().force_delete(name)` |
+| `client.upload_to_file_search_store(store, path, Some(name))` | `client.file_search_stores().upload(store, FileUpload::from_path(path).with_display_name(name))` |
+| `client.upload_to_file_search_store(store, path, None)` | `client.file_search_stores().upload(store, FileUpload::from_path(path))` |
+| `client.upload_to_file_search_store_with_mime(store, path, display_name, mime_type)` | `client.file_search_stores().upload(store, FileUpload::from_path(path).with_mime_type(mime_type))`, plus `.with_display_name(name)` for `Some(name)` |
+| `client.list_file_search_documents(store, size, token)` | `client.file_search_stores().documents().list(store).with_page_size(size).with_page_token(token).send()` |
+| `client.get_file_search_document(name)` | `client.file_search_stores().documents().get(name)` |
+| `client.delete_file_search_document(name, false)` | `client.file_search_stores().documents().delete(name)` |
+| `client.delete_file_search_document(name, true)` | `client.file_search_stores().documents().force_delete(name)` |
+| `client.wait_for_document_active(name, timeout, poll_interval)` | `client.file_search_stores().documents().wait_until_active(name, PollOptions::new().with_timeout(timeout).with_poll_interval(poll_interval))` (either setter omitted for `None`: 60 s and 500 ms) |

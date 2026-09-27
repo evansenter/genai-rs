@@ -262,8 +262,9 @@ pub(crate) enum UploadSource {
     Bytes(Vec<u8>),
 }
 
-/// A file to upload with [`Files::upload`]: a path or bytes in memory, with
-/// an optional MIME type and display name.
+/// A file to upload with [`Files::upload`] or
+/// [`FileSearchStores::upload`](crate::FileSearchStores::upload): a path or
+/// bytes in memory, with an optional MIME type and display name.
 ///
 /// ```
 /// use genai_rs::FileUpload;
@@ -286,15 +287,17 @@ pub struct FileUpload {
 }
 
 impl FileUpload {
-    /// An upload of the file at `path`, streamed from disk when sent.
+    /// An upload of the file at `path`, read when it is sent.
     ///
-    /// Nothing is read until [`Files::upload`]. A missing, unreadable or
-    /// empty file, or one over 2 GB, fails there with
-    /// [`GenaiError::InvalidInput`] before any request. The MIME type comes
-    /// from the file extension unless [`with_mime_type`](Self::with_mime_type)
-    /// sets it (an extension it can't map fails the same way), and the
-    /// display name is the file name unless
-    /// [`with_display_name`](Self::with_display_name) sets one.
+    /// Nothing is read until the upload: [`Files::upload`] streams the file
+    /// from disk, and
+    /// [`FileSearchStores::upload`](crate::FileSearchStores::upload) reads it
+    /// into memory. A missing, unreadable or empty file, or one over 2 GB,
+    /// fails there with [`GenaiError::InvalidInput`] before any request. The
+    /// MIME type comes from the file extension unless
+    /// [`with_mime_type`](Self::with_mime_type) sets it (an extension it
+    /// can't map fails the same way), and the display name is the file name
+    /// unless [`with_display_name`](Self::with_display_name) sets one.
     #[must_use]
     pub fn from_path(path: impl Into<PathBuf>) -> Self {
         Self {
@@ -329,12 +332,20 @@ impl FileUpload {
     }
 
     /// Sets the display name the file is listed under
-    /// ([`FileMetadata::display_name`]). A path upload defaults to the file
-    /// name.
+    /// ([`FileMetadata::display_name`], or
+    /// [`FileSearchDocument::display_name`](crate::FileSearchDocument::display_name)
+    /// in a store). A path upload defaults to the file name.
     #[must_use]
     pub fn with_display_name(mut self, display_name: impl Into<String>) -> Self {
         self.display_name = Some(display_name.into());
         self
+    }
+
+    /// Splits the upload into its source, the MIME type to send and the
+    /// display name set, if any.
+    pub(crate) fn into_parts(self) -> Result<(UploadSource, String, Option<String>), GenaiError> {
+        let mime_type = self.resolved_mime_type()?;
+        Ok((self.source, mime_type, self.display_name))
     }
 
     /// The MIME type to send: the one set, or for a path, the one its
@@ -515,12 +526,7 @@ impl<'a> Files<'a> {
     /// # }
     /// ```
     pub async fn upload(self, upload: FileUpload) -> Result<FileMetadata, GenaiError> {
-        let mime_type = upload.resolved_mime_type()?;
-        let FileUpload {
-            source,
-            display_name,
-            ..
-        } = upload;
+        let (source, mime_type, display_name) = upload.into_parts()?;
         match source {
             UploadSource::Path(path) => {
                 let display_name = display_name.or_else(|| file_display_name(&path));

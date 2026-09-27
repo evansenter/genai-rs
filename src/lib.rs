@@ -169,7 +169,8 @@ pub use environments::{
 pub mod file_search_stores;
 pub use file_search_stores::{
     CreateFileSearchStoreRequest, DocumentListResponse, DocumentState, FileSearchDocument,
-    FileSearchStore, FileSearchStoreListResponse,
+    FileSearchDocuments, FileSearchStore, FileSearchStoreListResponse, FileSearchStores,
+    ListFileSearchDocuments, ListFileSearchStores,
 };
 
 // Safety settings (request safety_settings field)

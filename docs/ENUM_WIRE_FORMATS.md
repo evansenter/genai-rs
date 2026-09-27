@@ -485,8 +485,8 @@ Interactions API.
 ```
 
 - List envelopes are `{"fileSearchStores": [...]}` and `{"documents": [...]}`.
-  An empty store list is a bare `{}`. `page_size` and `pageSize` are both
-  accepted.
+  An empty store list, or an empty store's document list, is a bare `{}`.
+  `page_size` and `pageSize` are both accepted; the crate sends `page_size`.
 - Document `sizeBytes` is a JSON **string** (`"27"`).
 - `DocumentState` is `STATE_PENDING` / `STATE_ACTIVE` / `STATE_FAILED`,
   prefixed, unlike the Files API's bare `PROCESSING` / `ACTIVE` / `FAILED`.
@@ -505,7 +505,7 @@ Behavior, all verified live 2026-08-16:
 
 - **Indexing is asynchronous.** A fresh upload is `STATE_PENDING` and does
   not match until `STATE_ACTIVE` (about 1-2 s for a small text file). Use
-  `wait_for_document_active()`.
+  `file_search_stores().documents().wait_until_active()`.
 - **Deleting a non-empty document or store needs `force=true`**. Otherwise:
   `400 Cannot delete non-empty Document` / `... FileSearchStore`
   (`FAILED_PRECONDITION`).
@@ -521,6 +521,26 @@ Behavior, all verified live 2026-08-16:
 - **`file_search` can't be combined with `google_search` or
   `url_context`**: 400 `'<other>' and 'file_search' cannot be combined in the
   same request. Please choose one to continue.` `code_execution` is accepted.
+
+Paging and uploads, verified live 2026-09-27 with three stores and three
+documents:
+
+- Both lists are **oldest first** (creation order). `page_size` must be 1 to
+  20 for both (`21` is a 400, `page_size must be between 1 and 20`); `0` is
+  the default. The last page omits `nextPageToken` even when exactly full.
+- Tokens are unpadded URL-safe base64 of the last item's creation time and
+  ID, and are not bound to the page size (the same token with another
+  `page_size`, or none, continues the list). An unknown token is a 400
+  `Requested page_token is invalid.`; a document token sent to another store
+  lists nothing (`{}`).
+- **Raw uploads take any body**, so in-memory bytes upload exactly as a
+  file does. Without `display_name`, the document is named after the
+  `X-Goog-Upload-File-Name` header (`"notes.txt"` becomes the display name
+  and the ID prefix `notestxt-`); with neither, it has no display name and a
+  random ID. With both, `display_name` wins. The crate sends the header for
+  path uploads only, so an unnamed in-memory upload stays unnamed.
+- Deleting an empty store needs no `force`; a non-empty one is a 400
+  `Cannot delete non-empty FileSearchStore`.
 
 Covered by `tests/file_search_stores_tests.rs` and `examples/file_search.rs`.
 
