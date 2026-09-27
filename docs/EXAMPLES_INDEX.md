@@ -69,7 +69,7 @@ clean exit means it worked. A cheap subset is smoke-run in CI
 | `audio_input` | Inline audio with `TranscriptionConfig` |
 | `video_input` | Inline video; `VideoProcessing::segment()` to clip the window and frame rate |
 | `pdf_input` | PDFs via `document_data`; text files via `document_from_file_with_mime` |
-| `files_api` | `upload_file`, `wait_for_file_ready`, `Content::from_file`, list/get/delete, `upload_file_bytes` |
+| `files_api` | `files().upload(FileUpload::from_path(..))`, `wait_until_active`, `Content::from_file`, list (one page and `items()`), get, delete, `FileUpload::from_bytes` |
 
 ## Output
 

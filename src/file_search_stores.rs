@@ -370,7 +370,7 @@ impl Client {
     /// Uploads a local file into a file search store.
     ///
     /// MIME type is inferred from the file extension, matching
-    /// [`upload_file`](Self::upload_file). Use
+    /// [`Files::upload`](crate::Files::upload). Use
     /// [`upload_to_file_search_store_with_mime`](Self::upload_to_file_search_store_with_mime)
     /// to set it explicitly.
     ///

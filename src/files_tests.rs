@@ -292,11 +292,15 @@ async fn test_upload_file_unknown_extension_error() {
     let file_path = temp_dir.path().join("data.xyz");
     std::fs::write(&file_path, b"test data").unwrap();
 
-    // upload_file should fail with InvalidInput for unknown MIME type
-    let result = client.upload_file(&file_path).await;
-    assert!(result.is_err(), "Should fail for unknown extension");
+    // A path upload without a MIME type fails with InvalidInput for an
+    // unknown extension, naming the setter that fixes it.
+    let err = client
+        .files()
+        .upload(FileUpload::from_path(&file_path))
+        .await
+        .expect_err("Should fail for unknown extension");
+    assert!(matches!(err, GenaiError::InvalidInput(_)), "{err:?}");
 
-    let err = result.unwrap_err();
     let err_string = err.to_string();
     assert!(
         err_string.contains("Could not determine MIME type"),
@@ -308,6 +312,11 @@ async fn test_upload_file_unknown_extension_error() {
         "Error should include filename: {}",
         err_string
     );
+    assert!(
+        err_string.contains("FileUpload::with_mime_type()"),
+        "Error should name the setter: {}",
+        err_string
+    );
 }
 
 #[tokio::test]
@@ -315,7 +324,10 @@ async fn test_upload_file_nonexistent_file_error() {
     let client = Client::new("test_key".to_string());
 
     // Try to upload a file that doesn't exist
-    let result = client.upload_file("/nonexistent/path/to/file.txt").await;
+    let result = client
+        .files()
+        .upload(FileUpload::from_path("/nonexistent/path/to/file.txt"))
+        .await;
     assert!(result.is_err(), "Should fail for nonexistent file");
 
     let err = result.unwrap_err();
@@ -333,7 +345,8 @@ async fn test_upload_file_bytes_empty_file_error() {
 
     // Try to upload empty bytes
     let result = client
-        .upload_file_bytes(Vec::new(), "text/plain", Some("empty.txt"))
+        .files()
+        .upload(FileUpload::from_bytes(Vec::new(), "text/plain").with_display_name("empty.txt"))
         .await;
     assert!(result.is_err(), "Should fail for empty file");
 
@@ -354,7 +367,8 @@ async fn test_upload_file_bytes_validates_before_network() {
 
     // Empty file should fail with validation error, not auth error
     let result = client
-        .upload_file_bytes(Vec::new(), "text/plain", None)
+        .files()
+        .upload(FileUpload::from_bytes(Vec::new(), "text/plain"))
         .await;
     assert!(result.is_err());
     let err_string = result.unwrap_err().to_string();
@@ -363,6 +377,145 @@ async fn test_upload_file_bytes_validates_before_network() {
         "Should fail validation before hitting network: {}",
         err_string
     );
+}
+
+// =============================================================================
+// FileUpload, PollOptions, and the handle
+// =============================================================================
+
+#[test]
+fn file_upload_from_path_leaves_mime_type_and_display_name_to_the_upload() {
+    let upload = FileUpload::from_path("clips/video.mp4");
+    assert!(matches!(&upload.source, UploadSource::Path(p) if p == Path::new("clips/video.mp4")));
+    assert_eq!(upload.mime_type, None);
+    assert_eq!(upload.display_name, None);
+    // The MIME type comes from the extension when unset.
+    assert_eq!(upload.resolved_mime_type().unwrap(), "video/mp4");
+
+    // `impl Into<PathBuf>` takes a `&Path` and a `PathBuf` too.
+    let path = std::path::PathBuf::from("notes.md");
+    for upload in [
+        FileUpload::from_path(path.as_path()),
+        FileUpload::from_path(path.clone()),
+    ] {
+        assert!(matches!(&upload.source, UploadSource::Path(p) if *p == path));
+        assert_eq!(upload.resolved_mime_type().unwrap(), "text/markdown");
+    }
+}
+
+#[test]
+fn file_upload_from_bytes_carries_the_data_and_mime_type() {
+    let upload = FileUpload::from_bytes(b"a,b\n".to_vec(), "text/csv");
+    assert!(matches!(&upload.source, UploadSource::Bytes(d) if d == b"a,b\n"));
+    assert_eq!(upload.mime_type.as_deref(), Some("text/csv"));
+    assert_eq!(upload.display_name, None);
+    assert_eq!(upload.resolved_mime_type().unwrap(), "text/csv");
+    // `impl Into<String>` takes an owned string too.
+    let owned = FileUpload::from_bytes(Vec::new(), String::from("application/pdf"));
+    assert_eq!(owned.mime_type.as_deref(), Some("application/pdf"));
+}
+
+#[test]
+fn file_upload_setters_replace() {
+    let upload = FileUpload::from_path("data.xyz")
+        .with_mime_type("application/octet-stream")
+        .with_display_name("first")
+        .with_display_name(String::from("second"));
+    assert_eq!(upload.display_name.as_deref(), Some("second"));
+    // An explicit MIME type wins over the extension, even one that maps to
+    // nothing.
+    assert_eq!(
+        upload.resolved_mime_type().unwrap(),
+        "application/octet-stream"
+    );
+
+    let upload = FileUpload::from_bytes(b"x".to_vec(), "text/plain").with_mime_type("text/csv");
+    assert_eq!(upload.resolved_mime_type().unwrap(), "text/csv");
+}
+
+#[test]
+fn file_upload_without_a_mappable_extension_names_the_setter() {
+    let err = FileUpload::from_path("data.xyz")
+        .resolved_mime_type()
+        .unwrap_err();
+    assert!(matches!(err, GenaiError::InvalidInput(_)), "{err:?}");
+    let message = err.to_string();
+    assert!(message.contains("'data.xyz'"), "{message}");
+    assert!(
+        message.contains("FileUpload::with_mime_type()"),
+        "{message}"
+    );
+}
+
+#[test]
+fn file_upload_debug_shows_the_length_not_the_bytes() {
+    let upload =
+        FileUpload::from_bytes(b"top-secret".to_vec(), "text/plain").with_display_name("notes");
+    let debug = format!("{upload:?}");
+    assert!(!debug.contains("top-secret"), "{debug}");
+    assert!(!debug.contains("116, 111"), "no byte values: {debug}");
+    assert!(debug.contains("data_len: 10"), "{debug}");
+    assert!(debug.contains("text/plain"), "{debug}");
+    assert!(debug.contains("notes"), "{debug}");
+
+    let debug = format!("{:?}", FileUpload::from_path("clips/video.mp4"));
+    assert!(debug.contains("path: \"clips/video.mp4\""), "{debug}");
+    assert!(debug.contains("mime_type: None"), "{debug}");
+}
+
+#[test]
+fn poll_options_fall_back_to_the_given_defaults() {
+    let (timeout, interval) = (Duration::from_secs(120), Duration::from_secs(2));
+    let unset = PollOptions::new();
+    assert_eq!(unset, PollOptions::default());
+    assert_eq!(unset.timeout_or(timeout), timeout);
+    assert_eq!(unset.poll_interval_or(interval), interval);
+
+    let set = PollOptions::new()
+        .with_timeout(Duration::from_secs(5))
+        .with_poll_interval(Duration::from_millis(250))
+        // `with_*` replaces.
+        .with_timeout(Duration::from_secs(9));
+    assert_eq!(set.timeout_or(timeout), Duration::from_secs(9));
+    assert_eq!(set.poll_interval_or(interval), Duration::from_millis(250));
+
+    // Each value falls back on its own.
+    let only_interval = PollOptions::new().with_poll_interval(Duration::from_secs(1));
+    assert_eq!(only_interval.timeout_or(timeout), timeout);
+}
+
+#[test]
+fn file_wait_defaults_are_120_s_and_2_s() {
+    assert_eq!(FILE_WAIT_TIMEOUT, Duration::from_secs(120));
+    assert_eq!(FILE_POLL_INTERVAL, Duration::from_secs(2));
+}
+
+#[test]
+fn list_files_setters_replace() {
+    let client = Client::new("k".to_string());
+    let list = client.files().list();
+    assert_eq!(list.page_size, None);
+    assert_eq!(list.page_token, None);
+
+    let list = list
+        .with_page_size(1)
+        .with_page_token("t1")
+        .with_page_size(100)
+        .with_page_token(String::from("t2"));
+    assert_eq!(list.page_size, Some(100));
+    assert_eq!(list.page_token.as_deref(), Some("t2"));
+}
+
+#[test]
+fn files_handle_and_list_debug_redact_the_api_key() {
+    let client = Client::new("secret-api-key".to_string());
+    for debug in [
+        format!("{:?}", client.files()),
+        format!("{:?}", client.files().list().with_page_size(5)),
+    ] {
+        assert!(!debug.contains("secret-api-key"), "{debug}");
+        assert!(debug.contains("[REDACTED]"), "{debug}");
+    }
 }
 
 /// Property-based tests for serialization roundtrips using proptest.

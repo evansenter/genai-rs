@@ -451,6 +451,28 @@ not.
 Verified 2026-08-16 and re-measured 2026-08-18, including by
 `test_video_processing_segment_reduces_token_cost`.
 
+### Files
+
+`FileState` is a file's bare uppercase `state` (`PROCESSING` / `ACTIVE` /
+`FAILED`). The Files API is camelCase, paging included: `pageSize` and
+`pageToken` go out, `nextPageToken` comes back. The resource is in
+`src/files.rs`.
+
+Verified live 2026-09-27 (list paging, three text files at `pageSize=1`):
+
+- The list is newest first (by `createTime`), one file per page at
+  `pageSize=1`. The last page omits `nextPageToken`, even when it is exactly
+  full.
+- `nextPageToken` is unpadded URL-safe base64 that encodes the last listed
+  file's ID. It is not bound to the page size: the same token with another
+  `pageSize`, or none, continues the list. An unrecognized token is a 400
+  (`Requested page_token is invalid.`).
+- `pageSize` must be 1 to 100; `5000` is a 400 (`page_size must be between
+  1 and 100`). `0` is the default. The snake_case `page_size` is accepted
+  too; the crate sends `pageSize`.
+- Files carry `updateTime` and `source` (`UPLOADED`), which the crate does
+  not model; they are dropped on deserialization.
+
 ### File Search
 
 **The store and document resources are camelCase**, unlike the

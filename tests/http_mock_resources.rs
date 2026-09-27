@@ -23,10 +23,11 @@ use genai_rs::{
     Agent, AllowlistEntry, CreateCredentialRequest, CreateEnvironmentRequest,
     CreateFileSearchStoreRequest, CreateVoiceRequest, CredentialConfig, CredentialType,
     CredentialUpdate, DocumentState, EnvironmentFileUpload, EnvironmentSource, EnvironmentSpec,
-    EnvironmentStatus, FileMetadata, FileSearchDocument, GenaiError, InjectionLocation,
-    InteractionInput, InteractionRequest, NetworkConfig, RevocationBehavior, StreamChunk, Tool,
-    Trigger, TriggerCreateParams, TriggerExecution, TriggerStatus, TriggerUpdate, Voice,
-    VoiceAudio, VoicePitch, VoiceType, Webhook, WebhookEvent, WebhookState, WebhookUpdate,
+    EnvironmentStatus, FileMetadata, FileSearchDocument, FileUpload, GenaiError, InjectionLocation,
+    InteractionInput, InteractionRequest, NetworkConfig, PollOptions, RevocationBehavior,
+    StreamChunk, Tool, Trigger, TriggerCreateParams, TriggerExecution, TriggerStatus,
+    TriggerUpdate, Voice, VoiceAudio, VoicePitch, VoiceType, Webhook, WebhookEvent, WebhookState,
+    WebhookUpdate,
 };
 #[cfg(not(feature = "strict-unknown"))]
 use genai_rs::{CredentialStatus, EnvironmentFileType, InteractionStatus, TriggerExecutionStatus};
@@ -322,9 +323,9 @@ fn every_call(c: &genai_rs::Client) -> Vec<(&'static str, Returns, Call<'_>)> {
             Nothing,
             call(c.delete_file_search_document(DOC, true)),
         ),
-        ("get_file", Resource, call(c.get_file("files/abc"))),
-        ("list_files", Resource, call(c.list_files(None, None))),
-        ("delete_file", Nothing, call(c.delete_file("files/abc"))),
+        ("files.get", Resource, call(c.files().get("files/abc"))),
+        ("files.list", Resource, call(c.files().list().send())),
+        ("files.delete", Nothing, call(c.files().delete("files/abc"))),
         (
             "get_interaction",
             Resource,
@@ -1257,6 +1258,11 @@ async fn handle_futures_and_list_streams_outlive_their_temporaries() {
     let stub = Stub::start(|request, _| {
         if request.target.starts_with("/v1beta/agents?") || request.target == "/v1beta/agents" {
             agents_page(&["listed"], None)
+        } else if let Some(id) = request.target.strip_prefix("/v1beta/files/") {
+            Reply::json(
+                200,
+                json!({"name": format!("files/{id}"), "mimeType": "text/plain"}),
+            )
         } else {
             let id = request.target.rsplit('/').next().unwrap_or_default();
             Reply::json(200, json!({"id": id}))
@@ -1274,6 +1280,13 @@ async fn handle_futures_and_list_streams_outlive_their_temporaries() {
     let stored = c.agents().get("a3");
     assert_send(&stored);
     assert_eq!(stored.await.unwrap().id.as_deref(), Some("a3"));
+
+    let names = ["files/f1".to_string(), "files/f2".to_string()];
+    let files = futures_util::future::join_all(names.iter().map(|n| c.files().get(n))).await;
+    let files: Vec<FileMetadata> = files.into_iter().collect::<Result<_, _>>().unwrap();
+    assert_eq!(file_names(&files), ["files/f1", "files/f2"]);
+    let waiting = c.files().wait_until_active("files/f3", PollOptions::new());
+    assert_send(&waiting);
 
     // The client this stream came from is a temporary, gone before the
     // stream is first polled on another task.
@@ -1825,12 +1838,16 @@ async fn environment_file_upload_rejects_an_unheaderable_mime_type_as_invalid_in
 
 /// The Files API upload validates its MIME type the same way.
 #[tokio::test]
-async fn upload_file_bytes_rejects_an_unheaderable_mime_type_as_invalid_input() {
+async fn files_upload_rejects_an_unheaderable_mime_type_as_invalid_input() {
     let stub = Stub::replying(vec![]).await;
 
     let err = stub
         .client()
-        .upload_file_bytes(b"x".to_vec(), "text/plain\nX-Injected: 1", None)
+        .files()
+        .upload(FileUpload::from_bytes(
+            b"x".to_vec(),
+            "text/plain\nX-Injected: 1",
+        ))
         .await
         .unwrap_err();
 
@@ -2961,7 +2978,7 @@ async fn get_interaction_stream_http_error_is_the_only_item() {
 
 /// A path upload streams the file as the finalize body, byte for byte.
 #[tokio::test]
-async fn upload_file_streams_the_file_from_disk_then_finalizes() {
+async fn files_upload_from_path_streams_the_file_from_disk_then_finalizes() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("notes.txt");
     // Under one 8 MB read buffer, but it spans many TCP writes, and the
@@ -2979,7 +2996,12 @@ async fn upload_file_streams_the_file_from_disk_then_finalizes() {
     ])
     .await;
 
-    let file = stub.client().upload_file(&path).await.unwrap();
+    let file = stub
+        .client()
+        .files()
+        .upload(FileUpload::from_path(&path))
+        .await
+        .unwrap();
     assert_eq!(file.name, "files/f1");
     assert_eq!(file.size_bytes_as_u64(), Some(data.len() as u64));
 
@@ -3018,29 +3040,174 @@ async fn files_endpoints_send_the_documented_requests() {
     assert_wire(
         &stub,
         vec![
-            wire("GET", "/v1beta/files/abc", None, c.get_file("files/abc")),
-            wire("GET", "/v1beta/files", None, c.list_files(None, None)),
+            wire("GET", "/v1beta/files/abc", None, c.files().get("files/abc")),
+            wire("GET", "/v1beta/files", None, c.files().list().send()),
             // The Files API spells its paging parameters in camelCase.
             wire(
                 "GET",
                 "/v1beta/files?pageSize=10&pageToken=a%2Bb",
                 None,
-                c.list_files(Some(10), Some("a+b")),
+                c.files()
+                    .list()
+                    .with_page_size(10)
+                    .with_page_token("a+b")
+                    .send(),
             ),
             wire(
                 "DELETE",
                 "/v1beta/files/abc",
                 None,
-                c.delete_file("files/abc"),
+                c.files().delete("files/abc"),
             ),
         ],
     )
     .await;
 }
 
+/// `with_mime_type` and `with_display_name` replace what a path upload
+/// would infer from the file name.
+#[tokio::test]
+async fn files_upload_from_path_sends_the_mime_type_and_display_name_set() {
+    let (_dir, path) = temp_file("data.xyz", b"hello");
+    let stub = Stub::replying(vec![
+        Reply::json(200, json!({})).header("x-goog-upload-url", "{base}/upload-session/f1"),
+        Reply::json(
+            200,
+            json!({"file": {"name": "files/f1", "mimeType": "application/octet-stream", "uri": "u"}}),
+        ),
+    ])
+    .await;
+
+    stub.client()
+        .files()
+        .upload(
+            FileUpload::from_path(&path)
+                .with_mime_type("application/octet-stream")
+                .with_display_name("Q4 data"),
+        )
+        .await
+        .unwrap();
+
+    let [start, finish] = stub.requests().try_into().unwrap();
+    assert_eq!(
+        start.header("x-goog-upload-header-content-type"),
+        Some("application/octet-stream")
+    );
+    assert_eq!(start.json(), json!({"file": {"displayName": "Q4 data"}}));
+    assert_eq!(finish.body, b"hello");
+}
+
+/// A bytes upload has no display name unless one is set.
+#[tokio::test]
+async fn files_upload_from_bytes_without_a_display_name_sends_empty_metadata() {
+    let stub = Stub::replying(vec![
+        Reply::json(200, json!({})).header("x-goog-upload-url", "{base}/upload-session/f1"),
+        Reply::json(
+            200,
+            json!({"file": {"name": "files/f1", "mimeType": "text/csv", "uri": "u"}}),
+        ),
+    ])
+    .await;
+
+    let file = stub
+        .client()
+        .files()
+        .upload(FileUpload::from_bytes(b"a,b\n".to_vec(), "text/csv"))
+        .await
+        .unwrap();
+
+    assert_eq!(file.name, "files/f1");
+    let [start, finish] = stub.requests().try_into().unwrap();
+    assert_eq!(
+        start.header("x-goog-upload-header-content-type"),
+        Some("text/csv")
+    );
+    assert_eq!(start.json(), json!({"file": {}}));
+    assert_eq!(finish.body, b"a,b\n");
+}
+
+fn files_page(names: &[&str], next: Option<&str>) -> Reply {
+    let files: Vec<Value> = names
+        .iter()
+        .map(|name| json!({"name": name, "mimeType": "text/plain", "uri": "u"}))
+        .collect();
+    let mut body = json!({"files": files});
+    if let Some(next) = next {
+        body["nextPageToken"] = json!(next);
+    }
+    Reply::json(200, body)
+}
+
+fn file_names(files: &[FileMetadata]) -> Vec<&str> {
+    files.iter().map(|f| f.name.as_str()).collect()
+}
+
+/// Files paging is camelCase both ways: `pageSize` / `pageToken` go out and
+/// `nextPageToken` comes back. The first token has the live shape
+/// (unpadded URL-safe base64, 2026-09-27).
+#[tokio::test]
+async fn file_list_items_resend_the_camel_case_page_size_on_every_page() {
+    let stub = Stub::replying(vec![
+        files_page(
+            &["files/b", "files/a"],
+            Some("ciAKDoIBCwjX2uHVBhDQ_75OCg5CDGJ2eXU4bHQ1dzZpcw"),
+        ),
+        // An empty page with a token is followed.
+        files_page(&[], Some("p+3")),
+        files_page(&["files/c"], None),
+    ])
+    .await;
+
+    let files: Vec<FileMetadata> = stub
+        .client()
+        .files()
+        .list()
+        .with_page_size(2)
+        .items()
+        .try_collect()
+        .await
+        .unwrap();
+
+    assert_eq!(file_names(&files), ["files/b", "files/a", "files/c"]);
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/files?pageSize=2",
+            "/v1beta/files?pageSize=2&pageToken=ciAKDoIBCwjX2uHVBhDQ_75OCg5CDGJ2eXU4bHQ1dzZpcw",
+            "/v1beta/files?pageSize=2&pageToken=p%2B3",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn file_list_pages_resume_from_with_page_token() {
+    let stub = Stub::replying(vec![
+        files_page(&["files/c"], Some("p3")),
+        files_page(&["files/d"], None),
+    ])
+    .await;
+
+    let pages: Vec<_> = stub
+        .client()
+        .files()
+        .list()
+        .with_page_token("p2")
+        .pages()
+        .try_collect()
+        .await
+        .unwrap();
+
+    assert_eq!(pages.len(), 2);
+    assert_eq!(file_names(&pages[0].files), ["files/c"]);
+    assert_eq!(
+        targets(&stub),
+        ["/v1beta/files?pageToken=p2", "/v1beta/files?pageToken=p3"]
+    );
+}
+
 #[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
-async fn list_files_parses_metadata_and_preserves_unknown_states() {
+async fn file_list_parses_metadata_and_preserves_unknown_states() {
     let stub = Stub::replying(vec![Reply::json(
         200,
         json!({
@@ -3056,7 +3223,7 @@ async fn list_files_parses_metadata_and_preserves_unknown_states() {
     )])
     .await;
 
-    let list = stub.client().list_files(None, None).await.unwrap();
+    let list = stub.client().files().list().send().await.unwrap();
 
     let clip = &list.files[0];
     assert!(clip.is_active());
@@ -3078,14 +3245,17 @@ async fn list_files_parses_metadata_and_preserves_unknown_states() {
 }
 
 async fn wait_for_file(stub: &Stub, timeout: Duration) -> Result<FileMetadata, GenaiError> {
-    let metadata: FileMetadata = serde_json::from_value(file("PROCESSING")).unwrap();
+    let poll = PollOptions::new()
+        .with_poll_interval(Duration::from_millis(10))
+        .with_timeout(timeout);
     stub.client()
-        .wait_for_file_ready(&metadata, Duration::from_millis(10), timeout)
+        .files()
+        .wait_until_active("files/abc", poll)
         .await
 }
 
 #[tokio::test]
-async fn wait_for_file_ready_times_out_with_the_last_state() {
+async fn wait_until_active_times_out_with_the_last_state() {
     let stub = Stub::start(|_, _| Reply::json(200, file("PROCESSING"))).await;
 
     let err = wait_for_file(&stub, Duration::from_millis(60))
@@ -3101,7 +3271,7 @@ async fn wait_for_file_ready_times_out_with_the_last_state() {
 
 #[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
-async fn wait_for_file_ready_keeps_polling_through_unknown_states() {
+async fn wait_until_active_keeps_polling_through_unknown_states() {
     let stub = Stub::replying(vec![
         Reply::json(200, file("TRANSCODING")),
         Reply::json(200, file("ACTIVE")),
@@ -3115,7 +3285,7 @@ async fn wait_for_file_ready_keeps_polling_through_unknown_states() {
 }
 
 #[tokio::test]
-async fn wait_for_file_ready_propagates_api_errors() {
+async fn wait_until_active_propagates_api_errors() {
     let stub = Stub::replying(vec![Reply::json(200, file("PROCESSING")), not_found()]).await;
 
     let err = wait_for_file(&stub, Duration::from_secs(5))
@@ -3296,12 +3466,17 @@ async fn reserved_characters_in_ids_are_percent_encoded() {
                 None,
                 c.get_file_search_document("fileSearchStores/a b/documents/c?d"),
             ),
-            wire("GET", "/v1beta/files/a%20b", None, c.get_file("files/a b")),
+            wire(
+                "GET",
+                "/v1beta/files/a%20b",
+                None,
+                c.files().get("files/a b"),
+            ),
             wire(
                 "DELETE",
                 "/v1beta/files/a%3Fb",
                 None,
-                c.delete_file("files/a?b"),
+                c.files().delete("files/a?b"),
             ),
         ],
     )
@@ -3314,10 +3489,7 @@ async fn empty_and_dot_segment_ids_are_rejected_before_any_request() {
     let client = stub.client();
     let c = &client;
     let plain = |data: &[u8]| EnvironmentFileUpload::new(data.to_vec(), "text/plain");
-    let unnamed_file: FileMetadata =
-        serde_json::from_value(json!({"name": "abc", "mimeType": "text/plain"})).unwrap();
-    let unnamed_file = &unnamed_file;
-    let second = Duration::from_secs(1);
+    let poll_once = PollOptions::new().with_timeout(Duration::ZERO);
 
     let cases: Vec<(&str, Call<'_>)> = vec![
         ("webhooks.get empty", call(c.webhooks().get(""))),
@@ -3426,11 +3598,11 @@ async fn empty_and_dot_segment_ids_are_rejected_before_any_request() {
                 items.into_iter().next().unwrap().map(drop)
             }),
         ),
-        ("get_file dot", call(c.get_file("files/.."))),
-        ("delete_file empty", call(c.delete_file("files/"))),
+        ("files.get dot", call(c.files().get("files/.."))),
+        ("files.delete empty", call(c.files().delete("files/"))),
         (
-            "wait_for_file_ready",
-            call(c.wait_for_file_ready(unnamed_file, second, second)),
+            "files.wait_until_active",
+            call(c.files().wait_until_active("files/", poll_once)),
         ),
         (
             "get_file_search_store",
@@ -3470,12 +3642,21 @@ async fn malformed_resource_names_are_rejected_before_any_request() {
     let c = &client;
 
     let cases: Vec<(&str, &str, Call<'_>)> = vec![
-        ("get_file", "bare id", call(c.get_file("abc"))),
-        ("get_file", "extra segment", call(c.get_file("files/a/b"))),
+        ("files.get", "bare id", call(c.files().get("abc"))),
         (
-            "delete_file",
+            "files.get",
+            "extra segment",
+            call(c.files().get("files/a/b")),
+        ),
+        (
+            "files.delete",
             "wrong prefix",
-            call(c.delete_file("fileSearchStores/abc")),
+            call(c.files().delete("fileSearchStores/abc")),
+        ),
+        (
+            "files.wait_until_active",
+            "bare id",
+            call(c.files().wait_until_active("abc", PollOptions::new())),
         ),
         (
             "get_file_search_store",
@@ -3762,10 +3943,17 @@ async fn empty_object_parses_as_an_empty_last_page_on_every_list_endpoint() {
             }),
         ),
         (
-            "list_files",
+            "files.list",
             Box::pin(async move {
-                let l = c.list_files(None, None).await?;
+                let l = c.files().list().send().await?;
                 Ok((l.files.len(), l.next_page_token))
+            }),
+        ),
+        (
+            "files.list items",
+            Box::pin(async move {
+                let items: Vec<_> = c.files().list().items().try_collect().await?;
+                Ok((items.len(), None))
             }),
         ),
     ];

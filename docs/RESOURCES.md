@@ -4,10 +4,11 @@ Each `/v1beta` resource is reached through a handle on `Client`:
 `client.agents()` returns an `Agents` handle, `client.webhooks()` a
 `Webhooks` handle, `client.triggers()` a `Triggers` handle,
 `client.environments()` an `Environments` handle, `client.credentials()` a
-`Credentials` handle and `client.voices()` a `Voices` handle, whose methods
-are the resource's verbs. A nested resource is a plain accessor that binds
-no ID: `client.environments().files()` takes the environment ID in each
-method, as in Python. Lists return a builder that ends in `.send()` (one page),
+`Credentials` handle, `client.voices()` a `Voices` handle and
+`client.files()` a `Files` handle, whose methods are the resource's verbs. A
+nested resource is a plain accessor that binds no ID:
+`client.environments().files()` takes the environment ID in each method, as
+in Python. Lists return a builder that ends in `.send()` (one page),
 `.pages()` or `.items()` (every page). The conventions and the paging
 rules are in
 [Resource handles and list builders](BUILDER_API.md#resource-handles-and-list-builders),
@@ -82,10 +83,24 @@ become `with_*` setters.
 | `client.voices.list(page_size=, page_token=, search=, type_=, gender=, language_code=, region_code=, accent=, persona=, contexts=, pitch=)` | `client.voices().list().with_page_size(n).with_page_token(t).with_search(q).with_voice_type(v).with_gender(g).with_language_code(l).with_region_code(r).with_accent(a).with_persona(p).with_context(c).with_pitch(p).send()` |
 | (no equivalent) | `client.voices().list().pages()` / `.items()` |
 | `client.voices.delete(id)` | `client.voices().delete(id)` |
+| `client.files.upload(file=path, config={"mime_type": m, "display_name": n})` | `client.files().upload(FileUpload::from_path(path).with_mime_type(m).with_display_name(n))` |
+| `client.files.upload(file=io_object, config={"mime_type": m})` | `client.files().upload(FileUpload::from_bytes(data, m))` |
+| `client.files.upload(config={"name": ...})` (a chosen `files/<id>`) | Not modeled yet: the server assigns the name |
+| `client.files.get(name=)` | `client.files().get(name)` |
+| `client.files.list(config={"page_size": n, "page_token": t})` (one page) | `client.files().list().with_page_size(n).with_page_token(t).send()` |
+| iterating `client.files.list()` | `client.files().list().items()` (or `.pages()`) |
+| `client.files.delete(name=)` | `client.files().delete(name)` |
+| (no equivalent) | `client.files().wait_until_active(name, PollOptions::new())` |
+| `client.files.download(file=)`, `client.files.register_files(uris=)` | Not modeled yet |
 
-Python's `files.upload` also takes a path or a file object as `file` and
-guesses a missing `mime_type`; `EnvironmentFileUpload` takes the bytes and an
-explicit MIME type.
+Python's `environments.files.upload` also takes a path or a file object as
+`file` and guesses a missing `mime_type`; `EnvironmentFileUpload` takes the
+bytes and an explicit MIME type.
+
+Python's `files.upload` guesses a missing `mime_type` from a path, as
+`FileUpload::from_path` does from the extension, and needs one for a file
+object, as `FileUpload::from_bytes` does. A path upload's display name
+defaults to the file name.
 
 Python's `voices.list` takes a list of values for each filter, and the API
 matches any of them (verified live 2026-09-27). genai-rs sends one value per
@@ -121,6 +136,15 @@ A `None` positional argument becomes an omitted setter.
 | `client.get_environment(id)` | `client.environments().get(id)` |
 | `client.list_environments(size, token)` | `client.environments().list().with_page_size(size).with_page_token(token).send()` |
 | `client.delete_environment(id)` | `client.environments().delete(id)` |
+| `client.upload_file(path)` | `client.files().upload(FileUpload::from_path(path))` |
+| `client.upload_file_with_mime(path, mime_type)` | `client.files().upload(FileUpload::from_path(path).with_mime_type(mime_type))` |
+| `client.upload_file_chunked(path)` and its `_with_mime` / `_with_options` forms | `client.files().upload(FileUpload::from_path(path))`, which streams from disk; `.with_mime_type(mime_type)` for an explicit type |
+| `client.upload_file_bytes(data, mime_type, Some(name))` | `client.files().upload(FileUpload::from_bytes(data, mime_type).with_display_name(name))` |
+| `client.upload_file_bytes(data, mime_type, None)` | `client.files().upload(FileUpload::from_bytes(data, mime_type))` |
+| `client.get_file(name)` | `client.files().get(name)` |
+| `client.list_files(size, token)` | `client.files().list().with_page_size(size).with_page_token(token).send()` |
+| `client.delete_file(name)` | `client.files().delete(name)` |
+| `client.wait_for_file_ready(&file, poll_interval, timeout)` | `client.files().wait_until_active(&file.name, PollOptions::new().with_poll_interval(poll_interval).with_timeout(timeout))` |
 
 ## Methods added after 0.10
 

@@ -14,8 +14,8 @@ use async_trait::async_trait;
 use common::http_stub::{Recorded, Reply, Stub};
 use futures_util::StreamExt;
 use genai_rs::{
-    AutoFunctionStreamChunk, CallableFunction, Client, FunctionDeclaration, FunctionError,
-    GenaiError, StreamChunk, ToolService,
+    AutoFunctionStreamChunk, CallableFunction, Client, FileUpload, FunctionDeclaration,
+    FunctionError, GenaiError, PollOptions, StreamChunk, ToolService,
 };
 use serde_json::{Value, json};
 
@@ -358,7 +358,11 @@ async fn file_upload_uses_the_base_url_for_both_legs() {
 
     let file = stub
         .client()
-        .upload_file_bytes(b"hello".to_vec(), "text/plain", Some("greeting.txt"))
+        .files()
+        .upload(
+            FileUpload::from_bytes(b"hello".to_vec(), "text/plain")
+                .with_display_name("greeting.txt"),
+        )
         .await
         .unwrap();
     assert_eq!(file.name, "files/abc");
@@ -380,14 +384,15 @@ async fn file_upload_without_session_url_is_malformed_response() {
     let stub = Stub::replying(vec![Reply::json(200, json!({}))]).await;
     let err = stub
         .client()
-        .upload_file_bytes(b"hello".to_vec(), "text/plain", None)
+        .files()
+        .upload(FileUpload::from_bytes(b"hello".to_vec(), "text/plain"))
         .await
         .unwrap_err();
     assert!(matches!(err, GenaiError::MalformedResponse(_)), "{err:?}");
 }
 
 #[tokio::test]
-async fn wait_for_file_ready_polls_then_returns_active() {
+async fn wait_until_active_polls_then_returns_active() {
     let file = |state: &str| json!({"name": "files/abc", "mimeType": "video/mp4", "uri": "u", "state": state});
     let stub = Stub::replying(vec![
         Reply::json(200, file("PROCESSING")),
@@ -395,10 +400,13 @@ async fn wait_for_file_ready_polls_then_returns_active() {
     ])
     .await;
     let client = stub.client();
-    let metadata = serde_json::from_value(file("PROCESSING")).unwrap();
+    let poll = PollOptions::new()
+        .with_poll_interval(Duration::from_millis(10))
+        .with_timeout(Duration::from_secs(5));
 
     let ready = client
-        .wait_for_file_ready(&metadata, Duration::from_millis(10), Duration::from_secs(5))
+        .files()
+        .wait_until_active("files/abc", poll)
         .await
         .unwrap();
     assert!(ready.is_active());
@@ -407,20 +415,20 @@ async fn wait_for_file_ready_polls_then_returns_active() {
 }
 
 #[tokio::test]
-async fn wait_for_file_ready_failure_is_terminal_not_retryable() {
+async fn wait_until_active_failure_is_terminal_not_retryable() {
     let failed = json!({
         "name": "files/abc", "mimeType": "video/mp4", "uri": "u", "state": "FAILED",
         "error": {"code": 13, "message": "transcoding failed"}
     });
     let stub = Stub::replying(vec![Reply::json(200, failed)]).await;
-    let metadata = serde_json::from_value(
-        json!({"name": "files/abc", "mimeType": "video/mp4", "uri": "u", "state": "PROCESSING"}),
-    )
-    .unwrap();
+    let poll = PollOptions::new()
+        .with_poll_interval(Duration::from_millis(10))
+        .with_timeout(Duration::from_secs(5));
 
     let err = stub
         .client()
-        .wait_for_file_ready(&metadata, Duration::from_millis(10), Duration::from_secs(5))
+        .files()
+        .wait_until_active("files/abc", poll)
         .await
         .unwrap_err();
     assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");

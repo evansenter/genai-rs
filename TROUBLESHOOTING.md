@@ -83,7 +83,7 @@ Stateless conversations need the manual loop; see
 |---------|-----|
 | The model says it can't see the image | Use full MIME types (`"image/png"`, not `"png"`) and standard base64 |
 | Inline video fails with a generic `400 Request contains an invalid argument` | The clip is shorter than one sampled frame (sub-second at the default ~1 fps). Use a longer clip or raise `fps`; see [Multimodal](docs/MULTIMODAL.md#video-processing) |
-| An uploaded file is not usable yet | `client.wait_for_file_ready(&file, poll_interval, timeout).await?` returns the ready `FileMetadata`; `get_file()` and `is_active()` / `is_processing()` / `is_failed()` show the state |
+| An uploaded file is not usable yet | `client.files().wait_until_active(&file.name, PollOptions::new()).await?` returns the ready `FileMetadata` (by default it polls every 2 s for up to 2 min; `PollOptions` changes both); `client.files().get(&file.name)` and `is_active()` / `is_processing()` / `is_failed()` show the state |
 | Image generation returns text | Use `genai_rs::DEFAULT_IMAGE_MODEL` and `.with_image_output()` |
 | File Search finds nothing right after an upload | Wait with `client.wait_for_document_active(&doc.name, None, None)`; a pending document just returns no matches |
 | `file_search_results()` is empty | Expected: the API does not emit that step; results are folded into the text (#429) |

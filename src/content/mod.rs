@@ -610,12 +610,12 @@ impl Content {
     /// # Example
     ///
     /// ```no_run
-    /// use genai_rs::{Client, Content};
+    /// use genai_rs::{Client, Content, FileUpload};
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::new("api-key".to_string());
     ///
-    /// let file = client.upload_file("video.mp4").await?;
+    /// let file = client.files().upload(FileUpload::from_path("video.mp4")).await?;
     /// let content = Content::from_file(&file);
     ///
     /// let response = client.interaction()

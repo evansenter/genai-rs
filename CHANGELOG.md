@@ -17,6 +17,8 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
   size on every request, stop on an empty token, and fail with
   `MalformedResponse` if a token repeats. The streams own a clone of the
   client, so they can be spawned.
+- `FileUpload::with_display_name` sets a path upload's display name, which
+  was always the file name.
 - **Voices API**: `client.voices()` lists the voice catalog (a list builder
   with `with_search`, `with_voice_type`, `with_gender`, `with_language_code`,
   `with_region_code`, `with_accent`, `with_persona`, `with_context` and
@@ -74,20 +76,32 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
 ### Changed
 
 - **Breaking: resource methods moved from `Client` to per-resource
-  handles.** `client.webhooks()`, `.triggers()`, `.agents()` and
-  `.environments()` each return a `Copy` handle that borrows the client.
-  Rename `client.<verb>_<resource>(…)` to `client.<resources>().<verb>(…)`.
-  Exceptions: `run_trigger` → `triggers().run`,
+  handles.** `client.webhooks()`, `.triggers()`, `.agents()`,
+  `.environments()` and `.files()` each return a `Copy` handle that borrows
+  the client. Rename `client.<verb>_<resource>(…)` to
+  `client.<resources>().<verb>(…)`: `get_file(name)` →
+  `files().get(name)`. Exceptions: `run_trigger` → `triggers().run`,
   `list_trigger_executions(id, …)` → `triggers().list_executions(id)`,
   `ping_webhook` → `webhooks().ping`, `rotate_webhook_signing_secret` →
-  `webhooks().rotate_signing_secret`. The full table is in
-  `docs/RESOURCES.md`.
+  `webhooks().rotate_signing_secret`, and the Files uploads and
+  `wait_for_file_ready` (below). The full table is in `docs/RESOURCES.md`.
 - **Breaking: `list_webhooks`, `list_triggers`, `list_trigger_executions`,
-  `list_agents` and `list_environments` return a builder.** The positional
-  `page_size`, `page_token` and `parent` arguments are gone. Chain
-  `.with_page_size(n)`, `.with_page_token(t)` or `.with_parent(p)` on
+  `list_agents`, `list_environments` and `list_files` return a builder.**
+  The positional `page_size`, `page_token` and `parent` arguments are gone.
+  Chain `.with_page_size(n)`, `.with_page_token(t)` or `.with_parent(p)` on
   `client.<resources>().list()` (or `client.triggers().list_executions(id)`),
   then `.send()` for one page (the same `*ListResponse`).
+- **Breaking: Files uploads take a `FileUpload`.** `upload_file(p)` →
+  `files().upload(FileUpload::from_path(p))`; `upload_file_with_mime(p, m)`
+  → `files().upload(FileUpload::from_path(p).with_mime_type(m))`;
+  `upload_file_bytes(d, m, Some(n))` →
+  `files().upload(FileUpload::from_bytes(d, m).with_display_name(n))`
+  (drop `with_display_name` for `None`). The error for an extension with no
+  known MIME type now points at `FileUpload::with_mime_type()`.
+- **Breaking: `wait_for_file_ready(&f, poll, timeout)`** →
+  `files().wait_until_active(&f.name, PollOptions::new().with_poll_interval(poll).with_timeout(timeout))`.
+  It takes the file name rather than the metadata, and either option can be
+  left out: the defaults are a 120 s timeout and a 2 s poll interval.
 - **Breaking: `update_mask` moved onto the update value.**
   `update_webhook(id, &u, Some("state"))` →
   `webhooks().update(id, &u.with_update_mask("state"))`; `None` becomes
@@ -97,7 +111,8 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
   merged into `genai_rs::environments`, and the Files API types moved to a
   public `genai_rs::files` module (`FileUploadResponse` is now exported). Root
   re-exports are unchanged.
-- **Breaking:** `upload_file` / `upload_file_with_mime` stream from disk with
+- **Breaking:** path uploads (`files().upload(FileUpload::from_path(p))`,
+  formerly `upload_file` / `upload_file_with_mime`) stream from disk with
   bounded memory. `upload_file_chunked*`, `ResumableUpload` and
   `DEFAULT_CHUNK_SIZE` are removed: the handle was only returned after a
   successful upload, so it could never resume anything.
@@ -215,7 +230,8 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
 - The streaming auto-function loop reported "Stream ended without Complete
   event" instead of the server's in-stream error.
 - `execute_stream()` did not set `stream: true` itself.
-- `wait_for_file_ready()` reported a failed file as a retryable 500.
+- `files().wait_until_active()` (formerly `wait_for_file_ready()`) reported
+  a failed file as a retryable 500.
 - The SSE parser dropped a final event without a trailing newline and did not
   join multi-line `data:` fields.
 - `#[tool]` mapped `i8`/`u8`/`i16`/`u16`, `&str`, `char` and path-qualified

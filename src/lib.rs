@@ -234,7 +234,8 @@ pub mod antigravity;
 // Files API (/v1beta/files)
 pub mod files;
 pub use files::{
-    FileError, FileMetadata, FileState, FileUploadResponse, ListFilesResponse, VideoMetadata,
+    FileError, FileMetadata, FileState, FileUpload, FileUploadResponse, Files, ListFiles,
+    ListFilesResponse, PollOptions, VideoMetadata,
 };
 
 // =============================================================================
