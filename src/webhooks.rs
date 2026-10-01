@@ -73,7 +73,7 @@ wire_enum! {
 }
 
 /// A signing secret used to verify webhook payloads (output only).
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 #[non_exhaustive]
 pub struct SigningSecret {
@@ -88,6 +88,23 @@ pub struct SigningSecret {
         deserialize_with = "crate::serde_util::deserialize_lenient_timestamp::<_, crate::serde_util::ForSigningSecret>"
     )]
     pub expire_time: Option<DateTime<Utc>>,
+    /// Fields the crate does not model yet, kept so a round trip preserves
+    /// them. `Debug` prints only their keys: this is a secret-bearing type,
+    /// so an unmodeled field here is the likeliest to be sensitive, and
+    /// nothing can redact a field the crate does not know about.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for SigningSecret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SigningSecret")
+            .field("truncated_secret", &self.truncated_secret)
+            .field("expire_time", &self.expire_time)
+            // Keys only: see the field doc.
+            .field("extra", &self.extra.keys().collect::<Vec<_>>())
+            .finish()
+    }
 }
 
 /// A Webhook resource.
@@ -302,6 +319,11 @@ pub struct WebhookListResponse {
     /// Token for the next page. Absent when there are no more pages.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_page_token: Option<String>,
+    /// Fields the crate does not model yet, kept so a deserialize/serialize
+    /// round trip preserves them. A list envelope is where the API is
+    /// likeliest to add something (a total count, a page-size echo).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Response for `POST /v1beta/webhooks/{id}:rotateSigningSecret`.

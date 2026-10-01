@@ -252,6 +252,11 @@ pub struct EnvironmentListResponse {
     /// Token for fetching the next page, absent on the last page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_page_token: Option<String>,
+    /// Fields the crate does not model yet, kept so a deserialize/serialize
+    /// round trip preserves them. A list envelope is where the API is
+    /// likeliest to add something (a total count, a page-size echo).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Environments resource methods; see [IDs](crate::environments#ids).
