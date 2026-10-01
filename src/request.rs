@@ -313,9 +313,7 @@ wire_enum! {
         /// Minimal reasoning, fastest responses.
         ///
         /// Not supported by every model: [`DEFAULT_MODEL`](crate::DEFAULT_MODEL)
-        /// rejects it with a 400 (verified live 2026-08-15). Use
-        /// [`MINIMAL_THINKING_MODEL`](crate::MINIMAL_THINKING_MODEL), which is
-        /// pinned to a model that accepts it.
+        /// rejects it with a 400 (verified live 2026-10-01).
         Minimal = "minimal",
         /// Light reasoning for simple problems
         Low = "low",

@@ -72,24 +72,15 @@ pub(crate) mod wire_enum;
 /// enforces it). It is a default, not a constraint:
 /// [`with_model`](InteractionBuilder::with_model) accepts any model id.
 ///
-/// Capability gap: this model rejects [`ThinkingLevel::Minimal`] — see
-/// [`MINIMAL_THINKING_MODEL`] (verified live 2026-09-24).
+/// Capability gap: this model rejects [`ThinkingLevel::Minimal`] with a 400
+/// (verified live 2026-10-01).
 pub const DEFAULT_MODEL: &str = "gemini-3.8-flash";
-
-/// A model that supports [`ThinkingLevel::Minimal`], which
-/// [`DEFAULT_MODEL`] rejects (`'minimal' is not a supported thinking level
-/// for this model. Allowed values are: high, low, medium.`).
-///
-/// `gemini-3.7-flash` and `gemini-3.8-flash` both reject it; `gemini-3.6-flash`
-/// and `gemini-3.5-flash` accept it (verified live 2026-09-24). Pinned
-/// independently of [`DEFAULT_MODEL`]: it tracks whichever model has the
-/// capability, so it goes stale when *that* model is retired.
-pub const MINIMAL_THINKING_MODEL: &str = "gemini-3.6-flash";
 
 /// The model to use for image generation.
 ///
-/// Image output is a separate model family from [`DEFAULT_MODEL`]; passing
-/// the default to an image-generation request will not produce images.
+/// Image output is a separate model family from [`DEFAULT_MODEL`], and there
+/// is no 3.8 image model: `gemini-3.8-flash` answers an image request with
+/// text only (verified live 2026-10-01).
 pub const DEFAULT_IMAGE_MODEL: &str = "gemini-3.1-flash-image";
 
 /// The model to use for text-to-speech.

@@ -1111,6 +1111,26 @@ impl InteractionResponse {
             .collect()
     }
 
+    /// Function calls that still need a result: those with no
+    /// [`Step::FunctionResult`] for their `id` in this response.
+    ///
+    /// A tool the server runs itself, such as an MCP server, comes back as a
+    /// `function_call` and its `function_result` in the same response
+    /// (observed 2026-10-01), so [`function_calls`](Self::function_calls)
+    /// alone over-reports what the client must answer.
+    #[must_use]
+    pub fn pending_function_calls(&self) -> Vec<FunctionCallInfo<'_>> {
+        let answered: BTreeSet<&str> = self
+            .function_results()
+            .into_iter()
+            .map(|result| result.call_id)
+            .collect();
+        self.function_calls()
+            .into_iter()
+            .filter(|call| !answered.contains(call.id))
+            .collect()
+    }
+
     /// Check if response contains function calls
     #[must_use]
     pub fn has_function_calls(&self) -> bool {
@@ -1981,6 +2001,32 @@ mod tests {
         assert_eq!(calls[0].args["city"], "Tokyo");
         assert!(response.has_function_calls());
         assert!(response.has_thoughts());
+    }
+
+    #[test]
+    fn test_pending_function_calls_skip_answered_calls() {
+        let response = InteractionResponse {
+            status: InteractionStatus::RequiresAction,
+            steps: vec![
+                Step::function_call(
+                    "mcp_1",
+                    "deepwiki:read_wiki_structure",
+                    serde_json::json!({}),
+                ),
+                Step::function_result("deepwiki:read_wiki_structure", "mcp_1", "{}"),
+                Step::function_call(
+                    "call_1",
+                    "get_weather",
+                    serde_json::json!({"city": "Tokyo"}),
+                ),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(response.function_calls().len(), 2);
+        let pending = response.pending_function_calls();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, "call_1");
+        assert_eq!(pending[0].name, "get_weather");
     }
 
     #[test]

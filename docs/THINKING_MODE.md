@@ -15,7 +15,7 @@ revision, that reasoning appears in `response.steps` as
 
 | Level | Wire value | On `DEFAULT_MODEL` |
 |-------|-----------|--------------------|
-| `Minimal` | `"minimal"` | **Rejected**: `'minimal' is not a supported thinking level for this model. Allowed values are: high, low, medium.` Use `genai_rs::MINIMAL_THINKING_MODEL`, a model that accepts it |
+| `Minimal` | `"minimal"` | **Rejected**: `Thinking level THINKING_LEVEL_MINIMAL is not supported for this model.` Some older models accept it; pass one to `with_model()` |
 | `Low` | `"low"` | Accepted; the cheapest level this model allows |
 | `Medium` | `"medium"` | Accepted |
 | `High` | `"high"` | Accepted |

@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.11.0] - 2026-09-26
+## [0.11.0] - 2026-10-01
 
 Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
 `gemini-3.8-flash`, the `antigravity-preview-09-2026` agent, and Antigravity
@@ -101,7 +101,7 @@ harness 0.1.18.
   as a function result).
 
 - **Breaking:** `DEFAULT_MODEL` is `gemini-3.8-flash` (was `gemini-3.7-flash`).
-  It rejects `ThinkingLevel::Minimal`; use `MINIMAL_THINKING_MODEL`.
+  It rejects `ThinkingLevel::Minimal`.
 - **Breaking:** `DEFAULT_TTS_MODEL` is `gemini-3.8-flash-tts` (was
   `gemini-2.5-pro-preview-tts`). It returns `audio/wav` rather than raw L16, and
   multi-speaker requests need `Content::speaker_text` turns instead of a
@@ -159,6 +159,10 @@ harness 0.1.18.
 
 ### Removed
 
+- **Breaking:** `MINIMAL_THINKING_MODEL`. Every text-based constant now uses
+  the 3.8 Flash models, which have no `minimal` thinking level. To keep using
+  `ThinkingLevel::Minimal`, pass a model that accepts it (`gemini-3.6-flash`
+  did on 2026-10-01) to `with_model()`.
 - **Breaking:** `INLINE_VIDEO_MODEL`. Its premise was a fixture bug: the test
   clip was 0.2 s long and yields no sampled frame. Any clip of 1 s or longer
   works inline on `DEFAULT_MODEL` (D-012).
@@ -183,6 +187,11 @@ harness 0.1.18.
   as `default_api:<name>`, which it started doing on the second user turn of
   a non-streamed chain (2026-10-01). Previously the loop answered "function
   not found". The function result still carries the call's own name.
+- The auto-function loops no longer try to run MCP calls the server already
+  answered: since 2026-10-01 those come back as a `function_call` and its
+  `function_result` in the same response. New
+  `InteractionResponse::pending_function_calls()` returns only the calls
+  still waiting for a result.
 - The SSE parser rescanned its whole buffer on every network chunk, so a
   multi-megabyte event (image output) cost quadratic CPU: about 200 ms of
   CPU per image stream, now about 50 ms. Text streams parse 15–40% faster.

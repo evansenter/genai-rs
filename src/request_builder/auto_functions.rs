@@ -254,7 +254,7 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// if result.reached_max_loops {
     ///     eprintln!("Hit max loops! Executed {} functions", result.executions.len());
-    ///     // Inspect result.response.function_calls() to see what's still pending
+    ///     // Inspect result.response.pending_function_calls() to see what's still pending
     /// }
     /// # Ok(())
     /// # }
@@ -371,8 +371,8 @@ impl<'a> InteractionBuilder<'a> {
                 accumulated_usage.accumulate(usage);
             }
 
-            // Extract function calls using convenience method
-            let function_calls = response.function_calls();
+            // Calls the server already answered (MCP) are not ours to run.
+            let function_calls = response.pending_function_calls();
 
             // If no function calls, we're done!
             if function_calls.is_empty() {
@@ -699,7 +699,8 @@ impl<'a> InteractionBuilder<'a> {
                 // Function calls come from the Completed response's steps
                 // (assembled by the HTTP layer from step.start/step.delta
                 // events, including streamed arguments_delta fragments).
-                let response_function_calls = response.function_calls();
+                // Calls the server already answered (MCP) are not ours to run.
+                let response_function_calls = response.pending_function_calls();
                 let has_function_calls = !response_function_calls.is_empty();
 
                 // If no function calls, we're done!

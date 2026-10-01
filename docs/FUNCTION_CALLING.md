@@ -183,8 +183,10 @@ Use `create()` and run the loop yourself when you need control over
 execution, or when storage is disabled.
 
 Function calls arrive as `Step::FunctionCall { id, name, arguments, .. }` steps,
-and `response.function_calls()` returns them as `FunctionCallInfo { id, name,
-args }`. Send results back as `Step::function_result(name, call_id, result)`,
+and `response.pending_function_calls()` returns the ones still waiting for a
+result as `FunctionCallInfo { id, name, args }`. (`function_calls()` returns
+every call, including MCP calls the server ran and answered in the same
+response.) Send results back as `Step::function_result(name, call_id, result)`,
 where `result` is any `Into<FunctionResultPayload>` (a `serde_json::Value`,
 `&str`, `String`, or `Vec<Content>`; a `Value` that is not a string or object
 is sent as `{"result": value}`):
@@ -215,10 +217,10 @@ let mut response = client
     .await?;
 
 // Manual execution loop
-while response.has_function_calls() {
+while !response.pending_function_calls().is_empty() {
     let mut results = Vec::new();
 
-    for call in response.function_calls() {
+    for call in response.pending_function_calls() {
         // YOUR execution logic here
         let result = execute_my_function(call.name, call.args);
 
@@ -247,6 +249,11 @@ println!("{}", response.as_text().unwrap());
 
 For a failed execution, `Step::function_result_error(name, call_id, result)`
 sets `is_error: true` on the step. A real loop should also cap its iterations.
+
+Since 2026-10-01 the API sometimes names a call `default_api:<name>` (on the
+second user turn of a non-streamed chain). Match your function on the part
+after `default_api:`, and send the result back under `call.name` as it
+arrived. The auto-function loops do both.
 
 - **Tools on result turns.** Tools are not inherited across turns (see
   [Conversations](CONVERSATIONS.md#what-carries-over-between-turns)). A turn

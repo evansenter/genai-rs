@@ -61,17 +61,20 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
 
 - **Namespaced function names.** On the second user turn of a non-streamed
   chain, a declared function is called as `default_api:<name>`. The
-  auto-function loops resolve it. MCP tools run server-side appear as
-  `function_call` / `function_result` steps named `<server>:<tool>`, not
-  `tool_call` steps.
-- **Streamed multi-turn function calling fails.** When the user turn and the
-  turn before it were both streamed, the function result is rejected with
-  `400 Please ensure that function response turn comes immediately after a
-  function call turn`, whatever name it carries. Any non-streamed turn in the
-  pair avoids it. `test_multiturn_streaming_auto_functions` pins it.
-- **An MCP interaction ends in `requires_action`** after the server has run
-  every MCP call and produced the final `model_output`.
-  `test_mcp_server_tool_round_trip` pins it.
+  auto-function loops resolve it. MCP tools run server-side appear as an
+  answered `function_call` / `function_result` pair named `<server>:<tool>`,
+  not `tool_call` steps; `pending_function_calls()` leaves them out.
+- **Streamed multi-turn function calling fails (server bug).** When the user
+  turn and the turn before it were both streamed, the function result is
+  rejected with `400 Please ensure that function response turn comes
+  immediately after a function call turn`, whatever name it carries. Any
+  non-streamed turn in the pair avoids it, so
+  `test_multiturn_streaming_auto_functions` streams only its second turn
+  until this is fixed.
+- **An MCP interaction ends in `requires_action` (server bug)** after the
+  server has run every MCP call and produced the final `model_output`.
+  `test_mcp_server_tool_round_trip` accepts that status only when no call is
+  pending.
 - **`cancel` fails on `antigravity-preview-09-2026`** with `400 There was a
   problem processing your request`; it works on `antigravity-preview-05-2026`.
 
