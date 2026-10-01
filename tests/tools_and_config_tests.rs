@@ -1066,20 +1066,25 @@ mod thinking {
             return;
         };
 
-        let result = stateful_builder(&client)
-            .with_text("What is 2 + 2?")
-            .with_thinking_level(ThinkingLevel::Minimal)
-            .create()
-            .await;
+        // A 400 is not retried; a transient 5xx or 429 is.
+        let result = retry_request!([client] => {
+            stateful_builder(&client)
+                .with_text("What is 2 + 2?")
+                .with_thinking_level(ThinkingLevel::Minimal)
+                .create()
+                .await
+        });
 
+        // The wording changed once already ("'minimal' is not a supported
+        // thinking level" until 2026-09-24), so match the level, not the text.
         match result {
             Err(genai_rs::GenaiError::Api {
                 status_code: 400,
                 message,
                 ..
             }) => assert!(
-                message.contains("THINKING_LEVEL_MINIMAL") && message.contains("not supported"),
-                "unexpected 400 for Minimal: {message}"
+                message.to_lowercase().contains("minimal"),
+                "400 does not name the rejected level: {message}"
             ),
             other => panic!("expected DEFAULT_MODEL to reject Minimal with a 400, got: {other:?}"),
         }
