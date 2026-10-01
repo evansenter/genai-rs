@@ -327,6 +327,24 @@ Gemini API but it is available on the Gemini Enterprise Agent Platform").
 probe, int64 counts arrived as protobuf-JSON strings and timestamps as ISO 8601
 with an offset.
 
+Verified live 2026-09-26 (list paging):
+
+- `GET /v1beta/environments` returns the newest environment first, 50 per
+  page by default (`page_size=1000` returned all 111 on the key in one page).
+  A page can be short or empty while a `next_page_token` remains: at
+  `page_size=1` one page mid-list was `{"environments": [], "next_page_token":
+  ...}`, and at the default size the first page held 49. The last page omits
+  the token. Tokens are URL-safe base64.
+- `GET /v1beta/environments/{id}/files/{path}` honors `page_size`; its
+  `next_page_token` is a decimal offset (`"1"`, `"2"`, ...) and is omitted on
+  the last page. A token sent without the `recursive=true` of the first
+  request answers `{}`, so `recursive` must ride on every page. A
+  non-numeric token is `400` (`Invalid page_token.`), and an offset past the
+  end is `{}`.
+- Uploading to an existing path without `overwrite=true` fails on the
+  finalizing request, after the bytes are sent: `409` with
+  `{"error": {"message": "Requested entity already exists", "code": "aborted"}}`.
+
 ### TriggerStatus and TriggerExecutionStatus
 
 | Enum | Wire values |
@@ -347,6 +365,16 @@ shapes are hedged:
 - All trigger-family timestamps go through a lenient RFC 3339
   deserializer. An unexpected shape degrades to `None` with a `warn!`, rather
   than failing the list.
+
+Verified live 2026-09-26 (list paging, no triggers on the key):
+
+- `GET /v1beta/triggers?page_size=2` returns `{}`, the end of the list.
+  An unrecognized `page_token` is a `400 INVALID_ARGUMENT`.
+- `GET /v1beta/triggers/{id}/executions` returns `{}` for a trigger that does
+  not exist, not a 404; `GET /v1beta/triggers/{id}` on the same ID is a
+  `404 NOT_FOUND`. `POST .../executions` (run now) on it is a structured
+  `404 NOT_FOUND`, while an unknown sub-collection is an empty-body 404, so
+  the executions path exists server-side. Execution shapes stay unverified.
 
 ### ThinkingSummaries
 
@@ -423,6 +451,28 @@ not.
 Verified 2026-08-16 and re-measured 2026-08-18, including by
 `test_video_processing_segment_reduces_token_cost`.
 
+### Files
+
+`FileState` is a file's bare uppercase `state` (`PROCESSING` / `ACTIVE` /
+`FAILED`). The Files API is camelCase, paging included: `pageSize` and
+`pageToken` go out, `nextPageToken` comes back. The resource is in
+`src/files.rs`.
+
+Verified live 2026-09-27 (list paging, three text files at `pageSize=1`):
+
+- The list is newest first (by `createTime`), one file per page at
+  `pageSize=1`. The last page omits `nextPageToken`, even when it is exactly
+  full.
+- `nextPageToken` is unpadded URL-safe base64 that encodes the last listed
+  file's ID. It is not bound to the page size: the same token with another
+  `pageSize`, or none, continues the list. An unrecognized token is a 400
+  (`Requested page_token is invalid.`).
+- `pageSize` must be 1 to 100; `5000` is a 400 (`page_size must be between
+  1 and 100`). `0` is the default. The snake_case `page_size` is accepted
+  too; the crate sends `pageSize`.
+- Files carry `updateTime` and `source` (`UPLOADED`), which the crate does
+  not model; they are dropped on deserialization.
+
 ### File Search
 
 **The store and document resources are camelCase**, unlike the
@@ -435,8 +485,8 @@ Interactions API.
 ```
 
 - List envelopes are `{"fileSearchStores": [...]}` and `{"documents": [...]}`.
-  An empty store list is a bare `{}`. `page_size` and `pageSize` are both
-  accepted.
+  An empty store list, or an empty store's document list, is a bare `{}`.
+  `page_size` and `pageSize` are both accepted; the crate sends `page_size`.
 - Document `sizeBytes` is a JSON **string** (`"27"`).
 - `DocumentState` is `STATE_PENDING` / `STATE_ACTIVE` / `STATE_FAILED`,
   prefixed, unlike the Files API's bare `PROCESSING` / `ACTIVE` / `FAILED`.
@@ -455,7 +505,7 @@ Behavior, all verified live 2026-08-16:
 
 - **Indexing is asynchronous.** A fresh upload is `STATE_PENDING` and does
   not match until `STATE_ACTIVE` (about 1-2 s for a small text file). Use
-  `wait_for_document_active()`.
+  `file_search_stores().documents().wait_until_active()`.
 - **Deleting a non-empty document or store needs `force=true`**. Otherwise:
   `400 Cannot delete non-empty Document` / `... FileSearchStore`
   (`FAILED_PRECONDITION`).
@@ -471,6 +521,26 @@ Behavior, all verified live 2026-08-16:
 - **`file_search` can't be combined with `google_search` or
   `url_context`**: 400 `'<other>' and 'file_search' cannot be combined in the
   same request. Please choose one to continue.` `code_execution` is accepted.
+
+Paging and uploads, verified live 2026-09-27 with three stores and three
+documents:
+
+- Both lists are **oldest first** (creation order). `page_size` must be 1 to
+  20 for both (`21` is a 400, `page_size must be between 1 and 20`); `0` is
+  the default. The last page omits `nextPageToken` even when exactly full.
+- Tokens are unpadded URL-safe base64 of the last item's creation time and
+  ID, and are not bound to the page size (the same token with another
+  `page_size`, or none, continues the list). An unknown token is a 400
+  `Requested page_token is invalid.`; a document token sent to another store
+  lists nothing (`{}`).
+- **Raw uploads take any body**, so in-memory bytes upload exactly as a
+  file does. Without `display_name`, the document is named after the
+  `X-Goog-Upload-File-Name` header (`"notes.txt"` becomes the display name
+  and the ID prefix `notestxt-`); with neither, it has no display name and a
+  random ID. With both, `display_name` wins. The crate sends the header for
+  path uploads only, so an unnamed in-memory upload stays unnamed.
+- Deleting an empty store needs no `force`; a non-empty one is a 400
+  `Cannot delete non-empty FileSearchStore`.
 
 Covered by `tests/file_search_stores_tests.rs` and `examples/file_search.rs`.
 
@@ -683,6 +753,14 @@ Verified live 2026-07 (full CRUD, `:ping`, `:rotateSigningSecret`):
   echoed verbatim in the create response (modeled as
   `InteractionResponse::webhook_config`).
 
+Verified live 2026-09-26 (list paging, three webhooks at `page_size=1`):
+
+- `page_size` is honored, and `next_page_token` is present only while more
+  webhooks remain; the last page omits it. An empty collection is `{}`.
+- The token is raw bytes with control characters, not base64 (shape
+  `"rC\n\x19B\x17<name>\n&B$<id>"`), so it must be percent-encoded byte for
+  byte when resent. The `webhooks_and_agents_tests` paging test covers this.
+
 ### Environment
 
 `environment` (request) and `base_environment` (agent) take an environment id
@@ -722,6 +800,47 @@ Verified live 2026-07 (Antigravity agent, `background: true`): the inline
 source, `"disabled"`, an allowlist with `transform`, and the id string form.
 `gcs`, `repository` and `skill_registry` sources and `base_environment` were
 not exercised.
+
+### Credentials
+
+`CredentialType` tags create bodies (`{"type": "bearer_token", "token": ...}`)
+and is required on updates; the credential resource itself is in
+`src/credentials.rs`.
+
+Verified live 2026-09-27 (IDs and list paging, three bearer credentials at
+`page_size=1`):
+
+- IDs are letters, digits and hyphens, up to 63 characters. Create rejects
+  anything else with a 400 (`Credential ids should be alphanumeric with
+  hyphens, up to 63 characters.`), and a `GET` on a percent-encoded
+  `credentials/<id>` resource name gets the same 400.
+- The list runs in creation (and ID) order, one credential per page at
+  `page_size=1`. `next_page_token` is unpadded URL-safe base64 that encodes
+  the last listed ID, and the last page omits it. An unrecognized token is a
+  400 (`Precondition check failed.`). An empty collection is `{}`.
+
+### Voices
+
+`VoiceType` is the voice's `type` field and the `type` list filter;
+`VoicePitch` is its `pitch` field and filter. The resource is in
+`src/voices.rs`.
+
+Verified live 2026-09-27 (list paging and IDs):
+
+- The catalog lists in ID order, 50 voices per page by default. The last
+  page has no `next_page_token`, even when it is exactly full. A query that
+  matches nothing is `{}`.
+- `next_page_token` is unpadded URL-safe base64 of a value that ends in the
+  last listed voice's `<id>|<language_code>`. It is bound to the filters:
+  sending it with a filter dropped or changed is a 400 (`Filter parameters do
+  not match the filter parameters used in the request that returned this
+  page_token.`), while `page_size` may change. An unrecognized token is a
+  400 (`Invalid page token.`).
+- A filter repeated with several values (`gender=female&gender=male`)
+  matches any of them. The crate sends one value per filter.
+- `GET /v1beta/voices/{id}` finds stored custom voices (`voice_...`) only.
+  Prebuilt IDs (`achernar`, `kore`, `en-gb-storyteller-1`), an upper-cased
+  custom ID and a percent-encoded `voices/<id>` resource name are 404s.
 
 ### ResponseFormat
 

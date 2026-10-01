@@ -4,8 +4,9 @@
 //! Each endpoint is pinned on its HTTP method, path (percent-encoding
 //! included), query, and JSON body, and a realistic response is parsed into
 //! the typed result with Evergreen `Unknown` and `extra` preservation. Error
-//! mapping and the wait helpers' success, failure and timeout paths are
-//! covered too.
+//! mapping, the wait helpers' success, failure and timeout paths, and list
+//! paging (`.pages()` / `.items()` across several stub pages) are covered
+//! too.
 //!
 //! Tests whose replies carry unknown enum values are compiled out under
 //! `strict-unknown`, which rejects those values by design.
@@ -17,15 +18,16 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use common::http_stub::{Reply, Stub};
-use futures_util::StreamExt;
+use futures_util::{StreamExt, TryStreamExt};
 use genai_rs::{
     Agent, AllowlistEntry, CreateCredentialRequest, CreateEnvironmentRequest,
     CreateFileSearchStoreRequest, CreateVoiceRequest, CredentialConfig, CredentialType,
     CredentialUpdate, DocumentState, EnvironmentFileUpload, EnvironmentSource, EnvironmentSpec,
-    EnvironmentStatus, FileMetadata, FileSearchDocument, GenaiError, InjectionLocation,
-    InteractionInput, InteractionRequest, ListVoicesParams, NetworkConfig, RevocationBehavior,
-    StreamChunk, Tool, TriggerCreateParams, TriggerStatus, TriggerUpdate, VoiceAudio, VoicePitch,
-    VoiceType, Webhook, WebhookEvent, WebhookState, WebhookUpdate,
+    EnvironmentStatus, FileMetadata, FileSearchDocument, FileUpload, GenaiError, InjectionLocation,
+    InteractionInput, InteractionRequest, NetworkConfig, PollOptions, RevocationBehavior,
+    StreamChunk, Tool, Trigger, TriggerCreateParams, TriggerExecution, TriggerStatus,
+    TriggerUpdate, Voice, VoiceAudio, VoicePitch, VoiceType, Webhook, WebhookEvent, WebhookState,
+    WebhookUpdate,
 };
 #[cfg(not(feature = "strict-unknown"))]
 use genai_rs::{CredentialStatus, EnvironmentFileType, InteractionStatus, TriggerExecutionStatus};
@@ -140,213 +142,227 @@ fn every_call(c: &genai_rs::Client) -> Vec<(&'static str, Returns, Call<'_>)> {
     use Returns::{Nothing, Resource};
     vec![
         (
-            "create_webhook",
+            "webhooks.create",
             Resource,
             call(async move {
-                c.create_webhook(&Webhook::new("https://example.com/h", vec![]))
+                c.webhooks()
+                    .create(&Webhook::new("https://example.com/h", vec![]))
                     .await
             }),
         ),
-        ("get_webhook", Resource, call(c.get_webhook("wh-1"))),
-        ("list_webhooks", Resource, call(c.list_webhooks(None, None))),
+        ("webhooks.get", Resource, call(c.webhooks().get("wh-1"))),
+        ("webhooks.list", Resource, call(c.webhooks().list().send())),
         (
-            "update_webhook",
+            "webhooks.update",
             Resource,
             call(async move {
-                c.update_webhook("wh-1", &WebhookUpdate::new().with_name("n"), None)
-                    .await
-            }),
-        ),
-        ("delete_webhook", Nothing, call(c.delete_webhook("wh-1"))),
-        ("ping_webhook", Nothing, call(c.ping_webhook("wh-1"))),
-        (
-            "rotate_webhook_signing_secret",
-            Resource,
-            call(c.rotate_webhook_signing_secret("wh-1", None)),
-        ),
-        (
-            "create_trigger",
-            Resource,
-            call(async move { c.create_trigger(&trigger_params()).await }),
-        ),
-        ("get_trigger", Resource, call(c.get_trigger("t-1"))),
-        ("list_triggers", Resource, call(c.list_triggers(None, None))),
-        (
-            "update_trigger",
-            Resource,
-            call(async move {
-                c.update_trigger("t-1", &TriggerUpdate::new().with_display_name("n"))
-                    .await
-            }),
-        ),
-        ("delete_trigger", Nothing, call(c.delete_trigger("t-1"))),
-        ("run_trigger", Resource, call(c.run_trigger("t-1"))),
-        (
-            "list_trigger_executions",
-            Resource,
-            call(c.list_trigger_executions("t-1", None, None)),
-        ),
-        (
-            "create_agent",
-            Resource,
-            call(async move { c.create_agent(&Agent::new("a")).await }),
-        ),
-        ("get_agent", Resource, call(c.get_agent("a"))),
-        (
-            "list_agents",
-            Resource,
-            call(c.list_agents(None, None, None)),
-        ),
-        ("delete_agent", Nothing, call(c.delete_agent("a"))),
-        (
-            "create_environment",
-            Resource,
-            call(async move {
-                c.create_environment(&CreateEnvironmentRequest::from_environment("env-0"))
+                c.webhooks()
+                    .update("wh-1", &WebhookUpdate::new().with_name("n"))
                     .await
             }),
         ),
         (
-            "get_environment",
-            Resource,
-            call(c.get_environment("env-1")),
-        ),
-        (
-            "list_environments",
-            Resource,
-            call(c.list_environments(None, None)),
-        ),
-        (
-            "delete_environment",
+            "webhooks.delete",
             Nothing,
-            call(c.delete_environment("env-1")),
+            call(c.webhooks().delete("wh-1")),
+        ),
+        ("webhooks.ping", Nothing, call(c.webhooks().ping("wh-1"))),
+        (
+            "webhooks.rotate_signing_secret",
+            Resource,
+            call(c.webhooks().rotate_signing_secret("wh-1", None)),
         ),
         (
-            "list_environment_files",
+            "triggers.create",
             Resource,
-            call(c.list_environment_files("env-1", "", false, None, None)),
+            call(async move { c.triggers().create(&trigger_params()).await }),
+        ),
+        ("triggers.get", Resource, call(c.triggers().get("t-1"))),
+        ("triggers.list", Resource, call(c.triggers().list().send())),
+        (
+            "triggers.update",
+            Resource,
+            call(async move {
+                c.triggers()
+                    .update("t-1", &TriggerUpdate::new().with_display_name("n"))
+                    .await
+            }),
+        ),
+        ("triggers.delete", Nothing, call(c.triggers().delete("t-1"))),
+        ("triggers.run", Resource, call(c.triggers().run("t-1"))),
+        (
+            "triggers.list_executions",
+            Resource,
+            call(c.triggers().list_executions("t-1").send()),
         ),
         (
-            "upload_environment_file",
+            "agents.create",
             Resource,
-            call(c.upload_environment_file(
+            call(async move { c.agents().create(&Agent::new("a")).await }),
+        ),
+        ("agents.get", Resource, call(c.agents().get("a"))),
+        ("agents.list", Resource, call(c.agents().list().send())),
+        ("agents.delete", Nothing, call(c.agents().delete("a"))),
+        (
+            "environments.create",
+            Resource,
+            call(async move {
+                c.environments()
+                    .create(&CreateEnvironmentRequest::from_environment("env-0"))
+                    .await
+            }),
+        ),
+        (
+            "environments.get",
+            Resource,
+            call(c.environments().get("env-1")),
+        ),
+        (
+            "environments.list",
+            Resource,
+            call(c.environments().list().send()),
+        ),
+        (
+            "environments.delete",
+            Nothing,
+            call(c.environments().delete("env-1")),
+        ),
+        (
+            "environments.files.list",
+            Resource,
+            call(c.environments().files().list("env-1", "").send()),
+        ),
+        (
+            "environments.files.upload",
+            Resource,
+            call(c.environments().files().upload(
                 "env-1",
                 "a.txt",
-                b"x".to_vec(),
-                "text/plain",
-                EnvironmentFileUpload::default(),
+                EnvironmentFileUpload::new(b"x".to_vec(), "text/plain"),
             )),
         ),
         (
-            "create_credential",
+            "credentials.create",
             Resource,
             call(async move {
-                c.create_credential(&CreateCredentialRequest::bearer_token("t"))
-                    .await
-            }),
-        ),
-        ("get_credential", Resource, call(c.get_credential("cred-1"))),
-        (
-            "list_credentials",
-            Resource,
-            call(c.list_credentials(None, None)),
-        ),
-        (
-            "update_credential",
-            Resource,
-            call(async move {
-                c.update_credential(
-                    "cred-1",
-                    &CredentialUpdate::new(CredentialType::BearerToken),
-                    None,
-                )
-                .await
-            }),
-        ),
-        (
-            "delete_credential",
-            Nothing,
-            call(c.delete_credential("cred-1")),
-        ),
-        (
-            "list_voices",
-            Resource,
-            call(async move { c.list_voices(&ListVoicesParams::new()).await }),
-        ),
-        ("get_voice", Resource, call(c.get_voice("achernar"))),
-        (
-            "create_voice",
-            Resource,
-            call(async move { c.create_voice(&CreateVoiceRequest::prompted("p")).await }),
-        ),
-        ("delete_voice", Nothing, call(c.delete_voice("voice_1"))),
-        (
-            "create_file_search_store",
-            Resource,
-            call(async move {
-                c.create_file_search_store(&CreateFileSearchStoreRequest::new())
+                c.credentials()
+                    .create(&CreateCredentialRequest::bearer_token("t"))
                     .await
             }),
         ),
         (
-            "get_file_search_store",
+            "credentials.get",
             Resource,
-            call(c.get_file_search_store(STORE)),
+            call(c.credentials().get("cred-1")),
         ),
         (
-            "list_file_search_stores",
+            "credentials.list",
             Resource,
-            call(c.list_file_search_stores(None, None)),
+            call(c.credentials().list().send()),
         ),
         (
-            "delete_file_search_store",
+            "credentials.update",
+            Resource,
+            call(async move {
+                c.credentials()
+                    .update(
+                        "cred-1",
+                        &CredentialUpdate::new(CredentialType::BearerToken),
+                    )
+                    .await
+            }),
+        ),
+        (
+            "credentials.delete",
             Nothing,
-            call(c.delete_file_search_store(STORE, true)),
+            call(c.credentials().delete("cred-1")),
         ),
+        ("voices.list", Resource, call(c.voices().list().send())),
+        ("voices.get", Resource, call(c.voices().get("voice_1"))),
         (
-            "list_file_search_documents",
+            "voices.create",
             Resource,
-            call(c.list_file_search_documents(STORE, None, None)),
+            call(async move { c.voices().create(&CreateVoiceRequest::prompted("p")).await }),
         ),
+        ("voices.delete", Nothing, call(c.voices().delete("voice_1"))),
         (
-            "get_file_search_document",
+            "file_search_stores.create",
             Resource,
-            call(c.get_file_search_document(DOC)),
+            call(async move {
+                c.file_search_stores()
+                    .create(&CreateFileSearchStoreRequest::new())
+                    .await
+            }),
         ),
         (
-            "delete_file_search_document",
+            "file_search_stores.get",
+            Resource,
+            call(c.file_search_stores().get(STORE)),
+        ),
+        (
+            "file_search_stores.list",
+            Resource,
+            call(c.file_search_stores().list().send()),
+        ),
+        (
+            "file_search_stores.delete",
             Nothing,
-            call(c.delete_file_search_document(DOC, true)),
-        ),
-        ("get_file", Resource, call(c.get_file("files/abc"))),
-        ("list_files", Resource, call(c.list_files(None, None))),
-        ("delete_file", Nothing, call(c.delete_file("files/abc"))),
-        (
-            "get_interaction",
-            Resource,
-            call(c.get_interaction("int-1")),
+            call(c.file_search_stores().delete(STORE)),
         ),
         (
-            "get_interaction_with_input",
-            Resource,
-            call(c.get_interaction_with_input("int-1")),
-        ),
-        (
-            "delete_interaction",
+            "file_search_stores.force_delete",
             Nothing,
-            call(c.delete_interaction("int-1")),
+            call(c.file_search_stores().force_delete(STORE)),
         ),
         (
-            "cancel_interaction",
+            "file_search_stores.documents.list",
             Resource,
-            call(c.cancel_interaction("int-1")),
+            call(c.file_search_stores().documents().list(STORE).send()),
+        ),
+        (
+            "file_search_stores.documents.get",
+            Resource,
+            call(c.file_search_stores().documents().get(DOC)),
+        ),
+        (
+            "file_search_stores.documents.delete",
+            Nothing,
+            call(c.file_search_stores().documents().delete(DOC)),
+        ),
+        (
+            "file_search_stores.documents.force_delete",
+            Nothing,
+            call(c.file_search_stores().documents().force_delete(DOC)),
+        ),
+        ("files.get", Resource, call(c.files().get("files/abc"))),
+        ("files.list", Resource, call(c.files().list().send())),
+        ("files.delete", Nothing, call(c.files().delete("files/abc"))),
+        (
+            "interactions.get",
+            Resource,
+            call(c.interactions().get("int-1")),
+        ),
+        (
+            "interactions.get_with_input",
+            Resource,
+            call(c.interactions().get_with_input("int-1")),
+        ),
+        (
+            "interactions.delete",
+            Nothing,
+            call(c.interactions().delete("int-1")),
+        ),
+        (
+            "interactions.cancel",
+            Resource,
+            call(c.interactions().cancel("int-1")),
         ),
         // A stream's first item; a body without SSE frames is just empty.
         (
-            "get_interaction_stream",
+            "interactions.stream",
             Nothing,
             call(async move {
-                match c.get_interaction_stream("int-1", None).next().await {
+                match c.interactions().stream("int-1").next().await {
                     Some(item) => item.map(drop),
                     None => Ok(()),
                 }
@@ -409,27 +425,38 @@ async fn webhook_endpoints_send_the_documented_requests() {
                     "name": "hook"
                 })),
                 async move {
-                    c.create_webhook(
-                        &Webhook::new(
-                            "https://example.com/hook",
-                            vec![
-                                WebhookEvent::InteractionCompleted,
-                                WebhookEvent::BatchFailed,
-                            ],
+                    c.webhooks()
+                        .create(
+                            &Webhook::new(
+                                "https://example.com/hook",
+                                vec![
+                                    WebhookEvent::InteractionCompleted,
+                                    WebhookEvent::BatchFailed,
+                                ],
+                            )
+                            .with_name("hook"),
                         )
-                        .with_name("hook"),
-                    )
-                    .await
+                        .await
                 },
             ),
-            wire("GET", "/v1beta/webhooks/wh-1", None, c.get_webhook("wh-1")),
-            wire("GET", "/v1beta/webhooks", None, c.list_webhooks(None, None)),
+            wire(
+                "GET",
+                "/v1beta/webhooks/wh-1",
+                None,
+                c.webhooks().get("wh-1"),
+            ),
+            wire("GET", "/v1beta/webhooks", None, c.webhooks().list().send()),
             wire(
                 "GET",
                 "/v1beta/webhooks?page_size=5&page_token=a%2Fb%3D",
                 None,
-                c.list_webhooks(Some(5), Some("a/b=")),
+                c.webhooks()
+                    .list()
+                    .with_page_size(5)
+                    .with_page_token("a/b=")
+                    .send(),
             ),
+            // The mask rides in the query; the body holds only the fields.
             wire(
                 "PATCH",
                 "/v1beta/webhooks/wh-1?update_mask=uri%2Cstate",
@@ -437,8 +464,9 @@ async fn webhook_endpoints_send_the_documented_requests() {
                 async move {
                     let update = WebhookUpdate::new()
                         .with_uri("https://example.com/v2")
-                        .with_state(WebhookState::Disabled);
-                    c.update_webhook("wh-1", &update, Some("uri,state")).await
+                        .with_state(WebhookState::Disabled)
+                        .with_update_mask("uri,state");
+                    c.webhooks().update("wh-1", &update).await
                 },
             ),
             wire(
@@ -448,32 +476,32 @@ async fn webhook_endpoints_send_the_documented_requests() {
                 async move {
                     let update = WebhookUpdate::new()
                         .with_subscribed_events(vec![WebhookEvent::VideoGenerated]);
-                    c.update_webhook("wh-1", &update, None).await
+                    c.webhooks().update("wh-1", &update).await
                 },
             ),
             wire(
                 "DELETE",
                 "/v1beta/webhooks/wh-1",
                 None,
-                c.delete_webhook("wh-1"),
+                c.webhooks().delete("wh-1"),
             ),
             wire(
                 "POST",
                 "/v1beta/webhooks/wh-1:ping",
                 Some(json!({})),
-                c.ping_webhook("wh-1"),
+                c.webhooks().ping("wh-1"),
             ),
             wire(
                 "POST",
                 "/v1beta/webhooks/wh-1:rotateSigningSecret",
                 Some(json!({})),
-                c.rotate_webhook_signing_secret("wh-1", None),
+                c.webhooks().rotate_signing_secret("wh-1", None),
             ),
             wire(
                 "POST",
                 "/v1beta/webhooks/wh-1:rotateSigningSecret",
                 Some(json!({"revocation_behavior": "revoke_previous_secrets_immediately"})),
-                c.rotate_webhook_signing_secret(
+                c.webhooks().rotate_signing_secret(
                     "wh-1",
                     Some(RevocationBehavior::RevokePreviousSecretsImmediately),
                 ),
@@ -502,7 +530,8 @@ async fn webhook_create_response_parses_the_secret_and_preserves_unknowns() {
 
     let webhook = stub
         .client()
-        .create_webhook(&Webhook::new("https://example.com/hook", vec![]))
+        .webhooks()
+        .create(&Webhook::new("https://example.com/hook", vec![]))
         .await
         .unwrap();
 
@@ -545,7 +574,14 @@ async fn webhook_list_keeps_the_page_token_and_drops_only_undeserializable_entri
     )])
     .await;
 
-    let list = stub.client().list_webhooks(Some(3), None).await.unwrap();
+    let list = stub
+        .client()
+        .webhooks()
+        .list()
+        .with_page_size(3)
+        .send()
+        .await
+        .unwrap();
 
     let ids: Vec<_> = list
         .webhooks
@@ -568,6 +604,49 @@ async fn webhook_list_keeps_the_page_token_and_drops_only_undeserializable_entri
     assert_eq!(list.next_page_token.as_deref(), Some("page-2"));
 }
 
+#[tokio::test]
+async fn webhook_list_items_resend_raw_byte_page_tokens_percent_encoded() {
+    // Live webhook page tokens are raw bytes, control characters included
+    // (observed 2026-09-26: "rC\n\x19B\x17<name>\n&B$<id>"). The next
+    // request must carry them percent-encoded byte for byte, or the server
+    // restarts the list.
+    let token = "rC\n\u{19}B\u{17}hook-1\n&B$wh-1";
+    let stub = Stub::replying(vec![
+        Reply::json(
+            200,
+            json!({
+                "webhooks": [{"id": "wh-1", "uri": "https://a.example"}],
+                "next_page_token": token
+            }),
+        ),
+        Reply::json(
+            200,
+            json!({"webhooks": [{"id": "wh-2", "uri": "https://b.example"}]}),
+        ),
+    ])
+    .await;
+    let client = stub.client();
+
+    let webhooks: Vec<Webhook> = client
+        .webhooks()
+        .list()
+        .with_page_size(1)
+        .items()
+        .try_collect()
+        .await
+        .unwrap();
+
+    let ids: Vec<_> = webhooks.iter().filter_map(|w| w.id.as_deref()).collect();
+    assert_eq!(ids, ["wh-1", "wh-2"]);
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/webhooks?page_size=1",
+            "/v1beta/webhooks?page_size=1&page_token=rC%0A%19B%17hook-1%0A%26B%24wh-1",
+        ]
+    );
+}
+
 #[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
 async fn rotate_signing_secret_sends_unknown_behaviors_verbatim_and_returns_the_secret() {
@@ -578,7 +657,8 @@ async fn rotate_signing_secret_sends_unknown_behaviors_verbatim_and_returns_the_
 
     let rotated = stub
         .client()
-        .rotate_webhook_signing_secret("wh-1", Some(behavior))
+        .webhooks()
+        .rotate_signing_secret("wh-1", Some(behavior))
         .await
         .unwrap();
 
@@ -630,14 +710,19 @@ async fn trigger_endpoints_send_the_documented_requests() {
                     "execution_timeout_seconds": 600,
                     "labels": {"team": "ops"}
                 })),
-                async move { c.create_trigger(&params).await },
+                async move { c.triggers().create(&params).await },
             ),
-            wire("GET", "/v1beta/triggers/t-1", None, c.get_trigger("t-1")),
+            wire("GET", "/v1beta/triggers/t-1", None, c.triggers().get("t-1")),
+            wire("GET", "/v1beta/triggers", None, c.triggers().list().send()),
             wire(
                 "GET",
                 "/v1beta/triggers?page_size=10&page_token=p2",
                 None,
-                c.list_triggers(Some(10), Some("p2")),
+                c.triggers()
+                    .list()
+                    .with_page_size(10)
+                    .with_page_token("p2")
+                    .send(),
             ),
             // No update_mask: the spec defines none for triggers.
             wire(
@@ -648,38 +733,42 @@ async fn trigger_endpoints_send_the_documented_requests() {
                     let update = TriggerUpdate::new()
                         .with_display_name("renamed")
                         .with_status(TriggerStatus::Paused);
-                    c.update_trigger("t-1", &update).await
+                    c.triggers().update("t-1", &update).await
                 },
             ),
             wire(
                 "PATCH",
                 "/v1beta/triggers/t-1",
                 Some(json!({"status": "archived", "max_consecutive_failures": "5"})),
-                async move { c.update_trigger("t-1", &unknown_update).await },
+                async move { c.triggers().update("t-1", &unknown_update).await },
             ),
             wire(
                 "DELETE",
                 "/v1beta/triggers/t-1",
                 None,
-                c.delete_trigger("t-1"),
+                c.triggers().delete("t-1"),
             ),
             wire(
                 "POST",
                 "/v1beta/triggers/t-1/executions",
                 Some(json!({})),
-                c.run_trigger("t-1"),
+                c.triggers().run("t-1"),
             ),
             wire(
                 "GET",
                 "/v1beta/triggers/t-1/executions",
                 None,
-                c.list_trigger_executions("t-1", None, None),
+                c.triggers().list_executions("t-1").send(),
             ),
             wire(
                 "GET",
                 "/v1beta/triggers/t-1/executions?page_size=2&page_token=next",
                 None,
-                c.list_trigger_executions("t-1", Some(2), Some("next")),
+                c.triggers()
+                    .list_executions("t-1")
+                    .with_page_size(2)
+                    .with_page_token("next")
+                    .send(),
             ),
         ],
     )
@@ -709,7 +798,7 @@ async fn trigger_response_parses_string_counts_timestamp_aliases_and_sparse_inte
     )])
     .await;
 
-    let trigger = stub.client().get_trigger("t-1").await.unwrap();
+    let trigger = stub.client().triggers().get("t-1").await.unwrap();
 
     assert_eq!(trigger.status, Some(TriggerStatus::Active));
     assert_eq!(trigger.max_consecutive_failures, Some(3));
@@ -749,7 +838,7 @@ async fn trigger_list_preserves_unknown_statuses() {
     .await;
     let client = stub.client();
 
-    let list = client.list_triggers(None, None).await.unwrap();
+    let list = client.triggers().list().send().await.unwrap();
     assert_eq!(list.triggers[0].status, Some(TriggerStatus::Paused));
     let unknown = list.triggers[1].status.as_ref().unwrap();
     assert_eq!(unknown.unknown_status_type(), Some("suspended_by_billing"));
@@ -759,7 +848,7 @@ async fn trigger_list_preserves_unknown_statuses() {
     );
     assert_eq!(list.next_page_token.as_deref(), Some("p2"));
 
-    let empty = client.list_triggers(None, None).await.unwrap();
+    let empty = client.triggers().list().send().await.unwrap();
     assert!(empty.triggers.is_empty() && empty.next_page_token.is_none());
 }
 
@@ -790,7 +879,7 @@ async fn trigger_execution_responses_parse_under_both_list_keys() {
     .await;
     let client = stub.client();
 
-    let run = client.run_trigger("t-1").await.unwrap();
+    let run = client.triggers().run("t-1").await.unwrap();
     assert_eq!(run.interaction_id.as_deref(), Some("int-9"));
     assert_eq!(
         run.status.as_ref().unwrap().unknown_status_type(),
@@ -800,7 +889,9 @@ async fn trigger_execution_responses_parse_under_both_list_keys() {
     assert_eq!(run.extra["attempt"], 2);
 
     let spec_key = client
-        .list_trigger_executions("t-1", None, None)
+        .triggers()
+        .list_executions("t-1")
+        .send()
         .await
         .unwrap();
     assert_eq!(
@@ -810,12 +901,83 @@ async fn trigger_execution_responses_parse_under_both_list_keys() {
     assert_eq!(spec_key.next_page_token.as_deref(), Some("n"));
 
     let alias_key = client
-        .list_trigger_executions("t-1", None, None)
+        .triggers()
+        .list_executions("t-1")
+        .send()
         .await
         .unwrap();
     let execution = &alias_key.trigger_executions[0];
     assert_eq!(execution.status, Some(TriggerExecutionStatus::TimedOut));
     assert_eq!(execution.error.as_deref(), Some("deadline exceeded"));
+}
+
+#[tokio::test]
+async fn trigger_list_items_follow_every_page_with_the_page_size() {
+    let stub = Stub::replying(vec![
+        Reply::json(
+            200,
+            json!({"triggers": [{"id": "t-1"}, {"id": "t-2"}], "next_page_token": "p2"}),
+        ),
+        Reply::json(200, json!({"triggers": [{"id": "t-3"}]})),
+    ])
+    .await;
+    let client = stub.client();
+
+    let triggers: Vec<Trigger> = client
+        .triggers()
+        .list()
+        .with_page_size(2)
+        .items()
+        .try_collect()
+        .await
+        .unwrap();
+
+    let ids: Vec<_> = triggers.iter().filter_map(|t| t.id.as_deref()).collect();
+    assert_eq!(ids, ["t-1", "t-2", "t-3"]);
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/triggers?page_size=2",
+            "/v1beta/triggers?page_size=2&page_token=p2",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn trigger_execution_items_resend_the_trigger_and_page_size_on_every_page() {
+    let stub = Stub::replying(vec![
+        Reply::json(
+            200,
+            json!({
+                "trigger_executions": [{"id": "e1"}, {"id": "e2"}],
+                "next_page_token": "p2"
+            }),
+        ),
+        // The path-segment spelling of the envelope key, on a later page.
+        Reply::json(200, json!({"executions": [{"id": "e3"}]})),
+    ])
+    .await;
+    let client = stub.client();
+
+    let executions: Vec<TriggerExecution> = client
+        .triggers()
+        .list_executions("t/1")
+        .with_page_size(2)
+        .items()
+        .try_collect()
+        .await
+        .unwrap();
+
+    let ids: Vec<_> = executions.iter().filter_map(|e| e.id.as_deref()).collect();
+    assert_eq!(ids, ["e1", "e2", "e3"]);
+    // The owned trigger ID is encoded into every page's path.
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/triggers/t%2F1/executions?page_size=2",
+            "/v1beta/triggers/t%2F1/executions?page_size=2&page_token=p2",
+        ]
+    );
 }
 
 // =============================================================================
@@ -848,39 +1010,39 @@ async fn agent_endpoints_send_the_documented_requests() {
                         .with_description("A test agent")
                         .add_tool(Tool::CodeExecution)
                         .with_base_environment("env-1");
-                    c.create_agent(&agent).await
+                    c.agents().create(&agent).await
                 },
             ),
             wire(
                 "GET",
                 "/v1beta/agents/my-agent",
                 None,
-                c.get_agent("my-agent"),
+                c.agents().get("my-agent"),
             ),
-            wire(
-                "GET",
-                "/v1beta/agents",
-                None,
-                c.list_agents(None, None, None),
-            ),
+            wire("GET", "/v1beta/agents", None, c.agents().list().send()),
             wire(
                 "GET",
                 "/v1beta/agents?page_size=5&page_token=t&parent=projects%2Fp%201",
                 None,
-                c.list_agents(Some(5), Some("t"), Some("projects/p 1")),
+                c.agents()
+                    .list()
+                    .with_page_size(5)
+                    .with_page_token("t")
+                    .with_parent("projects/p 1")
+                    .send(),
             ),
             // With no paging, the filter takes the leading `?`.
             wire(
                 "GET",
                 "/v1beta/agents?parent=p",
                 None,
-                c.list_agents(None, None, Some("p")),
+                c.agents().list().with_parent("p").send(),
             ),
             wire(
                 "DELETE",
                 "/v1beta/agents/my-agent",
                 None,
-                c.delete_agent("my-agent"),
+                c.agents().delete("my-agent"),
             ),
         ],
     )
@@ -906,7 +1068,7 @@ async fn agent_responses_parse_tools_and_preserve_unknown_environments() {
     .await;
     let client = stub.client();
 
-    let fetched = client.get_agent("my-agent").await.unwrap();
+    let fetched = client.agents().get("my-agent").await.unwrap();
     assert!(matches!(
         fetched.tools.as_deref(),
         Some([Tool::CodeExecution, Tool::UrlContext])
@@ -920,13 +1082,241 @@ async fn agent_responses_parse_tools_and_preserve_unknown_environments() {
         json!({"type": "gpu_sandbox", "accelerator": "l4"})
     );
 
-    let list = client.list_agents(None, None, None).await.unwrap();
+    let list = client.agents().list().send().await.unwrap();
     assert_eq!(list.agents.len(), 2);
     assert_eq!(
         list.agents[1].base_environment,
         Some(EnvironmentSpec::Id("env-9".to_string()))
     );
     assert_eq!(list.next_page_token.as_deref(), Some("p2"));
+}
+
+// =============================================================================
+// List paging: `.pages()` / `.items()` over the stub (D-016)
+// =============================================================================
+
+fn agents_page(ids: &[&str], next: Option<&str>) -> Reply {
+    let agents: Vec<Value> = ids.iter().map(|id| json!({"id": id})).collect();
+    let mut body = json!({"agents": agents});
+    if let Some(next) = next {
+        body["next_page_token"] = json!(next);
+    }
+    Reply::json(200, body)
+}
+
+fn agent_ids(agents: &[Agent]) -> Vec<&str> {
+    agents.iter().filter_map(|a| a.id.as_deref()).collect()
+}
+
+fn targets(stub: &Stub) -> Vec<String> {
+    stub.requests().into_iter().map(|r| r.target).collect()
+}
+
+#[tokio::test]
+async fn list_items_follow_every_page_and_resend_the_query() {
+    let stub = Stub::replying(vec![
+        agents_page(&["a1", "a2"], Some("p2")),
+        // An empty page with a token is followed, not taken as the end.
+        agents_page(&[], Some("p/3")),
+        agents_page(&["a3"], Some("")),
+    ])
+    .await;
+    let client = stub.client();
+
+    let agents: Vec<Agent> = client
+        .agents()
+        .list()
+        .with_page_size(2)
+        .with_parent("projects/p")
+        .items()
+        .try_collect()
+        .await
+        .unwrap();
+
+    assert_eq!(agent_ids(&agents), ["a1", "a2", "a3"]);
+    // Page size and filter ride on every page; only the token changes.
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/agents?page_size=2&parent=projects%2Fp",
+            "/v1beta/agents?page_size=2&page_token=p2&parent=projects%2Fp",
+            "/v1beta/agents?page_size=2&page_token=p%2F3&parent=projects%2Fp",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn list_pages_resume_from_with_page_token() {
+    let stub = Stub::replying(vec![
+        agents_page(&["a3"], Some("p3")),
+        agents_page(&["a4"], None),
+    ])
+    .await;
+    let client = stub.client();
+
+    let pages: Vec<_> = client
+        .agents()
+        .list()
+        .with_page_token("p2")
+        .pages()
+        .try_collect()
+        .await
+        .unwrap();
+
+    assert_eq!(pages.len(), 2);
+    assert_eq!(agent_ids(&pages[0].agents), ["a3"]);
+    assert_eq!(pages[1].next_page_token, None);
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/agents?page_token=p2",
+            "/v1beta/agents?page_token=p3"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn list_send_fetches_exactly_one_page() {
+    let stub = Stub::replying(vec![agents_page(&["a1"], Some("p2"))]).await;
+    let client = stub.client();
+
+    let page = client.agents().list().send().await.unwrap();
+
+    assert_eq!(agent_ids(&page.agents), ["a1"]);
+    assert_eq!(page.next_page_token.as_deref(), Some("p2"));
+    assert_eq!(targets(&stub), ["/v1beta/agents"]);
+}
+
+#[tokio::test]
+async fn list_items_stop_on_a_repeated_page_token() {
+    let stub = Stub::replying(vec![
+        agents_page(&["a1"], Some("same")),
+        agents_page(&["a2"], Some("same")),
+    ])
+    .await;
+    let client = stub.client();
+
+    let results: Vec<_> = client.agents().list().items().collect().await;
+
+    assert_eq!(results.len(), 3, "{results:?}");
+    assert_eq!(results[0].as_ref().unwrap().id.as_deref(), Some("a1"));
+    // The repeating page's items are still delivered, then the error.
+    assert_eq!(results[1].as_ref().unwrap().id.as_deref(), Some("a2"));
+    assert!(
+        matches!(&results[2], Err(GenaiError::MalformedResponse(m)) if m.contains("\"same\"")),
+        "{:?}",
+        results[2]
+    );
+    assert_eq!(
+        stub.requests().len(),
+        2,
+        "the repeated token is not fetched"
+    );
+}
+
+#[tokio::test]
+async fn list_items_end_at_the_first_error() {
+    // The stub answers a third request with 500, which would show up here.
+    let stub = Stub::replying(vec![agents_page(&["a1"], Some("p2")), not_found()]).await;
+    let client = stub.client();
+
+    let results: Vec<_> = client.agents().list().items().collect().await;
+
+    assert_eq!(results.len(), 2, "{results:?}");
+    assert!(results[0].is_ok());
+    assert!(
+        matches!(
+            results[1],
+            Err(GenaiError::Api {
+                status_code: 404,
+                ..
+            })
+        ),
+        "{:?}",
+        results[1]
+    );
+    assert_eq!(stub.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn list_streams_send_nothing_until_polled() {
+    let stub = Stub::replying(vec![agents_page(&["a1"], None)]).await;
+    let client = stub.client();
+
+    let mut items = client.agents().list().items();
+    let pages = client.agents().list().pages();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        stub.requests().is_empty(),
+        "a request before the first poll"
+    );
+
+    drop(pages);
+    let first = items.next().await.unwrap().unwrap();
+    assert_eq!(first.id.as_deref(), Some("a1"));
+    assert!(items.next().await.is_none());
+    assert_eq!(stub.requests().len(), 1);
+}
+
+/// Compile guard for D-016. Handle methods take `self`, so a call's future
+/// holds the client borrow rather than the temporary handle (an `&self`
+/// receiver fails these with E0515), and list streams own a client clone,
+/// so one built from a temporary client can be spawned.
+#[tokio::test]
+async fn handle_futures_and_list_streams_outlive_their_temporaries() {
+    fn assert_send<T: Send>(_: &T) {}
+
+    let stub = Stub::start(|request, _| {
+        if request.target.starts_with("/v1beta/agents?") || request.target == "/v1beta/agents" {
+            agents_page(&["listed"], None)
+        } else if let Some(id) = request.target.strip_prefix("/v1beta/files/") {
+            Reply::json(
+                200,
+                json!({"name": format!("files/{id}"), "mimeType": "text/plain"}),
+            )
+        } else {
+            let id = request.target.rsplit('/').next().unwrap_or_default();
+            Reply::json(200, json!({"id": id}))
+        }
+    })
+    .await;
+    let client = stub.client();
+    let c = &client;
+
+    let ids = ["a1".to_string(), "a2".to_string()];
+    let fetched = futures_util::future::join_all(ids.iter().map(|id| c.agents().get(id))).await;
+    let fetched: Vec<Agent> = fetched.into_iter().collect::<Result<_, _>>().unwrap();
+    assert_eq!(agent_ids(&fetched), ["a1", "a2"]);
+
+    let stored = c.agents().get("a3");
+    assert_send(&stored);
+    assert_eq!(stored.await.unwrap().id.as_deref(), Some("a3"));
+
+    let names = ["files/f1".to_string(), "files/f2".to_string()];
+    let files = futures_util::future::join_all(names.iter().map(|n| c.files().get(n))).await;
+    let files: Vec<FileMetadata> = files.into_iter().collect::<Result<_, _>>().unwrap();
+    assert_eq!(file_names(&files), ["files/f1", "files/f2"]);
+    let waiting = c.files().wait_until_active("files/f3", PollOptions::new());
+    assert_send(&waiting);
+    // A nested handle's future holds only the client borrow too.
+    let indexing = c
+        .file_search_stores()
+        .documents()
+        .wait_until_active(DOC, PollOptions::new());
+    assert_send(&indexing);
+    let documents = c.file_search_stores().documents().list(STORE).items();
+    assert_send(&documents);
+
+    // The client this stream came from is a temporary, gone before the
+    // stream is first polled on another task.
+    let items = stub.client().agents().list().items();
+    assert_send(&items);
+    let listed: Vec<Agent> = tokio::spawn(items.try_collect()).await.unwrap().unwrap();
+    assert_eq!(agent_ids(&listed), ["listed"]);
+
+    let pages = c.agents().list().with_page_size(1).pages();
+    let spawned = tokio::spawn(async move { pages.try_collect::<Vec<_>>().await });
+    assert_eq!(spawned.await.unwrap().unwrap().len(), 1);
 }
 
 // =============================================================================
@@ -961,7 +1351,7 @@ async fn environment_endpoints_send_the_documented_requests() {
                         .with_network(NetworkConfig::allowlist(vec![AllowlistEntry::new(
                             "pypi.org",
                         )]));
-                    c.create_environment(&request).await
+                    c.environments().create(&request).await
                 },
             ),
             // Fork: the whole body is the source environment.
@@ -970,7 +1360,8 @@ async fn environment_endpoints_send_the_documented_requests() {
                 "/v1beta/environments",
                 Some(json!({"from_environment": "env-1"})),
                 async move {
-                    c.create_environment(&CreateEnvironmentRequest::from_environment("env-1"))
+                    c.environments()
+                        .create(&CreateEnvironmentRequest::from_environment("env-1"))
                         .await
                 },
             ),
@@ -979,53 +1370,75 @@ async fn environment_endpoints_send_the_documented_requests() {
                 "/v1beta/environments",
                 Some(json!({"network": "disabled"})),
                 async move {
-                    c.create_environment(
-                        &CreateEnvironmentRequest::new().with_network(NetworkConfig::Disabled),
-                    )
-                    .await
+                    c.environments()
+                        .create(
+                            &CreateEnvironmentRequest::new().with_network(NetworkConfig::Disabled),
+                        )
+                        .await
                 },
             ),
             wire(
                 "GET",
                 "/v1beta/environments/env-1",
                 None,
-                c.get_environment("env-1"),
+                c.environments().get("env-1"),
             ),
             wire(
                 "GET",
                 "/v1beta/environments",
                 None,
-                c.list_environments(None, None),
+                c.environments().list().send(),
             ),
             wire(
                 "GET",
                 "/v1beta/environments?page_size=50&page_token=p%2B2",
                 None,
-                c.list_environments(Some(50), Some("p+2")),
+                c.environments()
+                    .list()
+                    .with_page_size(50)
+                    .with_page_token("p+2")
+                    .send(),
             ),
             wire(
                 "DELETE",
                 "/v1beta/environments/env-1",
                 None,
-                c.delete_environment("env-1"),
+                c.environments().delete("env-1"),
             ),
             wire(
                 "GET",
                 "/v1beta/environments/env-1/files/",
                 None,
-                c.list_environment_files("env-1", "", false, None, None),
+                c.environments().files().list("env-1", "").send(),
             ),
             wire(
                 "GET",
                 "/v1beta/environments/env-1/files/src/",
                 None,
-                c.list_environment_files("env-1", "src/", false, None, None),
+                c.environments().files().list("env-1", "src/").send(),
+            ),
+            // `with_recursive(false)` sends nothing, like the default.
+            wire(
+                "GET",
+                "/v1beta/environments/env-1/files/src",
+                None,
+                c.environments()
+                    .files()
+                    .list("env-1", "src")
+                    .with_recursive(false)
+                    .send(),
             ),
             wire(
                 "GET",
                 "/v1beta/environments/env-1/files/src/my%20file.py?page_size=5&page_token=t&recursive=true",
                 None,
-                c.list_environment_files("env-1", "/src/my file.py", true, Some(5), Some("t")),
+                c.environments()
+                    .files()
+                    .list("env-1", "/src/my file.py")
+                    .with_recursive(true)
+                    .with_page_size(5)
+                    .with_page_token("t")
+                    .send(),
             ),
         ],
     )
@@ -1055,7 +1468,7 @@ async fn environment_response_parses_string_counts_and_preserves_unknowns() {
     )])
     .await;
 
-    let env = stub.client().get_environment("env-1").await.unwrap();
+    let env = stub.client().environments().get("env-1").await.unwrap();
 
     assert_eq!(env.id.as_deref(), Some("38aac1ae7f30fe9bd67afe42382ea041"));
     let status = env.status.as_ref().unwrap();
@@ -1103,7 +1516,7 @@ async fn environment_list_parses_pages_and_the_empty_object() {
     .await;
     let client = stub.client();
 
-    let list = client.list_environments(None, None).await.unwrap();
+    let list = client.environments().list().send().await.unwrap();
     let statuses: Vec<_> = list
         .environments
         .iter()
@@ -1115,8 +1528,91 @@ async fn environment_list_parses_pages_and_the_empty_object() {
     );
     assert_eq!(list.next_page_token.as_deref(), Some("p2"));
 
-    let empty = client.list_environments(None, None).await.unwrap();
+    let empty = client.environments().list().send().await.unwrap();
     assert!(empty.environments.is_empty());
+}
+
+/// The live shape at `page_size=1` (2026-09-26): an empty page with a
+/// token mid-list, and no token on the last page.
+#[tokio::test]
+async fn environment_list_items_follow_every_page_with_the_page_size() {
+    let stub = Stub::replying(vec![
+        Reply::json(
+            200,
+            json!({"environments": [{"id": "e1"}], "next_page_token": "cjUKD4IB"}),
+        ),
+        Reply::json(
+            200,
+            json!({"environments": [], "next_page_token": "chUKDoIB"}),
+        ),
+        Reply::json(200, json!({"environments": [{"id": "e2"}]})),
+    ])
+    .await;
+    let client = stub.client();
+
+    let environments: Vec<genai_rs::Environment> = client
+        .environments()
+        .list()
+        .with_page_size(1)
+        .items()
+        .try_collect()
+        .await
+        .unwrap();
+
+    let ids: Vec<_> = environments
+        .iter()
+        .filter_map(|e| e.id.as_deref())
+        .collect();
+    assert_eq!(ids, ["e1", "e2"]);
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/environments?page_size=1",
+            "/v1beta/environments?page_size=1&page_token=cjUKD4IB",
+            "/v1beta/environments?page_size=1&page_token=chUKDoIB",
+        ]
+    );
+}
+
+/// Live, the file listing's token is an offset, and a page token sent
+/// without `recursive=true` lists something else (`{}`, 2026-09-26), so the
+/// flag must ride on every page with the path and page size.
+#[tokio::test]
+async fn environment_file_items_resend_the_path_recursive_and_page_size_on_every_page() {
+    let stub = Stub::replying(vec![
+        Reply::json(
+            200,
+            json!({
+                "files": [{"path": "probe", "type": "DIRECTORY"}, {"path": "probe/a.txt", "type": "FILE"}],
+                "next_page_token": "2"
+            }),
+        ),
+        Reply::json(200, json!({"files": [{"path": "probe/b c.txt", "type": "FILE"}]})),
+    ])
+    .await;
+    let client = stub.client();
+
+    let files: Vec<genai_rs::EnvironmentFile> = client
+        .environments()
+        .files()
+        .list("env/1", "dir name")
+        .with_recursive(true)
+        .with_page_size(2)
+        .items()
+        .try_collect()
+        .await
+        .unwrap();
+
+    let paths: Vec<_> = files.iter().filter_map(|f| f.path.as_deref()).collect();
+    assert_eq!(paths, ["probe", "probe/a.txt", "probe/b c.txt"]);
+    // The owned environment ID and path are encoded into every page's path.
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/environments/env%2F1/files/dir%20name?page_size=2&recursive=true",
+            "/v1beta/environments/env%2F1/files/dir%20name?page_size=2&page_token=2&recursive=true",
+        ]
+    );
 }
 
 #[cfg(not(feature = "strict-unknown"))]
@@ -1138,7 +1634,11 @@ async fn environment_file_list_parses_uppercase_types_and_preserves_unknowns() {
 
     let list = stub
         .client()
-        .list_environment_files("env-1", "", true, None, None)
+        .environments()
+        .files()
+        .list("env-1", "")
+        .with_recursive(true)
+        .send()
         .await
         .unwrap();
 
@@ -1160,7 +1660,7 @@ async fn environment_file_list_parses_uppercase_types_and_preserves_unknowns() {
 }
 
 #[tokio::test]
-async fn upload_environment_file_starts_a_session_then_finalizes() {
+async fn environment_file_upload_starts_a_session_then_finalizes() {
     let stub = Stub::replying(vec![
         Reply::json(200, json!({})).header("x-goog-upload-url", "{base}/upload-session/env-1"),
         Reply::json(
@@ -1172,15 +1672,14 @@ async fn upload_environment_file_starts_a_session_then_finalizes() {
 
     let written = stub
         .client()
-        .upload_environment_file(
+        .environments()
+        .files()
+        .upload(
             "env-1",
             "data/in.csv",
-            b"a,b\n1,2\n".to_vec(),
-            "text/csv",
-            EnvironmentFileUpload {
-                overwrite: true,
-                extract: true,
-            },
+            EnvironmentFileUpload::new(b"a,b\n1,2\n".to_vec(), "text/csv")
+                .with_overwrite(true)
+                .with_extract(true),
         )
         .await
         .unwrap();
@@ -1218,7 +1717,7 @@ async fn upload_environment_file_starts_a_session_then_finalizes() {
 }
 
 #[tokio::test]
-async fn upload_environment_file_without_options_sends_no_query() {
+async fn environment_file_upload_without_options_sends_no_query() {
     let stub = Stub::replying(vec![
         Reply::json(200, json!({})).header("x-goog-upload-url", "{base}/upload-session/2"),
         Reply::json(200, json!({"files": []})),
@@ -1226,12 +1725,12 @@ async fn upload_environment_file_without_options_sends_no_query() {
     .await;
 
     stub.client()
-        .upload_environment_file(
+        .environments()
+        .files()
+        .upload(
             "env-1",
             "/notes/a b.txt",
-            b"hi".to_vec(),
-            "text/plain",
-            EnvironmentFileUpload::default(),
+            EnvironmentFileUpload::new(b"hi".to_vec(), "text/plain"),
         )
         .await
         .unwrap();
@@ -1244,17 +1743,17 @@ async fn upload_environment_file_without_options_sends_no_query() {
 }
 
 #[tokio::test]
-async fn upload_environment_file_without_session_url_is_malformed_response() {
+async fn environment_file_upload_without_session_url_is_malformed_response() {
     let stub = Stub::replying(vec![Reply::json(200, json!({}))]).await;
 
     let err = stub
         .client()
-        .upload_environment_file(
+        .environments()
+        .files()
+        .upload(
             "env-1",
             "a.txt",
-            b"hi".to_vec(),
-            "text/plain",
-            EnvironmentFileUpload::default(),
+            EnvironmentFileUpload::new(b"hi".to_vec(), "text/plain"),
         )
         .await
         .unwrap_err();
@@ -1264,49 +1763,89 @@ async fn upload_environment_file_without_session_url_is_malformed_response() {
     assert_eq!(stub.requests().len(), 1, "no bytes without a session");
 }
 
+/// A missing environment is rejected at the start (live 2026-09-26).
 #[tokio::test]
-async fn upload_environment_file_start_rejection_stops_before_the_bytes() {
+async fn environment_file_upload_start_rejection_stops_before_the_bytes() {
     let stub = Stub::replying(vec![Reply::json(
-        409,
-        json!({"error": {"message": "File already exists: a.txt", "code": "already_exists"}}),
+        404,
+        json!({"error": {"message": "Requested entity was not found.", "code": "not_found"}}),
     )])
     .await;
 
     let err = stub
         .client()
-        .upload_environment_file(
+        .environments()
+        .files()
+        .upload(
             "env-1",
             "a.txt",
-            b"hi".to_vec(),
-            "text/plain",
-            EnvironmentFileUpload::default(),
+            EnvironmentFileUpload::new(b"hi".to_vec(), "text/plain"),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(&err, GenaiError::Api { status_code: 404, message, .. }
+            if message == "not_found: Requested entity was not found."),
+        "{err:?}"
+    );
+    assert_eq!(stub.requests().len(), 1);
+}
+
+/// An existing file without `overwrite` is rejected only when the bytes are
+/// finalized (live 2026-09-26).
+#[tokio::test]
+async fn environment_file_upload_conflict_surfaces_from_the_finalizing_request() {
+    let stub = Stub::replying(vec![
+        Reply::json(200, json!({})).header("x-goog-upload-url", "{base}/upload-session/3"),
+        Reply::json(
+            409,
+            json!({"error": {"message": "Requested entity already exists", "code": "aborted"}}),
+        ),
+    ])
+    .await;
+
+    let err = stub
+        .client()
+        .environments()
+        .files()
+        .upload(
+            "env-1",
+            "a.txt",
+            EnvironmentFileUpload::new(b"hi".to_vec(), "text/plain"),
         )
         .await
         .unwrap_err();
 
     assert!(
         matches!(&err, GenaiError::Api { status_code: 409, message, .. }
-            if message == "already_exists: File already exists: a.txt"),
+            if message == "aborted: Requested entity already exists"),
         "{err:?}"
     );
-    assert_eq!(stub.requests().len(), 1);
+    let [start, finish] = stub.requests().try_into().unwrap();
+    assert_eq!(
+        start.target,
+        "/upload/v1beta/environments/env-1/files/a.txt"
+    );
+    assert_eq!(finish.target, "/upload-session/3");
+    assert_eq!(finish.body, b"hi");
 }
 
 /// `RequestBuilder::header` would defer an unheaderable value to `send()`
 /// as `GenaiError::Http`, which `is_retryable()` calls transient, so a retry
 /// loop would spin on input that can never succeed.
 #[tokio::test]
-async fn upload_environment_file_rejects_an_unheaderable_mime_type_as_invalid_input() {
+async fn environment_file_upload_rejects_an_unheaderable_mime_type_as_invalid_input() {
     let stub = Stub::replying(vec![]).await;
 
     let err = stub
         .client()
-        .upload_environment_file(
+        .environments()
+        .files()
+        .upload(
             "env-1",
             "a.txt",
-            b"x".to_vec(),
-            "text/plain\nX-Injected: 1",
-            EnvironmentFileUpload::default(),
+            EnvironmentFileUpload::new(b"x".to_vec(), "text/plain\nX-Injected: 1"),
         )
         .await
         .unwrap_err();
@@ -1318,12 +1857,16 @@ async fn upload_environment_file_rejects_an_unheaderable_mime_type_as_invalid_in
 
 /// The Files API upload validates its MIME type the same way.
 #[tokio::test]
-async fn upload_file_bytes_rejects_an_unheaderable_mime_type_as_invalid_input() {
+async fn files_upload_rejects_an_unheaderable_mime_type_as_invalid_input() {
     let stub = Stub::replying(vec![]).await;
 
     let err = stub
         .client()
-        .upload_file_bytes(b"x".to_vec(), "text/plain\nX-Injected: 1", None)
+        .files()
+        .upload(FileUpload::from_bytes(
+            b"x".to_vec(),
+            "text/plain\nX-Injected: 1",
+        ))
         .await
         .unwrap_err();
 
@@ -1352,56 +1895,80 @@ async fn file_search_store_endpoints_send_the_documented_requests() {
                     let request = CreateFileSearchStoreRequest::new()
                         .with_display_name("Docs")
                         .with_extra("embeddingModel", "models/text-embedding");
-                    c.create_file_search_store(&request).await
+                    c.file_search_stores().create(&request).await
                 },
             ),
             wire(
                 "GET",
                 "/v1beta/fileSearchStores/abc",
                 None,
-                c.get_file_search_store(STORE),
+                c.file_search_stores().get(STORE),
+            ),
+            wire(
+                "GET",
+                "/v1beta/fileSearchStores",
+                None,
+                c.file_search_stores().list().send(),
             ),
             wire(
                 "GET",
                 "/v1beta/fileSearchStores?page_size=20&page_token=t",
                 None,
-                c.list_file_search_stores(Some(20), Some("t")),
+                c.file_search_stores()
+                    .list()
+                    .with_page_size(20)
+                    .with_page_token("t")
+                    .send(),
             ),
             wire(
                 "DELETE",
                 "/v1beta/fileSearchStores/abc",
                 None,
-                c.delete_file_search_store(STORE, false),
+                c.file_search_stores().delete(STORE),
             ),
             wire(
                 "DELETE",
                 "/v1beta/fileSearchStores/abc?force=true",
                 None,
-                c.delete_file_search_store(STORE, true),
+                c.file_search_stores().force_delete(STORE),
             ),
             wire(
                 "GET",
                 "/v1beta/fileSearchStores/abc/documents?page_size=2",
                 None,
-                c.list_file_search_documents(STORE, Some(2), None),
+                c.file_search_stores()
+                    .documents()
+                    .list(STORE)
+                    .with_page_size(2)
+                    .send(),
+            ),
+            wire(
+                "GET",
+                "/v1beta/fileSearchStores/abc/documents?page_token=d2",
+                None,
+                c.file_search_stores()
+                    .documents()
+                    .list(STORE)
+                    .with_page_token("d2")
+                    .send(),
             ),
             wire(
                 "GET",
                 "/v1beta/fileSearchStores/abc/documents/doc-1",
                 None,
-                c.get_file_search_document(DOC),
+                c.file_search_stores().documents().get(DOC),
             ),
             wire(
                 "DELETE",
                 "/v1beta/fileSearchStores/abc/documents/doc-1",
                 None,
-                c.delete_file_search_document(DOC, false),
+                c.file_search_stores().documents().delete(DOC),
             ),
             wire(
                 "DELETE",
                 "/v1beta/fileSearchStores/abc/documents/doc-1?force=true",
                 None,
-                c.delete_file_search_document(DOC, true),
+                c.file_search_stores().documents().force_delete(DOC),
             ),
         ],
     )
@@ -1428,7 +1995,7 @@ async fn file_search_store_responses_are_camel_case_and_keep_extras() {
     .await;
     let client = stub.client();
 
-    let fetched = client.get_file_search_store(STORE).await.unwrap();
+    let fetched = client.file_search_stores().get(STORE).await.unwrap();
     assert_eq!(fetched.name, "fileSearchStores/abc");
     assert_eq!(fetched.display_name.as_deref(), Some("Docs"));
     assert_eq!(
@@ -1441,7 +2008,7 @@ async fn file_search_store_responses_are_camel_case_and_keep_extras() {
     assert_eq!(back["displayName"], "Docs");
     assert_eq!(back["activeDocumentsCount"], "3");
 
-    let list = client.list_file_search_stores(None, None).await.unwrap();
+    let list = client.file_search_stores().list().send().await.unwrap();
     let names: Vec<_> = list.stores.iter().map(|s| s.name.as_str()).collect();
     assert_eq!(names, ["fileSearchStores/abc", "fileSearchStores/def"]);
     assert_eq!(list.next_page_token.as_deref(), Some("p2"));
@@ -1465,7 +2032,10 @@ async fn document_list_parses_states_sizes_and_unknown_states() {
 
     let list = stub
         .client()
-        .list_file_search_documents(STORE, None, None)
+        .file_search_stores()
+        .documents()
+        .list(STORE)
+        .send()
         .await
         .unwrap();
 
@@ -1481,6 +2051,159 @@ async fn document_list_parses_states_sizes_and_unknown_states() {
     assert_eq!(archived.unknown_state_type(), Some("STATE_ARCHIVED"));
     assert_eq!(serde_json::to_value(archived).unwrap(), "STATE_ARCHIVED");
     assert_eq!(list.next_page_token.as_deref(), Some("n"));
+}
+
+/// The live list shape at `page_size=1` (2026-09-27): oldest first,
+/// unpadded URL-safe base64 tokens, and no token on the last page.
+#[tokio::test]
+async fn file_search_store_list_items_follow_every_page_with_the_page_size() {
+    let store = |name: &str| json!({"name": name, "displayName": name});
+    let stub = Stub::replying(vec![
+        Reply::json(
+            200,
+            json!({
+                "fileSearchStores": [store("fileSearchStores/one-0pk6lx0oxgg5")],
+                "nextPageToken": "cjEKD4IBDAi07uHVBhColM-EAQoeQhxnZW5haXJzcHJvYmVjODEtMHBrNmx4MG94Z2c1"
+            }),
+        ),
+        Reply::json(
+            200,
+            json!({"fileSearchStores": [store("fileSearchStores/two-avyyk8egynb4")]}),
+        ),
+    ])
+    .await;
+
+    let stores: Vec<genai_rs::FileSearchStore> = stub
+        .client()
+        .file_search_stores()
+        .list()
+        .with_page_size(1)
+        .items()
+        .try_collect()
+        .await
+        .unwrap();
+
+    let names: Vec<_> = stores.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "fileSearchStores/one-0pk6lx0oxgg5",
+            "fileSearchStores/two-avyyk8egynb4"
+        ]
+    );
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/fileSearchStores?page_size=1",
+            "/v1beta/fileSearchStores?page_size=1&page_token=cjEKD4IBDAi07uHVBhColM-EAQoeQhxnZW5haXJzcHJvYmVjODEtMHBrNmx4MG94Z2c1",
+        ]
+    );
+}
+
+fn documents_page(ids: &[&str], next: Option<&str>) -> Reply {
+    let documents: Vec<Value> = ids
+        .iter()
+        .map(|id| json!({"name": format!("{STORE}/documents/{id}"), "state": "STATE_ACTIVE"}))
+        .collect();
+    let mut body = json!({"documents": documents});
+    if let Some(next) = next {
+        body["nextPageToken"] = json!(next);
+    }
+    Reply::json(200, body)
+}
+
+fn document_ids(documents: &[FileSearchDocument]) -> Vec<&str> {
+    documents
+        .iter()
+        .filter_map(|d| d.name.rsplit_once("/documents/").map(|(_, id)| id))
+        .collect()
+}
+
+#[tokio::test]
+async fn file_search_document_items_resend_the_store_and_page_size_on_every_page() {
+    let stub = Stub::replying(vec![
+        documents_page(
+            &["d1"],
+            Some("cigKD4IBDAjO7uHVBhCQ0MCZAwoVQhN1cGxvYWQtMDh2emdrdmdhcmhq"),
+        ),
+        // An empty page with a token is followed.
+        documents_page(&[], Some("p+3")),
+        documents_page(&["d2"], None),
+    ])
+    .await;
+
+    let documents: Vec<FileSearchDocument> = stub
+        .client()
+        .file_search_stores()
+        .documents()
+        .list(STORE)
+        .with_page_size(1)
+        .items()
+        .try_collect()
+        .await
+        .unwrap();
+
+    assert_eq!(document_ids(&documents), ["d1", "d2"]);
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/fileSearchStores/abc/documents?page_size=1",
+            "/v1beta/fileSearchStores/abc/documents?page_size=1&page_token=cigKD4IBDAjO7uHVBhCQ0MCZAwoVQhN1cGxvYWQtMDh2emdrdmdhcmhq",
+            "/v1beta/fileSearchStores/abc/documents?page_size=1&page_token=p%2B3",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn file_search_document_pages_resume_from_with_page_token() {
+    let stub = Stub::replying(vec![
+        documents_page(&["d3"], Some("p3")),
+        documents_page(&["d4"], None),
+    ])
+    .await;
+
+    let pages: Vec<_> = stub
+        .client()
+        .file_search_stores()
+        .documents()
+        .list(STORE)
+        .with_page_token("p2")
+        .pages()
+        .try_collect()
+        .await
+        .unwrap();
+
+    assert_eq!(pages.len(), 2);
+    assert_eq!(document_ids(&pages[0].documents), ["d3"]);
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/fileSearchStores/abc/documents?page_token=p2",
+            "/v1beta/fileSearchStores/abc/documents?page_token=p3"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn file_search_document_items_for_a_malformed_store_name_yield_only_the_error() {
+    let stub = Stub::replying(vec![]).await;
+
+    let results: Vec<_> = stub
+        .client()
+        .file_search_stores()
+        .documents()
+        .list("abc")
+        .items()
+        .collect()
+        .await;
+
+    assert_eq!(results.len(), 1, "{results:?}");
+    assert!(
+        matches!(&results[0], Err(GenaiError::InvalidInput(m)) if m.contains("fileSearchStores/<id>")),
+        "{:?}",
+        results[0]
+    );
+    assert!(stub.requests().is_empty());
 }
 
 /// The API's upload answer: an operation naming the created document.
@@ -1502,13 +2225,17 @@ fn temp_file(name: &str, contents: &[u8]) -> (tempfile::TempDir, std::path::Path
 }
 
 #[tokio::test]
-async fn upload_to_file_search_store_sends_raw_bytes_then_reads_the_document_back() {
+async fn file_search_store_path_upload_sends_raw_bytes_then_reads_the_document_back() {
     let stub = Stub::replying(vec![upload_operation(), document(Some("STATE_PENDING"))]).await;
     let (_dir, path) = temp_file("notes.txt", b"hello search");
 
     let doc = stub
         .client()
-        .upload_to_file_search_store(STORE, &path, Some("My Doc"))
+        .file_search_stores()
+        .upload(
+            STORE,
+            FileUpload::from_path(&path).with_display_name("My Doc"),
+        )
         .await
         .unwrap();
     assert_eq!(doc.name, DOC);
@@ -1535,12 +2262,16 @@ async fn upload_to_file_search_store_sends_raw_bytes_then_reads_the_document_bac
 }
 
 #[tokio::test]
-async fn upload_to_file_search_store_with_mime_and_no_display_name_sends_no_query() {
+async fn file_search_store_path_upload_with_a_mime_type_and_no_display_name_sends_no_query() {
     let stub = Stub::replying(vec![upload_operation(), document(None)]).await;
     let (_dir, path) = temp_file("report.data", b"# Report");
 
     stub.client()
-        .upload_to_file_search_store_with_mime(STORE, &path, None, "text/markdown")
+        .file_search_stores()
+        .upload(
+            STORE,
+            FileUpload::from_path(&path).with_mime_type("text/markdown"),
+        )
         .await
         .unwrap();
 
@@ -1550,14 +2281,70 @@ async fn upload_to_file_search_store_with_mime_and_no_display_name_sends_no_quer
         "/upload/v1beta/fileSearchStores/abc:uploadToFileSearchStore"
     );
     assert_eq!(requests[0].header("content-type"), Some("text/markdown"));
+    // Without `display_name` the API names the document after this header
+    // (live 2026-09-27), so a path upload is named after its file.
     assert_eq!(
         requests[0].header("x-goog-upload-file-name"),
         Some("report.data")
     );
 }
 
+/// In-memory uploads use the same raw protocol, verified live 2026-09-27.
+/// They send no file-name header: the API would take it as the display name.
 #[tokio::test]
-async fn upload_to_file_search_store_unresolved_operation_is_malformed_response() {
+async fn file_search_store_bytes_upload_sends_the_data_and_display_name_without_a_file_name() {
+    let stub = Stub::replying(vec![upload_operation(), document(Some("STATE_PENDING"))]).await;
+
+    let doc = stub
+        .client()
+        .file_search_stores()
+        .upload(
+            STORE,
+            FileUpload::from_bytes(b"in memory".to_vec(), "text/csv").with_display_name("Q4 memo"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(doc.name, DOC);
+
+    let [upload, read_back] = stub.requests().try_into().unwrap();
+    assert_eq!(
+        upload.target,
+        "/upload/v1beta/fileSearchStores/abc:uploadToFileSearchStore?display_name=Q4%20memo"
+    );
+    assert_eq!(upload.header("x-goog-upload-protocol"), Some("raw"));
+    assert_eq!(upload.header("x-goog-upload-file-name"), None);
+    assert_eq!(upload.header("content-type"), Some("text/csv"));
+    assert_eq!(upload.body, b"in memory");
+    assert_eq!(
+        read_back.target,
+        "/v1beta/fileSearchStores/abc/documents/doc-1"
+    );
+}
+
+#[tokio::test]
+async fn file_search_store_bytes_upload_without_a_display_name_sends_no_name_at_all() {
+    let stub = Stub::replying(vec![upload_operation(), document(None)]).await;
+
+    stub.client()
+        .file_search_stores()
+        .upload(
+            STORE,
+            FileUpload::from_bytes(b"unnamed".to_vec(), "text/plain"),
+        )
+        .await
+        .unwrap();
+
+    let upload = &stub.requests()[0];
+    assert_eq!(
+        upload.target,
+        "/upload/v1beta/fileSearchStores/abc:uploadToFileSearchStore"
+    );
+    assert_eq!(upload.header("x-goog-upload-file-name"), None);
+    assert_eq!(upload.body, b"unnamed");
+}
+
+#[tokio::test]
+async fn file_search_store_upload_unresolved_operation_is_malformed_response() {
     let stub = Stub::replying(vec![Reply::json(
         200,
         json!({"name": "fileSearchStores/abc/upload/operations/op-7", "done": false}),
@@ -1567,7 +2354,8 @@ async fn upload_to_file_search_store_unresolved_operation_is_malformed_response(
 
     let err = stub
         .client()
-        .upload_to_file_search_store(STORE, &path, None)
+        .file_search_stores()
+        .upload(STORE, FileUpload::from_path(&path))
         .await
         .unwrap_err();
 
@@ -1580,7 +2368,7 @@ async fn upload_to_file_search_store_unresolved_operation_is_malformed_response(
 }
 
 #[tokio::test]
-async fn upload_to_file_search_store_read_back_failure_names_the_document() {
+async fn file_search_store_upload_read_back_failure_names_the_document() {
     let unavailable = || {
         Reply::json(
             503,
@@ -1599,7 +2387,8 @@ async fn upload_to_file_search_store_read_back_failure_names_the_document() {
         let stub = Stub::replying(vec![upload_operation(), read_back]).await;
         let err = stub
             .client()
-            .upload_to_file_search_store(STORE, &path, None)
+            .file_search_stores()
+            .upload(STORE, FileUpload::from_path(&path))
             .await
             .unwrap_err();
 
@@ -1620,9 +2409,10 @@ async fn upload_to_file_search_store_read_back_failure_names_the_document() {
 }
 
 #[tokio::test]
-async fn upload_to_file_search_store_rejects_bad_input_before_any_request() {
+async fn file_search_store_upload_rejects_bad_input_before_any_request() {
     let stub = Stub::replying(vec![]).await;
     let client = stub.client();
+    let stores = client.file_search_stores();
     let (dir, text) = temp_file("notes.txt", b"hello");
     let empty = dir.path().join("empty.txt");
     std::fs::write(&empty, b"").unwrap();
@@ -1633,28 +2423,41 @@ async fn upload_to_file_search_store_rejects_bad_input_before_any_request() {
     let cases: Vec<(&str, Call<'_>)> = vec![
         (
             "empty file",
-            call(client.upload_to_file_search_store(STORE, &empty, None)),
+            call(stores.upload(STORE, FileUpload::from_path(&empty))),
         ),
         (
             "missing file",
-            call(client.upload_to_file_search_store(STORE, &missing, None)),
+            call(stores.upload(STORE, FileUpload::from_path(&missing))),
         ),
         (
             "unknown extension",
-            call(client.upload_to_file_search_store(STORE, &unknown_ext, None)),
+            call(stores.upload(STORE, FileUpload::from_path(&unknown_ext))),
         ),
         (
             "unheaderable mime type",
-            call(client.upload_to_file_search_store_with_mime(
+            call(stores.upload(
                 STORE,
-                &text,
-                None,
-                "text/plain\nX-Injected: 1",
+                FileUpload::from_path(&text).with_mime_type("text/plain\nX-Injected: 1"),
+            )),
+        ),
+        (
+            "empty bytes",
+            call(stores.upload(STORE, FileUpload::from_bytes(Vec::new(), "text/plain"))),
+        ),
+        (
+            "unheaderable mime type for bytes",
+            call(stores.upload(
+                STORE,
+                FileUpload::from_bytes(b"x".to_vec(), "text/plain\r\nX-Injected: 1"),
             )),
         ),
         (
             "bare store id",
-            call(client.upload_to_file_search_store("abc", &text, None)),
+            call(stores.upload("abc", FileUpload::from_path(&text))),
+        ),
+        (
+            "bare store id for bytes",
+            call(stores.upload("abc", FileUpload::from_bytes(b"x".to_vec(), "text/plain"))),
         ),
     ];
     for (label, call) in cases {
@@ -1672,16 +2475,21 @@ async fn wait_for_document(
     timeout: Duration,
 ) -> (Result<FileSearchDocument, GenaiError>, Vec<String>) {
     let stub = Stub::replying(replies).await;
+    let poll = PollOptions::new()
+        .with_timeout(timeout)
+        .with_poll_interval(Duration::from_millis(5));
     let result = stub
         .client()
-        .wait_for_document_active(DOC, Some(timeout), Some(Duration::from_millis(5)))
+        .file_search_stores()
+        .documents()
+        .wait_until_active(DOC, poll)
         .await;
     let targets = stub.requests().into_iter().map(|r| r.target).collect();
     (result, targets)
 }
 
 #[tokio::test]
-async fn wait_for_document_active_polls_until_active() {
+async fn document_wait_until_active_polls_until_active() {
     let (result, targets) = wait_for_document(
         vec![
             document(Some("STATE_PENDING")),
@@ -1702,7 +2510,7 @@ async fn wait_for_document_active_polls_until_active() {
 }
 
 #[tokio::test]
-async fn wait_for_document_active_failed_state_is_terminal() {
+async fn document_wait_until_active_failed_state_is_terminal() {
     let (result, targets) =
         wait_for_document(vec![document(Some("STATE_FAILED"))], Duration::from_secs(5)).await;
 
@@ -1714,16 +2522,17 @@ async fn wait_for_document_active_failed_state_is_terminal() {
 }
 
 #[tokio::test]
-async fn wait_for_document_active_times_out_with_the_last_state() {
+async fn document_wait_until_active_times_out_with_the_last_state() {
     let stub = Stub::start(|_, _| document(Some("STATE_PENDING"))).await;
+    let poll = PollOptions::new()
+        .with_timeout(Duration::from_millis(60))
+        .with_poll_interval(Duration::from_millis(10));
 
     let err = stub
         .client()
-        .wait_for_document_active(
-            DOC,
-            Some(Duration::from_millis(60)),
-            Some(Duration::from_millis(10)),
-        )
+        .file_search_stores()
+        .documents()
+        .wait_until_active(DOC, poll)
         .await
         .unwrap_err();
 
@@ -1740,7 +2549,7 @@ async fn wait_for_document_active_times_out_with_the_last_state() {
 
 #[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
-async fn wait_for_document_active_keeps_polling_through_unknown_and_missing_states() {
+async fn document_wait_until_active_keeps_polling_through_unknown_and_missing_states() {
     let (result, targets) = wait_for_document(
         vec![
             document(Some("STATE_REINDEXING")),
@@ -1756,7 +2565,7 @@ async fn wait_for_document_active_keeps_polling_through_unknown_and_missing_stat
 }
 
 #[tokio::test]
-async fn wait_for_document_active_propagates_api_errors() {
+async fn document_wait_until_active_propagates_api_errors() {
     let (result, targets) = wait_for_document(
         vec![document(Some("STATE_PENDING")), not_found()],
         Duration::from_secs(5),
@@ -1789,46 +2598,42 @@ async fn voice_endpoints_send_the_documented_requests() {
     assert_wire(
         &stub,
         vec![
-            wire(
-                "GET",
-                "/v1beta/voices",
-                None,
-                async move { c.list_voices(&ListVoicesParams::new()).await },
-            ),
+            wire("GET", "/v1beta/voices", None, c.voices().list().send()),
             wire(
                 "GET",
                 "/v1beta/voices?page_size=5&page_token=t%2F1&search=warm%20voice&gender=female\
                  &language_code=en-US&type=prebuilt&pitch=high",
                 None,
-                async move {
-                    let params = ListVoicesParams::new()
-                        .with_page_size(5)
-                        .with_page_token("t/1")
-                        .with_search("warm voice")
-                        .with_voice_type(VoiceType::Prebuilt)
-                        .with_gender("female")
-                        .with_language_code("en-US")
-                        .with_pitch(VoicePitch::High);
-                    c.list_voices(&params).await
-                },
+                c.voices()
+                    .list()
+                    .with_page_size(5)
+                    .with_page_token("t/1")
+                    .with_search("warm voice")
+                    .with_voice_type(VoiceType::Prebuilt)
+                    .with_gender("female")
+                    .with_language_code("en-US")
+                    .with_pitch(VoicePitch::High)
+                    .send(),
             ),
             wire(
                 "GET",
                 "/v1beta/voices?region_code=US&accent=General%20American&persona=Narrator\
                  &context=Content%20%26%20Media",
                 None,
-                async move {
-                    let params = ListVoicesParams {
-                        region_code: Some("US".into()),
-                        accent: Some("General American".into()),
-                        persona: Some("Narrator".into()),
-                        context: Some("Content & Media".into()),
-                        ..Default::default()
-                    };
-                    c.list_voices(&params).await
-                },
+                c.voices()
+                    .list()
+                    .with_region_code("US")
+                    .with_accent("General American")
+                    .with_persona("Narrator")
+                    .with_context("Content & Media")
+                    .send(),
             ),
-            wire("GET", "/v1beta/voices/achernar", None, c.get_voice("achernar")),
+            wire(
+                "GET",
+                "/v1beta/voices/voice_abc",
+                None,
+                c.voices().get("voice_abc"),
+            ),
             wire(
                 "POST",
                 "/v1beta/voices",
@@ -1839,7 +2644,7 @@ async fn voice_endpoints_send_the_documented_requests() {
                 async move {
                     let request =
                         CreateVoiceRequest::prompted("A warm storyteller.").with_display_name("teller");
-                    c.create_voice(&request).await
+                    c.voices().create(&request).await
                 },
             ),
             wire(
@@ -1858,14 +2663,14 @@ async fn voice_endpoints_send_the_documented_requests() {
                         VoiceAudio::new("Y25z", "audio/wav"),
                     )
                     .with_store(false);
-                    c.create_voice(&request).await
+                    c.voices().create(&request).await
                 },
             ),
             wire(
                 "DELETE",
                 "/v1beta/voices/voice_abc",
                 None,
-                c.delete_voice("voice_abc"),
+                c.voices().delete("voice_abc"),
             ),
         ],
     )
@@ -1890,11 +2695,7 @@ async fn voice_list_parses_prebuilt_voices_and_preserves_unknowns() {
     )])
     .await;
 
-    let list = stub
-        .client()
-        .list_voices(&ListVoicesParams::new())
-        .await
-        .unwrap();
+    let list = stub.client().voices().list().send().await.unwrap();
 
     let prebuilt = &list.voices[0];
     assert_eq!(prebuilt.voice_type, Some(VoiceType::Prebuilt));
@@ -1935,7 +2736,8 @@ async fn created_voice_parses_the_prompted_shape() {
 
     let voice = stub
         .client()
-        .create_voice(&CreateVoiceRequest::prompted(
+        .voices()
+        .create(&CreateVoiceRequest::prompted(
             "A calm, low-pitched robot narrator.",
         ))
         .await
@@ -1946,6 +2748,86 @@ async fn created_voice_parses_the_prompted_shape() {
     assert!(voice.expire_time.is_some());
     assert_eq!(voice.usage.unwrap().total_tokens, Some(1334));
     assert_eq!(voice.sample_audio.unwrap().data, "UklGRg==");
+}
+
+fn voices_page(ids: &[&str], next: Option<&str>) -> Reply {
+    let voices: Vec<Value> = ids
+        .iter()
+        .map(|id| json!({"id": id, "type": "prebuilt", "gender": "female"}))
+        .collect();
+    let mut body = json!({"voices": voices});
+    if let Some(next) = next {
+        body["next_page_token"] = json!(next);
+    }
+    Reply::json(200, body)
+}
+
+/// The live API rejects a page token sent without the filters of the
+/// request that returned it (400, 2026-09-27), so every page repeats them.
+/// The token is the live one for this query at `page_size=3`.
+#[tokio::test]
+async fn voice_list_items_resend_the_filters_and_page_size_on_every_page() {
+    const TOKEN: &str = "ETuWXCXs7pvKGAEiDWF1dG9ub2V8ZW4tVVM";
+    let stub = Stub::replying(vec![
+        voices_page(&["achernar", "aoede", "autonoe"], Some(TOKEN)),
+        voices_page(&["callirrhoe"], None),
+    ])
+    .await;
+    let client = stub.client();
+
+    let voices: Vec<Voice> = client
+        .voices()
+        .list()
+        .with_page_size(3)
+        .with_voice_type(VoiceType::Prebuilt)
+        .with_language_code("en-US")
+        .with_gender("female")
+        .items()
+        .try_collect()
+        .await
+        .unwrap();
+
+    let ids: Vec<_> = voices.iter().filter_map(|v| v.id.as_deref()).collect();
+    assert_eq!(ids, ["achernar", "aoede", "autonoe", "callirrhoe"]);
+    let query = "gender=female&language_code=en-US&type=prebuilt";
+    assert_eq!(
+        targets(&stub),
+        [
+            format!("/v1beta/voices?page_size=3&{query}"),
+            format!("/v1beta/voices?page_size=3&page_token={TOKEN}&{query}"),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn voice_list_pages_resume_from_with_page_token_with_the_filters() {
+    let stub = Stub::replying(vec![
+        voices_page(&["en-gb-storyteller-5"], Some("p3")),
+        voices_page(&[], None),
+    ])
+    .await;
+    let client = stub.client();
+
+    let pages: Vec<_> = client
+        .voices()
+        .list()
+        .with_search("narrator")
+        .with_page_token("p2")
+        .pages()
+        .try_collect()
+        .await
+        .unwrap();
+
+    assert_eq!(pages.len(), 2);
+    assert_eq!(pages[0].voices.len(), 1);
+    assert!(pages[1].voices.is_empty());
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/voices?page_token=p2&search=narrator",
+            "/v1beta/voices?page_token=p3&search=narrator",
+        ]
+    );
 }
 
 // =============================================================================
@@ -1977,7 +2859,7 @@ async fn credential_endpoints_send_the_documented_requests() {
                         prefix: Some("Bearer".into()),
                     })
                     .with_id("gh-token");
-                    c.create_credential(&request).await
+                    c.credentials().create(&request).await
                 },
             ),
             wire(
@@ -1993,7 +2875,7 @@ async fn credential_endpoints_send_the_documented_requests() {
                         "v4lue",
                         vec![InjectionLocation::Header, InjectionLocation::Query],
                     );
-                    c.create_credential(&request).await
+                    c.credentials().create(&request).await
                 },
             ),
             wire(
@@ -2015,30 +2897,35 @@ async fn credential_endpoints_send_the_documented_requests() {
                         token_url: "https://oauth.example/token".into(),
                         scopes: Some(vec!["repo".into()]),
                     });
-                    c.create_credential(&request).await
+                    c.credentials().create(&request).await
                 },
             ),
             wire(
                 "GET",
                 "/v1beta/credentials/gh-token",
                 None,
-                c.get_credential("gh-token"),
+                c.credentials().get("gh-token"),
             ),
             wire(
                 "GET",
                 "/v1beta/credentials?page_size=10&page_token=n",
                 None,
-                c.list_credentials(Some(10), Some("n")),
+                c.credentials()
+                    .list()
+                    .with_page_size(10)
+                    .with_page_token("n")
+                    .send(),
             ),
             wire(
                 "PATCH",
-                "/v1beta/credentials/gh-token?update_mask=token",
-                Some(json!({"type": "bearer_token", "token": "rotated"})),
+                "/v1beta/credentials/gh-token?update_mask=token%2Cprefix",
+                Some(json!({"type": "bearer_token", "token": "rotated", "prefix": ""})),
                 async move {
-                    let mut update = CredentialUpdate::new(CredentialType::BearerToken);
+                    let mut update = CredentialUpdate::new(CredentialType::BearerToken)
+                        .with_update_mask("token,prefix");
                     update.token = Some("rotated".into());
-                    c.update_credential("gh-token", &update, Some("token"))
-                        .await
+                    update.prefix = Some(String::new());
+                    c.credentials().update("gh-token", &update).await
                 },
             ),
             wire(
@@ -2048,14 +2935,14 @@ async fn credential_endpoints_send_the_documented_requests() {
                 async move {
                     let mut update = CredentialUpdate::new(CredentialType::EnvironmentVariable);
                     update.trusted_domains = Some(vec!["api.example".into()]);
-                    c.update_credential("gh-token", &update, None).await
+                    c.credentials().update("gh-token", &update).await
                 },
             ),
             wire(
                 "DELETE",
                 "/v1beta/credentials/gh-token",
                 None,
-                c.delete_credential("gh-token"),
+                c.credentials().delete("gh-token"),
             ),
         ],
     )
@@ -2078,7 +2965,7 @@ async fn credential_responses_parse_and_preserve_unknowns() {
     )])
     .await;
 
-    let list = stub.client().list_credentials(None, None).await.unwrap();
+    let list = stub.client().credentials().list().send().await.unwrap();
 
     let bearer = &list.credentials[0];
     assert_eq!(bearer.credential_type, Some(CredentialType::BearerToken));
@@ -2098,6 +2985,46 @@ async fn credential_responses_parse_and_preserve_unknowns() {
     );
     assert_eq!(ssh.extra["fingerprint"], "SHA256:abc");
     assert_eq!(list.next_page_token.as_deref(), Some("n"));
+}
+
+/// The live shape at `page_size=1` (2026-09-27): URL-safe base64 tokens,
+/// and no token on the last page.
+#[tokio::test]
+async fn credential_list_items_follow_every_page_with_the_page_size() {
+    let stub = Stub::replying(vec![
+        Reply::json(
+            200,
+            json!({
+                "credentials": [{"id": "cred-1", "type": "bearer_token"}],
+                "next_page_token": "cgoKCEIGY3JlZC0x"
+            }),
+        ),
+        Reply::json(
+            200,
+            json!({"credentials": [{"id": "cred-2", "type": "environment_variable"}]}),
+        ),
+    ])
+    .await;
+    let client = stub.client();
+
+    let credentials: Vec<genai_rs::Credential> = client
+        .credentials()
+        .list()
+        .with_page_size(1)
+        .items()
+        .try_collect()
+        .await
+        .unwrap();
+
+    let ids: Vec<_> = credentials.iter().filter_map(|c| c.id.as_deref()).collect();
+    assert_eq!(ids, ["cred-1", "cred-2"]);
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/credentials?page_size=1",
+            "/v1beta/credentials?page_size=1&page_token=cgoKCEIGY3JlZC0x",
+        ]
+    );
 }
 
 /// Set in the child process `loud_wire_redacts_credential_secrets` spawns.
@@ -2134,14 +3061,15 @@ async fn loud_wire_redacts_credential_secrets() {
             }),
         ];
         for request in &requests {
-            client.create_credential(request).await.unwrap();
+            client.credentials().create(request).await.unwrap();
         }
         let update = CredentialUpdate {
             value: Some(SECRETS[4].into()),
             ..CredentialUpdate::new(CredentialType::EnvironmentVariable)
         };
         client
-            .update_credential("cred-1", &update, None)
+            .credentials()
+            .update("cred-1", &update)
             .await
             .unwrap();
         return;
@@ -2188,25 +3116,25 @@ async fn interaction_endpoints_send_the_documented_requests() {
                 "GET",
                 "/v1beta/interactions/int-1",
                 None,
-                c.get_interaction("int-1"),
+                c.interactions().get("int-1"),
             ),
             wire(
                 "GET",
                 "/v1beta/interactions/int-1?include_input=true",
                 None,
-                c.get_interaction_with_input("int-1"),
+                c.interactions().get_with_input("int-1"),
             ),
             wire(
                 "DELETE",
                 "/v1beta/interactions/int-1",
                 None,
-                c.delete_interaction("int-1"),
+                c.interactions().delete("int-1"),
             ),
             wire(
                 "POST",
                 "/v1beta/interactions/int-1/cancel",
                 Some(json!({})),
-                c.cancel_interaction("int-1"),
+                c.interactions().cancel("int-1"),
             ),
         ],
     )
@@ -2234,7 +3162,7 @@ async fn interaction_response_preserves_unknown_status_input_and_extras() {
     .await;
     let client = stub.client();
 
-    let response = client.get_interaction_with_input("int-1").await.unwrap();
+    let response = client.interactions().get_with_input("int-1").await.unwrap();
     assert_eq!(
         response.status.unknown_status_type(),
         Some("paused_for_review")
@@ -2247,12 +3175,12 @@ async fn interaction_response_preserves_unknown_status_input_and_extras() {
     assert_eq!(back["status"], "paused_for_review");
     assert_eq!(back["region"], "eu");
 
-    let cancelled = client.cancel_interaction("int-1").await.unwrap();
+    let cancelled = client.interactions().cancel("int-1").await.unwrap();
     assert_eq!(cancelled.status, InteractionStatus::Cancelled);
 }
 
 #[tokio::test]
-async fn get_interaction_stream_without_resume_token_streams_the_lifecycle() {
+async fn interactions_stream_without_resume_token_streams_the_lifecycle() {
     let stub = Stub::replying(vec![Reply::sse(&[
         "data: {\"event_type\":\"interaction.created\",\"interaction\":{\"id\":\"int-1\",\"status\":\"in_progress\"},\"event_id\":\"e1\"}\n\n",
         "data: {\"event_type\":\"step.start\",\"index\":0,\"step\":{\"type\":\"model_output\",\"content\":[]},\"event_id\":\"e2\"}\n\n",
@@ -2264,7 +3192,8 @@ async fn get_interaction_stream_without_resume_token_streams_the_lifecycle() {
 
     let events: Vec<_> = stub
         .client()
-        .get_interaction_stream("int-1", None)
+        .interactions()
+        .stream("int-1")
         .map(Result::unwrap)
         .collect()
         .await;
@@ -2291,7 +3220,7 @@ async fn get_interaction_stream_without_resume_token_streams_the_lifecycle() {
 }
 
 #[tokio::test]
-async fn get_interaction_stream_preserves_unknown_events() {
+async fn interactions_stream_preserves_unknown_events() {
     let stub = Stub::replying(vec![Reply::sse(&[
         "data: {\"event_type\":\"interaction.paused\",\"reason\":\"maintenance\",\"event_id\":\"e9\"}\n\n",
     ])])
@@ -2299,7 +3228,8 @@ async fn get_interaction_stream_preserves_unknown_events() {
 
     let events: Vec<_> = stub
         .client()
-        .get_interaction_stream("int-1", Some("e8"))
+        .interactions()
+        .resume_stream("int-1", "e8")
         .collect()
         .await;
 
@@ -2312,14 +3242,10 @@ async fn get_interaction_stream_preserves_unknown_events() {
 }
 
 #[tokio::test]
-async fn get_interaction_stream_http_error_is_the_only_item() {
+async fn interactions_stream_http_error_is_the_only_item() {
     let stub = Stub::replying(vec![not_found()]).await;
 
-    let events: Vec<_> = stub
-        .client()
-        .get_interaction_stream("int-1", None)
-        .collect()
-        .await;
+    let events: Vec<_> = stub.client().interactions().stream("int-1").collect().await;
 
     assert!(
         matches!(
@@ -2331,13 +3257,49 @@ async fn get_interaction_stream_http_error_is_the_only_item() {
     );
 }
 
+#[tokio::test]
+async fn interactions_stream_is_lazy_owned_and_spawnable() {
+    fn assert_send<T: Send>(_: &T) {}
+
+    let stub = Stub::replying(vec![Reply::sse(&[
+        "data: {\"event_type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"b\"},\"event_id\":\"e2\"}\n\n",
+    ])])
+    .await;
+
+    // Built from a temporary client and ID, both gone before the first poll.
+    let stream = {
+        let id = String::from("int-1");
+        let last = String::from("e1");
+        stub.client().interactions().resume_stream(&id, &last)
+    };
+    assert_send(&stream);
+    assert!(stub.requests().is_empty(), "nothing is sent before a poll");
+
+    let events: Vec<_> = tokio::spawn(stream.collect::<Vec<_>>()).await.unwrap();
+    let [Ok(event)] = events.as_slice() else {
+        panic!("expected one event, got {events:?}");
+    };
+    assert_eq!(event.event_id.as_deref(), Some("e2"));
+    let [request] = stub.requests().try_into().unwrap();
+    assert_eq!(
+        request.target,
+        "/v1beta/interactions/int-1?alt=sse&stream=true&last_event_id=e1"
+    );
+
+    // A handle future holds only the client borrow, so it can be stored.
+    let client = stub.client();
+    let stored = client.interactions().get("int-1");
+    assert_send(&stored);
+    drop(stored);
+}
+
 // =============================================================================
 // Files API: metadata, list, delete, wait
 // =============================================================================
 
 /// A path upload streams the file as the finalize body, byte for byte.
 #[tokio::test]
-async fn upload_file_streams_the_file_from_disk_then_finalizes() {
+async fn files_upload_from_path_streams_the_file_from_disk_then_finalizes() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("notes.txt");
     // Under one 8 MB read buffer, but it spans many TCP writes, and the
@@ -2355,7 +3317,12 @@ async fn upload_file_streams_the_file_from_disk_then_finalizes() {
     ])
     .await;
 
-    let file = stub.client().upload_file(&path).await.unwrap();
+    let file = stub
+        .client()
+        .files()
+        .upload(FileUpload::from_path(&path))
+        .await
+        .unwrap();
     assert_eq!(file.name, "files/f1");
     assert_eq!(file.size_bytes_as_u64(), Some(data.len() as u64));
 
@@ -2394,29 +3361,174 @@ async fn files_endpoints_send_the_documented_requests() {
     assert_wire(
         &stub,
         vec![
-            wire("GET", "/v1beta/files/abc", None, c.get_file("files/abc")),
-            wire("GET", "/v1beta/files", None, c.list_files(None, None)),
+            wire("GET", "/v1beta/files/abc", None, c.files().get("files/abc")),
+            wire("GET", "/v1beta/files", None, c.files().list().send()),
             // The Files API spells its paging parameters in camelCase.
             wire(
                 "GET",
                 "/v1beta/files?pageSize=10&pageToken=a%2Bb",
                 None,
-                c.list_files(Some(10), Some("a+b")),
+                c.files()
+                    .list()
+                    .with_page_size(10)
+                    .with_page_token("a+b")
+                    .send(),
             ),
             wire(
                 "DELETE",
                 "/v1beta/files/abc",
                 None,
-                c.delete_file("files/abc"),
+                c.files().delete("files/abc"),
             ),
         ],
     )
     .await;
 }
 
+/// `with_mime_type` and `with_display_name` replace what a path upload
+/// would infer from the file name.
+#[tokio::test]
+async fn files_upload_from_path_sends_the_mime_type_and_display_name_set() {
+    let (_dir, path) = temp_file("data.xyz", b"hello");
+    let stub = Stub::replying(vec![
+        Reply::json(200, json!({})).header("x-goog-upload-url", "{base}/upload-session/f1"),
+        Reply::json(
+            200,
+            json!({"file": {"name": "files/f1", "mimeType": "application/octet-stream", "uri": "u"}}),
+        ),
+    ])
+    .await;
+
+    stub.client()
+        .files()
+        .upload(
+            FileUpload::from_path(&path)
+                .with_mime_type("application/octet-stream")
+                .with_display_name("Q4 data"),
+        )
+        .await
+        .unwrap();
+
+    let [start, finish] = stub.requests().try_into().unwrap();
+    assert_eq!(
+        start.header("x-goog-upload-header-content-type"),
+        Some("application/octet-stream")
+    );
+    assert_eq!(start.json(), json!({"file": {"displayName": "Q4 data"}}));
+    assert_eq!(finish.body, b"hello");
+}
+
+/// A bytes upload has no display name unless one is set.
+#[tokio::test]
+async fn files_upload_from_bytes_without_a_display_name_sends_empty_metadata() {
+    let stub = Stub::replying(vec![
+        Reply::json(200, json!({})).header("x-goog-upload-url", "{base}/upload-session/f1"),
+        Reply::json(
+            200,
+            json!({"file": {"name": "files/f1", "mimeType": "text/csv", "uri": "u"}}),
+        ),
+    ])
+    .await;
+
+    let file = stub
+        .client()
+        .files()
+        .upload(FileUpload::from_bytes(b"a,b\n".to_vec(), "text/csv"))
+        .await
+        .unwrap();
+
+    assert_eq!(file.name, "files/f1");
+    let [start, finish] = stub.requests().try_into().unwrap();
+    assert_eq!(
+        start.header("x-goog-upload-header-content-type"),
+        Some("text/csv")
+    );
+    assert_eq!(start.json(), json!({"file": {}}));
+    assert_eq!(finish.body, b"a,b\n");
+}
+
+fn files_page(names: &[&str], next: Option<&str>) -> Reply {
+    let files: Vec<Value> = names
+        .iter()
+        .map(|name| json!({"name": name, "mimeType": "text/plain", "uri": "u"}))
+        .collect();
+    let mut body = json!({"files": files});
+    if let Some(next) = next {
+        body["nextPageToken"] = json!(next);
+    }
+    Reply::json(200, body)
+}
+
+fn file_names(files: &[FileMetadata]) -> Vec<&str> {
+    files.iter().map(|f| f.name.as_str()).collect()
+}
+
+/// Files paging is camelCase both ways: `pageSize` / `pageToken` go out and
+/// `nextPageToken` comes back. The first token has the live shape
+/// (unpadded URL-safe base64, 2026-09-27).
+#[tokio::test]
+async fn file_list_items_resend_the_camel_case_page_size_on_every_page() {
+    let stub = Stub::replying(vec![
+        files_page(
+            &["files/b", "files/a"],
+            Some("ciAKDoIBCwjX2uHVBhDQ_75OCg5CDGJ2eXU4bHQ1dzZpcw"),
+        ),
+        // An empty page with a token is followed.
+        files_page(&[], Some("p+3")),
+        files_page(&["files/c"], None),
+    ])
+    .await;
+
+    let files: Vec<FileMetadata> = stub
+        .client()
+        .files()
+        .list()
+        .with_page_size(2)
+        .items()
+        .try_collect()
+        .await
+        .unwrap();
+
+    assert_eq!(file_names(&files), ["files/b", "files/a", "files/c"]);
+    assert_eq!(
+        targets(&stub),
+        [
+            "/v1beta/files?pageSize=2",
+            "/v1beta/files?pageSize=2&pageToken=ciAKDoIBCwjX2uHVBhDQ_75OCg5CDGJ2eXU4bHQ1dzZpcw",
+            "/v1beta/files?pageSize=2&pageToken=p%2B3",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn file_list_pages_resume_from_with_page_token() {
+    let stub = Stub::replying(vec![
+        files_page(&["files/c"], Some("p3")),
+        files_page(&["files/d"], None),
+    ])
+    .await;
+
+    let pages: Vec<_> = stub
+        .client()
+        .files()
+        .list()
+        .with_page_token("p2")
+        .pages()
+        .try_collect()
+        .await
+        .unwrap();
+
+    assert_eq!(pages.len(), 2);
+    assert_eq!(file_names(&pages[0].files), ["files/c"]);
+    assert_eq!(
+        targets(&stub),
+        ["/v1beta/files?pageToken=p2", "/v1beta/files?pageToken=p3"]
+    );
+}
+
 #[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
-async fn list_files_parses_metadata_and_preserves_unknown_states() {
+async fn file_list_parses_metadata_and_preserves_unknown_states() {
     let stub = Stub::replying(vec![Reply::json(
         200,
         json!({
@@ -2432,7 +3544,7 @@ async fn list_files_parses_metadata_and_preserves_unknown_states() {
     )])
     .await;
 
-    let list = stub.client().list_files(None, None).await.unwrap();
+    let list = stub.client().files().list().send().await.unwrap();
 
     let clip = &list.files[0];
     assert!(clip.is_active());
@@ -2454,14 +3566,17 @@ async fn list_files_parses_metadata_and_preserves_unknown_states() {
 }
 
 async fn wait_for_file(stub: &Stub, timeout: Duration) -> Result<FileMetadata, GenaiError> {
-    let metadata: FileMetadata = serde_json::from_value(file("PROCESSING")).unwrap();
+    let poll = PollOptions::new()
+        .with_poll_interval(Duration::from_millis(10))
+        .with_timeout(timeout);
     stub.client()
-        .wait_for_file_ready(&metadata, Duration::from_millis(10), timeout)
+        .files()
+        .wait_until_active("files/abc", poll)
         .await
 }
 
 #[tokio::test]
-async fn wait_for_file_ready_times_out_with_the_last_state() {
+async fn wait_until_active_times_out_with_the_last_state() {
     let stub = Stub::start(|_, _| Reply::json(200, file("PROCESSING"))).await;
 
     let err = wait_for_file(&stub, Duration::from_millis(60))
@@ -2477,7 +3592,7 @@ async fn wait_for_file_ready_times_out_with_the_last_state() {
 
 #[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
-async fn wait_for_file_ready_keeps_polling_through_unknown_states() {
+async fn wait_until_active_keeps_polling_through_unknown_states() {
     let stub = Stub::replying(vec![
         Reply::json(200, file("TRANSCODING")),
         Reply::json(200, file("ACTIVE")),
@@ -2491,7 +3606,7 @@ async fn wait_for_file_ready_keeps_polling_through_unknown_states() {
 }
 
 #[tokio::test]
-async fn wait_for_file_ready_propagates_api_errors() {
+async fn wait_until_active_propagates_api_errors() {
     let stub = Stub::replying(vec![Reply::json(200, file("PROCESSING")), not_found()]).await;
 
     let err = wait_for_file(&stub, Duration::from_secs(5))
@@ -2527,103 +3642,128 @@ async fn reserved_characters_in_ids_are_percent_encoded() {
                 "GET",
                 "/v1beta/webhooks/a%2Fb%3Fc%23d",
                 None,
-                c.get_webhook("a/b?c#d"),
+                c.webhooks().get("a/b?c#d"),
             ),
             // The colon verb stays outside the encoded ID.
             wire(
                 "POST",
                 "/v1beta/webhooks/wh%3A1:ping",
                 Some(json!({})),
-                c.ping_webhook("wh:1"),
+                c.webhooks().ping("wh:1"),
             ),
             wire(
                 "POST",
                 "/v1beta/webhooks/wh%3A1:rotateSigningSecret",
                 Some(json!({})),
-                c.rotate_webhook_signing_secret("wh:1", None),
+                c.webhooks().rotate_signing_secret("wh:1", None),
             ),
             wire(
                 "DELETE",
                 "/v1beta/webhooks/a%20b",
                 None,
-                c.delete_webhook("a b"),
+                c.webhooks().delete("a b"),
             ),
             // Dots inside an ID are not dot segments.
-            wire("GET", "/v1beta/webhooks/v1.2", None, c.get_webhook("v1.2")),
-            wire("GET", "/v1beta/triggers/t%2F1", None, c.get_trigger("t/1")),
+            wire(
+                "GET",
+                "/v1beta/webhooks/v1.2",
+                None,
+                c.webhooks().get("v1.2"),
+            ),
+            wire(
+                "GET",
+                "/v1beta/triggers/t%2F1",
+                None,
+                c.triggers().get("t/1"),
+            ),
             wire(
                 "POST",
                 "/v1beta/triggers/t%2F1/executions",
                 Some(json!({})),
-                c.run_trigger("t/1"),
+                c.triggers().run("t/1"),
             ),
             wire(
                 "GET",
                 "/v1beta/triggers/t%3F1/executions?page_token=x%26y",
                 None,
-                c.list_trigger_executions("t?1", None, Some("x&y")),
+                c.triggers()
+                    .list_executions("t?1")
+                    .with_page_token("x&y")
+                    .send(),
             ),
             wire(
                 "GET",
                 "/v1beta/agents/team%2Fagent",
                 None,
-                c.get_agent("team/agent"),
+                c.agents().get("team/agent"),
             ),
             // An already-encoded traversal is encoded again, not decoded.
             wire(
                 "DELETE",
                 "/v1beta/agents/%252e%252e%252f",
                 None,
-                c.delete_agent("%2e%2e%2f"),
+                c.agents().delete("%2e%2e%2f"),
             ),
             wire(
                 "GET",
                 "/v1beta/environments/e%231",
                 None,
-                c.get_environment("e#1"),
+                c.environments().get("e#1"),
             ),
             wire(
                 "GET",
                 "/v1beta/environments/e%2F1/files/dir%20name/a%3Fb",
                 None,
-                c.list_environment_files("e/1", "dir name/a?b", false, None, None),
+                c.environments().files().list("e/1", "dir name/a?b").send(),
             ),
             wire(
                 "GET",
                 "/v1beta/credentials/a%3Fb",
                 None,
-                c.get_credential("a?b"),
+                c.credentials().get("a?b"),
+            ),
+            // A resource name stays one segment (the API answers it 400).
+            wire(
+                "PATCH",
+                "/v1beta/credentials/credentials%2Fgh?update_mask=token%26x%3D1",
+                Some(json!({"type": "bearer_token"})),
+                async move {
+                    let update = CredentialUpdate::new(CredentialType::BearerToken)
+                        .with_update_mask("token&x=1");
+                    c.credentials().update("credentials/gh", &update).await
+                },
             ),
             wire(
                 "GET",
                 "/v1beta/voices/voice%2Fx",
                 None,
-                c.get_voice("voice/x"),
+                c.voices().get("voice/x"),
             ),
             wire(
                 "GET",
                 "/v1beta/interactions/int%2F1",
                 None,
-                c.get_interaction("int/1"),
+                c.interactions().get("int/1"),
             ),
             wire(
                 "POST",
                 "/v1beta/interactions/int%2F1/cancel",
                 Some(json!({})),
-                c.cancel_interaction("int/1"),
+                c.interactions().cancel("int/1"),
             ),
             wire(
                 "DELETE",
                 "/v1beta/interactions/int%3F1",
                 None,
-                c.delete_interaction("int?1"),
+                c.interactions().delete("int?1"),
             ),
             wire(
                 "GET",
                 "/v1beta/interactions/int%2F1?alt=sse&stream=true&last_event_id=evt%2B1%26x",
                 None,
                 async move {
-                    c.get_interaction_stream("int/1", Some("evt+1&x"))
+                    c.interactions()
+                        .resume_stream("int/1", "evt+1&x")
                         .collect::<Vec<_>>()
                         .await
                         .into_iter()
@@ -2634,26 +3774,36 @@ async fn reserved_characters_in_ids_are_percent_encoded() {
                 "GET",
                 "/v1beta/fileSearchStores/a%20b",
                 None,
-                c.get_file_search_store("fileSearchStores/a b"),
+                c.file_search_stores().get("fileSearchStores/a b"),
             ),
             wire(
                 "GET",
                 "/v1beta/fileSearchStores/a%23b/documents",
                 None,
-                c.list_file_search_documents("fileSearchStores/a#b", None, None),
+                c.file_search_stores()
+                    .documents()
+                    .list("fileSearchStores/a#b")
+                    .send(),
             ),
             wire(
                 "GET",
                 "/v1beta/fileSearchStores/a%20b/documents/c%3Fd",
                 None,
-                c.get_file_search_document("fileSearchStores/a b/documents/c?d"),
+                c.file_search_stores()
+                    .documents()
+                    .get("fileSearchStores/a b/documents/c?d"),
             ),
-            wire("GET", "/v1beta/files/a%20b", None, c.get_file("files/a b")),
+            wire(
+                "GET",
+                "/v1beta/files/a%20b",
+                None,
+                c.files().get("files/a b"),
+            ),
             wire(
                 "DELETE",
                 "/v1beta/files/a%3Fb",
                 None,
-                c.delete_file("files/a?b"),
+                c.files().delete("files/a?b"),
             ),
         ],
     )
@@ -2665,120 +3815,165 @@ async fn empty_and_dot_segment_ids_are_rejected_before_any_request() {
     let stub = Stub::replying(vec![]).await;
     let client = stub.client();
     let c = &client;
-    let data = || b"x".to_vec();
-    let plain = EnvironmentFileUpload::default();
-    let unnamed_file: FileMetadata =
-        serde_json::from_value(json!({"name": "abc", "mimeType": "text/plain"})).unwrap();
-    let unnamed_file = &unnamed_file;
-    let second = Duration::from_secs(1);
+    let plain = |data: &[u8]| EnvironmentFileUpload::new(data.to_vec(), "text/plain");
+    let poll_once = PollOptions::new().with_timeout(Duration::ZERO);
 
     let cases: Vec<(&str, Call<'_>)> = vec![
-        ("get_webhook empty", call(c.get_webhook(""))),
-        ("get_webhook ..", call(c.get_webhook(".."))),
+        ("webhooks.get empty", call(c.webhooks().get(""))),
+        ("webhooks.get ..", call(c.webhooks().get(".."))),
         (
-            "update_webhook",
-            call(async move { c.update_webhook("", &WebhookUpdate::new(), None).await }),
+            "webhooks.update",
+            call(async move { c.webhooks().update("", &WebhookUpdate::new()).await }),
         ),
-        ("delete_webhook", call(c.delete_webhook(""))),
-        ("ping_webhook", call(c.ping_webhook("."))),
+        ("webhooks.delete", call(c.webhooks().delete(""))),
+        ("webhooks.ping", call(c.webhooks().ping("."))),
         (
-            "rotate_webhook_signing_secret",
-            call(c.rotate_webhook_signing_secret("", None)),
+            "webhooks.rotate_signing_secret",
+            call(c.webhooks().rotate_signing_secret("", None)),
         ),
-        ("get_trigger", call(c.get_trigger(""))),
+        ("triggers.get", call(c.triggers().get(""))),
         (
-            "update_trigger",
-            call(async move { c.update_trigger("%2E%2E", &TriggerUpdate::new()).await }),
+            "triggers.update",
+            call(async move { c.triggers().update("%2E%2E", &TriggerUpdate::new()).await }),
         ),
-        ("delete_trigger", call(c.delete_trigger(""))),
-        ("run_trigger", call(c.run_trigger("."))),
+        ("triggers.delete", call(c.triggers().delete(""))),
+        ("triggers.run", call(c.triggers().run("."))),
         (
-            "list_trigger_executions",
-            call(c.list_trigger_executions("", None, None)),
-        ),
-        ("get_agent", call(c.get_agent(""))),
-        ("delete_agent", call(c.delete_agent("%2e%2e"))),
-        ("get_environment", call(c.get_environment(""))),
-        ("delete_environment", call(c.delete_environment(".."))),
-        (
-            "list_environment_files id",
-            call(c.list_environment_files("", "", false, None, None)),
+            "triggers.list_executions",
+            call(c.triggers().list_executions("").send()),
         ),
         (
-            "list_environment_files ..",
-            call(c.list_environment_files("env-1", "a/../b", false, None, None)),
+            "triggers.list_executions items",
+            call(
+                c.triggers()
+                    .list_executions("..")
+                    .items()
+                    .try_collect::<Vec<_>>(),
+            ),
+        ),
+        ("agents.get", call(c.agents().get(""))),
+        ("agents.delete", call(c.agents().delete("%2e%2e"))),
+        ("environments.get", call(c.environments().get(""))),
+        ("environments.delete", call(c.environments().delete(".."))),
+        (
+            "environments.files.list id",
+            call(c.environments().files().list("", "").send()),
         ),
         (
-            "list_environment_files .",
-            call(c.list_environment_files("env-1", "./a", false, None, None)),
+            "environments.files.list ..",
+            call(c.environments().files().list("env-1", "a/../b").send()),
         ),
         (
-            "upload_environment_file id",
-            call(c.upload_environment_file("", "a.txt", data(), "text/plain", plain)),
+            "environments.files.list .",
+            call(c.environments().files().list("env-1", "./a").send()),
         ),
         (
-            "upload_environment_file ..",
-            call(c.upload_environment_file("env-1", "../a.txt", data(), "text/plain", plain)),
+            "environments.files.list items",
+            call(
+                c.environments()
+                    .files()
+                    .list("env-1", "../a")
+                    .with_recursive(true)
+                    .items()
+                    .try_collect::<Vec<_>>(),
+            ),
         ),
         (
-            "upload_environment_file empty data",
-            call(c.upload_environment_file("env-1", "a.txt", Vec::new(), "text/plain", plain)),
+            "environments.files.upload id",
+            call(c.environments().files().upload("", "a.txt", plain(b"x"))),
         ),
-        ("get_credential", call(c.get_credential(""))),
         (
-            "update_credential",
+            "environments.files.upload ..",
+            call(
+                c.environments()
+                    .files()
+                    .upload("env-1", "../a.txt", plain(b"x")),
+            ),
+        ),
+        (
+            "environments.files.upload empty data",
+            call(
+                c.environments()
+                    .files()
+                    .upload("env-1", "a.txt", plain(b"")),
+            ),
+        ),
+        ("credentials.get", call(c.credentials().get(""))),
+        (
+            "credentials.update",
             call(async move {
-                c.update_credential(
-                    "",
-                    &CredentialUpdate::new(CredentialType::BearerToken),
-                    None,
-                )
-                .await
+                c.credentials()
+                    .update("", &CredentialUpdate::new(CredentialType::BearerToken))
+                    .await
             }),
         ),
-        ("delete_credential", call(c.delete_credential("."))),
-        ("get_voice", call(c.get_voice(""))),
-        ("delete_voice", call(c.delete_voice(".."))),
-        ("get_interaction", call(c.get_interaction(""))),
+        ("credentials.delete", call(c.credentials().delete("."))),
+        ("voices.get", call(c.voices().get(""))),
+        ("voices.delete", call(c.voices().delete(".."))),
+        ("interactions.get", call(c.interactions().get(""))),
         (
-            "get_interaction_with_input",
-            call(c.get_interaction_with_input("..")),
+            "interactions.get_with_input",
+            call(c.interactions().get_with_input("..")),
         ),
-        ("delete_interaction", call(c.delete_interaction(""))),
-        ("cancel_interaction", call(c.cancel_interaction(""))),
+        ("interactions.delete", call(c.interactions().delete(""))),
+        ("interactions.cancel", call(c.interactions().cancel(""))),
         (
-            "get_interaction_stream",
+            "interactions.stream",
             call(async move {
-                let items: Vec<_> = c.get_interaction_stream("", None).collect().await;
+                let items: Vec<_> = c.interactions().stream("").collect().await;
                 assert_eq!(items.len(), 1, "the error is the stream's only item");
                 items.into_iter().next().unwrap().map(drop)
             }),
         ),
-        ("get_file dot", call(c.get_file("files/.."))),
-        ("delete_file empty", call(c.delete_file("files/"))),
+        ("files.get dot", call(c.files().get("files/.."))),
+        ("files.delete empty", call(c.files().delete("files/"))),
         (
-            "wait_for_file_ready",
-            call(c.wait_for_file_ready(unnamed_file, second, second)),
+            "files.wait_until_active",
+            call(c.files().wait_until_active("files/", poll_once)),
         ),
         (
-            "get_file_search_store",
-            call(c.get_file_search_store("fileSearchStores/")),
+            "file_search_stores.get",
+            call(c.file_search_stores().get("fileSearchStores/")),
         ),
         (
-            "delete_file_search_store",
-            call(c.delete_file_search_store("fileSearchStores/..", true)),
+            "file_search_stores.delete",
+            call(c.file_search_stores().delete("fileSearchStores/..")),
         ),
         (
-            "get_file_search_document",
-            call(c.get_file_search_document("fileSearchStores/abc/documents/")),
+            "file_search_stores.force_delete",
+            call(c.file_search_stores().force_delete("fileSearchStores/..")),
         ),
         (
-            "delete_file_search_document",
-            call(c.delete_file_search_document("fileSearchStores//documents/doc-1", true)),
+            "file_search_stores.documents.get",
+            call(
+                c.file_search_stores()
+                    .documents()
+                    .get("fileSearchStores/abc/documents/"),
+            ),
         ),
         (
-            "wait_for_document_active",
-            call(c.wait_for_document_active("fileSearchStores/abc/documents/..", None, None)),
+            "file_search_stores.documents.delete",
+            call(
+                c.file_search_stores()
+                    .documents()
+                    .delete("fileSearchStores//documents/doc-1"),
+            ),
+        ),
+        (
+            "file_search_stores.documents.force_delete",
+            call(
+                c.file_search_stores()
+                    .documents()
+                    .force_delete("fileSearchStores//documents/doc-1"),
+            ),
+        ),
+        (
+            "file_search_stores.documents.wait_until_active",
+            call(
+                c.file_search_stores()
+                    .documents()
+                    .wait_until_active("fileSearchStores/abc/documents/..", poll_once),
+            ),
         ),
     ];
     for (label, call) in cases {
@@ -2798,47 +3993,73 @@ async fn malformed_resource_names_are_rejected_before_any_request() {
     let c = &client;
 
     let cases: Vec<(&str, &str, Call<'_>)> = vec![
-        ("get_file", "bare id", call(c.get_file("abc"))),
-        ("get_file", "extra segment", call(c.get_file("files/a/b"))),
+        ("files.get", "bare id", call(c.files().get("abc"))),
         (
-            "delete_file",
-            "wrong prefix",
-            call(c.delete_file("fileSearchStores/abc")),
-        ),
-        (
-            "get_file_search_store",
-            "bare id",
-            call(c.get_file_search_store("abc")),
-        ),
-        (
-            "get_file_search_store",
+            "files.get",
             "extra segment",
-            call(c.get_file_search_store("fileSearchStores/abc/documents")),
+            call(c.files().get("files/a/b")),
         ),
         (
-            "list_file_search_documents",
+            "files.delete",
+            "wrong prefix",
+            call(c.files().delete("fileSearchStores/abc")),
+        ),
+        (
+            "files.wait_until_active",
             "bare id",
-            call(c.list_file_search_documents("abc", None, None)),
+            call(c.files().wait_until_active("abc", PollOptions::new())),
         ),
         (
-            "get_file_search_document",
+            "file_search_stores.get",
+            "bare id",
+            call(c.file_search_stores().get("abc")),
+        ),
+        (
+            "file_search_stores.get",
+            "extra segment",
+            call(c.file_search_stores().get("fileSearchStores/abc/documents")),
+        ),
+        (
+            "file_search_stores.documents.list",
+            "bare id",
+            call(c.file_search_stores().documents().list("abc").send()),
+        ),
+        (
+            "file_search_stores.documents.get",
             "store name only",
-            call(c.get_file_search_document(STORE)),
+            call(c.file_search_stores().documents().get(STORE)),
         ),
         (
-            "get_file_search_document",
+            "file_search_stores.documents.get",
             "no store prefix",
-            call(c.get_file_search_document("documents/doc-1")),
+            call(c.file_search_stores().documents().get("documents/doc-1")),
         ),
         (
-            "get_file_search_document",
+            "file_search_stores.documents.get",
             "nested store",
-            call(c.get_file_search_document("fileSearchStores/a/b/documents/doc-1")),
+            call(
+                c.file_search_stores()
+                    .documents()
+                    .get("fileSearchStores/a/b/documents/doc-1"),
+            ),
         ),
         (
-            "delete_file_search_document",
+            "file_search_stores.documents.delete",
             "nested document",
-            call(c.delete_file_search_document("fileSearchStores/abc/documents/d/e", false)),
+            call(
+                c.file_search_stores()
+                    .documents()
+                    .delete("fileSearchStores/abc/documents/d/e"),
+            ),
+        ),
+        (
+            "file_search_stores.documents.wait_until_active",
+            "store name only",
+            call(
+                c.file_search_stores()
+                    .documents()
+                    .wait_until_active(STORE, PollOptions::new()),
+            ),
         ),
     ];
     for (method, shape, call) in cases {
@@ -2953,82 +4174,179 @@ async fn empty_object_parses_as_an_empty_last_page_on_every_list_endpoint() {
 
     let pages: Vec<(&str, Page<'_>)> = vec![
         (
-            "list_webhooks",
+            "webhooks.list",
             Box::pin(async move {
-                let l = c.list_webhooks(None, None).await?;
+                let l = c.webhooks().list().send().await?;
                 Ok((l.webhooks.len(), l.next_page_token))
             }),
         ),
         (
-            "list_triggers",
+            "webhooks.list items",
             Box::pin(async move {
-                let l = c.list_triggers(None, None).await?;
+                let items: Vec<_> = c.webhooks().list().items().try_collect().await?;
+                Ok((items.len(), None))
+            }),
+        ),
+        (
+            "triggers.list",
+            Box::pin(async move {
+                let l = c.triggers().list().send().await?;
                 Ok((l.triggers.len(), l.next_page_token))
             }),
         ),
         (
-            "list_trigger_executions",
+            "triggers.list items",
             Box::pin(async move {
-                let l = c.list_trigger_executions("t-1", None, None).await?;
+                let items: Vec<_> = c.triggers().list().items().try_collect().await?;
+                Ok((items.len(), None))
+            }),
+        ),
+        (
+            "triggers.list_executions",
+            Box::pin(async move {
+                let l = c.triggers().list_executions("t-1").send().await?;
                 Ok((l.trigger_executions.len(), l.next_page_token))
             }),
         ),
         (
-            "list_agents",
+            "triggers.list_executions items",
             Box::pin(async move {
-                let l = c.list_agents(None, None, None).await?;
+                let items: Vec<_> = c
+                    .triggers()
+                    .list_executions("t-1")
+                    .items()
+                    .try_collect()
+                    .await?;
+                Ok((items.len(), None))
+            }),
+        ),
+        (
+            "agents.list",
+            Box::pin(async move {
+                let l = c.agents().list().send().await?;
                 Ok((l.agents.len(), l.next_page_token))
             }),
         ),
         (
-            "list_environments",
+            "agents.list items",
             Box::pin(async move {
-                let l = c.list_environments(None, None).await?;
+                let items: Vec<_> = c.agents().list().items().try_collect().await?;
+                Ok((items.len(), None))
+            }),
+        ),
+        (
+            "environments.list",
+            Box::pin(async move {
+                let l = c.environments().list().send().await?;
                 Ok((l.environments.len(), l.next_page_token))
             }),
         ),
         (
-            "list_environment_files",
+            "environments.list items",
             Box::pin(async move {
-                let l = c
-                    .list_environment_files("env-1", "", false, None, None)
-                    .await?;
+                let items: Vec<_> = c.environments().list().items().try_collect().await?;
+                Ok((items.len(), None))
+            }),
+        ),
+        (
+            "environments.files.list",
+            Box::pin(async move {
+                let l = c.environments().files().list("env-1", "").send().await?;
                 Ok((l.files.len(), l.next_page_token))
             }),
         ),
         (
-            "list_credentials",
+            "environments.files.list items",
             Box::pin(async move {
-                let l = c.list_credentials(None, None).await?;
+                let items: Vec<_> = c
+                    .environments()
+                    .files()
+                    .list("env-1", "")
+                    .items()
+                    .try_collect()
+                    .await?;
+                Ok((items.len(), None))
+            }),
+        ),
+        (
+            "credentials.list",
+            Box::pin(async move {
+                let l = c.credentials().list().send().await?;
                 Ok((l.credentials.len(), l.next_page_token))
             }),
         ),
         (
-            "list_voices",
+            "credentials.list items",
             Box::pin(async move {
-                let l = c.list_voices(&ListVoicesParams::new()).await?;
+                let items: Vec<_> = c.credentials().list().items().try_collect().await?;
+                Ok((items.len(), None))
+            }),
+        ),
+        (
+            "voices.list",
+            Box::pin(async move {
+                let l = c.voices().list().send().await?;
                 Ok((l.voices.len(), l.next_page_token))
             }),
         ),
         (
-            "list_file_search_stores",
+            "voices.list items",
             Box::pin(async move {
-                let l = c.list_file_search_stores(None, None).await?;
+                let items: Vec<_> = c.voices().list().items().try_collect().await?;
+                Ok((items.len(), None))
+            }),
+        ),
+        (
+            "file_search_stores.list",
+            Box::pin(async move {
+                let l = c.file_search_stores().list().send().await?;
                 Ok((l.stores.len(), l.next_page_token))
             }),
         ),
         (
-            "list_file_search_documents",
+            "file_search_stores.list items",
             Box::pin(async move {
-                let l = c.list_file_search_documents(STORE, None, None).await?;
+                let items: Vec<_> = c.file_search_stores().list().items().try_collect().await?;
+                Ok((items.len(), None))
+            }),
+        ),
+        (
+            "file_search_stores.documents.list",
+            Box::pin(async move {
+                let l = c
+                    .file_search_stores()
+                    .documents()
+                    .list(STORE)
+                    .send()
+                    .await?;
                 Ok((l.documents.len(), l.next_page_token))
             }),
         ),
         (
-            "list_files",
+            "file_search_stores.documents.list items",
             Box::pin(async move {
-                let l = c.list_files(None, None).await?;
+                let items: Vec<_> = c
+                    .file_search_stores()
+                    .documents()
+                    .list(STORE)
+                    .items()
+                    .try_collect()
+                    .await?;
+                Ok((items.len(), None))
+            }),
+        ),
+        (
+            "files.list",
+            Box::pin(async move {
+                let l = c.files().list().send().await?;
                 Ok((l.files.len(), l.next_page_token))
+            }),
+        ),
+        (
+            "files.list items",
+            Box::pin(async move {
+                let items: Vec<_> = c.files().list().items().try_collect().await?;
+                Ok((items.len(), None))
             }),
         ),
     ];
@@ -3050,7 +4368,7 @@ async fn client_timeout_applies_to_resource_calls() {
         .unwrap();
 
     let started = std::time::Instant::now();
-    let err = client.get_webhook("wh-1").await.unwrap_err();
+    let err = client.webhooks().get("wh-1").await.unwrap_err();
 
     assert!(
         matches!(err, GenaiError::Http(ref e) if e.is_timeout()),
@@ -3080,19 +4398,20 @@ async fn base_url_prefix_applies_to_resource_and_upload_endpoints() {
         .unwrap();
     let (_dir, path) = temp_file("notes.txt", b"hello");
 
-    client.list_webhooks(None, None).await.unwrap();
+    client.webhooks().list().send().await.unwrap();
     client
-        .upload_environment_file(
+        .environments()
+        .files()
+        .upload(
             "env-1",
             "a.txt",
-            b"hi".to_vec(),
-            "text/plain",
-            EnvironmentFileUpload::default(),
+            EnvironmentFileUpload::new(b"hi".to_vec(), "text/plain"),
         )
         .await
         .unwrap();
     client
-        .upload_to_file_search_store(STORE, &path, None)
+        .file_search_stores()
+        .upload(STORE, FileUpload::from_path(&path))
         .await
         .unwrap();
 

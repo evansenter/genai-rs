@@ -44,10 +44,13 @@
 //!    interactions, the Files API allows uploading once and referencing by URI:
 //!
 //!    ```no_run
-//!    # use genai_rs::{Client, Content};
+//!    # use genai_rs::{Client, Content, FileUpload};
 //!    # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //!    # let client = Client::new("key".to_string());
-//!    let file = client.upload_file("large-video.mp4").await?;
+//!    let file = client
+//!        .files()
+//!        .upload(FileUpload::from_path("large-video.mp4"))
+//!        .await?;
 //!    let response = client
 //!        .interaction()
 //!        .with_model(genai_rs::DEFAULT_MODEL)

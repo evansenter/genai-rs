@@ -139,9 +139,70 @@ println!("{}", serde_json::to_string_pretty(&request)?);
 
 | Method | Behavior |
 |--------|----------|
-| `client.get_interaction(id)` | Fetches the interaction; the response's `input` is `None` |
-| `client.get_interaction_with_input(id)` | Fetches with `include_input=true`, so `input` is populated |
-| `client.get_interaction_stream(id, last_event_id)` | Streams it, optionally resuming after an event id (see [Streaming API](STREAMING_API.md#stream-resume)) |
+| `client.interactions().get(id)` | Fetches the interaction; the response's `input` is `None` |
+| `client.interactions().get_with_input(id)` | Fetches with `include_input=true`, so `input` is populated |
+| `client.interactions().stream(id)` | Streams a background interaction from the start |
+| `client.interactions().resume_stream(id, last_event_id)` | Resumes its stream after an event id (see [Streaming API](STREAMING_API.md#stream-resume)) |
+| `client.interactions().cancel(id)` | Cancels a background interaction that is still in progress |
+| `client.interactions().delete(id)` | Deletes the stored interaction |
+
+## Resource handles and list builders
+
+A `/v1beta` resource is reached through a handle: `client.agents()` returns a
+`Copy` value that borrows the client, and its methods are the resource's
+verbs. [Resources](RESOURCES.md) lists every handle and the `Client` method
+each one replaced.
+
+| Shape | Rule |
+|-------|------|
+| `client.agents().get(id)` | Required arguments are positional. The future holds only the client borrow, so it can be stored or joined with others |
+| `client.agents().list()` | Returns a list builder. `with_page_size()`, `with_page_token()` and the list's own filters (`with_parent()`) configure it |
+| `.send()` | Sends one request and returns one page (`AgentListResponse`) |
+| `.pages()` | Streams every page |
+| `.items()` | Streams every item across pages, in server order |
+
+The streams need `futures_util::{StreamExt, TryStreamExt}` and follow these
+rules:
+
+- Nothing is sent until the stream is first polled.
+- The page size and filters are sent with every page; only the token changes.
+- The stream ends after a page whose `next_page_token` is absent or empty. An
+  empty page that has a token is followed.
+- If the server returns a token it already returned (or the starting token),
+  the stream yields that page, then `GenaiError::MalformedResponse`, then ends.
+- An error is yielded once and ends the stream. Nothing is retried.
+- A stream owns a clone of the client, so it can be stored or spawned.
+
+```rust,no_run
+use futures_util::{StreamExt, TryStreamExt};
+use genai_rs::Agent;
+
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+// One page
+let page = client.agents().list().with_page_size(50).send().await?;
+if let Some(token) = page.next_page_token {
+    // Resume from where that page left off
+    let _rest = client.agents().list().with_page_token(token).send().await?;
+}
+
+// Every agent, across pages
+let agents: Vec<Agent> = client.agents().list().items().try_collect().await?;
+
+// Page by page, stopping early
+let mut pages = client.agents().list().with_page_size(10).pages();
+while let Some(page) = pages.next().await {
+    if page?.agents.iter().any(|a| a.id.as_deref() == Some("customer-sentinel")) {
+        break;
+    }
+}
+
+// On another task
+let listing = tokio::spawn(client.agents().list().items().try_collect::<Vec<Agent>>());
+let spawned = listing.await.expect("list task panicked")?;
+# let _ = (agents, spawned);
+# Ok(())
+# }
+```
 
 ## Related
 

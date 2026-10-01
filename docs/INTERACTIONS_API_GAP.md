@@ -92,10 +92,10 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
 | `processing_call` / `processing_result` steps and deltas | `Step::Processing*`, `StepDelta::Processing*` | Emitted for video with `processing: "agentic"`. The ~36KB signatures are required on replay. The streaming accumulator dropped them (`step.start` has `""`; the value arrives in `step.delta`), so stateless replay of a streamed turn got `400 Processing call step is missing signature`. Fixed; covered by `tests/processing_steps_tests.rs`. Unknown deltas now also merge a `signature` into a same-typed Unknown step. |
 | `retrieval_call` / `retrieval_result` steps and deltas | `Step::Retrieval*` | Spec parity; the retrieval tool is Vertex-only |
 | `speech_metadata` and `word_info` annotations | `Annotation::SpeechMetadata` / `WordInfo`, `Content::speaker_text` | Required for multi-speaker on 3.8 TTS; rejected by older TTS models |
-| Voices resource `/v1beta/voices` | `src/voices.rs` | List with filters and paging, prompted create, get, synthesize with the custom ID, delete |
-| Credentials resource `/v1beta/credentials` | `src/credentials.rs` | Create, get, list, patch, delete. OAuth2 create checks that `token_url` is reachable. The ID is optional on create. |
+| Voices resource `/v1beta/voices` | `client.voices()` (`src/voices.rs`) | List with filters and paging, prompted create, get, synthesize with the custom ID, delete |
+| Credentials resource `/v1beta/credentials` | `client.credentials()` (`src/credentials.rs`) | Create, get, list, patch, delete. OAuth2 create checks that `token_url` is reachable. The ID is optional on create. |
 | `environment.env` and `AllowlistEntry.credential` | `RemoteEnvironment::env`, `EnvVar` | Validated (unknown ID → 404) and echoed; the echo spells `env` as a list of single-key maps. Works at runtime (`tests/credentials_tests.rs`): plain values are visible in the sandbox; credential-backed variables hold a placeholder and the egress proxy substitutes the secret; allowlist bearer credentials are injected. Bearer `header_name`/`prefix` are accepted but not applied. |
-| Environment files (list and resumable upload) | `src/environments/files.rs` | Works; entry `type` is uppercase `FILE`/`DIRECTORY` on the wire |
+| Environment files (list and resumable upload) | `client.environments().files()` (`src/environments/files.rs`) | Works; entry `type` is uppercase `FILE`/`DIRECTORY` on the wire |
 | `from_environment` (fork) | `CreateEnvironmentRequest::from_environment` | Works with a bare ID; `environments/{id}` returns 404 |
 | `Video.name` | `Content::with_video_name` | Accepted |
 | Video `response_format.resolution` | `VideoResolution` | Server-validated; no Interactions model outputs video (Veo 404s) |
@@ -157,7 +157,7 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
 ## Verification protocol
 
 New surface lands with wire-fixture unit tests taken from the bindings,
-next to the type (`src/steps.rs`, `src/voices.rs`, ...). It also gets a
+next to the type (`src/steps/`, `src/voices.rs`, ...). It also gets a
 strict live test that cleans up after itself and is registered in the
 `rust.yml` integration matrix (`tests/ci_coverage.rs` enforces this).
 Before a release, run the integration suite with `LOUD_WIRE=1` and update

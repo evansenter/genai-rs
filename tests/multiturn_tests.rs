@@ -266,9 +266,10 @@ async fn test_system_instruction_not_inherited() {
         let client = &client;
         async move {
             client
-                .get_interaction(&id)
+                .interactions()
+                .get(&id)
                 .await
-                .expect("get_interaction")
+                .expect("interactions().get")
                 .system_instruction
         }
     };

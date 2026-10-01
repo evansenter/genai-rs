@@ -11,7 +11,7 @@
 //!
 //! See `docs/OUTPUT_MODALITIES.md` for delivery modes and per-modality options.
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::request::{ImageAspectRatio, ImageSize};
 use crate::wire_enum::wire_enum;
@@ -49,16 +49,19 @@ wire_enum! {
 ///
 /// Unknown `type` tags from the API deserialize into the `Unknown` variant,
 /// preserving the original data for debugging and roundtrip serialization.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ResponseFormat {
     /// Text output configuration.
     Text {
         /// MIME type of the text output. Known values: `application/json`,
         /// `text/plain`.
+        #[serde(skip_serializing_if = "Option::is_none")]
         mime_type: Option<String>,
         /// JSON schema the output must conform to. Only applicable when
         /// `mime_type` is `application/json`.
+        #[serde(skip_serializing_if = "Option::is_none")]
         schema: Option<serde_json::Value>,
     },
     /// Audio output configuration.
@@ -73,14 +76,18 @@ pub enum ResponseFormat {
         /// MIME type of the audio output. Known values: `audio/mp3`,
         /// `audio/ogg_opus`, `audio/l16`, `audio/wav`, `audio/alaw`,
         /// `audio/mulaw`. Rejected by the Gemini API as of 2026-07.
+        #[serde(skip_serializing_if = "Option::is_none")]
         mime_type: Option<String>,
         /// Delivery mode for the audio output. Rejected by the Gemini API
         /// as of 2026-07 (inline-only).
+        #[serde(skip_serializing_if = "Option::is_none")]
         delivery: Option<ResponseDelivery>,
         /// Sample rate in Hz.
+        #[serde(skip_serializing_if = "Option::is_none")]
         sample_rate: Option<i32>,
         /// Bit rate in bits per second. Only applicable for compressed
         /// formats (MP3, Opus).
+        #[serde(skip_serializing_if = "Option::is_none")]
         bit_rate: Option<i32>,
     },
     /// Image output configuration.
@@ -92,13 +99,17 @@ pub enum ResponseFormat {
     Image {
         /// MIME type of the image output. Known value: `image/jpeg`
         /// (the only value the Gemini API accepts as of 2026-07).
+        #[serde(skip_serializing_if = "Option::is_none")]
         mime_type: Option<String>,
         /// Delivery mode for the image output. Rejected by the Gemini API
         /// as of 2026-07 (inline-only).
+        #[serde(skip_serializing_if = "Option::is_none")]
         delivery: Option<ResponseDelivery>,
         /// Aspect ratio for the image output.
+        #[serde(skip_serializing_if = "Option::is_none")]
         aspect_ratio: Option<ImageAspectRatio>,
         /// Size of the image output.
+        #[serde(skip_serializing_if = "Option::is_none")]
         image_size: Option<ImageSize>,
     },
     /// Video output configuration.
@@ -108,21 +119,30 @@ pub enum ResponseFormat {
     /// live-verified beyond server-side validation.
     Video {
         /// Delivery mode for the video output.
+        #[serde(skip_serializing_if = "Option::is_none")]
         delivery: Option<ResponseDelivery>,
         /// GCS URI to store the video output. Required on Vertex when
         /// `delivery` is `uri`. Rejected on the Gemini API (2026-07:
         /// "not available on the Gemini API but it is available on the
         /// Gemini Enterprise Agent Platform").
+        #[serde(skip_serializing_if = "Option::is_none")]
         gcs_uri: Option<String>,
         /// Aspect ratio for the video output. Known values: `16:9`, `9:16`.
+        #[serde(skip_serializing_if = "Option::is_none")]
         aspect_ratio: Option<ImageAspectRatio>,
         /// Duration for the video output (e.g., `"8s"`).
+        #[serde(skip_serializing_if = "Option::is_none")]
         duration: Option<String>,
         /// Output resolution; the server validates the value
         /// (`360p`, `720p`, `1080p`, `4k`).
+        #[serde(skip_serializing_if = "Option::is_none")]
         resolution: Option<VideoResolution>,
     },
     /// Unknown variant for forward compatibility (Evergreen pattern)
+    // Serializes as `data` exactly as captured; `format_type` is ignored
+    // (see `serialize_unknown_data`), so a hand-built unknown format goes out
+    // without a type unless `data` carries one.
+    #[serde(untagged, serialize_with = "crate::serde_util::serialize_unknown_data")]
     Unknown {
         /// The unrecognized format type from the API
         format_type: String,
@@ -209,99 +229,6 @@ impl From<serde_json::Value> for ResponseFormat {
             serde_json::from_value(value).expect("ResponseFormat deserialization is infallible")
         } else {
             Self::json_schema(value)
-        }
-    }
-}
-
-impl Serialize for ResponseFormat {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        use serde::ser::SerializeMap;
-        match self {
-            Self::Text { mime_type, schema } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "text")?;
-                if let Some(mime_type) = mime_type {
-                    map.serialize_entry("mime_type", mime_type)?;
-                }
-                if let Some(schema) = schema {
-                    map.serialize_entry("schema", schema)?;
-                }
-                map.end()
-            }
-            Self::Audio {
-                mime_type,
-                delivery,
-                sample_rate,
-                bit_rate,
-            } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "audio")?;
-                if let Some(mime_type) = mime_type {
-                    map.serialize_entry("mime_type", mime_type)?;
-                }
-                if let Some(delivery) = delivery {
-                    map.serialize_entry("delivery", delivery)?;
-                }
-                if let Some(sample_rate) = sample_rate {
-                    map.serialize_entry("sample_rate", sample_rate)?;
-                }
-                if let Some(bit_rate) = bit_rate {
-                    map.serialize_entry("bit_rate", bit_rate)?;
-                }
-                map.end()
-            }
-            Self::Image {
-                mime_type,
-                delivery,
-                aspect_ratio,
-                image_size,
-            } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "image")?;
-                if let Some(mime_type) = mime_type {
-                    map.serialize_entry("mime_type", mime_type)?;
-                }
-                if let Some(delivery) = delivery {
-                    map.serialize_entry("delivery", delivery)?;
-                }
-                if let Some(aspect_ratio) = aspect_ratio {
-                    map.serialize_entry("aspect_ratio", aspect_ratio)?;
-                }
-                if let Some(image_size) = image_size {
-                    map.serialize_entry("image_size", image_size)?;
-                }
-                map.end()
-            }
-            Self::Video {
-                delivery,
-                gcs_uri,
-                aspect_ratio,
-                duration,
-                resolution,
-            } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "video")?;
-                if let Some(delivery) = delivery {
-                    map.serialize_entry("delivery", delivery)?;
-                }
-                if let Some(gcs_uri) = gcs_uri {
-                    map.serialize_entry("gcs_uri", gcs_uri)?;
-                }
-                if let Some(aspect_ratio) = aspect_ratio {
-                    map.serialize_entry("aspect_ratio", aspect_ratio)?;
-                }
-                if let Some(duration) = duration {
-                    map.serialize_entry("duration", duration)?;
-                }
-                if let Some(resolution) = resolution {
-                    map.serialize_entry("resolution", resolution)?;
-                }
-                map.end()
-            }
-            Self::Unknown { data, .. } => data.serialize(serializer),
         }
     }
 }
@@ -433,13 +360,20 @@ impl<'de> Deserialize<'de> for ResponseFormat {
 /// (list).
 ///
 /// This enum is marked `#[non_exhaustive]` for forward compatibility.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
 #[non_exhaustive]
 pub enum ResponseFormatSpec {
-    /// A single response format (serialized as a bare object).
-    Single(ResponseFormat),
+    // The variant order is load-bearing for Deserialize: untagged variants
+    // are tried in declaration order, and `ResponseFormat` would also accept
+    // an array (its tagged sequence form, else `Unknown`), so `List` must
+    // come first to claim every array. Anything else fails `List` without
+    // parsing and lands in `Single`, which relies on `ResponseFormat`
+    // deserialization never failing (it falls back to `Unknown`).
     /// A list of response formats (serialized as an array).
     List(Vec<ResponseFormat>),
+    /// A single response format (serialized as a bare object).
+    Single(ResponseFormat),
 }
 
 impl From<ResponseFormat> for ResponseFormatSpec {
@@ -457,44 +391,6 @@ impl From<Vec<ResponseFormat>> for ResponseFormatSpec {
 impl From<serde_json::Value> for ResponseFormatSpec {
     fn from(value: serde_json::Value) -> Self {
         Self::Single(value.into())
-    }
-}
-
-impl Serialize for ResponseFormatSpec {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            Self::Single(format) => format.serialize(serializer),
-            Self::List(formats) => formats.serialize(serializer),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for ResponseFormatSpec {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value {
-            serde_json::Value::Array(items) => {
-                let formats = items
-                    .into_iter()
-                    .map(|item| {
-                        serde_json::from_value::<ResponseFormat>(item)
-                            .expect("ResponseFormat deserialization is infallible")
-                    })
-                    .collect();
-                Ok(Self::List(formats))
-            }
-            other => {
-                let format = serde_json::from_value::<ResponseFormat>(other)
-                    .expect("ResponseFormat deserialization is infallible");
-                Ok(Self::Single(format))
-            }
-        }
     }
 }
 
@@ -611,6 +507,153 @@ mod tests {
     }
 
     #[test]
+    fn test_response_format_none_fields_are_omitted() {
+        // The Gemini API rejects some of these fields outright (audio
+        // `mime_type`/`delivery`), so an unset field must stay off the wire.
+        let cases = [
+            (
+                ResponseFormat::Text {
+                    mime_type: None,
+                    schema: None,
+                },
+                r#"{"type":"text"}"#,
+            ),
+            (
+                ResponseFormat::Audio {
+                    mime_type: None,
+                    delivery: None,
+                    sample_rate: None,
+                    bit_rate: None,
+                },
+                r#"{"type":"audio"}"#,
+            ),
+            (
+                ResponseFormat::Image {
+                    mime_type: None,
+                    delivery: None,
+                    aspect_ratio: None,
+                    image_size: None,
+                },
+                r#"{"type":"image"}"#,
+            ),
+            (
+                ResponseFormat::Video {
+                    delivery: None,
+                    gcs_uri: None,
+                    aspect_ratio: None,
+                    duration: None,
+                    resolution: None,
+                },
+                r#"{"type":"video"}"#,
+            ),
+            (
+                ResponseFormat::text_plain(),
+                r#"{"type":"text","mime_type":"text/plain"}"#,
+            ),
+            (
+                ResponseFormat::Audio {
+                    mime_type: None,
+                    delivery: None,
+                    sample_rate: Some(24000),
+                    bit_rate: None,
+                },
+                r#"{"type":"audio","sample_rate":24000}"#,
+            ),
+            (
+                ResponseFormat::Video {
+                    delivery: None,
+                    gcs_uri: None,
+                    aspect_ratio: None,
+                    duration: None,
+                    resolution: Some(VideoResolution::Uhd4k),
+                },
+                r#"{"type":"video","resolution":"4k"}"#,
+            ),
+        ];
+        for (format, wire) in cases {
+            assert_eq!(serde_json::to_string(&format).unwrap(), wire);
+        }
+    }
+
+    #[test]
+    fn test_response_format_some_empty_values_are_sent() {
+        // Only None is skipped: an empty string or a null schema the caller
+        // set explicitly still goes out.
+        let format = ResponseFormat::Text {
+            mime_type: Some(String::new()),
+            schema: Some(serde_json::Value::Null),
+        };
+        assert_eq!(
+            serde_json::to_string(&format).unwrap(),
+            r#"{"type":"text","mime_type":"","schema":null}"#
+        );
+    }
+
+    #[test]
+    fn test_response_format_key_order() {
+        // "type" first, then the fields in declaration order.
+        let cases = [
+            (
+                ResponseFormat::json_schema(json!({"type": "object"})),
+                r#"{"type":"text","mime_type":"application/json","schema":{"type":"object"}}"#,
+            ),
+            (
+                ResponseFormat::Audio {
+                    mime_type: Some("audio/mp3".to_string()),
+                    delivery: Some(ResponseDelivery::Inline),
+                    sample_rate: Some(24000),
+                    bit_rate: Some(128_000),
+                },
+                r#"{"type":"audio","mime_type":"audio/mp3","delivery":"inline","sample_rate":24000,"bit_rate":128000}"#,
+            ),
+            (
+                ResponseFormat::Image {
+                    mime_type: Some("image/jpeg".to_string()),
+                    delivery: Some(ResponseDelivery::Uri),
+                    aspect_ratio: Some(ImageAspectRatio::Widescreen16x9),
+                    image_size: Some(ImageSize::Hd2k),
+                },
+                r#"{"type":"image","mime_type":"image/jpeg","delivery":"uri","aspect_ratio":"16:9","image_size":"2K"}"#,
+            ),
+            (
+                ResponseFormat::Video {
+                    delivery: Some(ResponseDelivery::Uri),
+                    gcs_uri: Some("gs://bucket/out".to_string()),
+                    aspect_ratio: Some(ImageAspectRatio::Portrait9x16),
+                    duration: Some("8s".to_string()),
+                    resolution: Some(VideoResolution::Hd720p),
+                },
+                r#"{"type":"video","delivery":"uri","gcs_uri":"gs://bucket/out","aspect_ratio":"9:16","duration":"8s","resolution":"720p"}"#,
+            ),
+        ];
+        for (format, wire) in cases {
+            assert_eq!(serde_json::to_string(&format).unwrap(), wire);
+        }
+    }
+
+    #[test]
+    fn test_response_format_unknown_serializes_data_verbatim() {
+        // `format_type` is not merged back in: the wire form is `data`
+        // exactly, whatever its shape.
+        let unknown = |data: serde_json::Value| {
+            serde_json::to_string(&ResponseFormat::Unknown {
+                format_type: "hologram".to_string(),
+                data,
+            })
+            .unwrap()
+        };
+        assert_eq!(
+            unknown(json!({"type": "stale", "a": 1})),
+            r#"{"a":1,"type":"stale"}"#
+        );
+        assert_eq!(unknown(json!({"a": 1})), r#"{"a":1}"#);
+        assert_eq!(unknown(json!({})), "{}");
+        assert_eq!(unknown(json!("raw")), r#""raw""#);
+        assert_eq!(unknown(json!([1, 2])), "[1,2]");
+        assert_eq!(unknown(serde_json::Value::Null), "null");
+    }
+
+    #[test]
     fn test_response_format_roundtrip_all_variants() {
         let formats = vec![
             ResponseFormat::json_schema(json!({"type": "object"})),
@@ -721,6 +764,82 @@ mod tests {
         let json = serde_json::to_string(&list).unwrap();
         let parsed: ResponseFormatSpec = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, list);
+    }
+
+    #[test]
+    fn test_response_format_spec_wire_shape() {
+        // Single is the bare format object; List is a plain array, even
+        // when empty.
+        let single = ResponseFormatSpec::Single(ResponseFormat::text_plain());
+        assert_eq!(
+            serde_json::to_string(&single).unwrap(),
+            r#"{"type":"text","mime_type":"text/plain"}"#
+        );
+        let empty = ResponseFormatSpec::List(vec![]);
+        assert_eq!(serde_json::to_string(&empty).unwrap(), "[]");
+        let list = ResponseFormatSpec::List(vec![
+            ResponseFormat::text_plain(),
+            ResponseFormat::Audio {
+                mime_type: None,
+                delivery: None,
+                sample_rate: Some(24000),
+                bit_rate: None,
+            },
+        ]);
+        assert_eq!(
+            serde_json::to_string(&list).unwrap(),
+            r#"[{"type":"text","mime_type":"text/plain"},{"type":"audio","sample_rate":24000}]"#
+        );
+    }
+
+    #[test]
+    fn test_response_format_spec_deserialize_shapes() {
+        let parse = |wire: &str| serde_json::from_str::<ResponseFormatSpec>(wire).unwrap();
+        let missing = |data: serde_json::Value| ResponseFormat::Unknown {
+            format_type: "<missing type>".to_string(),
+            data,
+        };
+        let bare_text = ResponseFormat::Text {
+            mime_type: None,
+            schema: None,
+        };
+
+        // Every array is a List, however its elements parse; a nested
+        // array is one element, preserved as Unknown.
+        assert_eq!(parse("[]"), ResponseFormatSpec::List(vec![]));
+        assert_eq!(
+            parse("[{}]"),
+            ResponseFormatSpec::List(vec![missing(json!({}))])
+        );
+        assert_eq!(
+            parse(r#"[{"type":"text"},{"type":"hologram"}]"#),
+            ResponseFormatSpec::List(vec![
+                bare_text.clone(),
+                ResponseFormat::Unknown {
+                    format_type: "hologram".to_string(),
+                    data: json!({"type": "hologram"}),
+                },
+            ])
+        );
+        assert_eq!(
+            parse(r#"[[{"type":"text"}]]"#),
+            ResponseFormatSpec::List(vec![missing(json!([{"type": "text"}]))])
+        );
+
+        // Anything else is a Single.
+        assert_eq!(
+            parse(r#"{"type":"text"}"#),
+            ResponseFormatSpec::Single(bare_text)
+        );
+        assert_eq!(
+            parse("null"),
+            ResponseFormatSpec::Single(missing(serde_json::Value::Null))
+        );
+        assert_eq!(
+            parse(r#""x""#),
+            ResponseFormatSpec::Single(missing(json!("x")))
+        );
+        assert_eq!(parse("3"), ResponseFormatSpec::Single(missing(json!(3))));
     }
 
     #[test]

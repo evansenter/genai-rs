@@ -5,12 +5,16 @@
 //! up. No prior setup is needed — the example creates everything it uses and
 //! deletes it again on the way out.
 //!
+//! The document is uploaded from memory; `FileUpload::from_path` uploads a
+//! file from disk the same way.
+//!
 //! Run with: cargo run --example file_search
 
-use genai_rs::{Client, CreateFileSearchStoreRequest, FileSearchConfig, GenaiError};
+use genai_rs::{
+    Client, CreateFileSearchStoreRequest, FileSearchConfig, FileUpload, GenaiError, PollOptions,
+};
 use std::env;
 use std::error::Error;
-use std::io::Write;
 
 /// A document with a fact the model cannot already know, so a correct answer
 /// demonstrates retrieval rather than recall.
@@ -37,9 +41,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //    (e.g. "fileSearchStores/my-docs-4kws71n2ybpr") — that is what the
     //    File Search tool takes, not the display name.
     let store = client
-        .create_file_search_store(
-            &CreateFileSearchStoreRequest::new().with_display_name("genai-rs-example"),
-        )
+        .file_search_stores()
+        .create(&CreateFileSearchStoreRequest::new().with_display_name("genai-rs-example"))
         .await?;
     println!("Created store: {}", store.name);
 
@@ -48,12 +51,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let result = run_example(&client, model_name, &store.name).await;
 
     println!("\n--- Cleanup ---");
-    // `force` is required while the store still holds documents.
+    // The forced delete, because the store still holds its document.
     //
     // Logged rather than `?`: whatever killed the run (connectivity, quota,
     // an expired key) is likely to kill the delete too, and the original
     // cause is the more useful of the two errors to surface.
-    if let Err(e) = client.delete_file_search_store(&store.name, true).await {
+    if let Err(e) = client.file_search_stores().force_delete(&store.name).await {
         eprintln!("cleanup failed for {}: {e}", store.name);
     } else {
         println!("Deleted store: {}", store.name);
@@ -68,12 +71,13 @@ async fn run_example(
     store_name: &str,
 ) -> Result<(), Box<dyn Error>> {
     // 2. Upload a document into the store.
-    let mut file = tempfile::Builder::new().suffix(".txt").tempfile()?;
-    write!(file, "{DOCUMENT}")?;
-    file.flush()?;
-
     let document = client
-        .upload_to_file_search_store(store_name, file.path(), Some("engineering-handbook"))
+        .file_search_stores()
+        .upload(
+            store_name,
+            FileUpload::from_bytes(DOCUMENT.as_bytes().to_vec(), "text/plain")
+                .with_display_name("engineering-handbook"),
+        )
         .await?;
     println!("Uploaded document: {}", document.name);
     println!("  state: {:?}", document.state);
@@ -82,7 +86,9 @@ async fn run_example(
     //    and File Search silently returns nothing for it until it is Active —
     //    so waiting here is not optional.
     let active = client
-        .wait_for_document_active(&document.name, None, None)
+        .file_search_stores()
+        .documents()
+        .wait_until_active(&document.name, PollOptions::new())
         .await?;
     println!("  indexed: {:?}\n", active.state);
 

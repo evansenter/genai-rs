@@ -348,3 +348,196 @@ The bare-ID rules are stated once, in each module's `# IDs` section.
 **Consequences.** Every root re-export (`genai_rs::X`) is unchanged. The
 module paths `genai_rs::environment::*` and `genai_rs::environment_files::*`
 are gone; use `genai_rs::environments::*` or the root.
+
+Amended by D-016: a resource module holds its accessor, handle(s) and list
+builders. The interaction methods left `client.rs` in D-017.
+
+---
+
+## D-014 — Split oversized modules; tests in sibling files (2026-09-26)
+
+**Context.** Nine source files had grown past 1,100 lines excluding tests,
+with `steps.rs` near 2,900 and `InteractionBuilder` a single 62-method
+`impl`. Large files attract unrelated changes and make review diffs hard to
+place. The structure audit compared the crate with the codex workspace
+(`evansenter/codex`), which targets modules under 500 lines and moves new
+code into a new module once a file passes about 800.
+
+**Decision.** Split each along the seams its own section banners already
+marked, as pure moves (no logic, signature or public-path change). Per D-011:
+
+| From | To |
+|------|----|
+| `src/steps.rs` | `src/steps/`: `mod.rs` (`Step`), `step_serde.rs`, `delta.rs`, `delta_serde.rs`, `accumulator.rs` |
+| `src/request_builder/mod.rs` | `src/request_builder/`: `input.rs`, `tools.rs`, `output.rs`, `generation.rs`, `conversation.rs` beside `mod.rs` |
+| `src/antigravity/mod.rs` | `src/antigravity/`: `error.rs`, `builder.rs`, `agent.rs`, `hook_mapping.rs`, `turn.rs` beside `mod.rs` |
+| `src/antigravity/protocol.rs` | `src/antigravity/protocol/`: `mod.rs`, `enums.rs`, `config.rs`, `input.rs`, `output.rs`, `step_update.rs` |
+| `src/content.rs`, `src/content_tests.rs` | `src/content/`: `mod.rs`, `serde_impls.rs`, `annotation.rs`, `results.rs`, `video_processing.rs`, `content_tests.rs` |
+| `src/response.rs`, `src/response_tests.rs` | `src/response/`: `mod.rs`, `usage.rs`, `views.rs`, `tool_steps.rs`, `step_summary.rs`, `response_tests.rs` |
+| `src/tools.rs` | `src/tools/`: `mod.rs` (`Tool`), `function.rs`, `choice.rs`, `retrieval.rs`, `builtin.rs` |
+| `src/request.rs`, `src/request_tests.rs` | `src/request/`: `mod.rs`, `generation_config.rs`, `agent_config.rs`, `request_tests.rs` |
+| `src/wire.rs` | `src/wire/`: `mod.rs`, `printer.rs`, `tracing_forwarder.rs` |
+
+New submodules are private and re-exported explicitly from their `mod.rs`,
+so every public path (`genai_rs::steps::StepDelta`, root re-exports) is
+unchanged; the rustdoc page set was compared before and after. Unit tests
+moved with their code into sibling `<module>_tests.rs` files declared with
+`#[path]`, the codex convention, and `tests/non_exhaustive_responses.rs`
+now follows `#[path]` so those files are not scanned as API.
+
+**Consequences.** New code has an obvious home, and a file's size is a signal
+worth acting on. The cost is more files and a directory hop for readers who
+knew the old layout; links to `src/<file>.rs:<line>` in issues written
+before 2026-09-26 point at the pre-split layout. `tracing` targets come from
+`module_path!()`, so events from moved code gain a segment (a warning once
+logged under `genai_rs::antigravity::protocol` now logs under
+`genai_rs::antigravity::protocol::enums`); `EnvFilter` directives match by
+prefix, so existing filters still select them.
+
+---
+
+## D-015 — Derive `Serialize`; keep `Deserialize` hand-written (2026-09-26)
+
+**Context.** Evergreen unions such as `Tool`, `Content` and `Annotation` wrote
+each variant list three times: the public enum, a private `Known*` shadow that
+`Deserialize` parses into, and a manual `serialize_map`. A prototype showed a
+full derive can reproduce the `Unknown` fallback (an `untagged` last variant
+with `deserialize_with`), and a read-only survey of all 21 hand-written impls
+then compared it against current behavior in detail.
+
+**Decision.** Derive `Serialize` wherever the output is byte-identical to the
+manual impl, with shared helpers in `src/serde_util.rs`
+(`is_none_or_empty`, `serialize_unknown_merged`, `serialize_unknown_data`).
+Keep every `Deserialize` hand-written. Deriving it would change behavior in
+edge cases:
+
+- an integer `"type"` tag parses as a variant index, so `{"type": 1}` becomes
+  a known variant with defaulted fields and loses the rest of its data
+  (serde buffers the input for the untagged fallback, and its buffered
+  identifier accepts integers);
+- duplicate JSON keys fall to `Unknown` instead of last-one-wins;
+- the fallback warning can no longer include the parse error, which is how a
+  malformed known variant is told apart from a new one.
+
+Converted: `Tool`, `Annotation`, `Content`, `ResponseFormat`,
+`TranscriptionMode`, `InteractionInput`, `FunctionResultPayload`,
+`RemoteEnvironment`, plus both halves of `ResponseFormatSpec` (an untagged
+`List`-then-`Single` derive, equivalent because `ResponseFormat`'s
+`Deserialize` never fails). Each was checked against the removed impl by a
+temporary 4,096-case property test per variant, and exact-JSON tests now pin
+key order, skip rules and `Unknown` merging. `Step`, `StepDelta`,
+`ToolChoice`, `VideoProcessing` and the stream types reshape the wire, so they
+stay manual.
+
+**Consequences.** One variant list per type is gone and a new field's skip
+rule now sits on the field. The derived impls call `serialize_struct` where
+the manual ones called `serialize_map`; serde_json output is identical, but a
+non-JSON serializer could tell them apart. Field declaration order is now
+wire order for these types, so reordering fields is a wire change.
+
+
+---
+
+## D-016 — Resource handles (2026-09-26)
+
+**Context.** Each `/v1beta` resource added its methods straight onto `Client`
+(`create_webhook`, `list_trigger_executions`,
+`upload_to_file_search_store_with_mime`, ...), so one type carried dozens of
+`<verb>_<resource>` names. Optional inputs were positional
+(`list_agents(None, None, Some(p))`, `update_webhook(id, &u, None)`), and
+every list returned one page, leaving each caller to write its own
+`next_page_token` loop. The Python SDK groups the same calls per resource
+(`client.agents.list(...)`).
+
+**Decision.** Resource methods move to per-resource handles, under these
+rules:
+
+1. **Handles.** Each resource has an accessor
+   `Client::<resources>(&self) -> <Handle><'_>`. A handle is
+   `#[derive(Clone, Copy, Debug)]` and holds only `&'a Client`, so its
+   `Debug` is the client's key-redacting one.
+2. **Receivers are `self`, never `&self`.** The future of an
+   `async fn(&self)` borrows the temporary handle, so storing
+   `client.files().get(id)` or writing
+   `join_all(ids.map(|id| c.files().get(id)))` fails with E0515 (a
+   returned value references a temporary). Taken by value, the handle is
+   moved into the future, which then holds only the client borrow.
+3. **Required arguments are positional; optional inputs live on a value**
+   (`&WebhookUpdate`, `FileUpload`, `PollOptions`, ...). Only lists are
+   builders. A single typed trailing `Option<RevocationBehavior>` is the one
+   exception, and a `bool` flag becomes its own verb (`force_delete`).
+4. **Nested resources** (`environments().files()`,
+   `file_search_stores().documents()`) are plain accessors that bind no id:
+   the parent id or full name is a method argument, as in Python.
+5. **Lists.** `list(..)` returns a `List*<'a>` builder that owns its ids and
+   query state. It is configured with `with_*` and ends in `.send()` (one
+   page, the existing `*ListResponse`), `.pages()` or `.items()`. The
+   streams send nothing until polled, send the page size and filters with
+   every page, end after a page whose token is absent or empty, follow an
+   empty page that has a token, and stop on the first error without
+   retrying. A token already requested (including the starting one) yields
+   its page, then `MalformedResponse`, rather than looping forever. An empty
+   object is an empty last page. No handle method returns `impl Trait`, so
+   the edition-2024 capture rules never come up.
+6. **`#[must_use]` goes on the handle and builder types**, each with a
+   reason, and on `pages()` / `items()`. Accessors, `list()` and `with_*`
+   carry none: a bare `#[must_use]` on a function returning a `#[must_use]`
+   type trips `clippy::double_must_use`, which `-D warnings` makes an error.
+7. **Streams own a clone of the client.** `pages()` and `items()` return
+   `BoxStream<'static, _>`: the builder clones the `Client` (an `Arc`'d
+   reqwest client and two strings) and its query state into the stream, so
+   a stream can be stored or spawned even when built from a temporary. A
+   compile-time assertion keeps `Client: Send + Sync`. The engine is the
+   private `src/paging.rs`.
+
+This amends D-013's placement: a resource module holds its accessor,
+handle(s), list builders and `impl_list_page!` invocation instead of an
+`impl Client` block. `client.interaction()`, `execute` and `execute_stream`
+stay on `Client`. The change lands one resource per commit, agents first.
+
+**Consequences.** Breaking for every resource call (D-007); the old-to-new
+table is in `docs/RESOURCES.md`. Each resource is one rustdoc page and one
+completion list, and lists no longer need hand-written token loops. A
+paging stream clones the `Client` once per page request. Adding a list
+filter setter, or `IntoFuture` on the builders, is not breaking later.
+Streams borrowing the client would avoid those clones, but switching to
+owned streams afterwards would change the handle types, so owned streams
+were chosen up front.
+
+---
+
+## D-017 — Interaction methods move to `src/interactions.rs` (2026-09-27)
+
+**Context.** After D-016 every `/v1beta` resource was a handle except
+stored interactions: `src/client.rs` still carried five id-based methods
+(`get_interaction`, `get_interaction_with_input`, `get_interaction_stream`,
+`cancel_interaction`, `delete_interaction`) next to `Client` and
+`ClientBuilder`. `get_interaction_stream(id, Option<&str>)` also borrowed
+the client, so its stream could not be spawned, unlike the D-016 list
+streams.
+
+**Decision.** Moved, per D-011:
+
+| From | To |
+|------|----|
+| `Client::get_interaction` in `src/client.rs` | `Interactions::get` in `src/interactions.rs` |
+| `Client::get_interaction_with_input` | `Interactions::get_with_input` |
+| `Client::get_interaction_stream(id, None)` | `Interactions::stream(id)` |
+| `Client::get_interaction_stream(id, Some(e))` | `Interactions::resume_stream(id, e)` |
+| `Client::cancel_interaction` | `Interactions::cancel` |
+| `Client::delete_interaction` | `Interactions::delete` |
+
+`src/interactions.rs` is a private module holding the `Client::interactions`
+accessor and the handle; the root re-exports `Interactions`. It is not a
+public module, so it does not echo the removed `interactions_api`. The
+handle follows D-016's rules. Both streams return
+`BoxStream<'static, _>`, owning a clone of the client and of the IDs, like
+the list streams; nothing is sent until the first poll, and an invalid ID is
+still the stream's only item. Creating an interaction stays on `Client`:
+`client.interaction()` (the builder), `execute` and `execute_stream`, which
+are not id-based. `client.rs`'s `log_body` became `pub(crate)` for the
+handle.
+
+**Consequences.** Breaking for the five methods (D-007); the table above is
+also in `docs/RESOURCES.md`. `src/client.rs` holds only `Client`,
+`ClientBuilder`, the builder entry point and `execute`/`execute_stream`.

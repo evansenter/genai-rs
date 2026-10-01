@@ -53,17 +53,23 @@ prints the wire; `RUST_LOG=genai_rs=debug` enables debug logs.
 
 | Path | Contents |
 |------|----------|
-| `src/client.rs`, `src/request_builder/` | `Client`, `ClientBuilder`, the interaction methods, `InteractionBuilder`, the auto-function loop (`auto_functions.rs`) |
-| `src/request.rs`, `src/content.rs`, `src/tools.rs` | Request types, `Content`, tool configs |
-| `src/steps.rs`, `src/response.rs` | The steps response model, `InteractionResponse` and its accessors |
+| `src/client.rs`, `src/request_builder/` | `Client`, `ClientBuilder`, `interaction()`, `execute`/`execute_stream`, `InteractionBuilder` (one file per concern: `input`, `tools`, `output`, `generation`; `ConversationBuilder` in `conversation.rs`), the auto-function loop (`auto_functions.rs`) |
+| `src/request/`, `src/content/`, `src/tools/` | Request types (`generation_config.rs`, `agent_config.rs`), `Content` (annotations, result items, video processing alongside), tool configs (`function`, `choice`, `retrieval`, `builtin`) |
+| `src/steps/`, `src/response/` | The steps response model (`Step`, `StepDelta`, the stream `accumulator`), `InteractionResponse` and its accessors (usage, view types and `StepSummary` alongside) |
 | `src/wire_streaming.rs`, `src/streaming.rs` | Stream chunk/event types; auto-function stream types |
-| `src/webhooks.rs`, `triggers.rs`, `agents.rs`, `environments/`, `files.rs`, `file_search_stores.rs`, `credentials.rs`, `voices.rs` | Resource types (`/v1beta/...`) and each resource's `impl Client` methods |
+| `src/webhooks.rs`, `triggers.rs`, `agents.rs`, `environments/`, `files.rs`, `file_search_stores.rs`, `credentials.rs`, `voices.rs` | Resource types (`/v1beta/...`) and each resource's accessor, handle and list builders (D-016; the old-to-new map is `docs/RESOURCES.md`) |
+| `src/interactions.rs` | The `Interactions` handle: get, stream, resume, cancel and delete a stored interaction by id (D-017) |
+| `src/paging.rs` | `pub(crate)` paging engine behind every list builder's `.pages()` / `.items()` |
 | `src/http/` | `pub(crate)` HTTP layer: one request path (`common.rs`), SSE parser, error mapping |
-| `src/wire.rs` | `WireInspector`, `LOUD_WIRE` printer |
+| `src/wire/` | `WireInspector`, `LOUD_WIRE` printer and `WireFilter` (`printer.rs`), `TracingForwarder` |
 | `src/function_calling.rs`, `genai-rs-macros/` | Function registry, `#[tool]` macro (`inventory` registration) |
 | `src/antigravity/` | Harness client (feature-gated); see `docs/ANTIGRAVITY.md` |
 
-When a module or directory moves, record it in `DECISIONS.md` (D-011).
+Submodules are private; a directory's `mod.rs` re-exports its public items
+explicitly, so public paths do not depend on file layout. Keep implementation
+modules under roughly 800 lines excluding tests: add a module rather than
+growing a large file (D-014). When a module or directory moves, record it in
+`DECISIONS.md` (D-011).
 
 ## Rules
 
@@ -80,7 +86,7 @@ Unknown {
 ```
 
 with helpers `is_unknown()`, `unknown_<context>_type()`, `unknown_data()`
-(reference: `Content` in `src/content.rs`). Response and resource structs are
+(reference: `Content` in `src/content/`). Response and resource structs are
 `#[non_exhaustive]` (D-002, guarded by `tests/non_exhaustive_responses.rs`)
 and keep unmodeled fields in a `#[serde(flatten)] extra` map. Polling
 continues on unknown statuses, bounded by timeouts. The `strict-unknown`
@@ -119,6 +125,11 @@ reaches the wire must use a real id.
 
 - `with_*` configures a setting (calling twice replaces); `add_*` appends to a
   collection. See `docs/BUILDER_API.md`.
+- Resources are reached through handles: `client.<resources>().<verb>(..)`
+  (`client.webhooks().get(id)`). Handle methods take `self`; required
+  arguments are positional and optional inputs live on a value. Lists return
+  a builder ending in `.send()` (one page), `.pages()` or `.items()` (every
+  page). See D-016 and `docs/RESOURCES.md`.
 - `*_with_auto_functions()` runs the function-calling loop
   (`docs/FUNCTION_CALLING.md`).
 - `#[must_use]` on getters, handles and boolean checks.
@@ -140,7 +151,9 @@ reaches the wire must use a real id.
 
 ### Tests
 
-- Unit tests live inline in `src/` (and `src/*_tests.rs`); offline HTTP
+- Unit tests for a new module go in a sibling file, declared at the bottom of
+  the module as `#[cfg(test)] #[path = "<module>_tests.rs"] mod tests;`
+  (existing inline test modules stay until their code moves). Offline HTTP
   behavior is tested against a local stub in `tests/http_mock_tests.rs` via
   `ClientBuilder::with_base_url`.
 - Live tests are `#[ignore = "Requires API key"]` (exact string) and must

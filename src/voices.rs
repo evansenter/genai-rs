@@ -6,17 +6,34 @@
 //! [`key`](Voice::key)) works anywhere a prebuilt voice name does, e.g.
 //! [`InteractionBuilder::with_voice`](crate::InteractionBuilder::with_voice).
 //!
+//! Manage them through the [`Voices`] handle from [`Client::voices`]:
+//! [`create`](Voices::create), [`get`](Voices::get), [`list`](Voices::list)
+//! and [`delete`](Voices::delete).
+//!
 //! Verified live 2026-09-24: list (all filters), get, prompted create, and
 //! delete. Prebuilt IDs are lowercase (`kore`, `ar-001-advisor-2`). Errors on
 //! this resource use the standard Google envelope
 //! (`{"error": {"code": 400, "status": "INVALID_ARGUMENT", ...}}`).
+//!
+//! # IDs
+//!
+//! Methods take the bare ID ([`Voice::id`]), not a `voices/...` resource
+//! name: the ID is percent-encoded into a single path segment. Stored custom
+//! voices have `voice_...` IDs, matched case-sensitively, and
+//! [`get`](Voices::get) finds only those: a prebuilt catalog ID (`achernar`,
+//! `kore`), an upper-cased custom ID and a percent-encoded `voices/<id>`
+//! resource name all get a 404 (verified live 2026-09-27), though a prebuilt
+//! ID works as a voice name. An empty or dot-segment ID fails locally with
+//! [`GenaiError::InvalidInput`] before any request.
 
 use crate::client::Client;
 use crate::errors::GenaiError;
+use crate::paging;
 use crate::response::UsageMetadata;
 use crate::serde_util::{ResourceName, deserialize_lenient_timestamp};
 use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
+use futures_util::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 
 struct ForVoice;
@@ -176,6 +193,8 @@ pub struct VoiceListResponse {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+paging::impl_list_page!(VoiceListResponse, voices: Voice);
+
 /// The voice definition inside a [`CreateVoiceRequest`].
 #[derive(Clone, Debug, Default, Serialize, PartialEq)]
 pub struct VoiceSpec {
@@ -210,7 +229,7 @@ pub struct ReplicatedVoice {
     pub consent_audio: VoiceAudio,
 }
 
-/// Request body for [`Client::create_voice`].
+/// Request body for [`Voices::create`].
 ///
 /// ```
 /// use genai_rs::CreateVoiceRequest;
@@ -277,91 +296,25 @@ impl CreateVoiceRequest {
     }
 }
 
-/// Filters and paging for [`Client::list_voices`]. All filters are optional.
+/// The catalog filters of a [`ListVoices`]. Every page of a listing carries
+/// the same filters: the API rejects a page token sent with other filters.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct ListVoicesParams {
-    /// Maximum voices per page.
-    pub page_size: Option<u32>,
-    /// Token from a previous page.
-    pub page_token: Option<String>,
-    /// Free-text search over the catalog.
-    pub search: Option<String>,
-    /// Only voices of this type.
-    pub voice_type: Option<VoiceType>,
-    /// Only voices with this gender, e.g. `female`.
-    pub gender: Option<String>,
-    /// Only voices for this language, e.g. `en-US`.
-    pub language_code: Option<String>,
-    /// Only voices for this region, e.g. `GB`.
-    pub region_code: Option<String>,
-    /// Only voices with this accent.
-    pub accent: Option<String>,
-    /// Only voices with this persona.
-    pub persona: Option<String>,
-    /// Only voices for this usage context.
-    pub context: Option<String>,
-    /// Only voices with this pitch.
-    pub pitch: Option<VoicePitch>,
+pub(crate) struct VoiceFilters {
+    pub(crate) search: Option<String>,
+    pub(crate) voice_type: Option<VoiceType>,
+    pub(crate) gender: Option<String>,
+    pub(crate) language_code: Option<String>,
+    pub(crate) region_code: Option<String>,
+    pub(crate) accent: Option<String>,
+    pub(crate) persona: Option<String>,
+    pub(crate) context: Option<String>,
+    pub(crate) pitch: Option<VoicePitch>,
 }
 
-impl ListVoicesParams {
-    /// No filters, server-default page size.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Sets the page size.
-    #[must_use]
-    pub const fn with_page_size(mut self, page_size: u32) -> Self {
-        self.page_size = Some(page_size);
-        self
-    }
-
-    /// Sets the page token.
-    #[must_use]
-    pub fn with_page_token(mut self, token: impl Into<String>) -> Self {
-        self.page_token = Some(token.into());
-        self
-    }
-
-    /// Sets the free-text search.
-    #[must_use]
-    pub fn with_search(mut self, search: impl Into<String>) -> Self {
-        self.search = Some(search.into());
-        self
-    }
-
-    /// Filters by voice type.
-    #[must_use]
-    pub fn with_voice_type(mut self, voice_type: VoiceType) -> Self {
-        self.voice_type = Some(voice_type);
-        self
-    }
-
-    /// Filters by language.
-    #[must_use]
-    pub fn with_language_code(mut self, language_code: impl Into<String>) -> Self {
-        self.language_code = Some(language_code.into());
-        self
-    }
-
-    /// Filters by gender.
-    #[must_use]
-    pub fn with_gender(mut self, gender: impl Into<String>) -> Self {
-        self.gender = Some(gender.into());
-        self
-    }
-
-    /// Filters by pitch.
-    #[must_use]
-    pub fn with_pitch(mut self, pitch: VoicePitch) -> Self {
-        self.pitch = Some(pitch);
-        self
-    }
-
-    /// The non-paging filters as query pairs, in wire names.
-    pub(crate) fn filters(&self) -> Vec<(&'static str, String)> {
+impl VoiceFilters {
+    /// The set filters as query pairs, in wire names (`voice_type` is sent
+    /// as `type`).
+    pub(crate) fn query_pairs(&self) -> Vec<(&'static str, String)> {
         let mut out = Vec::new();
         let strings = [
             ("search", &self.search),
@@ -388,47 +341,85 @@ impl ListVoicesParams {
 }
 
 impl Client {
-    /// Lists voices: the prebuilt catalog plus your stored custom voices.
+    /// The `/v1beta/voices` resource: list the voice catalog, and create,
+    /// get and delete custom voices.
     ///
-    /// # Errors
+    /// The handle borrows the client and is `Copy`; see
+    /// [IDs](crate::voices#ids) for what the methods take.
     ///
-    /// Returns an error on network failure or a non-success status.
-    pub async fn list_voices(
-        &self,
-        params: &ListVoicesParams,
-    ) -> Result<VoiceListResponse, GenaiError> {
-        crate::http::voices::list_voices(&self.http, params).await
+    /// ```no_run
+    /// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+    /// let voice = client.voices().get("voice_3d8wi4xx4yxg").await?;
+    /// # let _ = voice;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn voices(&self) -> Voices<'_> {
+        Voices { client: self }
     }
+}
 
-    /// Retrieves a voice by bare ID (`voice_...`, or a prebuilt name).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the voice doesn't exist or the request fails.
-    pub async fn get_voice(&self, voice_id: &str) -> Result<Voice, GenaiError> {
-        crate::http::voices::get_voice(&self.http, voice_id).await
-    }
+/// The `/v1beta/voices` resource, from [`Client::voices`].
+///
+/// Methods take `self` by value, so each call's future holds only the client
+/// borrow, never the handle: `client.voices().get(id)` can be stored or
+/// joined with others. See [IDs](crate::voices#ids).
+#[derive(Clone, Copy, Debug)]
+#[must_use = "a resource handle does nothing until you call one of its methods"]
+pub struct Voices<'a> {
+    client: &'a Client,
+}
 
+impl<'a> Voices<'a> {
     /// Creates a custom voice.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is rejected (e.g. a prompted voice
+    /// with `store: false`, or the stored-voice quota is exhausted).
+    ///
+    /// # Example
     ///
     /// ```no_run
     /// # async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
     /// use genai_rs::CreateVoiceRequest;
     ///
     /// let voice = client
-    ///     .create_voice(&CreateVoiceRequest::prompted("A warm, gravelly storyteller."))
+    ///     .voices()
+    ///     .create(&CreateVoiceRequest::prompted("A warm, gravelly storyteller."))
     ///     .await?;
     /// println!("{:?}", voice.id);
     /// # Ok(())
     /// # }
     /// ```
+    pub async fn create(self, request: &CreateVoiceRequest) -> Result<Voice, GenaiError> {
+        crate::http::voices::create_voice(&self.client.http, request).await
+    }
+
+    /// Retrieves a stored custom voice by its bare ID (`voice_...`).
+    /// Prebuilt catalog IDs are not found here; see
+    /// [IDs](crate::voices#ids).
     ///
     /// # Errors
     ///
-    /// Returns an error if the request is rejected (e.g. a prompted voice
-    /// with `store: false`, or the stored-voice quota is exhausted).
-    pub async fn create_voice(&self, request: &CreateVoiceRequest) -> Result<Voice, GenaiError> {
-        crate::http::voices::create_voice(&self.http, request).await
+    /// Returns an error if the voice doesn't exist (404) or the request
+    /// fails.
+    pub async fn get(self, voice_id: &str) -> Result<Voice, GenaiError> {
+        crate::http::voices::get_voice(&self.client.http, voice_id).await
+    }
+
+    /// Lists voices, the prebuilt catalog plus your stored custom voices:
+    /// configure the returned [`ListVoices`] (filters and paging), then call
+    /// [`send`](ListVoices::send) for one page, or
+    /// [`pages`](ListVoices::pages) / [`items`](ListVoices::items) to stream
+    /// them all.
+    pub fn list(self) -> ListVoices<'a> {
+        ListVoices {
+            client: self.client,
+            filters: VoiceFilters::default(),
+            page_size: None,
+            page_token: None,
+        }
     }
 
     /// Deletes a stored custom voice.
@@ -436,8 +427,189 @@ impl Client {
     /// # Errors
     ///
     /// Returns an error if the voice doesn't exist or the request fails.
-    pub async fn delete_voice(&self, voice_id: &str) -> Result<(), GenaiError> {
-        crate::http::voices::delete_voice(&self.http, voice_id).await
+    pub async fn delete(self, voice_id: &str) -> Result<(), GenaiError> {
+        crate::http::voices::delete_voice(&self.client.http, voice_id).await
+    }
+}
+
+/// A `GET /v1beta/voices` request, from [`Voices::list`]. All filters are
+/// optional; each one set narrows the list.
+///
+/// End it with [`send`](Self::send) for one page, or
+/// [`pages`](Self::pages) / [`items`](Self::items) to follow
+/// `next_page_token` to the end of the list. The filters and page size are
+/// sent with every page.
+///
+/// The API ties a page token to the filters of the request that returned
+/// it: the same token with other filters, or with none, is a 400 (verified
+/// live 2026-09-27). The streams take care of this; when resuming with
+/// [`with_page_token`](Self::with_page_token), set the same filters again.
+///
+/// # Example
+///
+/// ```no_run
+/// use futures_util::{StreamExt, TryStreamExt};
+/// use genai_rs::{Voice, VoiceType};
+///
+/// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+/// // One page of the British English catalog
+/// let page = client
+///     .voices()
+///     .list()
+///     .with_voice_type(VoiceType::Prebuilt)
+///     .with_language_code("en-GB")
+///     .with_page_size(10)
+///     .send()
+///     .await?;
+/// for voice in &page.voices {
+///     println!("{:?}: {:?}", voice.id, voice.description);
+/// }
+///
+/// // The first 20 matches of a search, across pages
+/// let narrators: Vec<Voice> = client
+///     .voices()
+///     .list()
+///     .with_search("narrator")
+///     .items()
+///     .take(20)
+///     .try_collect()
+///     .await?;
+/// # let _ = narrators;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Clone, Debug)]
+#[must_use = "a list request does nothing until .send(), .pages() or .items()"]
+pub struct ListVoices<'a> {
+    client: &'a Client,
+    filters: VoiceFilters,
+    page_size: Option<u32>,
+    page_token: Option<String>,
+}
+
+impl<'a> ListVoices<'a> {
+    /// Sets the maximum number of voices per page (the API default is 50).
+    /// Sent with every page.
+    pub fn with_page_size(mut self, page_size: u32) -> Self {
+        self.page_size = Some(page_size);
+        self
+    }
+
+    /// Starts from this page token, from a previous page's
+    /// `next_page_token`. Set the filters that page was listed with, too.
+    pub fn with_page_token(mut self, page_token: impl Into<String>) -> Self {
+        self.page_token = Some(page_token.into());
+        self
+    }
+
+    /// Free-text search over the catalog, e.g. `narrator`.
+    pub fn with_search(mut self, search: impl Into<String>) -> Self {
+        self.filters.search = Some(search.into());
+        self
+    }
+
+    /// Only voices of this type (wire parameter `type`).
+    pub fn with_voice_type(mut self, voice_type: VoiceType) -> Self {
+        self.filters.voice_type = Some(voice_type);
+        self
+    }
+
+    /// Only voices with this gender, e.g. `female`.
+    pub fn with_gender(mut self, gender: impl Into<String>) -> Self {
+        self.filters.gender = Some(gender.into());
+        self
+    }
+
+    /// Only voices for this language, a BCP-47 tag such as `en-US`.
+    pub fn with_language_code(mut self, language_code: impl Into<String>) -> Self {
+        self.filters.language_code = Some(language_code.into());
+        self
+    }
+
+    /// Only voices for this region, e.g. `GB`.
+    pub fn with_region_code(mut self, region_code: impl Into<String>) -> Self {
+        self.filters.region_code = Some(region_code.into());
+        self
+    }
+
+    /// Only voices with this accent, e.g. `General American`.
+    pub fn with_accent(mut self, accent: impl Into<String>) -> Self {
+        self.filters.accent = Some(accent.into());
+        self
+    }
+
+    /// Only voices with this persona, e.g. `Storyteller & Narrator`.
+    pub fn with_persona(mut self, persona: impl Into<String>) -> Self {
+        self.filters.persona = Some(persona.into());
+        self
+    }
+
+    /// Only voices for this usage context, e.g. `Content & Media`.
+    pub fn with_context(mut self, context: impl Into<String>) -> Self {
+        self.filters.context = Some(context.into());
+        self
+    }
+
+    /// Only voices with this pitch.
+    pub fn with_pitch(mut self, pitch: VoicePitch) -> Self {
+        self.filters.pitch = Some(pitch);
+        self
+    }
+
+    /// Sends the request and returns one page.
+    ///
+    /// A list that matches nothing comes back as an empty page with no
+    /// `next_page_token`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails or response parsing fails.
+    pub async fn send(self) -> Result<VoiceListResponse, GenaiError> {
+        crate::http::voices::list_voices(
+            &self.client.http,
+            &self.filters,
+            self.page_size,
+            self.page_token.as_deref(),
+        )
+        .await
+    }
+
+    /// Streams every page, starting at [`with_page_token`](Self::with_page_token)
+    /// or the first page.
+    ///
+    /// Nothing is sent until the stream is polled. It ends after a page
+    /// without a `next_page_token`; an error is yielded once and ends it. A
+    /// page whose token was already requested (the starting token included)
+    /// is yielded, then [`GenaiError::MalformedResponse`]. The stream owns a
+    /// clone of the client, so it can be stored or spawned.
+    #[must_use = "streams do nothing unless polled"]
+    pub fn pages(self) -> BoxStream<'static, Result<VoiceListResponse, GenaiError>> {
+        let Self {
+            client,
+            filters,
+            page_size,
+            page_token,
+        } = self;
+        let client = client.clone();
+        paging::pages("voices", page_token, move |token| {
+            let (client, filters) = (client.clone(), filters.clone());
+            async move {
+                crate::http::voices::list_voices(
+                    &client.http,
+                    &filters,
+                    page_size,
+                    token.as_deref(),
+                )
+                .await
+            }
+        })
+    }
+
+    /// Streams every voice across pages, in server order. Same rules as
+    /// [`pages`](Self::pages).
+    #[must_use = "streams do nothing unless polled"]
+    pub fn items(self) -> BoxStream<'static, Result<Voice, GenaiError>> {
+        paging::items(self.pages())
     }
 }
 
@@ -523,20 +695,64 @@ mod tests {
     }
 
     #[test]
-    fn list_params_render_wire_names() {
-        let params = ListVoicesParams::new()
+    fn voice_list_without_setters_sends_no_query() {
+        let client = Client::new("k".to_string());
+        let list = client.voices().list();
+        assert_eq!(list.filters, VoiceFilters::default());
+        assert!(list.filters.query_pairs().is_empty());
+        assert_eq!(list.page_size, None);
+        assert_eq!(list.page_token, None);
+    }
+
+    #[test]
+    fn voice_list_setters_render_wire_names() {
+        let client = Client::new("k".to_string());
+        let list = client
+            .voices()
+            .list()
             .with_page_size(3)
-            .with_voice_type(VoiceType::Prebuilt)
+            .with_page_token("t1")
+            .with_search("warm")
+            .with_voice_type(VoiceType::Prompted)
+            .with_gender("female")
             .with_language_code("en-US")
-            .with_pitch(VoicePitch::Low);
+            .with_region_code("US")
+            .with_accent("General American")
+            .with_persona("Storyteller & Narrator")
+            .with_context("Content & Media")
+            .with_pitch(VoicePitch::Low)
+            // `with_*` replaces.
+            .with_page_token("t2")
+            .with_voice_type(VoiceType::Prebuilt);
+        assert_eq!(list.page_size, Some(3));
+        assert_eq!(list.page_token.as_deref(), Some("t2"));
+        // Paging stays out of the filters; `voice_type` is sent as `type`.
         assert_eq!(
-            params.filters(),
+            list.filters.query_pairs(),
             vec![
+                ("search", "warm".to_string()),
+                ("gender", "female".to_string()),
                 ("language_code", "en-US".to_string()),
+                ("region_code", "US".to_string()),
+                ("accent", "General American".to_string()),
+                ("persona", "Storyteller & Narrator".to_string()),
+                ("context", "Content & Media".to_string()),
                 ("type", "prebuilt".to_string()),
                 ("pitch", "low".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn voices_handle_and_list_debug_redact_the_api_key() {
+        let client = Client::new("secret-api-key".to_string());
+        for debug in [
+            format!("{:?}", client.voices()),
+            format!("{:?}", client.voices().list().with_search("warm")),
+        ] {
+            assert!(!debug.contains("secret-api-key"), "{debug}");
+            assert!(debug.contains("[REDACTED]"), "{debug}");
+        }
     }
 
     #[test]

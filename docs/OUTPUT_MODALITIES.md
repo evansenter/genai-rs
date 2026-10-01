@@ -117,22 +117,40 @@ The Voices API (`/v1beta/voices`) serves the catalog and stores custom
 voices. Prebuilt ids are lowercase (`kore`, `puck`, and locale voices like
 `ar-001-advisor-2`); the capitalized spellings are accepted too.
 
-```rust,ignore
-use genai_rs::{CreateVoiceRequest, ListVoicesParams};
+```rust,no_run
+use genai_rs::{CreateVoiceRequest, VoiceType};
 
-let page = client.list_voices(&ListVoicesParams::new().with_page_size(10)).await?;
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+let page = client
+    .voices()
+    .list()
+    .with_voice_type(VoiceType::Prebuilt)
+    .with_language_code("en-US")
+    .with_page_size(10)
+    .send()
+    .await?;
 for voice in &page.voices {
     println!("{:?}: {:?}", voice.id, voice.description);
 }
 
 // Design a voice from a prompt; its id works anywhere a prebuilt name does
 let voice = client
-    .create_voice(&CreateVoiceRequest::prompted("A calm, low-pitched narrator."))
+    .voices()
+    .create(&CreateVoiceRequest::prompted("A calm, low-pitched narrator."))
     .await?;
 let id = voice.id.clone().expect("stored voices have an id");
 // ... .with_voice(&id) ...
-client.delete_voice(&id).await?;
+client.voices().delete(&id).await?;
+# Ok(())
+# }
 ```
+
+The list filters are `with_search`, `with_voice_type`, `with_gender`,
+`with_language_code`, `with_region_code`, `with_accent`, `with_persona`,
+`with_context` and `with_pitch`. `.items()` streams every match across
+pages, resending the filters with each page, which the API requires.
+`client.voices().get(id)` finds stored custom voices only: a prebuilt id is
+a 404 there (2026-09-27), though it works as a voice name.
 
 Prompted voices must be stored (`store: true`, the default for
 `CreateVoiceRequest::prompted`) and expire after a year. A custom voice

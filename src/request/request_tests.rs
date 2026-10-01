@@ -1,6 +1,7 @@
 //! Unit tests for request types (InteractionRequest, GenerationConfig, etc.)
 
 use super::*;
+use crate::tools::{FunctionCallingMode, ToolChoice};
 
 #[test]
 fn test_serialize_create_interaction_request_with_model() {

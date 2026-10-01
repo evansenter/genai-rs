@@ -1,9 +1,9 @@
 //! Deep Research: a long-running agent, polled to completion or cancelled.
 //!
 //! Agent interactions run in the background: `create()` returns at once with
-//! an in-progress interaction, and you poll `get_interaction(id)` (or register
+//! an in-progress interaction, and you poll `interactions().get(id)` (or register
 //! a webhook, see `webhooks_and_background`). If the wait exceeds your budget,
-//! `cancel_interaction(id)` stops the agent so it stops consuming tokens.
+//! `interactions().cancel(id)` stops the agent so it stops consuming tokens.
 //!
 //! Research takes minutes. Set `DEEP_RESEARCH_MAX_WAIT_SECS` (default 900)
 //! to change the budget; a small value exercises the cancel path.
@@ -57,7 +57,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             println!("\n({summaries} thought summaries along the way)");
         }
         None => {
-            let cancelled = client.cancel_interaction(&id).await?;
+            let cancelled = client.interactions().cancel(&id).await?;
             println!(
                 "Gave up after {max_wait:?}; cancelled, status now {:?}",
                 cancelled.status
@@ -91,7 +91,7 @@ async fn poll(
         }
         tokio::time::sleep(delay).await;
         delay = (delay * 2).min(MAX_POLL_DELAY);
-        response = client.get_interaction(&id).await?;
+        response = client.interactions().get(&id).await?;
         println!("  {:>4}s  {:?}", start.elapsed().as_secs(), response.status);
     }
 }

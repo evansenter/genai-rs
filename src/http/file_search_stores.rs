@@ -14,17 +14,14 @@ use super::common::{
 };
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
+use super::files::check_upload_size;
 use crate::errors::GenaiError;
 use crate::file_search_stores::{
     CreateFileSearchStoreRequest, DocumentListResponse, FileSearchDocument, FileSearchStore,
     FileSearchStoreListResponse,
 };
+use crate::files::UploadSource;
 use reqwest::header::HeaderValue;
-use std::path::Path;
-
-/// Upload ceiling, borrowed from the Files API's 2 GB and not verified for
-/// this resource; checked before any bytes are sent.
-const MAX_UPLOAD_SIZE: u64 = 2_147_483_648;
 
 fn stores_url(ctx: &HttpContext) -> String {
     ctx.api_url("fileSearchStores")
@@ -192,17 +189,21 @@ pub async fn delete_document(
     Ok(())
 }
 
-/// Uploads a local file into a store
+/// Uploads a file from disk or memory into a store
 /// (`POST /upload/v1beta/{store}:uploadToFileSearchStore`, raw protocol).
 ///
 /// The API answers with an operation wrapper naming the created document;
 /// this fetches the document so callers get the same shape the list and get
 /// endpoints return. New documents start `Pending` — see
-/// [`wait_for_document_active`](crate::Client::wait_for_document_active).
+/// [`FileSearchDocuments::wait_until_active`](crate::FileSearchDocuments::wait_until_active).
+///
+/// The raw protocol sends the whole body in one request, so a path is read
+/// fully into memory; the size guard (the Files API's 2 GB, unverified for
+/// this resource) at least stops an oversized file before it is read.
 pub async fn upload_to_file_search_store(
     ctx: &HttpContext,
     store_name: &str,
-    file_path: &Path,
+    source: UploadSource,
     display_name: Option<&str>,
     mime_type: &str,
 ) -> Result<FileSearchDocument, GenaiError> {
@@ -211,33 +212,41 @@ pub async fn upload_to_file_search_store(
         ctx.upload_url(&format!("{store_path}:uploadToFileSearchStore")),
         &[("display_name", display_name)],
     );
-
-    let read_error = |e: std::io::Error| {
-        GenaiError::InvalidInput(format!("Failed to read {}: {e}", file_path.display()))
-    };
-    // Size the upload from the open handle, so it describes the file sent.
-    let file = tokio::fs::File::open(file_path).await.map_err(read_error)?;
-    let file_size = file.metadata().await.map_err(read_error)?.len();
-    if file_size == 0 {
-        return Err(GenaiError::InvalidInput(
-            "Cannot upload empty file".to_string(),
-        ));
-    }
-    if file_size > MAX_UPLOAD_SIZE {
-        return Err(GenaiError::InvalidInput(format!(
-            "File size {file_size} exceeds maximum {MAX_UPLOAD_SIZE}"
-        )));
-    }
-
     let mime_type_header = mime_type_header(mime_type)?;
 
-    // The API derives a fallback display name from this header when the
-    // query parameter is absent, so send it either way.
-    let file_name = file_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("upload");
-    let file_name_header = upload_file_name_header(file_name);
+    // Without `display_name`, the API names the document after the
+    // `X-Goog-Upload-File-Name` header, and leaves it unnamed when the header
+    // is absent too (verified live 2026-09-27). A path sends its file name,
+    // as a Files API path upload does; bytes send none, so an in-memory
+    // upload without a display name stays unnamed, as in the Files API.
+    let (body, size_bytes, file_name_header) = match source {
+        UploadSource::Path(file_path) => {
+            let read_error = |e: std::io::Error| {
+                GenaiError::InvalidInput(format!("Failed to read {}: {e}", file_path.display()))
+            };
+            // Size the upload from the open handle, so it describes the file
+            // sent; the body streams from disk.
+            let file = tokio::fs::File::open(&file_path)
+                .await
+                .map_err(read_error)?;
+            let size = file.metadata().await.map_err(read_error)?.len();
+            check_upload_size(size)?;
+            let file_name = file_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("upload");
+            (
+                file_body(file),
+                size,
+                Some(upload_file_name_header(file_name)),
+            )
+        }
+        UploadSource::Bytes(data) => {
+            let size = data.len() as u64;
+            check_upload_size(size)?;
+            (reqwest::Body::from(data), size, None)
+        }
+    };
 
     let request_id = ctx.next_request_id();
     ctx.emit_request(
@@ -246,18 +255,23 @@ pub async fn upload_to_file_search_store(
         &url,
         Some(&serde_json::json!({
             "display_name": display_name,
-            "file_name": String::from_utf8_lossy(file_name_header.as_bytes()),
+            "file_name": file_name_header
+                .as_ref()
+                .map(|h| String::from_utf8_lossy(h.as_bytes())),
             "mime_type": mime_type,
-            "size_bytes": file_size,
+            "size_bytes": size_bytes,
         })),
     );
 
-    let builder = api_request(ctx, reqwest::Method::POST, &url)
-        .header("X-Goog-Upload-Protocol", "raw")
-        .header("X-Goog-Upload-File-Name", file_name_header)
+    let mut builder =
+        api_request(ctx, reqwest::Method::POST, &url).header("X-Goog-Upload-Protocol", "raw");
+    if let Some(file_name_header) = file_name_header {
+        builder = builder.header("X-Goog-Upload-File-Name", file_name_header);
+    }
+    let builder = builder
         .header(reqwest::header::CONTENT_TYPE, mime_type_header)
-        .header(reqwest::header::CONTENT_LENGTH, file_size)
-        .body(file_body(file));
+        .header(reqwest::header::CONTENT_LENGTH, size_bytes)
+        .body(body);
     let response = send_checked(ctx, request_id, builder).await?;
     let text = response.text().await?;
     ctx.emit_response_body(request_id, &text);

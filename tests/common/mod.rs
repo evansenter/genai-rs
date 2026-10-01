@@ -210,7 +210,8 @@ pub async fn poll_until_done(
     let mut delay = Duration::from_secs(1);
     loop {
         let response = client
-            .get_interaction(interaction_id)
+            .interactions()
+            .get(interaction_id)
             .await
             .unwrap_or_else(|e| panic!("polling {interaction_id} failed: {e:?}"));
         match response.status {

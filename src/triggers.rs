@@ -4,8 +4,13 @@
 //! A [`Trigger`] runs a stored interaction request on a cron
 //! [`schedule`](Trigger::schedule) with **no client process running**: the
 //! API creates a fresh interaction per firing, and past firings are
-//! inspectable via
-//! [`list_trigger_executions`](crate::client::Client::list_trigger_executions).
+//! inspectable via [`list_executions`](Triggers::list_executions).
+//!
+//! Manage triggers through the [`Triggers`] handle from
+//! [`Client::triggers`]: [`create`](Triggers::create),
+//! [`get`](Triggers::get), [`list`](Triggers::list),
+//! [`update`](Triggers::update), [`delete`](Triggers::delete),
+//! [`run`](Triggers::run) and [`list_executions`](Triggers::list_executions).
 //!
 //! Server-side constraint (verified live 2026-08-08): the trigger's
 //! `interaction` must target a custom `agent` (an [`agents`](crate::agents)
@@ -29,9 +34,11 @@
 
 use crate::client::Client;
 use crate::errors::GenaiError;
+use crate::paging;
 use crate::request::{InteractionInput, InteractionRequest};
 use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
+use futures_util::stream::BoxStream;
 use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 
@@ -86,7 +93,8 @@ wire_enum! {
 #[non_exhaustive]
 pub struct Trigger {
     /// Output only. The ID of the trigger — the value the ID-taking
-    /// client methods (`get_trigger`, `delete_trigger`, ...) expect.
+    /// [`Triggers`] methods ([`get`](Triggers::get),
+    /// [`delete`](Triggers::delete), ...) expect.
     /// Like its siblings on this wire-unverified family (see
     /// [`Trigger::environment_id`]), it may arrive in `triggers/...`
     /// resource-name form; strip such a prefix before passing it back.
@@ -125,7 +133,7 @@ pub struct Trigger {
     /// This wire-unverified family may deliver IDs in `environments/...`
     /// resource-name form; strip such a prefix before passing the value
     /// back to an ID-taking client method (they percent-encode a slash
-    /// into the path — see [`Client::get_environment`](crate::Client::get_environment)).
+    /// into the path — see [`Environments::get`](crate::Environments::get)).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment_id: Option<String>,
     /// Output only. The current status of the trigger.
@@ -340,8 +348,8 @@ pub struct TriggerCreateParams {
     /// The interaction request created on each firing. Must target a
     /// custom `agent`; `store` is not allowed here (server-verified —
     /// [`TriggerCreateParams::new`], the deserialize path, and
-    /// `create_trigger` itself all warn when it is set, the last covering
-    /// struct literals and post-construction mutation too).
+    /// [`Triggers::create`] itself all warn when it is set, the last
+    /// covering struct literals and post-construction mutation too).
     #[serde(deserialize_with = "deserialize_interaction_with_warns")]
     pub interaction: InteractionRequest,
     /// Human-readable display name.
@@ -405,9 +413,9 @@ pub struct TriggerCreateParams {
 /// - empty input: would fire on a schedule with an empty prompt.
 ///
 /// Called from [`TriggerCreateParams::new`], the deserialize path, and
-/// `create_trigger` (which also catches struct literals and later mutation),
-/// so `new`-then-create warns twice. Warns rather than errors: the full shape
-/// can't be validated while creation is agent-gated.
+/// [`Triggers::create`] (which also catches struct literals and later
+/// mutation), so `new`-then-create warns twice. Warns rather than errors: the
+/// full shape can't be validated while creation is agent-gated.
 pub(crate) fn warn_on_interaction_footguns(interaction: &InteractionRequest) {
     if interaction.store.is_some() {
         tracing::warn!(
@@ -502,8 +510,9 @@ impl TriggerCreateParams {
 /// Update payload for a [`Trigger`] — unset fields are omitted from the
 /// PATCH body.
 ///
-/// Unlike [`Client::update_webhook`](crate::client::Client::update_webhook),
-/// the SDK spec exposes **no `update_mask` parameter** for trigger updates
+/// Unlike webhook updates
+/// ([`WebhookUpdate::update_mask`](crate::WebhookUpdate::update_mask)), the
+/// SDK spec exposes **no `update_mask` parameter** for trigger updates
 /// (google-genai 2.17.0: `triggers.update(id, display_name, status)` only),
 /// so field omission is the only scoping mechanism available. The sibling
 /// webhooks PATCH was observed live (2026-07) to apply exactly the fields
@@ -659,6 +668,8 @@ pub struct TriggerListResponse {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+paging::impl_list_page!(TriggerListResponse, triggers: Trigger);
+
 /// Response from listing a trigger's executions.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -686,23 +697,76 @@ pub struct TriggerExecutionListResponse {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-/// Triggers resource methods; see [IDs](crate::triggers#ids).
+paging::impl_list_page!(TriggerExecutionListResponse, trigger_executions: TriggerExecution);
+
 impl Client {
+    /// The `/v1beta/triggers` resource: create, inspect, update, fire and
+    /// delete server-side scheduled triggers, and list their executions.
+    ///
+    /// The handle borrows the client and is `Copy`; see
+    /// [IDs](crate::triggers#ids) for what the methods take.
+    ///
+    /// ```no_run
+    /// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+    /// let trigger = client.triggers().get("trig-123").await?;
+    /// # let _ = trigger;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn triggers(&self) -> Triggers<'_> {
+        Triggers { client: self }
+    }
+}
+
+/// The `/v1beta/triggers` resource, from [`Client::triggers`].
+///
+/// Methods take `self` by value, so each call's future holds only the client
+/// borrow, never the handle: `client.triggers().get(id)` can be stored or
+/// joined with others. See [IDs](crate::triggers#ids).
+#[derive(Clone, Copy, Debug)]
+#[must_use = "a resource handle does nothing until you call one of its methods"]
+pub struct Triggers<'a> {
+    client: &'a Client,
+}
+
+impl<'a> Triggers<'a> {
     /// Creates a server-side scheduled trigger.
     ///
     /// The trigger's `interaction` must target a custom `agent` (see
     /// [`crate::triggers`] for the live-verified constraints); trigger
     /// creation is gated with custom-agent creation on standard API keys.
+    /// Like [`TriggerCreateParams::new`], this warns when the nested
+    /// interaction sets `store`, targets no `agent`, or has empty input.
     ///
     /// # Errors
     ///
     /// Returns an error on network failure or when the API rejects the
     /// trigger definition.
-    pub async fn create_trigger(
-        &self,
-        params: &crate::TriggerCreateParams,
-    ) -> Result<crate::Trigger, GenaiError> {
-        crate::http::triggers::create_trigger(&self.http, params).await
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{Client, InteractionInput, InteractionRequest, TriggerCreateParams};
+    ///
+    /// # async fn example(client: Client) -> Result<(), genai_rs::GenaiError> {
+    /// let interaction = InteractionRequest {
+    ///     agent: Some("my-custom-agent".to_string()),
+    ///     input: InteractionInput::Text("Daily repo audit".to_string()),
+    ///     ..Default::default()
+    /// };
+    /// let trigger = client
+    ///     .triggers()
+    ///     .create(
+    ///         &TriggerCreateParams::new("0 9 * * *", "UTC", interaction)
+    ///             .with_display_name("daily-audit"),
+    ///     )
+    ///     .await?;
+    /// println!("Created {:?}, next run {:?}", trigger.id, trigger.next_run_time);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn create(self, params: &TriggerCreateParams) -> Result<Trigger, GenaiError> {
+        crate::http::triggers::create_trigger(&self.client.http, params).await
     }
 
     /// Retrieves a trigger by ID.
@@ -710,46 +774,53 @@ impl Client {
     /// # Errors
     ///
     /// Returns an error on network failure or when the trigger doesn't exist.
-    pub async fn get_trigger(&self, trigger_id: &str) -> Result<crate::Trigger, GenaiError> {
-        crate::http::triggers::get_trigger(&self.http, trigger_id).await
+    pub async fn get(self, trigger_id: &str) -> Result<Trigger, GenaiError> {
+        crate::http::triggers::get_trigger(&self.client.http, trigger_id).await
     }
 
-    /// Lists triggers, paged.
-    ///
-    /// # Arguments
-    ///
-    /// * `page_size` - Optional maximum number of triggers per page.
-    /// * `page_token` - Optional token from a previous list call.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error on network failure or an invalid page token.
-    pub async fn list_triggers(
-        &self,
-        page_size: Option<u32>,
-        page_token: Option<&str>,
-    ) -> Result<crate::TriggerListResponse, GenaiError> {
-        crate::http::triggers::list_triggers(&self.http, page_size, page_token).await
+    /// Lists triggers: configure the returned [`ListTriggers`], then call
+    /// [`send`](ListTriggers::send) for one page, or
+    /// [`pages`](ListTriggers::pages) / [`items`](ListTriggers::items) to
+    /// stream them all.
+    pub fn list(self) -> ListTriggers<'a> {
+        ListTriggers {
+            client: self.client,
+            page_size: None,
+            page_token: None,
+        }
     }
 
-    /// Updates a trigger (display name and/or status; `paused` pauses it,
-    /// `active` resumes it).
+    /// Updates a trigger with the fields set on `update` (display name
+    /// and/or status; `paused` pauses it, `active` resumes it).
     ///
-    /// # Arguments
-    ///
-    /// * `trigger_id` - The trigger to update.
-    /// * `update` - The fields to change (only set fields are sent; there
-    ///   is no `update_mask` on this endpoint — see [`crate::TriggerUpdate`]).
+    /// Only set fields are sent. There is no `update_mask` on this endpoint;
+    /// see [`TriggerUpdate`].
     ///
     /// # Errors
     ///
     /// Returns an error on network failure or when the trigger doesn't exist.
-    pub async fn update_trigger(
-        &self,
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{Client, TriggerStatus, TriggerUpdate};
+    ///
+    /// # async fn example(client: Client) -> Result<(), genai_rs::GenaiError> {
+    /// // Pause a trigger
+    /// let paused = client
+    ///     .triggers()
+    ///     .update("trig-123", &TriggerUpdate::new().with_status(TriggerStatus::Paused))
+    ///     .await?;
+    /// # let _ = paused;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn update(
+        self,
         trigger_id: &str,
-        update: &crate::TriggerUpdate,
-    ) -> Result<crate::Trigger, GenaiError> {
-        crate::http::triggers::update_trigger(&self.http, trigger_id, update).await
+        update: &TriggerUpdate,
+    ) -> Result<Trigger, GenaiError> {
+        crate::http::triggers::update_trigger(&self.client.http, trigger_id, update).await
     }
 
     /// Deletes a trigger.
@@ -757,713 +828,261 @@ impl Client {
     /// # Errors
     ///
     /// Returns an error on network failure or when the trigger doesn't exist.
-    pub async fn delete_trigger(&self, trigger_id: &str) -> Result<(), GenaiError> {
-        crate::http::triggers::delete_trigger(&self.http, trigger_id).await
+    pub async fn delete(self, trigger_id: &str) -> Result<(), GenaiError> {
+        crate::http::triggers::delete_trigger(&self.client.http, trigger_id).await
     }
 
     /// Fires a trigger immediately, outside its schedule.
     ///
-    /// **Unverified endpoint shape**: this posts to the `executions`
-    /// sub-collection (not a `:run` colon verb), a path derived from the
-    /// google-genai generated bindings rather than observed live — it
-    /// needs an existing trigger, and trigger creation is agent-gated
-    /// (see [`triggers`](crate::triggers)). The same caveat applies to
-    /// [`list_trigger_executions`](Self::list_trigger_executions).
+    /// This posts to the `executions` sub-collection (not a `:run` colon
+    /// verb), the path in the google-genai generated bindings. The path
+    /// exists server-side (live 2026-09-26: a missing trigger is a
+    /// structured `404 NOT_FOUND`), but the response shape is unverified: it
+    /// needs an existing trigger, and trigger creation is agent-gated (see
+    /// [`triggers`](crate::triggers)).
     ///
     /// # Errors
     ///
     /// Returns an error on network failure or when the trigger doesn't exist.
-    pub async fn run_trigger(
-        &self,
-        trigger_id: &str,
-    ) -> Result<crate::TriggerExecution, GenaiError> {
-        crate::http::triggers::run_trigger(&self.http, trigger_id).await
+    pub async fn run(self, trigger_id: &str) -> Result<TriggerExecution, GenaiError> {
+        crate::http::triggers::run_trigger(&self.client.http, trigger_id).await
     }
 
-    /// Lists a trigger's past executions, paged.
+    /// Lists a trigger's past executions: configure the returned
+    /// [`ListTriggerExecutions`], then call
+    /// [`send`](ListTriggerExecutions::send) for one page, or
+    /// [`pages`](ListTriggerExecutions::pages) /
+    /// [`items`](ListTriggerExecutions::items) to stream them all.
     ///
-    /// # Arguments
+    /// Reads the same `executions` sub-collection [`run`](Self::run) posts
+    /// to. A trigger that does not exist lists as an empty page, not a 404
+    /// (live 2026-09-26). The execution shape is unverified, for the reason
+    /// given on [`run`](Self::run).
+    pub fn list_executions(self, trigger_id: &str) -> ListTriggerExecutions<'a> {
+        ListTriggerExecutions {
+            client: self.client,
+            trigger_id: trigger_id.to_owned(),
+            page_size: None,
+            page_token: None,
+        }
+    }
+}
+
+/// A `GET /v1beta/triggers` request, from [`Triggers::list`].
+///
+/// End it with [`send`](Self::send) for one page, or
+/// [`pages`](Self::pages) / [`items`](Self::items) to follow
+/// `next_page_token` to the end of the list. The page size is sent with
+/// every page.
+///
+/// # Example
+///
+/// ```no_run
+/// use futures_util::TryStreamExt;
+///
+/// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+/// // One page
+/// let page = client.triggers().list().with_page_size(50).send().await?;
+/// println!("{} triggers, more: {}", page.triggers.len(), page.next_page_token.is_some());
+///
+/// // Every trigger, across pages
+/// let all: Vec<genai_rs::Trigger> = client.triggers().list().items().try_collect().await?;
+/// # let _ = all;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Clone, Debug)]
+#[must_use = "a list request does nothing until .send(), .pages() or .items()"]
+pub struct ListTriggers<'a> {
+    client: &'a Client,
+    page_size: Option<u32>,
+    page_token: Option<String>,
+}
+
+impl<'a> ListTriggers<'a> {
+    /// Sets the maximum number of triggers per page. Sent with every page.
+    pub fn with_page_size(mut self, page_size: u32) -> Self {
+        self.page_size = Some(page_size);
+        self
+    }
+
+    /// Starts from this page token, from a previous page's
+    /// `next_page_token`.
+    pub fn with_page_token(mut self, page_token: impl Into<String>) -> Self {
+        self.page_token = Some(page_token.into());
+        self
+    }
+
+    /// Sends the request and returns one page.
     ///
-    /// * `trigger_id` - The trigger whose executions to list.
-    /// * `page_size` - Optional maximum number of executions per page.
-    /// * `page_token` - Optional token from a previous list call.
-    ///
-    /// **Unverified endpoint shape**: reads the same `executions`
-    /// sub-collection [`run_trigger`](Self::run_trigger) posts to, with
-    /// the same caveat — the path comes from the google-genai generated
-    /// bindings, not live observation, because it needs an existing
-    /// trigger and trigger creation is agent-gated.
+    /// An empty collection comes back as an empty page with no
+    /// `next_page_token` (the API answers `{}`).
     ///
     /// # Errors
     ///
-    /// Returns an error on network failure or when the trigger doesn't exist.
-    pub async fn list_trigger_executions(
-        &self,
-        trigger_id: &str,
-        page_size: Option<u32>,
-        page_token: Option<&str>,
-    ) -> Result<crate::TriggerExecutionListResponse, GenaiError> {
-        crate::http::triggers::list_trigger_executions(
-            &self.http, trigger_id, page_size, page_token,
+    /// Returns an error on network failure, an invalid page token, or a
+    /// response that fails to parse.
+    pub async fn send(self) -> Result<TriggerListResponse, GenaiError> {
+        crate::http::triggers::list_triggers(
+            &self.client.http,
+            self.page_size,
+            self.page_token.as_deref(),
         )
         .await
+    }
+
+    /// Streams every page, starting at [`with_page_token`](Self::with_page_token)
+    /// or the first page.
+    ///
+    /// Nothing is sent until the stream is polled. It ends after a page
+    /// without a `next_page_token`; an error is yielded once and ends it. A
+    /// page whose token was already requested (the starting token included)
+    /// is yielded, then [`GenaiError::MalformedResponse`]. The stream owns a
+    /// clone of the client, so it can be stored or spawned.
+    #[must_use = "streams do nothing unless polled"]
+    pub fn pages(self) -> BoxStream<'static, Result<TriggerListResponse, GenaiError>> {
+        let Self {
+            client,
+            page_size,
+            page_token,
+        } = self;
+        let client = client.clone();
+        paging::pages("triggers", page_token, move |token| {
+            let client = client.clone();
+            async move {
+                crate::http::triggers::list_triggers(&client.http, page_size, token.as_deref())
+                    .await
+            }
+        })
+    }
+
+    /// Streams every trigger across pages, in server order. Same rules as
+    /// [`pages`](Self::pages).
+    #[must_use = "streams do nothing unless polled"]
+    pub fn items(self) -> BoxStream<'static, Result<Trigger, GenaiError>> {
+        paging::items(self.pages())
+    }
+}
+
+/// A `GET /v1beta/triggers/{id}/executions` request, from
+/// [`Triggers::list_executions`].
+///
+/// End it with [`send`](Self::send) for one page, or
+/// [`pages`](Self::pages) / [`items`](Self::items) to follow
+/// `next_page_token` to the end of the list. The page size is sent with
+/// every page. An empty or dot-segment trigger ID fails with
+/// [`GenaiError::InvalidInput`] before any request (from `.send()`, or as
+/// the streams' only item).
+///
+/// # Example
+///
+/// ```no_run
+/// use futures_util::TryStreamExt;
+///
+/// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+/// // The ten most recent firings
+/// let page = client
+///     .triggers()
+///     .list_executions("trig-123")
+///     .with_page_size(10)
+///     .send()
+///     .await?;
+/// for execution in &page.trigger_executions {
+///     println!("{:?}: {:?}", execution.scheduled_time, execution.status);
+/// }
+///
+/// // Every firing, across pages
+/// let all: Vec<genai_rs::TriggerExecution> = client
+///     .triggers()
+///     .list_executions("trig-123")
+///     .items()
+///     .try_collect()
+///     .await?;
+/// # let _ = all;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Clone, Debug)]
+#[must_use = "a list request does nothing until .send(), .pages() or .items()"]
+pub struct ListTriggerExecutions<'a> {
+    client: &'a Client,
+    trigger_id: String,
+    page_size: Option<u32>,
+    page_token: Option<String>,
+}
+
+impl<'a> ListTriggerExecutions<'a> {
+    /// Sets the maximum number of executions per page. Sent with every page.
+    pub fn with_page_size(mut self, page_size: u32) -> Self {
+        self.page_size = Some(page_size);
+        self
+    }
+
+    /// Starts from this page token, from a previous page's
+    /// `next_page_token`.
+    pub fn with_page_token(mut self, page_token: impl Into<String>) -> Self {
+        self.page_token = Some(page_token.into());
+        self
+    }
+
+    /// Sends the request and returns one page.
+    ///
+    /// No executions, and a trigger that does not exist, both come back as
+    /// an empty page with no `next_page_token` (the API answers `{}`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid trigger ID or page token, on network
+    /// failure, or when the response fails to parse.
+    pub async fn send(self) -> Result<TriggerExecutionListResponse, GenaiError> {
+        crate::http::triggers::list_trigger_executions(
+            &self.client.http,
+            &self.trigger_id,
+            self.page_size,
+            self.page_token.as_deref(),
+        )
+        .await
+    }
+
+    /// Streams every page, starting at [`with_page_token`](Self::with_page_token)
+    /// or the first page.
+    ///
+    /// Nothing is sent until the stream is polled. It ends after a page
+    /// without a `next_page_token`; an error is yielded once and ends it. A
+    /// page whose token was already requested (the starting token included)
+    /// is yielded, then [`GenaiError::MalformedResponse`]. The stream owns a
+    /// clone of the client, so it can be stored or spawned.
+    #[must_use = "streams do nothing unless polled"]
+    pub fn pages(self) -> BoxStream<'static, Result<TriggerExecutionListResponse, GenaiError>> {
+        let Self {
+            client,
+            trigger_id,
+            page_size,
+            page_token,
+        } = self;
+        let client = client.clone();
+        paging::pages("trigger executions", page_token, move |token| {
+            let (client, trigger_id) = (client.clone(), trigger_id.clone());
+            async move {
+                crate::http::triggers::list_trigger_executions(
+                    &client.http,
+                    &trigger_id,
+                    page_size,
+                    token.as_deref(),
+                )
+                .await
+            }
+        })
+    }
+
+    /// Streams every execution across pages, in server order. Same rules as
+    /// [`pages`](Self::pages).
+    #[must_use = "streams do nothing unless polled"]
+    pub fn items(self) -> BoxStream<'static, Result<TriggerExecution, GenaiError>> {
+        paging::items(self.pages())
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::request::InteractionInput;
-
-    fn probe_interaction() -> InteractionRequest {
-        InteractionRequest {
-            agent: Some("my-agent".to_string()),
-            input: InteractionInput::Text("Say OK".to_string()),
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn create_params_serialize_minimal() {
-        let params = TriggerCreateParams::new("0 5 1 1 *", "UTC", probe_interaction());
-        let json = serde_json::to_value(&params).unwrap();
-        assert_eq!(json["schedule"], "0 5 1 1 *");
-        assert_eq!(json["time_zone"], "UTC");
-        assert_eq!(json["interaction"]["agent"], "my-agent");
-        assert!(json.get("display_name").is_none());
-    }
-
-    #[test]
-    fn trigger_update_serializes_partial() {
-        // The send direction for TriggerStatus: pause/resume rides on this
-        // exact wire value.
-        let update = TriggerUpdate::new().with_status(TriggerStatus::Paused);
-        assert_eq!(
-            serde_json::to_value(&update).unwrap(),
-            serde_json::json!({"status": "paused"})
-        );
-
-        // An empty update must serialize to an empty object. There is no
-        // update_mask on this endpoint (see the TriggerUpdate docs), so
-        // omitting unset fields from the body is the only partial-update
-        // mechanism the wire offers — this pins that we never send nulls.
-        assert_eq!(
-            serde_json::to_value(TriggerUpdate::new()).unwrap(),
-            serde_json::json!({})
-        );
-
-        let named = TriggerUpdate::new()
-            .with_display_name("renamed")
-            .with_status(TriggerStatus::Active);
-        let json = serde_json::to_value(&named).unwrap();
-        assert_eq!(json["display_name"], "renamed");
-        assert_eq!(json["status"], "active");
-    }
-
-    #[test]
-    fn list_envelopes_deserialize_under_spec_keys() {
-        // Pins the envelope keys the crate is betting on for the resource
-        // ENUM_WIRE_FORMATS.md marks as unverified: `triggers` and (the one
-        // that diverges from its path segment) `trigger_executions`. If the
-        // live wire turns out to use `executions`, the fix lands as a
-        // visible diff here rather than as a list that quietly reads zero.
-        let list: TriggerListResponse =
-            serde_json::from_value(serde_json::json!({"triggers": [{"id": "t1"}]})).unwrap();
-        assert_eq!(list.triggers.len(), 1);
-
-        let executions: TriggerExecutionListResponse = serde_json::from_value(serde_json::json!({
-            "trigger_executions": [{"id": "e1", "status": "completed"}]
-        }))
-        .unwrap();
-        assert_eq!(executions.trigger_executions.len(), 1);
-        assert_eq!(
-            executions.trigger_executions[0].status,
-            Some(TriggerExecutionStatus::Completed)
-        );
-    }
-
-    #[test]
-    fn create_params_and_update_pass_through_unmodeled_fields() {
-        // Trigger bodies can't be live-verified while creation is
-        // agent-gated, so the Evergreen extra map is the release valve for
-        // fields the crate doesn't model yet (same shape as
-        // CreateEnvironmentRequest::extra next door).
-        let mut params = TriggerCreateParams::new("0 9 * * *", "UTC", probe_interaction());
-        params
-            .extra
-            .insert("future_field".into(), serde_json::json!("x"));
-        let json = serde_json::to_value(&params).unwrap();
-        assert_eq!(json["future_field"], "x");
-
-        // A colliding key wins on serialize (the flattened map is emitted
-        // last) — pinned so the precedence reads as a decision rather than
-        // an artifact of field-declaration order.
-        params
-            .extra
-            .insert("schedule".into(), serde_json::json!("*/5 * * * *"));
-        let json = serde_json::to_value(&params).unwrap();
-        assert_eq!(json["schedule"], "*/5 * * * *");
-
-        let mut update = TriggerUpdate::new();
-        update.extra.insert("other".into(), serde_json::json!(1));
-        let json = serde_json::to_value(&update).unwrap();
-        assert_eq!(json, serde_json::json!({"other": 1}));
-        // An empty map keeps the empty-update-is-{} contract.
-        assert_eq!(
-            serde_json::to_value(TriggerUpdate::new()).unwrap(),
-            serde_json::json!({})
-        );
-
-        // The deserialize direction: an unmodeled key on the way in lands
-        // in `extra` — the documented absorption behavior a config-file
-        // typo relies on, and the direction where a flatten regression
-        // (flatten buffers every sibling through serde's Content, and the
-        // nested interaction deserializers are custom) would be silent.
-        let params: TriggerCreateParams = serde_json::from_value(serde_json::json!({
-            "schedule": "0 9 * * *",
-            "time_zone": "UTC",
-            "interaction": {"agent": "my-agent", "input": "hi"},
-            "future_field": "x"
-        }))
-        .unwrap();
-        assert_eq!(params.extra["future_field"], "x");
-
-        // The int64s accept the protobuf-JSON string form on the way in
-        // (a config seeded from a stored Trigger re-serializes them as
-        // strings) while still sending plain numbers on the way out.
-        let params: TriggerCreateParams = serde_json::from_value(serde_json::json!({
-            "schedule": "0 9 * * *",
-            "time_zone": "UTC",
-            "interaction": {"agent": "my-agent", "input": "hi"},
-            "max_consecutive_failures": "3",
-            "execution_timeout_seconds": "600"
-        }))
-        .unwrap();
-        assert_eq!(params.max_consecutive_failures, Some(3));
-        assert_eq!(params.execution_timeout_seconds, Some(600));
-        let json = serde_json::to_value(&params).unwrap();
-        assert_eq!(json["max_consecutive_failures"], serde_json::json!(3));
-        assert_eq!(json["execution_timeout_seconds"], serde_json::json!(600));
-
-        // Unlike the response side there is no page to protect here, so a
-        // malformed value stays a clean load-time error rather than
-        // silently dropping the field (which would create a trigger with
-        // no auto-disable cap).
-        for bad in [
-            serde_json::json!("three"),
-            serde_json::json!(""),
-            serde_json::json!(3.5),
-            serde_json::json!(true),
-        ] {
-            let result: Result<TriggerCreateParams, _> =
-                serde_json::from_value(serde_json::json!({
-                    "schedule": "0 9 * * *",
-                    "time_zone": "UTC",
-                    "interaction": {"agent": "my-agent", "input": "hi"},
-                    "max_consecutive_failures": bad
-                }));
-            assert!(result.is_err(), "send-side int64 must stay strict");
-        }
-        let update: TriggerUpdate =
-            serde_json::from_value(serde_json::json!({"other": 1})).unwrap();
-        assert_eq!(update.extra["other"], 1);
-    }
-
-    #[test]
-    fn store_warn_fires_on_both_construction_paths() {
-        // The store rejection is server-verified but masked by the agent
-        // gate, so the pre-flight warn is the only signal most users get.
-        // Pin that it fires from new() AND from a config-file load — a
-        // value assertion cannot express either.
-        let messages = crate::test_subscriber::capture_messages(|| {
-            let mut interaction = probe_interaction();
-            interaction.store = Some(true);
-            let _ = TriggerCreateParams::new("0 9 * * *", "UTC", interaction);
-        });
-        assert!(
-            messages.iter().any(|m| m.contains("store")),
-            "new() must warn on store; got: {messages:?}"
-        );
-
-        let messages = crate::test_subscriber::capture_messages(|| {
-            let params: TriggerCreateParams = serde_json::from_value(serde_json::json!({
-                "schedule": "0 9 * * *",
-                "time_zone": "UTC",
-                "interaction": {"agent": "my-agent", "input": "hi", "store": true}
-            }))
-            .unwrap();
-            assert_eq!(params.interaction.store, Some(true));
-        });
-        assert!(
-            messages.iter().any(|m| m.contains("store")),
-            "the deserialize path must warn on store; got: {messages:?}"
-        );
-    }
-
-    #[test]
-    fn missing_agent_warn_fires_on_model_only_interactions() {
-        // The other live-verified rejection: a model-only interaction is
-        // refused ("Agent '' is invalid or not found"), and the agent
-        // gate masks it until the round-trip. Pin that the funnel warns,
-        // and that an agent-targeting interaction stays quiet.
-        let messages = crate::test_subscriber::capture_messages(|| {
-            let interaction = crate::request::InteractionRequest {
-                model: Some("test-model".to_string()),
-                input: InteractionInput::Text("Daily audit".to_string()),
-                ..Default::default()
-            };
-            let _ = TriggerCreateParams::new("0 9 * * *", "UTC", interaction);
-        });
-        assert!(
-            messages.iter().any(|m| m.contains("custom agent")),
-            "new() must warn on a model-only interaction; got: {messages:?}"
-        );
-
-        let messages = crate::test_subscriber::capture_messages(|| {
-            let _ = TriggerCreateParams::new("0 9 * * *", "UTC", probe_interaction());
-        });
-        assert!(
-            !messages.iter().any(|m| m.contains("custom agent")),
-            "an agent-targeting interaction must not warn; got: {messages:?}"
-        );
-    }
-
-    #[test]
-    fn empty_input_warn_fires_on_the_struct_literal_shape() {
-        // The strict `input` deserialize can't catch a struct literal that
-        // rides `..Default::default()` — the field is present and
-        // well-formed, just the empty zero value — nor the explicit
-        // empty-vector spellings of the same mistake. Pin that the funnel
-        // warns on all three, and that real input stays quiet.
-        let empty_inputs = [
-            InteractionInput::default(),
-            InteractionInput::Content(Vec::new()),
-            InteractionInput::Steps(Vec::new()),
-        ];
-        for input in empty_inputs {
-            let variant = format!("{input:?}");
-            let messages = crate::test_subscriber::capture_messages(|| {
-                let interaction = crate::request::InteractionRequest {
-                    agent: Some("my-agent".to_string()),
-                    input,
-                    ..Default::default()
-                };
-                let _ = TriggerCreateParams::new("0 9 * * *", "UTC", interaction);
-            });
-            assert!(
-                messages.iter().any(|m| m.contains("empty prompt")),
-                "new() must warn on empty {variant}; got: {messages:?}"
-            );
-        }
-
-        // The config-file spelling of the same mistake: an empty JSON
-        // array parses cleanly as empty `Steps` (input_from_value's
-        // is-content check is vacuously false for it), so the deserialize
-        // funnel must warn too — this is the shape a user hits without
-        // ever writing a struct literal.
-        let messages = crate::test_subscriber::capture_messages(|| {
-            let params: TriggerCreateParams = serde_json::from_value(serde_json::json!({
-                "schedule": "0 9 * * *",
-                "time_zone": "UTC",
-                "interaction": {"agent": "my-agent", "input": []}
-            }))
-            .unwrap();
-            assert!(matches!(
-                &params.interaction.input,
-                InteractionInput::Steps(steps) if steps.is_empty()
-            ));
-        });
-        assert!(
-            messages.iter().any(|m| m.contains("empty prompt")),
-            "the deserialize path must warn on an empty-array input; got: {messages:?}"
-        );
-
-        let messages = crate::test_subscriber::capture_messages(|| {
-            let _ = TriggerCreateParams::new("0 9 * * *", "UTC", probe_interaction());
-        });
-        assert!(
-            !messages.iter().any(|m| m.contains("empty prompt")),
-            "real input must not warn; got: {messages:?}"
-        );
-    }
-
-    /// Pins the third roundtrip asymmetry documented on
-    /// [`Trigger::interaction`]: because that field is an
-    /// [`InteractionRequest`], a trigger read back with a bare `[Content]`
-    /// input re-serializes as a `user_input` step (#427).
-    ///
-    /// Asserted rather than left to prose so that moving the wrap back onto
-    /// `InteractionInput`'s own `Serialize` — or removing it — cannot make
-    /// that doc comment stale in silence.
-    #[test]
-    fn trigger_interaction_reshapes_a_bare_content_input() {
-        let trigger: Trigger = serde_json::from_value(serde_json::json!({
-            "name": "triggers/abc",
-            "interaction": {
-                "model": "test-model",
-                "input": [{"type": "text", "text": "hi"}],
-            },
-        }))
-        .expect("a trigger with a bare content-array input should deserialize");
-
-        // Read back as `Content` — the shape the server sent.
-        assert!(
-            matches!(
-                trigger.interaction.as_ref().map(|i| &i.input),
-                Some(InteractionInput::Content(c)) if c.len() == 1
-            ),
-            "expected a Content input, got {:?}",
-            trigger.interaction.as_ref().map(|i| &i.input)
-        );
-
-        // Re-serialized as a step — the reshape the doc comment describes.
-        let json = serde_json::to_value(&trigger).unwrap();
-        assert_eq!(
-            json["interaction"]["input"],
-            serde_json::json!([{
-                "type": "user_input",
-                "content": [{"type": "text", "text": "hi"}],
-            }]),
-            "a bare content array must come back out as a user_input step"
-        );
-    }
-
-    #[test]
-    fn trigger_int64s_tolerate_string_wire_form() {
-        // The environments resource live-verified that this API family
-        // serializes int64s as protobuf-JSON strings; a trigger doing the
-        // same must degrade per-field, not fail the whole list response.
-        let json = serde_json::json!({
-            "id": "trig-1",
-            "max_consecutive_failures": "3",
-            "consecutive_failure_count": "1",
-            "execution_timeout_seconds": 600
-        });
-        let trigger: Trigger = serde_json::from_value(json).unwrap();
-        assert_eq!(trigger.max_consecutive_failures, Some(3));
-        assert_eq!(trigger.consecutive_failure_count, Some(1));
-        assert_eq!(trigger.execution_timeout_seconds, Some(600));
-
-        // Re-serialization is uniform with Environment's counts: the
-        // protobuf-JSON string form, whichever form arrived.
-        let back = serde_json::to_value(&trigger).unwrap();
-        assert_eq!(back["max_consecutive_failures"], serde_json::json!("3"));
-        assert_eq!(back["execution_timeout_seconds"], serde_json::json!("600"));
-    }
-
-    #[test]
-    fn trigger_timestamps_degrade_per_field() {
-        // Same posture as the int64s on this wire-unverified resource: a
-        // timestamp arriving in an unexpected encoding (epoch number,
-        // proto-style object, garbage string) drops that field to None
-        // instead of failing the whole list response.
-        let json = serde_json::json!({
-            "id": "trig-1",
-            "create_time": "2026-08-08T12:30:00Z",
-            "update_time": "not-a-time",
-            "last_run_time": 1754656200,
-            "next_run_time": {"seconds": 1754656200}
-        });
-        let trigger: Trigger = serde_json::from_value(json).unwrap();
-        assert_eq!(trigger.id.as_deref(), Some("trig-1"));
-        assert!(trigger.create_time.is_some());
-        assert_eq!(trigger.update_time, None);
-        assert_eq!(trigger.last_run_time, None);
-        assert_eq!(trigger.next_run_time, None);
-
-        let json = serde_json::json!({
-            "id": "exec-1",
-            "scheduled_time": "2026-08-08T12:30:00Z",
-            "end_time": "garbage"
-        });
-        let execution: TriggerExecution = serde_json::from_value(json).unwrap();
-        assert!(execution.scheduled_time.is_some());
-        assert_eq!(execution.end_time, None);
-    }
-
-    #[test]
-    fn create_params_serialize_all_fields() {
-        let params = TriggerCreateParams::new("0 9 * * *", "UTC", probe_interaction())
-            .with_display_name("daily-audit")
-            .with_environment_id("env-123")
-            .with_max_consecutive_failures(3)
-            .with_execution_timeout_seconds(600);
-        let json = serde_json::to_value(&params).unwrap();
-        assert_eq!(json["display_name"], "daily-audit");
-        assert_eq!(json["environment_id"], "env-123");
-        assert_eq!(json["max_consecutive_failures"], 3);
-        assert_eq!(json["execution_timeout_seconds"], 600);
-    }
-
-    #[test]
-    fn empty_list_response_deserializes() {
-        // GET /v1beta/triggers returns `{}` when nothing exists.
-        let list: TriggerListResponse = serde_json::from_value(serde_json::json!({})).unwrap();
-        assert!(list.triggers.is_empty());
-
-        // Present-but-degenerate list keys — the shapes the struct-level
-        // serde default does not reach — degrade rather than zeroing the
-        // page with an error: null and non-array values read as empty.
-        let list: TriggerListResponse =
-            serde_json::from_value(serde_json::json!({"triggers": null})).unwrap();
-        assert!(list.triggers.is_empty());
-        let list: TriggerListResponse =
-            serde_json::from_value(serde_json::json!({"triggers": "corrupted"})).unwrap();
-        assert!(list.triggers.is_empty());
-        let executions: TriggerExecutionListResponse =
-            serde_json::from_value(serde_json::json!({"trigger_executions": null})).unwrap();
-        assert!(executions.trigger_executions.is_empty());
-        let executions: TriggerExecutionListResponse =
-            serde_json::from_value(serde_json::json!({"trigger_executions": {"a": 1}})).unwrap();
-        assert!(executions.trigger_executions.is_empty());
-
-        // The alias hedges on the wire-unverified spellings: the
-        // path-segment envelope key and the environments-convention
-        // timestamps deserialize too.
-        let executions: TriggerExecutionListResponse = serde_json::from_value(
-            serde_json::json!({"executions": [{"id": "e1", "status": "completed"}]}),
-        )
-        .unwrap();
-        assert_eq!(executions.trigger_executions.len(), 1);
-        let trigger: Trigger = serde_json::from_value(serde_json::json!({
-            "id": "t1",
-            "created": "2026-08-08T12:30:00Z",
-            "updated": "2026-08-08T12:31:00Z"
-        }))
-        .unwrap();
-        assert!(trigger.create_time.is_some());
-        assert!(trigger.update_time.is_some());
-    }
-
-    #[cfg(not(feature = "strict-unknown"))]
-    #[test]
-    fn unknown_statuses_roundtrip() {
-        let status: TriggerStatus = serde_json::from_value(serde_json::json!("snoozing")).unwrap();
-        assert!(status.is_unknown());
-        assert_eq!(serde_json::to_value(&status).unwrap(), "snoozing");
-
-        let exec: TriggerExecutionStatus =
-            serde_json::from_value(serde_json::json!("requeued")).unwrap();
-        assert!(exec.is_unknown());
-        assert_eq!(serde_json::to_value(&exec).unwrap(), "requeued");
-    }
-
-    #[test]
-    fn trigger_deserializes_sdk_shape() {
-        let json = serde_json::json!({
-            "id": "trig-1",
-            "schedule": "0 9 * * *",
-            "time_zone": "UTC",
-            "interaction": {"agent": "my-agent", "input": "audit"},
-            "status": "active",
-            "next_run_time": "2026-08-09T09:00:00Z"
-        });
-        let trigger: Trigger = serde_json::from_value(json).unwrap();
-        assert_eq!(trigger.id.as_deref(), Some("trig-1"));
-        assert_eq!(trigger.status, Some(TriggerStatus::Active));
-        assert!(trigger.next_run_time.is_some());
-    }
-
-    #[test]
-    fn sparse_trigger_projection_degrades_per_field() {
-        // A list projection that elides the nested interaction (or any
-        // other field) must still deserialize — Evergreen posture.
-        let trigger: Trigger = serde_json::from_value(serde_json::json!({"id": "t"})).unwrap();
-        assert_eq!(trigger.id.as_deref(), Some("t"));
-        assert!(trigger.interaction.is_none());
-
-        let execution: TriggerExecution =
-            serde_json::from_value(serde_json::json!({"status": "completed"})).unwrap();
-        assert!(execution.id.is_none());
-        assert_eq!(execution.status, Some(TriggerExecutionStatus::Completed));
-
-        // Present-but-partial interaction (identity fields without input)
-        // must also degrade rather than fail the trigger.
-        let trigger: Trigger = serde_json::from_value(serde_json::json!({
-            "id": "t2",
-            "interaction": {"agent": "my-agent"}
-        }))
-        .unwrap();
-        let interaction = trigger.interaction.expect("interaction present");
-        assert_eq!(interaction.agent.as_deref(), Some("my-agent"));
-        // An absent input reads as empty text on this path (documented on
-        // the field): indistinguishable from a genuinely empty prompt.
-        assert_eq!(
-            interaction.input,
-            crate::request::InteractionInput::Text(String::new())
-        );
-
-        // An interaction carrying an undeserializable `input` — explicit
-        // null (serde defaults only cover the key-absent case) or a stray
-        // scalar — degrades to empty text too, instead of failing the
-        // whole list response. (A malformed steps *array* is deliberately
-        // not in this list: under default features the Evergreen Step
-        // deserializer absorbs unrecognized elements as Unknown steps, so
-        // only scalar shapes are rejectable in every feature mode.)
-        for bad_input in [serde_json::Value::Null, serde_json::json!(0)] {
-            let trigger: Trigger = serde_json::from_value(serde_json::json!({
-                "id": "t3",
-                "interaction": {"agent": "my-agent", "input": bad_input}
-            }))
-            .unwrap();
-            let interaction = trigger.interaction.expect("interaction present");
-            assert_eq!(
-                interaction.input,
-                crate::request::InteractionInput::Text(String::new())
-            );
-        }
-
-        // A non-object `interaction` (stray scalar, array) or one with a
-        // type mismatch on a modeled field degrades to None wholesale —
-        // the catch-all arms, uniform with the serde_util helpers.
-        for bad_interaction in [
-            serde_json::json!(0),
-            serde_json::json!([5]),
-            serde_json::json!({"model": 5}),
-        ] {
-            let trigger: Trigger = serde_json::from_value(serde_json::json!({
-                "id": "t4",
-                "interaction": bad_interaction
-            }))
-            .unwrap();
-            assert_eq!(trigger.id.as_deref(), Some("t4"));
-            assert!(trigger.interaction.is_none());
-        }
-
-        // The leniency is scoped to the response side: the same malformed
-        // input in a send-side TriggerCreateParams (e.g. loaded from a
-        // config file) is a clean parse error, not a silently scheduled
-        // empty prompt.
-        let result: Result<TriggerCreateParams, _> = serde_json::from_value(serde_json::json!({
-            "schedule": "0 9 * * *",
-            "time_zone": "UTC",
-            "interaction": {"agent": "my-agent", "input": 0}
-        }));
-        assert!(result.is_err(), "send-side input must stay strict");
-        // Absent (or typo'd, e.g. "inputs") is equally a clean parse
-        // error on the send side — `input` is a required field there, so
-        // a config mistake cannot silently schedule an empty prompt.
-        let result: Result<TriggerCreateParams, _> = serde_json::from_value(serde_json::json!({
-            "schedule": "0 9 * * *",
-            "time_zone": "UTC",
-            "interaction": {"agent": "my-agent", "inputs": "typo"}
-        }));
-        assert!(result.is_err(), "send-side absent input must stay strict");
-    }
-
-    #[test]
-    fn execution_status_wire_values() {
-        for (status, wire) in [
-            (TriggerExecutionStatus::InProgress, "in_progress"),
-            (TriggerExecutionStatus::Completed, "completed"),
-            (TriggerExecutionStatus::Failed, "failed"),
-            (TriggerExecutionStatus::Skipped, "skipped"),
-            (TriggerExecutionStatus::TimedOut, "timed_out"),
-        ] {
-            assert_eq!(serde_json::to_value(&status).unwrap(), wire);
-            // Display is public API and must agree with the wire value.
-            assert_eq!(status.to_string(), wire);
-        }
-        for (status, wire) in [
-            (TriggerStatus::Active, "active"),
-            (TriggerStatus::Paused, "paused"),
-            (TriggerStatus::Error, "error"),
-        ] {
-            assert_eq!(serde_json::to_value(&status).unwrap(), wire);
-            assert_eq!(status.to_string(), wire);
-        }
-    }
-
-    // --- Evergreen `extra` passthrough on response shapes (#406) ---
-
-    #[test]
-    fn trigger_preserves_unknown_response_fields() {
-        // The response shape is unverified while trigger creation is
-        // agent-gated, so a field the API returns today would otherwise be
-        // both invisible and unrecoverable to a caller.
-        let wire = serde_json::json!({
-            "id": "trig_123",
-            "display_name": "nightly",
-            "future_field": {"nested": [1, 2]}
-        });
-
-        let trigger: Trigger = serde_json::from_value(wire.clone()).unwrap();
-        assert_eq!(
-            trigger.extra.get("future_field"),
-            Some(&serde_json::json!({"nested": [1, 2]}))
-        );
-        assert_eq!(serde_json::to_value(&trigger).unwrap(), wire);
-    }
-
-    #[test]
-    fn trigger_without_unknown_fields_has_empty_extra() {
-        let trigger: Trigger =
-            serde_json::from_value(serde_json::json!({"id": "trig_123"})).unwrap();
-        assert!(trigger.extra.is_empty());
-        // An empty map must not add a key on serialize.
-        assert_eq!(
-            serde_json::to_value(&trigger).unwrap(),
-            serde_json::json!({"id": "trig_123"})
-        );
-    }
-
-    #[test]
-    fn trigger_execution_preserves_unknown_response_fields() {
-        let wire = serde_json::json!({
-            "id": "exec_1",
-            "trigger_id": "trig_123",
-            "future_metric": 42
-        });
-
-        let execution: TriggerExecution = serde_json::from_value(wire.clone()).unwrap();
-        assert_eq!(
-            execution.extra.get("future_metric"),
-            Some(&serde_json::json!(42))
-        );
-        assert_eq!(serde_json::to_value(&execution).unwrap(), wire);
-    }
-
-    #[test]
-    fn trigger_extra_wins_on_collision() {
-        // The doc comment on all five new `extra` fields states this as a
-        // guarantee, and it is not intrinsic — it holds only because the
-        // flattened map is emitted last, which is a consequence of `extra`
-        // being declared after the modeled fields. Moving the declaration up
-        // is a plausible tidy-up that nothing else in these structs depends
-        // on, and it would silently flip the documented behaviour on all
-        // five while every other test still passed. Pinned on `Trigger` as
-        // the representative; the mechanism is identical across the five.
-        let mut trigger: Trigger =
-            serde_json::from_value(serde_json::json!({"id": "trig_123"})).unwrap();
-        trigger
-            .extra
-            .insert("id".into(), serde_json::json!("from_extra"));
-        let json = serde_json::to_value(&trigger).unwrap();
-        assert_eq!(
-            json["id"], "from_extra",
-            "a colliding key must win on serialize, as the field doc promises"
-        );
-    }
-
-    #[test]
-    fn trigger_execution_without_unknown_fields_has_empty_extra() {
-        let execution: TriggerExecution =
-            serde_json::from_value(serde_json::json!({"id": "exec_1"})).unwrap();
-        assert!(execution.extra.is_empty());
-        // An empty map must not add a key on serialize.
-        assert_eq!(
-            serde_json::to_value(&execution).unwrap(),
-            serde_json::json!({"id": "exec_1"})
-        );
-    }
-
-    #[test]
-    fn trigger_extra_does_not_disturb_equality_for_identical_wire() {
-        // PartialEq includes the map, so two triggers parsed from the same
-        // wire stay equal — existing equality-based tests are unaffected.
-        let wire = serde_json::json!({"id": "trig_123", "unknown": true});
-        let a: Trigger = serde_json::from_value(wire.clone()).unwrap();
-        let b: Trigger = serde_json::from_value(wire).unwrap();
-        assert_eq!(a, b);
-    }
-}
+#[path = "triggers_tests.rs"]
+mod tests;

@@ -3,8 +3,8 @@
 use super::*;
 use crate::Tool;
 use crate::{
-    Client, FileSearchConfig, FunctionDeclaration, ImageAspectRatio, ImageConfig, ImageSize,
-    McpServerConfig,
+    Client, DeepResearchConfig, FileSearchConfig, FunctionDeclaration, ImageAspectRatio,
+    ImageConfig, ImageSize, McpServerConfig, ThinkingLevel, ThinkingSummaries,
 };
 use serde_json::json;
 

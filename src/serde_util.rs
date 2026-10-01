@@ -12,9 +12,14 @@
 //! wire (offset form, fractional-second width). A parsed `DateTime` cannot
 //! remember the original formatting, and nothing in the crate re-sends a
 //! deserialized resource, so the asymmetry is deliberate.
+//!
+//! It also holds the `skip_serializing_if` predicate and the `Unknown`
+//! variant serializers that let the Evergreen tagged unions
+//! `#[derive(Serialize)]` instead of hand-writing a map per variant.
 
-use serde::Deserialize;
 use serde::de::Deserializer;
+use serde::ser::SerializeMap;
+use serde::{Deserialize, Serialize, Serializer};
 
 /// Names the resource a lenient helper is deserializing, so its `warn!`
 /// lines say *which* field family degraded — the analogue of the vec
@@ -46,6 +51,71 @@ resource_markers! {
 #[cfg(test)]
 resource_markers! {
     ForTest => "TestWrapper",
+}
+
+/// `skip_serializing_if` predicate: true for `None` *and* for `Some` of an
+/// empty collection, so an optional list or map the caller set to empty is
+/// omitted from the wire rather than sent as `[]` or `{}`.
+///
+/// Works for any `Option<C>` whose `&C` iterates: `Vec`, `HashMap`,
+/// `BTreeMap`, and so on.
+#[allow(clippy::ref_option)] // signature dictated by serde's skip_serializing_if
+pub(crate) fn is_none_or_empty<T>(value: &Option<T>) -> bool
+where
+    for<'a> &'a T: IntoIterator,
+{
+    value
+        .as_ref()
+        .is_none_or(|collection| collection.into_iter().next().is_none())
+}
+
+/// Variant-level `serialize_with` for an `Unknown { <context>_type, data }`
+/// variant whose wire form re-merges the type into the object: `"type"`
+/// first (from `type_name`, overriding any `"type"` inside `data`), then
+/// every other entry of an object `data` in its map order. Non-object data
+/// is written under a `"data"` key; null data is omitted, leaving just the
+/// type.
+///
+/// serde passes a struct variant's fields to a variant-level
+/// `serialize_with` as one reference argument each, in declaration order,
+/// so the variant must declare the type string before `data`. (The first
+/// parameter is `&str`; serde's `&String` argument deref-coerces to it.)
+pub(crate) fn serialize_unknown_merged<S>(
+    type_name: &str,
+    data: &serde_json::Value,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let mut map = serializer.serialize_map(None)?;
+    map.serialize_entry("type", type_name)?;
+    // Flatten the data fields into the map if it's an object
+    if let serde_json::Value::Object(obj) = data {
+        for (key, value) in obj {
+            if key != "type" {
+                map.serialize_entry(key, value)?;
+            }
+        }
+    } else if !data.is_null() {
+        map.serialize_entry("data", data)?;
+    }
+    map.end()
+}
+
+/// Variant-level `serialize_with` for an `Unknown { <context>_type, data }`
+/// variant whose wire form is `data` exactly as captured; the type string is
+/// ignored (it was read out of `data` on deserialize). Same argument order
+/// as [`serialize_unknown_merged`].
+pub(crate) fn serialize_unknown_data<S>(
+    _type_name: &str,
+    data: &serde_json::Value,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    data.serialize(serializer)
 }
 
 /// Serializes an optional int64 in the protobuf-JSON string form the API
@@ -423,6 +493,128 @@ mod tests {
             messages.iter().any(|m| m.contains("dropping")),
             "the element-drop degradation must warn; got: {messages:?}"
         );
+    }
+
+    #[test]
+    fn is_none_or_empty_skips_none_and_empty_collections() {
+        use std::collections::{BTreeMap, HashMap};
+
+        assert!(super::is_none_or_empty::<Vec<i32>>(&None));
+        assert!(super::is_none_or_empty::<Vec<i32>>(&Some(vec![])));
+        assert!(!super::is_none_or_empty(&Some(vec![1])));
+
+        assert!(super::is_none_or_empty::<HashMap<String, String>>(&None));
+        assert!(super::is_none_or_empty(&Some(
+            HashMap::<String, String>::new()
+        )));
+        assert!(!super::is_none_or_empty(&Some(HashMap::from([(
+            "k".to_string(),
+            "v".to_string()
+        )]))));
+
+        assert!(super::is_none_or_empty(&Some(
+            BTreeMap::<String, i32>::new()
+        )));
+        assert!(!super::is_none_or_empty(&Some(BTreeMap::from([(
+            "k".to_string(),
+            1
+        )]))));
+    }
+
+    /// The shape the `Unknown` serializers are written for: an internally
+    /// tagged enum whose last variant is untagged with a variant-level
+    /// `serialize_with`. Going through the derive (rather than calling the
+    /// helpers directly) pins the argument order serde passes.
+    #[derive(Serialize)]
+    #[serde(tag = "type", rename_all = "snake_case")]
+    enum Merged {
+        Known {
+            x: i32,
+        },
+        #[serde(untagged, serialize_with = "super::serialize_unknown_merged")]
+        Unknown {
+            thing_type: String,
+            data: serde_json::Value,
+        },
+    }
+
+    #[derive(Serialize)]
+    #[serde(tag = "type", rename_all = "snake_case")]
+    enum Verbatim {
+        Known {
+            x: i32,
+        },
+        #[serde(untagged, serialize_with = "super::serialize_unknown_data")]
+        Unknown {
+            thing_type: String,
+            data: serde_json::Value,
+        },
+    }
+
+    fn merged(data: serde_json::Value) -> String {
+        serde_json::to_string(&Merged::Unknown {
+            thing_type: "zz_new".to_string(),
+            data,
+        })
+        .unwrap()
+    }
+
+    fn verbatim(data: serde_json::Value) -> String {
+        serde_json::to_string(&Verbatim::Unknown {
+            thing_type: "zz_new".to_string(),
+            data,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn unknown_merged_writes_type_first_then_data_entries() {
+        assert_eq!(
+            serde_json::to_string(&Merged::Known { x: 1 }).unwrap(),
+            r#"{"type":"known","x":1}"#
+        );
+        // The type string wins over a "type" inside data, and comes first;
+        // the remaining entries follow in the data map's (sorted) order.
+        assert_eq!(
+            merged(serde_json::json!({"b": 1, "type": "stale", "a": [true]})),
+            r#"{"type":"zz_new","a":[true],"b":1}"#
+        );
+        // Data without a "type" key still goes out with one.
+        assert_eq!(
+            merged(serde_json::json!({"a": 1})),
+            r#"{"type":"zz_new","a":1}"#
+        );
+        assert_eq!(merged(serde_json::json!({})), r#"{"type":"zz_new"}"#);
+        // Non-object data nests under "data"; null data is omitted.
+        assert_eq!(
+            merged(serde_json::json!("raw")),
+            r#"{"type":"zz_new","data":"raw"}"#
+        );
+        assert_eq!(
+            merged(serde_json::json!([1, 2])),
+            r#"{"type":"zz_new","data":[1,2]}"#
+        );
+        assert_eq!(
+            merged(serde_json::json!(7)),
+            r#"{"type":"zz_new","data":7}"#
+        );
+        assert_eq!(merged(serde_json::Value::Null), r#"{"type":"zz_new"}"#);
+    }
+
+    #[test]
+    fn unknown_data_writes_data_verbatim() {
+        assert_eq!(
+            serde_json::to_string(&Verbatim::Known { x: 1 }).unwrap(),
+            r#"{"type":"known","x":1}"#
+        );
+        // The type string is ignored: data goes out exactly as captured.
+        assert_eq!(
+            verbatim(serde_json::json!({"b": 1, "type": "stale", "a": 2})),
+            r#"{"a":2,"b":1,"type":"stale"}"#
+        );
+        assert_eq!(verbatim(serde_json::json!({"a": 1})), r#"{"a":1}"#);
+        assert_eq!(verbatim(serde_json::json!("raw")), r#""raw""#);
+        assert_eq!(verbatim(serde_json::Value::Null), "null");
     }
 
     #[test]

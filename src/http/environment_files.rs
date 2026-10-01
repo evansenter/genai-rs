@@ -60,13 +60,14 @@ fn upload_start_url(
     ctx: &HttpContext,
     environment_id: &str,
     path: &str,
-    options: EnvironmentFileUpload,
+    overwrite: bool,
+    extract: bool,
 ) -> Result<String, GenaiError> {
     Ok(with_query(
         ctx.upload_url(&files_path(environment_id, path)?),
         &[
-            ("overwrite", options.overwrite.then_some("true")),
-            ("extract", options.extract.then_some("true")),
+            ("overwrite", overwrite.then_some("true")),
+            ("extract", extract.then_some("true")),
         ],
     ))
 }
@@ -92,18 +93,22 @@ pub async fn upload_file(
     ctx: &HttpContext,
     environment_id: &str,
     path: &str,
-    data: Vec<u8>,
-    mime_type: &str,
-    options: EnvironmentFileUpload,
+    upload: EnvironmentFileUpload,
 ) -> Result<EnvironmentFileList, GenaiError> {
+    let EnvironmentFileUpload {
+        data,
+        mime_type,
+        overwrite,
+        extract,
+    } = upload;
     if data.is_empty() {
         return Err(GenaiError::InvalidInput(
             "Cannot upload an empty environment file".to_string(),
         ));
     }
-    let mime_type = mime_type_header(mime_type)?;
+    let mime_type = mime_type_header(&mime_type)?;
     let size = data.len().to_string();
-    let start_url = upload_start_url(ctx, environment_id, path, options)?;
+    let start_url = upload_start_url(ctx, environment_id, path, overwrite, extract)?;
     tracing::debug!(
         "Uploading environment file: env={environment_id}, path={path:?}, {size} bytes"
     );
@@ -167,18 +172,13 @@ mod tests {
     #[test]
     fn upload_url_carries_options() {
         assert_eq!(
-            upload_start_url(
-                &ctx(),
-                "env1",
-                "/data/a.tar",
-                EnvironmentFileUpload {
-                    overwrite: true,
-                    extract: true
-                }
-            )
-            .unwrap(),
+            upload_start_url(&ctx(), "env1", "/data/a.tar", true, true).unwrap(),
             "https://generativelanguage.googleapis.com/upload/v1beta/environments/env1/files/\
              data/a.tar?overwrite=true&extract=true"
+        );
+        assert_eq!(
+            upload_start_url(&ctx(), "env1", "a.txt", false, false).unwrap(),
+            "https://generativelanguage.googleapis.com/upload/v1beta/environments/env1/files/a.txt"
         );
     }
 

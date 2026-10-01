@@ -14,8 +14,8 @@ use async_trait::async_trait;
 use common::http_stub::{Recorded, Reply, Stub};
 use futures_util::StreamExt;
 use genai_rs::{
-    AutoFunctionStreamChunk, CallableFunction, Client, FunctionDeclaration, FunctionError,
-    GenaiError, StreamChunk, ToolService,
+    AutoFunctionStreamChunk, CallableFunction, Client, FileUpload, FunctionDeclaration,
+    FunctionError, GenaiError, PollOptions, StreamChunk, ToolService,
 };
 use serde_json::{Value, json};
 
@@ -160,7 +160,7 @@ async fn execute_stream_sends_stream_true() {
 }
 
 #[tokio::test]
-async fn get_interaction_stream_asks_for_sse_and_resumes() {
+async fn interactions_resume_stream_asks_for_sse_and_resumes() {
     let stub = Stub::replying(vec![Reply::sse(&[
         "data: {\"event_type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"b\"},\"event_id\":\"evt-4\"}\n\n",
     ])])
@@ -168,7 +168,8 @@ async fn get_interaction_stream_asks_for_sse_and_resumes() {
     let client = stub.client();
 
     let events: Vec<_> = client
-        .get_interaction_stream("int-1", Some("evt-3"))
+        .interactions()
+        .resume_stream("int-1", "evt-3")
         .collect()
         .await;
     assert_eq!(events.len(), 1);
@@ -274,7 +275,7 @@ async fn api_error_carries_request_id_retry_after_and_envelope_message() {
     ])
     .await;
 
-    let err = stub.client().get_interaction("int-1").await.unwrap_err();
+    let err = stub.client().interactions().get("int-1").await.unwrap_err();
     match &err {
         GenaiError::Api {
             status_code,
@@ -309,7 +310,7 @@ async fn api_error_standard_envelope_and_raw_bodies() {
     .await;
     let client = stub.client();
 
-    let err = client.get_interaction("int-1").await.unwrap_err();
+    let err = client.interactions().get("int-1").await.unwrap_err();
     assert!(
         matches!(&err, GenaiError::Api { status_code: 400, message, .. }
             if *message == format!("INVALID_ARGUMENT: {long_message}")),
@@ -317,7 +318,7 @@ async fn api_error_standard_envelope_and_raw_bodies() {
     );
     assert!(!err.is_retryable());
 
-    let err = client.get_interaction("int-1").await.unwrap_err();
+    let err = client.interactions().get("int-1").await.unwrap_err();
     assert!(
         matches!(&err, GenaiError::Api { status_code: 502, message, .. }
             if message == "<html>Bad Gateway</html>"),
@@ -334,9 +335,9 @@ async fn unparseable_success_body_is_malformed_response() {
     ])
     .await;
     let client = stub.client();
-    let err = client.get_interaction("int-1").await.unwrap_err();
+    let err = client.interactions().get("int-1").await.unwrap_err();
     assert!(matches!(err, GenaiError::MalformedResponse(_)), "{err:?}");
-    let err = client.get_interaction("int-1").await.unwrap_err();
+    let err = client.interactions().get("int-1").await.unwrap_err();
     assert!(matches!(err, GenaiError::MalformedResponse(_)), "{err:?}");
     assert!(!err.is_retryable());
 }
@@ -358,7 +359,11 @@ async fn file_upload_uses_the_base_url_for_both_legs() {
 
     let file = stub
         .client()
-        .upload_file_bytes(b"hello".to_vec(), "text/plain", Some("greeting.txt"))
+        .files()
+        .upload(
+            FileUpload::from_bytes(b"hello".to_vec(), "text/plain")
+                .with_display_name("greeting.txt"),
+        )
         .await
         .unwrap();
     assert_eq!(file.name, "files/abc");
@@ -380,14 +385,15 @@ async fn file_upload_without_session_url_is_malformed_response() {
     let stub = Stub::replying(vec![Reply::json(200, json!({}))]).await;
     let err = stub
         .client()
-        .upload_file_bytes(b"hello".to_vec(), "text/plain", None)
+        .files()
+        .upload(FileUpload::from_bytes(b"hello".to_vec(), "text/plain"))
         .await
         .unwrap_err();
     assert!(matches!(err, GenaiError::MalformedResponse(_)), "{err:?}");
 }
 
 #[tokio::test]
-async fn wait_for_file_ready_polls_then_returns_active() {
+async fn wait_until_active_polls_then_returns_active() {
     let file = |state: &str| json!({"name": "files/abc", "mimeType": "video/mp4", "uri": "u", "state": state});
     let stub = Stub::replying(vec![
         Reply::json(200, file("PROCESSING")),
@@ -395,10 +401,13 @@ async fn wait_for_file_ready_polls_then_returns_active() {
     ])
     .await;
     let client = stub.client();
-    let metadata = serde_json::from_value(file("PROCESSING")).unwrap();
+    let poll = PollOptions::new()
+        .with_poll_interval(Duration::from_millis(10))
+        .with_timeout(Duration::from_secs(5));
 
     let ready = client
-        .wait_for_file_ready(&metadata, Duration::from_millis(10), Duration::from_secs(5))
+        .files()
+        .wait_until_active("files/abc", poll)
         .await
         .unwrap();
     assert!(ready.is_active());
@@ -407,20 +416,20 @@ async fn wait_for_file_ready_polls_then_returns_active() {
 }
 
 #[tokio::test]
-async fn wait_for_file_ready_failure_is_terminal_not_retryable() {
+async fn wait_until_active_failure_is_terminal_not_retryable() {
     let failed = json!({
         "name": "files/abc", "mimeType": "video/mp4", "uri": "u", "state": "FAILED",
         "error": {"code": 13, "message": "transcoding failed"}
     });
     let stub = Stub::replying(vec![Reply::json(200, failed)]).await;
-    let metadata = serde_json::from_value(
-        json!({"name": "files/abc", "mimeType": "video/mp4", "uri": "u", "state": "PROCESSING"}),
-    )
-    .unwrap();
+    let poll = PollOptions::new()
+        .with_poll_interval(Duration::from_millis(10))
+        .with_timeout(Duration::from_secs(5));
 
     let err = stub
         .client()
-        .wait_for_file_ready(&metadata, Duration::from_millis(10), Duration::from_secs(5))
+        .files()
+        .wait_until_active("files/abc", poll)
         .await
         .unwrap_err();
     assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");

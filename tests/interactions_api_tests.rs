@@ -99,7 +99,7 @@ mod basic {
 
     #[tokio::test]
     #[ignore = "Requires API key"]
-    async fn test_get_interaction() {
+    async fn test_interactions_get() {
         let Some(client) = get_client() else {
             println!("Skipping: GEMINI_API_KEY not set");
             return;
@@ -114,7 +114,8 @@ mod basic {
         .expect("Interaction failed");
 
         let retrieved = client
-            .get_interaction(response.id.as_ref().expect("id should exist"))
+            .interactions()
+            .get(response.id.as_ref().expect("id should exist"))
             .await
             .expect("Get interaction failed");
 
@@ -125,7 +126,7 @@ mod basic {
 
     #[tokio::test]
     #[ignore = "Requires API key"]
-    async fn test_delete_interaction() {
+    async fn test_interactions_delete() {
         let Some(client) = get_client() else {
             println!("Skipping: GEMINI_API_KEY not set");
             return;
@@ -141,11 +142,12 @@ mod basic {
         let id = response.id.expect("id should exist");
 
         client
-            .delete_interaction(&id)
+            .interactions()
+            .delete(&id)
             .await
             .expect("Delete interaction failed");
 
-        let get_result = client.get_interaction(&id).await;
+        let get_result = client.interactions().get(&id).await;
         assert!(
             matches!(
                 get_result,
@@ -185,9 +187,10 @@ mod basic {
         let id = response.id.expect("stored interaction should have id");
 
         let cancelled = client
-            .cancel_interaction(&id)
+            .interactions()
+            .cancel(&id)
             .await
-            .expect("cancel_interaction failed");
+            .expect("interactions().cancel failed");
         assert_eq!(cancelled.status, InteractionStatus::Cancelled);
     }
 
@@ -672,7 +675,8 @@ mod store {
             .expect("Interaction failed");
 
         let retrieved = client
-            .get_interaction(response.id.as_ref().expect("id should exist"))
+            .interactions()
+            .get(response.id.as_ref().expect("id should exist"))
             .await
             .expect("Should be able to retrieve stored interaction");
 

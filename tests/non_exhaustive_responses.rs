@@ -31,27 +31,27 @@ use syn::{Attribute, Item, Meta, Token};
 /// by accident.
 const REQUEST_SIDE: &[&str] = &[
     // Interaction request and its config tree.
-    "src/request.rs:InteractionRequest",
-    "src/request.rs:GenerationConfig",
-    "src/request.rs:TranscriptionConfig",
-    "src/request.rs:SpeechConfig",
-    "src/request.rs:ImageConfig",
-    "src/request.rs:VideoConfig",
-    "src/request.rs:AgentConfig",
+    "src/request/mod.rs:InteractionRequest",
+    "src/request/generation_config.rs:GenerationConfig",
+    "src/request/generation_config.rs:TranscriptionConfig",
+    "src/request/generation_config.rs:SpeechConfig",
+    "src/request/generation_config.rs:ImageConfig",
+    "src/request/generation_config.rs:VideoConfig",
+    "src/request/agent_config.rs:AgentConfig",
     "src/safety.rs:SafetySetting",
     // Tool declarations and configs the caller builds.
-    "src/tools.rs:FunctionDeclaration",
-    "src/tools.rs:FunctionParameters",
-    "src/tools.rs:AllowedTools",
-    "src/tools.rs:VertexAiSearchConfig",
-    "src/tools.rs:ExaAiSearchConfig",
-    "src/tools.rs:ParallelAiSearchConfig",
-    "src/tools.rs:RagResource",
-    "src/tools.rs:HybridSearchConfig",
-    "src/tools.rs:RagFilter",
-    "src/tools.rs:RagRanking",
-    "src/tools.rs:RagRetrievalConfig",
-    "src/tools.rs:RagStoreConfig",
+    "src/tools/function.rs:FunctionDeclaration",
+    "src/tools/function.rs:FunctionParameters",
+    "src/tools/choice.rs:AllowedTools",
+    "src/tools/retrieval.rs:VertexAiSearchConfig",
+    "src/tools/retrieval.rs:ExaAiSearchConfig",
+    "src/tools/retrieval.rs:ParallelAiSearchConfig",
+    "src/tools/retrieval.rs:RagResource",
+    "src/tools/retrieval.rs:HybridSearchConfig",
+    "src/tools/retrieval.rs:RagFilter",
+    "src/tools/retrieval.rs:RagRanking",
+    "src/tools/retrieval.rs:RagRetrievalConfig",
+    "src/tools/retrieval.rs:RagStoreConfig",
     // Resource create/update bodies.
     "src/environments/mod.rs:CreateEnvironmentRequest",
     "src/environments/spec.rs:EnvironmentSource",
@@ -68,12 +68,15 @@ const REQUEST_SIDE: &[&str] = &[
 /// Test-only modules declared out of line; finding them proves the gate
 /// detection works, since otherwise test files would be scanned as API.
 const EXPECTED_TEST_MODULES: &[&str] = &[
-    "src/content_tests",
+    "src/content/content_tests",
+    "src/files_tests",
+    "src/paging_tests",
     "src/proptest_tests",
-    "src/request_tests",
-    "src/response_tests",
+    "src/request/request_tests",
+    "src/response/response_tests",
     "src/streaming_tests",
     "src/test_subscriber",
+    "src/triggers_tests",
     "src/request_builder/tests",
 ];
 
@@ -164,6 +167,11 @@ fn analyze(sources: &[(String, String)], exemptions: &[&str]) -> Report {
     for (rel, file) in &parsed {
         let mut finder = GatedModules {
             dir: child_module_dir(rel),
+            file_dir: Path::new(rel)
+                .parent()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
             found: &mut report.test_modules,
         };
         finder.visit_file(file);
@@ -265,6 +273,20 @@ fn child_module_dir(rel: &str) -> String {
     }
 }
 
+/// The value of a `#[path = "..."]` attribute, if present.
+fn path_attr(attrs: &[Attribute]) -> Option<String> {
+    attrs.iter().find_map(|attr| match &attr.meta {
+        Meta::NameValue(nv) if nv.path.is_ident("path") => match &nv.value {
+            syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(s),
+                ..
+            }) => Some(s.value()),
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
 /// A file is test-only if a gated `mod` declared it: `<m>.rs`, `<m>/mod.rs`,
 /// or anything below `<m>/`.
 fn is_test_only_path(rel: &str, test_modules: &BTreeSet<String>) -> bool {
@@ -273,16 +295,28 @@ fn is_test_only_path(rel: &str, test_modules: &BTreeSet<String>) -> bool {
         .any(|m| rel == format!("{m}.rs") || rel.starts_with(&format!("{m}/")))
 }
 
-/// Collects out-of-line `#[cfg(test)] mod x;` declarations.
+/// Collects out-of-line `#[cfg(test)] mod x;` declarations, following a
+/// `#[path = "x_tests.rs"]` attribute when there is one.
 struct GatedModules<'a> {
+    /// Where an unattributed `mod x;` resolves (see [`child_module_dir`]).
     dir: String,
+    /// The declaring file's own directory, which a top-level `#[path]` is
+    /// relative to.
+    file_dir: String,
     found: &'a mut BTreeSet<String>,
 }
 
 impl<'ast> Visit<'ast> for GatedModules<'_> {
     fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
         if module.content.is_none() && is_test_gated(&module.attrs) {
-            self.found.insert(format!("{}/{}", self.dir, module.ident));
+            let target = match path_attr(&module.attrs) {
+                Some(path) => {
+                    let path = path.strip_suffix(".rs").unwrap_or(&path).to_owned();
+                    format!("{}/{path}", self.file_dir)
+                }
+                None => format!("{}/{}", self.dir, module.ident),
+            };
+            self.found.insert(target);
         }
         // Inline modules are not followed: an out-of-line `mod` inside one
         // would resolve to a nested directory, and `src/` has none.

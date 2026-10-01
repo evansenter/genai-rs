@@ -91,7 +91,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     background_interaction(&client, background).await?;
     environment_lifecycle(&client, &environment).await?;
 
-    let triggers = client.list_triggers(Some(10), None).await?;
+    let triggers = client.triggers().list().with_page_size(10).send().await?;
     println!(
         "\nTriggers visible to this key: {}",
         triggers.triggers.len()
@@ -106,11 +106,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 async fn webhook_lifecycle(client: &Client, webhook: &Webhook) -> Result<(), Box<dyn Error>> {
     println!("--- Webhook ---");
-    let created = client.create_webhook(webhook).await?;
+    let created = client.webhooks().create(webhook).await?;
     let id = created
         .id
         .filter(|id| !id.is_empty())
-        .ok_or("create_webhook returned no ID")?;
+        .ok_or("webhooks().create returned no ID")?;
     // The secret is only ever returned here; store it.
     println!(
         "Created {id}; signing secret returned: {}",
@@ -118,29 +118,31 @@ async fn webhook_lifecycle(client: &Client, webhook: &Webhook) -> Result<(), Box
     );
 
     let result = async {
-        let listed = client.list_webhooks(Some(10), None).await?;
+        let listed = client.webhooks().list().with_page_size(10).send().await?;
         println!("Registered webhooks: {}", listed.webhooks.len());
 
         let updated = client
-            .update_webhook(
+            .webhooks()
+            .update(
                 &id,
-                &WebhookUpdate::new().with_state(WebhookState::Disabled),
-                Some("state"),
+                &WebhookUpdate::new()
+                    .with_state(WebhookState::Disabled)
+                    .with_update_mask("state"),
             )
             .await?;
         println!("Updated state: {:?}", updated.state);
 
-        client.ping_webhook(&id).await?;
+        client.webhooks().ping(&id).await?;
         println!("Ping sent");
 
         // The previous secret stays valid for a grace period by default.
-        let rotated = client.rotate_webhook_signing_secret(&id, None).await?;
+        let rotated = client.webhooks().rotate_signing_secret(&id, None).await?;
         println!("Rotated; new secret returned: {}", rotated.secret.is_some());
         Ok::<_, genai_rs::GenaiError>(())
     }
     .await;
 
-    client.delete_webhook(&id).await?;
+    client.webhooks().delete(&id).await?;
     println!("Deleted {id}");
     Ok(result?)
 }
@@ -158,7 +160,7 @@ async fn background_interaction(
     );
 
     // Don't leave a research agent running on the example's behalf.
-    let cancelled = client.cancel_interaction(&id).await?;
+    let cancelled = client.interactions().cancel(&id).await?;
     println!("Cancelled: status {:?}", cancelled.status);
     Ok(())
 }
@@ -168,17 +170,25 @@ async fn environment_lifecycle(
     request: &CreateEnvironmentRequest,
 ) -> Result<(), Box<dyn Error>> {
     println!("\n--- Environment ---");
-    let created = client.create_environment(request).await?;
+    let created = client.environments().create(request).await?;
     let id = created
         .id
         .filter(|id| !id.is_empty())
-        .ok_or("create_environment returned no ID")?;
+        .ok_or("environments.create returned no ID")?;
     println!("Created {id}");
 
     let result = async {
-        let listed = client.list_environments(Some(10), None).await?;
-        println!("Environments visible: {}", listed.environments.len());
-        let fetched = client.get_environment(&id).await?;
+        let listed = client
+            .environments()
+            .list()
+            .with_page_size(10)
+            .send()
+            .await?;
+        println!(
+            "Environments on the first page: {}",
+            listed.environments.len()
+        );
+        let fetched = client.environments().get(&id).await?;
         println!(
             "Fetched: status {:?}, {:?} file(s), {:?} bytes",
             fetched.status, fetched.file_count, fetched.size_bytes
@@ -188,7 +198,7 @@ async fn environment_lifecycle(
     .await;
 
     // Environments expire on their own, but repeated runs would pile up.
-    client.delete_environment(&id).await?;
+    client.environments().delete(&id).await?;
     println!("Deleted {id}");
     Ok(result?)
 }

@@ -2,7 +2,7 @@
 //! variant handling (API revision 2026-05-20).
 //!
 //! Tool calls, tool results, and thoughts are no longer `Content` variants;
-//! they are typed `Step` variants (see `src/steps.rs`). The tool-content
+//! they are typed `Step` variants (see `src/steps/`). The tool-content
 //! tests that used to live here have been migrated to the equivalent Step
 //! wire-format tests below.
 //!
@@ -10,7 +10,7 @@
 //! computer use has no Step equivalent (it flows through `function_call`
 //! steps).
 
-use super::*;
+use crate::*;
 
 // --- Basic Content Serialization/Deserialization ---
 

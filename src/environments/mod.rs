@@ -7,8 +7,8 @@
 //! files, repositories, skill registries) and what outbound network access
 //! is allowed. The `environment` request field and the Agents resource's
 //! `base_environment` accept either a string environment ID — one created
-//! explicitly via [`Client::create_environment()`](crate::Client::create_environment)
-//! or by a previous interaction, echoed as
+//! explicitly via [`Environments::create`] or by a previous interaction,
+//! echoed as
 //! [`InteractionResponse::environment_id`](crate::InteractionResponse) — or
 //! a typed remote environment object. [`EnvironmentSpec`] models that union.
 //!
@@ -18,9 +18,11 @@
 //! configuration) that agent interactions can execute against. Requests
 //! reference one via
 //! [`InteractionRequest::environment`](crate::request::InteractionRequest::environment)
-//! — either inline (the API creates one implicitly) or by ID. The CRUD
-//! surface creates an environment once, references it from many
-//! interactions, lists what exists, and deletes what's stale.
+//! — either inline (the API creates one implicitly) or by ID. The
+//! [`Environments`] handle from [`Client::environments`] manages them:
+//! [`create`](Environments::create) one explicitly so many interactions can
+//! reference it, and [`get`](Environments::get), [`list`](Environments::list)
+//! and [`delete`](Environments::delete) them.
 //!
 //! Wire format verified live 2026-08-08: the resource uses `created` /
 //! `updated` / `last_accessed` ISO-8601 timestamps, and `file_count` /
@@ -29,11 +31,11 @@
 //!
 //! # Files inside an environment
 //!
-//! [`Client::list_environment_files()`](crate::Client::list_environment_files)
-//! lists what an agent left in an environment and
-//! [`Client::upload_environment_file()`](crate::Client::upload_environment_file)
-//! uploads a file into one before an interaction runs. Paths are relative to
-//! the environment root; `""` lists the root.
+//! [`Environments::files`] returns the [`EnvironmentFiles`] handle:
+//! [`list`](EnvironmentFiles::list) shows what an agent left in an
+//! environment, and [`upload`](EnvironmentFiles::upload) writes a file into
+//! one before an interaction runs. Paths are relative to the environment
+//! root; `""` lists the root.
 //!
 //! Verified live 2026-09-24: listing (root, a directory, one file,
 //! recursive) and a resumable single-shot upload. The API reports entry
@@ -56,7 +58,10 @@
 mod files;
 mod spec;
 
-pub use files::{EnvironmentFile, EnvironmentFileList, EnvironmentFileType, EnvironmentFileUpload};
+pub use files::{
+    EnvironmentFile, EnvironmentFileList, EnvironmentFileType, EnvironmentFileUpload,
+    EnvironmentFiles, ListEnvironmentFiles,
+};
 pub use spec::{
     AllowlistEntry, EnvVar, EnvironmentSource, EnvironmentSpec, NetworkConfig, RemoteEnvironment,
     SourceType,
@@ -64,11 +69,13 @@ pub use spec::{
 
 use crate::client::Client;
 use crate::errors::GenaiError;
+use crate::paging;
 use crate::serde_util::{
     ForEnvironment, deserialize_lenient_timestamp, deserialize_string_i64, serialize_string_i64,
 };
 use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
+use futures_util::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 
 wire_enum! {
@@ -259,23 +266,75 @@ pub struct EnvironmentListResponse {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-/// Environments resource methods; see [IDs](crate::environments#ids).
+paging::impl_list_page!(EnvironmentListResponse, environments: Environment);
+
 impl Client {
+    /// The `/v1beta/environments` resource: create, inspect, list and delete
+    /// environments, and reach the files inside them through
+    /// [`files`](Environments::files).
+    ///
+    /// The handle borrows the client and is `Copy`; see
+    /// [IDs](crate::environments#ids) for what the methods take.
+    ///
+    /// ```no_run
+    /// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+    /// let environment = client.environments().get("38aac1ae7f30fe9bd67afe42382ea041").await?;
+    /// println!("{:?}: {:?} file(s)", environment.status, environment.file_count);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn environments(&self) -> Environments<'_> {
+        Environments { client: self }
+    }
+}
+
+/// The `/v1beta/environments` resource, from [`Client::environments`].
+///
+/// Methods take `self` by value, so each call's future holds only the client
+/// borrow, never the handle: `client.environments().get(id)` can be stored
+/// or joined with others. See [IDs](crate::environments#ids).
+#[derive(Clone, Copy, Debug)]
+#[must_use = "a resource handle does nothing until you call one of its methods"]
+pub struct Environments<'a> {
+    client: &'a Client,
+}
+
+impl<'a> Environments<'a> {
     /// Creates an environment explicitly, for reuse across interactions.
     ///
     /// Requests can also create environments implicitly by passing a typed
-    /// [`EnvironmentSpec`] inline; explicit creation
-    /// returns the ID so many interactions can share one container.
+    /// [`EnvironmentSpec`] inline; explicit creation returns the ID so many
+    /// interactions can share one container.
+    /// [`CreateEnvironmentRequest::from_environment`] forks an existing
+    /// environment, files included.
     ///
     /// # Errors
     ///
     /// Returns an error on network failure or when the definition is
     /// rejected.
-    pub async fn create_environment(
-        &self,
-        request: &crate::CreateEnvironmentRequest,
-    ) -> Result<crate::Environment, GenaiError> {
-        crate::http::environments::create_environment(&self.http, request).await
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use genai_rs::{CreateEnvironmentRequest, EnvironmentSource};
+    ///
+    /// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+    /// let environment = client
+    ///     .environments()
+    ///     .create(
+    ///         &CreateEnvironmentRequest::new()
+    ///             .add_source(EnvironmentSource::inline("/workspace/.env", "MODE=ci")),
+    ///     )
+    ///     .await?;
+    /// println!("Created {:?}", environment.id);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn create(
+        self,
+        request: &CreateEnvironmentRequest,
+    ) -> Result<Environment, GenaiError> {
+        crate::http::environments::create_environment(&self.client.http, request).await
     }
 
     /// Retrieves an environment by ID.
@@ -284,29 +343,20 @@ impl Client {
     ///
     /// Returns an error on network failure or when the environment doesn't
     /// exist.
-    pub async fn get_environment(
-        &self,
-        environment_id: &str,
-    ) -> Result<crate::Environment, GenaiError> {
-        crate::http::environments::get_environment(&self.http, environment_id).await
+    pub async fn get(self, environment_id: &str) -> Result<Environment, GenaiError> {
+        crate::http::environments::get_environment(&self.client.http, environment_id).await
     }
 
-    /// Lists environments, paged.
-    ///
-    /// # Arguments
-    ///
-    /// * `page_size` - Optional maximum number of environments per page.
-    /// * `page_token` - Optional token from a previous list call.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error on network failure or an invalid page token.
-    pub async fn list_environments(
-        &self,
-        page_size: Option<u32>,
-        page_token: Option<&str>,
-    ) -> Result<crate::EnvironmentListResponse, GenaiError> {
-        crate::http::environments::list_environments(&self.http, page_size, page_token).await
+    /// Lists environments: configure the returned [`ListEnvironments`], then
+    /// call [`send`](ListEnvironments::send) for one page, or
+    /// [`pages`](ListEnvironments::pages) /
+    /// [`items`](ListEnvironments::items) to stream them all.
+    pub fn list(self) -> ListEnvironments<'a> {
+        ListEnvironments {
+            client: self.client,
+            page_size: None,
+            page_token: None,
+        }
     }
 
     /// Deletes an environment.
@@ -315,8 +365,120 @@ impl Client {
     ///
     /// Returns an error on network failure or when the environment doesn't
     /// exist.
-    pub async fn delete_environment(&self, environment_id: &str) -> Result<(), GenaiError> {
-        crate::http::environments::delete_environment(&self.http, environment_id).await
+    pub async fn delete(self, environment_id: &str) -> Result<(), GenaiError> {
+        crate::http::environments::delete_environment(&self.client.http, environment_id).await
+    }
+}
+
+/// A `GET /v1beta/environments` request, from [`Environments::list`].
+///
+/// End it with [`send`](Self::send) for one page, or
+/// [`pages`](Self::pages) / [`items`](Self::items) to follow
+/// `next_page_token` to the end of the list. The page size is sent with
+/// every page.
+///
+/// A page can hold fewer environments than the page size, or none, while
+/// more remain: live on 2026-09-26, with `page_size=1` one page of the list
+/// came back empty with a `next_page_token`. The streams follow such pages;
+/// when calling [`send`](Self::send) yourself, keep going while
+/// `next_page_token` is present rather than stopping on a short page.
+///
+/// # Example
+///
+/// ```no_run
+/// use futures_util::TryStreamExt;
+///
+/// # async fn example(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+/// // One page
+/// let page = client.environments().list().with_page_size(50).send().await?;
+/// println!(
+///     "{} environments, more: {}",
+///     page.environments.len(),
+///     page.next_page_token.is_some()
+/// );
+///
+/// // Every environment, across pages
+/// let all: Vec<genai_rs::Environment> =
+///     client.environments().list().items().try_collect().await?;
+/// # let _ = all;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Clone, Debug)]
+#[must_use = "a list request does nothing until .send(), .pages() or .items()"]
+pub struct ListEnvironments<'a> {
+    client: &'a Client,
+    page_size: Option<u32>,
+    page_token: Option<String>,
+}
+
+impl<'a> ListEnvironments<'a> {
+    /// Sets the maximum number of environments per page (the API's default
+    /// is 50). Sent with every page.
+    pub fn with_page_size(mut self, page_size: u32) -> Self {
+        self.page_size = Some(page_size);
+        self
+    }
+
+    /// Starts from this page token, from a previous page's
+    /// `next_page_token`.
+    pub fn with_page_token(mut self, page_token: impl Into<String>) -> Self {
+        self.page_token = Some(page_token.into());
+        self
+    }
+
+    /// Sends the request and returns one page.
+    ///
+    /// An empty collection comes back as an empty page with no
+    /// `next_page_token` (the API answers `{}`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure, an invalid page token, or a
+    /// response that fails to parse.
+    pub async fn send(self) -> Result<EnvironmentListResponse, GenaiError> {
+        crate::http::environments::list_environments(
+            &self.client.http,
+            self.page_size,
+            self.page_token.as_deref(),
+        )
+        .await
+    }
+
+    /// Streams every page, starting at [`with_page_token`](Self::with_page_token)
+    /// or the first page.
+    ///
+    /// Nothing is sent until the stream is polled. It ends after a page
+    /// without a `next_page_token`; an error is yielded once and ends it. A
+    /// page whose token was already requested (the starting token included)
+    /// is yielded, then [`GenaiError::MalformedResponse`]. The stream owns a
+    /// clone of the client, so it can be stored or spawned.
+    #[must_use = "streams do nothing unless polled"]
+    pub fn pages(self) -> BoxStream<'static, Result<EnvironmentListResponse, GenaiError>> {
+        let Self {
+            client,
+            page_size,
+            page_token,
+        } = self;
+        let client = client.clone();
+        paging::pages("environments", page_token, move |token| {
+            let client = client.clone();
+            async move {
+                crate::http::environments::list_environments(
+                    &client.http,
+                    page_size,
+                    token.as_deref(),
+                )
+                .await
+            }
+        })
+    }
+
+    /// Streams every environment across pages, in server order. Same rules
+    /// as [`pages`](Self::pages).
+    #[must_use = "streams do nothing unless polled"]
+    pub fn items(self) -> BoxStream<'static, Result<Environment, GenaiError>> {
+        paging::items(self.pages())
     }
 }
 
@@ -503,6 +665,35 @@ mod tests {
             Some(&serde_json::json!("value"))
         );
         assert_eq!(serde_json::to_value(&environment).unwrap(), wire);
+    }
+
+    #[test]
+    fn list_environments_setters_fill_the_query() {
+        let client = Client::new("k".to_string());
+        let list = client.environments().list();
+        assert_eq!(list.page_size, None);
+        assert_eq!(list.page_token, None);
+
+        let list = list
+            .with_page_size(5)
+            .with_page_token("t1")
+            // `with_*` replaces.
+            .with_page_size(1)
+            .with_page_token("t2");
+        assert_eq!(list.page_size, Some(1));
+        assert_eq!(list.page_token.as_deref(), Some("t2"));
+    }
+
+    #[test]
+    fn environments_handle_and_list_debug_redact_the_api_key() {
+        let client = Client::new("secret-api-key".to_string());
+        for debug in [
+            format!("{:?}", client.environments()),
+            format!("{:?}", client.environments().list().with_page_size(1)),
+        ] {
+            assert!(!debug.contains("secret-api-key"), "{debug}");
+            assert!(debug.contains("[REDACTED]"), "{debug}");
+        }
     }
 
     #[test]

@@ -62,7 +62,7 @@ pool), rather than building one per request.
 | Code Execution | `with_code_execution()` | Python sandbox |
 | URL Context | `with_url_context()` | Web page analysis |
 | Google Maps | `with_google_maps()` | Places and geographic grounding |
-| File Search | `add_tool(FileSearchConfig::new(stores))` | Semantic retrieval over your file search stores (`create_file_search_store`) |
+| File Search | `add_tool(FileSearchConfig::new(stores))` | Semantic retrieval over your file search stores (`client.file_search_stores()`) |
 | Computer Use | `add_tool(ComputerUseConfig::new())` | Browser/desktop actions your code executes (allowlisted keys) |
 | MCP Servers | `add_tool(McpServerConfig::new(name, url))` | Model Context Protocol tools |
 | Retrieval | `add_tool(RetrievalConfig::new()...)` | Vertex AI Search / RAG stores (Vertex-only, see below) |
@@ -231,7 +231,7 @@ if response.has_thoughts() {
 use genai_rs::{Webhook, WebhookConfig, WebhookEvent};
 
 // Register a managed webhook once...
-let webhook = client.create_webhook(&Webhook::new(
+let webhook = client.webhooks().create(&Webhook::new(
     "https://example.com/hooks/genai",
     vec![WebhookEvent::InteractionCompleted, WebhookEvent::InteractionFailed],
 )).await?;
@@ -326,6 +326,7 @@ agentic code-review application with subagents and a structured report.
 | Document | Description |
 |----------|-------------|
 | [Builder API](docs/BUILDER_API.md) | Method naming conventions, validation |
+| [Resources](docs/RESOURCES.md) | Resource handles, list paging, Python-to-Rust and old-to-new method maps |
 | [Error Handling](docs/ERROR_HANDLING.md) | Error types, recovery patterns |
 | [Reliability](docs/RELIABILITY.md) | Retries, timeouts, cancellation, service tiers |
 | [Logging Strategy](docs/LOGGING_STRATEGY.md) | Log levels, `LOUD_WIRE` debugging |

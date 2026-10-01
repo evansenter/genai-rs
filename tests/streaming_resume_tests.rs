@@ -1,4 +1,4 @@
-//! `get_interaction_stream`: following a background interaction and resuming
+//! `interactions().stream` and `resume_stream`: following a background interaction and resuming
 //! with `last_event_id`.
 //!
 //! Observed live 2026-09-24: streaming retrieval works only for background
@@ -40,7 +40,7 @@ async fn start_background(client: &Client) -> String {
 
 #[tokio::test]
 #[ignore = "Requires API key"]
-async fn test_get_interaction_stream_follows_background_interaction() {
+async fn test_interactions_stream_follows_background_interaction() {
     let Some(client) = get_client() else {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
@@ -48,7 +48,7 @@ async fn test_get_interaction_stream_follows_background_interaction() {
 
     with_timeout(STREAM_BUDGET, async {
         let id = start_background(&client).await;
-        let result = consume_stream(client.get_interaction_stream(&id, None)).await;
+        let result = consume_stream(client.interactions().stream(&id)).await;
 
         assert!(
             !result.collected_text.is_empty(),
@@ -81,7 +81,7 @@ async fn test_stream_resume_with_last_event_id() {
         let mut seen = Vec::new();
         let (id, full) = loop {
             let id = start_background(&client).await;
-            let full = consume_stream(client.get_interaction_stream(&id, None)).await;
+            let full = consume_stream(client.interactions().stream(&id)).await;
             seen.push(full.event_ids.len());
             if full.event_ids.len() >= 2 {
                 break (id, full);
@@ -93,7 +93,7 @@ async fn test_stream_resume_with_last_event_id() {
         };
 
         let resume_from = &full.event_ids[0];
-        let resumed = consume_stream(client.get_interaction_stream(&id, Some(resume_from))).await;
+        let resumed = consume_stream(client.interactions().resume_stream(&id, resume_from)).await;
 
         // Which deltas carry an id differs between the live stream and the
         // replay (a replay can tag fewer), so the ids cannot be compared as
@@ -125,7 +125,7 @@ async fn test_stream_resume_with_last_event_id() {
 /// must surface rather than read as an empty stream.
 #[tokio::test]
 #[ignore = "Requires API key"]
-async fn test_get_interaction_stream_rejects_foreground_interaction() {
+async fn test_interactions_stream_rejects_foreground_interaction() {
     let Some(client) = get_client() else {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
@@ -140,7 +140,7 @@ async fn test_get_interaction_stream_rejects_foreground_interaction() {
     .expect("create failed");
     let id = response.id.expect("stored interaction should have an id");
 
-    let mut stream = client.get_interaction_stream(&id, None);
+    let mut stream = client.interactions().stream(&id);
     let first = stream.next().await;
     assert!(
         matches!(

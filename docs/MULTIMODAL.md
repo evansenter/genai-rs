@@ -81,8 +81,7 @@ compatibility. `examples/audio_input.rs` is a runnable demo.
 ## Video
 
 ```rust,ignore
-use genai_rs::{Content, video_from_file};
-use std::time::Duration;
+use genai_rs::{Content, FileUpload, PollOptions, video_from_file};
 
 // From the filesystem
 let clip = video_from_file("clip.mp4").await?;
@@ -94,10 +93,8 @@ let clip = video_from_file("clip.mp4").await?;
 let inline = Content::video_data(base64_video, "video/mp4");
 
 // Files API, for large videos
-let file = client.upload_file("large_video.mp4").await?;
-let file = client
-    .wait_for_file_ready(&file, Duration::from_secs(2), Duration::from_secs(120))
-    .await?;
+let file = client.files().upload(FileUpload::from_path("large_video.mp4")).await?;
+let file = client.files().wait_until_active(&file.name, PollOptions::new()).await?;
 let by_uri = Content::video_uri(&file.uri, "video/mp4");
 ```
 
@@ -167,33 +164,52 @@ Upload once, then reference by URI across requests.
 Path uploads stream from disk with about 8 MB of buffer, so file size (up to
 the 2 GB limit) does not drive memory use.
 
-```rust,ignore
-// Upload (MIME type from the extension)
-let file = client.upload_file("large_video.mp4").await?;
+```rust,no_run
+use futures_util::TryStreamExt;
+use genai_rs::{Content, FileMetadata, FileUpload, PollOptions};
+use std::time::Duration;
+
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+# let csv_bytes = b"region,total\nnorth,12\n".to_vec();
+// Upload (MIME type from the extension, display name from the file name)
+let file = client.files().upload(FileUpload::from_path("large_video.mp4")).await?;
 
 // Explicit MIME type
-let file = client.upload_file_with_mime("data.bin", "application/octet-stream").await?;
+let data = client
+    .files()
+    .upload(FileUpload::from_path("data.bin").with_mime_type("application/octet-stream"))
+    .await?;
 
 // From bytes, with an optional display name
-let file = client.upload_file_bytes(csv_bytes, "text/csv", Some("Q4 Sales Data")).await?;
-
-// Wait until processing finishes (poll every 2 s, give up after 2 min)
-let file = client
-    .wait_for_file_ready(&file, Duration::from_secs(2), Duration::from_secs(120))
+let sales = client
+    .files()
+    .upload(FileUpload::from_bytes(csv_bytes, "text/csv").with_display_name("Q4 Sales Data"))
     .await?;
+
+// Wait until processing finishes. By default it polls every 2 s and gives
+// up after 2 min; `PollOptions::new()` alone keeps both defaults.
+let poll = PollOptions::new().with_timeout(Duration::from_secs(300));
+let file = client.files().wait_until_active(&file.name, poll).await?;
 
 // Use it
 let content = Content::from_file(&file); // URI + MIME type from the metadata
 
 // Inspect, list, delete
-let metadata = client.get_file(&file.name).await?;
+let metadata = client.files().get(&file.name).await?;
 println!("active={} processing={} failed={}",
     metadata.is_active(), metadata.is_processing(), metadata.is_failed());
-for f in client.list_files(None, None).await?.files {
+for f in client.files().list().send().await?.files {
     println!("{} {}", f.name, f.mime_type);
 }
-client.delete_file(&file.name).await?;
+let every_file: Vec<FileMetadata> = client.files().list().items().try_collect().await?;
+client.files().delete(&file.name).await?;
+# let _ = (data, sales, content, every_file);
+# Ok(())
+# }
 ```
+
+The list is newest first. `send()` returns one page; `items()` streams every
+file across pages (`with_page_size` takes 1 to 100).
 
 `examples/files_api.rs` is a runnable demo.
 

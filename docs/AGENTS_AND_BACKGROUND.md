@@ -64,10 +64,12 @@ A custom agent bundles an id, a system instruction, tools (a subset:
 `code_execution`, `url_context`, `google_search`, `mcp_server`) and a base
 environment. Creating custom agents is gated on standard API keys.
 
-```rust,ignore
+```rust,no_run
+use futures_util::TryStreamExt;
 use genai_rs::{Agent, EnvironmentSource, RemoteEnvironment, Tool};
 
-let agent = client.create_agent(
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+let agent = client.agents().create(
     &Agent::new("customer-sentinel")
         .with_system_instruction("You monitor customer feedback.")
         .with_description("Watches feedback channels and summarizes sentiment")
@@ -79,10 +81,17 @@ let agent = client.create_agent(
 
 // Run it like any agent: .with_agent("customer-sentinel").with_background(true)
 
-let fetched = client.get_agent("customer-sentinel").await?;
-let page = client.list_agents(Some(50), None, None).await?; // page_size, page_token, parent
-client.delete_agent("customer-sentinel").await?;
+let fetched = client.agents().get("customer-sentinel").await?;
+let page = client.agents().list().with_page_size(50).send().await?; // one page
+let all: Vec<Agent> = client.agents().list().items().try_collect().await?; // every page
+client.agents().delete("customer-sentinel").await?;
+# Ok(())
+# }
 ```
+
+`list()` returns a builder: `.with_page_size()`, `.with_page_token()` and
+`.with_parent()` configure it, and `.send()`, `.pages()` or `.items()` run it
+(see [Resource handles and list builders](BUILDER_API.md#resource-handles-and-list-builders)).
 
 ## Environments
 
@@ -131,11 +140,17 @@ Environments are also first-class resources. Create one up front, reference
 its id from many interactions, and delete it when done. The full lifecycle
 works on a standard API key.
 
-```rust,ignore
-use genai_rs::{CreateEnvironmentRequest, EnvironmentFileUpload, EnvironmentSource};
+```rust,no_run
+use futures_util::TryStreamExt;
+use genai_rs::{
+    CreateEnvironmentRequest, Environment, EnvironmentFile, EnvironmentFileUpload,
+    EnvironmentSource,
+};
 
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let env = client
-    .create_environment(
+    .environments()
+    .create(
         &CreateEnvironmentRequest::new()
             .add_source(EnvironmentSource::inline("/workspace/.env", "MODE=ci")),
     )
@@ -143,21 +158,31 @@ let env = client
 let env_id = env.id.clone().expect("create returns an id");
 
 // Put a file in before a run, and list what the agent left afterwards
-client
-    .upload_environment_file(&env_id, "data/input.csv", b"a,b\n1,2\n".to_vec(), "text/csv",
-        EnvironmentFileUpload { overwrite: true, ..Default::default() })
+let upload = EnvironmentFileUpload::new(b"a,b\n1,2\n".to_vec(), "text/csv").with_overwrite(true);
+client.environments().files().upload(&env_id, "data/input.csv", upload).await?;
+let files: Vec<EnvironmentFile> = client
+    .environments()
+    .files()
+    .list(&env_id, "") // "" is the root
+    .with_recursive(true)
+    .items()
+    .try_collect()
     .await?;
-let files = client.list_environment_files(&env_id, "", true, None, None).await?; // path, recursive
 
 // Fork it, files included
 let fork = client
-    .create_environment(&CreateEnvironmentRequest::from_environment(&env_id))
+    .environments()
+    .create(&CreateEnvironmentRequest::from_environment(&env_id))
     .await?;
 
-let fetched = client.get_environment(&env_id).await?;
+let fetched = client.environments().get(&env_id).await?;
 println!("status={:?} files={:?}", fetched.status, fetched.file_count);
-let page = client.list_environments(Some(10), None).await?;
-client.delete_environment(&env_id).await?;
+let page = client.environments().list().with_page_size(10).send().await?;
+let all: Vec<Environment> = client.environments().list().items().try_collect().await?;
+client.environments().delete(&env_id).await?;
+# let _ = (files, fork, page, all);
+# Ok(())
+# }
 ```
 
 Environment file paths are relative to the root (`""` lists the root), and
@@ -172,20 +197,48 @@ instead of carrying it inline. Reference it with `EnvVar::credential(id)`
 (an environment variable) or `AllowlistEntry::with_credential(id)` (a header
 on matching egress). Secret material is write-only: reads return metadata.
 
-```rust,ignore
-use genai_rs::{CreateCredentialRequest, EnvVar, RemoteEnvironment};
+```rust,no_run
+use futures_util::TryStreamExt;
+use genai_rs::{
+    AllowlistEntry, CreateCredentialRequest, Credential, CredentialType, CredentialUpdate,
+    NetworkConfig, RemoteEnvironment,
+};
 
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let cred = client
-    .create_credential(&CreateCredentialRequest::bearer_token("s3cret").with_id("github-token"))
+    .credentials()
+    .create(&CreateCredentialRequest::bearer_token("s3cret").with_id("github-token"))
     .await?;
 
-let env = RemoteEnvironment::new().add_env_var("GITHUB_TOKEN", EnvVar::credential("github-token"));
+// Requests from the sandbox to api.github.com carry the token.
+let env = RemoteEnvironment::new().with_network(NetworkConfig::allowlist(vec![
+    AllowlistEntry::new("api.github.com").with_credential("github-token"),
+]));
+
+// Rotate the secret; the mask travels as the `update_mask` query parameter.
+let rotated = CredentialUpdate {
+    token: Some("n3w-s3cret".into()),
+    ..CredentialUpdate::new(CredentialType::BearerToken)
+};
+client
+    .credentials()
+    .update("github-token", &rotated.with_update_mask("token"))
+    .await?;
+
+let all: Vec<Credential> = client.credentials().list().items().try_collect().await?;
+client.credentials().delete("github-token").await?;
+# let _ = (cred, env, all);
+# Ok(())
+# }
 ```
 
 CRUD was verified live (2026-09-24): create, get, list, update with and
-without `update_mask`, and delete. **The references have no observed effect
-yet.** The API accepts and echoes them, but an Antigravity sandbox saw
-neither the variable nor an injected header.
+without `update_mask`, and delete. Both references take effect at runtime
+(verified live 2026-09-24): a bearer credential on an allowlist entry is
+injected into requests to that domain, and an `environment_variable`
+credential behind `EnvVar::credential` shows the sandbox only a placeholder,
+which the egress proxy replaces with the secret in requests to its
+`trusted_domains`. `tests/credentials_tests.rs` pins both.
 
 ## Scheduled triggers (`/v1beta/triggers`)
 
@@ -194,9 +247,14 @@ nested interaction must target a **custom agent**: a model-only interaction
 is rejected. Since custom-agent creation is gated, most accounts can list
 triggers but not create them.
 
-```rust,ignore
-use genai_rs::{InteractionInput, InteractionRequest, TriggerCreateParams, TriggerStatus, TriggerUpdate};
+```rust,no_run
+use futures_util::TryStreamExt;
+use genai_rs::{
+    InteractionInput, InteractionRequest, TriggerCreateParams, TriggerExecution, TriggerStatus,
+    TriggerUpdate,
+};
 
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let interaction = InteractionRequest {
     agent: Some("my-custom-agent".to_string()),
     input: InteractionInput::Text("Summarize yesterday's alerts".to_string()),
@@ -207,20 +265,25 @@ let interaction = InteractionRequest {
 let params = TriggerCreateParams::new("0 9 * * 1-5", "America/Los_Angeles", interaction)
     .with_display_name("weekday-briefing")
     .with_environment_id("env-id"); // optional
-let trigger = client.create_trigger(&params).await?;
+let trigger = client.triggers().create(&params).await?;
 
 let id = trigger.id.clone().expect("created trigger has an id");
-let execution = client.run_trigger(&id).await?; // fire now
-let runs = client.list_trigger_executions(&id, Some(10), None).await?;
-client.update_trigger(&id, &TriggerUpdate::new().with_status(TriggerStatus::Paused)).await?;
-client.delete_trigger(&id).await?;
+let execution = client.triggers().run(&id).await?; // fire now
+let recent = client.triggers().list_executions(&id).with_page_size(10).send().await?;
+let all: Vec<TriggerExecution> = client.triggers().list_executions(&id).items().try_collect().await?;
+client.triggers().update(&id, &TriggerUpdate::new().with_status(TriggerStatus::Paused)).await?;
+client.triggers().delete(&id).await?;
+# let _ = (execution, recent, all);
+# Ok(())
+# }
 ```
 
 The nested request must not set `store`: the API rejects it there.
 `TriggerUpdate` omits unset fields from the PATCH body. The endpoint takes no
 `update_mask`, so partial-update behavior rests on that omission, and it is
 unverified until trigger updates can be live-tested. `TriggerExecutionStatus`
-lists the execution outcomes.
+lists the execution outcomes. `list_executions` on a trigger ID that does not
+exist returns an empty list, not a 404 (live, 2026-09-26).
 
 ## Background execution
 
@@ -254,10 +317,12 @@ and `video.generated`.
 
 Register once for all matching events:
 
-```rust,ignore
+```rust,no_run
+use futures_util::TryStreamExt;
 use genai_rs::{Webhook, WebhookEvent, WebhookState, WebhookUpdate};
 
-let webhook = client.create_webhook(
+# async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
+let webhook = client.webhooks().create(
     &Webhook::new(
         "https://example.com/hooks/genai",
         vec![WebhookEvent::InteractionCompleted, WebhookEvent::InteractionFailed],
@@ -269,11 +334,19 @@ let webhook = client.create_webhook(
 let signing_secret = webhook.new_signing_secret.clone().expect("returned on create");
 let id = webhook.id.clone().expect("created webhook has an id");
 
-client.ping_webhook(&id).await?;                                  // test delivery
-let rotated = client.rotate_webhook_signing_secret(&id, None).await?;
-client.update_webhook(&id, &WebhookUpdate::new().with_state(WebhookState::Disabled), Some("state")).await?;
-client.delete_webhook(&id).await?;
+client.webhooks().ping(&id).await?;                                   // test delivery
+let rotated = client.webhooks().rotate_signing_secret(&id, None).await?;
+client.webhooks().update(&id, &WebhookUpdate::new().with_state(WebhookState::Disabled)).await?;
+let all: Vec<Webhook> = client.webhooks().list().items().try_collect().await?; // every page
+client.webhooks().delete(&id).await?;
+# let _ = (signing_secret, rotated, all);
+# Ok(())
+# }
 ```
+
+`update()` applies the fields set on the `WebhookUpdate`;
+`.with_update_mask("state")` adds the optional `update_mask` query parameter,
+which the API was observed to ignore (2026-07).
 
 Or route one request, which overrides the registered webhooks for it and
 echoes `user_metadata` on every event:
@@ -293,7 +366,7 @@ let response = client
     )
     .create()
     .await?;
-// On interaction.completed: client.get_interaction(&id_from_event).await?
+// On interaction.completed: client.interactions().get(&id_from_event).await?
 ```
 
 Verify delivery signatures with the signing secret before trusting a
@@ -315,7 +388,7 @@ async fn poll_until_done(
     let start = Instant::now();
     let mut delay = Duration::from_secs(2);
     loop {
-        let response = client.get_interaction(id).await?;
+        let response = client.interactions().get(id).await?;
         match response.status {
             InteractionStatus::Completed => return Ok(response),
             InteractionStatus::Failed
@@ -348,20 +421,20 @@ async fn poll_until_done(
 | `BudgetExceeded` | The configured budget ran out; inspect partial results |
 
 Persist the interaction id as soon as `create()` returns, so a restart can
-resume with `get_interaction(&id)`. `response.steps` can be non-empty while
+resume with `client.interactions().get(&id)`. `response.steps` can be non-empty while
 the run is still `InProgress`, and `response.output_steps()` folds those
 partial results into a history.
 
 ### Streaming a background interaction
 
-`client.get_interaction_stream(&id, None)` streams a running interaction from
-the start. Pass a `last_event_id` to resume; see
+`client.interactions().stream(&id)` streams a running interaction from
+the start; `resume_stream(&id, last_event_id)` resumes after an event. See
 [Streaming API](STREAMING_API.md#stream-resume).
 
 ```rust,ignore
 use futures_util::StreamExt;
 
-let mut stream = client.get_interaction_stream(&interaction_id, None);
+let mut stream = client.interactions().stream(&interaction_id);
 while let Some(event) = stream.next().await {
     let event = event?;
     if let Some(text) = event.chunk.delta_text() {
@@ -375,6 +448,6 @@ while let Some(event) = stream.next().await {
 
 ### Cancellation
 
-`client.cancel_interaction(&id)` stops a background interaction that is still
+`client.interactions().cancel(&id)` stops a background interaction that is still
 `InProgress`, and returns it with status `Cancelled`. It errors if the
 interaction is not background or has already finished.

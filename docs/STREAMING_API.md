@@ -7,7 +7,7 @@ streams:
 |--------|--------|---------|
 | `InteractionBuilder::create_stream()` | `StreamEvent` | A single streamed interaction |
 | `InteractionBuilder::create_stream_with_auto_functions()` | `AutoFunctionStreamEvent` | Streaming plus automatic function execution |
-| `Client::get_interaction_stream(id, last_event_id)` | `StreamEvent` | Resuming a stream, or streaming a background interaction |
+| `client.interactions().stream(id)` / `.resume_stream(id, last_event_id)` | `StreamEvent` | Streaming a background interaction, or resuming a stream |
 
 Each event is a wrapper holding `chunk` (what happened) and
 `event_id: Option<String>` (the SSE event id, used to resume).
@@ -253,7 +253,7 @@ while let Some(event) = stream.next().await {
 ## Stream resume
 
 If the connection drops, resume the *same* generation with
-`client.get_interaction_stream(interaction_id, Some(last_event_id))`. It
+`client.interactions().resume_stream(interaction_id, last_event_id)`. It
 requests `GET /v1beta/interactions/{id}?alt=sse&last_event_id=…` (the id is
 URL-encoded) and continues after that event.
 
@@ -264,7 +264,7 @@ Requirements:
 2. You have the interaction id, from the `Created` event or the response.
 3. You have the last `event_id` you processed. `event_id` is **optional** per
    the API spec, so resume only works when the server sent one. Otherwise
-   restart, or fetch the finished interaction with `get_interaction()`.
+   restart, or fetch the finished interaction with `client.interactions().get(id)`.
 
 ```rust,no_run
 use futures_util::StreamExt;
@@ -300,7 +300,7 @@ while let Some(result) = stream.next().await {
 
 // If interrupted, resume from last position:
 if let (Some(id), Some(last_evt)) = (&interaction_id, &last_event_id) {
-    let mut resumed = client.get_interaction_stream(id, Some(last_evt));
+    let mut resumed = client.interactions().resume_stream(id, last_evt);
     while let Some(result) = resumed.next().await {
         let _event = result?;
         // Continue processing from where we left off
@@ -310,7 +310,7 @@ if let (Some(id), Some(last_evt)) = (&interaction_id, &last_event_id) {
 # }
 ```
 
-`get_interaction_stream(id, None)` streams a background interaction from the
+`client.interactions().stream(id)` streams a background interaction from the
 start, which is how to watch a long agent run live.
 
 ## Timeouts

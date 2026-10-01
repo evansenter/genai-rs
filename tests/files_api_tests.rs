@@ -1,21 +1,32 @@
-//! Files API: upload (from disk, streamed, and from memory), get, list,
-//! delete, readiness polling, and use in an interaction.
+//! Files API: upload (from disk, streamed, and from memory), get, list
+//! (one page and across pages), delete, readiness polling, and use in an
+//! interaction.
 //!
 //! ```bash
 //! cargo nextest run --test files_api_tests --run-ignored all
 //! ```
 
 mod common;
-use genai_rs::{Client, Content, GenaiError};
+use futures_util::StreamExt;
+use genai_rs::wire::{WireEvent, WireInspector};
+use genai_rs::{Client, Content, FileMetadata, FileUpload, GenaiError, PollOptions};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 fn get_client() -> Client {
     common::get_client().expect("GEMINI_API_KEY must be set")
 }
 
+/// Polls every second, giving up after `secs` seconds.
+fn poll_every_second_for(secs: u64) -> PollOptions {
+    PollOptions::new()
+        .with_poll_interval(Duration::from_secs(1))
+        .with_timeout(Duration::from_secs(secs))
+}
+
 /// A missing file reads as 403 "…or it may not exist" (verified live
 /// 2026-09-24): the API does not distinguish absent from inaccessible.
-fn assert_file_gone(result: Result<genai_rs::FileMetadata, GenaiError>) {
+fn assert_file_gone(result: Result<FileMetadata, GenaiError>) {
     match result {
         Err(GenaiError::Api {
             status_code: 403,
@@ -39,7 +50,8 @@ async fn test_upload_text_file() {
 
     // Upload the file
     let file = client
-        .upload_file_with_mime(&file_path, "text/plain")
+        .files()
+        .upload(FileUpload::from_path(&file_path).with_mime_type("text/plain"))
         .await
         .expect("Failed to upload file");
 
@@ -57,7 +69,8 @@ async fn test_upload_text_file() {
 
     // Clean up
     client
-        .delete_file(&file.name)
+        .files()
+        .delete(&file.name)
         .await
         .expect("Failed to delete file");
 }
@@ -70,7 +83,11 @@ async fn test_upload_bytes() {
 
     let content = b"This is some test content uploaded as bytes.";
     let file = client
-        .upload_file_bytes(content.to_vec(), "text/plain", Some("bytes-test.txt"))
+        .files()
+        .upload(
+            FileUpload::from_bytes(content.to_vec(), "text/plain")
+                .with_display_name("bytes-test.txt"),
+        )
         .await
         .expect("Failed to upload bytes");
 
@@ -79,25 +96,30 @@ async fn test_upload_bytes() {
     assert_eq!(file.display_name.as_deref(), Some("bytes-test.txt"));
 
     // Clean up
-    client.delete_file(&file.name).await.unwrap();
+    client.files().delete(&file.name).await.unwrap();
 }
 
 /// Tests getting file metadata.
 #[tokio::test]
 #[ignore = "Requires API key"]
-async fn test_get_file() {
+async fn test_files_get() {
     let client = get_client();
 
     // Upload a file
-    let content = b"Test file for get_file test";
+    let content = b"Test file for files().get test";
     let uploaded = client
-        .upload_file_bytes(content.to_vec(), "text/plain", Some("get-test.txt"))
+        .files()
+        .upload(
+            FileUpload::from_bytes(content.to_vec(), "text/plain")
+                .with_display_name("get-test.txt"),
+        )
         .await
         .expect("Failed to upload file");
 
     // Retrieve file metadata
     let retrieved = client
-        .get_file(&uploaded.name)
+        .files()
+        .get(&uploaded.name)
         .await
         .expect("Failed to get file");
 
@@ -105,25 +127,32 @@ async fn test_get_file() {
     assert_eq!(retrieved.mime_type, uploaded.mime_type);
 
     // Clean up
-    client.delete_file(&uploaded.name).await.unwrap();
+    client.files().delete(&uploaded.name).await.unwrap();
 }
 
 /// Tests listing files.
 #[tokio::test]
 #[ignore = "Requires API key"]
-async fn test_list_files() {
+async fn test_files_list_one_page() {
     let client = get_client();
 
     // Upload a file to ensure there's at least one
-    let content = b"Test file for list_files test";
+    let content = b"Test file for files().list test";
     let file = client
-        .upload_file_bytes(content.to_vec(), "text/plain", Some("list-test.txt"))
+        .files()
+        .upload(
+            FileUpload::from_bytes(content.to_vec(), "text/plain")
+                .with_display_name("list-test.txt"),
+        )
         .await
         .expect("Failed to upload file");
 
-    // List files
+    // List files (newest first)
     let response = client
-        .list_files(Some(10), None)
+        .files()
+        .list()
+        .with_page_size(10)
+        .send()
         .await
         .expect("Failed to list files");
 
@@ -132,29 +161,34 @@ async fn test_list_files() {
     assert!(found, "Uploaded file should appear in file list");
 
     // Clean up
-    client.delete_file(&file.name).await.unwrap();
+    client.files().delete(&file.name).await.unwrap();
 }
 
 /// Tests deleting a file.
 #[tokio::test]
 #[ignore = "Requires API key"]
-async fn test_delete_file() {
+async fn test_files_delete() {
     let client = get_client();
 
     // Upload a file
     let content = b"Test file to be deleted";
     let file = client
-        .upload_file_bytes(content.to_vec(), "text/plain", Some("delete-test.txt"))
+        .files()
+        .upload(
+            FileUpload::from_bytes(content.to_vec(), "text/plain")
+                .with_display_name("delete-test.txt"),
+        )
         .await
         .expect("Failed to upload file");
 
     // Delete the file
     client
-        .delete_file(&file.name)
+        .files()
+        .delete(&file.name)
         .await
         .expect("Failed to delete file");
 
-    assert_file_gone(client.get_file(&file.name).await);
+    assert_file_gone(client.files().get(&file.name).await);
 }
 
 /// An uploaded file's content reaches the model when referenced by URI.
@@ -166,13 +200,17 @@ async fn test_file_in_interaction() {
     // Upload a text file with some content
     let content = b"The capital of France is Paris. The Eiffel Tower is 330 meters tall.";
     let file = client
-        .upload_file_bytes(content.to_vec(), "text/plain", Some("facts.txt"))
+        .files()
+        .upload(
+            FileUpload::from_bytes(content.to_vec(), "text/plain").with_display_name("facts.txt"),
+        )
         .await
         .expect("Failed to upload file");
 
     // Wait for file to be ready (text files should be quick)
     let ready_file = client
-        .wait_for_file_ready(&file, Duration::from_secs(1), Duration::from_secs(30))
+        .files()
+        .wait_until_active(&file.name, poll_every_second_for(30))
         .await
         .expect("File should become ready");
 
@@ -204,7 +242,7 @@ async fn test_file_in_interaction() {
     )
     .await;
 
-    client.delete_file(&file.name).await.unwrap();
+    client.files().delete(&file.name).await.unwrap();
 }
 
 /// Tests that Content::from_file() correctly infers content type.
@@ -216,27 +254,21 @@ async fn test_content_from_file_type_inference() {
     let client = get_client();
 
     // Upload files with different MIME types
-    let video_file = client
-        .upload_file_bytes(b"fake video data".to_vec(), "video/mp4", Some("test.mp4"))
+    let upload = |data: &[u8], mime_type: &str, name: &str| {
+        client
+            .files()
+            .upload(FileUpload::from_bytes(data.to_vec(), mime_type).with_display_name(name))
+    };
+    let video_file = upload(b"fake video data", "video/mp4", "test.mp4")
         .await
         .unwrap();
-
-    let image_file = client
-        .upload_file_bytes(b"fake image data".to_vec(), "image/png", Some("test.png"))
+    let image_file = upload(b"fake image data", "image/png", "test.png")
         .await
         .unwrap();
-
-    let audio_file = client
-        .upload_file_bytes(b"fake audio data".to_vec(), "audio/mp3", Some("test.mp3"))
+    let audio_file = upload(b"fake audio data", "audio/mp3", "test.mp3")
         .await
         .unwrap();
-
-    let doc_file = client
-        .upload_file_bytes(
-            b"fake pdf data".to_vec(),
-            "application/pdf",
-            Some("test.pdf"),
-        )
+    let doc_file = upload(b"fake pdf data", "application/pdf", "test.pdf")
         .await
         .unwrap();
 
@@ -267,93 +299,140 @@ async fn test_content_from_file_type_inference() {
 
     // Clean up
     for file in [video_file, image_file, audio_file, doc_file] {
-        client.delete_file(&file.name).await.unwrap();
+        client.files().delete(&file.name).await.unwrap();
     }
 }
 
-/// Tests pagination when listing files.
+/// Records the URL of every GET the client sends.
+#[derive(Debug, Default)]
+struct GetUrls(Mutex<Vec<String>>);
+
+impl WireInspector for GetUrls {
+    fn on_event(&self, event: &WireEvent) {
+        if let WireEvent::Request { method, url, .. } = event
+            && method == "GET"
+        {
+            self.0.lock().unwrap().push(url.clone());
+        }
+    }
+}
+
+/// `items()` follows `nextPageToken` across pages: at one file per page, it
+/// streams until both fresh uploads have turned up (the list is newest
+/// first, but other tests upload concurrently, so allow up to 50 pages).
 #[tokio::test]
 #[ignore = "Requires API key"]
-async fn test_list_files_pagination() {
-    let client = get_client();
+async fn test_list_items_follow_pages_until_both_uploads_appear() {
+    let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY must be set");
+    let urls = Arc::new(GetUrls::default());
+    let client = Client::builder(api_key)
+        .add_wire_inspector(urls.clone())
+        .build()
+        .expect("client");
 
-    // Upload a few files
-    let mut uploaded_files = Vec::new();
-    for i in 0..3 {
+    let mut uploaded = Vec::new();
+    for i in 0..2 {
         let file = client
-            .upload_file_bytes(
-                format!("Content {i}").into_bytes(),
-                "text/plain",
-                Some(&format!("paginate-{i}.txt")),
+            .files()
+            .upload(
+                FileUpload::from_bytes(format!("Content {i}").into_bytes(), "text/plain")
+                    .with_display_name(format!("paginate-{i}.txt")),
             )
             .await
             .expect("Failed to upload file");
-        uploaded_files.push(file);
+        uploaded.push(file);
     }
 
-    // List with page size of 1
-    let first_page = client
-        .list_files(Some(1), None)
-        .await
-        .expect("Failed to list files");
+    let listed = async {
+        let mut missing: Vec<&str> = uploaded.iter().map(|f| f.name.as_str()).collect();
+        let mut seen = Vec::new();
+        let mut items = client.files().list().with_page_size(1).items().take(50);
+        while !missing.is_empty() {
+            let Some(file) = items.next().await else {
+                break;
+            };
+            let file = file?;
+            missing.retain(|name| *name != file.name);
+            seen.push(file.name);
+        }
+        Ok::<_, GenaiError>((seen, missing.len()))
+    }
+    .await;
 
-    assert!(
-        !first_page.files.is_empty(),
-        "First page should have at least one file"
+    for file in &uploaded {
+        client.files().delete(&file.name).await.unwrap();
+    }
+
+    let (seen, missing) = listed.expect("files().list().items() failed");
+    println!("Streamed {} file(s) to find both uploads", seen.len());
+    assert_eq!(missing, 0, "not every upload was listed: {seen:?}");
+    let mut unique = seen.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(
+        unique.len(),
+        seen.len(),
+        "a file repeated across pages: {seen:?}"
     );
 
-    // If there's a next page token, we can verify pagination works
-    if let Some(token) = first_page.next_page_token {
-        let _second_page = client
-            .list_files(Some(1), Some(&token))
-            .await
-            .expect("Failed to list second page");
-
-        // The request succeeding is sufficient validation - we don't assert on
-        // content since other tests may have left files and the page size isn't
-        // guaranteed to be exactly what we requested.
-    }
-
-    // Clean up
-    for file in uploaded_files {
-        client.delete_file(&file.name).await.unwrap();
+    // At most one file per page, so each item came from its own request;
+    // every request after the first carried the previous page's token.
+    let urls = urls.0.lock().unwrap().clone();
+    let lists: Vec<&String> = urls.iter().filter(|u| u.contains("/files?")).collect();
+    println!("Sent {} list request(s)", lists.len());
+    assert!(
+        lists.len() >= 2,
+        "two uploads at pageSize=1 need two pages: {lists:?}"
+    );
+    assert!(
+        lists.len() >= seen.len(),
+        "a page held more than one file: {lists:?}"
+    );
+    for (i, url) in lists.iter().enumerate() {
+        assert!(
+            url.contains("pageSize=1"),
+            "page {i} dropped the page size: {url}"
+        );
+        assert_eq!(url.contains("pageToken="), i > 0, "page {i}: {url}");
     }
 }
 
-/// Tests the wait_for_file_ready function with an already active file.
+/// `wait_until_active` with the default `PollOptions` returns an already
+/// active file.
 #[tokio::test]
 #[ignore = "Requires API key"]
-async fn test_wait_for_file_ready_immediate() {
+async fn test_wait_until_active_returns_an_active_file() {
     let client = get_client();
 
     // Upload a small text file (should be immediately active)
     let file = client
-        .upload_file_bytes(
-            b"Small test content".to_vec(),
-            "text/plain",
-            Some("wait-test.txt"),
+        .files()
+        .upload(
+            FileUpload::from_bytes(b"Small test content".to_vec(), "text/plain")
+                .with_display_name("wait-test.txt"),
         )
         .await
         .expect("Failed to upload file");
 
     // Wait should return quickly for an already active file
     let ready = client
-        .wait_for_file_ready(&file, Duration::from_millis(100), Duration::from_secs(10))
+        .files()
+        .wait_until_active(&file.name, PollOptions::new())
         .await
         .expect("File should become ready");
 
     assert!(ready.is_active());
 
     // Clean up
-    client.delete_file(&file.name).await.unwrap();
+    client.files().delete(&file.name).await.unwrap();
 }
 
-/// Tests that get_file returns an error for non-existent files.
+/// Tests that `files().get()` returns an error for non-existent files.
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_get_nonexistent_file_returns_error() {
     let client = get_client();
-    assert_file_gone(client.get_file("files/abcdefghijkl").await);
+    assert_file_gone(client.files().get("files/abcdefghijkl").await);
 }
 
 // =============================================================================
@@ -363,7 +442,7 @@ async fn test_get_nonexistent_file_returns_error() {
 /// A file larger than the 8 MB read buffer streams up intact.
 #[tokio::test]
 #[ignore = "Requires API key"]
-async fn test_upload_file_streams_a_file_larger_than_the_read_buffer() {
+async fn test_path_upload_streams_a_file_larger_than_the_read_buffer() {
     let client = get_client();
 
     let temp_dir = tempfile::tempdir().unwrap();
@@ -372,7 +451,8 @@ async fn test_upload_file_streams_a_file_larger_than_the_read_buffer() {
     std::fs::write(&file_path, &data).unwrap();
 
     let file = client
-        .upload_file_with_mime(&file_path, "text/plain")
+        .files()
+        .upload(FileUpload::from_path(&file_path).with_mime_type("text/plain"))
         .await
         .expect("Streamed upload failed");
 
@@ -390,22 +470,28 @@ async fn test_upload_file_streams_a_file_larger_than_the_read_buffer() {
     );
 
     client
-        .delete_file(&file.name)
+        .files()
+        .delete(&file.name)
         .await
         .expect("Failed to delete file");
 }
 
-/// `upload_file` infers the MIME type from the extension.
+/// A path upload infers the MIME type from the extension, and the display
+/// name from the file name.
 #[tokio::test]
 #[ignore = "Requires API key"]
-async fn test_upload_file_auto_mime() {
+async fn test_path_upload_auto_mime() {
     let client = get_client();
 
     let temp_dir = tempfile::tempdir().unwrap();
     let file_path = temp_dir.path().join("test.mp4");
     std::fs::write(&file_path, vec![0u8; 1024]).unwrap();
 
-    let file = client.upload_file(&file_path).await.expect("Upload failed");
+    let file = client
+        .files()
+        .upload(FileUpload::from_path(&file_path))
+        .await
+        .expect("Upload failed");
 
     assert_eq!(
         file.mime_type, "video/mp4",
@@ -413,12 +499,36 @@ async fn test_upload_file_auto_mime() {
     );
     assert_eq!(file.display_name.as_deref(), Some("test.mp4"));
 
-    client.delete_file(&file.name).await.unwrap();
+    client.files().delete(&file.name).await.unwrap();
+}
+
+/// `with_display_name` replaces a path upload's default display name.
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_path_upload_with_display_name() {
+    let client = get_client();
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let file_path = temp_dir.path().join("q4.csv");
+    std::fs::write(&file_path, "region,total\nnorth,12\n").unwrap();
+
+    let file = client
+        .files()
+        .upload(FileUpload::from_path(&file_path).with_display_name("Q4 sales"))
+        .await
+        .expect("Upload failed");
+    let fetched = client.files().get(&file.name).await;
+    client.files().delete(&file.name).await.unwrap();
+
+    assert_eq!(file.display_name.as_deref(), Some("Q4 sales"));
+    assert_eq!(file.mime_type, "text/csv");
+    let fetched = fetched.expect("files().get failed");
+    assert_eq!(fetched.display_name.as_deref(), Some("Q4 sales"));
 }
 
 /// Empty files are rejected before any request is made.
 #[tokio::test]
-async fn test_upload_file_empty_file_error() {
+async fn test_path_upload_empty_file_error() {
     let client = Client::new("test-api-key".to_string());
 
     let temp_dir = tempfile::tempdir().unwrap();
@@ -426,7 +536,8 @@ async fn test_upload_file_empty_file_error() {
     std::fs::write(&file_path, b"").unwrap();
 
     let err = client
-        .upload_file_with_mime(&file_path, "text/plain")
+        .files()
+        .upload(FileUpload::from_path(&file_path).with_mime_type("text/plain"))
         .await
         .expect_err("Should fail for empty file");
     assert!(matches!(err, GenaiError::InvalidInput(_)), "{err:?}");
@@ -435,11 +546,12 @@ async fn test_upload_file_empty_file_error() {
 
 /// A missing file fails on open, before any request is made.
 #[tokio::test]
-async fn test_upload_file_nonexistent_file_error() {
+async fn test_path_upload_nonexistent_file_error() {
     let client = Client::new("test-api-key".to_string());
 
     let err = client
-        .upload_file_with_mime("/nonexistent/path/to/file.txt", "text/plain")
+        .files()
+        .upload(FileUpload::from_path("/nonexistent/path/to/file.txt").with_mime_type("text/plain"))
         .await
         .expect_err("Should fail for nonexistent file");
     assert!(matches!(err, GenaiError::InvalidInput(_)), "{err:?}");
@@ -458,13 +570,15 @@ async fn test_path_upload_in_interaction() {
     std::fs::write(&file_path, content).unwrap();
 
     let file = client
-        .upload_file_with_mime(&file_path, "text/plain")
+        .files()
+        .upload(FileUpload::from_path(&file_path).with_mime_type("text/plain"))
         .await
         .expect("Upload failed");
 
     // Wait for file to be ready
     let ready_file = client
-        .wait_for_file_ready(&file, Duration::from_secs(1), Duration::from_secs(30))
+        .files()
+        .wait_until_active(&file.name, poll_every_second_for(30))
         .await
         .expect("File should become ready");
 
@@ -493,5 +607,5 @@ async fn test_path_upload_in_interaction() {
     )
     .await;
 
-    client.delete_file(&file.name).await.unwrap();
+    client.files().delete(&file.name).await.unwrap();
 }

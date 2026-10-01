@@ -1826,7 +1826,7 @@ async fn test_antigravity_protocol_enums_have_not_drifted() {
     assert!(
         drift.is_empty(),
         "harness protocol drift detected — update the wire enums/fields in \
-         src/antigravity/protocol.rs (and docs/ENUM_WIRE_FORMATS.md):\n  {}",
+         src/antigravity/protocol/ (and docs/ENUM_WIRE_FORMATS.md):\n  {}",
         drift.join("\n  ")
     );
 }

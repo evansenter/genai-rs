@@ -56,6 +56,7 @@
 // Internal HTTP Layer (pub(crate))
 // =============================================================================
 pub(crate) mod http;
+pub(crate) mod paging;
 pub(crate) mod serde_util;
 #[cfg(test)]
 pub(crate) mod test_subscriber;
@@ -144,8 +145,9 @@ pub use response_format::{ResponseDelivery, ResponseFormat, ResponseFormatSpec, 
 // Triggers resource (/v1beta/triggers) — server-side scheduled interactions
 pub mod triggers;
 pub use triggers::{
-    Trigger, TriggerCreateParams, TriggerExecution, TriggerExecutionListResponse,
-    TriggerExecutionStatus, TriggerListResponse, TriggerStatus, TriggerUpdate,
+    ListTriggerExecutions, ListTriggers, Trigger, TriggerCreateParams, TriggerExecution,
+    TriggerExecutionListResponse, TriggerExecutionStatus, TriggerListResponse, TriggerStatus,
+    TriggerUpdate, Triggers,
 };
 
 // Environments: the spec (environment request field, agent
@@ -153,9 +155,9 @@ pub use triggers::{
 pub mod environments;
 pub use environments::{
     AllowlistEntry, CreateEnvironmentRequest, EnvVar, Environment, EnvironmentFile,
-    EnvironmentFileList, EnvironmentFileType, EnvironmentFileUpload, EnvironmentListResponse,
-    EnvironmentSource, EnvironmentSpec, EnvironmentStatus, NetworkConfig, RemoteEnvironment,
-    SourceType,
+    EnvironmentFileList, EnvironmentFileType, EnvironmentFileUpload, EnvironmentFiles,
+    EnvironmentListResponse, EnvironmentSource, EnvironmentSpec, EnvironmentStatus, Environments,
+    ListEnvironmentFiles, ListEnvironments, NetworkConfig, RemoteEnvironment, SourceType,
 };
 
 // File Search Stores resource (/v1beta/fileSearchStores) — the documents
@@ -163,7 +165,8 @@ pub use environments::{
 pub mod file_search_stores;
 pub use file_search_stores::{
     CreateFileSearchStoreRequest, DocumentListResponse, DocumentState, FileSearchDocument,
-    FileSearchStore, FileSearchStoreListResponse,
+    FileSearchDocuments, FileSearchStore, FileSearchStoreListResponse, FileSearchStores,
+    ListFileSearchDocuments, ListFileSearchStores,
 };
 
 // Safety settings (request safety_settings field)
@@ -172,25 +175,26 @@ pub use safety::{HarmCategory, SafetyMethod, SafetySetting, SafetyThreshold};
 
 // Agents resource (/v1beta/agents)
 pub mod agents;
-pub use agents::{Agent, AgentListResponse};
+pub use agents::{Agent, AgentListResponse, Agents, ListAgents};
 
 pub mod credentials;
 pub use credentials::{
     CreateCredentialRequest, Credential, CredentialConfig, CredentialListResponse,
-    CredentialStatus, CredentialType, CredentialUpdate, InjectionLocation,
+    CredentialStatus, CredentialType, CredentialUpdate, Credentials, InjectionLocation,
+    ListCredentials,
 };
 
 pub mod voices;
 pub use voices::{
-    CreateVoiceRequest, ListVoicesParams, PromptedVoice, ReplicatedVoice, Voice, VoiceAudio,
-    VoiceListResponse, VoicePitch, VoiceSpec, VoiceType,
+    CreateVoiceRequest, ListVoices, PromptedVoice, ReplicatedVoice, Voice, VoiceAudio,
+    VoiceListResponse, VoicePitch, VoiceSpec, VoiceType, Voices,
 };
 
 // Webhooks resource (/v1beta/webhooks) and per-request webhook_config
 pub mod webhooks;
 pub use webhooks::{
-    RevocationBehavior, RotateSigningSecretResponse, SigningSecret, Webhook, WebhookConfig,
-    WebhookEvent, WebhookListResponse, WebhookState, WebhookUpdate,
+    ListWebhooks, RevocationBehavior, RotateSigningSecretResponse, SigningSecret, Webhook,
+    WebhookConfig, WebhookEvent, WebhookListResponse, WebhookState, WebhookUpdate, Webhooks,
 };
 
 // Response types
@@ -227,7 +231,8 @@ pub mod antigravity;
 // Files API (/v1beta/files)
 pub mod files;
 pub use files::{
-    FileError, FileMetadata, FileState, FileUploadResponse, ListFilesResponse, VideoMetadata,
+    FileError, FileMetadata, FileState, FileUpload, FileUploadResponse, Files, ListFiles,
+    ListFilesResponse, PollOptions, VideoMetadata,
 };
 
 // =============================================================================
@@ -236,6 +241,9 @@ pub use files::{
 
 pub mod client;
 pub use client::{Client, ClientBuilder};
+
+mod interactions;
+pub use interactions::Interactions;
 
 pub mod request_builder;
 pub use request_builder::{ConversationBuilder, InteractionBuilder};
@@ -288,13 +296,7 @@ pub use multimodal::{
 // =============================================================================
 
 #[cfg(test)]
-mod content_tests;
-#[cfg(test)]
 mod proptest_tests;
-#[cfg(test)]
-mod request_tests;
-#[cfg(test)]
-mod response_tests;
 #[cfg(test)]
 mod streaming_tests;
 
@@ -341,6 +343,7 @@ mod doc_tests {
     doc_comment!(include_str!("../docs/MULTIMODAL.md"));
     doc_comment!(include_str!("../docs/OUTPUT_MODALITIES.md"));
     doc_comment!(include_str!("../docs/RELIABILITY.md"));
+    doc_comment!(include_str!("../docs/RESOURCES.md"));
     doc_comment!(include_str!("../docs/STREAMING_API.md"));
     doc_comment!(include_str!("../docs/TESTING.md"));
     doc_comment!(include_str!("../docs/THINKING_MODE.md"));
