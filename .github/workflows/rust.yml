@@ -303,6 +303,29 @@ jobs:
             exit 1
           fi
 
+      # #458: `[Unreleased]` is where parallel PRs collide, and a "keep both"
+      # resolution misfiles entries silently. The section ships verbatim as the
+      # release body, so check its structure here, not at tag time.
+      - name: Lint the real CHANGELOG's structure
+        if: ${{ !cancelled() && steps.checkout.conclusion == 'success' }}
+        run: |
+          set -euo pipefail
+          VERSION=$(awk -F'"' '/^version = /{print $2; exit}' Cargo.toml)
+          if [ -z "$VERSION" ]; then
+            echo "::error::No anchored 'version = ' line in Cargo.toml — the version could not be read, so this check verified nothing."
+            exit 1
+          fi
+          rc=0
+          .github/scripts/check_changelog.sh CHANGELOG.md "$VERSION" || rc=$?
+          if [ "$rc" -eq 1 ]; then
+            echo "::error::CHANGELOG.md has structural problems (listed above) — usually a merge that kept both sides of [Unreleased]. The version section ships verbatim as the release body."
+            exit 1
+          elif [ "$rc" -ne 0 ]; then
+            echo "::error::check_changelog.sh exited $rc — a usage or environment error, not a lint finding."
+            exit 1
+          fi
+          echo "CHANGELOG.md structure OK ([Unreleased] and [$VERSION] checked)"
+
       # Guarded like the step above, so a red harness can't silently skip these.
       # The setup steps too, or the check would fail on a missing `yaml` import
       # instead.

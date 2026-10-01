@@ -7,9 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
-`gemini-3.8-flash`, and Antigravity harness 0.1.18.
-
 ### Added
 
 - `.pages()` / `.items()` on every list builder stream all pages. They
@@ -19,33 +16,90 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
   client, so they can be spawned.
 - `FileUpload::with_display_name` sets a path upload's display name, which
   was always the file name.
-- **Voices API**: `client.voices()` lists the voice catalog (a list builder
-  with `with_search`, `with_voice_type`, `with_gender`, `with_language_code`,
-  `with_region_code`, `with_accent`, `with_persona`, `with_context` and
-  `with_pitch`), and creates (`CreateVoiceRequest`), gets and deletes custom
-  voices. A custom voice id works as `SpeechConfig::voice` on 3.8 TTS models.
-- **Credentials API**: `client.credentials()` creates, gets, lists (a list
-  builder), updates and deletes credentials; `CredentialUpdate::with_update_mask`
-  sets the `update_mask` query parameter. `RemoteEnvironment::add_env_var` /
-  `EnvVar` and `AllowlistEntry::with_credential` reference them, verified end
-  to end: the sandbox never sees a credential's secret, and the egress proxy
-  injects it into requests to trusted domains. Bearer `header_name`/`prefix`
-  are accepted but not applied by the API yet.
-- **Environment files and forking**: `client.environments().files()` lists
-  an environment's files (`.list(env, path)`, a list builder with
-  `with_recursive`) and uploads into one (`.upload(env, path, upload)` with
-  `EnvironmentFileUpload::new(data, mime_type)`, `with_overwrite` and
-  `with_extract`); `CreateEnvironmentRequest::from_environment` forks an
-  environment (bare environment id only).
-- **File Search Store management**: `client.file_search_stores()` creates
-  (`CreateFileSearchStoreRequest`), gets, lists (a list builder), deletes and
-  force-deletes stores, and uploads documents into them
-  (`.upload(store, FileUpload)`, from a path or from bytes);
-  `.documents()` lists (`.list(store)`, a list builder), gets, deletes and
-  force-deletes documents, and `wait_until_active` waits for indexing
-  (search returns nothing for a pending document; by default it waits up to
-  60 s, polling every 500 ms). Types `FileSearchStore`,
-  `FileSearchDocument`, `DocumentState`.
+- File Search Store uploads accept bytes: `FileUpload::from_bytes(data, mime_type)`.
+- Voice list filters `with_region_code`, `with_accent`, `with_persona` and
+  `with_context`.
+- `docs/RESOURCES.md`: every old method mapped to its handle call, and each
+  resource mapped to Google's Python SDK.
+
+### Changed
+
+- **Breaking: resource methods moved from `Client` to per-resource
+  handles.** `client.agents()`, `.webhooks()`, `.triggers()`,
+  `.environments()`, `.credentials()`, `.voices()`, `.files()`,
+  `.file_search_stores()` and `.interactions()` each return a `Copy` handle
+  that borrows the client. Rename `client.<verb>_<resource>(…)` to
+  `client.<resources>().<verb>(…)`: `get_file(name)` → `files().get(name)`.
+  Exceptions: `run_trigger` → `triggers().run`, `list_trigger_executions(id, …)`
+  → `triggers().list_executions(id)`, `ping_webhook` → `webhooks().ping`,
+  `rotate_webhook_signing_secret` → `webhooks().rotate_signing_secret`,
+  `get_interaction_with_input` → `interactions().get_with_input`,
+  `get_interaction_stream(id, None | Some(e))` → `interactions().stream(id)` /
+  `resume_stream(id, e)` (the stream now owns a clone of the client),
+  `list_environment_files` / `upload_environment_file` →
+  `environments().files().list` / `.upload`, and the File Search documents
+  methods → `file_search_stores().documents().<verb>`. `client.interaction()`,
+  `execute` and `execute_stream` are unchanged. The full table is in
+  `docs/RESOURCES.md`. The handle types, the `List*` builders, `FileUpload`
+  and `PollOptions` are exported at the crate root.
+- **Breaking: every `list_*` method returns a builder.** The positional
+  `page_size`, `page_token` and `parent` arguments are gone. Chain
+  `.with_page_size(n)`, `.with_page_token(t)` or `.with_parent(p)` on
+  `client.<resources>().list()`, then `.send()` for one page (the same
+  `*ListResponse`). `ListVoicesParams` is removed: its filters are setters on
+  `client.voices().list()`. `list_environment_files`'s `recursive` argument is
+  `.with_recursive(bool)`.
+- **Breaking: uploads take a `FileUpload`.** `upload_file(p)` →
+  `files().upload(FileUpload::from_path(p))`; `upload_file_with_mime(p, m)`
+  → `files().upload(FileUpload::from_path(p).with_mime_type(m))`;
+  `upload_file_bytes(d, m, Some(n))` →
+  `files().upload(FileUpload::from_bytes(d, m).with_display_name(n))`;
+  `upload_to_file_search_store(store, p, Some(n))` →
+  `file_search_stores().upload(store, FileUpload::from_path(p).with_display_name(n))`
+  (`_with_mime` adds `.with_mime_type(m)`). The error for an extension with
+  no known MIME type now points at `FileUpload::with_mime_type()`.
+- **Breaking: `EnvironmentFileUpload` carries the payload.**
+  `upload_environment_file(env, path, data, mime, EnvironmentFileUpload { overwrite, extract })`
+  → `environments().files().upload(env, path, EnvironmentFileUpload::new(data, mime).with_overwrite(overwrite).with_extract(extract))`.
+- **Breaking: waits take `PollOptions`.** `wait_for_file_ready(&f, poll, timeout)`
+  → `files().wait_until_active(&f.name, PollOptions::new().with_poll_interval(poll).with_timeout(timeout))`
+  (defaults 120 s / 2 s); `wait_for_document_active(name, timeout, poll)` →
+  `file_search_stores().documents().wait_until_active(name, PollOptions::new()…)`
+  (defaults 60 s / 500 ms). Either option can be left out.
+- **Breaking: `update_mask` moved onto the update value.**
+  `update_webhook(id, &u, Some("state"))` →
+  `webhooks().update(id, &u.with_update_mask("state"))`, and likewise
+  `update_credential` → `credentials().update`. `None` becomes no
+  `with_update_mask` call. The mask is sent as the query parameter, never in
+  the body.
+- **Breaking: forced deletes are their own verb.**
+  `delete_file_search_store(name, true)` → `file_search_stores().force_delete(name)`;
+  `delete_file_search_document(name, true)` →
+  `file_search_stores().documents().force_delete(name)`; `false` → `delete(name)`.
+
+## [0.11.0] - 2026-09-26
+
+Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
+`gemini-3.8-flash`, and Antigravity harness 0.1.18.
+
+### Added
+
+- **Voices API**: `Client::{list_voices, get_voice, create_voice,
+  delete_voice}`, `CreateVoiceRequest`, `ListVoicesParams`. A custom voice id
+  works as `SpeechConfig::voice` on 3.8 TTS models.
+- **Credentials API**: `Client::{create, get, list, update,
+  delete}_credential(s)`, plus `RemoteEnvironment::add_env_var` / `EnvVar` and
+  `AllowlistEntry::with_credential` references, verified end to end: the
+  sandbox never sees a credential's secret, and the egress proxy injects it
+  into requests to trusted domains. Bearer `header_name`/`prefix` are
+  accepted but not applied by the API yet.
+- **Environment files and forking**: `Client::list_environment_files`,
+  `Client::upload_environment_file`, `CreateEnvironmentRequest::from_environment`
+  (bare environment id only).
+- **File Search Store management**: create, get, list and delete stores;
+  upload, get, list and delete documents; `wait_for_document_active` (indexing
+  is asynchronous and search returns nothing for a pending document). Types
+  `FileSearchStore`, `FileSearchDocument`, `DocumentState`.
 - **Video `processing`**: `Content::with_processing()` and
   `VideoProcessing::segment()` for clip windows, `fps` sampling and agentic
   mode. A segment window is the main token-cost lever (16,198 vs 57,778 video
@@ -77,56 +131,25 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
 - Antigravity: `AgentBehavior` with `AgentBuilder`/`Subagent::with_agent_behavior`,
   `BuiltinTool::ReadUrlContent` (write-capable: network egress),
   `ChatResponse::stop_reason()`, `protocol::{StopReason, Modality, AgentBehavior}`.
+- List envelopes (`AgentListResponse`, `CredentialListResponse`,
+  `EnvironmentListResponse`, `FileSearchStoreListResponse`,
+  `DocumentListResponse`, `ListFilesResponse`, `TriggerListResponse`,
+  `TriggerExecutionListResponse`, `VoiceListResponse`, `WebhookListResponse`)
+  and `SigningSecret` gained a flattened `extra` map, so fields the crate
+  doesn't model yet survive a round trip. All were already
+  `#[non_exhaustive]`, so nothing breaks. `SigningSecret`'s `Debug` prints
+  only the keys of `extra`, never the values.
 
 ### Changed
 
-- **Breaking: resource methods moved from `Client` to per-resource
-  handles.** `client.webhooks()`, `.triggers()`, `.agents()`,
-  `.environments()`, `.files()` and `.interactions()` each return a `Copy`
-  handle that borrows the client. Rename `client.<verb>_<resource>(…)` to
-  `client.<resources>().<verb>(…)`: `get_file(name)` →
-  `files().get(name)`. Exceptions: `run_trigger` → `triggers().run`,
-  `list_trigger_executions(id, …)` → `triggers().list_executions(id)`,
-  `ping_webhook` → `webhooks().ping`, `rotate_webhook_signing_secret` →
-  `webhooks().rotate_signing_secret`, `get_interaction_with_input` →
-  `interactions().get_with_input`, `get_interaction_stream(id, None | Some(e))`
-  → `interactions().stream(id)` / `resume_stream(id, e)` (the stream now
-  owns a clone of the client, so it can be spawned), and the Files uploads
-  and `wait_for_file_ready` (below). `client.interaction()`, `execute` and
-  `execute_stream` are unchanged. The full table is in `docs/RESOURCES.md`.
-  The handle types (`Webhooks`, `Files`, ...), the `List*` builders,
-  `FileUpload` and `PollOptions` are exported at the crate root.
-- **Breaking: `list_webhooks`, `list_triggers`, `list_trigger_executions`,
-  `list_agents`, `list_environments` and `list_files` return a builder.**
-  The positional `page_size`, `page_token` and `parent` arguments are gone.
-  Chain `.with_page_size(n)`, `.with_page_token(t)` or `.with_parent(p)` on
-  `client.<resources>().list()` (or `client.triggers().list_executions(id)`),
-  then `.send()` for one page (the same `*ListResponse`).
-- **Breaking: Files uploads take a `FileUpload`.** `upload_file(p)` →
-  `files().upload(FileUpload::from_path(p))`; `upload_file_with_mime(p, m)`
-  → `files().upload(FileUpload::from_path(p).with_mime_type(m))`;
-  `upload_file_bytes(d, m, Some(n))` →
-  `files().upload(FileUpload::from_bytes(d, m).with_display_name(n))`
-  (drop `with_display_name` for `None`). The error for an extension with no
-  known MIME type now points at `FileUpload::with_mime_type()`.
-- **Breaking:** path uploads (`files().upload(FileUpload::from_path(p))`,
-  formerly `upload_file` / `upload_file_with_mime`) stream from disk with
-  bounded memory. `upload_file_chunked*`, `ResumableUpload` and
-  `DEFAULT_CHUNK_SIZE` are removed: the handle was only returned after a
-  successful upload, so it could never resume anything.
-- **Breaking: `wait_for_file_ready(&f, poll, timeout)`** →
-  `files().wait_until_active(&f.name, PollOptions::new().with_poll_interval(poll).with_timeout(timeout))`.
-  It takes the file name rather than the metadata, and either option can be
-  left out: the defaults are a 120 s timeout and a 2 s poll interval.
-- **Breaking: `update_mask` moved onto the update value.**
-  `update_webhook(id, &u, Some("state"))` →
-  `webhooks().update(id, &u.with_update_mask("state"))`; `None` becomes
-  `webhooks().update(id, &u)`. `WebhookUpdate` gained a public
-  `update_mask` field, sent as the query parameter and never in the body.
 - **Breaking:** `genai_rs::environment` and `genai_rs::environment_files` are
   merged into `genai_rs::environments`, and the Files API types moved to a
   public `genai_rs::files` module (`FileUploadResponse` is now exported). Root
   re-exports are unchanged.
+- **Breaking:** `upload_file` / `upload_file_with_mime` stream from disk with
+  bounded memory. `upload_file_chunked*`, `ResumableUpload` and
+  `DEFAULT_CHUNK_SIZE` are removed: the handle was only returned after a
+  successful upload, so it could never resume anything.
 - **Breaking:** `InteractionStreamEvent`, `StreamMetadata` and `StreamError` are
   no longer public; no public API took or returned them.
 - **Breaking:** `strict-unknown` now rejects unknown values of every string
@@ -135,6 +158,7 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
 - **Breaking:** `From<serde_json::Value> for FunctionResultPayload` wraps a
   non-object value as `{"result": value}` (the API rejects a top-level array
   as a function result).
+
 - **Breaking:** `DEFAULT_MODEL` is `gemini-3.8-flash` (was `gemini-3.7-flash`).
   It rejects `ThinkingLevel::Minimal`; use `MINIMAL_THINKING_MODEL`.
 - **Breaking:** `DEFAULT_TTS_MODEL` is `gemini-3.8-flash-tts` (was
@@ -158,6 +182,7 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
   `with_google_search` / `with_google_maps` / `with_code_execution` /
   `with_url_context` now replace an existing tool of the same kind instead of
   appending a duplicate.
+- **Breaking:** `create_file_search_store` takes `&CreateFileSearchStoreRequest`.
 - **Breaking:** `Api.message` is the parsed error envelope,
   `"STATUS_OR_CODE: message"`, no longer the raw body cut at 200 characters.
   A 2xx body that fails to parse is `MalformedResponse` (was `Json`); an upload
@@ -188,7 +213,7 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
   `Api-Revision` header too (the server currently ignores its value).
 - Examples: every example runs live, exits non-zero when what it
   demonstrates didn't happen, and cleans up; a subset runs in CI. New
-  coverage for stream resume, `interactions().delete`, `VideoProcessing::segment`
+  coverage for stream resume, `delete_interaction`, `VideoProcessing::segment`
   and `with_image_config`.
 
 ### Removed
@@ -203,6 +228,7 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
   `Content::{image,video}_{data,uri}_with_resolution` (use
   `.with_resolution()`); `InteractionResponse::{created, updated,
   code_execution_call, google_search_call, url_context_call_id}`;
+  `create_file_search_store_with_request`;
   the `excludedPredefinedFunctions` alias.
 - Examples that demonstrated nothing real: `rag_system`, `web_scraper_agent`,
   `code_assistant`, `testing_assistant`, `multi_turn_agent_manual`,
@@ -218,14 +244,14 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
 - File search store, document and Files list responses drop only an
   undeserializable entry (with a warning) and treat a `null` list as empty,
   like every other resource list, instead of failing the whole page.
+
 - **Antigravity policies were bypassed on the pre-tool hook path** for MCP
   tools (`mcp_<server>_<tool>`) and `start_subagent`, because the harness names
   them differently there; on 0.1.18 that hook is the only gate. Hook-denied
   calls now surface as `ToolDecision::Denied`, `on_post_tool` fires once per
   custom call, and every builtin toggle is sent explicitly (0.1.10 silently
   exposed `manage_task` / `schedule`).
-- **Streaming a stored interaction never streamed** (`interactions().stream`,
-  formerly `get_interaction_stream`) — it omitted `stream=true`, so
+- **`get_interaction_stream` never streamed** — it omitted `stream=true`, so
   the server returned plain JSON and the stream ended empty. It works now,
   for background interactions (the only kind the API streams on GET).
 - **Streamed `processing_call` / `processing_result` signatures were dropped**,
@@ -238,8 +264,7 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
 - The streaming auto-function loop reported "Stream ended without Complete
   event" instead of the server's in-stream error.
 - `execute_stream()` did not set `stream: true` itself.
-- `files().wait_until_active()` (formerly `wait_for_file_ready()`) reported
-  a failed file as a retryable 500.
+- `wait_for_file_ready()` reported a failed file as a retryable 500.
 - The SSE parser dropped a final event without a trailing newline and did not
   join multi-line `data:` fields.
 - `#[tool]` mapped `i8`/`u8`/`i16`/`u16`, `&str`, `char` and path-qualified
@@ -258,6 +283,10 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
   and environment `env` maps. Custom `WireInspector`s still receive raw bodies.
 - Antigravity policy bypass on the pre-tool hook path (see Fixed): `deny`
   rules for MCP tools and `start_subagent` were not applied.
+- `Debug` on `CredentialConfig`, `CreateCredentialRequest` and
+  `CredentialUpdate` printed tokens, values and OAuth2 secrets in full; it now
+  prints `[REDACTED]` for every write-only field, as `Client` does for the API
+  key.
 
 
 ## [0.10.0] - 2026-08-16

@@ -141,6 +141,11 @@ pub struct FileSearchStoreListResponse {
     /// Token for the next page, absent on the final page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_page_token: Option<String>,
+    /// Fields the crate does not model yet, kept so a deserialize/serialize
+    /// round trip preserves them. A list envelope is where the API is
+    /// likeliest to add something (a total count, a page-size echo).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 paging::impl_list_page!(FileSearchStoreListResponse, stores: FileSearchStore);
@@ -216,6 +221,11 @@ pub struct DocumentListResponse {
     /// Token for the next page, absent on the final page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_page_token: Option<String>,
+    /// Fields the crate does not model yet, kept so a deserialize/serialize
+    /// round trip preserves them. A list envelope is where the API is
+    /// likeliest to add something (a total count, a page-size echo).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 paging::impl_list_page!(DocumentListResponse, documents: FileSearchDocument);

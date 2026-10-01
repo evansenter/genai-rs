@@ -127,12 +127,19 @@ pub struct CredentialListResponse {
     /// Token for the next page, absent on the last page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_page_token: Option<String>,
+    /// Fields the crate does not model yet, kept so a deserialize/serialize
+    /// round trip preserves them. A list envelope is where the API is
+    /// likeliest to add something (a total count, a page-size echo).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 paging::impl_list_page!(CredentialListResponse, credentials: Credential);
 
 /// The secret material of a new credential, tagged by `type` on the wire.
-#[derive(Clone, Debug, Serialize, PartialEq)]
+///
+/// `Debug` prints the write-only secrets as `[REDACTED]`.
+#[derive(Clone, Serialize, PartialEq)]
 #[serde(tag = "type")]
 #[non_exhaustive]
 pub enum CredentialConfig {
@@ -182,7 +189,52 @@ pub enum CredentialConfig {
     },
 }
 
-/// Request body for [`Credentials::create`].
+// Custom Debug that redacts the write-only secrets (mirrors the api_key
+// redaction on `Client`), so `dbg!` or `tracing::debug!(?request)` cannot
+// undo the LOUD_WIRE redaction.
+impl std::fmt::Debug for CredentialConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BearerToken {
+                token: _,
+                header_name,
+                prefix,
+            } => f
+                .debug_struct("BearerToken")
+                .field("token", &"[REDACTED]")
+                .field("header_name", header_name)
+                .field("prefix", prefix)
+                .finish(),
+            Self::EnvironmentVariable {
+                value: _,
+                injection_location,
+                trusted_domains,
+            } => f
+                .debug_struct("EnvironmentVariable")
+                .field("value", &"[REDACTED]")
+                .field("injection_location", injection_location)
+                .field("trusted_domains", trusted_domains)
+                .finish(),
+            Self::OAuth2 {
+                client_id,
+                client_secret: _,
+                refresh_token: _,
+                token_url,
+                scopes,
+            } => f
+                .debug_struct("OAuth2")
+                .field("client_id", client_id)
+                .field("client_secret", &"[REDACTED]")
+                .field("refresh_token", &"[REDACTED]")
+                .field("token_url", token_url)
+                .field("scopes", scopes)
+                .finish(),
+        }
+    }
+}
+
+/// Request body for [`Credentials::create`]. `Debug` redacts the
+/// secret (see [`CredentialConfig`]).
 ///
 /// ```
 /// use genai_rs::CreateCredentialRequest;
@@ -239,6 +291,7 @@ impl CreateCredentialRequest {
 
 /// Request body for [`Credentials::update`]. `credential_type` must
 /// match the stored credential's type; set only the fields to change.
+/// `Debug` prints the write-only secrets as `[REDACTED]`.
 ///
 /// [`with_update_mask`](Self::with_update_mask) adds an `update_mask` query
 /// parameter naming the fields to apply.
@@ -257,7 +310,7 @@ impl CreateCredentialRequest {
 ///     serde_json::json!({"type": "bearer_token", "token": "rotated"})
 /// );
 /// ```
-#[derive(Clone, Debug, Serialize, PartialEq)]
+#[derive(Clone, Serialize, PartialEq)]
 pub struct CredentialUpdate {
     /// Type of the credential being updated.
     #[serde(rename = "type")]
@@ -303,6 +356,45 @@ pub struct CredentialUpdate {
     /// mask.
     #[serde(skip)]
     pub update_mask: Option<String>,
+}
+
+// Custom Debug that redacts the write-only secrets, like `CredentialConfig`.
+// Destructured with no `..`, so adding a field is a compile error here until
+// someone decides whether it needs redacting.
+impl std::fmt::Debug for CredentialUpdate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            credential_type,
+            token,
+            header_name,
+            prefix,
+            value,
+            injection_location,
+            trusted_domains,
+            client_id,
+            client_secret,
+            refresh_token,
+            token_url,
+            scopes,
+            update_mask,
+        } = self;
+        let redact = |secret: &Option<String>| secret.as_ref().map(|_| "[REDACTED]");
+        f.debug_struct("CredentialUpdate")
+            .field("credential_type", credential_type)
+            .field("token", &redact(token))
+            .field("header_name", header_name)
+            .field("prefix", prefix)
+            .field("value", &redact(value))
+            .field("injection_location", injection_location)
+            .field("trusted_domains", trusted_domains)
+            .field("client_id", client_id)
+            .field("client_secret", &redact(client_secret))
+            .field("refresh_token", &redact(refresh_token))
+            .field("token_url", token_url)
+            .field("scopes", scopes)
+            .field("update_mask", update_mask)
+            .finish()
+    }
 }
 
 impl CredentialUpdate {
@@ -575,6 +667,50 @@ impl<'a> ListCredentials<'a> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn debug_redacts_every_create_secret() {
+        let requests = [
+            CreateCredentialRequest::bearer_token("secret-token").with_id("id-1"),
+            CreateCredentialRequest::environment_variable(
+                "secret-value",
+                vec![InjectionLocation::Header],
+            ),
+            CreateCredentialRequest::new(CredentialConfig::OAuth2 {
+                client_id: "visible-client".into(),
+                client_secret: "secret-client".into(),
+                refresh_token: "secret-refresh".into(),
+                token_url: "https://oauth.example/token".into(),
+                scopes: None,
+            }),
+        ];
+        for request in &requests {
+            let out = format!("{request:?}");
+            assert!(!out.contains("secret-"), "secret leaked: {out}");
+            assert!(out.contains("[REDACTED]"), "{out}");
+        }
+        // Non-secret fields stay visible.
+        let oauth = format!("{:?}", requests[2]);
+        assert!(oauth.contains("visible-client") && oauth.contains("oauth.example"));
+        assert!(format!("{:?}", requests[0]).contains("id-1"));
+    }
+
+    #[test]
+    fn debug_redacts_update_secrets_only_when_set() {
+        let update = CredentialUpdate {
+            token: Some("secret-token".into()),
+            client_secret: Some("secret-client".into()),
+            header_name: Some("X-Visible".into()),
+            ..CredentialUpdate::new(CredentialType::BearerToken)
+        };
+        let out = format!("{update:?}");
+        assert!(!out.contains("secret-"), "secret leaked: {out}");
+        assert!(out.contains(r#"token: Some("[REDACTED]")"#), "{out}");
+        assert!(out.contains("X-Visible"), "{out}");
+        // An unset secret reads as None, so the output still says what an
+        // update will change.
+        assert!(out.contains("value: None"), "{out}");
+    }
 
     /// Captured from a live `POST /v1beta/credentials` (2026-09-24).
     #[test]

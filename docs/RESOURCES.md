@@ -151,11 +151,11 @@ matches any of them (verified live 2026-09-27). genai-rs sends one value per
 filter, and a second `with_*` call replaces the first. Python's `contexts`
 argument is the `context` query parameter, set by `with_context`.
 
-## From the `Client` methods (0.10)
+## From the `Client` methods (0.11)
 
 A `None` positional argument becomes an omitted setter.
 
-| 0.10 | Now |
+| 0.11 | Now |
 |------|-----|
 | `client.create_agent(&agent)` | `client.agents().create(&agent)` |
 | `client.get_agent(id)` | `client.agents().get(id)` |
@@ -188,21 +188,13 @@ A `None` positional argument becomes an omitted setter.
 | `client.delete_environment(id)` | `client.environments().delete(id)` |
 | `client.upload_file(path)` | `client.files().upload(FileUpload::from_path(path))` |
 | `client.upload_file_with_mime(path, mime_type)` | `client.files().upload(FileUpload::from_path(path).with_mime_type(mime_type))` |
-| `client.upload_file_chunked(path)` and its `_with_mime` / `_with_options` forms | `client.files().upload(FileUpload::from_path(path))`, which streams from disk; `.with_mime_type(mime_type)` for an explicit type |
+| `client.upload_file_chunked(path)` and its `_with_mime` / `_with_options` forms (0.10; removed in 0.11) | `client.files().upload(FileUpload::from_path(path))`, which streams from disk; `.with_mime_type(mime_type)` for an explicit type |
 | `client.upload_file_bytes(data, mime_type, Some(name))` | `client.files().upload(FileUpload::from_bytes(data, mime_type).with_display_name(name))` |
 | `client.upload_file_bytes(data, mime_type, None)` | `client.files().upload(FileUpload::from_bytes(data, mime_type))` |
 | `client.get_file(name)` | `client.files().get(name)` |
 | `client.list_files(size, token)` | `client.files().list().with_page_size(size).with_page_token(token).send()` |
 | `client.delete_file(name)` | `client.files().delete(name)` |
 | `client.wait_for_file_ready(&file, poll_interval, timeout)` | `client.files().wait_until_active(&file.name, PollOptions::new().with_poll_interval(poll_interval).with_timeout(timeout))` |
-
-## Methods added after 0.10
-
-These were on `main` after 0.10 but never released; they moved to handles
-before their first release.
-
-| Before | Now |
-|--------|-----|
 | `client.list_environment_files(env, path, recursive, size, token)` | `client.environments().files().list(env, path).with_recursive(recursive).with_page_size(size).with_page_token(token).send()` |
 | `client.upload_environment_file(env, path, data, mime_type, EnvironmentFileUpload { overwrite, extract })` | `client.environments().files().upload(env, path, EnvironmentFileUpload::new(data, mime_type).with_overwrite(overwrite).with_extract(extract))` |
 | `client.create_credential(&request)` | `client.credentials().create(&request)` |
