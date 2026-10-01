@@ -77,6 +77,11 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
   pending.
 - **`cancel` fails on `antigravity-preview-09-2026`** with `400 There was a
   problem processing your request`; it works on `antigravity-preview-05-2026`.
+- **Agentic video processing sometimes never answers.** 2 of 6 identical
+  raw-HTTP requests hung past 150 s while the rest answered in 5-11 s, and a
+  stateless replay of such a turn can hang too. `processing_steps_tests`
+  bounds and retries each request, and reports `LIVE_TOOL_EVIDENCE_SKIPPED`
+  if no attempt answers.
 
 ## Sweep 2.18.1 → 2.25.0 (2026-09-24)
 

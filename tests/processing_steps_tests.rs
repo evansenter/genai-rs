@@ -4,11 +4,51 @@
 //! carrying a large signature the API requires on stateless replay. When
 //! streaming, `step.start` announces `signature: ""` and the value arrives in
 //! `step.delta` — the case these tests pin.
+//!
+//! Agentic processing normally answers in 5-15 s, but since 2026-10-01 some
+//! requests never answer: 2 of 6 raw-HTTP requests hung past 150 s, and a
+//! replay of the turn can hang too. So each request gets [`ATTEMPT_TIMEOUT`]
+//! and [`ATTEMPTS`] tries. If none answers, the test prints
+//! `LIVE_TOOL_EVIDENCE_SKIPPED` (server availability, not a crate defect)
+//! for CI to count, as the MCP test does for its third-party server. An
+//! answer that fails an assertion still fails the test.
 
 mod common;
 
-use common::{TINY_MP4_BASE64, consume_stream, extended_test_timeout, get_client, with_timeout};
+use common::{TINY_MP4_BASE64, consume_stream, get_client, with_timeout};
 use genai_rs::{Content, InteractionInput, Step, VideoProcessing};
+use std::future::Future;
+use std::time::Duration;
+
+/// A streamed turn once took 47 s to complete.
+const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(45);
+const ATTEMPTS: u32 = 3;
+/// Every attempt of both requests in the streamed test.
+const TEST_BUDGET: Duration = Duration::from_secs(45 * 3 * 2 + 10);
+
+/// Runs `attempt` up to [`ATTEMPTS`] times, abandoning any that outlives
+/// [`ATTEMPT_TIMEOUT`]. Returns `None`, after printing the skip marker, when
+/// no attempt answered.
+async fn agentic_attempts<F, Fut, T>(mut attempt: F) -> Option<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = T>,
+{
+    for n in 1..=ATTEMPTS {
+        match tokio::time::timeout(ATTEMPT_TIMEOUT, attempt()).await {
+            Ok(value) => return Some(value),
+            Err(_) => println!(
+                "agentic video request attempt {n}/{ATTEMPTS} did not answer within \
+                 {ATTEMPT_TIMEOUT:?}"
+            ),
+        }
+    }
+    println!(
+        "LIVE_TOOL_EVIDENCE_SKIPPED: agentic video processing did not answer within \
+         {ATTEMPT_TIMEOUT:?} on any of {ATTEMPTS} attempts"
+    );
+    None
+}
 
 fn agentic_video_turn() -> Vec<Content> {
     vec![
@@ -43,15 +83,20 @@ async fn test_agentic_video_emits_signed_processing_steps() {
         return;
     };
 
-    with_timeout(extended_test_timeout(), async {
-        let response = client
-            .interaction()
-            .with_model(genai_rs::DEFAULT_MODEL)
-            .with_input(InteractionInput::Content(agentic_video_turn()))
-            .with_store_disabled()
-            .create()
-            .await
-            .expect("agentic video request failed");
+    with_timeout(TEST_BUDGET, async {
+        let Some(result) = agentic_attempts(|| {
+            client
+                .interaction()
+                .with_model(genai_rs::DEFAULT_MODEL)
+                .with_input(InteractionInput::Content(agentic_video_turn()))
+                .with_store_disabled()
+                .create()
+        })
+        .await
+        else {
+            return;
+        };
+        let response = result.expect("agentic video request failed");
         assert_processing_steps_signed(&response.steps);
         // The model may process more than once (three calls observed).
         let summary = response.step_summary();
@@ -75,14 +120,21 @@ async fn test_streamed_agentic_video_turn_replays_statelessly() {
         return;
     };
 
-    with_timeout(extended_test_timeout(), async {
-        let stream = client
-            .interaction()
-            .with_model(genai_rs::DEFAULT_MODEL)
-            .with_input(InteractionInput::Content(agentic_video_turn()))
-            .with_store_disabled()
-            .create_stream();
-        let result = consume_stream(stream).await;
+    with_timeout(TEST_BUDGET, async {
+        let Some(result) = agentic_attempts(|| {
+            consume_stream(
+                client
+                    .interaction()
+                    .with_model(genai_rs::DEFAULT_MODEL)
+                    .with_input(InteractionInput::Content(agentic_video_turn()))
+                    .with_store_disabled()
+                    .create_stream(),
+            )
+        })
+        .await
+        else {
+            return;
+        };
         let first = result
             .final_response
             .expect("stream ended without a completed response");
@@ -91,15 +143,20 @@ async fn test_streamed_agentic_video_turn_replays_statelessly() {
         let mut history = vec![Step::user_input(agentic_video_turn())];
         history.extend(first.steps);
 
-        let follow_up = client
-            .interaction()
-            .with_model(genai_rs::DEFAULT_MODEL)
-            .with_history(history)
-            .with_text("Is the video in color? Answer yes or no.")
-            .with_store_disabled()
-            .create()
-            .await
-            .expect("stateless replay of the streamed turn was rejected");
+        let Some(follow_up) = agentic_attempts(|| {
+            client
+                .interaction()
+                .with_model(genai_rs::DEFAULT_MODEL)
+                .with_history(history.clone())
+                .with_text("Is the video in color? Answer yes or no.")
+                .with_store_disabled()
+                .create()
+        })
+        .await
+        else {
+            return;
+        };
+        let follow_up = follow_up.expect("stateless replay of the streamed turn was rejected");
         assert!(
             follow_up.as_text().is_some_and(|t| !t.trim().is_empty()),
             "replay returned no text: {:?}",
