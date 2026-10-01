@@ -32,6 +32,9 @@ async fn main() -> Result<(), genai_rs::GenaiError> {
 }
 ```
 
+`Client` holds a connection pool: build one and reuse it (clones share the
+pool), rather than building one per request.
+
 ## Features
 
 ### Core Capabilities
@@ -265,7 +268,7 @@ See [`retry_with_backoff`](examples/retry_with_backoff.rs) for a complete retry 
 
 The `antigravity` feature (off by default) adds a **native Rust client for
 Google's Antigravity `localharness` agent runtime** — the same harness behind
-the hosted `antigravity-preview-05-2026` agent, running locally with your
+the hosted Antigravity agent (`DEFAULT_ANTIGRAVITY_AGENT`), running locally with your
 workspaces, your tools, and Rust-side policy enforcement. The harness binary
 executes the agent loop (shell, file edits, search, MCP, subagents); this
 crate speaks its protocol directly, with no Python in the loop:

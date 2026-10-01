@@ -71,6 +71,8 @@ tokio-util = { version = "0.7", features = ["io"] }
 colored = { version = "3", optional = true }
 colored_json = { version = "5", optional = true }
 urlencoding = "2"
+# Newline search in the SSE parser; already in the tree via serde_json.
+memchr = "2.7"
 # Antigravity harness client (feature = "antigravity"). The harness WebSocket
 # is localhost-only (ws://), so no TLS features are needed.
 tokio-tungstenite = { version = "0.29", optional = true }
@@ -90,6 +92,8 @@ chrono = { workspace = true }
 doc-comment = "0.3"
 regex = "1"
 backon = "1.6"
+# tests/credentials_tests.rs compares SHA-256 digests of credential values.
+sha2 = "0.11"
 # tests/non_exhaustive_responses.rs parses src/ to check struct attributes.
 syn = { workspace = true, features = ["full", "visit"] }
 

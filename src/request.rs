@@ -313,9 +313,7 @@ wire_enum! {
         /// Minimal reasoning, fastest responses.
         ///
         /// Not supported by every model: [`DEFAULT_MODEL`](crate::DEFAULT_MODEL)
-        /// rejects it with a 400 (verified live 2026-08-15). Use
-        /// [`MINIMAL_THINKING_MODEL`](crate::MINIMAL_THINKING_MODEL), which is
-        /// pinned to a model that accepts it.
+        /// rejects it with a 400 (verified live 2026-10-01).
         Minimal = "minimal",
         /// Light reasoning for simple problems
         Low = "low",
@@ -1384,16 +1382,14 @@ impl From<DynamicConfig> for AgentConfig {
 /// machine. The bare `antigravity` string is only the `agent_config` *type*
 /// discriminant (which [`From`] sets), not an agent ID.
 ///
-/// Probe notes (verified live 2026-08-09, standard API key):
-/// `agent_config: {"type": "antigravity"}` and `max_total_tokens` are
-/// **accepted** on `antigravity-preview-05-2026` (the server's validation
-/// error enumerates the supported config types as `dynamic`,
-/// `deep-research`, `code-mender`, `antigravity`). Setting `model` to a
-/// value the agent doesn't offer returns 404 `not_found` — as
-/// `gemini-3.6-flash` did when this was recorded, despite being a valid
-/// model for ordinary interactions. The agent's model catalog is not
-/// enumerable on a standard key, so leave `model` unset unless you know an
-/// accepted value.
+/// Probe notes (standard API key): `agent_config: {"type": "antigravity"}`,
+/// `max_total_tokens` and `model` are **accepted** on
+/// `antigravity-preview-09-2026` (verified live 2026-10-01). The server's
+/// validation error enumerates the supported config types as `dynamic`,
+/// `deep-research`, `code-mender`, `antigravity`. The agent defaults to
+/// `gemini-3.8-flash`; Google's Antigravity Agent guide lists the
+/// 3.8/3.7/3.6/3.5 Flash models and `gemini-3.5-flash-lite` as the other
+/// `model` values. A value the agent doesn't offer returns 404 `not_found`.
 ///
 /// # Example
 ///
@@ -1420,8 +1416,8 @@ impl AntigravityConfig {
     /// Set the model the agent uses for its reasoning loop.
     ///
     /// A value the agent does not offer fails the interaction with 404
-    /// `not_found` — see the [type docs](AntigravityConfig) for the probe
-    /// notes; leave unset unless you know an accepted value.
+    /// `not_found`; see the [type docs](AntigravityConfig) for the accepted
+    /// values.
     #[must_use]
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());

@@ -162,10 +162,10 @@ adopt these ideas natively:
 ## Relationship to the Interactions API `agent` field
 
 The Interactions API exposes hosted agents including
-`agent: "antigravity-preview-05-2026"` — the same harness run server-side.
+`agent: "antigravity-preview-09-2026"` (`DEFAULT_ANTIGRAVITY_AGENT`) — the same harness run server-side.
 genai-rs therefore offers the Antigravity harness at two altitudes:
 
-- **Hosted**: `client.interaction().with_agent("antigravity-preview-05-2026")`
+- **Hosted**: `client.interaction().with_agent(DEFAULT_ANTIGRAVITY_AGENT)`
   (plus Environments/Agents resources — see `docs/INTERACTIONS_API_GAP.md`).
 - **Local**: `genai_rs::antigravity` spawning `localharness` with local
   workspaces, local tool execution, and local policy enforcement (this doc).

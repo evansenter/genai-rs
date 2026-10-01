@@ -476,7 +476,11 @@ mod mcp_server {
     /// unsupported on Gemini 3).
     ///
     /// Loud failures are the ones that are ours: the API rejecting the tool,
-    /// or a non-`Completed` status. The two ambiguous outcomes (an error this
+    /// or an interaction left waiting on a call nobody answered. Since
+    /// 2026-10-01 the API ends an MCP interaction in `requires_action` even
+    /// after running every MCP call and producing the answer
+    /// (`docs/INTERACTIONS_API_GAP.md`), so that status passes only when no
+    /// call is pending. The two ambiguous outcomes (an error this
     /// guard cannot classify, and a completed turn with no evidence the server
     /// was called) are both what a dead third-party server and a silent
     /// regression look like, so they print `LIVE_TOOL_EVIDENCE_SKIPPED` for
@@ -529,19 +533,28 @@ mod mcp_server {
             .iter()
             .map(genai_rs::Step::step_type)
             .collect();
-        assert_eq!(
-            response.status,
-            InteractionStatus::Completed,
-            "MCP interaction should complete; steps were {step_types:?}"
+        let finished = response.status == InteractionStatus::Completed
+            || (response.status == InteractionStatus::RequiresAction
+                && response.pending_function_calls().is_empty()
+                && response.has_text());
+        assert!(
+            finished,
+            "MCP interaction should finish; status {:?}, steps {step_types:?}",
+            response.status
         );
 
         // Tool-use tokens are non-zero only if the server was called; the
-        // declaration alone costs none (measured 2026-08-16). The API emits
-        // generic `tool_call` steps for MCP today.
+        // declaration alone costs none (measured 2026-08-16). MCP calls came
+        // back as `tool_call` steps, and since 2026-10-01 as answered
+        // `function_call` steps named `deepwiki:<tool>`.
         let tool_tokens = response.tool_use_tokens().unwrap_or(0);
         let called = tool_tokens > 0
             || step_types.contains(&"tool_call")
-            || step_types.contains(&"mcp_server_tool_call");
+            || step_types.contains(&"mcp_server_tool_call")
+            || response
+                .function_calls()
+                .iter()
+                .any(|call| call.name.starts_with("deepwiki:"));
         if !called {
             println!(
                 "LIVE_TOOL_EVIDENCE_SKIPPED: the interaction completed but shows no \
@@ -1041,37 +1054,40 @@ mod image_generation {
 mod thinking {
     use super::*;
 
+    /// `DEFAULT_MODEL` rejects `Minimal` (documented in `ThinkingLevel` and
+    /// `docs/THINKING_MODE.md`). The request reaching the API with the
+    /// wire value is what the 400 proves; if the model starts accepting the
+    /// level, this fails so the docs get updated.
     #[tokio::test]
     #[ignore = "Requires API key"]
-    async fn test_generation_config_thinking_level_minimal() {
+    async fn test_generation_config_thinking_level_minimal_rejected() {
         let Some(client) = get_client() else {
             println!("Skipping: GEMINI_API_KEY not set");
             return;
         };
 
-        let config = GenerationConfig {
-            max_output_tokens: Some(2000),
-            thinking_level: Some(ThinkingLevel::Minimal),
-            ..Default::default()
-        };
-
-        let response = retry_request!([client, config] => {
+        // A 400 is not retried; a transient 5xx or 429 is.
+        let result = retry_request!([client] => {
             stateful_builder(&client)
-                .with_model(genai_rs::MINIMAL_THINKING_MODEL)
                 .with_text("What is 2 + 2?")
-                .with_generation_config(config)
+                .with_thinking_level(ThinkingLevel::Minimal)
                 .create()
                 .await
-        })
-        .expect("Minimal thinking interaction failed");
+        });
 
-        assert_eq!(response.status, InteractionStatus::Completed);
-        let text = response.as_text().expect("Should have text response");
-        // A computed value, so a substring check is deterministic.
-        assert!(
-            text.contains('4'),
-            "Should contain the answer 4. Got: {text}"
-        );
+        // The wording changed once already ("'minimal' is not a supported
+        // thinking level" until 2026-09-24), so match the level, not the text.
+        match result {
+            Err(genai_rs::GenaiError::Api {
+                status_code: 400,
+                message,
+                ..
+            }) => assert!(
+                message.to_lowercase().contains("minimal"),
+                "400 does not name the rejected level: {message}"
+            ),
+            other => panic!("expected DEFAULT_MODEL to reject Minimal with a 400, got: {other:?}"),
+        }
     }
 
     #[tokio::test]

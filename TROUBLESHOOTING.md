@@ -30,7 +30,7 @@ changing it changes nothing.
 | `GenaiError::Timeout(_)` | The request-level `with_timeout()` elapsed |
 | `GenaiError::Http(e)` with `e.is_timeout()` | The **client-level** `ClientBuilder::with_timeout()` elapsed. It caps every request, including streams, and a request-level timeout cannot extend it; see [Timeouts](docs/RELIABILITY.md#timeouts) |
 | `GenaiError::InvalidInput(_)` before any request is sent | The builder rejected the combination (for example, no input, both model and agent, or `with_store_disabled()` with chaining or background) |
-| `'minimal' is not a supported thinking level for this model` | `DEFAULT_MODEL` rejects `ThinkingLevel::Minimal`; use `genai_rs::MINIMAL_THINKING_MODEL` |
+| `Thinking level THINKING_LEVEL_MINIMAL is not supported for this model` | `DEFAULT_MODEL` rejects `ThinkingLevel::Minimal`; use `Low`, or pass a model that accepts it to `with_model()` |
 | TLS errors in minimal containers | The crate verifies against the OS trust store; install a CA bundle |
 
 ## Function calling

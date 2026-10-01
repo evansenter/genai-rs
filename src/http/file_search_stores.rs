@@ -9,8 +9,8 @@
 //! so the shared [`with_paging`] helper works unchanged.
 
 use super::common::{
-    NO_BODY, api_request, mime_type_header, path_segment, require_id, send_and_read, send_checked,
-    with_paging, with_query,
+    NO_BODY, api_request, file_body, mime_type_header, path_segment, require_id, send_and_read,
+    send_checked, with_paging, with_query,
 };
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
@@ -23,8 +23,7 @@ use reqwest::header::HeaderValue;
 use std::path::Path;
 
 /// Upload ceiling, borrowed from the Files API's 2 GB and not verified for
-/// this resource. The raw protocol needs the whole body in memory, so the
-/// guard at least stops an oversized file before it is read.
+/// this resource; checked before any bytes are sent.
 const MAX_UPLOAD_SIZE: u64 = 2_147_483_648;
 
 fn stores_url(ctx: &HttpContext) -> String {
@@ -213,25 +212,22 @@ pub async fn upload_to_file_search_store(
         &[("display_name", display_name)],
     );
 
-    let metadata = tokio::fs::metadata(file_path).await.map_err(|e| {
-        GenaiError::InvalidInput(format!("Failed to stat {}: {e}", file_path.display()))
-    })?;
-    if metadata.len() == 0 {
+    let read_error = |e: std::io::Error| {
+        GenaiError::InvalidInput(format!("Failed to read {}: {e}", file_path.display()))
+    };
+    // Size the upload from the open handle, so it describes the file sent.
+    let file = tokio::fs::File::open(file_path).await.map_err(read_error)?;
+    let file_size = file.metadata().await.map_err(read_error)?.len();
+    if file_size == 0 {
         return Err(GenaiError::InvalidInput(
             "Cannot upload empty file".to_string(),
         ));
     }
-    if metadata.len() > MAX_UPLOAD_SIZE {
+    if file_size > MAX_UPLOAD_SIZE {
         return Err(GenaiError::InvalidInput(format!(
-            "File size {} exceeds maximum {}",
-            metadata.len(),
-            MAX_UPLOAD_SIZE
+            "File size {file_size} exceeds maximum {MAX_UPLOAD_SIZE}"
         )));
     }
-
-    let bytes = tokio::fs::read(file_path).await.map_err(|e| {
-        GenaiError::InvalidInput(format!("Failed to read {}: {e}", file_path.display()))
-    })?;
 
     let mime_type_header = mime_type_header(mime_type)?;
 
@@ -252,7 +248,7 @@ pub async fn upload_to_file_search_store(
             "display_name": display_name,
             "file_name": String::from_utf8_lossy(file_name_header.as_bytes()),
             "mime_type": mime_type,
-            "size_bytes": bytes.len(),
+            "size_bytes": file_size,
         })),
     );
 
@@ -260,7 +256,8 @@ pub async fn upload_to_file_search_store(
         .header("X-Goog-Upload-Protocol", "raw")
         .header("X-Goog-Upload-File-Name", file_name_header)
         .header(reqwest::header::CONTENT_TYPE, mime_type_header)
-        .body(bytes);
+        .header(reqwest::header::CONTENT_LENGTH, file_size)
+        .body(file_body(file));
     let response = send_checked(ctx, request_id, builder).await?;
     let text = response.text().await?;
     ctx.emit_response_body(request_id, &text);

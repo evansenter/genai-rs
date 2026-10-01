@@ -464,6 +464,149 @@ async fn auto_functions_stop_at_max_loops() {
     assert_eq!(second["input"][0]["call_id"], "call-0");
 }
 
+/// Observed live 2026-10-01: on the second user turn of a non-streamed
+/// chain the API names a declared function's call `default_api:<name>`.
+#[tokio::test]
+async fn auto_functions_resolve_default_api_namespaced_calls() {
+    let stub = Stub::replying(vec![
+        Reply::json(
+            200,
+            function_call_response("int-1", "call-1", "default_api:svc_fn"),
+        ),
+        Reply::json(200, text_response("int-2", "done")),
+    ])
+    .await;
+
+    let result = stub
+        .client()
+        .interaction()
+        .with_model("test-model")
+        .with_text("hi")
+        .with_tool_service(Arc::new(Service(vec!["svc_fn"])))
+        .create_with_auto_functions()
+        .await
+        .unwrap();
+
+    let [execution] = result.executions.as_slice() else {
+        panic!("expected one execution: {:?}", result.executions);
+    };
+    assert_eq!(execution.name, "svc_fn");
+    assert_eq!(execution.result, json!({"source": "service"}));
+    // The result goes back under the call's own name.
+    let second = stub.requests()[1].json();
+    assert_eq!(second["input"][0]["name"], "default_api:svc_fn");
+    assert_eq!(second["input"][0]["call_id"], "call-1");
+}
+
+#[tokio::test]
+async fn streaming_auto_functions_resolve_default_api_namespaced_calls() {
+    let stub = Stub::replying(vec![
+        Reply::sse(&[
+            "data: {\"event_type\":\"step.start\",\"index\":0,\"step\":{\"type\":\"function_call\",\"id\":\"call-1\",\"name\":\"default_api:svc_fn\",\"arguments\":{}}}\n\n",
+            "data: {\"event_type\":\"step.stop\",\"index\":0}\n\n",
+            "data: {\"event_type\":\"interaction.completed\",\"interaction\":{\"id\":\"int-1\",\"status\":\"requires_action\"}}\n\n",
+        ]),
+        Reply::sse(&[
+            "data: {\"event_type\":\"interaction.completed\",\"interaction\":{\"id\":\"int-2\",\"status\":\"completed\"}}\n\n",
+        ]),
+    ])
+    .await;
+
+    let events: Vec<_> = stub
+        .client()
+        .interaction()
+        .with_model("test-model")
+        .with_text("hi")
+        .with_tool_service(Arc::new(Service(vec!["svc_fn"])))
+        .create_stream_with_auto_functions()
+        .collect()
+        .await;
+
+    let executions: Vec<_> = events
+        .iter()
+        .filter_map(|e| match &e.as_ref().unwrap().chunk {
+            AutoFunctionStreamChunk::FunctionResults(results) => Some(results),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    let [execution] = executions.as_slice() else {
+        panic!("expected one execution: {executions:?}");
+    };
+    assert_eq!(execution.name, "svc_fn");
+    assert_eq!(execution.result, json!({"source": "service"}));
+    let second = stub.requests()[1].json();
+    assert_eq!(second["input"][0]["name"], "default_api:svc_fn");
+}
+
+/// An MCP call the server ran comes back with its result in the same
+/// response (observed 2026-10-01); the loop runs only the client's call.
+#[tokio::test]
+async fn auto_functions_skip_calls_the_server_answered() {
+    let stub = Stub::replying(vec![
+        Reply::json(
+            200,
+            json!({
+                "id": "int-1",
+                "status": "requires_action",
+                "steps": [
+                    {"type": "function_call", "id": "mcp-1", "name": "deepwiki:read_wiki_structure", "arguments": {}},
+                    {"type": "function_result", "call_id": "mcp-1", "name": "deepwiki:read_wiki_structure", "result": {"result": "{}"}},
+                    {"type": "function_call", "id": "call-1", "name": "svc_fn", "arguments": {}}
+                ]
+            }),
+        ),
+        Reply::json(200, text_response("int-2", "done")),
+    ])
+    .await;
+
+    let result = stub
+        .client()
+        .interaction()
+        .with_model("test-model")
+        .with_text("hi")
+        .with_tool_service(Arc::new(Service(vec!["svc_fn"])))
+        .create_with_auto_functions()
+        .await
+        .unwrap();
+
+    let names: Vec<_> = result.executions.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, ["svc_fn"]);
+    let input = stub.requests()[1].json()["input"].clone();
+    assert_eq!(input.as_array().map(Vec::len), Some(1), "{input}");
+    assert_eq!(input[0]["call_id"], "call-1");
+}
+
+/// Only the `default_api` namespace is resolved: other prefixes name
+/// server-side tools (`deepwiki:read_wiki_structure` for an MCP server).
+#[tokio::test]
+async fn auto_functions_do_not_resolve_other_namespaces() {
+    let stub = Stub::replying(vec![
+        Reply::json(
+            200,
+            function_call_response("int-1", "call-1", "other:svc_fn"),
+        ),
+        Reply::json(200, text_response("int-2", "done")),
+    ])
+    .await;
+
+    let result = stub
+        .client()
+        .interaction()
+        .with_model("test-model")
+        .with_text("hi")
+        .with_tool_service(Arc::new(Service(vec!["svc_fn"])))
+        .create_with_auto_functions()
+        .await
+        .unwrap();
+
+    let [execution] = result.executions.as_slice() else {
+        panic!("expected one execution: {:?}", result.executions);
+    };
+    assert_eq!(execution.name, "other:svc_fn");
+    assert!(execution.is_error(), "{execution:?}");
+}
+
 #[tokio::test]
 async fn auto_functions_with_zero_loops_is_an_error_without_a_request() {
     let stub = Stub::replying(vec![]).await;

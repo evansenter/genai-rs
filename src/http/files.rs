@@ -1,7 +1,7 @@
 //! HTTP calls for the Files API; the types live in [`crate::files`].
 
 use super::common::{
-    API_KEY_HEADER, NO_BODY, mime_type_header, path_segment, require_id, send_and_read,
+    API_KEY_HEADER, NO_BODY, file_body, mime_type_header, path_segment, require_id, send_and_read,
     send_checked, with_query,
 };
 use super::context::HttpContext;
@@ -10,7 +10,6 @@ use crate::errors::GenaiError;
 use crate::files::{FileMetadata, FileUploadResponse, ListFilesResponse};
 use crate::wire::WireEvent;
 use std::path::Path;
-use tokio_util::io::ReaderStream;
 
 // --- API Functions ---
 
@@ -147,10 +146,6 @@ pub async fn upload_bytes(
     finish_upload(ctx, request_id, &upload_url, file_size, file_data.into()).await
 }
 
-/// Read-buffer size for streaming a file from disk, which bounds memory use
-/// per upload; the body still goes up as one `upload, finalize` request.
-const READ_BUFFER_SIZE: usize = 8 * 1024 * 1024;
-
 /// Uploads a file from disk, streaming it rather than reading it into memory.
 ///
 /// # Errors
@@ -192,8 +187,7 @@ pub async fn upload_path(
     )
     .await?;
 
-    let body = reqwest::Body::wrap_stream(ReaderStream::with_capacity(file, READ_BUFFER_SIZE));
-    finish_upload(ctx, request_id, &upload_url, file_size, body).await
+    finish_upload(ctx, request_id, &upload_url, file_size, file_body(file)).await
 }
 
 /// Validates a `files/<id>` resource name and rebuilds it with the ID

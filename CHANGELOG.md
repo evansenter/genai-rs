@@ -5,10 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.11.0] - 2026-09-26
+## [0.11.0] - 2026-10-01
 
 Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
-`gemini-3.8-flash`, and Antigravity harness 0.1.18.
+`gemini-3.8-flash`, the `antigravity-preview-09-2026` agent, and Antigravity
+harness 0.1.18.
 
 ### Added
 
@@ -70,6 +71,18 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
 
 ### Changed
 
+- `DEFAULT_ANTIGRAVITY_AGENT` is now `antigravity-preview-09-2026`, which
+  replaced `antigravity-preview-05-2026`; the old agent shuts down on
+  2026-10-05. Remote-sandbox runs that read only the model output need no
+  other change. Code that parses the hosted agent's `function_call` steps by
+  tool name must use the new built-in tool names (`write_to_file`,
+  `replace_file_content`, `view_file`, `list_dir`, `find_by_name`,
+  `grep_search`), which take PascalCase parameters. `AntigravityConfig::with_model`
+  now works: the agent accepts the 3.8/3.7/3.6/3.5 Flash models and
+  `gemini-3.5-flash-lite`.
+- `InteractionResponse::labels` and `system_instruction` are only filled by
+  `get_interaction`: create responses stopped echoing request fields
+  (observed 2026-10-01).
 - **Breaking:** `genai_rs::environment` and `genai_rs::environment_files` are
   merged into `genai_rs::environments`, and the Files API types moved to a
   public `genai_rs::files` module (`FileUploadResponse` is now exported). Root
@@ -88,7 +101,7 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
   as a function result).
 
 - **Breaking:** `DEFAULT_MODEL` is `gemini-3.8-flash` (was `gemini-3.7-flash`).
-  It rejects `ThinkingLevel::Minimal`; use `MINIMAL_THINKING_MODEL`.
+  It rejects `ThinkingLevel::Minimal`.
 - **Breaking:** `DEFAULT_TTS_MODEL` is `gemini-3.8-flash-tts` (was
   `gemini-2.5-pro-preview-tts`). It returns `audio/wav` rather than raw L16, and
   multi-speaker requests need `Content::speaker_text` turns instead of a
@@ -146,6 +159,10 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
 
 ### Removed
 
+- **Breaking:** `MINIMAL_THINKING_MODEL`. Every text-based constant now uses
+  the 3.8 Flash models, which have no `minimal` thinking level. To keep using
+  `ThinkingLevel::Minimal`, pass a model that accepts it (`gemini-3.6-flash`
+  did on 2026-10-01) to `with_model()`.
 - **Breaking:** `INLINE_VIDEO_MODEL`. Its premise was a fixture bug: the test
   clip was 0.2 s long and yields no sampled frame. Any clip of 1 s or longer
   works inline on `DEFAULT_MODEL` (D-012).
@@ -166,6 +183,21 @@ Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
 
 ### Fixed
 
+- The auto-function loops now run a declared function when the API calls it
+  as `default_api:<name>`, which it started doing on the second user turn of
+  a non-streamed chain (2026-10-01). Previously the loop answered "function
+  not found". The function result still carries the call's own name.
+- The auto-function loops no longer try to run MCP calls the server already
+  answered: since 2026-10-01 those come back as a `function_call` and its
+  `function_result` in the same response. New
+  `InteractionResponse::pending_function_calls()` returns only the calls
+  still waiting for a result.
+- The SSE parser rescanned its whole buffer on every network chunk, so a
+  multi-megabyte event (image output) cost quadratic CPU: about 200 ms of
+  CPU per image stream, now about 50 ms. Text streams parse 15–40% faster.
+- `upload_to_file_search_store` read the whole file into memory (up to the
+  2 GB limit). It now streams from disk, as Files API uploads do: a 200 MB
+  upload peaked at 17 MB of memory instead of 211 MB.
 - An upload MIME type that cannot be a header value returns `InvalidInput`
   (not retryable) instead of a retryable `GenaiError::Http`, for every upload
   path.

@@ -46,12 +46,42 @@ the bindings is modeled until it is probed. From the 2.25.0 sweep:
   on every TTS model (it was rejected on 2026-08-16). A bare `{voice,
   language}` object is still rejected. The crate sends the list, which works
   everywhere.
-- **`labels` are accepted** and echoed on the response (Vertex-only on
-  2026-08-08). `safety_settings` is still Vertex-only.
+- **`labels` are accepted** and stored (Vertex-only on 2026-08-08).
+  `safety_settings` is still Vertex-only. By 2026-10-01 create responses
+  stopped echoing request fields (`labels`, `system_instruction`,
+  `generation_config`); a GET of the stored interaction returns them.
 - **`gemini-3.8-flash-tts`** returns `audio/wav`, and multi-speaker needs a
   `speech_metadata` annotation per text turn (see `docs/OUTPUT_MODALITIES.md`).
 - **The Voices resource** uses the standard Google error envelope
   (`code: 400, status: "INVALID_ARGUMENT"`).
+
+## Server-side changes (live, 2026-10-01)
+
+Not in the changelog or the bindings; each reproduces with raw HTTP.
+
+- **Namespaced function names.** On the second user turn of a non-streamed
+  chain, a declared function is called as `default_api:<name>`. The
+  auto-function loops resolve it. MCP tools run server-side appear as an
+  answered `function_call` / `function_result` pair named `<server>:<tool>`,
+  not `tool_call` steps; `pending_function_calls()` leaves them out.
+- **Streamed multi-turn function calling fails (server bug).** When the user
+  turn and the turn before it were both streamed, the function result is
+  rejected with `400 Please ensure that function response turn comes
+  immediately after a function call turn`, whatever name it carries. Any
+  non-streamed turn in the pair avoids it, so
+  `test_multiturn_streaming_auto_functions` streams only its second turn
+  until this is fixed.
+- **An MCP interaction ends in `requires_action` (server bug)** after the
+  server has run every MCP call and produced the final `model_output`.
+  `test_mcp_server_tool_round_trip` accepts that status only when no call is
+  pending.
+- **`cancel` fails on `antigravity-preview-09-2026`** with `400 There was a
+  problem processing your request`; it works on `antigravity-preview-05-2026`.
+- **Agentic video processing sometimes never answers.** 2 of 6 identical
+  raw-HTTP requests hung past 150 s while the rest answered in 5-11 s, and a
+  stateless replay of such a turn can hang too. `processing_steps_tests`
+  bounds and retries each request, and reports `LIVE_TOOL_EVIDENCE_SKIPPED`
+  if no attempt answers.
 
 ## Sweep 2.18.1 → 2.25.0 (2026-09-24)
 
@@ -72,7 +102,7 @@ the bindings is modeled until it is probed. From the 2.25.0 sweep:
 | `transcription_config.mode` | `TranscriptionMode` | String and object forms accepted and validated; no output effect seen |
 | `Ranking.rank_service` | `RankService` | Vertex-only (retrieval tool) |
 | `FunctionResultDelta.call_id` dropped | now `Option` | Keeps the delta typed if the field stops arriving |
-| Interaction echoes: `labels`, `system_instruction` | `InteractionResponse` | Observed live |
+| Stored interaction fields: `labels`, `system_instruction` | `InteractionResponse` | Observed live (GET only since 2026-10-01) |
 | Unmodeled response fields | `extra` on `InteractionResponse` and `UsageMetadata` | Usage carries `raw_prompt_token` and `model_invocation_token_counts`; interactions echo `environment`, `generation_config`, and more |
 | Model literals `gemini-3.8-flash`, `gemini-3.8-flash-tts` | `DEFAULT_MODEL`, `DEFAULT_TTS_MODEL` | — |
 

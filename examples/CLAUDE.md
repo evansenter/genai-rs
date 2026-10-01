@@ -24,7 +24,7 @@ run it before committing a change to it. A subset is smoke-run in CI
   a later step fails.
 - **Model and agent IDs come from the constants** in `src/lib.rs`
   (`DEFAULT_MODEL`, `DEFAULT_IMAGE_MODEL`, `DEFAULT_TTS_MODEL`,
-  `MINIMAL_THINKING_MODEL`, `DEFAULT_DEEP_RESEARCH_AGENT`, ...), including in
+  `DEFAULT_DEEP_RESEARCH_AGENT`, ...), including in
   prose.
 - **Explain in the `//!` header**: what the example shows, the constraints a
   reader would otherwise trip over, and the run command. Keep comments to the

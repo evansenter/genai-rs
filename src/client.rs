@@ -20,6 +20,11 @@ fn log_body<T: std::fmt::Debug + serde::Serialize>(label: &str, body: &T) {
 }
 
 /// The main client for interacting with the Google Generative AI API.
+///
+/// Build one `Client` and reuse it. It holds a connection pool, so calls
+/// after the first skip the connection and TLS handshake that a freshly built
+/// client pays on every request. `Clone` is cheap and clones share the pool,
+/// so give each task a clone rather than a new client.
 #[derive(Clone)]
 pub struct Client {
     /// Shared HTTP context: reqwest client, API key, wire inspectors, and

@@ -4,6 +4,8 @@
 //! Observed live 2026-09-24: streaming retrieval works only for background
 //! interactions (a foreground one is rejected with 400), and only text deltas
 //! streamed live carry an `event_id` (a long answer yields three or four).
+//! Observed 2026-09-26: a resumed replay can tag fewer deltas than the live
+//! stream did, so resumption is checked on the text, not the id list.
 //!
 //! ```bash
 //! cargo nextest run --test streaming_resume_tests --run-ignored all
@@ -62,7 +64,7 @@ async fn test_get_interaction_stream_follows_background_interaction() {
     .await;
 }
 
-/// Resuming from an event replays exactly the events after it.
+/// Resuming from an event replays only what came after it.
 ///
 /// Needs a stream with at least two ids to have a suffix to compare. The
 /// server decides how many it sends, so a run that saw only one starts a new
@@ -93,10 +95,23 @@ async fn test_stream_resume_with_last_event_id() {
         let resume_from = &full.event_ids[0];
         let resumed = consume_stream(client.get_interaction_stream(&id, Some(resume_from))).await;
 
-        assert_eq!(
-            resumed.event_ids,
-            full.event_ids[1..],
-            "resuming from {resume_from} should replay exactly the later events"
+        // Which deltas carry an id differs between the live stream and the
+        // replay (a replay can tag fewer), so the ids cannot be compared as
+        // lists. The text can: it must be a proper, non-empty tail.
+        assert!(
+            !resumed.collected_text.is_empty()
+                && resumed.collected_text.len() < full.collected_text.len()
+                && full.collected_text.ends_with(&resumed.collected_text),
+            "resuming from {resume_from} should replay only the text after it: \
+             got {} of {} bytes, tail match: {}",
+            resumed.collected_text.len(),
+            full.collected_text.len(),
+            full.collected_text.ends_with(&resumed.collected_text)
+        );
+        assert!(
+            !resumed.event_ids.contains(resume_from),
+            "the resume point itself was replayed: {:?}",
+            resumed.event_ids
         );
         let done = resumed
             .final_response
