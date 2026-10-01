@@ -93,11 +93,41 @@ fn auto_discover_tools(
     }
 }
 
-/// Executes a function by looking it up in the service map first, then the global registry.
+/// The prefix the API puts on a declared function's name on some turns:
+/// `default_api:get_weather` for `get_weather` on the second user turn of a
+/// non-streamed multi-turn chain (observed live 2026-10-01).
+const DECLARED_FUNCTION_NAMESPACE: &str = "default_api:";
+
+/// Executes the function a call names. A `default_api:`-prefixed name that
+/// matches no function falls back to its bare form.
+///
+/// Returns the name of the function that ran (the call's own name when none
+/// matched) and its result as JSON. The function result sent back to the API
+/// must still carry the call's name.
+async fn execute_function<'n>(
+    name: &'n str,
+    args: Value,
+    service_functions: &HashMap<String, Arc<dyn CallableFunction>>,
+    function_registry: &FunctionRegistry,
+) -> (&'n str, Value) {
+    let declared =
+        |name: &str| service_functions.contains_key(name) || function_registry.get(name).is_some();
+    let name = match name.strip_prefix(DECLARED_FUNCTION_NAMESPACE) {
+        Some(bare) if !declared(name) && declared(bare) => {
+            debug!("Resolved namespaced function call '{name}' to '{bare}'");
+            bare
+        }
+        _ => name,
+    };
+    let result = call_function(name, args, service_functions, function_registry).await;
+    (name, result)
+}
+
+/// Calls a function by looking it up in the service map first, then the global registry.
 ///
 /// Returns the function result as JSON. Errors are converted to JSON error objects
 /// rather than failing the entire operation, allowing the model to recover gracefully.
-async fn execute_function(
+async fn call_function(
     name: &str,
     args: Value,
     service_functions: &HashMap<String, Arc<dyn CallableFunction>>,
@@ -368,7 +398,7 @@ impl<'a> InteractionBuilder<'a> {
 
                 // Execute the function with timing
                 let start = Instant::now();
-                let result = execute_function(
+                let (function_name, result) = execute_function(
                     call.name,
                     call.args.clone(),
                     &service_functions,
@@ -376,11 +406,11 @@ impl<'a> InteractionBuilder<'a> {
                 )
                 .await;
                 let duration = start.elapsed();
-                debug!("Function '{}' executed in {:?}", call.name, duration);
+                debug!("Function '{}' executed in {:?}", function_name, duration);
 
                 // Track execution for the result
                 all_executions.push(FunctionExecutionResult::new(
-                    call.name,
+                    function_name,
                     &call_id,
                     call.args.clone(),
                     result.clone(),
@@ -712,7 +742,7 @@ impl<'a> InteractionBuilder<'a> {
                 for (call_id, name, args) in &calls_to_execute {
                     // Execute the function with timing
                     let start = Instant::now();
-                    let result = execute_function(
+                    let (function_name, result) = execute_function(
                         name,
                         args.clone(),
                         &service_functions,
@@ -722,12 +752,12 @@ impl<'a> InteractionBuilder<'a> {
                     let duration = start.elapsed();
                     debug!(
                         "Function '{}' executed in {:?}",
-                        name, duration
+                        function_name, duration
                     );
 
                     // Track result for yielding
                     execution_results.push(FunctionExecutionResult::new(
-                        name.clone(),
+                        function_name,
                         call_id.clone(),
                         args.clone(),
                         result.clone(),
@@ -811,7 +841,7 @@ mod tests {
         let service_functions: HashMap<String, Arc<dyn CallableFunction>> = HashMap::new();
         let registry = get_global_function_registry();
 
-        let result = execute_function(
+        let (_, result) = execute_function(
             "__genai_rs_test_nonexistent_function__",
             json!({"arg": 1}),
             &service_functions,

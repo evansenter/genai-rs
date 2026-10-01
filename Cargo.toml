@@ -92,6 +92,8 @@ chrono = { workspace = true }
 doc-comment = "0.3"
 regex = "1"
 backon = "1.6"
+# tests/credentials_tests.rs compares SHA-256 digests of credential values.
+sha2 = "0.11"
 # tests/non_exhaustive_responses.rs parses src/ to check struct attributes.
 syn = { workspace = true, features = ["full", "visit"] }
 

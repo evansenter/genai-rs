@@ -162,13 +162,32 @@ async fn test_duplicate_credential_id_conflicts() {
 /// Everything the test asserts comes from its output as the sandbox reports
 /// it (`code_execution_result`), never from the model's reply: a model that
 /// ignores the instruction can make this test fail, but not pass.
+///
+/// It prints SHA-256 digests rather than credential values, and says what it
+/// is in its header: `antigravity-preview-09-2026` reads a script before
+/// running it, and refused one that printed credentials and sent them to
+/// httpbin (2026-10-01).
 const CHECK_SCRIPT: &str = concat!(
-    "cat genai_rs_test/fixture.txt; echo\n",
+    "# genai-rs integration test: checks this environment's variables and its\n",
+    "# credential injection. Every value is a throwaway fixture created for this\n",
+    "# run and deleted afterwards. httpbin.org is the environment's trusted\n",
+    "# domain, where its egress proxy substitutes the credential into requests.\n",
+    "# Only SHA-256 digests of credential values are printed, never the values.\n",
+    "digest() { printf %s \"$1\" | sha256sum | cut -c1-64; }\n",
+    "echo \"FIXTURE=[$(cat genai_rs_test/fixture.txt)]\"\n",
     "echo \"PLAIN=[$GENAI_RS_TEST_PLAIN]\"\n",
-    "echo \"CREDENTIAL=[$GENAI_RS_TEST_CREDENTIAL]\"\n",
+    "echo \"CREDENTIAL_LENGTH=[${#GENAI_RS_TEST_CREDENTIAL}]\"\n",
+    "echo \"CREDENTIAL_SHA256=[$(digest \"$GENAI_RS_TEST_CREDENTIAL\")]\"\n",
     "echo '--- egress'\n",
     "curl -s -m 20 \"https://httpbin.org/anything?q=$GENAI_RS_TEST_CREDENTIAL\" \\\n",
-    "  -H \"X-Test: $GENAI_RS_TEST_CREDENTIAL\"\n",
+    "  -H \"X-Test: $GENAI_RS_TEST_CREDENTIAL\" | python3 -c '\n",
+    "import hashlib, json, sys\n",
+    "echo = json.load(sys.stdin)\n",
+    "digest = lambda value: hashlib.sha256(value.encode()).hexdigest()\n",
+    "print(\"QUERY_SHA256=[%s]\" % digest(echo[\"args\"].get(\"q\", \"\")))\n",
+    "print(\"HEADER_SHA256=[%s]\" % digest(echo[\"headers\"].get(\"X-Test\", \"\")))\n",
+    "print(\"AUTHORIZATION_SHA256=[%s]\" % digest(echo[\"headers\"].get(\"Authorization\", \"\")))\n",
+    "'\n",
 );
 
 /// Says what the run is, because it is exactly what a model should be wary
@@ -176,7 +195,16 @@ const CHECK_SCRIPT: &str = concat!(
 const CHECK_PROMPT: &str = "This is an automated integration test for the genai-rs client \
     library. It checks that this environment's variables and its credential injection \
     work. Every value involved is a throwaway fixture created for this run and deleted \
-    afterwards. Run `bash genai_rs_test/check.sh` once and reply with its raw output only.";
+    afterwards, and the script prints only SHA-256 digests of credential values. Run \
+    `bash genai_rs_test/check.sh` once and reply with its raw output only.";
+
+fn sha256_hex(value: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(value.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
 
 /// Environment variables and credentials take effect at runtime (first
 /// verified live 2026-09-24):
@@ -259,7 +287,7 @@ async fn test_credentials_reach_sandbox_and_egress() {
                         .join("\n");
                     let step_types: Vec<_> = done.steps.iter().map(|s| s.step_type()).collect();
                     assert!(
-                        output.contains(&file_nonce),
+                        output.contains(&format!("FIXTURE=[{file_nonce}]")),
                         "the script did not run inside the environment (fixture file \
                          not read); sandbox output: {output:?}; steps: {step_types:?}; reply: {:?}",
                         done.as_text()
@@ -267,25 +295,31 @@ async fn test_credentials_reach_sandbox_and_egress() {
                     let (sandbox, egress) = output
                         .split_once("--- egress")
                         .unwrap_or_else(|| panic!("no egress section in {output:?}"));
+                    let secret_sha256 = sha256_hex(&secret);
 
                     assert!(
                         sandbox.contains(&format!("PLAIN=[{plain}]")),
                         "plain env var not visible: {sandbox:?}"
                     );
                     assert!(
-                        !sandbox.contains("CREDENTIAL=[]"),
+                        !sandbox.contains("CREDENTIAL_LENGTH=[0]"),
                         "credential env var not set at all: {sandbox:?}"
                     );
                     assert!(
-                        !sandbox.contains(&secret),
-                        "the credential's secret is readable inside the sandbox"
+                        sandbox.contains("CREDENTIAL_SHA256=[")
+                            && !sandbox.contains(&secret_sha256),
+                        "the credential's secret is readable inside the sandbox: {sandbox:?}"
                     );
                     assert!(
-                        egress.matches(secret.as_str()).count() >= 2,
+                        egress.contains(&format!("QUERY_SHA256=[{secret_sha256}]"))
+                            && egress.contains(&format!("HEADER_SHA256=[{secret_sha256}]")),
                         "secret not substituted into both the query and the header: {egress:?}"
                     );
                     assert!(
-                        egress.contains(&format!("Bearer {token}")),
+                        egress.contains(&format!(
+                            "AUTHORIZATION_SHA256=[{}]",
+                            sha256_hex(&format!("Bearer {token}"))
+                        )),
                         "allowlist credential not injected: {egress:?}"
                     );
                 }

@@ -110,7 +110,12 @@ pub const DEFAULT_DEEP_RESEARCH_AGENT: &str = "deep-research-preview-04-2026";
 /// Requires an `environment` (see [`EnvironmentSpec`]) and `background = true`.
 /// Unrelated to the `antigravity` cargo feature, which drives a *local*
 /// harness process instead.
-pub const DEFAULT_ANTIGRAVITY_AGENT: &str = "antigravity-preview-05-2026";
+///
+/// `antigravity-preview-09-2026` replaced `antigravity-preview-05-2026`,
+/// which shuts down on 2026-10-05. Its built-in tools are renamed and take
+/// PascalCase parameters, so code that parses its `function_call` steps by
+/// tool name must match the new names.
+pub const DEFAULT_ANTIGRAVITY_AGENT: &str = "antigravity-preview-09-2026";
 
 // =============================================================================
 // Core Type Modules
