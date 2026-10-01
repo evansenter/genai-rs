@@ -625,10 +625,11 @@ async fn test_safety_settings_vertex_gated() {
 }
 
 /// `labels` was Vertex-only until at least 2026-08-08; as of 2026-09-24 the
-/// Gemini API accepts them and echoes them back.
+/// Gemini API accepts and stores them. The create response stopped echoing
+/// them by 2026-10-01, so the stored record is read back with a GET.
 #[tokio::test]
 #[ignore = "Requires API key"]
-async fn test_labels_accepted_and_echoed() {
+async fn test_labels_accepted_and_stored() {
     let Some(client) = get_client() else {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
@@ -646,7 +647,14 @@ async fn test_labels_accepted_and_echoed() {
     .expect("labels should be accepted (verified live 2026-09-24)");
 
     assert_eq!(response.status, genai_rs::InteractionStatus::Completed);
-    let labels = response.labels.expect("labels were not echoed");
+    let id = response.id.expect("stored interaction id");
+    let stored = client
+        .interactions()
+        .get(&id)
+        .await
+        .expect("get_interaction");
+    let _ = client.interactions().delete(&id).await;
+    let labels = stored.labels.expect("labels were not stored");
     assert_eq!(labels.get("team").map(String::as_str), Some("genai-rs-ci"));
 }
 
@@ -660,12 +668,12 @@ async fn test_antigravity_config_accepted() {
 
     use genai_rs::{AntigravityConfig, EnvironmentSource, RemoteEnvironment};
 
-    // Verified live (2026-08-09): `agent_config: {"type": "antigravity"}`
-    // plus `max_total_tokens` is accepted on `antigravity-preview-05-2026`
-    // (which requires an environment). `model` is deliberately not sent —
-    // an unavailable value returns 404 and the agent's model catalog is
-    // not enumerable on a standard key. Retry transients, assert the
-    // strong form, and cancel the background interaction. The retry is
+    // Verified live (2026-10-01): `agent_config: {"type": "antigravity"}`
+    // plus `max_total_tokens` and `model` is accepted on
+    // `antigravity-preview-09-2026` (which requires an environment).
+    // `DEFAULT_MODEL` (also the agent's documented default) is sent, so a
+    // `model` the agent stops offering (404) fails the test. Retry transients,
+    // assert the strong form, and cancel the background interaction. The retry is
     // deliberate despite the non-idempotent create: a retry after a lost
     // response can orphan an agent run plus its environment with no ID to
     // clean up, but max_total_tokens caps the orphan's cost and the
@@ -682,11 +690,15 @@ async fn test_antigravity_config_accepted() {
                 RemoteEnvironment::new()
                     .add_source(EnvironmentSource::inline("/etc/motd", "config probe")),
             )
-            .with_agent_config(AntigravityConfig::new().with_max_total_tokens(200_000))
+            .with_agent_config(
+                AntigravityConfig::new()
+                    .with_model(genai_rs::DEFAULT_MODEL)
+                    .with_max_total_tokens(200_000),
+            )
             .create()
             .await
     })
-    .expect("AntigravityConfig should be accepted (verified live 2026-08-09)");
+    .expect("AntigravityConfig should be accepted (verified live 2026-10-01)");
     println!("AntigravityConfig accepted: status={:?}", response.status);
     if let Some(id) = &response.id {
         // Print both arms: a failed cancel leaves a background agent

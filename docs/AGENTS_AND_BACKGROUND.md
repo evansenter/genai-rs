@@ -9,14 +9,14 @@ cancellation.
 
 ## Managed agents
 
-Google-managed agents known to this crate (from the 2026-05-20 spec):
+Google-managed agents known to this crate:
 
 | Agent ID | Constant | Notes |
 |----------|----------|-------|
 | `deep-research-preview-04-2026` | `genai_rs::DEFAULT_DEEP_RESEARCH_AGENT` | Deep Research |
 | `deep-research-max-preview-04-2026` | — | Deep Research Max |
 | `deep-research-pro-preview-12-2025` | — | The Deep Research launch preview |
-| `antigravity-preview-05-2026` | `genai_rs::DEFAULT_ANTIGRAVITY_AGENT` | Multi-step tasks with file operations and tool use. Requires an [environment](#environments) |
+| `antigravity-preview-09-2026` | `genai_rs::DEFAULT_ANTIGRAVITY_AGENT` | Multi-step tasks with file operations and tool use. Requires an [environment](#environments) |
 
 Prefer the constants. Unknown agent ids pass through unchanged, so newer
 agents work without a crate update. Availability varies by account.

@@ -98,7 +98,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .await?;
 
     for round in 1..=MAX_ROUNDS {
-        let calls = response.function_calls();
+        let calls = response.pending_function_calls();
         if calls.is_empty() {
             println!("\n{}", response.as_text().ok_or("no text in response")?);
             return Ok(());

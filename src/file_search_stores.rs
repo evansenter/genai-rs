@@ -482,9 +482,8 @@ impl<'a> FileSearchStores<'a> {
     /// [`FileSearchDocuments::wait_until_active`].
     ///
     /// The upload is a single request with the whole file as its body (the
-    /// `raw` protocol, with no resumable path), so a path upload reads the
-    /// file fully into memory first: a 1.5 GB file costs 1.5 GB of resident
-    /// memory. The API answers with an operation naming the new document,
+    /// `raw` protocol, with no resumable path). A path upload streams the
+    /// file from disk, so memory use does not grow with it. The API answers with an operation naming the new document,
     /// which a second request reads back.
     ///
     /// # Errors
@@ -502,7 +501,9 @@ impl<'a> FileSearchStores<'a> {
     ///
     /// The 2 GB ceiling is borrowed from the Files API and has not been
     /// verified for this resource, so treat it as a local guard rather than
-    /// the API's limit.
+    /// the API's limit. The raw upload protocol sends one body with no
+    /// resumable path, so an interrupted upload starts over; a path upload
+    /// streams from disk, so memory use does not grow with the file.
     ///
     /// # Example
     ///

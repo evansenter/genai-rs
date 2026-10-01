@@ -884,13 +884,13 @@ accepted but ignored on non-video models.
 
 ### AntigravityConfig
 
-`{"agent_config": {"type": "antigravity", "max_total_tokens": 200000}}`.
-Verified live 2026-08-09 on `antigravity-preview-05-2026`, which requires an
+`{"agent_config": {"type": "antigravity", "model": "gemini-3.8-flash", "max_total_tokens": 200000}}`.
+Verified live 2026-10-01 on `antigravity-preview-09-2026`, which requires an
 `environment`. The validation error lists the `agent_config.type` values
 `dynamic`, `deep-research`, `code-mender` and `antigravity`. `model` is
-validated per agent: an unavailable value returns 404 (observed with
-`gemini-3.6-flash`; the agent's model catalog can't be listed on a standard
-key).
+validated per agent: `gemini-3.6-flash` and `gemini-3.5-flash-lite` were
+accepted, an unknown value returns 404. (On `antigravity-preview-05-2026`,
+`gemini-3.6-flash` returned 404.)
 
 ### Deep Research agent_config
 

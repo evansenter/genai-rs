@@ -114,7 +114,6 @@ literals elsewhere.
 | Constant | Use for |
 |----------|---------|
 | `DEFAULT_MODEL` | Everything, unless a row below applies |
-| `MINIMAL_THINKING_MODEL` | `ThinkingLevel::Minimal` (the default model rejects it) |
 | `DEFAULT_IMAGE_MODEL` | Image generation |
 | `DEFAULT_TTS_MODEL` | Text-to-speech |
 | `DEFAULT_DEEP_RESEARCH_AGENT`, `DEFAULT_ANTIGRAVITY_AGENT` | `with_agent()` |

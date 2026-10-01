@@ -150,18 +150,24 @@ pub struct InteractionResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated: Option<DateTime<Utc>>,
 
-    /// The system instruction the interaction ran with, as echoed by the API.
+    /// The system instruction the interaction ran with. Only a stored
+    /// interaction read back with
+    /// [`interactions().get`](crate::Interactions::get) carries it; create
+    /// responses stopped echoing request fields by 2026-10-01.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_instruction: Option<String>,
 
-    /// The request's labels, as echoed by the API (verified live
-    /// 2026-09-24).
+    /// The request's labels. Like
+    /// [`system_instruction`](Self::system_instruction), only a stored
+    /// interaction read back with
+    /// [`interactions().get`](crate::Interactions::get) carries them
+    /// (verified live 2026-10-01).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub labels: Option<std::collections::BTreeMap<String, String>>,
 
     /// Fields the API returned that this struct does not model, preserved
     /// for roundtrip (Evergreen): e.g. the `environment`, `generation_config`
-    /// and `agent_config` echoes.
+    /// and `agent_config` a stored interaction carries.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -429,6 +435,26 @@ impl InteractionResponse {
                     None
                 }
             })
+            .collect()
+    }
+
+    /// Function calls that still need a result: those with no
+    /// [`Step::FunctionResult`] for their `id` in this response.
+    ///
+    /// A tool the server runs itself, such as an MCP server, comes back as a
+    /// `function_call` and its `function_result` in the same response
+    /// (observed 2026-10-01), so [`function_calls`](Self::function_calls)
+    /// alone over-reports what the client must answer.
+    #[must_use]
+    pub fn pending_function_calls(&self) -> Vec<FunctionCallInfo<'_>> {
+        let answered: std::collections::BTreeSet<&str> = self
+            .function_results()
+            .into_iter()
+            .map(|result| result.call_id)
+            .collect();
+        self.function_calls()
+            .into_iter()
+            .filter(|call| !answered.contains(call.id))
             .collect()
     }
 

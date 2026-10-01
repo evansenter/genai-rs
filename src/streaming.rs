@@ -542,7 +542,10 @@ impl<'de> Deserialize<'de> for AutoFunctionStreamEvent {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct FunctionExecutionResult {
-    /// Name of the function that was called
+    /// Name of the declared function that ran. When the API called it as
+    /// `default_api:<name>`, this is the bare name while the response's
+    /// `function_call` step keeps the API's, so match executions to calls by
+    /// [`call_id`](Self::call_id).
     pub name: String,
     /// The call_id from the FunctionCall this result responds to
     pub call_id: String,

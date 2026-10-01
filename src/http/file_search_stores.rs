@@ -9,8 +9,8 @@
 //! so the shared [`with_paging`] helper works unchanged.
 
 use super::common::{
-    NO_BODY, api_request, mime_type_header, path_segment, require_id, send_and_read, send_checked,
-    with_paging, with_query,
+    NO_BODY, api_request, file_body, mime_type_header, path_segment, require_id, send_and_read,
+    send_checked, with_paging, with_query,
 };
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
@@ -219,24 +219,32 @@ pub async fn upload_to_file_search_store(
     // is absent too (verified live 2026-09-27). A path sends its file name,
     // as a Files API path upload does; bytes send none, so an in-memory
     // upload without a display name stays unnamed, as in the Files API.
-    let (bytes, file_name_header) = match source {
+    let (body, size_bytes, file_name_header) = match source {
         UploadSource::Path(file_path) => {
-            let metadata = tokio::fs::metadata(&file_path).await.map_err(|e| {
-                GenaiError::InvalidInput(format!("Failed to stat {}: {e}", file_path.display()))
-            })?;
-            check_upload_size(metadata.len())?;
-            let bytes = tokio::fs::read(&file_path).await.map_err(|e| {
+            let read_error = |e: std::io::Error| {
                 GenaiError::InvalidInput(format!("Failed to read {}: {e}", file_path.display()))
-            })?;
+            };
+            // Size the upload from the open handle, so it describes the file
+            // sent; the body streams from disk.
+            let file = tokio::fs::File::open(&file_path)
+                .await
+                .map_err(read_error)?;
+            let size = file.metadata().await.map_err(read_error)?.len();
+            check_upload_size(size)?;
             let file_name = file_path
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("upload");
-            (bytes, Some(upload_file_name_header(file_name)))
+            (
+                file_body(file),
+                size,
+                Some(upload_file_name_header(file_name)),
+            )
         }
         UploadSource::Bytes(data) => {
-            check_upload_size(data.len() as u64)?;
-            (data, None)
+            let size = data.len() as u64;
+            check_upload_size(size)?;
+            (reqwest::Body::from(data), size, None)
         }
     };
 
@@ -251,7 +259,7 @@ pub async fn upload_to_file_search_store(
                 .as_ref()
                 .map(|h| String::from_utf8_lossy(h.as_bytes())),
             "mime_type": mime_type,
-            "size_bytes": bytes.len(),
+            "size_bytes": size_bytes,
         })),
     );
 
@@ -262,7 +270,8 @@ pub async fn upload_to_file_search_store(
     }
     let builder = builder
         .header(reqwest::header::CONTENT_TYPE, mime_type_header)
-        .body(bytes);
+        .header(reqwest::header::CONTENT_LENGTH, size_bytes)
+        .body(body);
     let response = send_checked(ctx, request_id, builder).await?;
     let text = response.text().await?;
     ctx.emit_response_body(request_id, &text);

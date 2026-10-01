@@ -7,8 +7,8 @@
 //! `with_thinking_summaries(ThinkingSummaries::Auto)` is set, a readable
 //! summary.
 //!
-//! `ThinkingLevel::Minimal` is model-dependent: `DEFAULT_MODEL` rejects it,
-//! so this example sends it to `MINIMAL_THINKING_MODEL`.
+//! `ThinkingLevel::Minimal` is model-dependent, and `DEFAULT_MODEL` rejects
+//! it, so this example compares `Low` and `High`.
 //!
 //! Run with: `cargo run --example thinking`
 
@@ -29,7 +29,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     println!("--- Thinking levels ---");
     let levels = [
-        (genai_rs::MINIMAL_THINKING_MODEL, ThinkingLevel::Minimal),
         (genai_rs::DEFAULT_MODEL, ThinkingLevel::Low),
         (genai_rs::DEFAULT_MODEL, ThinkingLevel::High),
     ];
