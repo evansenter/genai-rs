@@ -77,11 +77,16 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
   pending.
 - **`cancel` fails on `antigravity-preview-09-2026`** with `400 There was a
   problem processing your request`; it works on `antigravity-preview-05-2026`.
-- **Agentic video processing sometimes never answers.** 2 of 6 identical
-  raw-HTTP requests hung past 150 s while the rest answered in 5-11 s, and a
-  stateless replay of such a turn can hang too. `processing_steps_tests`
-  bounds and retries each request, and reports `LIVE_TOOL_EVIDENCE_SKIPPED`
-  if no attempt answers.
+- **Uploaded environment files carry no `size_bytes`** (2026-10-06), in the
+  upload response or in listings; files from environment sources still
+  report it.
+- **Agentic video processing often fails.** On 2026-10-01 2 of 6 identical
+  raw-HTTP requests hung past 150 s; on 2026-10-06 3 of 5 returned `500
+  Internal error encountered` (a stream `error` event when streamed), while
+  `static` processing of the same video succeeded 5 of 5. A stateless
+  replay of such a turn can fail too. `processing_steps_tests` retries a
+  timeout, 5xx or stream error up to 5 times and reports
+  `LIVE_TOOL_EVIDENCE_SKIPPED` if no attempt answers.
 
 ## Sweep 2.18.1 → 2.25.0 (2026-09-24)
 
