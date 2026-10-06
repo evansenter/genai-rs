@@ -77,6 +77,9 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
   pending.
 - **`cancel` fails on `antigravity-preview-09-2026`** with `400 There was a
   problem processing your request`; it works on `antigravity-preview-05-2026`.
+- **Uploaded environment files carry no `size_bytes`** (2026-10-06), in the
+  upload response or in listings; files from environment sources still
+  report it.
 - **Agentic video processing sometimes never answers.** 2 of 6 identical
   raw-HTTP requests hung past 150 s while the rest answered in 5-11 s, and a
   stateless replay of such a turn can hang too. `processing_steps_tests`

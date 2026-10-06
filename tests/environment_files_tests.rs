@@ -74,7 +74,9 @@ async fn test_upload_list_and_fork() {
             let file = written.files.first().expect("upload listed no file");
             assert_eq!(file.path.as_deref(), Some("genai-rs/hello.txt"));
             assert_eq!(file.file_type, Some(EnvironmentFileType::File));
-            assert_eq!(file.size_bytes, Some(content.len() as i64));
+            // Uploaded files stopped reporting `size_bytes` by 2026-10-06
+            // (absent here and in listings); a source file still reports
+            // it, checked in the recursive listing below.
 
             // Without `with_overwrite`, writing over it is a 409 (from the
             // finalizing request, live 2026-09-26).
@@ -114,6 +116,12 @@ async fn test_upload_list_and_fork() {
                 "directory missing from {:?}",
                 root.files
             );
+            let motd = root
+                .files
+                .iter()
+                .find(|f| f.path.as_deref() == Some("etc/motd"))
+                .unwrap_or_else(|| panic!("source file missing from {:?}", root.files));
+            assert_eq!(motd.size_bytes, Some("hello".len() as i64));
 
             let single = client
                 .environments()

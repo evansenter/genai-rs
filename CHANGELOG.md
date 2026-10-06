@@ -5,7 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.11.0] - 2026-10-06
+
+Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
+`gemini-3.8-flash`, the `antigravity-preview-09-2026` agent, and Antigravity
+harness 0.1.18.
 
 ### Added
 
@@ -21,70 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `with_context`.
 - `docs/RESOURCES.md`: every old method mapped to its handle call, and each
   resource mapped to Google's Python SDK.
-
-### Changed
-
-- **Breaking: resource methods moved from `Client` to per-resource
-  handles.** `client.agents()`, `.webhooks()`, `.triggers()`,
-  `.environments()`, `.credentials()`, `.voices()`, `.files()`,
-  `.file_search_stores()` and `.interactions()` each return a `Copy` handle
-  that borrows the client. Rename `client.<verb>_<resource>(…)` to
-  `client.<resources>().<verb>(…)`: `get_file(name)` → `files().get(name)`.
-  Exceptions: `run_trigger` → `triggers().run`, `list_trigger_executions(id, …)`
-  → `triggers().list_executions(id)`, `ping_webhook` → `webhooks().ping`,
-  `rotate_webhook_signing_secret` → `webhooks().rotate_signing_secret`,
-  `get_interaction_with_input` → `interactions().get_with_input`,
-  `get_interaction_stream(id, None | Some(e))` → `interactions().stream(id)` /
-  `resume_stream(id, e)` (the stream now owns a clone of the client),
-  `list_environment_files` / `upload_environment_file` →
-  `environments().files().list` / `.upload`, and the File Search documents
-  methods → `file_search_stores().documents().<verb>`. `client.interaction()`,
-  `execute` and `execute_stream` are unchanged. The full table is in
-  `docs/RESOURCES.md`. The handle types, the `List*` builders, `FileUpload`
-  and `PollOptions` are exported at the crate root.
-- **Breaking: every `list_*` method returns a builder.** The positional
-  `page_size`, `page_token` and `parent` arguments are gone. Chain
-  `.with_page_size(n)`, `.with_page_token(t)` or `.with_parent(p)` on
-  `client.<resources>().list()`, then `.send()` for one page (the same
-  `*ListResponse`). `ListVoicesParams` is removed: its filters are setters on
-  `client.voices().list()`. `list_environment_files`'s `recursive` argument is
-  `.with_recursive(bool)`.
-- **Breaking: uploads take a `FileUpload`.** `upload_file(p)` →
-  `files().upload(FileUpload::from_path(p))`; `upload_file_with_mime(p, m)`
-  → `files().upload(FileUpload::from_path(p).with_mime_type(m))`;
-  `upload_file_bytes(d, m, Some(n))` →
-  `files().upload(FileUpload::from_bytes(d, m).with_display_name(n))`;
-  `upload_to_file_search_store(store, p, Some(n))` →
-  `file_search_stores().upload(store, FileUpload::from_path(p).with_display_name(n))`
-  (`_with_mime` adds `.with_mime_type(m)`). The error for an extension with
-  no known MIME type now points at `FileUpload::with_mime_type()`.
-- **Breaking: `EnvironmentFileUpload` carries the payload.**
-  `upload_environment_file(env, path, data, mime, EnvironmentFileUpload { overwrite, extract })`
-  → `environments().files().upload(env, path, EnvironmentFileUpload::new(data, mime).with_overwrite(overwrite).with_extract(extract))`.
-- **Breaking: waits take `PollOptions`.** `wait_for_file_ready(&f, poll, timeout)`
-  → `files().wait_until_active(&f.name, PollOptions::new().with_poll_interval(poll).with_timeout(timeout))`
-  (defaults 120 s / 2 s); `wait_for_document_active(name, timeout, poll)` →
-  `file_search_stores().documents().wait_until_active(name, PollOptions::new()…)`
-  (defaults 60 s / 500 ms). Either option can be left out.
-- **Breaking: `update_mask` moved onto the update value.**
-  `update_webhook(id, &u, Some("state"))` →
-  `webhooks().update(id, &u.with_update_mask("state"))`, and likewise
-  `update_credential` → `credentials().update`. `None` becomes no
-  `with_update_mask` call. The mask is sent as the query parameter, never in
-  the body.
-- **Breaking: forced deletes are their own verb.**
-  `delete_file_search_store(name, true)` → `file_search_stores().force_delete(name)`;
-  `delete_file_search_document(name, true)` →
-  `file_search_stores().documents().force_delete(name)`; `false` → `delete(name)`.
-
-## [0.11.0] - 2026-10-01
-
-Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
-`gemini-3.8-flash`, the `antigravity-preview-09-2026` agent, and Antigravity
-harness 0.1.18.
-
-### Added
-
 - **Voices API**: `Client::{list_voices, get_voice, create_voice,
   delete_voice}`, `CreateVoiceRequest`, `ListVoicesParams`. A custom voice id
   works as `SpeechConfig::voice` on 3.8 TTS models.
@@ -143,6 +83,61 @@ harness 0.1.18.
 
 ### Changed
 
+- **Breaking: resource methods moved from `Client` to per-resource
+  handles.** `client.agents()`, `.webhooks()`, `.triggers()`,
+  `.environments()`, `.credentials()`, `.voices()`, `.files()`,
+  `.file_search_stores()` and `.interactions()` each return a `Copy` handle
+  that borrows the client. Rename `client.<verb>_<resource>(…)` to
+  `client.<resources>().<verb>(…)`: `get_file(name)` → `files().get(name)`.
+  Exceptions: `run_trigger` → `triggers().run`, `list_trigger_executions(id, …)`
+  → `triggers().list_executions(id)`, `ping_webhook` → `webhooks().ping`,
+  `rotate_webhook_signing_secret` → `webhooks().rotate_signing_secret`,
+  `get_interaction_with_input` → `interactions().get_with_input`,
+  `get_interaction_stream(id, None | Some(e))` → `interactions().stream(id)` /
+  `resume_stream(id, e)` (the stream now owns a clone of the client),
+  `list_environment_files` / `upload_environment_file` →
+  `environments().files().list` / `.upload`, and the File Search documents
+  methods → `file_search_stores().documents().<verb>`. `client.interaction()`,
+  `execute` and `execute_stream` are unchanged. The full table is in
+  `docs/RESOURCES.md`. The handle types, the `List*` builders, `FileUpload`
+  and `PollOptions` are exported at the crate root.
+- **Breaking: every `list_*` method returns a builder.** The positional
+  `page_size`, `page_token` and `parent` arguments are gone. Chain
+  `.with_page_size(n)`, `.with_page_token(t)` or `.with_parent(p)` on
+  `client.<resources>().list()`, then `.send()` for one page (the same
+  `*ListResponse`). `ListVoicesParams` is removed: its filters are setters on
+  `client.voices().list()`. `list_environment_files`'s `recursive` argument is
+  `.with_recursive(bool)`.
+- **Breaking: uploads take a `FileUpload`.** `upload_file(p)` →
+  `files().upload(FileUpload::from_path(p))`; `upload_file_with_mime(p, m)`
+  → `files().upload(FileUpload::from_path(p).with_mime_type(m))`;
+  `upload_file_bytes(d, m, Some(n))` →
+  `files().upload(FileUpload::from_bytes(d, m).with_display_name(n))`;
+  `upload_to_file_search_store(store, p, Some(n))` →
+  `file_search_stores().upload(store, FileUpload::from_path(p).with_display_name(n))`
+  (`_with_mime` adds `.with_mime_type(m)`). The error for an extension with
+  no known MIME type now points at `FileUpload::with_mime_type()`.
+- **Breaking: `EnvironmentFileUpload` carries the payload.**
+  `upload_environment_file(env, path, data, mime, EnvironmentFileUpload { overwrite, extract })`
+  → `environments().files().upload(env, path, EnvironmentFileUpload::new(data, mime).with_overwrite(overwrite).with_extract(extract))`.
+- **Breaking: waits take `PollOptions`.** `wait_for_file_ready(&f, poll, timeout)`
+  → `files().wait_until_active(&f.name, PollOptions::new().with_poll_interval(poll).with_timeout(timeout))`
+  (defaults 120 s / 2 s); `wait_for_document_active(name, timeout, poll)` →
+  `file_search_stores().documents().wait_until_active(name, PollOptions::new()…)`
+  (defaults 60 s / 500 ms). Either option can be left out.
+- **Breaking: `update_mask` moved onto the update value.**
+  `update_webhook(id, &u, Some("state"))` →
+  `webhooks().update(id, &u.with_update_mask("state"))`, and likewise
+  `update_credential` → `credentials().update`. `None` becomes no
+  `with_update_mask` call. The mask is sent as the query parameter, never in
+  the body.
+- **Breaking: forced deletes are their own verb.**
+  `delete_file_search_store(name, true)` → `file_search_stores().force_delete(name)`;
+  `delete_file_search_document(name, true)` →
+  `file_search_stores().documents().force_delete(name)`; `false` → `delete(name)`.
+- `EnvironmentFile::size_bytes` is `None` for files written with
+  `environments().files().upload()`: the API stopped reporting their size
+  (observed 2026-10-06). Files from environment sources still report it.
 - `DEFAULT_ANTIGRAVITY_AGENT` is now `antigravity-preview-09-2026`, which
   replaced `antigravity-preview-05-2026`; the old agent shuts down on
   2026-10-05. Remote-sandbox runs that read only the model output need no

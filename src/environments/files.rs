@@ -46,7 +46,10 @@ pub struct EnvironmentFile {
     /// File or directory.
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub file_type: Option<EnvironmentFileType>,
-    /// Size in bytes (an int64 string on the wire).
+    /// Size in bytes (an int64 string on the wire). Reported for files
+    /// from environment sources; files written with
+    /// [`upload`](EnvironmentFiles::upload) carry none (observed
+    /// 2026-10-06).
     #[serde(
         skip_serializing_if = "Option::is_none",
         serialize_with = "serialize_string_i64",
