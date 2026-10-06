@@ -5,38 +5,58 @@
 //! streaming, `step.start` announces `signature: ""` and the value arrives in
 //! `step.delta` — the case these tests pin.
 //!
-//! Agentic processing normally answers in 5-15 s, but since 2026-10-01 some
-//! requests never answer: 2 of 6 raw-HTTP requests hung past 150 s, and a
-//! replay of the turn can hang too. So each request gets [`ATTEMPT_TIMEOUT`]
-//! and [`ATTEMPTS`] tries. If none answers, the test prints
-//! `LIVE_TOOL_EVIDENCE_SKIPPED` (server availability, not a crate defect)
-//! for CI to count, as the MCP test does for its third-party server. An
-//! answer that fails an assertion still fails the test.
+//! Agentic processing normally answers in 5-15 s, but since 2026-10-01 it
+//! often fails server-side: on 2026-10-01 2 of 6 raw-HTTP requests hung past
+//! 150 s, and on 2026-10-06 3 of 5 returned `500 Internal error encountered`
+//! (as a stream `error` event when streamed) while `static` processing of the
+//! same video succeeded 5 of 5. So each request gets [`ATTEMPT_TIMEOUT`] and
+//! [`ATTEMPTS`] tries; a timeout, a 5xx or a server-sent stream error is
+//! retried. If no attempt answers, the test prints
+//! `LIVE_TOOL_EVIDENCE_SKIPPED` (server availability, not a crate defect) for
+//! CI to count, as the MCP test does for its third-party server. Any other
+//! error, a stream that ends without completing, and an answer that fails an
+//! assertion still fail the test.
 
 mod common;
 
-use common::{TINY_MP4_BASE64, consume_stream, get_client, with_timeout};
-use genai_rs::{Content, InteractionInput, Step, VideoProcessing};
+use common::{TINY_MP4_BASE64, get_client, with_timeout};
+use futures_util::StreamExt;
+use futures_util::stream::BoxStream;
+use genai_rs::{
+    Content, GenaiError, InteractionInput, InteractionResponse, Step, StreamChunk, StreamEvent,
+    VideoProcessing,
+};
 use std::future::Future;
 use std::time::Duration;
 
 /// A streamed turn once took 47 s to complete.
 const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(45);
-const ATTEMPTS: u32 = 3;
+const ATTEMPTS: u32 = 5;
 /// Every attempt of both requests in the streamed test.
-const TEST_BUDGET: Duration = Duration::from_secs(45 * 3 * 2 + 10);
+const TEST_BUDGET: Duration = Duration::from_secs(45 * 5 * 2 + 10);
 
-/// Runs `attempt` up to [`ATTEMPTS`] times, abandoning any that outlives
-/// [`ATTEMPT_TIMEOUT`]. Returns `None`, after printing the skip marker, when
-/// no attempt answered.
-async fn agentic_attempts<F, Fut, T>(mut attempt: F) -> Option<T>
+/// A failure the server reported or caused: a 5xx, or an `error` event in
+/// the stream.
+fn is_server_failure(err: &GenaiError) -> bool {
+    matches!(err, GenaiError::Api { status_code, .. } if *status_code >= 500)
+        || matches!(err, GenaiError::Stream { .. })
+}
+
+/// Runs `attempt` up to [`ATTEMPTS`] times, retrying one that outlives
+/// [`ATTEMPT_TIMEOUT`] or fails server-side. Returns `None`, after printing
+/// the skip marker, when no attempt answered; any other result is returned
+/// as is.
+async fn agentic_attempts<F, Fut, T>(mut attempt: F) -> Option<Result<T, GenaiError>>
 where
     F: FnMut() -> Fut,
-    Fut: Future<Output = T>,
+    Fut: Future<Output = Result<T, GenaiError>>,
 {
     for n in 1..=ATTEMPTS {
         match tokio::time::timeout(ATTEMPT_TIMEOUT, attempt()).await {
-            Ok(value) => return Some(value),
+            Ok(Err(err)) if is_server_failure(&err) => {
+                println!("agentic video request attempt {n}/{ATTEMPTS} failed server-side: {err}");
+            }
+            Ok(result) => return Some(result),
             Err(_) => println!(
                 "agentic video request attempt {n}/{ATTEMPTS} did not answer within \
                  {ATTEMPT_TIMEOUT:?}"
@@ -44,10 +64,30 @@ where
         }
     }
     println!(
-        "LIVE_TOOL_EVIDENCE_SKIPPED: agentic video processing did not answer within \
-         {ATTEMPT_TIMEOUT:?} on any of {ATTEMPTS} attempts"
+        "LIVE_TOOL_EVIDENCE_SKIPPED: agentic video processing did not answer on any of \
+         {ATTEMPTS} attempts"
     );
     None
+}
+
+/// The stream's completed response, with a server `error` event surfaced as
+/// [`GenaiError::Stream`]. A stream that ends with neither is malformed.
+async fn completed_response(
+    mut stream: BoxStream<'_, Result<StreamEvent, GenaiError>>,
+) -> Result<InteractionResponse, GenaiError> {
+    let mut completed = None;
+    while let Some(event) = stream.next().await {
+        match event?.chunk {
+            StreamChunk::Completed(response) => completed = Some(response),
+            StreamChunk::Error { message, code } => {
+                return Err(GenaiError::Stream { message, code });
+            }
+            _ => {}
+        }
+    }
+    completed.ok_or_else(|| {
+        GenaiError::MalformedResponse("stream ended without a completed response".into())
+    })
 }
 
 fn agentic_video_turn() -> Vec<Content> {
@@ -122,7 +162,7 @@ async fn test_streamed_agentic_video_turn_replays_statelessly() {
 
     with_timeout(TEST_BUDGET, async {
         let Some(result) = agentic_attempts(|| {
-            consume_stream(
+            completed_response(
                 client
                     .interaction()
                     .with_model(genai_rs::DEFAULT_MODEL)
@@ -135,9 +175,7 @@ async fn test_streamed_agentic_video_turn_replays_statelessly() {
         else {
             return;
         };
-        let first = result
-            .final_response
-            .expect("stream ended without a completed response");
+        let first = result.expect("streamed agentic video turn failed");
         assert_processing_steps_signed(&first.steps);
 
         let mut history = vec![Step::user_input(agentic_video_turn())];
