@@ -10,8 +10,8 @@
 //! 150 s, and on 2026-10-06 3 of 5 returned `500 Internal error encountered`
 //! (as a stream `error` event when streamed) while `static` processing of the
 //! same video succeeded 5 of 5. So each request gets [`ATTEMPT_TIMEOUT`] and
-//! [`ATTEMPTS`] tries; a timeout, a 5xx or a server-sent stream error is
-//! retried. If no attempt answers, the test prints
+//! [`ATTEMPTS`] tries; a timeout, a 5xx or a stream `error` event with code
+//! `api_error` is retried. If no attempt answers, the test prints
 //! `LIVE_TOOL_EVIDENCE_SKIPPED` (server availability, not a crate defect) for
 //! CI to count, as the MCP test does for its third-party server. Any other
 //! error, a stream that ends without completing, and an answer that fails an
@@ -36,10 +36,11 @@ const ATTEMPTS: u32 = 5;
 const TEST_BUDGET: Duration = Duration::from_secs(45 * 5 * 2 + 10);
 
 /// A failure the server reported or caused: a 5xx, or an `error` event in
-/// the stream.
+/// the stream with the code the 500s carry (`api_error`; a rejected request
+/// is `invalid_request`).
 fn is_server_failure(err: &GenaiError) -> bool {
     matches!(err, GenaiError::Api { status_code, .. } if *status_code >= 500)
-        || matches!(err, GenaiError::Stream { .. })
+        || matches!(err, GenaiError::Stream { code, .. } if code.as_deref() == Some("api_error"))
 }
 
 /// Runs `attempt` up to [`ATTEMPTS`] times, retrying one that outlives
