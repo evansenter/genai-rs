@@ -180,7 +180,7 @@ source of truth. `tests/model_literals.rs` fails the build on any hardcoded
 A capability-specific constant is re-pinned *independently* of the default:
 it tracks whichever model has the capability, so it goes stale when that model
 retires, not when the default moves. `DEFAULT_IMAGE_MODEL` is the one left;
-`MINIMAL_THINKING_MODEL` was removed in 0.11.0, when everything text-based moved
+`MINIMAL_THINKING_MODEL` was removed in 0.12.0, when everything text-based moved
 to the 3.8 Flash model, which has no `minimal` thinking level.
 
 **Consequences.** In-crate unit tests may use either a constant or the
