@@ -151,11 +151,11 @@ matches any of them (verified live 2026-09-27). genai-rs sends one value per
 filter, and a second `with_*` call replaces the first. Python's `contexts`
 argument is the `context` query parameter, set by `with_context`.
 
-## From the `Client` methods (0.11)
+## From the `Client` methods (0.10)
 
 A `None` positional argument becomes an omitted setter.
 
-| 0.11 | Now |
+| 0.10 | Now |
 |------|-----|
 | `client.create_agent(&agent)` | `client.agents().create(&agent)` |
 | `client.get_agent(id)` | `client.agents().get(id)` |
@@ -188,35 +188,10 @@ A `None` positional argument becomes an omitted setter.
 | `client.delete_environment(id)` | `client.environments().delete(id)` |
 | `client.upload_file(path)` | `client.files().upload(FileUpload::from_path(path))` |
 | `client.upload_file_with_mime(path, mime_type)` | `client.files().upload(FileUpload::from_path(path).with_mime_type(mime_type))` |
-| `client.upload_file_chunked(path)` and its `_with_mime` / `_with_options` forms (0.10; removed in 0.11) | `client.files().upload(FileUpload::from_path(path))`, which streams from disk; `.with_mime_type(mime_type)` for an explicit type |
+| `client.upload_file_chunked(path)` and its `_with_mime` / `_with_options` forms | `client.files().upload(FileUpload::from_path(path))`, which streams from disk; `.with_mime_type(mime_type)` for an explicit type |
 | `client.upload_file_bytes(data, mime_type, Some(name))` | `client.files().upload(FileUpload::from_bytes(data, mime_type).with_display_name(name))` |
 | `client.upload_file_bytes(data, mime_type, None)` | `client.files().upload(FileUpload::from_bytes(data, mime_type))` |
 | `client.get_file(name)` | `client.files().get(name)` |
 | `client.list_files(size, token)` | `client.files().list().with_page_size(size).with_page_token(token).send()` |
 | `client.delete_file(name)` | `client.files().delete(name)` |
 | `client.wait_for_file_ready(&file, poll_interval, timeout)` | `client.files().wait_until_active(&file.name, PollOptions::new().with_poll_interval(poll_interval).with_timeout(timeout))` |
-| `client.list_environment_files(env, path, recursive, size, token)` | `client.environments().files().list(env, path).with_recursive(recursive).with_page_size(size).with_page_token(token).send()` |
-| `client.upload_environment_file(env, path, data, mime_type, EnvironmentFileUpload { overwrite, extract })` | `client.environments().files().upload(env, path, EnvironmentFileUpload::new(data, mime_type).with_overwrite(overwrite).with_extract(extract))` |
-| `client.create_credential(&request)` | `client.credentials().create(&request)` |
-| `client.get_credential(id)` | `client.credentials().get(id)` |
-| `client.list_credentials(size, token)` | `client.credentials().list().with_page_size(size).with_page_token(token).send()` |
-| `client.update_credential(id, &update, Some(mask))` | `client.credentials().update(id, &update.with_update_mask(mask))` |
-| `client.update_credential(id, &update, None)` | `client.credentials().update(id, &update)` |
-| `client.delete_credential(id)` | `client.credentials().delete(id)` |
-| `client.create_voice(&request)` | `client.voices().create(&request)` |
-| `client.get_voice(id)` | `client.voices().get(id)` |
-| `client.list_voices(&ListVoicesParams::new().with_search(q).with_page_size(size))` | `client.voices().list().with_search(q).with_page_size(size).send()` |
-| `client.delete_voice(id)` | `client.voices().delete(id)` |
-| `client.create_file_search_store(&request)` | `client.file_search_stores().create(&request)` |
-| `client.get_file_search_store(name)` | `client.file_search_stores().get(name)` |
-| `client.list_file_search_stores(size, token)` | `client.file_search_stores().list().with_page_size(size).with_page_token(token).send()` |
-| `client.delete_file_search_store(name, false)` | `client.file_search_stores().delete(name)` |
-| `client.delete_file_search_store(name, true)` | `client.file_search_stores().force_delete(name)` |
-| `client.upload_to_file_search_store(store, path, Some(name))` | `client.file_search_stores().upload(store, FileUpload::from_path(path).with_display_name(name))` |
-| `client.upload_to_file_search_store(store, path, None)` | `client.file_search_stores().upload(store, FileUpload::from_path(path))` |
-| `client.upload_to_file_search_store_with_mime(store, path, display_name, mime_type)` | `client.file_search_stores().upload(store, FileUpload::from_path(path).with_mime_type(mime_type))`, plus `.with_display_name(name)` for `Some(name)` |
-| `client.list_file_search_documents(store, size, token)` | `client.file_search_stores().documents().list(store).with_page_size(size).with_page_token(token).send()` |
-| `client.get_file_search_document(name)` | `client.file_search_stores().documents().get(name)` |
-| `client.delete_file_search_document(name, false)` | `client.file_search_stores().documents().delete(name)` |
-| `client.delete_file_search_document(name, true)` | `client.file_search_stores().documents().force_delete(name)` |
-| `client.wait_for_document_active(name, timeout, poll_interval)` | `client.file_search_stores().documents().wait_until_active(name, PollOptions::new().with_timeout(timeout).with_poll_interval(poll_interval))` (either setter omitted for `None`: 60 s and 500 ms) |

@@ -90,11 +90,11 @@ live-verification notes are in
 
 ```toml
 [dependencies]
-genai-rs = "0.11"
+genai-rs = "0.12"
 tokio = { version = "1.0", features = ["full"] }
 
 # For the #[tool] macro
-genai-rs-macros = "0.11"
+genai-rs-macros = "0.12"
 
 # Optional
 futures-util = "0.3"     # For streaming
