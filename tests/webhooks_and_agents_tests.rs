@@ -341,16 +341,19 @@ async fn test_agent_crud_lifecycle() {
         assert_eq!(fetched.system_instruction.as_deref(), Some(instruction));
         assert_eq!(fetched.description.as_deref(), Some(description));
 
-        let list = client
+        // Every page: agents leaked by runs that died before cleanup can
+        // push this one past the first.
+        let listed: Vec<Agent> = client
             .agents()
             .list()
             .with_page_size(50)
-            .send()
+            .items()
+            .try_collect()
             .await
             .expect("agents.list");
-        println!("Listed {} agents", list.agents.len());
+        println!("Listed {} agents", listed.len());
         assert!(
-            list.agents
+            listed
                 .iter()
                 .any(|a| a.id.as_deref() == Some(agent_id.as_str())),
             "created agent should appear in list"
@@ -622,12 +625,10 @@ async fn test_safety_settings_accepted_and_stored() {
 
     assert_eq!(response.status, genai_rs::InteractionStatus::Completed);
     let id = response.id.expect("stored interaction id");
-    let stored = client
-        .interactions()
-        .get(&id)
-        .await
-        .expect("get_interaction");
+    // Delete before checking the GET, so a failed read doesn't leak it.
+    let stored = client.interactions().get(&id).await;
     let _ = client.interactions().delete(&id).await;
+    let stored = stored.expect("get_interaction");
     // Parsing the echo, rather than comparing raw JSON, also exercises the
     // `type` key on the deserialize side.
     let echoed: Vec<SafetySetting> = serde_json::from_value(
