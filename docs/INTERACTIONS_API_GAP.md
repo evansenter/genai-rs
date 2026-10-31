@@ -47,7 +47,9 @@ the bindings is modeled until it is probed. From the 2.25.0 sweep:
   language}` object is still rejected. The crate sends the list, which works
   everywhere.
 - **`labels` are accepted** and stored (Vertex-only on 2026-08-08).
-  `safety_settings` is still Vertex-only. By 2026-10-01 create responses
+  `safety_settings` became accepted by 2026-10-30, with the category under
+  the item key `type` (a few values remain Vertex-only; see
+  `docs/ENUM_WIRE_FORMATS.md`). By 2026-10-01 create responses
   stopped echoing request fields (`labels`, `system_instruction`,
   `generation_config`); a GET of the stored interaction returns them.
 - **`gemini-3.8-flash-tts`** returns `audio/wav`, and multi-speaker needs a

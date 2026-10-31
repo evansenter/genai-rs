@@ -143,8 +143,14 @@ async fn test_duplicate_credential_id_conflicts() {
 
     with_credential(
         &client,
-        CreateCredentialRequest::environment_variable("v", vec![InjectionLocation::Header])
-            .with_id(&id),
+        // The API requires a trusted domain on environment_variable
+        // credentials (400 invalid_request without one, seen 2026-10-30).
+        CreateCredentialRequest::environment_variable(
+            "v",
+            vec![InjectionLocation::Header],
+            vec!["httpbin.org".into()],
+        )
+        .with_id(&id),
         |id| {
             let client = client.clone();
             async move {
@@ -317,7 +323,7 @@ async fn test_credentials_reach_sandbox_and_egress() {
     let secret_request = CreateCredentialRequest::new(CredentialConfig::EnvironmentVariable {
         value: secret.clone(),
         injection_location: vec![InjectionLocation::Header, InjectionLocation::Query],
-        trusted_domains: Some(vec!["httpbin.org".into()]),
+        trusted_domains: vec!["httpbin.org".into()],
     });
 
     with_credential(&client, bearer, |bearer_id| {

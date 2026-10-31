@@ -14,7 +14,10 @@
 //! Verified live 2026-09-24: create (bearer token, environment variable),
 //! get, list, patch (with and without `update_mask`), delete; the ID is
 //! optional on create (a UUID is assigned). OAuth2 creation validates that
-//! `token_url` is reachable.
+//! `token_url` is reachable. Since late October 2026 (seen 2026-10-30), an
+//! `environment_variable` create needs at least one `trusted_domains` entry
+//! as well as an `injection_location`, although the `google-genai` 2.34.0
+//! bindings still mark the domains optional.
 //!
 //! Both references take effect at runtime (verified live 2026-09-24 in a
 //! `DEFAULT_ANTIGRAVITY_AGENT` sandbox, pinned by
@@ -166,11 +169,11 @@ pub enum CredentialConfig {
     EnvironmentVariable {
         /// The secret value (write-only).
         value: String,
-        /// Where the value may be injected; at least one.
+        /// Where the value may be injected; the API requires at least one.
         injection_location: Vec<InjectionLocation>,
-        /// Domains allowed to receive the value.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        trusted_domains: Option<Vec<String>>,
+        /// Domains whose requests receive the value. The API requires at
+        /// least one (`400 invalid_request` otherwise, seen 2026-10-30).
+        trusted_domains: Vec<String>,
     },
     /// OAuth2 client credentials.
     #[serde(rename = "oauth2")]
@@ -268,16 +271,18 @@ impl CreateCredentialRequest {
         })
     }
 
-    /// An environment-variable secret injectable at `locations`.
+    /// An environment-variable secret, substituted at `locations` into
+    /// requests to `trusted_domains`. The API requires at least one of each.
     #[must_use]
     pub fn environment_variable(
         value: impl Into<String>,
         locations: Vec<InjectionLocation>,
+        trusted_domains: Vec<String>,
     ) -> Self {
         Self::new(CredentialConfig::EnvironmentVariable {
             value: value.into(),
             injection_location: locations,
-            trusted_domains: None,
+            trusted_domains,
         })
     }
 
@@ -675,6 +680,7 @@ mod tests {
             CreateCredentialRequest::environment_variable(
                 "secret-value",
                 vec![InjectionLocation::Header],
+                vec!["api.example".into()],
             ),
             CreateCredentialRequest::new(CredentialConfig::OAuth2 {
                 client_id: "visible-client".into(),
@@ -742,9 +748,15 @@ mod tests {
             serde_json::to_value(CreateCredentialRequest::environment_variable(
                 "v",
                 vec![InjectionLocation::Header, InjectionLocation::Query],
+                vec!["api.example".into()],
             ))
             .unwrap(),
-            json!({"type": "environment_variable", "value": "v", "injection_location": ["header", "query"]})
+            json!({
+                "type": "environment_variable",
+                "value": "v",
+                "injection_location": ["header", "query"],
+                "trusted_domains": ["api.example"]
+            })
         );
         assert_eq!(
             serde_json::to_value(CreateCredentialRequest::new(CredentialConfig::OAuth2 {

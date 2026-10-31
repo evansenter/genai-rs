@@ -62,7 +62,9 @@ request timeout. `examples/deep_research.rs` is runnable.
 
 A custom agent bundles an id, a system instruction, tools (a subset:
 `code_execution`, `url_context`, `google_search`, `mcp_server`) and a base
-environment. Creating custom agents is gated on standard API keys.
+environment. `Agent::new(id, base_agent)` takes both required fields; the
+only accepted base agent is `DEFAULT_ANTIGRAVITY_AGENT` (verified 2026-10-30,
+when creating custom agents stopped being gated on standard API keys).
 
 ```rust,no_run
 use futures_util::TryStreamExt;
@@ -70,7 +72,7 @@ use genai_rs::{Agent, EnvironmentSource, RemoteEnvironment, Tool};
 
 # async fn run(client: genai_rs::Client) -> Result<(), genai_rs::GenaiError> {
 let agent = client.agents().create(
-    &Agent::new("customer-sentinel")
+    &Agent::new("customer-sentinel", genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
         .with_system_instruction("You monitor customer feedback.")
         .with_description("Watches feedback channels and summarizes sentiment")
         .add_tool(Tool::CodeExecution)
@@ -244,8 +246,9 @@ which the egress proxy replaces with the secret in requests to its
 
 A trigger runs a stored interaction on a cron schedule, server-side. The
 nested interaction must target a **custom agent**: a model-only interaction
-is rejected. Since custom-agent creation is gated, most accounts can list
-triggers but not create them.
+is rejected. Custom-agent creation was gated on standard keys through
+2026-10-08 and works as of 2026-10-30; trigger creation against such an
+agent has not been re-verified since.
 
 ```rust,no_run
 use futures_util::TryStreamExt;

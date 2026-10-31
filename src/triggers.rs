@@ -16,9 +16,9 @@
 //! `interaction` must target a custom `agent` (an [`agents`](crate::agents)
 //! resource ID) — plain `model` interactions are rejected ("Agent '' is
 //! invalid or not found") and `store` is not allowed in the nested request.
-//! Custom-agent creation is gated/allowlisted on standard API keys, so
-//! trigger creation is too; the CRUD surface is modeled for accounts where
-//! it is available.
+//! Custom-agent creation was gated on standard API keys through 2026-10-08
+//! and works as of 2026-10-30; trigger creation against such an agent has
+//! not been re-verified since.
 //!
 //! This is distinct from
 //! `antigravity::TriggerConfig` (feature `antigravity`), which schedules
@@ -733,8 +733,7 @@ impl<'a> Triggers<'a> {
     /// Creates a server-side scheduled trigger.
     ///
     /// The trigger's `interaction` must target a custom `agent` (see
-    /// [`crate::triggers`] for the live-verified constraints); trigger
-    /// creation is gated with custom-agent creation on standard API keys.
+    /// [`crate::triggers`] for the live-verified constraints).
     /// Like [`TriggerCreateParams::new`], this warns when the nested
     /// interaction sets `store`, targets no `agent`, or has empty input.
     ///

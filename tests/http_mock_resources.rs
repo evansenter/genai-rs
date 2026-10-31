@@ -198,7 +198,7 @@ fn every_call(c: &genai_rs::Client) -> Vec<(&'static str, Returns, Call<'_>)> {
         (
             "agents.create",
             Resource,
-            call(async move { c.agents().create(&Agent::new("a")).await }),
+            call(async move { c.agents().create(&Agent::new("a", "base")).await }),
         ),
         ("agents.get", Resource, call(c.agents().get("a"))),
         ("agents.list", Resource, call(c.agents().list().send())),
@@ -1004,8 +1004,7 @@ async fn agent_endpoints_send_the_documented_requests() {
                     "base_environment": "env-1"
                 })),
                 async move {
-                    let agent = Agent::new("my-agent")
-                        .with_base_agent("agents/base")
+                    let agent = Agent::new("my-agent", "agents/base")
                         .with_system_instruction("Be brief.")
                         .with_description("A test agent")
                         .add_tool(Tool::CodeExecution)
@@ -2868,12 +2867,14 @@ async fn credential_endpoints_send_the_documented_requests() {
                 Some(json!({
                     "type": "environment_variable",
                     "value": "v4lue",
-                    "injection_location": ["header", "query"]
+                    "injection_location": ["header", "query"],
+                    "trusted_domains": ["api.example"]
                 })),
                 async move {
                     let request = CreateCredentialRequest::environment_variable(
                         "v4lue",
                         vec![InjectionLocation::Header, InjectionLocation::Query],
+                        vec!["api.example".into()],
                     );
                     c.credentials().create(&request).await
                 },
@@ -3051,7 +3052,7 @@ async fn loud_wire_redacts_credential_secrets() {
         let client = stub.client();
         let requests = [
             CreateCredentialRequest::bearer_token(SECRETS[0]),
-            CreateCredentialRequest::environment_variable(SECRETS[1], vec![]),
+            CreateCredentialRequest::environment_variable(SECRETS[1], vec![], vec![]),
             CreateCredentialRequest::new(CredentialConfig::OAuth2 {
                 client_id: "cid".into(),
                 client_secret: SECRETS[2].into(),

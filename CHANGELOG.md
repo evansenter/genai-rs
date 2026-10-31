@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.12.0] - 2026-10-08
+## [0.12.0] - 2026-10-31
 
 Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),
 `gemini-3.8-flash`, the `antigravity-preview-09-2026` agent, and Antigravity
@@ -39,7 +39,11 @@ publishing, so this release follows 0.10.0 directly.
   `CreateCredentialRequest` and `CredentialUpdate` redact credential secrets
   (`token`, `client_secret`, `refresh_token`, `environment_variable` values)
   and environment `env` maps. Custom `WireInspector`s still receive raw
-  bodies.
+  bodies. An `environment_variable` credential takes its trusted domains as
+  a required argument, `CreateCredentialRequest::environment_variable(value,
+  locations, trusted_domains)`: since late October 2026 the API rejects one
+  without a domain (400 `invalid_request`), although the `google-genai`
+  2.34.0 bindings still mark the field optional.
 - **Environment files and forking**: `client.environments().files().list(env)`
   (`.with_recursive(true)` for subdirectories) and `.upload(env, path,
   EnvironmentFileUpload::new(data, mime))`, and
@@ -98,6 +102,15 @@ publishing, so this release follows 0.10.0 directly.
 
 ### Changed
 
+- **Breaking: `Agent::new(id, base_agent)` takes the base agent;
+  `Agent::with_base_agent` is removed.** Creating custom agents now works on
+  a standard API key (it was refused with a generic 400 through 2026-10-08),
+  and the API rejects an agent without a base (`400 'base_agent' must be
+  specified.`). The only base it accepts so far is
+  `DEFAULT_ANTIGRAVITY_AGENT`; Deep Research and model ids get
+  `400 Unsupported 'base_agent'.` (verified 2026-10-30). Migrate
+  `Agent::new(id).with_base_agent(b)` to `Agent::new(id, b)`, and
+  `Agent::new(id)` to `Agent::new(id, genai_rs::DEFAULT_ANTIGRAVITY_AGENT)`.
 - **Breaking: resource methods moved from `Client` to per-resource
   handles.** `client.agents()`, `.webhooks()`, `.triggers()`,
   `.environments()`, `.files()` and `.interactions()` each return a `Copy`
@@ -204,7 +217,7 @@ publishing, so this release follows 0.10.0 directly.
   `CreateEnvironmentRequest`, `TranscriptionConfig` and `RagRanking` break
   exhaustive struct literals.
 - Request `labels` are accepted by the Gemini API (verified 2026-09-24; no
-  longer Vertex-only). `safety_settings` still is.
+  longer Vertex-only).
 - `#[tool]` needs only `genai-rs` and `genai-rs-macros` — no `async-trait`,
   `serde_json` or trait import at the expansion site. The two crates must be
   bumped together (the expansion uses `genai_rs::__private`).
@@ -242,6 +255,15 @@ publishing, so this release follows 0.10.0 directly.
 
 ### Fixed
 
+- `safety_settings` work on the Gemini API, which accepts them as of
+  2026-10-30 (Vertex-only through 2026-10-08). `SafetySetting` now sends its
+  category under the wire key `type`, as the API defines it; it sent
+  `category`, which the API never accepted (`400 Unknown parameter
+  'category' at 'safety_settings[0]'`), and the old Vertex-only rejection hid
+  the mistake. The Rust field is still `category`, but deserializing a
+  `SafetySetting` now requires `type`. `HarmCategory::CivicIntegrity`, the
+  four `Image*` categories and `SafetyThreshold::BlockNone` are still
+  rejected by the Gemini API as Vertex-only.
 - The auto-function loops now run a declared function when the API calls it
   as `default_api:<name>`, which it started doing on the second user turn of
   a non-streamed chain (2026-10-01). Previously the loop answered "function

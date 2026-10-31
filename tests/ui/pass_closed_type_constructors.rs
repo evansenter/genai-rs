@@ -4,7 +4,7 @@
 //! For `ModalityTokens` that left serde as the only way to build one, so
 //! `ModalityTokens::new()` was added; for the read-write resources,
 //! `docs/ENUM_WIRE_FORMATS.md` argues closing them costs nothing *because*
-//! constructors like `Agent::new()` cover the sending side.
+//! constructors like `Agent::new(id, base_agent)` cover the sending side.
 //!
 //! Neither claim can be checked in-crate, where the attribute is inert.
 //! trybuild builds this as its own crate, so removing or narrowing either
@@ -15,6 +15,10 @@ fn main() {
     let modality = genai_rs::ModalityTokens::new("text", 1);
     assert_eq!(modality.tokens, 1);
 
-    let agent = genai_rs::Agent::new("agents/x");
+    let agent = genai_rs::Agent::new("agents/x", genai_rs::DEFAULT_ANTIGRAVITY_AGENT);
     assert_eq!(agent.id.as_deref(), Some("agents/x"));
+    assert_eq!(
+        agent.base_agent.as_deref(),
+        Some(genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
+    );
 }

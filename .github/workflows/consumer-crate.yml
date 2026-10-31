@@ -150,7 +150,7 @@ jobs:
               let modality = genai_rs::ModalityTokens::new("text", 1);
               assert_eq!(modality.tokens, 1);
 
-              let agent = genai_rs::Agent::new("agents/x");
+              let agent = genai_rs::Agent::new("agents/x", genai_rs::DEFAULT_ANTIGRAVITY_AGENT);
               assert_eq!(agent.id.as_deref(), Some("agents/x"));
 
               println!("ok: {}", declaration.name());

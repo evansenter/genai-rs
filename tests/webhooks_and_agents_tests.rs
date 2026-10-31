@@ -296,68 +296,84 @@ async fn test_agent_crud_lifecycle() {
         return;
     };
 
-    let agent_id = "genai-rs-test-agent";
-    // Verified live (2026-07): the payload schema is validated first (agent
-    // `tools` accept only code_execution, google_search and url_context),
-    // then creation is refused with a generic 400 on a standard key. The
-    // CRUD assertions run where creation is allowlisted.
-    let agent = Agent::new(agent_id)
-        .with_system_instruction("You are a test agent that answers briefly.")
-        .with_description("Integration-test agent created by genai-rs")
+    // Unique per run: an existing id is a 409 (verified 2026-10-30), so a
+    // fixed id would fail after a run that died before cleanup, or alongside
+    // a concurrent CI run on the same key.
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock before epoch")
+        .subsec_nanos();
+    let agent_id = format!("genai-rs-test-agent-{nanos}");
+    let instruction = "You are a test agent that answers briefly.";
+    let description = "Integration-test agent created by genai-rs";
+    // Verified live 2026-10-30: `base_agent` is required and only the
+    // Antigravity agent is accepted. Through 2026-10-08 every create on a
+    // standard key was refused with a generic 400; it now succeeds.
+    let agent = Agent::new(&agent_id, genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
+        .with_system_instruction(instruction)
+        .with_description(description)
         .add_tool(Tool::CodeExecution);
 
-    let created = match client.agents().create(&agent).await {
-        Ok(agent) => agent,
-        // The gate: a generic 400 for a schema-valid payload. A schema
-        // rejection names the field, so it does not match.
-        Err(genai_rs::GenaiError::Api {
-            status_code: 400,
-            message,
-            ..
-        }) if message.contains("Request contains an invalid argument") => {
-            println!("Agent create gated for this key: {message}");
-            return;
-        }
-        Err(e) => panic!("expected the agent-create gate (400 invalid argument), got: {e}"),
-    };
+    // Not retried: a retry after a lost response would 409 on the id.
+    let created = client.agents().create(&agent).await.expect("agents.create");
     println!("Created agent: id={:?}", created.id);
 
-    // Get: the tools subset must round-trip intact.
-    let fetched = client.agents().get(agent_id).await.expect("agents.get");
-    assert_eq!(fetched.id.as_deref(), Some(agent_id));
-    assert!(
-        matches!(fetched.tools.as_deref(), Some([Tool::CodeExecution])),
-        "agent tools must round-trip: {:?}",
-        fetched.tools
-    );
-    assert_eq!(
-        fetched.system_instruction.as_deref(),
-        Some("You are a test agent that answers briefly.")
-    );
+    let checks = async {
+        // Create echoes the agent.
+        assert_eq!(created.id.as_deref(), Some(agent_id.as_str()));
+        assert_eq!(
+            created.base_agent.as_deref(),
+            Some(genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
+        );
 
-    // List
-    let list = client
-        .agents()
-        .list()
-        .with_page_size(50)
-        .send()
-        .await
-        .expect("agents.list");
-    println!("Listed {} agents", list.agents.len());
-    assert!(
-        list.agents
-            .iter()
-            .any(|a| a.id.as_deref() == Some(agent_id)),
-        "created agent should appear in list"
-    );
+        // Get: the tools subset must round-trip intact.
+        let fetched = client.agents().get(&agent_id).await.expect("agents.get");
+        assert_eq!(fetched.id.as_deref(), Some(agent_id.as_str()));
+        assert_eq!(
+            fetched.base_agent.as_deref(),
+            Some(genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
+        );
+        assert!(
+            matches!(fetched.tools.as_deref(), Some([Tool::CodeExecution])),
+            "agent tools must round-trip: {:?}",
+            fetched.tools
+        );
+        assert_eq!(fetched.system_instruction.as_deref(), Some(instruction));
+        assert_eq!(fetched.description.as_deref(), Some(description));
 
-    // Delete (cleanup)
-    client
-        .agents()
-        .delete(agent_id)
-        .await
-        .expect("agents.delete");
-    println!("Deleted agent {agent_id}");
+        // Every page: agents leaked by runs that died before cleanup can
+        // push this one past the first.
+        let listed: Vec<Agent> = client
+            .agents()
+            .list()
+            .with_page_size(50)
+            .items()
+            .try_collect()
+            .await
+            .expect("agents.list");
+        println!("Listed {} agents", listed.len());
+        assert!(
+            listed
+                .iter()
+                .any(|a| a.id.as_deref() == Some(agent_id.as_str())),
+            "created agent should appear in list"
+        );
+    };
+    let outcome = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(checks)).await;
+
+    let deleted = client.agents().delete(&agent_id).await;
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    deleted.expect("agents.delete");
+
+    // Deleted means gone.
+    match client.agents().get(&agent_id).await {
+        Err(genai_rs::GenaiError::Api {
+            status_code: 404, ..
+        }) => {}
+        other => panic!("expected 404 after delete, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -368,8 +384,8 @@ async fn test_agent_list_streams_end_on_the_last_page() {
         return;
     };
 
-    // A standard key lists no agents (`{"agents": []}`, verified
-    // 2026-09-26), so this pins the end-of-list rule on a real response.
+    // The test key usually holds no agents (`{"agents": []}`, verified
+    // 2026-10-30), so this pins the end-of-list rule on a real response.
     // Following several pages is covered offline in http_mock_resources.rs.
     let pages: Vec<_> = client
         .agents()
@@ -580,13 +596,60 @@ async fn test_transcription_config_accepted() {
     );
 }
 
-/// `safety_settings` is Vertex-only (verified live 2026-09-24): the 400 must
-/// carry the gate's stable "Gemini Enterprise" fragment, so a schema
-/// rejection, a mis-scoped key or a transport failure cannot pass. Acceptance
-/// means the knob launched and this probe should be upgraded.
+/// `safety_settings` is accepted on the Gemini API (verified live 2026-10-30;
+/// the parameter was Vertex-only through 2026-10-08). The item's category key
+/// is `type`. The create response drops `method`, so the stored record is
+/// read back with a GET.
 #[tokio::test]
 #[ignore = "Requires API key"]
-async fn test_safety_settings_vertex_gated() {
+async fn test_safety_settings_accepted_and_stored() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    use genai_rs::{HarmCategory, SafetyMethod, SafetySetting, SafetyThreshold};
+
+    let setting = SafetySetting::new(HarmCategory::Harassment, SafetyThreshold::BlockOnlyHigh)
+        .with_method(SafetyMethod::Severity);
+    let response = crate::retry_request!([client, setting] => {
+        client
+            .interaction()
+            .with_model(genai_rs::DEFAULT_MODEL)
+            .with_text("Say OK.")
+            .add_safety_setting(setting)
+            .create()
+            .await
+    })
+    .expect("safety_settings should be accepted (verified live 2026-10-30)");
+
+    let id = response.id.expect("stored interaction id");
+    // Delete before any assertion, so a failure doesn't leak it.
+    let stored = client.interactions().get(&id).await;
+    let _ = client.interactions().delete(&id).await;
+    assert_eq!(response.status, genai_rs::InteractionStatus::Completed);
+    let stored = stored.expect("get_interaction");
+    // Parsing the echo, rather than comparing raw JSON, also exercises the
+    // `type` key on the deserialize side.
+    let echoed: Vec<SafetySetting> = serde_json::from_value(
+        stored
+            .extra
+            .get("safety_settings")
+            .cloned()
+            .expect("safety_settings were not stored"),
+    )
+    .expect("stored safety_settings parse as SafetySetting");
+    assert_eq!(echoed, vec![setting]);
+}
+
+/// `civic_integrity`, the `image_*` categories and `block_none` are
+/// Vertex-only on the Gemini API (verified live 2026-10-30). The 400 must
+/// carry the gate's stable "Gemini Enterprise" fragment, so a schema
+/// rejection (such as an unknown item key), a mis-scoped key or a transport
+/// failure cannot pass.
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_safety_settings_vertex_only_value_gated() {
     let Some(client) = get_client() else {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
@@ -600,7 +663,7 @@ async fn test_safety_settings_vertex_gated() {
             .with_model(genai_rs::DEFAULT_MODEL)
             .with_text("Say OK.")
             .add_safety_setting(SafetySetting::new(
-                HarmCategory::Harassment,
+                HarmCategory::CivicIntegrity,
                 SafetyThreshold::BlockOnlyHigh,
             ))
             .create()
@@ -608,17 +671,22 @@ async fn test_safety_settings_vertex_gated() {
     });
 
     match result {
-        Ok(response) => panic!(
-            "safety_settings was accepted (status={:?}) — the knob has launched on \
-             the Gemini API; upgrade this probe to assert acceptance",
-            response.status
-        ),
+        Ok(response) => {
+            if let Some(id) = response.id.as_deref() {
+                let _ = client.interactions().delete(id).await;
+            }
+            panic!(
+                "civic_integrity was accepted (status={:?}) — update the Vertex-only \
+                 notes in src/safety.rs and docs/ENUM_WIRE_FORMATS.md",
+                response.status
+            )
+        }
         Err(genai_rs::GenaiError::Api {
             status_code: 400,
             message,
             ..
         }) if message.contains("Gemini Enterprise") => {
-            println!("safety_settings Vertex-gated as expected: {message}");
+            println!("civic_integrity Vertex-gated as expected: {message}");
         }
         Err(e) => panic!("expected the documented Vertex-gate 400, got: {e}"),
     }

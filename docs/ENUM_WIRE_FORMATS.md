@@ -49,9 +49,9 @@ the shape was a `Content` block rather than a step.
 | 28 | `ResponseFormat` | `format_type` | text/audio/image/video union |
 | 29 | `VideoTask` | `task_type` | text_to_video/image_to_video/reference_to_video/edit/extend |
 | 30 | `Visualization` | `visualization_type` | off/auto |
-| 31 | `HarmCategory` | `category_type` | Ten harm categories (Vertex-only parameter) |
-| 32 | `SafetyThreshold` | `threshold_type` | Block thresholds (Vertex-only parameter) |
-| 33 | `SafetyMethod` | `method_type` | severity/probability (Vertex-only parameter) |
+| 31 | `HarmCategory` | `category_type` | Ten harm categories (some Vertex-only) |
+| 32 | `SafetyThreshold` | `threshold_type` | Block thresholds (`block_none` Vertex-only) |
+| 33 | `SafetyMethod` | `method_type` | severity/probability |
 | 34 | `EnvironmentStatus` | `status_type` | active/expired |
 | 35 | `TriggerStatus` | `status_type` | active/paused/error |
 | 36 | `TriggerExecutionStatus` | `status_type` | Execution outcomes |
@@ -105,9 +105,9 @@ job runs this configuration.
 | `FunctionCallingMode` | lowercase | `"auto"`, `"any"`, `"none"`, `"validated"` | Uppercase spellings (pre-revision) now deserialize to `Unknown`. Pending live verification |
 | `CodeExecutionLanguage` | lowercase | `"python"` | `"PYTHON"` (pre-revision) now deserializes to `Unknown`. Pending live verification |
 | `ServiceTier` | lowercase | `"flex"`, `"standard"`, `"priority"` | Response echo `"standard"` verified live 2026-07 |
-| `HarmCategory` | snake_case | `"hate_speech"`, `"jailbreak"` | `safety_settings` is rejected by the Gemini API as Vertex-only (live 2026-08-08) |
-| `SafetyThreshold` | snake_case | `"block_only_high"`, `"off"` | Same Vertex-only constraint |
-| `SafetyMethod` | lowercase | `"severity"`, `"probability"` | Same Vertex-only constraint |
+| `HarmCategory` | snake_case | `"hate_speech"`, `"jailbreak"` | Sent under the item key `type`. Five values accepted live 2026-10-30; `civic_integrity` and `image_*` are Vertex-only |
+| `SafetyThreshold` | snake_case | `"block_only_high"`, `"off"` | Four values accepted live 2026-10-30; `block_none` is Vertex-only |
+| `SafetyMethod` | lowercase | `"severity"`, `"probability"` | Both accepted live 2026-10-30 |
 | `EnvironmentStatus` | lowercase | `"active"`, `"expired"` | `"active"` verified live 2026-08-08 |
 | `TriggerStatus` | lowercase | `"active"`, `"paused"`, `"error"` | From the SDK spec; creation is agent-gated, so pending live verification |
 | `TriggerExecutionStatus` | snake_case | `"in_progress"`, `"timed_out"` | From the SDK spec; pending live verification |
@@ -317,9 +317,13 @@ verification.
 | `SafetyThreshold` | `block_low_and_above`, `block_medium_and_above`, `block_only_high`, `block_none`, `off` |
 | `SafetyMethod` | `severity`, `probability` |
 
-The values come from the SDK spec. The `safety_settings` parameter itself is
-rejected by the Gemini API (live 2026-08-08: 400 "not available on the
-Gemini API but it is available on the Gemini Enterprise Agent Platform").
+Each setting is `{"type", "threshold", "method"?}`. The Gemini API accepts
+`safety_settings` as of 2026-10-30 (it was Vertex-only through 2026-10-08)
+and validates every value. `civic_integrity`, the `image_*` categories and
+`block_none` are rejected as Vertex-only (400 "...allowed on the Gemini
+Enterprise Agent Platform"). The crate sent the category under `category`
+until 0.12.0; the API never accepted that key, and the old whole-parameter
+gate hid the mistake.
 
 ### EnvironmentStatus
 
@@ -951,7 +955,7 @@ isn't in its `REQUEST_SIDE` exemption list. The rule:
 - **Closed**: anything the API returns (`InteractionResponse`,
   `UsageMetadata`, the `*ListResponse` wrappers, result items). That includes
   read-write resources (`Agent`, `Environment`, `Trigger`, `Webhook`), where
-  constructors like `Agent::new(id)` cover the sending side. Create bodies
+  constructors like `Agent::new(id, base_agent)` cover the sending side. Create bodies
   that ship builders (`CreateFileSearchStoreRequest`) are closed too.
 - **Open**: request types the user assembles and the API never returns
   (`GenerationConfig`, `FunctionDeclaration`, the tool configs).
