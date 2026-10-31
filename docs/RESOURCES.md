@@ -51,7 +51,7 @@ become `with_*` setters.
 
 | Python (`google-genai` 2.25) | genai-rs |
 |------------------------------|----------|
-| `client.agents.create(id=..., ...)` | `client.agents().create(&Agent::new(id)...)` |
+| `client.agents.create(id=..., ...)` | `client.agents().create(&Agent::new(id, base_agent)...)` |
 | `client.agents.get(id)` | `client.agents().get(id)` |
 | `client.agents.list(page_size=, page_token=, parent=)` | `client.agents().list().with_page_size(n).with_page_token(t).with_parent(p).send()` |
 | (no equivalent) | `client.agents().list().pages()` / `.items()` |

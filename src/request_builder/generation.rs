@@ -97,8 +97,8 @@ impl<'a> InteractionBuilder<'a> {
     /// Sets the safety settings for this request, replacing any previously
     /// added ones.
     ///
-    /// Server-side constraint (verified live 2026-08-08): the Gemini API
-    /// rejects `safety_settings` (Vertex-only); see [`SafetySetting`].
+    /// Accepted by the Gemini API (verified live 2026-10-30); some category
+    /// and threshold values are Vertex-only, see [`SafetySetting`].
     ///
     /// # Example
     ///

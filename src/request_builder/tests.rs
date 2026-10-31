@@ -1740,8 +1740,8 @@ fn test_builder_safety_settings_replace_and_accumulate() {
     let value = serde_json::to_value(&request).unwrap();
     let settings = value["safety_settings"].as_array().unwrap();
     assert_eq!(settings.len(), 3, "add_* must accumulate onto with_*");
-    assert_eq!(settings[0]["category"], "hate_speech");
-    assert_eq!(settings[1]["category"], "harassment");
+    assert_eq!(settings[0]["type"], "hate_speech");
+    assert_eq!(settings[1]["type"], "harassment");
     assert_eq!(settings[1]["threshold"], "block_only_high");
     assert_eq!(settings[2]["threshold"], "off");
 }
@@ -1769,7 +1769,7 @@ fn test_builder_with_safety_settings_replaces() {
     let value = serde_json::to_value(&request).unwrap();
     let settings = value["safety_settings"].as_array().unwrap();
     assert_eq!(settings.len(), 1, "with_* must replace");
-    assert_eq!(settings[0]["category"], "civic_integrity");
+    assert_eq!(settings[0]["type"], "civic_integrity");
 }
 
 #[test]

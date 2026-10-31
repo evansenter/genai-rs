@@ -8,11 +8,12 @@
 //! wire values deserialize into `Unknown` variants that preserve the
 //! original data for roundtrip serialization.
 //!
-//! Server-side constraint (verified live 2026-08-08): the Gemini API
-//! currently rejects `safety_settings` with 400 `invalid_request` — "not
-//! available on the Gemini API but it is available on the Gemini
-//! Enterprise Agent Platform" (Vertex-only). The types are modeled for
-//! spec parity and forward compatibility.
+//! Accepted by the Gemini API (verified live 2026-10-30; the parameter was
+//! Vertex-only through 2026-10-08). The wire object is
+//! `{"type", "threshold", "method"?}`, and the API validates every value.
+//! Some values are still rejected as Vertex-only (400 "...allowed on the
+//! Gemini Enterprise Agent Platform"): [`HarmCategory::CivicIntegrity`],
+//! the four `Image*` categories and [`SafetyThreshold::BlockNone`].
 
 use crate::wire_enum::wire_enum;
 use serde::{Deserialize, Serialize};
@@ -35,15 +36,17 @@ wire_enum! {
         Harassment = "harassment",
         /// Sexually explicit content.
         SexuallyExplicit = "sexually_explicit",
-        /// Content that could undermine civic processes.
+        /// Content that could undermine civic processes. Vertex-only on the
+        /// Gemini API (verified live 2026-10-30).
         CivicIntegrity = "civic_integrity",
-        /// Hateful imagery.
+        /// Hateful imagery. Vertex-only on the Gemini API (2026-10-30).
         ImageHate = "image_hate",
-        /// Dangerous imagery.
+        /// Dangerous imagery. Vertex-only on the Gemini API (2026-10-30).
         ImageDangerousContent = "image_dangerous_content",
-        /// Harassing imagery.
+        /// Harassing imagery. Vertex-only on the Gemini API (2026-10-30).
         ImageHarassment = "image_harassment",
-        /// Sexually explicit imagery.
+        /// Sexually explicit imagery. Vertex-only on the Gemini API
+        /// (2026-10-30).
         ImageSexuallyExplicit = "image_sexually_explicit",
         /// Prompt-injection / jailbreak attempts.
         Jailbreak = "jailbreak",
@@ -66,6 +69,7 @@ wire_enum! {
         /// Block only content with high probability of harm.
         BlockOnlyHigh = "block_only_high",
         /// Never block for this category, but keep safety scoring on.
+        /// Vertex-only on the Gemini API (verified live 2026-10-30).
         BlockNone = "block_none",
         /// Disable the safety filter for this category entirely.
         Off = "off",
@@ -100,7 +104,7 @@ wire_enum! {
 /// let setting = SafetySetting::new(HarmCategory::Harassment, SafetyThreshold::BlockOnlyHigh);
 /// assert_eq!(
 ///     serde_json::to_value(&setting).unwrap(),
-///     serde_json::json!({"category": "harassment", "threshold": "block_only_high"})
+///     serde_json::json!({"type": "harassment", "threshold": "block_only_high"})
 /// );
 /// ```
 ///
@@ -108,7 +112,7 @@ wire_enum! {
 ///
 /// All three enums here are open (Evergreen): an unrecognized *string*
 /// wire value deserializes into `Unknown` and re-serializes faithfully.
-/// A **non-string** wire value (e.g. a numeric `category` in a config
+/// A **non-string** wire value (e.g. a numeric `type` in a config
 /// file feeding [`TriggerCreateParams`](crate::TriggerCreateParams))
 /// also parses into `Unknown`, but its stored type is the
 /// `<non-string: ...>` debug marker — sending that back produces a
@@ -118,7 +122,8 @@ wire_enum! {
 /// [`TriggerUpdate::with_status`](crate::TriggerUpdate::with_status)).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SafetySetting {
-    /// The harm category this setting applies to.
+    /// The harm category this setting applies to (wire key `type`).
+    #[serde(rename = "type")]
     pub category: HarmCategory,
     /// The threshold for blocking content in this category.
     pub threshold: SafetyThreshold,
@@ -162,7 +167,7 @@ mod tests {
         assert_eq!(
             json,
             serde_json::json!({
-                "category": "dangerous_content",
+                "type": "dangerous_content",
                 "threshold": "block_medium_and_above",
                 "method": "severity"
             })
@@ -180,7 +185,7 @@ mod tests {
     #[test]
     fn unknown_values_roundtrip() {
         let json = serde_json::json!({
-            "category": "brand_new_category",
+            "type": "brand_new_category",
             "threshold": "block_everything"
         });
         let setting: SafetySetting = serde_json::from_value(json.clone()).unwrap();
@@ -195,9 +200,9 @@ mod tests {
 
     #[test]
     fn known_values_roundtrip() {
-        // Exhaustive: with the parameter Vertex-gated, no live probe can
-        // ever confirm a category string, so these hand-typed as_wire
-        // arms are pinned by nothing else.
+        // Exhaustive: the live tests confirm only the Gemini-accepted
+        // values (2026-10-30); `civic_integrity`, `image_*` and `block_none`
+        // are Vertex-only, so these hand-typed as_wire arms pin the rest.
         for (category, wire) in [
             (HarmCategory::HateSpeech, "hate_speech"),
             (HarmCategory::DangerousContent, "dangerous_content"),

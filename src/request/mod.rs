@@ -464,10 +464,10 @@ pub struct InteractionRequest {
 
     /// Safety settings for the interaction, one per harm category.
     ///
-    /// Server-side constraint (verified live 2026-08-08): the Gemini API
-    /// rejects `safety_settings` — "not available on the Gemini API but it
-    /// is available on the Gemini Enterprise Agent Platform" (Vertex-only).
-    /// The field is modeled for spec parity and forward compatibility.
+    /// Accepted by the Gemini API (verified live 2026-10-30; Vertex-only
+    /// through 2026-10-08). A few values are still Vertex-only; see
+    /// [`SafetySetting`]. A stored interaction read back with
+    /// `interactions().get` carries them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub safety_settings: Option<Vec<SafetySetting>>,
 

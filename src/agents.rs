@@ -39,7 +39,7 @@ use crate::tools::Tool;
 /// ```
 /// use genai_rs::{Agent, EnvironmentSource, RemoteEnvironment, Tool};
 ///
-/// let agent = Agent::new("customer-sentinel")
+/// let agent = Agent::new("customer-sentinel", genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
 ///     .with_system_instruction("You monitor customer feedback.")
 ///     .with_description("Watches feedback channels and summarizes sentiment")
 ///     .add_tool(Tool::CodeExecution)
@@ -77,8 +77,8 @@ pub struct Agent {
     ///
     /// Without this, a deserialize-then-serialize cycle silently drops any
     /// field the crate has not modeled yet — invisible to the caller, and
-    /// unrecoverable. Agent creation is gated on a standard API key, so only the
-    /// GET/LIST shapes have been observed.
+    /// unrecoverable. The create, get and list shapes were observed live on
+    /// 2026-10-30; create echoes the agent.
     ///
     /// **Also read on serialize into a request body.** [`Agents::create`]
     /// sends this whole struct, so `extra` is an *outbound* escape hatch too —
@@ -96,20 +96,22 @@ pub struct Agent {
 }
 
 impl Agent {
-    /// Creates a new agent definition with the given ID.
+    /// Creates an agent definition. `POST /v1beta/agents` requires both
+    /// arguments: `id` names the agent (an existing id is a 409), and
+    /// `base_agent` is the managed agent it extends.
+    ///
+    /// As of 2026-10-30 the only accepted base agent is
+    /// [`DEFAULT_ANTIGRAVITY_AGENT`](crate::DEFAULT_ANTIGRAVITY_AGENT), bare or
+    /// as `agents/<id>` (stored bare). Deep Research and model ids are
+    /// rejected with `400 Unsupported 'base_agent'.`, and an empty one with
+    /// `400 'base_agent' must be specified.`
     #[must_use]
-    pub fn new(id: impl Into<String>) -> Self {
+    pub fn new(id: impl Into<String>, base_agent: impl Into<String>) -> Self {
         Self {
             id: Some(id.into()),
+            base_agent: Some(base_agent.into()),
             ..Default::default()
         }
-    }
-
-    /// Sets the base agent to extend.
-    #[must_use]
-    pub fn with_base_agent(mut self, base_agent: impl Into<String>) -> Self {
-        self.base_agent = Some(base_agent.into());
-        self
     }
 
     /// Sets the system instruction for the agent.
@@ -202,17 +204,21 @@ impl<'a> Agents<'a> {
     /// [`InteractionBuilder::with_agent()`](crate::InteractionBuilder::with_agent)
     /// using its ID.
     ///
-    /// Live behavior notes (2026-07):
-    /// - Agent creation was rejected with a generic
-    ///   `400 "Request contains an invalid argument."` for every payload
-    ///   tried on a standard Gemini API key (even schema-valid ones), which
-    ///   suggests the resource is allowlisted/gated. Field names are still
-    ///   validated first (snake_case: `id`, `base_agent`,
-    ///   `system_instruction`, `description`, `tools`, `base_environment`).
+    /// Live behavior notes (2026-10-30):
+    /// - Works on a standard Gemini API key. `id` and `base_agent` are
+    ///   required (`400 Invalid agent id: ` /
+    ///   `400 'base_agent' must be specified.`), and
+    ///   [`DEFAULT_ANTIGRAVITY_AGENT`](crate::DEFAULT_ANTIGRAVITY_AGENT) is
+    ///   the only accepted base agent (`400 Unsupported 'base_agent'.`
+    ///   otherwise). The response echoes the agent; an existing `id` is
+    ///   `409 Requested entity already exists`. Through at least 2026-10-08,
+    ///   every create on a standard key was refused with a generic
+    ///   `400 "Request contains an invalid argument."`.
     /// - `tools` on an agent only accepts `code_execution`, `google_search`,
-    ///   and `url_context` (per the API's own validation error).
-    /// - Managed agent IDs (e.g. `deep-research-preview-04-2026`) are not
-    ///   retrievable through `GET /v1beta/agents/{id}` (404).
+    ///   and `url_context` (per the API's own validation error, 2026-07).
+    /// - Managed agent IDs (e.g. `antigravity-preview-09-2026`) are not
+    ///   retrievable through `GET /v1beta/agents/{id}` (404, re-verified
+    ///   2026-10-30).
     ///
     /// # Errors
     ///
@@ -230,7 +236,7 @@ impl<'a> Agents<'a> {
     /// let agent = client
     ///     .agents()
     ///     .create(
-    ///         &Agent::new("customer-sentinel")
+    ///         &Agent::new("customer-sentinel", genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
     ///             .with_system_instruction("You monitor customer feedback.")
     ///             .add_tool(Tool::CodeExecution),
     ///     )
@@ -434,8 +440,9 @@ mod tests {
         // {"id": ..., "base_agent": ..., "system_instruction": ...,
         //  "base_environment": {"type": "remote", "sources": [...]},
         //  "tools": [{"type": "code_execution"}]}
-        let agent = Agent::new("customer-sentinel")
-            .with_base_agent("")
+        // The bindings' example uses `"base_agent": ""`, which the API
+        // rejects with `'base_agent' must be specified.` (2026-10-30).
+        let agent = Agent::new("customer-sentinel", crate::DEFAULT_ANTIGRAVITY_AGENT)
             .with_system_instruction("You monitor customer feedback.")
             .add_tool(Tool::CodeExecution)
             .with_base_environment(
@@ -445,7 +452,7 @@ mod tests {
 
         let value = serde_json::to_value(&agent).unwrap();
         assert_eq!(value["id"], "customer-sentinel");
-        assert_eq!(value["base_agent"], "");
+        assert_eq!(value["base_agent"], crate::DEFAULT_ANTIGRAVITY_AGENT);
         assert_eq!(
             value["system_instruction"],
             "You monitor customer feedback."
@@ -460,8 +467,20 @@ mod tests {
     }
 
     #[test]
+    fn test_agent_new_sets_both_required_fields() {
+        let agent = Agent::new("a", "b");
+        assert_eq!(agent.id.as_deref(), Some("a"));
+        assert_eq!(agent.base_agent.as_deref(), Some("b"));
+        assert_eq!(
+            serde_json::to_value(&agent).unwrap(),
+            json!({"id": "a", "base_agent": "b"})
+        );
+    }
+
+    #[test]
     fn test_agent_base_environment_string_id() {
-        let agent = Agent::new("my-agent").with_base_environment("env42bare0");
+        let agent = Agent::new("my-agent", crate::DEFAULT_ANTIGRAVITY_AGENT)
+            .with_base_environment("env42bare0");
         let value = serde_json::to_value(&agent).unwrap();
         assert_eq!(value["base_environment"], "env42bare0");
     }
@@ -544,8 +563,8 @@ mod tests {
 
     #[test]
     fn agent_preserves_unknown_response_fields() {
-        // Agent creation is API-key gated, so only GET/LIST shapes have been
-        // observed — an unmodeled field is entirely plausible here.
+        // The API echoes agents verbatim today, but an unmodeled field is
+        // entirely plausible here.
         let wire = serde_json::json!({
             "id": "agent_1",
             "description": "test",
