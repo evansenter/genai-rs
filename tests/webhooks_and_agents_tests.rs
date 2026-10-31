@@ -623,11 +623,11 @@ async fn test_safety_settings_accepted_and_stored() {
     })
     .expect("safety_settings should be accepted (verified live 2026-10-30)");
 
-    assert_eq!(response.status, genai_rs::InteractionStatus::Completed);
     let id = response.id.expect("stored interaction id");
-    // Delete before checking the GET, so a failed read doesn't leak it.
+    // Delete before any assertion, so a failure doesn't leak it.
     let stored = client.interactions().get(&id).await;
     let _ = client.interactions().delete(&id).await;
+    assert_eq!(response.status, genai_rs::InteractionStatus::Completed);
     let stored = stored.expect("get_interaction");
     // Parsing the echo, rather than comparing raw JSON, also exercises the
     // `type` key on the deserialize side.
