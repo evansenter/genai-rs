@@ -147,17 +147,12 @@ async fn test_files_list_one_page() {
         .await
         .expect("Failed to upload file");
 
-    // List files (newest first)
-    let response = client
-        .files()
-        .list()
-        .with_page_size(10)
-        .send()
-        .await
-        .expect("Failed to list files");
-
-    // The uploaded file should be in the list
-    let found = response.files.iter().any(|f| f.name == file.name);
+    // Every page: the list is newest first, but concurrent uploads from
+    // this binary and other runs on the key can push this one off page 1.
+    let found = common::listed(client.files().list().with_page_size(10).items(), |f| {
+        f.name == file.name
+    })
+    .await;
     assert!(found, "Uploaded file should appear in file list");
 
     // Clean up

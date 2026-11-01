@@ -181,6 +181,10 @@ wire_string_enum!(
         /// subagents) and will return to `Running`. Explicitly **not**
         /// terminal — new in harness 0.1.10.
         WaitingForTasks => "STATE_WAITING_FOR_TASKS",
+        /// The trajectory is blocked on running subagents and will return
+        /// to `Running`. Not terminal — new in harness 0.1.23, which
+        /// ignores it the same way.
+        WaitingForSubagents => "STATE_WAITING_FOR_SUBAGENTS",
         /// The turn was cancelled (halt request or pre-turn hook denial).
         Cancelled => "STATE_CANCELLED",
     }

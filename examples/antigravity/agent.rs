@@ -18,7 +18,7 @@
 //!
 //! Requirements:
 //! - The `localharness` binary (ships in the `google-antigravity` Python
-//!   wheel): `pip install google-antigravity==0.1.18`, or set
+//!   wheel): `pip install google-antigravity==0.1.23`, or set
 //!   `ANTIGRAVITY_HARNESS_PATH` to the binary.
 //! - `GEMINI_API_KEY` for model calls.
 //!

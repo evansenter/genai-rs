@@ -33,8 +33,8 @@ pub use config::{
     AppendedSystemInstructions, CustomAgent, CustomSystemInstructions, FilesystemWorkspace,
     GeminiApiEndpoint, GeminiModelOptions, HarnessConfig, HarnessSideTools,
     InitializeConversationEvent, InstructionSection, McpHttpTransport, McpServerConfig,
-    McpStdioTransport, ModelConfig, PermissionsConfig, SystemInstructionPart, SystemInstructions,
-    Tool, ToolToggle, VertexEndpoint, Workspace,
+    McpStdioTransport, ModelConfig, PermissionsConfig, PolicyConfig, SystemInstructionPart,
+    SystemInstructions, Tool, ToolToggle, VertexEndpoint, Workspace,
 };
 pub use enums::{
     AgentBehavior, HookDecision, LifecycleHook, LineAction, Modality, ModelType, StepSource,

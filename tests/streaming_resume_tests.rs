@@ -142,13 +142,15 @@ async fn test_interactions_stream_rejects_foreground_interaction() {
 
     let mut stream = client.interactions().stream(&id);
     let first = stream.next().await;
+    println!("streaming a foreground interaction: {first:?}");
     assert!(
         matches!(
-            first,
+            &first,
             Some(Err(GenaiError::Api {
                 status_code: 400,
+                message,
                 ..
-            }))
+            })) if message.contains("Streaming retrieval of interactions is not supported")
         ),
         "expected the API's 400 for streaming a foreground interaction, got: {first:?}"
     );

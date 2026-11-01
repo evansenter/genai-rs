@@ -37,8 +37,10 @@ pub const DEFAULT_MAX_RETRIES: u32 = 3;
 pub const MAX_RETRY_SLEEP: Duration = Duration::from_secs(15);
 
 /// Known model-side flakes worth retrying: Spanner UTF-8 errors (#60), and
-/// two 400s that pass on re-run ("invalid json syntax" from structured output,
-/// and the bare "there was a problem processing your request" burst).
+/// 400s that pass on re-run: "invalid json syntax" from structured output,
+/// the bare "there was a problem processing your request" burst, and any 400
+/// that tells the caller to retry (`too_many_tool_calls`, which failed a
+/// url_context test 3 of 3 tries on main, and `malformed_tool_call`).
 /// Transport transience (network, timeouts, 429, 5xx) is
 /// [`GenaiError::is_retryable`]'s job.
 #[allow(dead_code)]
@@ -61,6 +63,9 @@ pub fn is_transient_error(err: &GenaiError) -> bool {
                 // loud on the first attempt.
                 || (*status_code == 400
                     && lower.contains("there was a problem processing your request"))
+                // The model looped or produced a broken tool call, and the
+                // API says so: "...Please retry the request."
+                || (*status_code == 400 && lower.contains("please retry the request"))
         }
         _ => false,
     }
@@ -251,6 +256,9 @@ pub struct StreamResult {
     pub saw_thought: bool,
     /// Every `event_id` seen, in order.
     pub event_ids: Vec<String>,
+    /// Event types the crate didn't recognize (`StreamChunk::Unknown`), in
+    /// order, without duplicates: API drift worth a look.
+    pub unknown_event_types: Vec<String>,
 }
 
 impl StreamResult {
@@ -261,7 +269,8 @@ impl StreamResult {
     }
 }
 
-/// Drains a stream, panicking on the first error.
+/// Drains a stream, panicking on the first error: an `Err` item, or an
+/// in-band SSE `error` event, which arrives as `Ok(StreamChunk::Error)`.
 ///
 /// A stream that errors midway has usually already produced a delta, so a
 /// helper that stopped quietly would let `has_output()` pass on a broken
@@ -277,6 +286,7 @@ pub async fn consume_stream(
         saw_function_call: false,
         saw_thought: false,
         event_ids: Vec::new(),
+        unknown_event_types: Vec::new(),
     };
 
     while let Some(item) = stream.next().await {
@@ -310,11 +320,38 @@ pub async fn consume_stream(
                 }
             }
             StreamChunk::Completed(response) => result.final_response = Some(response),
+            StreamChunk::Error { message, code } => panic!(
+                "stream sent an error event after {} delta(s): {message} (code {code:?})",
+                result.delta_count
+            ),
+            StreamChunk::Unknown { chunk_type, .. } => {
+                println!("stream sent an unrecognized event type: {chunk_type}");
+                if !result.unknown_event_types.contains(&chunk_type) {
+                    result.unknown_event_types.push(chunk_type);
+                }
+            }
             _ => {}
         }
     }
 
     result
+}
+
+/// Walks a listing's `.items()` stream until `found` matches, across every
+/// page. Lists put new resources last or interleave concurrent runs on the
+/// shared key, so a first-page or `take(n)` check starts failing once
+/// earlier runs have leaked enough resources. Panics on a list error.
+#[allow(dead_code)]
+pub async fn listed<T>(
+    mut items: futures_util::stream::BoxStream<'_, Result<T, GenaiError>>,
+    found: impl Fn(&T) -> bool,
+) -> bool {
+    while let Some(item) = items.next().await {
+        if found(&item.expect("list failed")) {
+            return true;
+        }
+    }
+    false
 }
 
 /// What a fully consumed auto-function stream produced.
@@ -346,7 +383,13 @@ impl AutoFunctionStreamResult {
 }
 
 /// Drains an auto-function stream, panicking on the first error (see
-/// [`consume_stream`]).
+/// [`consume_stream`]) and on a failed function execution.
+///
+/// A declared function the loop can't resolve gets an error *result*, not a
+/// stream error, and the model can often answer anyway. Without the second
+/// check, every caller would pass on a stream whose functions all failed;
+/// the non-streaming tests catch the same thing with
+/// `all_executions_succeeded()`.
 #[allow(dead_code)]
 pub async fn consume_auto_function_stream(
     mut stream: futures_util::stream::BoxStream<'_, Result<AutoFunctionStreamEvent, GenaiError>>,
@@ -390,6 +433,12 @@ pub async fn consume_auto_function_stream(
             AutoFunctionStreamChunk::FunctionResults(results) => {
                 result.function_results_count += 1;
                 for r in &results {
+                    assert!(
+                        r.is_success(),
+                        "function {} failed in the auto-function stream: {:?}",
+                        r.name,
+                        r.error_message()
+                    );
                     record(&mut result.executed_function_names, &r.name);
                 }
             }

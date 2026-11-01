@@ -232,6 +232,42 @@ mod basic {
         )
         .await;
     }
+
+    /// About 80 live assertions trust the semantic validator, so it needs a
+    /// control: a validator that drifted lenient would pass every one of
+    /// them without a marker.
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_semantic_validator_rejects_a_wrong_answer() {
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        let judge = |answer: &'static str| {
+            let client = client.clone();
+            async move {
+                crate::retry_request!([client] => {
+                    common::validate_response_semantically(
+                        &client,
+                        "Asked: What is the capital of France?",
+                        answer,
+                        "Does this response correctly identify Paris as the capital of France?",
+                    )
+                    .await
+                })
+                .expect("validator request failed")
+            }
+        };
+        assert!(
+            !judge("The capital of France is Berlin.").await,
+            "the validator accepted a wrong answer"
+        );
+        assert!(
+            judge("The capital of France is Paris.").await,
+            "the validator rejected a right answer"
+        );
+    }
 }
 
 // =============================================================================
@@ -320,7 +356,7 @@ mod streaming {
                 .create_stream();
 
             let mut delta_texts: Vec<String> = Vec::new();
-            let mut final_text = None;
+            let mut id = None;
             while let Some(result) = stream.next().await {
                 match result.expect("stream error").chunk {
                     StreamChunk::StepDelta { delta, .. } => {
@@ -328,9 +364,8 @@ mod streaming {
                             delta_texts.push(text.to_string());
                         }
                     }
-                    StreamChunk::Completed(response) => {
-                        final_text = response.as_text().map(str::to_string);
-                    }
+                    StreamChunk::Completed(response) => id = response.id,
+                    StreamChunk::Error { message, .. } => panic!("stream error event: {message}"),
                     _ => {}
                 }
             }
@@ -342,11 +377,15 @@ mod streaming {
             );
 
             // Deltas are fragments, not cumulative snapshots: their
-            // concatenation is the final text, with nothing repeated.
+            // concatenation is the stored text, with nothing repeated. The
+            // stored interaction is the oracle: the Completed response's text
+            // can be rebuilt by the crate from these same deltas, which
+            // would make the comparison hold by construction.
             let concatenated: String = delta_texts.concat();
-            if let Some(final_text) = final_text {
-                assert_eq!(concatenated, final_text, "deltas should concatenate to the final text");
-            }
+            let id = id.expect("stream ended without a completed interaction id");
+            let stored = client.interactions().get(&id).await.expect("get stored interaction");
+            let stored_text = stored.as_text().expect("stored interaction has no text");
+            assert_eq!(concatenated, stored_text, "deltas should concatenate to the stored text");
 
             assert_response_semantic(
                 &client,

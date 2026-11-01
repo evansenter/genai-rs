@@ -364,3 +364,33 @@ fn test_builder_no_workspace_no_announcement() {
     let parts = config.system_instructions.unwrap().custom.unwrap().part;
     assert_eq!(parts.len(), 1);
 }
+
+#[test]
+fn test_builder_contains_workspaces_by_default() {
+    // The harness contains file tools only when a policy config is sent.
+    let builder = AntigravityAgent::builder().add_workspace("/repo");
+    let config = builder.build_harness_config(&ToolDispatcher::new(vec![], &[]));
+    assert_eq!(
+        config.policy_config,
+        Some(protocol::PolicyConfig::default())
+    );
+    let wire = serde_json::to_value(&config).unwrap();
+    assert_eq!(wire["policyConfig"], serde_json::json!({}));
+}
+
+#[test]
+fn test_builder_workspace_containment_opt_out() {
+    let builder = AntigravityAgent::builder()
+        .add_workspace("/repo")
+        .with_workspace_containment(false);
+    let config = builder.build_harness_config(&ToolDispatcher::new(vec![], &[]));
+    assert_eq!(config.policy_config, None);
+}
+
+#[test]
+fn test_builder_no_workspace_no_policy_config() {
+    // Nothing to contain to: no policy config, as before.
+    let config =
+        AntigravityAgent::builder().build_harness_config(&ToolDispatcher::new(vec![], &[]));
+    assert_eq!(config.policy_config, None);
+}

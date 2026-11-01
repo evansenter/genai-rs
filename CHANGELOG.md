@@ -28,6 +28,22 @@ every item probed live; #463).
 
 ### Changed
 
+- **Breaking: the Antigravity bridge drives harness 0.1.23**
+  (`google-antigravity==0.1.23`, `SUPPORTED_HARNESS_VERSION`). It writes
+  0.1.23's new `runWorkflow` toggle (disabled), which 0.1.18 rejects at init,
+  and models the new non-terminal `TrajectoryState::WaitingForSubagents`,
+  which otherwise read as version drift. The full harness suite passes on
+  0.1.23.
+- **Antigravity agents are confined to their workspaces by default.** The
+  harness contains its file tools only when the client sends a policy
+  config, which this crate never did: an agent could read any file the
+  process could, and the content reached the model (verified on harness
+  0.1.18 and 0.1.23). With a workspace configured, `spawn()` now sends one;
+  a read outside the workspaces fails with `Access to path "…" is denied`.
+  The harness still allows the system temp directory and
+  `~/.gemini/antigravity/brain`. `AgentBuilder::with_workspace_containment(false)`
+  restores the old behavior.
+
 - **Breaking: `StreamChunk::StatusUpdate` gains `usage` and
   `continuation_token`, and `interaction_id` becomes `Option<String>`.** A
   `store: false` stream's status updates carry no interaction ID (verified
@@ -45,6 +61,7 @@ every item probed live; #463).
 - `temperature`, `top_p` and `TranscriptionConfig::adaptation_phrases` are
   documented as deprecated upstream (google-genai 2.34.0); the API still
   accepts them.
+
 - `Trigger` re-serializes `max_consecutive_failures`,
   `consecutive_failure_count` and `execution_timeout_seconds` as plain JSON
   numbers, the trigger API's own wire form (verified live 2026-11-01). It
@@ -53,6 +70,11 @@ every item probed live; #463).
 
 ### Fixed
 
+- `docs/ANTIGRAVITY.md`: on 0.1.23, `create_file`'s new `Append` argument
+  lets `{Overwrite: false, Append: true}` modify an existing file, so a
+  "new files only" gate must check `Append` too; a trigger before the first
+  turn no longer crashes the harness; and the harness's own prompt does list
+  the workspaces, which only `with_system_instructions` hides.
 - A mid-stream error ended a stream silently. The API sends it as a bare
   JSON line with no `data:` prefix, then closes the connection (a recitation
   block, live 2026-11-01), and the SSE parser dropped the line. It now
