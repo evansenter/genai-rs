@@ -248,7 +248,7 @@ impl<'a> InteractionBuilder<'a> {
         let timeout = self.timeout;
         let request = self.build()?;
 
-        within(timeout, client.execute(request)).await?
+        within(timeout, "Request", client.execute(request)).await?
     }
 
     /// Creates a streaming interaction that yields chunks as they arrive.
@@ -340,7 +340,7 @@ impl<'a> InteractionBuilder<'a> {
             let mut stream = client.execute_stream(request);
 
             loop {
-                let result = within(timeout, stream.next()).await?;
+                let result = within(timeout, "Stream chunk", stream.next()).await?;
 
                 match result {
                     Some(Ok(event)) => yield event,
@@ -495,18 +495,28 @@ impl<'a> InteractionBuilder<'a> {
     }
 }
 
-/// Awaits `future`, bounded by `timeout` when one is set: the per-request
-/// and per-chunk limit behind [`InteractionBuilder::with_timeout`].
-pub(super) async fn within<F: std::future::Future>(
+/// Bounds `future` by `timeout` when one is set: the per-request and
+/// per-chunk limit behind [`InteractionBuilder::with_timeout`]. `what`
+/// names the bounded step in the timeout log.
+///
+/// Built from combinators rather than an `async fn`, which would store the
+/// wrapped future twice and roughly double the size of every caller's
+/// future.
+pub(super) fn within<F: std::future::Future>(
     timeout: Option<Duration>,
+    what: &'static str,
     future: F,
-) -> Result<F::Output, GenaiError> {
+) -> impl std::future::Future<Output = Result<F::Output, GenaiError>> {
+    use futures_util::FutureExt;
+    use futures_util::future::Either;
     match timeout {
-        Some(duration) => tokio::time::timeout(duration, future).await.map_err(|_| {
-            debug!("Timed out after {duration:?}");
-            GenaiError::Timeout(duration)
-        }),
-        None => Ok(future.await),
+        Some(duration) => Either::Left(tokio::time::timeout(duration, future).map(move |r| {
+            r.map_err(|_| {
+                debug!("{what} timed out after {duration:?}");
+                GenaiError::Timeout(duration)
+            })
+        })),
+        None => Either::Right(future.map(Ok)),
     }
 }
 

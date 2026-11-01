@@ -345,7 +345,12 @@ impl<'a> InteractionBuilder<'a> {
             );
 
             // Apply per-API-call timeout if set (function execution time not included)
-            let response = within(timeout, client.execute(request.clone())).await??;
+            let response = within(
+                timeout,
+                "Auto-function API call",
+                client.execute(request.clone()),
+            )
+            .await??;
 
             // When store != false (validated at function entry), the API should always
             // return an interaction ID. Return an error if the API violates this contract,
@@ -611,7 +616,7 @@ impl<'a> InteractionBuilder<'a> {
 
                 // Apply per-chunk timeout if set (function execution time not included)
                 loop {
-                    let result = within(timeout, stream.next()).await?;
+                    let result = within(timeout, "Auto-function stream chunk", stream.next()).await?;
 
                     let Some(result) = result else { break };
                     let event = result?;
