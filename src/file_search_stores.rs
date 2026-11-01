@@ -69,7 +69,7 @@
 
 use crate::client::Client;
 use crate::errors::GenaiError;
-use crate::files::{FileUpload, PollOptions};
+use crate::files::{FileUpload, PollOptions, PollStep};
 use crate::paging;
 use crate::serde_util::{ForFileSearchDocument, deserialize_string_i64, serialize_string_i64};
 use crate::wire_enum::wire_enum;
@@ -699,54 +699,38 @@ impl<'a> FileSearchDocuments<'a> {
         document_name: &str,
         poll: PollOptions,
     ) -> Result<FileSearchDocument, GenaiError> {
-        let timeout = poll.timeout_or(DOCUMENT_WAIT_TIMEOUT);
-        let poll_interval = poll.poll_interval_or(DOCUMENT_POLL_INTERVAL);
-        let start = std::time::Instant::now();
-
-        loop {
-            let current = self.get(document_name).await?;
-
-            match &current.state {
-                Some(DocumentState::Active) => return Ok(current),
-                Some(DocumentState::Failed) => {
-                    // `Internal`: terminal, and a 5xx `Api` would read as
-                    // retryable.
-                    return Err(GenaiError::Internal(format!(
-                        "Document '{document_name}' failed to index. This is \
-                         terminal — re-uploading is the only recovery."
-                    )));
+        let what = format!("document '{document_name}'");
+        poll.wait(
+            &what,
+            (DOCUMENT_WAIT_TIMEOUT, DOCUMENT_POLL_INTERVAL),
+            || self.get(document_name),
+            |current| {
+                match &current.state {
+                    Some(DocumentState::Active) => return Ok(PollStep::Ready(current)),
+                    Some(DocumentState::Failed) => {
+                        // `Internal`: terminal, and a 5xx `Api` would read as
+                        // retryable.
+                        return Err(GenaiError::Internal(format!(
+                            "Document '{document_name}' failed to index. This is \
+                             terminal — re-uploading is the only recovery."
+                        )));
+                    }
+                    Some(state) if state.is_unknown() => {
+                        tracing::warn!(
+                            "Document '{document_name}' is in unknown state {state}, continuing \
+                             to poll. This may indicate API evolution - consider updating \
+                             genai-rs."
+                        );
+                    }
+                    _ => {}
                 }
-                Some(state) if state.is_unknown() => {
-                    tracing::warn!(
-                        "Document '{}' is in unknown state {}, continuing to poll. \
-                         This may indicate API evolution - consider updating genai-rs.",
-                        document_name,
-                        state
-                    );
-                }
-                _ => {}
-            }
-
-            if start.elapsed() > timeout {
-                let state_info = current
-                    .state
-                    .as_ref()
-                    .map_or_else(|| "unknown".to_string(), ToString::to_string);
-                return Err(GenaiError::Internal(format!(
-                    "Timeout waiting for document '{document_name}' to become active \
-                     (waited {:?}, last state: {state_info}). It may still be indexing - \
-                     try again with a longer timeout.",
-                    start.elapsed()
-                )));
-            }
-
-            tracing::debug!(
-                "Document '{}' not active yet, waiting {:?}...",
-                document_name,
-                poll_interval
-            );
-            tokio::time::sleep(poll_interval).await;
-        }
+                Ok(PollStep::Pending(current.state.as_ref().map_or_else(
+                    || "unknown".to_string(),
+                    ToString::to_string,
+                )))
+            },
+        )
+        .await
     }
 }
 

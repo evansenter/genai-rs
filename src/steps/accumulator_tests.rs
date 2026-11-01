@@ -359,3 +359,31 @@ fn function_result_delta_without_call_id_stays_typed() {
         other => panic!("expected FunctionResult, got {other:?}"),
     }
 }
+
+/// An empty signature in a later delta must not wipe the real one an
+/// earlier event carried: replay would then fail with `400 ... missing
+/// signature`.
+#[test]
+fn test_accumulator_empty_delta_signature_keeps_the_real_one() {
+    let mut acc = StepAccumulator::new();
+    acc.start(
+        0,
+        serde_json::from_value(json!({
+            "type": "google_search_call",
+            "id": "c1",
+            "arguments": {"queries": []},
+            "signature": "real-sig"
+        }))
+        .unwrap(),
+    );
+    acc.apply_delta(
+        0,
+        &StepDelta::GoogleSearchCall {
+            queries: vec!["rust".into()],
+            signature: Some(String::new()),
+        },
+    );
+    acc.stop(0);
+    let steps = acc.finish();
+    assert_eq!(steps[0].signature(), Some("real-sig"));
+}

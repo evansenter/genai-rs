@@ -209,7 +209,12 @@ impl<'de> Deserialize<'de> for OutputEvent {
                     "sessionEndResponse" => {
                         OutputPayload::SessionEndResponse(value.as_bool().unwrap_or_default())
                     }
-                    _ => unreachable!("key list is exhaustive"),
+                    // A key added to OUTPUT_PAYLOAD_KEYS without an arm
+                    // here: preserve it rather than panic on harness input.
+                    other => OutputPayload::Unknown {
+                        event_type: other.to_string(),
+                        data: value,
+                    },
                 });
                 break;
             }

@@ -248,6 +248,42 @@ fn test_redact_fields_webhook_signing_secrets() {
 }
 
 #[test]
+fn test_redact_header_values_keep_header_names() {
+    // An MCP server's headers and an environment allowlist's transforms
+    // carry secrets as header *values*; the names are worth seeing.
+    let mut value = serde_json::json!({
+        "tools": [{
+            "type": "mcp_server",
+            "name": "docs",
+            "url": "https://mcp.example/mcp",
+            "headers": {"Authorization": "Bearer mcp-secret", "X-Team": "team-7"}
+        }],
+        "environment": {
+            "type": "remote",
+            "network": {"allowlist": [{
+                "domain": "api.example.com",
+                "transform": [{"Authorization": "Bearer allow-secret"}]
+            }]}
+        }
+    });
+    truncate_long_fields(&mut value);
+    let rendered = value.to_string();
+    for secret in ["mcp-secret", "allow-secret", "team-7"] {
+        assert!(!rendered.contains(secret), "{secret} leaked: {rendered}");
+    }
+    assert_eq!(value["tools"][0]["headers"]["Authorization"], "[REDACTED]");
+    assert_eq!(
+        value["environment"]["network"]["allowlist"][0]["transform"][0]["Authorization"],
+        "[REDACTED]"
+    );
+    assert_eq!(value["tools"][0]["url"], "https://mcp.example/mcp");
+    assert_eq!(
+        value["environment"]["network"]["allowlist"][0]["domain"],
+        "api.example.com"
+    );
+}
+
+#[test]
 fn test_redact_fields_credential_secrets() {
     // Create bodies for each credential type, and an update body.
     let mut value = serde_json::json!([

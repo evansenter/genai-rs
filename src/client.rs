@@ -82,6 +82,7 @@ pub struct ClientBuilder {
     base_url: Option<String>,
     timeout: Option<Duration>,
     connect_timeout: Option<Duration>,
+    read_timeout: Option<Duration>,
     wire_inspectors: Vec<Arc<dyn WireInspector>>,
 }
 
@@ -93,6 +94,7 @@ impl std::fmt::Debug for ClientBuilder {
             .field("base_url", &self.base_url)
             .field("timeout", &self.timeout)
             .field("connect_timeout", &self.connect_timeout)
+            .field("read_timeout", &self.read_timeout)
             .field("wire_inspectors", &self.wire_inspectors.len())
             .finish()
     }
@@ -148,6 +150,41 @@ impl ClientBuilder {
     #[must_use]
     pub const fn with_connect_timeout(mut self, timeout: Duration) -> Self {
         self.connect_timeout = Some(timeout);
+        self
+    }
+
+    /// Sets the read timeout: the longest the client waits for the next
+    /// read, from the response headers onward, reset by every chunk that
+    /// arrives.
+    ///
+    /// Unlike [`with_timeout`](Self::with_timeout), which caps the whole
+    /// request and so has to be left generous (or unset) for long streams,
+    /// this suits SSE streams: a healthy stream keeps sending events, while
+    /// a stalled connection (a dropped NAT mapping, a half-open proxy)
+    /// otherwise waits forever. The stream then ends with a
+    /// [`GenaiError::Http`] error.
+    ///
+    /// It also bounds the wait for the response headers, so it applies to
+    /// every request on the client: a non-streaming `create()` against a
+    /// model that thinks longer than this before answering fails with it
+    /// too. Leave room for the longest silence the API legitimately has (a
+    /// long think, a background agent between status updates). If not set,
+    /// reads wait indefinitely.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use genai_rs::Client;
+    /// use std::time::Duration;
+    ///
+    /// let client = Client::builder("api_key".to_string())
+    ///     .with_read_timeout(Duration::from_secs(120))
+    ///     .build()?;
+    /// # Ok::<(), genai_rs::GenaiError>(())
+    /// ```
+    #[must_use]
+    pub const fn with_read_timeout(mut self, timeout: Duration) -> Self {
+        self.read_timeout = Some(timeout);
         self
     }
 
@@ -218,6 +255,10 @@ impl ClientBuilder {
             builder = builder.connect_timeout(connect_timeout);
         }
 
+        if let Some(read_timeout) = self.read_timeout {
+            builder = builder.read_timeout(read_timeout);
+        }
+
         let http_client = builder
             .build()
             .map_err(|e| GenaiError::ClientBuild(e.to_string()))?;
@@ -247,15 +288,23 @@ impl Client {
             base_url: None,
             timeout: None,
             connect_timeout: None,
+            read_timeout: None,
             wire_inspectors: Vec::new(),
         }
     }
 
-    /// Creates a new `GenAI` client.
+    /// Creates a new `GenAI` client, with no timeouts.
     ///
     /// # Arguments
     ///
     /// * `api_key` - Your Google AI API key.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the HTTP client can't be built: the TLS backend fails to
+    /// initialize, or the resolver can't load the system configuration (as
+    /// in some minimal containers). [`Client::builder`]`(..).build()`
+    /// reports the same failure as [`GenaiError::ClientBuild`] instead.
     #[must_use]
     pub fn new(api_key: String) -> Self {
         Self {

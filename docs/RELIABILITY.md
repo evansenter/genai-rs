@@ -34,6 +34,7 @@ let response = client.execute(request.clone()).await?;
 | Error | Retryable? |
 |-------|------------|
 | `Http(_)` (network, connect, TLS, client-level timeout) | Yes |
+| `Http(_)` from a request that can't be built (bad base URL, rejected header) or a redirect loop | No |
 | `Api { status_code: 429, .. }` | Yes |
 | `Api { status_code: 500..=599, .. }` | Yes |
 | `Timeout(_)` (request-level timeout) | Yes |
@@ -107,12 +108,13 @@ up the *same* generation from the last `event_id` with
 
 ## Timeouts
 
-There are two independent timeouts, and they behave differently.
+There are independent timeouts, and they behave differently.
 
 | | Set with | Mechanism | Error when exceeded |
 |---|---|---|---|
 | **Client-level** | `ClientBuilder::with_timeout()` | reqwest total-request timeout, from connect until the body is fully read (**including a streamed body**) | `GenaiError::Http` (`is_timeout()` is true) |
 | **Connect** | `ClientBuilder::with_connect_timeout()` | reqwest connect timeout | `GenaiError::Http` |
+| **Read** | `ClientBuilder::with_read_timeout()` | reqwest read timeout: the longest wait for the headers or the next chunk, reset by each one | `GenaiError::Http` (`is_timeout()` is true) |
 | **Request-level** | `InteractionBuilder::with_timeout()` | `tokio::time::timeout` around the call | `GenaiError::Timeout(duration)` |
 
 Consequences:
@@ -121,6 +123,12 @@ Consequences:
   apply, and the shorter wins. If you set per-request timeouts, or stream
   long responses, leave `ClientBuilder::with_timeout()` unset. With neither
   set, a request waits indefinitely.
+- **The read timeout is the client-level bound that suits streams.** It
+  covers every request on the client, including `interactions().stream()`
+  and `resume_stream()`, which no request-level timeout reaches, and ends a
+  stalled connection without capping a healthy long stream. It also bounds
+  time to first byte, so set it above the longest a non-streaming call
+  thinks before answering.
 - Where the request-level timeout applies depends on the method:
 
 | Method | Request-level timeout applies to |
