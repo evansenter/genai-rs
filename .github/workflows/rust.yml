@@ -577,7 +577,10 @@ jobs:
   # green one closes it. Its own job, so it sees every job's result.
   scheduled-run-status:
     name: Scheduled Run Status
-    needs: [check, test, test-strict-unknown, test-antigravity, test-integration, example-smoke, fmt, shell-scripts, clippy, doc, msrv, coverage]
+    # Every other job, so a job added later can't go red unreported.
+    # tests/ci_coverage.rs enforces it. Push- or PR-only jobs report
+    # `skipped` here, which neither escalates nor blocks the resolve.
+    needs: [check, test, test-strict-unknown, test-antigravity, test-integration, example-smoke, fmt, shell-scripts, clippy, doc, msrv, cross-platform, coverage, build-metrics]
     if: always() && github.event_name == 'schedule' && github.repository_owner == 'evansenter'
     runs-on: ubuntu-latest
     permissions:
@@ -598,9 +601,9 @@ jobs:
             "The weekly run exercises the live API against \`main\` with nothing
           pushed, so a red integration job usually means the API changed: a new
           required field, a renamed key, a retired model. Probe with
-          \`LOUD_WIRE=1\` before changing code (CLAUDE.md, \"live tests fail, they
-          don't skip\"). A red non-live job is toolchain drift, such as a new
-          stable clippy lint."
+          \`LOUD_WIRE=1\` before changing code, and see CLAUDE.md, Tests: live
+          tests must fail, not skip. A red non-live job is toolchain drift, such
+          as a new stable clippy lint."
       - name: Clear the failure issue once the run recovers
         if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
         env:
