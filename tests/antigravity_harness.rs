@@ -769,10 +769,15 @@ async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
         return;
     };
 
-    /// The turn must end promptly after the halt. Generous enough to
-    /// absorb a slow round trip, far below both the turn timeout and how
-    /// long the un-cancelled prompt would take.
+    /// The turn must end promptly after the halt is sent. Generous enough
+    /// to absorb a slow round trip, far below the turn timeout.
     const MUST_END_WITHIN: std::time::Duration = std::time::Duration::from_secs(30);
+    /// Halt this long into the turn even if fewer than
+    /// `OUTPUT_BEFORE_CANCEL` characters have streamed. On harness 0.1.23
+    /// the answer sometimes arrives as one step at the end, or the harness
+    /// goes quiet for minutes after a model error step (both seen
+    /// 2026-11-01); keying only on output then never halted mid-turn.
+    const HALT_AFTER: std::time::Duration = std::time::Duration::from_secs(8);
 
     let mut agent = AntigravityAgent::builder()
         // Much longer than MUST_END_WITHIN: if the halt is ignored, this
@@ -789,32 +794,46 @@ async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
     // Taken *before* the stream borrows the agent — the handle is the only
     // way to reach the session while a turn is in flight.
     //
-    // The halt fires on accumulated output rather than on a timer: a fixed
-    // delay races the model, and losing that race ("it answered before we
-    // cancelled") is an inconclusive run reported as a defect. Keying off
-    // real output means the turn is provably mid-generation when the halt
-    // is sent.
+    // The halt fires on accumulated output, or at `HALT_AFTER` if the
+    // output never streams. A fixed delay alone races the model, and losing
+    // that race ("it answered before we cancelled") is an inconclusive run
+    // reported as a defect; keying off real output means the turn is
+    // provably mid-generation when the halt is sent. The deadline covers
+    // harness runs that deliver the answer in one step or stall after an
+    // error step, where output alone never triggered a mid-turn halt.
     //
     // The threshold is deliberately not "the first delta" — the harness
     // emits a step before the upstream request is even in flight, and
     // halting there cancelled the POST rather than a running generation.
-    // Any real answer to this prompt clears this bar many times over, so
-    // failing to reach it means something is broken, not merely fast.
+    // The deadline trades some of that away: a halt at `HALT_AFTER` may
+    // land while the model is still thinking, before any output. That is
+    // still an in-flight turn, and it is what makes the test conclusive
+    // when the harness doesn't stream; the printout says which fired.
     /// Characters of streamed text/thinking to see before halting.
     const OUTPUT_BEFORE_CANCEL: usize = 200;
 
     let handle = agent.cancel_handle();
     let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
-    // Three-valued on purpose: "never reached the threshold" and "the halt
-    // request itself failed" want different diagnostics, and collapsing
-    // them would point a future debugger at the model's speed when the
-    // real fault was the halt.
+    // Three-valued on purpose: "the turn ended before any halt" and "the
+    // halt request itself failed" want different diagnostics, and
+    // collapsing them would point a future debugger at the model's speed
+    // when the real fault was the halt.
     let canceller = tokio::spawn(async move {
-        if started_rx.await.is_err() {
-            // Stream ended before generating enough to halt.
-            return None;
+        tokio::select! {
+            output = started_rx => {
+                if output.is_err() {
+                    // The stream ended before the output threshold or the
+                    // deadline: the turn finished on its own.
+                    return None;
+                }
+                let halted_at = std::time::Instant::now();
+                Some((handle.cancel().await, halted_at, "output"))
+            }
+            () = tokio::time::sleep(HALT_AFTER) => {
+                let halted_at = std::time::Instant::now();
+                Some((handle.cancel().await, halted_at, "deadline"))
+            }
         }
-        Some(handle.cancel().await)
     });
 
     let started = std::time::Instant::now();
@@ -855,27 +874,41 @@ async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
         }
         (finished, produced, outcome)
     };
-    let elapsed = started.elapsed();
-    match canceller.await.expect("canceller task") {
-        Some(Ok(())) => {}
-        Some(Err(err)) => panic!(
+    let ended = std::time::Instant::now();
+    let (halted_at, trigger) = match canceller.await.expect("canceller task") {
+        Some((Ok(()), halted_at, trigger)) => (halted_at, trigger),
+        Some((Err(err), _, _)) => panic!(
             "the halt request itself failed after {produced} chars of output: \
              {err:?}"
         ),
         None => panic!(
-            "the turn streamed only {produced} chars, below the \
-             {OUTPUT_BEFORE_CANCEL} needed before halting, so no halt was sent \
-             — this run proves nothing about cancellation"
+            "the turn finished in {:?}, with {produced} chars, before the halt \
+             was due — this run proves nothing about cancellation",
+            started.elapsed()
         ),
-    }
+    };
 
     // The assertion that actually proves cancellation: the turn stopped
-    // long before it would have finished on its own, and long before the
-    // turn timeout could have ended it.
+    // promptly once halted, long before the turn timeout could have ended
+    // it.
+    // A halt sent after the turn had already ended (the deadline firing
+    // just as it finished on its own) proves nothing.
+    let Some(after_halt) = ended.checked_duration_since(halted_at) else {
+        panic!(
+            "the turn ended {:?} in, before the {trigger} halt was sent — this \
+             run proves nothing about cancellation",
+            ended.duration_since(started)
+        );
+    };
+    println!(
+        "halted on {trigger} {:?} into the turn after {produced} chars; it ended \
+         {after_halt:?} later",
+        halted_at.duration_since(started)
+    );
     assert!(
-        elapsed < MUST_END_WITHIN,
-        "the turn ran {elapsed:?}, past the {MUST_END_WITHIN:?} bound — the \
-         halt did not stop it"
+        after_halt < MUST_END_WITHIN,
+        "the turn ran {after_halt:?} after the halt, past the {MUST_END_WITHIN:?} \
+         bound — the halt did not stop it"
     );
 
     match outcome {
