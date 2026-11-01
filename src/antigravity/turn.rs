@@ -362,8 +362,9 @@ impl AntigravityAgent {
                 return Err(AntigravityError::Turn(message));
             }
             _ => {
-                // Running / waiting-for-tasks / subagent idle or
-                // cancelled: nothing to do for the parent turn.
+                // Running / waiting-for-tasks / waiting-for-subagents /
+                // subagent idle or cancelled: nothing to do for the parent
+                // turn.
                 //
                 // An *unrecognized* main-trajectory state is different in
                 // kind, though it lands here too: only `Idle` ends a

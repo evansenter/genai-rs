@@ -996,7 +996,7 @@ against 0.1.10 and 0.1.5.
 | `StepState` | `state_type` | `STATE_ACTIVE`, `STATE_DONE`, `STATE_WAITING_FOR_USER`, `STATE_ERROR` |
 | `StepSource` | `source_type` | `SOURCE_SYSTEM`, `SOURCE_USER`, `SOURCE_MODEL` |
 | `StepTarget` | `target_type` | `TARGET_USER`, `TARGET_MODEL`, `TARGET_ENVIRONMENT` |
-| `TrajectoryState` | `state_type` | `STATE_RUNNING`, `STATE_FULLY_IDLE` (terminal; alias `STATE_IDLE`), `STATE_WAITING_FOR_TASKS`, `STATE_CANCELLED` |
+| `TrajectoryState` | `state_type` | `STATE_RUNNING`, `STATE_FULLY_IDLE` (terminal; alias `STATE_IDLE`), `STATE_WAITING_FOR_TASKS`, `STATE_WAITING_FOR_SUBAGENTS` (0.1.23), `STATE_CANCELLED` |
 | `StopReason` | `reason_type` | `STOP_REASON_MAX_MODEL_CALLS_EXCEEDED`, `..._MAX_TOOL_CALLS_...`, `..._MAX_{INPUT,OUTPUT,TOTAL}_TOKENS_EXCEEDED`, `STOP_REASON_QUOTA_EXHAUSTED` (0.1.18) |
 | `ModelType` | `model_type` | `MODEL_TYPE_TEXT`, `MODEL_TYPE_IMAGE` |
 | `Modality` | `modality_type` | `TEXT`, `IMAGE`, `VIDEO`, `AUDIO`, `DOCUMENT`: bare, unlike `MODALITY_UNSPECIFIED` (0.1.18) |

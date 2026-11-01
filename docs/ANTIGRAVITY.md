@@ -25,7 +25,7 @@ genai-rs = { version = "0.12", features = ["antigravity"] }
 Install the harness binary (it ships inside the platform-specific wheel):
 
 ```bash
-pip install google-antigravity==0.1.18
+pip install google-antigravity==0.1.23
 ```
 
 ### Version pinning
@@ -33,8 +33,10 @@ pip install google-antigravity==0.1.18
 The harness wire protocol is internal to Google's SDK and changes across
 0.1.x releases. Each genai-rs release is verified against exactly one wheel
 version, exposed as `antigravity::SUPPORTED_HARNESS_VERSION` (currently
-`0.1.18`) — pin that version. **This build cannot drive 0.1.10 or older**:
-see the second worked example below.
+`0.1.23`) — pin that version. **This build drives 0.1.23 only**: it writes
+0.1.23's `runWorkflow` toggle, which 0.1.18 rejects at init (`unknown field
+"runWorkflow"`, surfaced as `InitFailed`), and older harnesses fail as in
+the second worked example below.
 
 **Unknown-value preservation is not the same as forward compatibility.**
 Unrecognized events, fields, and enum values are preserved in `Unknown`
@@ -110,12 +112,22 @@ persistence either.
 ## Workspaces
 
 `add_workspace(path)` (or `with_workspace(path)` to replace) points the
-harness's built-in tools at a directory. The harness does **not** tell the
-model the workspace path, so by default `genai-rs` **announces the workspace
-root(s) to the model** — it appends a short, clearly delimited note listing
-the configured root(s) to the effective system instructions at send time (your
-`with_system_instructions` string is never mutated). Without this, agents
-guess paths (`/workdir`, `/workspace`, …) and wander.
+harness's built-in tools at a directory and, by default, **confines them to
+it**: a file read outside the workspaces fails with `Access to path "…" is
+denied`. The harness still allows the system temp directory and its own
+`~/.gemini/antigravity/brain`, so don't treat `$TMPDIR` as private from the
+agent. The harness enforces containment only when the client sends a policy
+config; before `with_workspace_containment` (on by default), this crate
+didn't, and an agent could read any file the process could. Turn it off
+only to reach outside the workspaces, behind a pre-tool hook or policy.
+
+`with_system_instructions` replaces the harness's own prompt, which is
+where the harness lists the workspaces, so the model would otherwise not
+know their paths. By default `genai-rs` therefore **announces the
+workspace root(s) to the model**: it appends a short, clearly delimited
+note listing the configured root(s) to the effective system instructions at
+send time (your `with_system_instructions` string is never mutated).
+Without this, agents guess paths (`/workdir`, `/workspace`, …) and wander.
 
 ```rust,ignore
 let agent = AntigravityAgent::builder()
@@ -249,7 +261,7 @@ what the *model* passed, under the harness's own tool-schema names, which
 are **not** the `ToolAction::args()` spellings (those are the step's action
 record, `filePath`, `commandLine`, ...):
 
-| Builtin | Argument names (0.1.18) |
+| Builtin | Argument names (0.1.18 and 0.1.23) |
 |---------|-------------------------|
 | `view_file` | `AbsolutePath`, `StartLine`, `EndLine`, `ContentOffset` |
 | `list_directory` | `DirectoryPath` |
@@ -257,7 +269,7 @@ record, `filePath`, `commandLine`, ...):
 | `search_directory` | `SearchPath`, `Query`, `Includes`, `IsRegex`, ... |
 | `run_command` | `CommandLine`, `Cwd`, `WaitMsBeforeAsync`, ... |
 | `edit_file` | `TargetFile`, `TargetContent`, `ReplacementContent`, ... |
-| `create_file` | `TargetFile`, `CodeContent`, `Overwrite`, ... |
+| `create_file` | `TargetFile`, `CodeContent`, `Overwrite`, `Append` (0.1.23), ... |
 | `start_subagent` | `Subagents` (each with `TypeName`, `Prompt`, `Role`) |
 
 Paths are plain absolute paths here, not `file://` URIs. For MCP tools the
@@ -268,6 +280,12 @@ names are harness-internal and version-specific (read them off a
 missing key: a check that indexes a key which is not there sees `Null` and,
 written the obvious way, allows everything. Both path-gating examples in
 this repository shipped that bug against 0.1.18 before it was caught.
+
+Arguments can also change meaning. 0.1.23 added `Append` to `create_file`:
+`{Overwrite: false, Append: true}` now appends to an existing file, where
+0.1.18 refused. A gate that allows `create_file` only when `Overwrite` is
+false ("new files only") lets the model modify existing files on 0.1.23;
+check `Append` too.
 
 ### Unrecognized tool confirmations
 
@@ -633,16 +651,11 @@ Delivery semantics (see `antigravity::triggers` for details):
 
 - The first firing happens after the first interval elapses, not
   immediately. Intervals must be non-zero (`spawn()` validates).
-- **Give the conversation one real turn before a trigger can fire.** On
-  harness 0.1.10, a trigger delivered into a conversation with no history
-  crashes the harness *process* — its pre-invocation hook asks for "tokens
-  since the last checkpoint", finds no steps, and aborts the agent run
-  (`earliest step index is out of bounds: 0 vs 0`). 0.1.18 (re-verified)
-  aborts the run the same way and closes the WebSocket. The session dies
-  with it, so the next send fails on a closed socket or a broken pipe. One
-  completed turn is enough. Reproduced by
-  `examples/antigravity/proactive_agent`, which opens with a turn for
-  exactly this reason.
+- A trigger can fire before the first turn on harness 0.1.23, which runs it
+  as a normal turn. Harnesses 0.1.10 and 0.1.18 aborted the agent run
+  instead (`earliest step index is out of bounds: 0 vs 0`) and closed the
+  WebSocket, so the session died; on those, give the conversation one real
+  turn first, as `examples/antigravity/proactive_agent` still does.
 - A firing is delivered **only while the agent is idle** (no
   `chat`/`send_streaming` turn in flight). If it comes due mid-turn, it is
   deferred until the turn ends, and missed intervals collapse into a single
@@ -800,7 +813,10 @@ variants, never on message text. Key variants: `HarnessNotFound{searched}`,
   consumer surfacing their events is a follow-up.
 - **Vertex endpoints**: wire types exist; the tested path is the Gemini API
   key endpoint.
-- **Harness 0.1.18 surface not modeled yet**: session budgets
+- **Harness 0.1.18 and 0.1.23 surface not modeled yet**: 0.1.23's skills
+  config and inline skills, the `run_workflow` builtin (written disabled),
+  `mcp_max_output_bytes`, MCP `force_all_tools_eager`, `max_output_tokens`,
+  `disable_define_subagent_tool` and template overrides; and session budgets
   (`BudgetConfig` — the stop reasons are modeled, the caps are not),
   `CompactionConfig`, `RulesConfig`, `ToolOutputTruncation`, retry config,
   the harness-side `PolicyConfig` rule evaluator (with its

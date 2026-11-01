@@ -23,7 +23,7 @@ issues a user turn that interrupts the trigger's turn.
 ## Running
 
 ```bash
-pip install google-antigravity==0.1.18   # or set ANTIGRAVITY_HARNESS_PATH
+pip install google-antigravity==0.1.23   # or set ANTIGRAVITY_HARNESS_PATH
 export GEMINI_API_KEY=...
 cargo run --example proactive_agent --features antigravity
 
@@ -33,13 +33,11 @@ LOUD_WIRE=automatedTrigger,summary cargo run --example proactive_agent --feature
 
 ## Gotchas
 
-- **Open with a real turn before any trigger can fire.** On harness
-  0.1.10 a trigger delivered into a conversation with *no history* crashes
-  the harness process — its pre-invocation hook asks for "tokens since the
-  last checkpoint", finds no steps, and aborts the run
-  (`earliest step index is out of bounds: 0 vs 0`). 0.1.18 still aborts
-  the run the same way and closes the WebSocket (re-verified). The session
-  dies with it. This example opens with a turn for exactly that reason.
+- **The example opens with a real turn before any trigger can fire.**
+  Harness 0.1.23 runs a trigger in an empty conversation normally, but on
+  0.1.10 and 0.1.18 one crashed the run (`earliest step index is out of
+  bounds: 0 vs 0`) and closed the WebSocket, killing the session. The
+  opening turn keeps the example safe on those.
 - **A trigger's turn is not surfaced.** Its text never reaches your
   stream; the next `chat`/`send_streaming` halts it and discards its
   events. Use triggers for side effects, and read results with a normal
