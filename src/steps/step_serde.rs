@@ -495,7 +495,7 @@ impl<'de> Deserialize<'de> for Step {
             },
         }
 
-        match serde_json::from_value::<KnownStep>(value.clone()) {
+        match KnownStep::deserialize(&value) {
             Ok(known) => Ok(match known {
                 KnownStep::UserInput { content } => Step::UserInput { content },
                 KnownStep::ModelOutput { content, error } => Step::ModelOutput { content, error },

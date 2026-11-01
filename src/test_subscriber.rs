@@ -115,6 +115,8 @@ pub(crate) struct LoudWireGuard {
     prior: Option<String>,
 }
 
+// Test-only env mutation (see the SAFETY comment on `set`).
+#[allow(unsafe_code)]
 impl LoudWireGuard {
     /// The one place the ambient value is read.
     ///
@@ -180,6 +182,7 @@ impl LoudWireGuard {
     }
 }
 
+#[allow(unsafe_code)] // restores LOUD_WIRE; see `LoudWireGuard::set`
 impl Drop for LoudWireGuard {
     fn drop(&mut self) {
         // SAFETY: as above — still holding the lock at drop time.

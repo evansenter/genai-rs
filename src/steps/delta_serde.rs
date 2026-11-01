@@ -431,7 +431,7 @@ impl<'de> Deserialize<'de> for StepDelta {
             },
         }
 
-        match serde_json::from_value::<KnownDelta>(value.clone()) {
+        match KnownDelta::deserialize(&value) {
             Ok(known) => Ok(match known {
                 KnownDelta::Text { text } => StepDelta::Text { text },
                 KnownDelta::Image {

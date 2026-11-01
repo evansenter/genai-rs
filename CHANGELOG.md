@@ -33,6 +33,11 @@ every item probed live; #463).
 
 ### Changed
 
+- `genai-rs` no longer turns on tokio's full feature set: it asks for `fs`
+  and `time` (plus `io-util`, `net`, `process`, `rt` and `sync` with the
+  `antigravity` feature). A crate that wrote `#[tokio::main]` while relying
+  on genai-rs to enable `rt-multi-thread` and `macros` must now enable them
+  itself.
 - `GenaiError::is_retryable()` is false for an HTTP error from a request
   that can't be built (a scheme-less `with_base_url`, a rejected header) or a
   redirect loop. They fail identically every time, and a retry loop spent its
@@ -51,7 +56,8 @@ every item probed live; #463).
   a read outside the workspaces fails with `Access to path "…" is denied`.
   The harness still allows the system temp directory and
   `~/.gemini/antigravity/brain`. `AgentBuilder::with_workspace_containment(false)`
-  restores the old behavior.
+  restores the old behavior, and an explicit `true` with no workspace fails
+  `spawn()` instead of running unconfined.
 - **Breaking: `StreamChunk::StatusUpdate` gains `usage` and
   `continuation_token`, and `interaction_id` becomes `Option<String>`.** A
   `store: false` stream's status updates carry no interaction ID (verified

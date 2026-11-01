@@ -859,9 +859,10 @@ async fn test_environment_crud_lifecycle() {
     ));
     // Create is a non-idempotent POST, so a retry after a lost response can
     // orphan a first container — tolerated here (unlike the trigger test's
-    // un-retried create) because an idle container costs nothing, while an
-    // un-retried create would flake the whole lifecycle. Environments do not
-    // expire on their own (2026-07 ones were still active on 2026-11-01).
+    // un-retried create): a rare orphan is the better trade than flaking
+    // the whole lifecycle. Environments do not expire on their own (2026-07
+    // ones were still active on 2026-11-01), so orphans accumulate until a
+    // cleanup sweep removes them (#492).
     let created = crate::retry_request!([client, request] => {
         client.environments().create(&request).await
     })

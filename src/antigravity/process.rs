@@ -376,6 +376,7 @@ impl HarnessProcess {
     }
 
     #[cfg(unix)]
+    #[allow(unsafe_code)] // libc::kill; see the SAFETY comment
     fn terminate(&self) {
         if let Some(pid) = self.child.id() {
             // SAFETY: plain signal dispatch to a pid we own; no memory is

@@ -185,8 +185,10 @@ impl AgentBuilder {
 
     /// Controls whether the harness confines its file tools to the
     /// configured workspaces. **On by default** whenever a workspace is
-    /// configured; without one there is nothing to confine to, so `true`
-    /// does nothing (and logs a warning at `spawn()`).
+    /// configured. Without a workspace there is nothing to confine to: the
+    /// agent's file tools can read anything the process can, and an
+    /// explicit `true` makes `spawn()` fail with
+    /// [`AntigravityError::Config`].
     ///
     /// It covers the file tools (`view_file`, `list_directory`, …), not
     /// `run_command`: a shell command can read any path the process can, so
@@ -461,6 +463,16 @@ impl AgentBuilder {
     /// - [`AntigravityError::HandshakeFailed`] / [`AntigravityError::InitFailed`]
     ///   with the harness's stderr tail when startup fails.
     pub async fn spawn(self) -> Result<AntigravityAgent, AntigravityError> {
+        // An explicit containment opt-in that can't be honored is an error,
+        // not a warning: without a workspace the harness has nothing to
+        // confine to, and the agent could read any file.
+        if self.workspace_containment == Some(true) && self.workspaces.is_empty() {
+            return Err(AntigravityError::Config(
+                "with_workspace_containment(true) needs a workspace: add one with \
+                 `.add_workspace(..)`, or drop the call to run unconfined"
+                    .to_string(),
+            ));
+        }
         // Safety parity with the reference SDK: refuse to run write-capable
         // agents with no policy and no pre-tool hook.
         if (self.capabilities.has_write_tools() || !self.mcp_servers.is_empty())
@@ -723,16 +735,10 @@ impl AgentBuilder {
             enabled_hooks,
             custom_subagents,
             agent_behavior: self.agent_behavior.map(AgentBehavior::to_wire),
-            policy_config: {
-                if self.workspace_containment == Some(true) && self.workspaces.is_empty() {
-                    tracing::warn!(
-                        "with_workspace_containment(true) has no effect: no workspace is \
-                         configured, so there is nothing to confine the agent to"
-                    );
-                }
-                (self.workspace_containment.unwrap_or(true) && !self.workspaces.is_empty())
-                    .then(protocol::PolicyConfig::default)
-            },
+            // spawn() rejects an explicit opt-in with no workspace.
+            policy_config: (self.workspace_containment.unwrap_or(true)
+                && !self.workspaces.is_empty())
+            .then(protocol::PolicyConfig::default),
         }
     }
 }

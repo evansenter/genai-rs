@@ -394,3 +394,17 @@ fn test_builder_no_workspace_no_policy_config() {
         AntigravityAgent::builder().build_harness_config(&ToolDispatcher::new(vec![], &[]));
     assert_eq!(config.policy_config, None);
 }
+
+#[tokio::test]
+async fn test_spawn_rejects_containment_without_a_workspace() {
+    // Rejected before the harness is looked for, so no binary is needed.
+    let err = AntigravityAgent::builder()
+        .with_workspace_containment(true)
+        .spawn()
+        .await
+        .expect_err("containment with no workspace must not spawn");
+    assert!(
+        matches!(&err, AntigravityError::Config(m) if m.contains("needs a workspace")),
+        "{err:?}"
+    );
+}
