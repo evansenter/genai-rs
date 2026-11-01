@@ -315,14 +315,24 @@ mod url_context {
     use futures_util::StreamExt;
     use genai_rs::StreamChunk;
 
-    fn assert_fetched(response: &InteractionResponse) {
-        let results = response.url_context_results();
+    /// A page url_context fetches reliably. `https://example.com` came back
+    /// `status: "error"` on every fetch (2026-11-01), and the model sometimes
+    /// retried it until the API gave up with `400 too_many_tool_calls`.
+    pub(super) const URL: &str = "https://www.iana.org/help/example-domains";
+
+    /// The fetch must have succeeded: a result whose status is `error` still
+    /// names the URL, so checking the URL alone passed on failed fetches.
+    pub(super) fn assert_fetched(response: &InteractionResponse) {
+        let items: Vec<_> = response
+            .url_context_results()
+            .into_iter()
+            .flat_map(|r| r.items.iter())
+            .collect();
         assert!(
-            results
+            items
                 .iter()
-                .any(|r| r.items.iter().any(|i| i.url.contains("example.com"))),
-            "no URL context result for example.com: {:?}",
-            response.step_summary()
+                .any(|i| i.url.contains("iana.org") && i.is_success()),
+            "no successful URL context fetch of {URL}: {items:?}"
         );
     }
 
@@ -336,7 +346,7 @@ mod url_context {
 
         let result1 = retry_request!([client] => {
             stateful_builder(&client)
-                .with_text("Fetch and summarize the main content from https://example.com using URL context.")
+                .with_text(format!("Fetch and summarize the main content from {URL} using URL context."))
                 .with_url_context()
                 .create()
                 .await
@@ -350,9 +360,9 @@ mod url_context {
         let text1 = response1.as_text().expect("turn 1 should answer in text");
         assert_response_semantic(
             &client,
-            "Asked to summarize https://example.com (IANA reserved domain for documentation)",
+            "Asked to summarize IANA's page about the example domains (example.com and friends, reserved for documentation)",
             text1,
-            "Does this response describe example.com as a reserved/example domain or mention its illustrative/documentation purpose?",
+            "Does this response describe example domains as reserved for documentation or examples?",
         )
         .await;
 
@@ -360,7 +370,7 @@ mod url_context {
         let result2 = retry_request!([client, prev_id] => {
             stateful_builder(&client)
                 .with_previous_interaction(&prev_id)
-                .with_text("Is that website a real company or an example domain?")
+                .with_text("Is example.com a real company's website or an example domain?")
                 .create()
                 .await
         });
@@ -371,7 +381,7 @@ mod url_context {
         let text2 = response2.as_text().expect("turn 2 should answer in text");
         assert_response_semantic(
             &client,
-            "Turn 1 fetched example.com. The user asked whether it is a real company or an example domain.",
+            "Turn 1 fetched IANA's page about example.com. The user asked whether example.com is a real company or an example domain.",
             text2,
             "Does this response say it is an example/reserved domain rather than a real company?",
         )
@@ -387,7 +397,7 @@ mod url_context {
         };
 
         let mut stream = interaction_builder(&client)
-            .with_text("Fetch https://example.com and describe the page structure.")
+            .with_text(format!("Fetch {URL} and describe the page structure."))
             .with_url_context()
             .create_stream();
 
@@ -603,7 +613,7 @@ mod computer_use {
 
         let result = stateful_builder(&client)
             // Live page state the model cannot know, so answering without the
-            // tool is not a plausible outcome (example.com's heading is).
+            // tool is not a plausible outcome (a static page's heading is).
             .with_text(
                 "Open https://news.ycombinator.com and tell me the exact title \
                  of the current top story.",
@@ -811,12 +821,20 @@ mod structured_output {
             "required": ["title", "description"]
         });
 
-        let result = stateful_builder(&client)
-            .with_text("Analyze the page at https://example.com and extract metadata.")
-            .with_url_context()
-            .with_response_format(schema)
-            .create()
-            .await;
+        // Retried: `400 too_many_tool_calls ... Please retry the request`
+        // failed this 3 of 3 nextest tries on main (2026-10-31), when it
+        // fetched example.com, which url_context can't fetch.
+        let result = common::with_timeout(common::extended_test_timeout(), async {
+            retry_request!([client, schema] => {
+                stateful_builder(&client)
+                    .with_text(format!("Analyze the page at {} and extract metadata.", url_context::URL))
+                    .with_url_context()
+                    .with_response_format(schema)
+                    .create()
+                    .await
+            })
+        })
+        .await;
         let Some(response) = tool_response(result, "URL context with structured output") else {
             return;
         };
@@ -824,11 +842,7 @@ mod structured_output {
         let json = parse_json(&response);
         assert!(json["title"].is_string(), "{json}");
         assert!(json["description"].is_string(), "{json}");
-        assert!(
-            !response.url_context_results().is_empty(),
-            "no URL context result: {:?}",
-            response.step_summary()
-        );
+        url_context::assert_fetched(&response);
     }
 
     #[tokio::test]

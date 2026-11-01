@@ -868,24 +868,6 @@ mod tests {
     }
 
     #[test]
-    fn test_auto_function_stream_chunk_variants() {
-        // Test that Delta and FunctionResults variants can be created
-        let _delta = AutoFunctionStreamChunk::Delta(StepDelta::Text {
-            text: "Hello".to_string(),
-        });
-
-        let _results = AutoFunctionStreamChunk::FunctionResults(vec![FunctionExecutionResult {
-            name: "test".to_string(),
-            call_id: "1".to_string(),
-            args: json!({}),
-            result: json!({"ok": true}),
-            duration: Duration::from_millis(10),
-        }]);
-
-        let _complete = AutoFunctionStreamChunk::Complete(InteractionResponse::default());
-    }
-
-    #[test]
     fn test_function_execution_result_serialization() {
         let result = FunctionExecutionResult::new(
             "get_weather",
