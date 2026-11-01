@@ -47,7 +47,8 @@ every item probed live; #463).
   a read outside the workspaces fails with `Access to path "…" is denied`.
   The harness still allows the system temp directory and
   `~/.gemini/antigravity/brain`. `AgentBuilder::with_workspace_containment(false)`
-  restores the old behavior.
+  restores the old behavior, and an explicit `true` with no workspace fails
+  `spawn()` instead of running unconfined.
 - **Breaking: `StreamChunk::StatusUpdate` gains `usage` and
   `continuation_token`, and `interaction_id` becomes `Option<String>`.** A
   `store: false` stream's status updates carry no interaction ID (verified
