@@ -826,7 +826,8 @@ mod structured_output {
         // requests looped ~117s; without the schema, 6 of 6 answered in 5s).
         // A healthy answer takes under 10s, so each attempt gets 30s and up
         // to 4 tries, the way processing_steps_tests handled #473's agentic
-        // video. Any other error still fails.
+        // video. Transient errors get another attempt too; any other error
+        // still fails.
         let mut result = None;
         for attempt in 1..=4 {
             let request = stateful_builder(&client)
@@ -843,6 +844,10 @@ mod structured_output {
                     if message.contains("too_many_tool_calls") =>
                 {
                     println!("attempt {attempt}/4: too_many_tool_calls");
+                }
+                // What retry_request! retried before this loop replaced it.
+                Ok(Err(e)) if e.is_retryable() || common::is_transient_error(&e) => {
+                    println!("attempt {attempt}/4: transient error: {e}");
                 }
                 Ok(other) => {
                     result = Some(other);
