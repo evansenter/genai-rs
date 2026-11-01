@@ -50,8 +50,36 @@ wire_enum! {
         Incomplete = "incomplete",
         /// Interaction stopped because the configured budget was exceeded.
         BudgetExceeded = "budget_exceeded",
+        /// Decoding paused and can be resumed with
+        /// [`continuation_token`](InteractionResponse::continuation_token).
+        ///
+        /// In the google-genai 2.34.0 bindings but never observed live: on
+        /// 2026-11-01 a continuable response (only
+        /// [`CONTINUATION_MODEL`](crate::CONTINUATION_MODEL), at
+        /// `max_output_tokens`) reported [`Incomplete`](Self::Incomplete)
+        /// with a token instead.
+        RequiresContinuation = "requires_continuation",
     }
     unknown(status_type, unknown_status_type)
+}
+
+/// An error an interaction ended with, from [`InteractionResponse::errors`].
+///
+/// Unlike a step's error, whose `code` is numeric, the code here is a
+/// string such as `"CANCELLED"`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct InteractionError {
+    /// The error code, e.g. `"CANCELLED"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    /// A human-readable message.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// Fields the crate does not model yet, preserved for roundtrip.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Response from creating or retrieving an interaction.
@@ -164,6 +192,23 @@ pub struct InteractionResponse {
     /// (verified live 2026-10-01).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub labels: Option<std::collections::BTreeMap<String, String>>,
+
+    /// Resumes a decode that stopped early; pass it back with
+    /// [`InteractionBuilder::with_continuation_token`](crate::InteractionBuilder::with_continuation_token).
+    ///
+    /// Verified live 2026-11-01: only
+    /// [`CONTINUATION_MODEL`](crate::CONTINUATION_MODEL) supports decoding
+    /// continuation. It returns a token with status
+    /// [`Incomplete`](InteractionStatus::Incomplete) when
+    /// `max_output_tokens` cuts the answer off, on plain, streamed and
+    /// background responses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub continuation_token: Option<String>,
+
+    /// Errors the interaction ended with, e.g. `[{"code": "CANCELLED", ...}]`
+    /// on an interaction cancelled by a dropped stream (live 2026-11-01).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub errors: Option<Vec<InteractionError>>,
 
     /// Fields the API returned that this struct does not model, preserved
     /// for roundtrip (Evergreen): e.g. the `environment`, `generation_config`

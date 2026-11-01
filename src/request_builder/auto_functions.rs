@@ -496,7 +496,6 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// while let Some(result) = stream.next().await {
     ///     let event = result?;
-    ///     // event.event_id can be saved for stream resume support
     ///     match event.chunk {
     ///         AutoFunctionStreamChunk::Delta(delta) => {
     ///             if let Some(t) = delta.as_text() {
