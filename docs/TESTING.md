@@ -33,7 +33,7 @@ Tests that exercise an `Unknown` value carry
 | `GEMINI_API_KEY` | Required for live tests |
 | `TEST_TIMEOUT_SECS` | Per-test budget (default 60) |
 | `EXTENDED_TEST_TIMEOUT_SECS` | Budget for multi-turn tests (default 120) |
-| `LOUD_WIRE=1`, `RUST_LOG=genai_rs=debug` | Wire and debug logging |
+| `LOUD_WIRE=1` | Wire logging (tests install no `tracing` subscriber, so `RUST_LOG` does nothing) |
 
 ## Offline HTTP tests
 
@@ -49,10 +49,11 @@ canned `Reply`s: JSON, text, SSE chunks, extra headers, or a delay.
   (percent-encoding included), query and JSON body. It parses a realistic
   response, preserving `Unknown` and `extra`, and covers the wait helpers'
   success, failure and timeout paths. Files API uploads are left out.
-- **Known bugs** are failing tests in `tests/http_mock_resources/known_bugs.rs`,
-  ignored with a `known bug: ...` reason until fixed. They sit in a
-  subdirectory because `ci_coverage.rs` scans only top-level files. Run them
-  with `cargo nextest run --test http_mock_resources --run-ignored only`.
+- **Known bugs**, when there are any, go in
+  `tests/http_mock_resources/known_bugs.rs` as failing tests ignored with a
+  `known bug: ...` reason until fixed. A subdirectory, because
+  `ci_coverage.rs` scans only top-level files. Run them with
+  `cargo nextest run --test http_mock_resources --run-ignored only`.
 
 Prefer an offline test for anything that doesn't depend on model behavior;
 it's fast and runs on every PR.
@@ -123,7 +124,6 @@ async fn test_feature_name() {
 | Helper | Purpose |
 |--------|---------|
 | `get_client()` | `Some(Client)` when `GEMINI_API_KEY` is set |
-| `get_inspecting_client()` | A client plus the last raw response body, for asserting on unmodeled fields |
 | `interaction_builder(&client)`, `stateful_builder(&client)` | Builders preset with `DEFAULT_MODEL` (the latter with storage on) |
 | `retry_request!([vars] => { ... })`, `retry_on_transient(n, ..)` | Retry transport errors (`is_retryable()`) and the model-side flakes in `is_transient_error` |
 | `with_timeout(test_timeout(), ..)`, `extended_test_timeout()` | Bound a test |

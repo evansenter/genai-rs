@@ -210,8 +210,9 @@ impl InteractionResponse {
 
     /// Whether the response contains generic `tool_call` steps.
     ///
-    /// This is the one to check for MCP — see
-    /// [`tool_calls`](Self::tool_calls).
+    /// MCP calls arrived as these through September 2026; since 2026-10-01
+    /// they arrive as [`function_calls`](Self::function_calls) named
+    /// `<server>:<tool>`. See [`tool_calls`](Self::tool_calls).
     #[must_use]
     pub fn has_tool_calls(&self) -> bool {
         self.steps
@@ -222,11 +223,10 @@ impl InteractionResponse {
     /// The generic `tool_call` steps, in order.
     ///
     /// These are server-side tool invocations the API does not further
-    /// identify, and they are what an MCP call arrives as — the endpoint
-    /// does not emit `mcp_server_tool_call` (verified live 2026-08-16). The
-    /// steps carry only an `id` and an optional `signature`, so which server
-    /// or tool ran is not recoverable; `usage.total_tool_use_tokens` is what
-    /// shows the call happened.
+    /// identify: MCP calls arrived as them on 2026-08-16, carrying only an
+    /// `id` and an optional `signature`. Since 2026-10-01 an MCP call
+    /// arrives instead as an answered `function_call` named
+    /// `<server>:<tool>`, in [`function_calls`](Self::function_calls).
     ///
     /// Returns a borrowed view carrying both fields, matching
     /// [`function_calls`](Self::function_calls) — the `signature` is what a

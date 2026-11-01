@@ -63,7 +63,7 @@ let response = client
 |-------|------|------------------|-------|
 | `temperature` | `Option<f32>` | — | Sampling randomness. Deprecated upstream (google-genai 2.34.0), still accepted (2026-11-01) |
 | `top_p` | `Option<f32>` | — | Nucleus sampling. Deprecated upstream like `temperature`, still accepted |
-| `max_output_tokens` | `Option<i32>` | — | Output cap. Per-model ceilings come from the Models API: `GET /v1beta/models/{model}` returns `outputTokenLimit` (65,536 for `gemini-3.8-flash`, checked 2026-09-24) |
+| `max_output_tokens` | `Option<i32>` | — | Output cap. Per-model ceilings come from the Models API: `GET /v1beta/models/{model}` returns `outputTokenLimit` (65,536 for `gemini-3.8-flash`, checked 2026-09-24). Counts across decoding continuations; see [Decoding continuation](#decoding-continuation) |
 | `seed` | `Option<i64>` | `with_seed()` | See [Seeds](#seeds) |
 | `stop_sequences` | `Option<Vec<String>>` | `with_stop_sequences()` | Generation halts on any of them |
 | `thinking_level` | `Option<ThinkingLevel>` | `with_thinking_level()` | See [Thinking Mode](THINKING_MODE.md) |
@@ -88,6 +88,39 @@ seeded requests returned identical text. The API doesn't document a
 guarantee, though, so tests should still assert on structure rather than
 exact text (see [Testing](TESTING.md)).
 
+### Decoding continuation
+
+A response cut off by `max_output_tokens` can be continued instead of
+regenerated, on `CONTINUATION_MODEL` only (every other model answers `400
+Decoding continuation is not enabled for this model`, verified live
+2026-11-01). The cut-off response is `Incomplete` and carries a
+`continuation_token`; send the same request again, with the token and a
+larger `max_output_tokens`, and the answer picks up mid-sentence. The cap
+counts across continuations, so reusing the first value is a 400 ("has
+already been exhausted"), and any different input is a 400 too.
+
+```rust,no_run
+# use genai_rs::{Client, GenerationConfig};
+# async fn example(client: &Client) -> Result<(), genai_rs::GenaiError> {
+let ask = |max_output_tokens| {
+    client
+        .interaction()
+        .with_model(genai_rs::CONTINUATION_MODEL)
+        .with_text("Write a sixteen-line poem about the sea.")
+        .with_generation_config(GenerationConfig {
+            max_output_tokens: Some(max_output_tokens),
+            ..Default::default()
+        })
+};
+let first = ask(30).create().await?;
+if let Some(token) = &first.continuation_token {
+    let rest = ask(600).with_continuation_token(token).create().await?;
+    println!("{}{}", first.all_text(), rest.all_text());
+}
+# Ok(())
+# }
+```
+
 ## Client configuration
 
 ```rust
@@ -104,6 +137,8 @@ let client = Client::builder("api-key".to_string())
 |------------------------|--------|
 | `with_timeout(Duration)` | Total-request timeout for every request, **including streamed bodies**. A request-level timeout cannot extend it |
 | `with_connect_timeout(Duration)` | Connection timeout |
+| `with_read_timeout(Duration)` | Longest wait for the headers or the next chunk, reset by each one: bounds a stalled stream without capping a long one. Set it above the longest a call thinks before answering |
+| `with_base_url(String)` | Send requests to a proxy or mock server instead of `generativelanguage.googleapis.com` |
 | `add_wire_inspector(Arc<dyn WireInspector>)` | Observe raw API traffic; see [Logging Strategy](LOGGING_STRATEGY.md#wire-inspection-api) |
 
 `Client::new(api_key)` is `Client::builder(api_key).build()` with no

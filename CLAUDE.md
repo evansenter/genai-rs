@@ -49,7 +49,8 @@ cargo nextest run --features antigravity --run-ignored all -E 'binary(antigravit
 ```
 
 Live tests take minutes and can flake on model variability. `LOUD_WIRE=1`
-prints the wire; `RUST_LOG=genai_rs=debug` enables debug logs.
+prints the wire. `RUST_LOG` does nothing in tests or examples: neither
+installs a `tracing` subscriber.
 
 ## Layout
 
@@ -118,6 +119,7 @@ literals elsewhere.
 | `DEFAULT_MODEL` | Everything, unless a row below applies |
 | `DEFAULT_IMAGE_MODEL` | Image generation |
 | `DEFAULT_TTS_MODEL` | Text-to-speech |
+| `CONTINUATION_MODEL` | Decoding continuation (the only model that supports it) |
 | `DEFAULT_DEEP_RESEARCH_AGENT`, `DEFAULT_ANTIGRAVITY_AGENT` | `with_agent()` |
 
 Unit tests may use `"test-model"` where the id is filler. Non-test code that
@@ -178,7 +180,8 @@ cleans up.
 ## Changelog and versioning
 
 Update `CHANGELOG.md` `[Unreleased]` for user-facing changes (features,
-breaking changes with migration, fixes). Not for internal refactors or CI.
+breaking changes with migration, fixes); create the section above the latest
+release if it is absent. Not for internal refactors or CI.
 
 Version bump — update all of:
 
@@ -218,10 +221,15 @@ upgrade table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`, and run
 - `rust.yml` jobs: check, test, test-strict-unknown, test-antigravity (pinned
   `localharness` wheel), test-integration (live, grouped), example-smoke
   (live), fmt, shell-scripts, clippy, doc, msrv, cross-platform, coverage,
-  build-metrics. Live jobs run only for same-repo pushes/PRs and fail on an
-  empty `GEMINI_API_KEY`.
+  build-metrics, scheduled-run-status. Live jobs run for pushes, same-repo
+  PRs, the weekly schedule (Wednesday) and `workflow_dispatch`, and fail on
+  an empty `GEMINI_API_KEY`. Each integration group runs every binary and
+  lists the failures; `.config/nextest.toml` kills a test hung past 10
+  minutes. A red scheduled run opens a `ci-health-escalation` issue
+  (`scheduled-run-status`).
 - Other workflows: `audit.yml`, `api-surface-sweep.yml`, `consumer-crate.yml`,
-  `ci-flakiness-report.yml`, `release.yml`, `release-drafter.yml`.
+  `ci-flakiness-report.yml`, `release.yml`, `release-drafter.yml`,
+  `claude.yml`, `claude-code-review.yml`.
 - **Example size gate:** `build-metrics` fails when an example binary grows
   more than 15% against the last main build. For intended growth, add the
   `size-growth-ok` label **and push a commit** (a re-run replays the old event

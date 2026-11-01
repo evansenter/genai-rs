@@ -99,8 +99,9 @@ mod paint {
 ///
 /// # Syntax
 ///
-/// `LOUD_WIRE` takes a comma-separated list. `1`, `true`, or any empty
-/// value means "everything, pretty-printed" — the historical behavior.
+/// `LOUD_WIRE` takes a comma-separated list. `1`, `true`, `yes`, `on`,
+/// `all`, or an empty value means "everything, pretty-printed" — the
+/// historical behavior.
 ///
 /// | Selector | Keeps |
 /// |----------|-------|

@@ -91,7 +91,7 @@ wire by `type`:
 | `GoogleMapsCall` / `GoogleMapsResult` | `google_maps_*` | Google Maps |
 | `ProcessingCall` / `ProcessingResult` | `processing_*` | Media processing for agentic video. Carries the signature that `step.start` announces as `""`; the assembled `Completed` response keeps it |
 | `RetrievalCall` / `RetrievalResult` | `retrieval_*` | Retrieval tool (Vertex-only) |
-| `McpServerToolCall` / `McpServerToolResult` | `mcp_server_tool_*` | Spec-defined, never observed: MCP calls arrive whole on `step.start` as a generic `tool_call` step |
+| `McpServerToolCall` / `McpServerToolResult` | `mcp_server_tool_*` | Spec-defined, never observed. MCP calls arrive as `function_call` / `function_result` steps named `<server>:<tool>` (since 2026-10-01; earlier as a generic `tool_call` step) |
 | `Unknown { delta_type, data }` | anything else | Preserved for forward compatibility |
 
 Helpers: `delta.as_text()`, `delta.as_arguments_delta()`, and the Evergreen
@@ -331,6 +331,10 @@ start, which is how to watch a long agent run live.
 - `ClientBuilder::with_timeout()` is a total-request timeout that also covers
   reading the streamed body, so it cuts long streams off. Leave it unset for
   streaming clients.
+- `ClientBuilder::with_read_timeout()` bounds the wait for the headers and
+  for each next chunk, so it ends a stalled connection without capping a
+  healthy long stream. It is the only client-level bound that reaches
+  `interactions().stream()` and `resume_stream()`.
 
 See [Reliability](RELIABILITY.md#timeouts).
 
@@ -339,7 +343,7 @@ See [Reliability](RELIABILITY.md#timeouts).
 `StreamChunk`, `AutoFunctionStreamChunk` and `StepDelta` are
 `#[non_exhaustive]`. Always include a wildcard arm. Unknown events carry the
 original JSON (`unknown_chunk_type()`, `unknown_data()`); an unknown SSE
-event type is logged at `debug`.
+event type is logged at `warn`.
 
 ## Examples
 

@@ -360,14 +360,11 @@ pub struct TriggerCreateParams {
     pub environment_id: Option<String>,
     /// Consecutive failures before the trigger is disabled.
     ///
-    /// Sends as a plain JSON number. The same logical field on the
-    /// *response*-side [`Trigger`] re-serializes in the protobuf-JSON
-    /// string form (for roundtrip fidelity to captured wire), so a
-    /// read-modify-recreate flow changes the wire spelling — both forms
-    /// are accepted on deserialize (here too, so a config file seeded
-    /// from a stored [`Trigger`] loads cleanly — but strip the stored
-    /// trigger's output-only keys first: they land in [`Self::extra`]
-    /// and are forwarded verbatim, which the API rejects).
+    /// Sends as a plain JSON number, as the response-side [`Trigger`]
+    /// does. The protobuf-JSON string form is accepted on deserialize too,
+    /// so a config file seeded from a stored [`Trigger`] loads cleanly —
+    /// but strip the stored trigger's output-only keys first: they land in
+    /// [`Self::extra`] and are forwarded verbatim, which the API rejects.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

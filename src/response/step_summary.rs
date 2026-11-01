@@ -55,17 +55,17 @@ pub struct StepSummary {
     /// Number of generic `tool_call` steps — server-side tool invocations
     /// the API does not further identify.
     ///
-    /// **This is where MCP calls land.** The endpoint emits `tool_call`
-    /// rather than `mcp_server_tool_call` (verified live 2026-08-16), so
-    /// [`mcp_server_tool_call_count`](Self::mcp_server_tool_call_count)
-    /// reads 0 on a successful MCP interaction while this reads non-zero.
-    /// Check this one. See #433.
+    /// MCP calls landed here through September 2026 (verified live
+    /// 2026-08-16). Since 2026-10-01 they arrive as answered
+    /// `function_call` steps named `<server>:<tool>`, counted in
+    /// [`function_call_count`](Self::function_call_count). See #433.
     pub tool_call_count: usize,
     /// Number of `mcp_server_tool_call` steps.
     ///
-    /// **Expect 0.** The API emits generic `tool_call` steps for MCP; see
-    /// [`tool_call_count`](Self::tool_call_count). Retained because the
-    /// step type is spec-defined and may start arriving.
+    /// **Expect 0.** The API has never emitted it: MCP calls arrived as
+    /// generic `tool_call` steps, and since 2026-10-01 as answered
+    /// `function_call` steps. Retained because the step type is
+    /// spec-defined and may start arriving.
     ///
     /// [`InteractionResponse::tool_use_tokens`] is the other signal that
     /// MCP ran, with the caveat that it is a single aggregate across all
