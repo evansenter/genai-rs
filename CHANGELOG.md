@@ -160,7 +160,7 @@ publishing, so this release follows 0.10.0 directly.
   locations, trusted_domains)`: since late October 2026 the API rejects one
   without a domain (400 `invalid_request`), although the `google-genai`
   2.34.0 bindings still mark the field optional.
-- **Environment files and forking**: `client.environments().files().list(env)`
+- **Environment files and forking**: `client.environments().files().list(env, path)`
   (`.with_recursive(true)` for subdirectories) and `.upload(env, path,
   EnvironmentFileUpload::new(data, mime))`, and
   `CreateEnvironmentRequest::from_environment` (bare environment id only).
@@ -177,9 +177,10 @@ publishing, so this release follows 0.10.0 directly.
   `VideoProcessing::segment()` for clip windows, `fps` sampling and agentic
   mode. A segment window is the main token-cost lever (16,198 vs 57,778 video
   tokens for a 5s window on one test video, 2026-08-18).
-- **New step types**: `Step::ToolCall` (the generic step MCP and other
-  server-side tools actually emit — previously `Unknown`, so MCP calls went
-  uncounted), `Step::ProcessingCall` / `ProcessingResult` (agentic video),
+- **New step types**: `Step::ToolCall` (the generic step MCP calls arrived
+  as through September 2026 — previously `Unknown`, so they went uncounted;
+  since 2026-10-01 MCP calls arrive as answered `function_call`s, see
+  Fixed), `Step::ProcessingCall` / `ProcessingResult` (agentic video),
   `Step::RetrievalCall` / `RetrievalResult` (Vertex-only), with matching
   `StepDelta` variants, `InteractionResponse::tool_calls()` / `has_tool_calls()`,
   and new `StepSummary` counts.
@@ -287,8 +288,9 @@ publishing, so this release follows 0.10.0 directly.
   enum, not only `Content` and `Step` types. Every string enum implements `Eq`,
   `Hash` and `Display`.
 - **Breaking:** `From<serde_json::Value> for FunctionResultPayload` wraps a
-  non-object value as `{"result": value}` (the API rejects a top-level array
-  as a function result).
+  value that is neither an object nor a string (an array, number, bool or
+  null) as `{"result": value}`; a string becomes `FunctionResultPayload::Text`
+  (the API rejects a top-level array as a function result).
 
 - **Breaking:** `DEFAULT_MODEL` is `gemini-3.8-flash` (was `gemini-3.7-flash`).
   It rejects `ThinkingLevel::Minimal`.

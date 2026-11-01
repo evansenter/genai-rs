@@ -30,9 +30,18 @@
 //! - **Fluent Builder API**: Chain methods for readable request construction
 //! - **Streaming**: Real-time response streaming with `create_stream()`
 //! - **Function Calling**: Automatic function discovery and execution via macros
-//! - **Built-in Tools**: Google Search, Code Execution, URL Context
+//! - **Built-in Tools**: Google Search, Google Maps, Code Execution, URL
+//!   Context, File Search, MCP servers and more
 //! - **Multimodal**: Images, audio, video, and document inputs
 //! - **Thinking Mode**: Access model reasoning with configurable levels
+//! - **Resources**: `client.agents()`, `.webhooks()`, `.triggers()`,
+//!   `.environments()`, `.credentials()`, `.voices()`, `.files()` and
+//!   `.file_search_stores()`, with paged `.items()` streams
+//! - **Background agents and decoding continuation**: Deep Research and
+//!   Antigravity agents in the background, and
+//!   [`CONTINUATION_MODEL`] answers resumed past `max_output_tokens`
+//! - **Local agents** (feature `antigravity`): a native client for the
+//!   Antigravity harness, with workspace containment, policies and hooks
 //!
 //! ## API Stability & Forward Compatibility
 //!

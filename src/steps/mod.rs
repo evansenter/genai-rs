@@ -345,15 +345,14 @@ pub enum Step {
     /// A server-side tool call the API does not further identify
     /// (`type: "tool_call"`).
     ///
-    /// This is what an MCP tool invocation actually looks like on the wire:
-    /// only `{id, signature}`, with no server name, tool name, or arguments
-    /// (verified live 2026-08-16, `gemini-3.7-flash`, `mcp.deepwiki.com`).
-    /// Before it was modeled, these landed in [`Step::Unknown`], so a
-    /// successful MCP interaction reported zero tool calls.
-    ///
-    /// The call *happened* and its cost is real — `usage.total_tool_use_tokens`
-    /// is non-zero — but which server or tool ran is not recoverable from the
-    /// response. See #433.
+    /// This is what an MCP tool invocation looked like on the wire through
+    /// September 2026: only `{id, signature}`, with no server name, tool
+    /// name, or arguments (verified live 2026-08-16, `gemini-3.7-flash`,
+    /// `mcp.deepwiki.com`). Since 2026-10-01 MCP calls arrive instead as
+    /// answered [`Step::FunctionCall`] / [`Step::FunctionResult`] pairs
+    /// named `<server>:<tool>`. Before it was modeled, this step landed in
+    /// [`Step::Unknown`], so a successful MCP interaction reported zero tool
+    /// calls. See #433.
     ///
     /// # Roundtrip cost of modeling this
     ///

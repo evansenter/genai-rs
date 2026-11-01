@@ -8,10 +8,10 @@ image generation), MCP, subagents, and trajectory persistence all run inside
 it. This module speaks its protocol directly — no Python in the loop — so
 your tools, hooks, and policies are ordinary Rust.
 
-> **Note**: All code blocks in this guide use `rust,ignore` because the
-> `antigravity` feature is off by default and doctests run without it.
-> The same snippets are exercised (compiled and run) by
-> `examples/antigravity/agent.rs` and `tests/antigravity_harness.rs`.
+> **Note**: The code blocks in this guide are `rust,ignore` fragments (they
+> use `agent` / `client` bindings they don't define), so doctests skip them.
+> `examples/antigravity/` and `tests/antigravity_harness.rs` exercise the
+> same APIs against a real harness.
 
 ## Setup
 
@@ -64,8 +64,8 @@ the plain-string `userInput` arm and renamed the multi-part
 `{"userInput": "hello"}` is a harness-side *parse error* — reported on its
 stderr (`failed to unmarshal InputEvent`) and nowhere else — so every turn
 failed to start and ran to its timeout. An outbound shape cannot be
-aliased: the harness accepts exactly one, which is why this build drives
-0.1.18 only. The drift guard now checks field *types* as well as names,
+aliased: the harness accepts exactly one, which is why a build drives a
+single revision (0.1.23 today). The drift guard now checks field *types* as well as names,
 since `userInput` kept its name while changing shape.
 
 ### Binary discovery
@@ -749,7 +749,7 @@ the scrollback. So `LOUD_WIRE` also takes a comma-separated filter.
 
 | Value | Keeps |
 |-------|-------|
-| `1`, `true`, `yes`, `on`, `all` | Everything (unchanged) |
+| `1`, `true`, `yes`, `on`, `all`, or empty | Everything (unchanged) |
 | `harness` | Spawn and stderr lines |
 | `ws` | Every WebSocket message |
 | `request`, `response`, `sse`, `upload` | The HTTP-side categories |

@@ -207,10 +207,9 @@ where
 /// string or unexpected JSON shape to `None` with a `warn!` instead of
 /// failing the enclosing struct (and hence an entire list response).
 ///
-/// Used on the trigger resource family, whose wire shape is unverified
-/// (protobuf-JSON specifies RFC 3339 strings for `Timestamp`, but this
-/// family already diverged from expectations once — int64s arrive as
-/// strings); on `Environment` for uniformity with the int64 helpers next
+/// Used on the trigger resource family (verified live 2026-11-01, but a
+/// sparse projection or a future encoding must not fail a whole list); on
+/// `Environment` for uniformity with the int64 helpers next
 /// door even though its timestamp encoding was live-verified; and on
 /// `Webhook`/`SigningSecret` so a divergent timestamp encoding costs one
 /// field rather than dropping the whole webhook from a listed page (the

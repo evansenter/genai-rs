@@ -738,9 +738,10 @@ async fn test_antigravity_config_accepted() {
     // assert the strong form, and cancel the background interaction. The retry is
     // deliberate despite the non-idempotent create: a retry after a lost
     // response can orphan an agent run plus its environment with no ID to
-    // clean up, but max_total_tokens caps the orphan's cost and the
-    // environment expires on its own — unlike the trigger probe, whose
-    // orphan would fire on a schedule forever, so it declines the retry.
+    // clean up, but max_total_tokens caps the orphan's cost — unlike the
+    // trigger probe, whose orphan would fire on a schedule forever, so it
+    // declines the retry. (The orphaned environment does not expire on its
+    // own: environments from 2026-07 were still active on 2026-11-01.)
     let response = crate::retry_request!([client] => {
         client
             .interaction()
@@ -858,8 +859,9 @@ async fn test_environment_crud_lifecycle() {
     ));
     // Create is a non-idempotent POST, so a retry after a lost response can
     // orphan a first container — tolerated here (unlike the trigger test's
-    // un-retried create) because environments expire on their own, bounding
-    // the leak, while an un-retried create would flake the whole lifecycle.
+    // un-retried create) because an idle container costs nothing, while an
+    // un-retried create would flake the whole lifecycle. Environments do not
+    // expire on their own (2026-07 ones were still active on 2026-11-01).
     let created = crate::retry_request!([client, request] => {
         client.environments().create(&request).await
     })
@@ -869,8 +871,8 @@ async fn test_environment_crud_lifecycle() {
         created.id, created.status
     );
     let created_id = created.id.clone().unwrap_or_else(|| {
-        // No ID means no handle to delete by — the container is leaked
-        // (until it expires). Name it loudly like the trigger and example
+        // No ID means no handle to delete by — the container is leaked.
+        // Name it loudly like the trigger and example
         // siblings instead of a bare expect.
         panic!(
             "environments.create returned no ID (protocol violation) — the container is \
@@ -880,8 +882,8 @@ async fn test_environment_crud_lifecycle() {
 
     // Run the read assertions in a closure so the delete below also runs
     // on the failure path — a tripped assertion must not leak the
-    // environment server-side (they expire eventually, but repeated CI
-    // failures would accumulate containers). Reads retry transients like
+    // environment server-side (environments don't expire on their own, so
+    // repeated CI failures accumulate containers). Reads retry transients like
     // the neighbouring CRUD tests.
     let checks = async {
         // Get: counts arrive as protobuf-JSON strings and must parse.

@@ -9,11 +9,9 @@ use std::borrow::Cow;
 ///
 /// Events are emitted at `DEBUG` level to the [`TRACING_TARGET`](super::TRACING_TARGET)
 /// (`genai_rs::wire`) target with structured fields, including the JSON
-/// body serialized as a string. Enable it with:
-///
-/// ```bash
-/// RUST_LOG=genai_rs::wire=debug cargo run --example simple_interaction
-/// ```
+/// body serialized as a string. They appear once your program installs a
+/// `tracing` subscriber; with an `EnvFilter`, select them with
+/// `RUST_LOG=genai_rs::wire=debug`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TracingForwarder;
 

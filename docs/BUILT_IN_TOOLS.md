@@ -395,14 +395,20 @@ For a restriction with a mode, pass `AllowedTools` entries to
 `with_allowed_tools_config()`:
 `AllowedTools::new(vec!["read_file".into()]).with_mode(FunctionCallingMode::Auto)`.
 
-**MCP calls arrive as generic `Step::ToolCall { id, signature }` steps**,
-not as `Step::McpServerToolCall` (verified live 2026-08-16 against a real MCP
-server). So a match on `McpServerToolCall` never fires, and
-`step_summary().mcp_server_tool_call_count` reads 0 even on a successful call.
-Count calls with `step_summary().tool_call_count` or `response.tool_calls()`.
-Which server or tool ran can't be recovered from the response. The
-`McpServerToolCall` / `McpServerToolResult` variants remain modeled from the
-spec (#459).
+**MCP calls arrive as answered `function_call` / `function_result` steps.**
+Since 2026-10-01 (re-verified 2026-11-01) the API runs each MCP call
+server-side and returns both steps in the same response, with the call named
+`<server>:<tool>` (for example `deepwiki:read_wiki_structure`).
+`response.function_calls()` includes them, and `pending_function_calls()`
+leaves them out, so the auto-function loops don't try to run them. Before
+that (verified 2026-08-16) they arrived as generic `Step::ToolCall { id,
+signature }` steps, which `tool_calls()` and `step_summary().tool_call_count`
+still count. `Step::McpServerToolCall` / `McpServerToolResult` have never
+been observed (#459).
+
+An MCP interaction can end in `RequiresAction` even after every call was
+answered (a server bug, #473). Treat `RequiresAction` with an empty
+`pending_function_calls()` and a text answer as finished.
 
 ## Combining Tools
 
@@ -456,8 +462,9 @@ let result = client
 | `file_search_results()` | File Search | `Vec<&FileSearchResultItem>` |
 | `has_google_maps_results()` | Google Maps | `bool` |
 | `google_maps_results()` | Google Maps | `Vec<GoogleMapsResultInfo>` |
-| `has_tool_calls()` | MCP / generic | `bool` |
-| `tool_calls()` | MCP / generic | `Vec<ToolCallInfo>` |
+| `function_calls()` | MCP (`<server>:<tool>`) and your functions | `Vec<FunctionCallInfo>` |
+| `has_tool_calls()` | Generic server-side tools (MCP before 2026-10) | `bool` |
+| `tool_calls()` | Generic server-side tools (MCP before 2026-10) | `Vec<ToolCallInfo>` |
 | `has_annotations()` | Any grounded | `bool` |
 | `all_annotations()` | Any grounded | `Iterator<Item = &Annotation>` |
 | `step_summary()` | All | `StepSummary` (per-step-type counts) |

@@ -37,7 +37,8 @@ LOUD_WIRE=automatedTrigger,summary cargo run --example proactive_agent --feature
   Harness 0.1.23 runs a trigger in an empty conversation normally, but on
   0.1.10 and 0.1.18 one crashed the run (`earliest step index is out of
   bounds: 0 vs 0`) and closed the WebSocket, killing the session. The
-  opening turn keeps the example safe on those.
+  example still opens with a turn, which also gives the trigger turns a
+  conversation to build on.
 - **A trigger's turn is not surfaced.** Its text never reaches your
   stream; the next `chat`/`send_streaming` halts it and discards its
   events. Use triggers for side effects, and read results with a normal

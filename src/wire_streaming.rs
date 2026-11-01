@@ -496,9 +496,10 @@ impl<'de> Deserialize<'de> for StreamChunk {
 
 /// A streaming event with position metadata for resume support.
 ///
-/// This wrapper pairs a [`StreamChunk`] with its `event_id`, enabling stream resumption
-/// after network interruptions. To resume a stream, pass the `event_id` from the last
-/// successfully received event to resume the stream.
+/// This wrapper pairs a [`StreamChunk`] with its `event_id`. Only a
+/// **background** interaction's stream carries event ids and can be
+/// resumed: a foreground `create_stream()` carries none, and the server
+/// cancels it when the connection drops (verified live 2026-11-01).
 ///
 /// # Example
 ///
@@ -507,18 +508,19 @@ impl<'de> Deserialize<'de> for StreamChunk {
 /// use genai_rs::{Client, StreamChunk};
 ///
 /// # async fn example(client: Client) -> Result<(), genai_rs::GenaiError> {
-/// let mut interaction_id = None;
-/// let mut last_event_id = None;
-/// let mut stream = client.interaction().with_model(genai_rs::DEFAULT_MODEL)
-///     .with_text("Count to 100").create_stream();
+/// // A background interaction, followed by streaming its events.
+/// let created = client.interaction().with_model(genai_rs::DEFAULT_MODEL)
+///     .with_text("Count to 100").with_background(true).create().await?;
+/// let id = created.id.clone().unwrap_or_default();
 ///
+/// let mut last_event_id = None;
+/// let mut stream = client.interactions().stream(&id);
 /// while let Some(result) = stream.next().await {
 ///     let event = result?;
 ///     if event.event_id.is_some() {
 ///         last_event_id = event.event_id.clone(); // Track for resume
 ///     }
 ///     match event.chunk {
-///         StreamChunk::Created { interaction } => interaction_id = interaction.id,
 ///         StreamChunk::StepDelta { delta, .. } => { /* process */ }
 ///         StreamChunk::Completed(response) => { /* done */ }
 ///         _ => {}
@@ -526,8 +528,8 @@ impl<'de> Deserialize<'de> for StreamChunk {
 /// }
 ///
 /// // If interrupted, resume from last_event_id:
-/// if let (Some(id), Some(last)) = (&interaction_id, &last_event_id) {
-///     let resumed_stream = client.interactions().resume_stream(id, last);
+/// if let Some(last) = &last_event_id {
+///     let resumed_stream = client.interactions().resume_stream(&id, last);
 /// #   drop(resumed_stream);
 /// }
 /// # Ok(())

@@ -13,7 +13,7 @@ wildcard arm.
 | Variant | Meaning | `is_retryable()` |
 |---------|---------|------------------|
 | `Api { status_code, message, request_id, retry_after }` | The API returned a non-2xx status | 429 and 5xx only |
-| `Http(reqwest::Error)` | Network, connect, TLS, or client-level timeout | Yes |
+| `Http(reqwest::Error)` | Network, connect, TLS, or client-level timeout | Yes, except a request that can't be built (bad base URL, rejected header) or a redirect loop |
 | `Timeout(Duration)` | The request-level timeout (`InteractionBuilder::with_timeout`) elapsed | Yes |
 | `Json(serde_json::Error)` | JSON (de)serialization failed outside response parsing, e.g. inside a stream event | No |
 | `Parse(String)` | An SSE stream could not be parsed | No |

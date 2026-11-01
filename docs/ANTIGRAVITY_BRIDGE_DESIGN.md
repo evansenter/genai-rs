@@ -1,7 +1,13 @@
 # Antigravity Bridge Design
 
 Status: **Implemented (phase 1)** — `src/antigravity/`, feature `antigravity`,
-user guide `docs/ANTIGRAVITY.md`. Deviations from this design in phase 1:
+user guide `docs/ANTIGRAVITY.md`.
+
+> The module layout and API sketch below are the original design. The
+> current API is in `docs/ANTIGRAVITY.md` and the rustdoc; the upgrade table
+> and the lessons near the end are kept current.
+
+Deviations from this design in phase 1:
 
 - ~~`triggers.rs` is a stub~~ — implemented: `AgentBuilder::add_trigger`
   spawns per-trigger timer tasks sending `automated_trigger` events, gated

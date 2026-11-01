@@ -66,6 +66,11 @@ pub enum GenaiError {
     /// possibly due to API evolution or an undocumented response format.
     /// Unlike `InvalidInput` (user's fault), this represents an issue with
     /// the API response itself.
+    ///
+    /// A stream whose body ends before `interaction.completed` or an error
+    /// event (a cut-off connection) also ends with this. It is not
+    /// [`is_retryable`](Self::is_retryable): re-sending starts a new
+    /// generation, and only a background interaction can resume.
     #[error("Malformed API response: {0}")]
     MalformedResponse(String),
     /// Request timed out after the specified duration.

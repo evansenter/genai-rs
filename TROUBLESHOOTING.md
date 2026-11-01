@@ -6,8 +6,10 @@ Symptoms and fixes, each with a link to the guide that covers it.
 
 ```bash
 LOUD_WIRE=1 cargo run --example simple_interaction            # requests, responses, SSE frames
-RUST_LOG=genai_rs=debug cargo run --example simple_interaction # library logs
 ```
+
+For library logs, run your program with `RUST_LOG=genai_rs=debug` after
+installing a `tracing` subscriber; the examples install none.
 
 `LOUD_WIRE` is read once, when the `Client` is built, so set it before your
 program starts. Error responses are printed in full. For output format,
@@ -28,7 +30,7 @@ changing it changes nothing.
 | `Api { status_code: 400, .. }` | The `message` usually names the field. Some fields are Vertex-only and rejected by the Gemini API (see [docs/INTERACTIONS_API_GAP.md](docs/INTERACTIONS_API_GAP.md)) |
 | A 400 that passes on re-run | See [Known transient errors](docs/ERROR_HANDLING.md#known-transient-errors) |
 | `GenaiError::Timeout(_)` | The request-level `with_timeout()` elapsed |
-| `GenaiError::Http(e)` with `e.is_timeout()` | The **client-level** `ClientBuilder::with_timeout()` elapsed. It caps every request, including streams, and a request-level timeout cannot extend it; see [Timeouts](docs/RELIABILITY.md#timeouts) |
+| `GenaiError::Http(e)` with `e.is_timeout()` | A **client-level** timeout elapsed: `ClientBuilder::with_timeout()` (caps every request, including streams; a request-level timeout cannot extend it) or `with_read_timeout()` (no headers or chunk arrived in time); see [Timeouts](docs/RELIABILITY.md#timeouts) |
 | `GenaiError::InvalidInput(_)` before any request is sent | The builder rejected the combination (for example, no input, both model and agent, or `with_store_disabled()` with chaining or background) |
 | `Thinking level THINKING_LEVEL_MINIMAL is not supported for this model` | `DEFAULT_MODEL` rejects `ThinkingLevel::Minimal`; use `Low`, or pass a model that accepts it to `with_model()` |
 | TLS errors in minimal containers | The crate verifies against the OS trust store; install a CA bundle |
@@ -72,9 +74,12 @@ Stateless conversations need the manual loop; see
 - `Err(GenaiError)` items are transport, parse or timeout errors.
 - A `StreamChunk::Error { message, code }` event is a server-side error; it
   is terminal.
-- A client-level timeout (`ClientBuilder::with_timeout`) cuts off long
-  streams; prefer the request-level timeout, which applies between chunks.
-- For stored interactions, resume from the last `event_id`; see
+- A client-level total timeout (`ClientBuilder::with_timeout`) cuts off long
+  streams. Prefer `with_read_timeout`, which bounds each gap and also
+  reaches `interactions().stream()`, or the request-level timeout, which
+  applies between chunks of `create_stream()`.
+- Only background interactions can resume from the last `event_id`; a
+  dropped foreground stream is cancelled server-side. See
   [Stream Resume](docs/STREAMING_API.md#stream-resume).
 
 ## Multimodal and files
