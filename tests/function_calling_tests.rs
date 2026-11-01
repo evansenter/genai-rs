@@ -1556,12 +1556,11 @@ mod multiturn {
         );
     }
 
-    /// A streamed auto-function turn chained onto an earlier one.
+    /// Two streamed auto-function turns, chained.
     ///
-    /// Turn 1 is not streamed: since 2026-10-01 the API rejects the function
-    /// result of a streamed turn whose previous turn was also streamed
-    /// (`docs/INTERACTIONS_API_GAP.md`, server-side changes). Restore turn 1
-    /// to `create_stream_with_auto_functions` once that is fixed.
+    /// From 2026-10-01 to at least 2026-10-08 the API rejected the second
+    /// turn's function result when both turns were streamed (#473). Fixed by
+    /// 2026-11-01.
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_multiturn_streaming_auto_functions() {
@@ -1572,21 +1571,22 @@ mod multiturn {
 
         let functions = vec![get_weather_function()];
 
-        let result1 = client
-            .interaction()
-            .with_model(genai_rs::DEFAULT_MODEL)
-            .with_text("What's the weather in Miami?")
-            .add_functions(functions.clone())
-            .with_store_enabled()
-            .with_system_instruction(SYSTEM_INSTRUCTION)
-            .create_with_auto_functions()
-            .await
-            .expect("Turn 1 should succeed");
+        let result1 = consume_auto_function_stream(
+            client
+                .interaction()
+                .with_model(genai_rs::DEFAULT_MODEL)
+                .with_text("What's the weather in Miami?")
+                .add_functions(functions.clone())
+                .with_store_enabled()
+                .with_system_instruction(SYSTEM_INSTRUCTION)
+                .create_stream_with_auto_functions(),
+        )
+        .await;
         assert!(
-            !result1.executions.is_empty(),
+            result1.function_results_count > 0,
             "Turn 1 should execute a function"
         );
-        let response1 = result1.response;
+        let response1 = result1.final_response.expect("Turn 1 should complete");
 
         let result2 = consume_auto_function_stream(
             client
