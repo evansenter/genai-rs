@@ -444,16 +444,14 @@ fn test_generation_config_tool_choice_allowed_tools_object() {
     );
 }
 
+/// The Gemini API rejects both penalties ("Unknown parameter
+/// 'presence_penalty' at 'generation_config'", live 2026-11-01), and neither
+/// is in the google-genai 2.34.0 bindings, so they are not modeled (D-005).
 #[test]
-fn test_generation_config_penalties_serialize() {
-    let config = GenerationConfig {
-        presence_penalty: Some(0.5),
-        frequency_penalty: Some(-0.5),
-        ..Default::default()
-    };
-    let value = serde_json::to_value(&config).unwrap();
-    assert_eq!(value["presence_penalty"], 0.5);
-    assert_eq!(value["frequency_penalty"], -0.5);
+fn test_generation_config_has_no_penalties() {
+    let value = serde_json::to_value(GenerationConfig::default()).unwrap();
+    assert!(value.get("presence_penalty").is_none());
+    assert!(value.get("frequency_penalty").is_none());
 }
 
 #[test]

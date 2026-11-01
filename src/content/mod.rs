@@ -22,16 +22,21 @@ use serde::Serialize;
 wire_enum! {
     /// Programming language for code execution.
     ///
-    /// Currently only Python is supported by the Gemini API.
+    /// Python is the only language observed live; the spec adds Bash.
     ///
     /// # Wire Format
     ///
-    /// Lowercase: `"python"`.
+    /// Lowercase: `"python"`, `"bash"`.
     #[derive(Default)]
     pub enum CodeExecutionLanguage {
         /// Python programming language
         #[default]
         Python = "python",
+        /// Bash. In the google-genai 2.34.0 bindings ("only available for
+        /// Gemini 3.0 model or above") but not observed live: on 2026-11-01
+        /// `gemini-3.8-flash` ran only Python, and `gemini-4-argon` ran shell
+        /// commands through Python's `subprocess`.
+        Bash = "bash",
     }
     unknown(language_type, unknown_language_type)
 }

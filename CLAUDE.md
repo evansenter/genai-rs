@@ -14,7 +14,9 @@ Prose docs lag the API; absence from them is not evidence of absence. In
 order (D-004):
 
 1. **Generated bindings** — `google-genai`'s `_gaos/types/` (diff two
-   releases to find new surface).
+   releases to find new surface). The published
+   [OpenAPI spec](https://ai.google.dev/static/api/interactions.openapi.json)
+   is the same surface in machine-readable form.
 2. **Live probe** against `generativelanguage.googleapis.com` — what the
    Gemini endpoint actually accepts, often narrower than the bindings.
    Probe with `LOUD_WIRE=1` or curl before modeling anything.

@@ -10,6 +10,7 @@ fn test_service_tier_roundtrip() {
         (ServiceTier::Flex, "\"flex\""),
         (ServiceTier::Standard, "\"standard\""),
         (ServiceTier::Priority, "\"priority\""),
+        (ServiceTier::Deferred, "\"deferred\""),
     ] {
         assert_eq!(serde_json::to_string(&tier).unwrap(), wire);
         let parsed: ServiceTier = serde_json::from_str(wire).unwrap();

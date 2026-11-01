@@ -32,9 +32,9 @@ the shape was a `Content` block rather than a step.
 | 11 | `ToolChoice` | `choice_type` | Mode string or `allowed_tools` object |
 | 12 | `ThinkingLevel` | `level_type` | minimal/low/medium/high |
 | 13 | `ThinkingSummaries` | `summaries_type` | auto/none |
-| 14 | `ServiceTier` | `tier_type` | flex/standard/priority |
+| 14 | `ServiceTier` | `tier_type` | flex/standard/priority/deferred |
 | 15 | `InteractionStatus` | `status_type` | Response status |
-| 16 | `CodeExecutionLanguage` | `language_type` | python |
+| 16 | `CodeExecutionLanguage` | `language_type` | python/bash |
 | 17 | `ImageAspectRatio` | `ratio_type` | 14 aspect ratios |
 | 18 | `ImageSize` | `size_type` | 512/1K/2K/4K |
 | 19 | `SearchType` | `search_type` | web_search/image_search/enterprise_web_search |
@@ -103,15 +103,15 @@ job runs this configuration.
 | `FunctionResultPayload` | untagged | `"ok"` / `{...}` / `[{"type": "text", ...}]` | String, JSON, or content-block list |
 | `ToolChoice` | string or object | `"any"` / `{"allowed_tools": {...}}` | Pending live verification |
 | `FunctionCallingMode` | lowercase | `"auto"`, `"any"`, `"none"`, `"validated"` | Uppercase spellings (pre-revision) now deserialize to `Unknown`. Pending live verification |
-| `CodeExecutionLanguage` | lowercase | `"python"` | `"PYTHON"` (pre-revision) now deserializes to `Unknown`. Pending live verification |
-| `ServiceTier` | lowercase | `"flex"`, `"standard"`, `"priority"` | Response echo `"standard"` verified live 2026-07 |
+| `CodeExecutionLanguage` | lowercase | `"python"`, `"bash"` | `"PYTHON"` (pre-revision) now deserializes to `Unknown`. `bash` is spec only (2.34.0) |
+| `ServiceTier` | lowercase | `"flex"`, `"standard"`, `"priority"`, `"deferred"` | `flex`/`priority` accepted and echoed live 2026-11-01; `deferred` is Vertex-only |
 | `HarmCategory` | snake_case | `"hate_speech"`, `"jailbreak"` | Sent under the item key `type`. Five values accepted live 2026-10-30; `civic_integrity` and `image_*` are Vertex-only |
 | `SafetyThreshold` | snake_case | `"block_only_high"`, `"off"` | Four values accepted live 2026-10-30; `block_none` is Vertex-only |
 | `SafetyMethod` | lowercase | `"severity"`, `"probability"` | Both accepted live 2026-10-30 |
 | `EnvironmentStatus` | lowercase | `"active"`, `"expired"` | `"active"` verified live 2026-08-08 |
 | `TriggerStatus` | lowercase | `"active"`, `"paused"`, `"error"` | `active`/`paused` verified live 2026-11-01; `error` is output-only (sending it is a 400) |
 | `TriggerExecutionStatus` | snake_case | `"in_progress"`, `"timed_out"` | `completed` verified live 2026-11-01; the rest from the SDK spec |
-| `InteractionStatus` | snake_case | `"in_progress"`, `"requires_action"`, `"budget_exceeded"` | `budget_exceeded` pending live verification. `Default` is `InProgress` |
+| `InteractionStatus` | snake_case | `"in_progress"`, `"requires_action"`, `"budget_exceeded"`, `"requires_continuation"` | `budget_exceeded` pending live verification; `requires_continuation` spec only. `Default` is `InProgress` |
 | `SearchType` | snake_case | `"web_search"`, `"image_search"`, `"enterprise_web_search"` | `enterprise_web_search` pending live verification |
 | `GroundingToolCount` | `{"type": ..., "count": n}` | `{"type": "google_search", "count": 1}` | In `usage.grounding_tool_count`; observed live 2026-07 |
 | `ThinkingSummaries` | lowercase | `"auto"`, `"none"` | Sent lowercase in both contexts; `THINKING_SUMMARIES_*` also accepted on deserialize. See [ThinkingSummaries](#thinkingsummaries) |
@@ -307,11 +307,12 @@ modes (`"AUTO"`) deserialize to `Unknown`. Pending live verification.
 
 ### ServiceTier
 
-`service_tier` on the request: `"flex"` / `"standard"` / `"priority"`. Every
-response echoes the effective tier (`"standard"`) along with
-`object: "interaction"`; both were verified live 2026-07 and are modeled on
-`InteractionResponse`. Sending `flex` / `priority` is pending live
-verification.
+`service_tier` on the request: `"flex"` / `"standard"` / `"priority"` /
+`"deferred"`. Every response echoes the effective tier along with
+`object: "interaction"`; both are modeled on `InteractionResponse`. `flex`
+and `priority` are accepted and echoed (live 2026-11-01). `deferred` is
+Vertex-only: `400 The value 'deferred' is not supported for 'service_tier'
+on the Gemini API, it is allowed on the Gemini Enterprise Agent Platform`.
 
 ### Safety settings
 
@@ -411,8 +412,9 @@ field does not disable thinking (see [Thinking Mode](THINKING_MODE.md)).
 | `RequiresAction` | `requires_action` | |
 | `Failed` | `failed` | |
 | `Cancelled` | `cancelled` | |
-| `Incomplete` | `incomplete` | From the SDK |
+| `Incomplete` | `incomplete` | Live 2026-11-01: `max_output_tokens` reached; carries a `continuation_token` on the continuation model |
 | `BudgetExceeded` | `budget_exceeded` | Pending live verification |
+| `RequiresContinuation` | `requires_continuation` | google-genai 2.34.0; never observed live |
 
 ### Resolution
 

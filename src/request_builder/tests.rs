@@ -1865,3 +1865,32 @@ fn test_transcription_config_builder_methods() {
         Some(["Interactions API".to_string(), "Evergreen".to_string()].as_slice())
     );
 }
+
+/// The token rides at the top level beside the original input, which a
+/// continuation must resend unchanged (live 2026-11-01).
+#[test]
+fn test_with_continuation_token_serializes_top_level() {
+    let request = create_test_client()
+        .interaction()
+        .with_model(crate::CONTINUATION_MODEL)
+        .with_text("Write a sonnet about the sea.")
+        .with_continuation_token("CiQxYzQ5ZGIwZi0=")
+        .build()
+        .unwrap();
+    let wire = serde_json::to_value(&request).unwrap();
+    assert_eq!(wire["continuation_token"], "CiQxYzQ5ZGIwZi0=");
+    assert_eq!(wire["input"], "Write a sonnet about the sea.");
+
+    let plain = create_test_client()
+        .interaction()
+        .with_model(crate::DEFAULT_MODEL)
+        .with_text("Hi")
+        .build()
+        .unwrap();
+    assert!(
+        serde_json::to_value(&plain)
+            .unwrap()
+            .get("continuation_token")
+            .is_none()
+    );
+}

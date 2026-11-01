@@ -482,6 +482,19 @@ pub struct InteractionRequest {
     /// logical request stay byte-identical across runs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub labels: Option<std::collections::BTreeMap<String, String>>,
+
+    /// Resumes a decode that stopped early, from
+    /// [`InteractionResponse::continuation_token`](crate::InteractionResponse::continuation_token).
+    ///
+    /// Send it with the *original* input (live 2026-11-01): any other input,
+    /// including empty text, gets `400 Cannot provide a different input on a
+    /// continuation request`. `max_output_tokens` is cumulative across
+    /// continuations, so raise it, or the API answers that the budget "has
+    /// already been exhausted". Only
+    /// [`CONTINUATION_MODEL`](crate::CONTINUATION_MODEL) supports
+    /// continuation so far.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub continuation_token: Option<String>,
 }
 
 wire_enum! {
@@ -489,7 +502,8 @@ wire_enum! {
     ///
     /// # Wire Format
     ///
-    /// Serializes as lowercase strings: `"flex"`, `"standard"`, `"priority"`.
+    /// Serializes as lowercase strings: `"flex"`, `"standard"`, `"priority"`,
+    /// `"deferred"`.
     pub enum ServiceTier {
         /// Flexible latency, lower cost.
         Flex = "flex",
@@ -497,6 +511,10 @@ wire_enum! {
         Standard = "standard",
         /// Prioritized processing.
         Priority = "priority",
+        /// Deferred processing. Vertex-only: the Gemini API answers "not
+        /// supported for 'service_tier' on the Gemini API, it is allowed on
+        /// the Gemini Enterprise Agent Platform" (live 2026-11-01).
+        Deferred = "deferred",
     }
     unknown(tier_type, unknown_tier_type)
 }

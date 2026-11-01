@@ -182,6 +182,15 @@ pub struct UsageMetadata {
         deserialize_with = "deserialize_optional_token_count"
     )]
     pub total_tool_use_tokens: Option<u32>,
+    /// Input tokens of the interaction's first turn (google-genai 2.34.0;
+    /// on every response live, 2026-11-01). On a continued decode it stays
+    /// at the original prompt while
+    /// [`total_input_tokens`](Self::total_input_tokens) grows.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_token_count"
+    )]
+    pub initial_input_tokens: Option<u32>,
 
     // =========================================================================
     // Per-Modality Breakdowns
@@ -234,6 +243,7 @@ impl UsageMetadata {
             || self.total_cached_tokens.is_some()
             || self.total_thought_tokens.is_some()
             || self.total_tool_use_tokens.is_some()
+            || self.initial_input_tokens.is_some()
             || self.input_tokens_by_modality.is_some()
             || self.output_tokens_by_modality.is_some()
             || self.cached_tokens_by_modality.is_some()
@@ -311,6 +321,9 @@ impl UsageMetadata {
     /// - If self has a value, adds the other's value
     /// - If self has None, takes the other's value
     ///
+    /// `initial_input_tokens` describes the first turn, so it keeps the
+    /// first value seen rather than summing.
+    ///
     /// Note: `*_by_modality` and `grounding_tool_count` fields are not
     /// accumulated (would require complex merging).
     pub(crate) fn accumulate(&mut self, other: &UsageMetadata) {
@@ -326,6 +339,9 @@ impl UsageMetadata {
         add_option(&mut self.total_cached_tokens, other.total_cached_tokens);
         add_option(&mut self.total_thought_tokens, other.total_thought_tokens);
         add_option(&mut self.total_tool_use_tokens, other.total_tool_use_tokens);
+        if self.initial_input_tokens.is_none() {
+            self.initial_input_tokens = other.initial_input_tokens;
+        }
         // Note: *_by_modality and grounding_tool_count fields are not
         // accumulated as they would require complex merging logic.
     }

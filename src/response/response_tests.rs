@@ -2698,3 +2698,37 @@ fn test_pending_function_calls_skip_answered_calls() {
     assert_eq!(pending[0].id, "call_1");
     assert_eq!(pending[0].name, "get_weather");
 }
+
+/// A continuable response, captured live (2026-11-01, the continuation
+/// model at `max_output_tokens: 30`): status `incomplete` with a top-level
+/// token. Plus a cancelled interaction's `errors`.
+#[test]
+fn continuation_token_and_errors_are_typed() {
+    let wire = serde_json::json!({
+        "id": "v1_abc",
+        "status": "incomplete",
+        "steps": [],
+        "continuation_token": "CiQxYzQ5ZGIwZi0=",
+        "errors": [{"code": "CANCELLED", "message": "There was a problem processing your request."}],
+        "usage": {"total_input_tokens": 43, "initial_input_tokens": 43}
+    });
+    let response: InteractionResponse = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(response.status, InteractionStatus::Incomplete);
+    assert_eq!(
+        response.continuation_token.as_deref(),
+        Some("CiQxYzQ5ZGIwZi0=")
+    );
+    let errors = response.errors.as_deref().unwrap();
+    assert_eq!(errors[0].code.as_deref(), Some("CANCELLED"));
+    assert_eq!(
+        response.usage.as_ref().unwrap().initial_input_tokens,
+        Some(43)
+    );
+    assert!(response.extra.is_empty(), "{:?}", response.extra);
+    assert!(response.usage.as_ref().unwrap().extra.is_empty());
+    assert_eq!(serde_json::to_value(&response).unwrap(), wire);
+
+    let status: InteractionStatus =
+        serde_json::from_value(serde_json::json!("requires_continuation")).unwrap();
+    assert_eq!(status, InteractionStatus::RequiresContinuation);
+}
