@@ -45,10 +45,17 @@ pub enum StreamChunk {
     /// Sent when the interaction status changes during processing.
     /// Useful for tracking progress of background/agent interactions.
     StatusUpdate {
-        /// The interaction ID
-        interaction_id: String,
+        /// The interaction ID. Absent on a `store: false` stream, which has
+        /// no stored interaction to name (live 2026-11-01).
+        interaction_id: Option<String>,
         /// The updated status
         status: InteractionStatus,
+        /// Usage so far. Background streams send it mid-run (google-genai
+        /// 2.34.0; live 2026-11-01).
+        usage: Option<UsageMetadata>,
+        /// A continuation token (google-genai 2.34.0; not observed live,
+        /// where it arrives on the completed interaction instead).
+        continuation_token: Option<String>,
     },
 
     /// A step started at the given index.
@@ -138,7 +145,7 @@ impl StreamChunk {
     pub fn interaction_id(&self) -> Option<&str> {
         match self {
             Self::Created { interaction } => interaction.id.as_deref(),
-            Self::StatusUpdate { interaction_id, .. } => Some(interaction_id),
+            Self::StatusUpdate { interaction_id, .. } => interaction_id.as_deref(),
             Self::Completed(response) => response.id.as_deref(),
             _ => None,
         }
@@ -197,15 +204,28 @@ impl StreamChunk {
             Self::StatusUpdate {
                 interaction_id,
                 status,
+                usage,
+                continuation_token,
             } => {
                 map.serialize_entry("chunk_type", "status_update")?;
-                map.serialize_entry(
-                    "data",
-                    &serde_json::json!({
-                        "interaction_id": interaction_id,
-                        "status": status,
-                    }),
-                )?;
+                let mut data = serde_json::Map::new();
+                if let Some(id) = interaction_id {
+                    data.insert("interaction_id".into(), id.clone().into());
+                }
+                data.insert(
+                    "status".into(),
+                    serde_json::to_value(status).map_err(serde::ser::Error::custom)?,
+                );
+                if let Some(usage) = usage {
+                    data.insert(
+                        "usage".into(),
+                        serde_json::to_value(usage).map_err(serde::ser::Error::custom)?,
+                    );
+                }
+                if let Some(token) = continuation_token {
+                    data.insert("continuation_token".into(), token.clone().into());
+                }
+                map.serialize_entry("data", &data)?;
             }
             Self::StepStart { index, step } => {
                 map.serialize_entry("chunk_type", "step_start")?;
@@ -343,11 +363,21 @@ impl<'de> Deserialize<'de> for StreamChunk {
                 let interaction_id = data
                     .get("interaction_id")
                     .and_then(|v| v.as_str())
-                    .map(String::from)
-                    .unwrap_or_else(|| {
-                        tracing::warn!("StreamChunk::StatusUpdate is missing interaction_id.");
-                        String::new()
-                    });
+                    .map(String::from);
+                let usage = data
+                    .get("usage")
+                    .cloned()
+                    .map(serde_json::from_value)
+                    .transpose()
+                    .map_err(|e| {
+                        serde::de::Error::custom(format!(
+                            "Failed to deserialize StreamChunk::StatusUpdate usage: {e}"
+                        ))
+                    })?;
+                let continuation_token = data
+                    .get("continuation_token")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
                 let status: InteractionStatus = data
                     .get("status")
                     .cloned()
@@ -366,6 +396,8 @@ impl<'de> Deserialize<'de> for StreamChunk {
                 Ok(Self::StatusUpdate {
                     interaction_id,
                     status,
+                    usage,
+                    continuation_token,
                 })
             }
             "step_start" => {
@@ -665,6 +697,10 @@ pub(crate) struct InteractionStreamEvent {
     /// Error details (present in "error" events)
     pub error: Option<StreamError>,
 
+    /// Continuation token (in "interaction.status_update", per the
+    /// google-genai 2.34.0 bindings)
+    pub continuation_token: Option<String>,
+
     /// Event ID for stream resumption.
     ///
     /// Pass this to `Interactions::resume_stream` to resume
@@ -697,17 +733,26 @@ impl<'de> Deserialize<'de> for InteractionStreamEvent {
             step_usage: Option<UsageMetadata>,
             metadata: Option<StreamMetadata>,
             error: Option<StreamError>,
+            continuation_token: Option<String>,
             event_id: Option<String>,
         }
 
         let fields: Fields =
             serde_json::from_value(raw.clone()).map_err(serde::de::Error::custom)?;
 
-        Ok(Self {
-            event_type: fields.event_type.unwrap_or_else(|| {
+        // A bare `{"error": {...}}` line (see `http::sse_parser`) carries no
+        // event_type; it is the stream's error event.
+        let event_type = match fields.event_type {
+            Some(event_type) => event_type,
+            None if fields.error.is_some() => "error".to_string(),
+            None => {
                 tracing::warn!("SSE event missing event_type field.");
                 "<missing event_type>".to_string()
-            }),
+            }
+        };
+
+        Ok(Self {
+            event_type,
             interaction: fields.interaction,
             interaction_id: fields.interaction_id,
             status: fields.status,
@@ -718,6 +763,7 @@ impl<'de> Deserialize<'de> for InteractionStreamEvent {
             step_usage: fields.step_usage,
             metadata: fields.metadata,
             error: fields.error,
+            continuation_token: fields.continuation_token,
             event_id: fields.event_id,
             raw,
         })
@@ -855,8 +901,13 @@ mod tests {
     #[test]
     fn test_stream_chunk_status_update_roundtrip() {
         let chunk = StreamChunk::StatusUpdate {
-            interaction_id: "test-interaction-789".to_string(),
+            interaction_id: Some("test-interaction-789".to_string()),
             status: InteractionStatus::RequiresAction,
+            usage: Some(UsageMetadata {
+                total_tokens: Some(12),
+                ..Default::default()
+            }),
+            continuation_token: None,
         };
 
         let json = serde_json::to_string(&chunk).expect("Serialization should succeed");
@@ -870,9 +921,13 @@ mod tests {
             StreamChunk::StatusUpdate {
                 interaction_id,
                 status,
+                usage,
+                continuation_token,
             } => {
-                assert_eq!(interaction_id, "test-interaction-789");
+                assert_eq!(interaction_id.as_deref(), Some("test-interaction-789"));
                 assert_eq!(status, InteractionStatus::RequiresAction);
+                assert_eq!(usage.and_then(|u| u.total_tokens), Some(12));
+                assert_eq!(continuation_token, None);
             }
             _ => panic!("Expected StatusUpdate variant"),
         }
@@ -962,8 +1017,10 @@ mod tests {
         assert!(!created_chunk.is_terminal());
 
         let status_chunk = StreamChunk::StatusUpdate {
-            interaction_id: "status-id".to_string(),
+            interaction_id: Some("status-id".to_string()),
             status: InteractionStatus::InProgress,
+            usage: None,
+            continuation_token: None,
         };
         assert_eq!(status_chunk.interaction_id(), Some("status-id"));
 

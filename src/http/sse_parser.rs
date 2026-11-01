@@ -3,6 +3,12 @@
 //! Follows the SSE framing rules: an event is the set of field lines up to a
 //! blank line, multiple `data:` lines join with `\n`, `:` lines are comments,
 //! and one leading space after the colon is dropped.
+//!
+//! One deviation: a line that starts with `{` is read as data. The API sends
+//! a mid-stream error as a bare JSON line with no `data:` prefix, then closes
+//! the connection (live 2026-11-01, a recitation block). Under the SSE rules
+//! that line is a field named `{"error"` and is dropped, and no SSE field
+//! name can start with `{`.
 
 use super::context::HttpContext;
 use super::error_helpers::format_json_parse_error;
@@ -96,23 +102,29 @@ impl PendingEvent {
         if line.starts_with(':') {
             return;
         }
+        if line.starts_with('{') {
+            self.push_data(line);
+            return;
+        }
         let (field, value) = match line.split_once(':') {
             Some((field, value)) => (field, value.strip_prefix(' ').unwrap_or(value)),
             None => (line, ""),
         };
         match field {
-            "data" => {
-                let data = self.data.get_or_insert_with(String::new);
-                if !data.is_empty() {
-                    data.push('\n');
-                }
-                data.push_str(value);
-            }
+            "data" => self.push_data(value),
             "event" => self.event_type = Some(value.to_string()),
             // `id` and `retry` carry nothing this client uses: the event id
             // is repeated inside the JSON payload.
             _ => {}
         }
+    }
+
+    fn push_data(&mut self, value: &str) {
+        let data = self.data.get_or_insert_with(String::new);
+        if !data.is_empty() {
+            data.push('\n');
+        }
+        data.push_str(value);
     }
 
     /// Ends the current event and parses its data, if it has any.

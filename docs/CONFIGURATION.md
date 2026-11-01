@@ -50,8 +50,6 @@ let response = client
     .with_text("Brainstorm 20 startup ideas")
     .with_seed(42)
     .with_stop_sequences(vec!["THE END".to_string()])
-    .with_presence_penalty(0.5)
-    .with_frequency_penalty(0.3)
     .with_thinking_level(ThinkingLevel::Medium)
     .create()
     .await?;
@@ -63,13 +61,11 @@ let response = client
 
 | Field | Type | Builder shortcut | Notes |
 |-------|------|------------------|-------|
-| `temperature` | `Option<f32>` | — | Sampling randomness |
-| `top_p` | `Option<f32>` | — | Nucleus sampling |
+| `temperature` | `Option<f32>` | — | Sampling randomness. Deprecated upstream (google-genai 2.34.0), still accepted (2026-11-01) |
+| `top_p` | `Option<f32>` | — | Nucleus sampling. Deprecated upstream like `temperature`, still accepted |
 | `max_output_tokens` | `Option<i32>` | — | Output cap. Per-model ceilings come from the Models API: `GET /v1beta/models/{model}` returns `outputTokenLimit` (65,536 for `gemini-3.8-flash`, checked 2026-09-24) |
 | `seed` | `Option<i64>` | `with_seed()` | See [Seeds](#seeds) |
 | `stop_sequences` | `Option<Vec<String>>` | `with_stop_sequences()` | Generation halts on any of them |
-| `presence_penalty` | `Option<f32>` | `with_presence_penalty()` | Penalizes tokens that already appeared; range [-2.0, 2.0] |
-| `frequency_penalty` | `Option<f32>` | `with_frequency_penalty()` | Penalizes tokens by frequency; range [-2.0, 2.0] |
 | `thinking_level` | `Option<ThinkingLevel>` | `with_thinking_level()` | See [Thinking Mode](THINKING_MODE.md) |
 | `thinking_summaries` | `Option<ThinkingSummaries>` | `with_thinking_summaries()` | See [Thinking Mode](THINKING_MODE.md#thinking-summaries) |
 | `tool_choice` | `Option<ToolChoice>` | `with_function_calling_mode()`, `with_tool_choice()`, `with_allowed_tools()` | See [Function Calling](FUNCTION_CALLING.md#function-calling-modes) |

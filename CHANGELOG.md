@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Tracks the Interactions API as of `google-genai` 2.34.0 (swept 2026-11-01,
+every item probed live; #463).
+
+### Added
+
+- Decoding continuation. A response cut off by `max_output_tokens` carries
+  `InteractionResponse::continuation_token`; resend the same input with
+  `InteractionBuilder::with_continuation_token(token)` and a larger
+  `max_output_tokens` (it counts across continuations) to continue it. Only
+  `CONTINUATION_MODEL` (`gemini-4-argon`) supports it; other models answer
+  `400 Decoding continuation is not enabled for this model` (verified live
+  2026-11-01). `InteractionStatus::RequiresContinuation` is modeled from the
+  spec but never observed: continuable responses report `Incomplete`.
+- `InteractionResponse::errors` (`InteractionError`, with a string `code`
+  such as `"CANCELLED"`), `UsageMetadata::initial_input_tokens`,
+  `PromptedVoice::base_voice` and `CreateVoiceRequest::with_base_voice`,
+  `CodeExecutionLanguage::Bash` (spec only) and `ServiceTier::Deferred`
+  (Vertex-only).
+
+### Changed
+
+- **Breaking: `StreamChunk::StatusUpdate` gains `usage` and
+  `continuation_token`, and `interaction_id` becomes `Option<String>`.** A
+  `store: false` stream's status updates carry no interaction ID (verified
+  live 2026-11-01), and the crate dropped them with a `warn!`; they now reach
+  the caller. Background streams send `usage` mid-run.
+- **Breaking: removed `GenerationConfig::presence_penalty` and
+  `frequency_penalty`, with `with_presence_penalty()` and
+  `with_frequency_penalty()`.** The API rejects both (`400 Unknown parameter
+  'presence_penalty' at 'generation_config'`, 2026-11-01), and google-genai
+  2.34.0 does not list them, so any request that set one failed.
+- A stream whose body ends before `interaction.completed` or an error event
+  now ends with `Err(GenaiError::MalformedResponse)`, so a cut-off connection
+  can't pass for a finished stream.
+- `temperature`, `top_p` and `TranscriptionConfig::adaptation_phrases` are
+  documented as deprecated upstream (google-genai 2.34.0); the API still
+  accepts them.
+
+### Fixed
+
+- A mid-stream error ended a stream silently. The API sends it as a bare
+  JSON line with no `data:` prefix, then closes the connection (a recitation
+  block, live 2026-11-01), and the SSE parser dropped the line. It now
+  arrives as `StreamChunk::Error`, with `code: Some("recitation")`.
+- The streaming docs said a stored foreground stream could be resumed. It
+  can't: a foreground stream carries no `event_id`, and when its connection
+  drops the server cancels the interaction. Only background interactions
+  resume (`docs/STREAMING_API.md`).
+
 ## [0.12.0] - 2026-10-31
 
 Tracks the Interactions API as of `google-genai` 2.25.0 (swept 2026-09-24),

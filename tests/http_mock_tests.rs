@@ -15,7 +15,7 @@ use common::http_stub::{Recorded, Reply, Stub};
 use futures_util::StreamExt;
 use genai_rs::{
     AutoFunctionStreamChunk, CallableFunction, Client, FileUpload, FunctionDeclaration,
-    FunctionError, GenaiError, PollOptions, StreamChunk, ToolService,
+    FunctionError, GenaiError, PollOptions, StreamChunk, StreamEvent, ToolService,
 };
 use serde_json::{Value, json};
 
@@ -163,6 +163,7 @@ async fn execute_stream_sends_stream_true() {
 async fn interactions_resume_stream_asks_for_sse_and_resumes() {
     let stub = Stub::replying(vec![Reply::sse(&[
         "data: {\"event_type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"b\"},\"event_id\":\"evt-4\"}\n\n",
+        "data: {\"event_type\":\"interaction.completed\",\"interaction\":{\"id\":\"int-1\",\"status\":\"completed\"}}\n\n",
     ])])
     .await;
     let client = stub.client();
@@ -172,7 +173,7 @@ async fn interactions_resume_stream_asks_for_sse_and_resumes() {
         .resume_stream("int-1", "evt-3")
         .collect()
         .await;
-    assert_eq!(events.len(), 1);
+    assert_eq!(events.len(), 2);
     assert_eq!(
         events[0].as_ref().unwrap().event_id.as_deref(),
         Some("evt-4")
@@ -190,7 +191,7 @@ async fn interactions_resume_stream_asks_for_sse_and_resumes() {
 // SSE framing, end to end
 // =============================================================================
 
-async fn stream_texts(chunks: &[&str]) -> Vec<String> {
+async fn stream_events(chunks: &[&str]) -> Vec<Result<StreamEvent, GenaiError>> {
     let stub = Stub::replying(vec![Reply::sse(chunks)]).await;
     let client = stub.client();
     let request = client
@@ -199,15 +200,66 @@ async fn stream_texts(chunks: &[&str]) -> Vec<String> {
         .with_text("Hi")
         .build()
         .unwrap();
-    client
-        .execute_stream(request)
-        .map(|event| match event.unwrap().chunk {
-            StreamChunk::StepDelta { delta, .. } => delta.as_text().unwrap_or_default().to_string(),
-            StreamChunk::Completed(response) => format!("<completed {}>", response.all_text()),
-            other => format!("<{other:?}>"),
+    client.execute_stream(request).collect().await
+}
+
+/// The stream's items as text. These framing fixtures mostly stop without a
+/// terminal event, so the cut-off error that then ends the stream is dropped
+/// (`stream_without_a_terminal_event_ends_in_an_error` covers it).
+async fn stream_texts(chunks: &[&str]) -> Vec<String> {
+    stream_events(chunks)
+        .await
+        .into_iter()
+        .filter_map(|event| match event {
+            Err(GenaiError::MalformedResponse(message))
+                if message.contains("stream ended before") =>
+            {
+                None
+            }
+            Err(e) => panic!("stream error: {e:?}"),
+            Ok(event) => Some(match event.chunk {
+                StreamChunk::StepDelta { delta, .. } => {
+                    delta.as_text().unwrap_or_default().to_string()
+                }
+                StreamChunk::Completed(response) => format!("<completed {}>", response.all_text()),
+                other => format!("<{other:?}>"),
+            }),
         })
         .collect()
-        .await
+}
+
+#[tokio::test]
+async fn stream_without_a_terminal_event_ends_in_an_error() {
+    let events = stream_events(&[&format!("data: {}\n\n", delta_event("a"))]).await;
+    assert!(
+        matches!(
+            events.as_slice(),
+            [Ok(_), Err(GenaiError::MalformedResponse(message))]
+                if message.contains("stream ended before")
+        ),
+        "{events:?}"
+    );
+}
+
+/// The API's mid-stream error: a bare JSON line, no `data:` prefix and no
+/// blank line, then EOF (live 2026-11-01, a recitation block).
+#[tokio::test]
+async fn bare_json_error_line_is_a_stream_error_event() {
+    let events = stream_events(&[
+        &format!("data: {}\n\n", delta_event("one, two")),
+        "{\"error\":{\"message\":\"Request blocked due to copyright/recitation content. Please modify your input and retry.\",\"code\":\"recitation\"}}\n",
+    ])
+    .await;
+    let [Ok(_), Ok(last)] = events.as_slice() else {
+        panic!("expected a delta then the error, got {events:?}");
+    };
+    match &last.chunk {
+        StreamChunk::Error { message, code } => {
+            assert!(message.starts_with("Request blocked"), "{message}");
+            assert_eq!(code.as_deref(), Some("recitation"));
+        }
+        other => panic!("expected StreamChunk::Error, got {other:?}"),
+    }
 }
 
 fn delta_event(text: &str) -> String {
