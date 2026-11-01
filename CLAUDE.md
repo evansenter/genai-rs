@@ -47,7 +47,8 @@ cargo nextest run --features antigravity --run-ignored all -E 'binary(antigravit
 ```
 
 Live tests take minutes and can flake on model variability. `LOUD_WIRE=1`
-prints the wire; `RUST_LOG=genai_rs=debug` enables debug logs.
+prints the wire. `RUST_LOG` does nothing in tests or examples: neither
+installs a `tracing` subscriber.
 
 ## Layout
 
@@ -176,7 +177,8 @@ cleans up.
 ## Changelog and versioning
 
 Update `CHANGELOG.md` `[Unreleased]` for user-facing changes (features,
-breaking changes with migration, fixes). Not for internal refactors or CI.
+breaking changes with migration, fixes); create the section above the latest
+release if it is absent. Not for internal refactors or CI.
 
 Version bump — update all of:
 

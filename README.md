@@ -42,14 +42,15 @@ pool), rather than building one per request.
 | Feature | Description |
 |---------|-------------|
 | **Steps Model** | Interactions API revision 2026-05-20: responses and history as typed `Step`s, per-step usage, typed citation annotations |
-| **Streaming** | Real-time step deltas with resume capability; function-call arguments stream incrementally |
+| **Streaming** | Real-time step deltas, resumable for background interactions; function-call arguments stream incrementally |
 | **Stateful Conversations** | Multi-turn context via `previous_interaction_id`, or stateless step replay with `with_history()` |
 | **Function Calling** | Auto-discovery with `#[tool]` macro or manual control |
-| **Typed Response Formats** | JSON schema, audio, image, and video output via `with_response_format()` |
+| **Typed Response Formats** | JSON schema, audio and image output via `with_response_format()` (video is modeled; no model serves it yet) |
 | **Thinking Mode** | Model reasoning with configurable depth, thought summaries and signatures |
 | **Background + Webhooks** | Background execution, per-request webhook routing, full `/webhooks` resource (CRUD, ping, secret rotation) |
 | **Environments & Agents** | `environment` request field plus full `/environments` (CRUD, live-verified) and `/agents` resource clients |
-| **Scheduled Triggers** | `/triggers` resource: server-side cron interactions that fire with no client process running (CRUD, run-now, execution history; creation requires a custom agent, allowlisted on standard keys) |
+| **Resource clients** | `client.agents()`, `.webhooks()`, `.triggers()`, `.environments()`, `.credentials()`, `.voices()`, `.files()`, `.file_search_stores()`, with paged `.items()` streams |
+| **Scheduled Triggers** | `/triggers` resource: server-side cron interactions that fire with no client process running (CRUD, run-now, execution history; the interaction must target a custom agent) |
 | **Multi-Speaker TTS** | `speech_config` list form for multi-voice dialogue |
 | **Wire Inspection** | Structured `WireEvent` stream via the `WireInspector` trait; `LOUD_WIRE=1` and `tracing` built-ins |
 | **Local Agents** | `antigravity` feature: native client for the Antigravity harness (workspaces, policies, subagents) |
@@ -149,13 +150,14 @@ See [Examples Index](docs/EXAMPLES_INDEX.md) for the complete categorized list.
 use futures_util::StreamExt;
 
 let mut stream = client.interaction()
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Write a haiku about Rust.")
     .create_stream();
 
-while let Some(Ok(event)) = stream.next().await {
+while let Some(event) = stream.next().await {
     // delta_text() extracts text from StreamChunk::StepDelta events
-    if let Some(text) = event.chunk.delta_text() {
-        print!("{}", text);
+    if let Some(text) = event?.chunk.delta_text() {
+        print!("{text}");
     }
 }
 ```
@@ -171,6 +173,7 @@ fn get_weather(location: String) -> String {
 }
 
 let result = client.interaction()
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("What's the weather in Tokyo?")
     .add_function(get_weather_declaration())
     .create_with_auto_functions()
@@ -182,6 +185,7 @@ let result = client.interaction()
 ```rust,ignore
 // First turn (enable storage for multi-turn)
 let r1 = client.interaction()
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_system_instruction("You are a helpful assistant.")
     .with_text("My name is Alice.")
     .with_store_enabled()
@@ -189,6 +193,7 @@ let r1 = client.interaction()
 
 // Continue conversation (r1.id is Option<String>)
 let r2 = client.interaction()
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_previous_interaction(r1.id.as_ref().expect("stored interactions have IDs"))
     .with_text("What's my name?")  // Remembers: Alice
     .create().await?;
@@ -204,6 +209,7 @@ let mut history = vec![Step::user_text("My name is Alice.")];
 history.extend(r1.output_steps());  // replay model output verbatim
 
 let r2 = client.interaction()
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_history(history)
     .with_text("What's my name?")
     .create().await?;
@@ -215,13 +221,13 @@ let r2 = client.interaction()
 use genai_rs::ThinkingLevel;
 
 let response = client.interaction()
+    .with_model(genai_rs::DEFAULT_MODEL)
     .with_thinking_level(ThinkingLevel::High)
     .with_text("What's 15% of 847?")
     .create().await?;
 
-// Check if model used reasoning (thoughts contain cryptographic signatures)
 if response.has_thoughts() {
-    println!("Model used {} thought blocks", response.thought_signatures().count());
+    println!("Model used {} thought blocks", response.step_summary().thought_count);
 }
 ```
 
@@ -354,15 +360,15 @@ agentic code-review application with subagents and a structured report.
 ## Debugging & Wire Inspection
 
 ```bash
-# Wire-level request/response logging (colored, secrets redacted)
+# Wire-level request/response logging (colored, secrets redacted); works with any example
 LOUD_WIRE=1 cargo run --example simple_interaction
-
-# Wire events via tracing
-RUST_LOG=genai_rs::wire=debug cargo run --example simple_interaction
-
-# Library debug logs
-RUST_LOG=genai_rs=debug cargo run --example simple_interaction
 ```
+
+`RUST_LOG` takes effect only in a program that installs a `tracing`
+subscriber, which the examples don't. In your application, call
+`tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).init()`;
+then `RUST_LOG=genai_rs=debug` shows library logs, and registering
+`wire::TracingForwarder` routes wire events to the `genai_rs::wire` target.
 
 For programmatic capture (snapshot tests, bug reports), implement the
 `WireInspector` trait and register it with

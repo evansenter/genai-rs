@@ -61,7 +61,8 @@ request timeout. `examples/deep_research.rs` is runnable.
 ## Custom agents (`/v1beta/agents`)
 
 A custom agent bundles an id, a system instruction, tools (a subset:
-`code_execution`, `url_context`, `google_search`, `mcp_server`) and a base
+`code_execution`, `function`, `google_search`, `mcp_server`, `url_context`,
+per the API's validation error, verified live 2026-11-01) and a base
 environment. `Agent::new(id, base_agent)` takes both required fields; the
 only accepted base agent is `DEFAULT_ANTIGRAVITY_AGENT` (verified 2026-10-30,
 when creating custom agents stopped being gated on standard API keys).
@@ -129,10 +130,11 @@ let env_id = response.environment_id.clone().expect("assigned environment");
   `NetworkConfig::Disabled` to turn networking off, or pass an allowlist
   (wildcards supported; `with_transform` injects headers on matching
   requests).
-- **`AntigravityConfig`**: the Antigravity agent config was verified end to
-  end on 2026-08-09. Leave its `model` unset: an unavailable value returns 404,
-  as `gemini-3.6-flash` did then, even though it worked for ordinary
-  interactions.
+- **`AntigravityConfig`**: `max_total_tokens` and `model` are accepted on
+  `antigravity-preview-09-2026` (verified live 2026-10-01). The agent defaults
+  to `gemini-3.8-flash`; `with_model()` takes the 3.8/3.7/3.6/3.5 Flash
+  models or `gemini-3.5-flash-lite`, and any other value fails the
+  interaction with 404 `not_found`.
 - A custom agent can carry a default environment via
   `Agent::with_base_environment`.
 
@@ -188,9 +190,9 @@ client.environments().delete(&env_id).await?;
 ```
 
 Environment file paths are relative to the root (`""` lists the root), and
-`.`/`..` segments are rejected. Environments expire on their own (`status`
-moves from `active` to `expired`), but delete what you create: repeated runs
-otherwise accumulate containers until they expire.
+`.`/`..` segments are rejected. **Delete what you create.** The spec has an
+`expired` status, but don't count on it: on 2026-11-01 environments created in
+July and August were still `active`, three months after last use.
 
 ### Credentials (`/v1beta/credentials`)
 
@@ -458,4 +460,7 @@ while let Some(event) = stream.next().await {
 
 `client.interactions().cancel(&id)` stops a background interaction that is still
 `InProgress`, and returns it with status `Cancelled`. It errors if the
-interaction is not background or has already finished.
+interaction is not background or has already finished. On
+`DEFAULT_ANTIGRAVITY_AGENT` (`antigravity-preview-09-2026`) it currently fails
+with `400 There was a problem processing your request` (2026-10-01; see
+`docs/INTERACTIONS_API_GAP.md`).

@@ -19,9 +19,9 @@ tracing_subscriber::fmt()
     .init();
 ```
 
-```bash
-RUST_LOG=genai_rs=debug cargo run --example simple_interaction
-```
+Then run your program with `RUST_LOG=genai_rs=debug`. The bundled examples
+install no subscriber, so `RUST_LOG` does nothing for them; use `LOUD_WIRE=1`
+there.
 
 | Level | Used for |
 |-------|----------|
@@ -153,10 +153,9 @@ let client = Client::builder("api-key".to_string())
 # }
 ```
 
-```bash
-RUST_LOG=genai_rs::wire=debug cargo run --example simple_interaction                 # wire events only
-RUST_LOG=genai_rs=debug,genai_rs::wire=debug cargo run --example simple_interaction  # both
-```
+In a program with a subscriber and a `TracingForwarder` registered,
+`RUST_LOG=genai_rs::wire=debug` selects the wire events alone, and
+`RUST_LOG=genai_rs=debug,genai_rs::wire=debug` adds the library logs.
 
 ## Guidelines for contributors
 

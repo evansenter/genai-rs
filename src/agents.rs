@@ -30,9 +30,10 @@ use crate::tools::Tool;
 
 /// An agent definition for the `/v1beta/agents` resource.
 ///
-/// Per the API spec, agent `tools` support a subset of the tool union:
-/// `code_execution`, `url_context`, `google_search`, and `mcp_server`.
-/// Other tool types are rejected by the API.
+/// Agent `tools` support a subset of the tool union: `code_execution`,
+/// `function`, `google_search`, `mcp_server` and `url_context` (the API's
+/// validation error, verified live 2026-11-01). Other tool types are
+/// rejected.
 ///
 /// # Example
 ///
@@ -214,8 +215,10 @@ impl<'a> Agents<'a> {
     ///   `409 Requested entity already exists`. Through at least 2026-10-08,
     ///   every create on a standard key was refused with a generic
     ///   `400 "Request contains an invalid argument."`.
-    /// - `tools` on an agent only accepts `code_execution`, `google_search`,
-    ///   and `url_context` (per the API's own validation error, 2026-07).
+    /// - `tools` on an agent accepts `code_execution`, `function`,
+    ///   `google_search`, `mcp_server` and `url_context` (the API's own
+    ///   validation error, 2026-11-01; it listed only the first, third and
+    ///   last in 2026-07).
     /// - Managed agent IDs (e.g. `antigravity-preview-09-2026`) are not
     ///   retrievable through `GET /v1beta/agents/{id}` (404, re-verified
     ///   2026-10-30).
@@ -242,9 +245,12 @@ impl<'a> Agents<'a> {
     ///     )
     ///     .await?;
     ///
-    /// // Run it
+    /// // Run it. Agents run in the background, and an Antigravity-based
+    /// // agent needs an environment (or a base environment on the agent).
     /// let response = client.interaction()
     ///     .with_agent(agent.id.as_deref().unwrap_or("customer-sentinel"))
+    ///     .with_environment(genai_rs::RemoteEnvironment::new())
+    ///     .with_background(true)
     ///     .with_text("Summarize this week's feedback")
     ///     .create()
     ///     .await?;

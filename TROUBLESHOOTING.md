@@ -6,8 +6,10 @@ Symptoms and fixes, each with a link to the guide that covers it.
 
 ```bash
 LOUD_WIRE=1 cargo run --example simple_interaction            # requests, responses, SSE frames
-RUST_LOG=genai_rs=debug cargo run --example simple_interaction # library logs
 ```
+
+For library logs, run your program with `RUST_LOG=genai_rs=debug` after
+installing a `tracing` subscriber; the examples install none.
 
 `LOUD_WIRE` is read once, when the `Client` is built, so set it before your
 program starts. Error responses are printed in full. For output format,

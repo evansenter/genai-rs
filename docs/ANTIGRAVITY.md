@@ -8,10 +8,10 @@ image generation), MCP, subagents, and trajectory persistence all run inside
 it. This module speaks its protocol directly — no Python in the loop — so
 your tools, hooks, and policies are ordinary Rust.
 
-> **Note**: All code blocks in this guide use `rust,ignore` because the
-> `antigravity` feature is off by default and doctests run without it.
-> The same snippets are exercised (compiled and run) by
-> `examples/antigravity/agent.rs` and `tests/antigravity_harness.rs`.
+> **Note**: The code blocks in this guide are `rust,ignore` fragments (they
+> use `agent` / `client` bindings they don't define), so doctests skip them.
+> `examples/antigravity/` and `tests/antigravity_harness.rs` exercise the
+> same APIs against a real harness.
 
 ## Setup
 

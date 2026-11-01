@@ -194,7 +194,7 @@ fields, and the `function_call` `signature`) were verified live 2026-07.
 | `url_context_result` | `UrlContextResult` | `{"call_id", "result": [UrlContextResultItem], "is_error"?, "signature"?}` |
 | `google_search_call` | `GoogleSearchCall` | `{"id", "arguments": {"queries": [...]}, "search_type"?, "signature"?}` |
 | `google_search_result` | `GoogleSearchResult` | `{"call_id", "result": [GoogleSearchResultItem], "is_error"?, "signature"?}` |
-| `tool_call` | `ToolCall` | `{"id", "signature"?}`. **What MCP calls actually arrive as** (live 2026-08-16) |
+| `tool_call` | `ToolCall` | `{"id", "signature"?}`. What MCP calls arrived as on 2026-08-16; since 2026-10-01 they arrive as answered `function_call` pairs |
 | `mcp_server_tool_call` | `McpServerToolCall` | `{"id", "name", "server_name", "arguments"}`. Spec-only, never observed |
 | `mcp_server_tool_result` | `McpServerToolResult` | `{"call_id", "name"?, "server_name"?, "result"}`. Spec-only, never observed |
 | `file_search_call` | `FileSearchCall` | `{"id", "signature"?}` |
@@ -211,7 +211,11 @@ fields, and the `function_call` `signature`) were verified live 2026-07.
 top level. The built-in tool calls nest theirs in `arguments`, and the crate
 flattens them into `urls`, `queries`, `language` and `code`.
 
-**MCP arrives as `tool_call`.** Verified live 2026-08-16 (`gemini-3.7-flash`,
+**Superseded 2026-10-01**: MCP calls now arrive as answered `function_call` /
+`function_result` steps named `<server>:<tool>` (see
+`docs/INTERACTIONS_API_GAP.md`). What follows is the 2026-08-16 shape.
+
+**MCP arrived as `tool_call`.** Verified live 2026-08-16 (`gemini-3.7-flash`,
 a real MCP server, successful call). The response carried a `tool_call`
 step with only `id`, `signature` and `type`, plus `total_tool_use_tokens:
 1962`. There was no `mcp_server_tool_call` step, and no server name, tool

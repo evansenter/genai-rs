@@ -76,7 +76,7 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
   final `model_output`. `test_mcp_server_tool_round_trip` accepts that
   status only when no call is pending.
 - **`cancel` fails on `antigravity-preview-09-2026`** with `400 There was a
-  problem processing your request`; it works on `antigravity-preview-05-2026`.
+  problem processing your request` (the retired 05-2026 agent accepted it).
 - **Uploaded environment files carry no `size_bytes`** (2026-10-06), in the
   upload response or in listings; files from environment sources still
   report it.
@@ -134,15 +134,16 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
   `:rotateSigningSecret`; `update_mask` is ignored); `include_input`
   (a no-op); retrieval tool (Vertex-only); video config and `VideoTask`
   (with `extend`); typed `response_format` (image: `image/jpeg` inline only;
-  audio: `sample_rate` only); environments and agents (agent create is gated
-  on a standard key; agent tools are code execution, search and URL context
-  only); multi-speaker TTS; presence/frequency penalties; tool-config
+  audio: `sample_rate` only); environments and agents (agent create was gated
+  on a standard key through 2026-10-08 and works since 2026-10-30; agent
+  tools were code execution, search and URL context in 2026-07, and add
+  `function` and `mcp_server` as of 2026-11-01); multi-speaker TTS; presence/frequency penalties; tool-config
   completeness; `budget_exceeded`; deep-research knobs (`enable_bigquery_tool`
   is Vertex-only); typed citations; audio channels and sample rate.
 - **2.17.0 (2026-08):** triggers resource (list verified; the full
   lifecycle verified 2026-11-01, once custom agents could be created),
   environments resource (full lifecycle),
-  `transcription_config`, `safety_settings` (Vertex-only), `labels` (now
+  `transcription_config`, `safety_settings` (Vertex-only until 2026-10-30), `labels` (now
   accepted, see above), `AntigravityConfig`.
 - **2.18.1 (2026-08-16):** `Content::Video.processing` (#434; the segment
   window is the token-cost lever, and it is valid only inside a `user_input`
