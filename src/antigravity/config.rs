@@ -16,7 +16,7 @@ use super::protocol;
 /// with:
 ///
 /// ```bash
-/// pip install google-antigravity==0.1.18
+/// pip install google-antigravity==0.1.23
 /// ```
 ///
 /// The 0.1.5 → 0.1.10 move renamed two wire spellings that the bridge
@@ -24,14 +24,16 @@ use super::protocol;
 /// `usageUpdate`); both old spellings are still accepted. The 0.1.10 →
 /// 0.1.18 move changed one the bridge *sends*: a user message is now a
 /// multi-part `userInput` object, and the old plain-string form is a
-/// harness-side parse error. An outbound shape cannot be aliased, so this
-/// build drives 0.1.18 only — against 0.1.10 every turn fails to start.
+/// harness-side parse error. An outbound shape cannot be aliased, so a
+/// build drives one revision. 0.1.23 added the `runWorkflow` toggle, which
+/// this build writes (disabled) and 0.1.18 rejects at init with `unknown
+/// field "runWorkflow"`, so this build drives 0.1.23 only.
 ///
 /// "Degrades gracefully" is doing real work in the sentence above, too: a
 /// renamed value an `Unknown` variant absorbs is invisible until behavior
 /// that *matched* on it silently stops firing, and a rejected input is
 /// reported only on the harness's stderr.
-pub const SUPPORTED_HARNESS_VERSION: &str = "0.1.18";
+pub const SUPPORTED_HARNESS_VERSION: &str = "0.1.23";
 
 /// How the harness frames the agent's task in its system prompt.
 ///
@@ -275,6 +277,7 @@ impl Capabilities {
             tool_search_config: None,
             manage_task: on(BuiltinTool::RunCommand),
             schedule: Some(protocol::ToolToggle::new(false)),
+            run_workflow: Some(protocol::ToolToggle::new(false)),
         }
     }
 }
@@ -688,6 +691,16 @@ mod tests {
         // `schedule` is never offered: a self-scheduled turn is one this
         // client cannot observe.
         assert!(!flags.schedule.unwrap().enabled);
+        // `run_workflow` (0.1.23) is written, disabled, under every
+        // capability set.
+        assert!(!flags.run_workflow.unwrap().enabled);
+        assert!(
+            !Capabilities::all()
+                .to_harness_side_tools()
+                .run_workflow
+                .unwrap()
+                .enabled
+        );
         assert!(
             !Capabilities::all()
                 .to_harness_side_tools()

@@ -94,7 +94,17 @@ async fn canary_streaming_interaction() {
             genai_rs::StreamChunk::Completed(response) => {
                 assert_no_unknown_steps(&response, "streaming completed response");
             }
-            _ => {} // Handle unknown variants
+            // A new SSE event type is the drift this canary exists for.
+            genai_rs::StreamChunk::Unknown { chunk_type, .. } => {
+                let event_type = format!("event {chunk_type}");
+                if !unknown_types_found.contains(&event_type) {
+                    unknown_types_found.push(event_type);
+                }
+            }
+            genai_rs::StreamChunk::Error { message, code } => {
+                panic!("stream sent an error event: {message} (code {code:?})")
+            }
+            _ => {}
         }
     }
 
@@ -102,9 +112,9 @@ async fn canary_streaming_interaction() {
 
     if !unknown_types_found.is_empty() {
         panic!(
-            "API returned unknown delta types in streaming deltas!\n\
+            "API returned unknown delta or event types while streaming!\n\
              Unknown types: {:?}\n\n\
-             Action required: Add support for these delta types in \
+             Action required: Add support for these types in \
              src/",
             unknown_types_found
         );

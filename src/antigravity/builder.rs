@@ -87,6 +87,9 @@ pub struct AgentBuilder {
     workspace_announcement: Option<bool>,
     /// `None` leaves the harness default (autonomous).
     agent_behavior: Option<AgentBehavior>,
+    /// Whether to confine file tools to the workspaces. `None` means the
+    /// default (on); see [`Self::with_workspace_containment`].
+    workspace_containment: Option<bool>,
 }
 
 impl std::fmt::Debug for AgentBuilder {
@@ -176,6 +179,42 @@ impl AgentBuilder {
     #[must_use]
     pub fn with_workspace_announcement(mut self, announce: bool) -> Self {
         self.workspace_announcement = Some(announce);
+        self
+    }
+
+    /// Controls whether the harness confines its file tools to the
+    /// configured workspaces. **On by default** whenever a workspace is
+    /// configured; without one there is nothing to confine to, so `true`
+    /// does nothing (and logs a warning at `spawn()`).
+    ///
+    /// It covers the file tools (`view_file`, `list_directory`, …), not
+    /// `run_command`: a shell command can read any path the process can, so
+    /// keep `run_command` off, or gate it with a hook or policy, if the
+    /// workspace boundary matters.
+    ///
+    /// The harness enforces containment only when the client sends a
+    /// policy config, and before this setting existed this crate never
+    /// did: an agent could read files anywhere the process could, and the
+    /// content reached the model (verified on harness 0.1.18 and 0.1.23).
+    /// With containment on, a read outside the workspaces fails with
+    /// `Access to path "…" is denied`. The harness still allows two roots
+    /// besides the workspaces: the system temp directory and its own
+    /// `~/.gemini/antigravity/brain` (verified on 0.1.23). The Python SDK
+    /// contains by default too.
+    ///
+    /// Turn it off only if the agent must reach paths outside its
+    /// workspaces, and gate those tools with a pre-tool hook or policy:
+    ///
+    /// ```rust,ignore
+    /// let agent = AntigravityAgent::builder()
+    ///     .add_workspace("/repo")
+    ///     .with_workspace_containment(false)
+    ///     // ...
+    ///     ;
+    /// ```
+    #[must_use]
+    pub fn with_workspace_containment(mut self, contain: bool) -> Self {
+        self.workspace_containment = Some(contain);
         self
     }
 
@@ -683,6 +722,16 @@ impl AgentBuilder {
             enabled_hooks,
             custom_subagents,
             agent_behavior: self.agent_behavior.map(AgentBehavior::to_wire),
+            policy_config: {
+                if self.workspace_containment == Some(true) && self.workspaces.is_empty() {
+                    tracing::warn!(
+                        "with_workspace_containment(true) has no effect: no workspace is \
+                         configured, so there is nothing to confine the agent to"
+                    );
+                }
+                (self.workspace_containment.unwrap_or(true) && !self.workspaces.is_empty())
+                    .then(protocol::PolicyConfig::default)
+            },
         }
     }
 }

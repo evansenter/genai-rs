@@ -73,7 +73,7 @@ jobs:
       - uses: ./.github/actions/setup-mold
       - name: Install pinned localharness wheel
         # Version must match SUPPORTED_HARNESS_VERSION in src/antigravity/.
-        run: pip install google-antigravity==0.1.18
+        run: pip install google-antigravity==0.1.23
       - name: Run unit tests with antigravity feature
         run: cargo nextest run --workspace --features antigravity
       # The only end-to-end guard against a harness protocol change. Key-gated

@@ -64,6 +64,25 @@ pub struct HarnessConfig {
     /// How the harness frames the task (new in harness 0.1.18).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_behavior: Option<AgentBehavior>,
+    /// Harness-side policy. Its presence alone turns on workspace
+    /// containment: the harness confines file tools to `workspaces` only
+    /// when a policy config is sent (verified on harness 0.1.18 and
+    /// 0.1.23).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_config: Option<PolicyConfig>,
+}
+
+/// `PolicyConfig`. This crate writes it empty, for workspace containment;
+/// tool policies run Rust-side through the pre-tool hook instead of as
+/// harness rules.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PolicyConfig {
+    /// `WORKSPACE_CONTAINMENT_UNSPECIFIED` (contained, the default) or
+    /// `WORKSPACE_CONTAINMENT_DISABLED`. Never written by this crate;
+    /// modeled so a config roundtrips.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_containment: Option<String>,
 }
 
 /// `SystemInstructions` (oneof `type`): custom or appended instructions.
@@ -230,6 +249,10 @@ pub struct HarnessSideTools {
     /// timer or cron job (new in harness 0.1.18).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schedule: Option<ToolToggle>,
+    /// `run_workflow` builtin, which also brings four skill tools (new in
+    /// harness 0.1.23; earlier harnesses reject the field at init).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_workflow: Option<ToolToggle>,
 }
 
 /// `PermissionsConfig`.

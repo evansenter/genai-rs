@@ -158,6 +158,12 @@ fn trajectory_terminal_state_accepts_both_harness_spellings() {
     assert_eq!(waiting, TrajectoryState::WaitingForTasks);
     assert!(!waiting.is_unknown());
 
+    // New in 0.1.23, and also not terminal.
+    let waiting: TrajectoryState =
+        serde_json::from_value(json!("STATE_WAITING_FOR_SUBAGENTS")).unwrap();
+    assert_eq!(waiting, TrajectoryState::WaitingForSubagents);
+    assert!(!waiting.is_unknown());
+
     // A genuinely unrecognized state still degrades (Evergreen).
     let bogus: TrajectoryState = serde_json::from_value(json!("STATE_FUTURE")).unwrap();
     assert!(bogus.is_unknown());
