@@ -104,7 +104,8 @@ async fn test_streamed_agentic_video_turn_replays_statelessly() {
         return;
     };
 
-    with_timeout(extended_test_timeout(), async {
+    // Two sequential agentic requests; a streamed turn alone has taken 47s.
+    with_timeout(extended_test_timeout() * 2, async {
         let first = completed_response(
             client
                 .interaction()
