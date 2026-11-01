@@ -471,31 +471,30 @@ impl PollOptions {
         let interval = self.poll_interval_or(defaults.1);
         let start = std::time::Instant::now();
         let mut last_state = "unknown".to_string();
-        // The latest transient failure, cleared by a successful read, so a
-        // deadline caused by an outage says so.
-        let mut last_error: Option<String> = None;
         loop {
             let bound = timeout
                 .saturating_sub(start.elapsed())
                 .max(Duration::from_secs(1));
-            match tokio::time::timeout(bound, get()).await {
+            // This round's transient failure, if any, so a deadline caused
+            // by an outage says so.
+            let last_error = match tokio::time::timeout(bound, get()).await {
                 Ok(Ok(current)) => {
-                    last_error = None;
                     match check(current)? {
                         PollStep::Ready(done) => return Ok(done),
                         PollStep::Pending(state) => last_state = state,
                     }
+                    None
                 }
                 Ok(Err(e)) if e.is_retryable() => {
                     tracing::warn!("Polling {what} failed ({e}); retrying until the deadline");
-                    last_error = Some(e.to_string());
+                    Some(e.to_string())
                 }
                 Ok(Err(e)) => return Err(e),
                 Err(_) => {
                     tracing::warn!("Polling {what}: no answer within {bound:?}");
-                    last_error = Some(format!("no answer within {bound:?}"));
+                    Some(format!("no answer within {bound:?}"))
                 }
-            }
+            };
             let waited = start.elapsed();
             if waited > timeout {
                 let cause = last_error
