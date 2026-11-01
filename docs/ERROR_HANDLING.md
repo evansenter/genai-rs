@@ -146,13 +146,17 @@ instead of reaching the model as a result.
 
 ## Streaming errors
 
-A stream from `create_stream()` can end in two ways:
+A stream from `create_stream()` ends in one of three ways:
 
-- `Err(GenaiError)` items, for transport, parse, or timeout errors. Resume
-  from the last `event_id` if the interaction was stored; see
-  [Stream Resume](STREAMING_API.md#stream-resume).
+- A terminal `StreamChunk::Completed(response)`.
 - A terminal `StreamChunk::Error { message, code }` event, which the server
-  sends inside the SSE stream. No events follow it.
+  sends inside the SSE stream, such as a recitation block (`code:
+  "recitation"`). No events follow it.
+- An `Err(GenaiError)` item, for transport, parse, or timeout errors. A
+  body that ends before either terminal event, such as a dropped
+  connection, ends with `GenaiError::MalformedResponse`. Only background
+  interactions can be resumed; see
+  [Stream Resume](STREAMING_API.md#stream-resume).
 
 ## Related
 

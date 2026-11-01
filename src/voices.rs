@@ -96,6 +96,14 @@ impl VoiceAudio {
 pub struct PromptedVoice {
     /// Natural-language description of the voice.
     pub input: String,
+    /// A prebuilt voice to start the design from, such as `"achird"`
+    /// (google-genai 2.34.0). Accepted, validated (an unknown name is a
+    /// `400 INVALID_ARGUMENT`) and echoed back, live 2026-11-01.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_voice: Option<String>,
+    /// Fields the crate does not model yet, preserved for roundtrip.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl PromptedVoice {
@@ -104,7 +112,15 @@ impl PromptedVoice {
     pub fn new(input: impl Into<String>) -> Self {
         Self {
             input: input.into(),
+            ..Default::default()
         }
+    }
+
+    /// Starts the design from a prebuilt voice.
+    #[must_use]
+    pub fn with_base_voice(mut self, voice: impl Into<String>) -> Self {
+        self.base_voice = Some(voice.into());
+        self
     }
 }
 
@@ -285,6 +301,20 @@ impl CreateVoiceRequest {
     #[must_use]
     pub fn with_display_name(mut self, name: impl Into<String>) -> Self {
         self.voice.display_name = Some(name.into());
+        self
+    }
+
+    /// Starts a prompted voice's design from a prebuilt voice, such as
+    /// `"achird"`. A replicated voice has no prompt to base, so there it
+    /// only logs a warning.
+    #[must_use]
+    pub fn with_base_voice(mut self, voice: impl Into<String>) -> Self {
+        match self.voice.prompted.take() {
+            Some(prompted) => self.voice.prompted = Some(prompted.with_base_voice(voice)),
+            None => tracing::warn!(
+                "CreateVoiceRequest::with_base_voice has no effect on a replicated voice"
+            ),
+        }
         self
     }
 
@@ -666,6 +696,24 @@ mod tests {
         assert_eq!(voice.usage.unwrap().total_tokens, Some(1334));
         assert_eq!(voice.sample_audio.unwrap().mime_type, "audio/wav");
         assert_eq!(voice.extra["future_field"], 1);
+    }
+
+    /// `base_voice` (google-genai 2.34.0) goes out on a prompted create and
+    /// comes back on the echo (live 2026-11-01).
+    #[test]
+    fn prompted_base_voice_round_trips() {
+        let request =
+            CreateVoiceRequest::prompted("A calm, low-pitched narrator.").with_base_voice("achird");
+        assert_eq!(
+            serde_json::to_value(&request).unwrap()["voice"]["prompted"],
+            json!({"input": "A calm, low-pitched narrator.", "base_voice": "achird"})
+        );
+        let echoed: PromptedVoice = serde_json::from_value(
+            json!({"input": "A calm, low-pitched narrator.", "base_voice": "achird"}),
+        )
+        .unwrap();
+        assert_eq!(echoed.base_voice.as_deref(), Some("achird"));
+        assert!(echoed.extra.is_empty());
     }
 
     #[test]

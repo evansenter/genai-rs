@@ -91,6 +91,12 @@ pub const DEFAULT_IMAGE_MODEL: &str = "gemini-3.1-flash-image";
 /// turn; see [`Content::speaker_text`].
 pub const DEFAULT_TTS_MODEL: &str = "gemini-3.8-flash-tts";
 
+/// The model to use for decoding continuation, the only one that supports
+/// it (verified live 2026-11-01; every other model answers `400 Decoding
+/// continuation is not enabled for this model`). See
+/// [`InteractionBuilder::with_continuation_token`].
+pub const CONTINUATION_MODEL: &str = "gemini-4-argon";
+
 /// The Deep Research agent id, for [`with_agent`](InteractionBuilder::with_agent).
 ///
 /// Agent interactions require `background = true`.
@@ -201,9 +207,9 @@ pub use webhooks::{
 pub mod response;
 pub use response::{
     AudioInfo, CodeExecutionCallInfo, CodeExecutionResultInfo, FunctionCallInfo,
-    FunctionResultInfo, GoogleMapsResultInfo, GroundingToolCount, ImageInfo, InteractionResponse,
-    InteractionStatus, ModalityTokens, OwnedFunctionCallInfo, StepSummary, ToolCallInfo,
-    UrlContextResultInfo, UsageMetadata,
+    FunctionResultInfo, GoogleMapsResultInfo, GroundingToolCount, ImageInfo, InteractionError,
+    InteractionResponse, InteractionStatus, ModalityTokens, OwnedFunctionCallInfo, StepSummary,
+    ToolCallInfo, UrlContextResultInfo, UsageMetadata,
 };
 
 // Tool types (function declarations, built-in tools)
