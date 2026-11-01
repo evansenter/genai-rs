@@ -49,7 +49,7 @@ Under API revision 2026-05-20 the server emits this lifecycle:
 | SSE event type | `StreamChunk` variant | Notes |
 |----------------|------------------------|-------|
 | `interaction.created` | `Created { interaction }` | First event; carries the interaction id |
-| `interaction.status_update` | `StatusUpdate { interaction_id, status }` | Background/agent progress |
+| `interaction.status_update` | `StatusUpdate { interaction_id, status, usage, .. }` | Background/agent progress. `interaction_id` is `None` on a `store: false` stream; background streams carry `usage` mid-run |
 | `step.start` | `StepStart { index, step }` | A step begins; it may be partial (a `FunctionCall` with empty arguments) |
 | `step.delta` | `StepDelta { index, delta }` | Incremental payload for that step |
 | `step.stop` | `StepStop { index, usage, step_usage }` | `usage` is cumulative; `step_usage` is this step's alone |
@@ -252,19 +252,27 @@ while let Some(event) = stream.next().await {
 
 ## Stream resume
 
-If the connection drops, resume the *same* generation with
+Only **background** interactions can be resumed (verified live 2026-11-01).
+A foreground stream from `create_stream()` carries no `event_id`s, and when
+its connection drops the server cancels the interaction: it keeps only the
+input step, reports `status: cancelled` with an `errors` entry, and
+`interactions().stream(id)` answers `400 Streaming retrieval of
+interactions is not supported`. Retrying means a new request.
+
+For a background interaction, follow or resume the *same* generation with
 `client.interactions().resume_stream(interaction_id, last_event_id)`. It
 requests `GET /v1beta/interactions/{id}?alt=sse&last_event_id=…` (the id is
 URL-encoded) and continues after that event.
 
 Requirements:
 
-1. The interaction is stored. Storage is on by default; `with_store_disabled()`
-   rules resume out.
-2. You have the interaction id, from the `Created` event or the response.
-3. You have the last `event_id` you processed. `event_id` is **optional** per
-   the API spec, so resume only works when the server sent one. Otherwise
-   restart, or fetch the finished interaction with `client.interactions().get(id)`.
+1. The interaction runs in the background (`with_background(true)`) and is
+   stored (on by default).
+2. You have the interaction id, from the create response.
+3. You have the last `event_id` you processed. Only some events carry one
+   (text deltas did, live), so resume from the last you saw. Otherwise
+   follow from the start with `client.interactions().stream(id)`, or fetch
+   the finished interaction with `client.interactions().get(id)`.
 
 ```rust,no_run
 use futures_util::StreamExt;
@@ -276,11 +284,15 @@ use genai_rs::{Client, StreamChunk};
 let mut last_event_id: Option<String> = None;
 let mut interaction_id: Option<String> = None;
 
-let mut stream = client.interaction()
+let created = client.interaction()
     .with_model(genai_rs::DEFAULT_MODEL)
     .with_text("Count to 100")
-    .with_store_enabled()  // Required for resume
-    .create_stream();
+    .with_background(true)  // Required for resume
+    .create()
+    .await?;
+interaction_id = created.id.clone();
+
+let mut stream = client.interactions().stream(interaction_id.as_deref().unwrap_or_default());
 
 while let Some(result) = stream.next().await {
     let event = result?;
@@ -290,12 +302,10 @@ while let Some(result) = stream.next().await {
         last_event_id = event.event_id.clone();
     }
 
-    // Capture interaction ID from the Created event
-    if let StreamChunk::Created { interaction } = &event.chunk {
-        interaction_id = interaction.id.clone();
-    }
-
     // Process event...
+    if let StreamChunk::StepDelta { delta, .. } = &event.chunk {
+        print!("{}", delta.as_text().unwrap_or_default());
+    }
 }
 
 // If interrupted, resume from last position:

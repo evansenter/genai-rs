@@ -198,3 +198,20 @@ fn usage_preserves_unmodeled_live_fields() {
     assert_eq!(usage.extra["raw_prompt_token"], 38);
     assert_eq!(serde_json::to_value(&usage).unwrap(), wire);
 }
+
+/// `initial_input_tokens` is the first turn's input, so accumulating keeps
+/// the first value rather than summing.
+#[test]
+fn test_usage_metadata_accumulate_keeps_the_first_initial_input_tokens() {
+    let mut total = UsageMetadata::default();
+    for (input, initial) in [(43, 43), (73, 43)] {
+        total.accumulate(&UsageMetadata {
+            total_input_tokens: Some(input),
+            initial_input_tokens: Some(initial),
+            ..Default::default()
+        });
+    }
+    assert_eq!(total.total_input_tokens, Some(116));
+    assert_eq!(total.initial_input_tokens, Some(43));
+    assert!(total.has_data());
+}
