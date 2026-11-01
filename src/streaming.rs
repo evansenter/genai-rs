@@ -3,7 +3,8 @@
 //! This module contains types for streaming responses with automatic function execution.
 //! The [`AutoFunctionStreamChunk`] enum provides events for tracking the progress of
 //! an interaction that may involve multiple function call rounds. Events are wrapped
-//! in [`AutoFunctionStreamEvent`] to include `event_id` for stream resume support.
+//! in [`AutoFunctionStreamEvent`], which carries the API's `event_id` when it sent
+//! one (foreground streams don't; see its docs on resumption).
 //!
 //! # Example
 //!
@@ -20,14 +21,8 @@
 //!     .with_text("What's the weather in London?")
 //!     .create_stream_with_auto_functions();
 //!
-//! let mut last_event_id = None;
 //! while let Some(result) = stream.next().await {
 //!     let event = result?;
-//!     // Track event_id for potential resume
-//!     if event.event_id.is_some() {
-//!         last_event_id = event.event_id.clone();
-//!     }
-//!
 //!     match &event.chunk {
 //!         AutoFunctionStreamChunk::Delta(delta) => {
 //!             if let Some(t) = delta.as_text() {
@@ -380,14 +375,11 @@ impl<'de> Deserialize<'de> for AutoFunctionStreamChunk {
 ///
 /// # Stream Resumption
 ///
-/// Save the `event_id` from each event. If the connection drops, you can resume
-/// the stream from the last received event by calling
-/// [`Interactions::resume_stream`](crate::Interactions::resume_stream) with the
-/// saved `event_id`.
-///
-/// **Note**: The auto-function streaming loop is client-side. If interrupted during
-/// function execution, you may need to restart the full loop rather than resuming.
-/// However, the underlying API stream can be resumed.
+/// An auto-function stream is a series of foreground streams, which carry no
+/// `event_id` and which the server cancels when the connection drops
+/// (verified live 2026-11-01), so an interrupted loop is restarted, not
+/// resumed. Only background interactions can be resumed, with
+/// [`Interactions::resume_stream`](crate::Interactions::resume_stream).
 ///
 /// # Example
 ///

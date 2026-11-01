@@ -99,11 +99,11 @@ retry only the API call.
 ### Streams
 
 A stream cannot be retried mid-flight: re-sending the request starts a new
-generation. For stored interactions (store is on by default), resume the
-*same* generation from the last `event_id` with
+generation. A dropped foreground stream is cancelled server-side (verified
+live 2026-11-01), so only a **background** interaction can be resumed: pick
+up the *same* generation from the last `event_id` with
 `client.interactions().resume_stream(interaction_id, last_event_id)`; see
-[Stream Resume](STREAMING_API.md#stream-resume). `event_id` is optional per
-the API spec, so resume only works when the server sent one.
+[Stream Resume](STREAMING_API.md#stream-resume).
 
 ## Timeouts
 

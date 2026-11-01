@@ -44,6 +44,9 @@ mod basic {
         assert!(response.id.is_some(), "Interaction ID should be present");
         assert_eq!(response.status, InteractionStatus::Completed);
         assert!(!response.steps.is_empty(), "Steps are empty");
+        // google-genai 2.34.0; on every response live (2026-11-01).
+        let usage = response.usage.as_ref().expect("usage");
+        assert!(usage.initial_input_tokens.is_some(), "{usage:?}");
 
         let text = response.as_text().expect("Should have text response");
         assert_response_semantic(
@@ -276,6 +279,45 @@ mod streaming {
     use futures_util::StreamExt;
     use genai_rs::{StreamChunk, ThinkingLevel, ThinkingSummaries};
 
+    /// A `store: false` stream's status updates carry no interaction ID
+    /// (live 2026-11-01). They used to be dropped, with a warn, for that.
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_unstored_stream_surfaces_status_updates() {
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        with_timeout(test_timeout(), async {
+            let mut stream = interaction_builder(&client)
+                .with_text("Say OK.")
+                .with_store_disabled()
+                .create_stream();
+            let mut updates = Vec::new();
+            let mut completed = false;
+            while let Some(event) = stream.next().await {
+                match event.expect("stream error").chunk {
+                    StreamChunk::StatusUpdate {
+                        interaction_id,
+                        status,
+                        ..
+                    } => updates.push((interaction_id, status)),
+                    StreamChunk::Completed(_) => completed = true,
+                    StreamChunk::Error { message, .. } => panic!("stream error event: {message}"),
+                    _ => {}
+                }
+            }
+            assert!(completed, "no completed event");
+            assert!(!updates.is_empty(), "no status update reached the caller");
+            assert!(
+                updates.iter().all(|(id, _)| id.is_none()),
+                "an unstored stream named an interaction: {updates:?}"
+            );
+        })
+        .await;
+    }
+
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_streaming_interaction() {
@@ -476,6 +518,60 @@ mod streaming {
 
 mod generation_config {
     use super::*;
+
+    /// Decoding continuation (google-genai 2.34.0), live on the continuation
+    /// model only: a response cut off by `max_output_tokens` is
+    /// `incomplete` with a token, and resending the same input with the
+    /// token and a larger (cumulative) budget continues it.
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_decoding_continuation_resumes_a_cut_off_answer() {
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        let ask = |max_output_tokens| {
+            client
+                .interaction()
+                .with_model(genai_rs::CONTINUATION_MODEL)
+                .with_text("Write a sixteen-line poem about the sea.")
+                .with_store_disabled()
+                .with_generation_config(GenerationConfig {
+                    max_output_tokens: Some(max_output_tokens),
+                    ..Default::default()
+                })
+        };
+        with_timeout(extended_test_timeout(), async {
+            let first = ask(30).create().await.expect("first request");
+            assert_eq!(first.status, InteractionStatus::Incomplete);
+            let token = first
+                .continuation_token
+                .clone()
+                .expect("a cut-off answer carries a continuation token");
+            let first_text = first.all_text();
+
+            let rest = ask(600)
+                .with_continuation_token(&token)
+                .create()
+                .await
+                .expect("the continuation was rejected");
+            let rest_text = rest.all_text();
+            println!(
+                "first: {first_text:?}\nrest: {rest_text:?} ({:?})",
+                rest.status
+            );
+            assert!(
+                !rest_text.trim().is_empty(),
+                "the continuation produced no text"
+            );
+            assert!(
+                !rest_text.starts_with(first_text.trim()),
+                "the continuation restarted the answer instead of continuing it"
+            );
+        })
+        .await;
+    }
 
     #[tokio::test]
     #[ignore = "Requires API key"]

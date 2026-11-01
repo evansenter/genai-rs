@@ -4,8 +4,8 @@
 >
 > | | |
 > |---|---|
-> | **Last swept against** | `google-genai` **2.25.0** |
-> | **Sweep date** | **2026-09-24** |
+> | **Last swept against** | `google-genai` **2.34.0** |
+> | **Sweep date** | **2026-11-01** |
 > | **Baseline in CI** | `.github/last-swept-sdk-version` |
 >
 > "Done" below means *nothing was missing as of the sweep date*. The SDK
@@ -18,6 +18,7 @@
 | Rank | Source | Why |
 |------|--------|-----|
 | 1 | **Generated bindings**: `google-genai`'s `_gaos/types/**` and the endpoint `path=` lines in `_gaos/*.py` | Ships ahead of prose. Diff two releases to find new surface. |
+| 1b | **OpenAPI specs**: `https://ai.google.dev/static/api/interactions.openapi.json` (v1beta) and `interactions-v1.openapi.json` (v1) | Machine-readable, and agrees with the bindings where both speak; found 2026-11-01. |
 | 2 | **Live probes** against `generativelanguage.googleapis.com` | Ground truth, and it disagrees with rank 1 in both directions. |
 | 3 | **Prose docs**: `ai.google.dev`, and this file | Both lag. Neither is evidence of absence. |
 
@@ -91,6 +92,52 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
   2026-10-06 3 of 5 returned `500 Internal error encountered`. On 2026-11-01
   all 16 requests answered, 10 of them concurrent, so
   `processing_steps_tests` no longer retries.
+
+## Sweep 2.25.0 → 2.34.0 (2026-11-01)
+
+Every item probed live on 2026-11-01.
+
+### Modeled
+
+| Surface | Where | Live result |
+|---|---|---|
+| Decoding continuation: `continuation_token` on the response and the request | `InteractionResponse::continuation_token`, `InteractionBuilder::with_continuation_token`, `CONTINUATION_MODEL` | Only `gemini-4-argon` supports it; every other model answers `400 Decoding continuation is not enabled for this model`. A response cut off by `max_output_tokens` is `incomplete` with a token (plain, streamed and background). Resending the original input with the token continues mid-sentence; any other input is a 400. `max_output_tokens` is cumulative across continuations. |
+| `requires_continuation` status | `InteractionStatus::RequiresContinuation` | Spec only; never produced. Continuable responses report `incomplete`. |
+| `InteractionStatusUpdate.usage`, `.continuation_token` | `StreamChunk::StatusUpdate` | Background streams send `usage` mid-run. A `store: false` stream's updates carry no `interaction_id`; the crate dropped them until now. |
+| `Usage.initial_input_tokens` | `UsageMetadata::initial_input_tokens` | On every response |
+| `Interaction.errors` | `InteractionResponse::errors`, `InteractionError` | `[{"code": "CANCELLED", ...}]` on an interaction cancelled by a dropped foreground stream |
+| `PromptedVoice.base_voice` | `PromptedVoice::base_voice`, `CreateVoiceRequest::with_base_voice` | Accepted, validated, echoed |
+| `CodeExecutionLanguage` `bash` | `CodeExecutionLanguage::Bash` | Spec only: `gemini-3.8-flash` runs only Python |
+| `service_tier: "deferred"` | `ServiceTier::Deferred` | Now explicitly Vertex-only ("allowed on the Gemini Enterprise Agent Platform"), so modeled per D-005 |
+| Function results with audio, video and document content | `FunctionResultPayload::Contents` (already) | The model reads all three |
+| `Environment.env` as plain strings | `RemoteEnvironment::env` (already) | Accepted; stored as `{"value": ...}` |
+| Mid-stream error as a bare JSON line | `http::sse_parser`, `StreamChunk::Error` | A recitation block arrives as `{"error": {...}}` with no `data:` prefix, then EOF. Not in the spec. |
+
+Also removed: `presence_penalty` and `frequency_penalty`, which the API now
+rejects (`400 Unknown parameter 'presence_penalty' at 'generation_config'`)
+and the bindings don't list. Deprecated upstream but still accepted:
+`temperature`, `top_p`, `adaptation_phrases`.
+
+### Deliberately not modeled
+
+| Surface | Why |
+|---|---|
+| `VideoTask` `upscale` | `400 ... Supported values: text_to_video, image_to_video, reference_to_video, edit, extend` |
+| `continuation_ids` | Never returned; as a request field, `400 Unknown parameter` |
+| Server-only tool types (`bash`, `filesystem`, `tool_search`, `manage_task`, `schedule`) | Now rejected with a 400 that lists the supported tool types (they were accepted bare in 2.25.0's sweep) |
+| New model ids (`gemini-4-argon`, `gemini-3.5-flash-lite`, `gemini-nano-banana-2.1`, `gemini-omni-*`, `lyria-3.5`, ...) | Model ids are open strings. All eight exist via `/v1beta/models`. |
+
+### Found, NOT yet modeled
+
+- **Continuation from a stored interaction without input.** With
+  `previous_interaction_id` and the token, the API accepts a request with
+  *no* `input`, but the crate always sends one. Needs an omittable input.
+- **`{"allowlist": "disabled"}` network form.** Accepted; the echo reads back
+  as `{"allowlist": [{"mode": "disabled"}]}`, which `NetworkConfig` parses
+  as an allowlist entry with an empty domain. Its meaning next to
+  `network: "disabled"` is undocumented.
+- **The stable `/v1` endpoint.** Create, get, delete and cancel only; no
+  continuation, environments or agent configs. The crate targets `v1beta`.
 
 ## Sweep 2.18.1 → 2.25.0 (2026-09-24)
 

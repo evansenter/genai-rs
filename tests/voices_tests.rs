@@ -24,7 +24,8 @@ where
         .voices()
         .create(
             &CreateVoiceRequest::prompted("A calm, low-pitched narrator.")
-                .with_display_name("genai-rs-test"),
+                .with_display_name("genai-rs-test")
+                .with_base_voice("achird"),
         )
         .await
         .expect("voices.create failed");
@@ -185,6 +186,16 @@ async fn test_prompted_voice_lifecycle_and_synthesis() {
             assert_eq!(fetched.id.as_deref(), Some(id.as_str()));
             assert_eq!(fetched.display_name.as_deref(), Some("genai-rs-test"));
             assert!(fetched.expire_time.is_some());
+            // google-genai 2.34.0's `base_voice` is stored and echoed.
+            assert_eq!(
+                fetched
+                    .prompted
+                    .as_ref()
+                    .and_then(|p| p.base_voice.as_deref()),
+                Some("achird"),
+                "{:?}",
+                fetched.prompted
+            );
 
             let response = client
                 .interaction()
