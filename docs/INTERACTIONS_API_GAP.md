@@ -139,8 +139,9 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
   only); multi-speaker TTS; presence/frequency penalties; tool-config
   completeness; `budget_exceeded`; deep-research knobs (`enable_bigquery_tool`
   is Vertex-only); typed citations; audio channels and sample rate.
-- **2.17.0 (2026-08):** triggers resource (list verified, create
-  agent-gated), environments resource (full lifecycle),
+- **2.17.0 (2026-08):** triggers resource (list verified; the full
+  lifecycle verified 2026-11-01, once custom agents could be created),
+  environments resource (full lifecycle),
   `transcription_config`, `safety_settings` (Vertex-only), `labels` (now
   accepted, see above), `AntigravityConfig`.
 - **2.18.1 (2026-08-16):** `Content::Video.processing` (#434; the segment

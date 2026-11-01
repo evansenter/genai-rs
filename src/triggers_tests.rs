@@ -362,9 +362,10 @@ fn trigger_interaction_reshapes_a_bare_content_input() {
 
 #[test]
 fn trigger_int64s_tolerate_string_wire_form() {
-    // The environments resource live-verified that this API family
-    // serializes int64s as protobuf-JSON strings; a trigger doing the
-    // same must degrade per-field, not fail the whole list response.
+    // The trigger API sends plain numbers (live 2026-11-01), but the
+    // environments resource next door sends protobuf-JSON strings; a
+    // trigger doing the same must degrade per-field, not fail the whole
+    // list response.
     let json = serde_json::json!({
         "id": "trig-1",
         "max_consecutive_failures": "3",
@@ -376,11 +377,131 @@ fn trigger_int64s_tolerate_string_wire_form() {
     assert_eq!(trigger.consecutive_failure_count, Some(1));
     assert_eq!(trigger.execution_timeout_seconds, Some(600));
 
-    // Re-serialization is uniform with Environment's counts: the
-    // protobuf-JSON string form, whichever form arrived.
+    // Re-serialization uses the live wire form, plain numbers, whichever
+    // form arrived.
     let back = serde_json::to_value(&trigger).unwrap();
-    assert_eq!(back["max_consecutive_failures"], serde_json::json!("3"));
-    assert_eq!(back["execution_timeout_seconds"], serde_json::json!("600"));
+    assert_eq!(back["max_consecutive_failures"], serde_json::json!(3));
+    assert_eq!(back["consecutive_failure_count"], serde_json::json!(1));
+    assert_eq!(back["execution_timeout_seconds"], serde_json::json!(600));
+}
+
+/// A trigger body captured live (2026-11-01) after a pause, a rename, a
+/// manual run and a resume, so every output-only field is present.
+const LIVE_TRIGGER: &str = r#"{"id":"ea010c58-dd4e-4645-85c3-3e276a892b81","schedule":"0 9 * * *","create_time":"2026-11-01T06:17:06.723987Z","update_time":"2026-11-01T06:18:13.110543Z","status":"active","time_zone":"UTC","display_name":"genai-rs probe renamed","environment_id":"c640a8ea5ef67b910af66f5096102458","max_consecutive_failures":5,"execution_timeout_seconds":600,"consecutive_failure_count":0,"last_run_time":"2026-11-01T06:17:23.409105Z","next_run_time":"2026-11-01T09:00:00Z","last_pause_time":"2026-11-01T06:17:21.211144Z","last_resume_time":"2026-11-01T06:18:13.110543Z","previous_interaction_id":"v1_ChZldG5tYXNXV0JNMzVuc0VQcFl1TmVBEhZldG5tYXNXV0JNMzVuc0VQcFl1TmVB","interaction":{"store":true,"object":"interaction","input":[{"type":"user_input","content":[{"text":"Say OK.","type":"text"}]}],"agent":"genai-rs-trig-probe-1793513824"}}"#;
+
+#[test]
+fn live_trigger_body_parses_every_field() {
+    let trigger: Trigger = serde_json::from_str(LIVE_TRIGGER).unwrap();
+    assert_eq!(
+        trigger.id.as_deref(),
+        Some("ea010c58-dd4e-4645-85c3-3e276a892b81")
+    );
+    assert_eq!(trigger.schedule.as_deref(), Some("0 9 * * *"));
+    assert_eq!(trigger.time_zone.as_deref(), Some("UTC"));
+    assert_eq!(trigger.status, Some(TriggerStatus::Active));
+    assert_eq!(trigger.max_consecutive_failures, Some(5));
+    assert_eq!(trigger.execution_timeout_seconds, Some(600));
+    assert_eq!(trigger.consecutive_failure_count, Some(0));
+    assert_eq!(
+        trigger.environment_id.as_deref(),
+        Some("c640a8ea5ef67b910af66f5096102458")
+    );
+    assert!(
+        trigger
+            .previous_interaction_id
+            .as_deref()
+            .is_some_and(|id| id.starts_with("v1_"))
+    );
+    for (name, time) in [
+        ("create_time", trigger.create_time),
+        ("update_time", trigger.update_time),
+        ("last_run_time", trigger.last_run_time),
+        ("next_run_time", trigger.next_run_time),
+        ("last_pause_time", trigger.last_pause_time),
+        ("last_resume_time", trigger.last_resume_time),
+    ] {
+        assert!(time.is_some(), "{name} must parse");
+    }
+    // Every top-level key is modeled.
+    assert!(trigger.extra.is_empty(), "unmodeled: {:?}", trigger.extra);
+
+    // The server's echo of the nested interaction: input normalized to a
+    // user_input step, and `store: true`, which create would reject.
+    let interaction = trigger.interaction.expect("interaction");
+    assert_eq!(
+        interaction.agent.as_deref(),
+        Some("genai-rs-trig-probe-1793513824")
+    );
+    assert_eq!(interaction.store, Some(true));
+    assert!(
+        matches!(&interaction.input, InteractionInput::Steps(steps) if steps.len() == 1),
+        "{:?}",
+        interaction.input
+    );
+}
+
+#[test]
+fn live_trigger_body_round_trips_in_wire_form() {
+    // Numbers stay numbers, and `create_time` keeps its spelling. The
+    // nested interaction's unmodeled `object` is the one key dropped.
+    let mut wire: serde_json::Value = serde_json::from_str(LIVE_TRIGGER).unwrap();
+    let trigger: Trigger = serde_json::from_value(wire.clone()).unwrap();
+    let mut back = serde_json::to_value(&trigger).unwrap();
+    wire["interaction"]
+        .as_object_mut()
+        .unwrap()
+        .remove("object");
+    // Timestamps re-serialize via chrono, which trims nothing but may
+    // differ in fractional-second rendering; compare them parsed.
+    for key in [
+        "create_time",
+        "update_time",
+        "last_run_time",
+        "next_run_time",
+        "last_pause_time",
+        "last_resume_time",
+    ] {
+        let parse = |v: &serde_json::Value| {
+            v.as_str()
+                .unwrap()
+                .parse::<DateTime<Utc>>()
+                .unwrap_or_else(|e| panic!("{key}: {e}"))
+        };
+        assert_eq!(parse(&wire[key]), parse(&back[key]), "{key}");
+        wire.as_object_mut().unwrap().remove(key);
+        back.as_object_mut().unwrap().remove(key);
+    }
+    assert_eq!(back, wire);
+}
+
+#[test]
+fn live_execution_list_parses() {
+    // Captured live (2026-11-01) after a manual run: no `scheduled_time`
+    // and no `environment_id` on the execution.
+    let page: TriggerExecutionListResponse = serde_json::from_str(
+        r#"{"trigger_executions":[{"id":"b03f9fb9-78a5-4b43-adda-440fe24985e9","start_time":"2026-11-01T06:17:23.409105Z","end_time":"2026-11-01T06:17:34.755216Z","status":"completed","interaction_id":"v1_ChZldG5tYXNXV0JNMzVuc0VQcFl1TmVBEhZldG5tYXNXV0JNMzVuc0VQcFl1TmVB","trigger_id":"ea010c58-dd4e-4645-85c3-3e276a892b81"}]}"#,
+    )
+    .unwrap();
+    let [execution] = page.trigger_executions.as_slice() else {
+        panic!("one execution: {page:?}");
+    };
+    assert_eq!(execution.status, Some(TriggerExecutionStatus::Completed));
+    assert_eq!(
+        execution.trigger_id.as_deref(),
+        Some("ea010c58-dd4e-4645-85c3-3e276a892b81")
+    );
+    assert!(execution.interaction_id.is_some());
+    assert!(execution.start_time.is_some() && execution.end_time.is_some());
+    assert!(execution.scheduled_time.is_none());
+    assert!(execution.extra.is_empty(), "{:?}", execution.extra);
+}
+
+#[test]
+fn run_response_is_an_empty_execution() {
+    // `POST .../executions` answers `{}` (live 2026-11-01); `run` must
+    // still return Ok, with every field unset.
+    let execution: TriggerExecution = serde_json::from_str("{}").unwrap();
+    assert_eq!(execution, TriggerExecution::default());
 }
 
 #[test]
