@@ -305,11 +305,15 @@ impl CreateVoiceRequest {
     }
 
     /// Starts a prompted voice's design from a prebuilt voice, such as
-    /// `"achird"`. No effect on a replicated voice.
+    /// `"achird"`. A replicated voice has no prompt to base, so there it
+    /// only logs a warning.
     #[must_use]
     pub fn with_base_voice(mut self, voice: impl Into<String>) -> Self {
-        if let Some(prompted) = self.voice.prompted.take() {
-            self.voice.prompted = Some(prompted.with_base_voice(voice));
+        match self.voice.prompted.take() {
+            Some(prompted) => self.voice.prompted = Some(prompted.with_base_voice(voice)),
+            None => tracing::warn!(
+                "CreateVoiceRequest::with_base_voice has no effect on a replicated voice"
+            ),
         }
         self
     }

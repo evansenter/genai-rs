@@ -241,6 +241,25 @@ async fn stream_without_a_terminal_event_ends_in_an_error() {
     );
 }
 
+/// A bare JSON line right after an unterminated `data:` event still parses
+/// as its own error event, rather than joining the pending payload.
+#[tokio::test]
+async fn bare_json_error_line_ends_a_pending_event() {
+    let events = stream_events(&[&format!(
+        "data: {}\n{{\"error\":{{\"message\":\"blocked\",\"code\":\"recitation\"}}}}\n",
+        delta_event("x")
+    )])
+    .await;
+    assert!(
+        matches!(
+            events.as_slice(),
+            [Ok(_), Ok(StreamEvent { chunk: StreamChunk::Error { code: Some(code), .. }, .. })]
+                if code == "recitation"
+        ),
+        "{events:?}"
+    );
+}
+
 /// The API's mid-stream error: a bare JSON line, no `data:` prefix and no
 /// blank line, then EOF (live 2026-11-01, a recitation block).
 #[tokio::test]

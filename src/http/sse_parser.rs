@@ -73,6 +73,17 @@ where
                     if let Some(parsed) = event.dispatch(ctx, request_id)? {
                         yield parsed;
                     }
+                } else if line.starts_with('{') {
+                    // A bare JSON line (see the module docs) is a whole
+                    // event: end any event in progress first, so the two
+                    // payloads can't be joined into one unparseable value.
+                    if let Some(parsed) = event.dispatch(ctx, request_id)? {
+                        yield parsed;
+                    }
+                    event.push_line(line);
+                    if let Some(parsed) = event.dispatch(ctx, request_id)? {
+                        yield parsed;
+                    }
                 } else {
                     event.push_line(line);
                 }
