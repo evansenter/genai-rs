@@ -338,29 +338,39 @@ impl<'a> InteractionBuilder<'a> {
         self
     }
 
-    /// Sets the presence penalty (range [-2.0, 2.0]).
+    /// Continues a decode that stopped early, using the
+    /// [`continuation_token`](crate::InteractionResponse::continuation_token)
+    /// of the response that stopped.
     ///
-    /// Positive values penalize tokens that already appeared in the text,
-    /// increasing the likelihood of new topics.
-    #[must_use]
-    pub fn with_presence_penalty(mut self, penalty: f32) -> Self {
-        let config = self
-            .generation_config
-            .get_or_insert_with(GenerationConfig::default);
-        config.presence_penalty = Some(penalty);
-        self
-    }
-
-    /// Sets the frequency penalty (range [-2.0, 2.0]).
+    /// Build the request as before, with the same input, and raise
+    /// `max_output_tokens`: the API counts it across continuations. Only
+    /// [`CONTINUATION_MODEL`](crate::CONTINUATION_MODEL) supports continuation
+    /// (verified live 2026-11-01).
     ///
-    /// Positive values penalize tokens proportionally to their frequency in
-    /// the text so far, reducing repetition.
+    /// ```no_run
+    /// # use genai_rs::{Client, GenerationConfig, InteractionStatus};
+    /// # async fn example(client: &Client) -> Result<(), genai_rs::GenaiError> {
+    /// let ask = |max_output_tokens| {
+    ///     client
+    ///         .interaction()
+    ///         .with_model(genai_rs::CONTINUATION_MODEL)
+    ///         .with_text("Write a sonnet about the sea.")
+    ///         .with_generation_config(GenerationConfig {
+    ///             max_output_tokens: Some(max_output_tokens),
+    ///             ..Default::default()
+    ///         })
+    /// };
+    /// let first = ask(30).create().await?;
+    /// if let Some(token) = &first.continuation_token {
+    ///     let rest = ask(400).with_continuation_token(token).create().await?;
+    ///     println!("{}{}", first.all_text(), rest.all_text());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
-    pub fn with_frequency_penalty(mut self, penalty: f32) -> Self {
-        let config = self
-            .generation_config
-            .get_or_insert_with(GenerationConfig::default);
-        config.frequency_penalty = Some(penalty);
+    pub fn with_continuation_token(mut self, token: impl Into<String>) -> Self {
+        self.continuation_token = Some(token.into());
         self
     }
 

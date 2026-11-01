@@ -438,6 +438,7 @@ fn arb_interaction_status() -> impl Strategy<Value = InteractionStatus> {
         Just(InteractionStatus::Cancelled),
         Just(InteractionStatus::Incomplete),
         Just(InteractionStatus::BudgetExceeded),
+        Just(InteractionStatus::RequiresContinuation),
         // Unknown variant with preserved data
         unknown_or(InteractionStatus::Completed, |status_type| {
             InteractionStatus::Unknown {
@@ -503,6 +504,7 @@ fn arb_service_tier() -> impl Strategy<Value = ServiceTier> {
         Just(ServiceTier::Flex),
         Just(ServiceTier::Standard),
         Just(ServiceTier::Priority),
+        Just(ServiceTier::Deferred),
         // Unknown variant with preserved data
         unknown_or(ServiceTier::Flex, |tier_type| ServiceTier::Unknown {
             tier_type: tier_type.clone(),
@@ -525,10 +527,11 @@ fn arb_search_type() -> impl Strategy<Value = SearchType> {
     ]
 }
 
-/// Strategy for CodeExecutionLanguage (wire format is lowercase "python").
+/// Strategy for CodeExecutionLanguage (wire format is lowercase).
 fn arb_code_execution_language() -> impl Strategy<Value = CodeExecutionLanguage> {
     prop_oneof![
         Just(CodeExecutionLanguage::Python),
+        Just(CodeExecutionLanguage::Bash),
         // Unknown variant with preserved data
         unknown_or(CodeExecutionLanguage::Python, |language_type| {
             CodeExecutionLanguage::Unknown {
@@ -1263,8 +1266,6 @@ fn arb_generation_config() -> impl Strategy<Value = GenerationConfig> {
     );
     let part2 = (
         proptest::option::of(arb_tool_choice()),
-        proptest::option::of(arb_clean_float().prop_map(|v| v.as_f64().unwrap() as f32)),
-        proptest::option::of(arb_clean_float().prop_map(|v| v.as_f64().unwrap() as f32)),
         proptest::option::of(proptest::collection::vec(arb_speech_config(), 1..3)),
         proptest::option::of(arb_image_config()),
         proptest::option::of(arb_video_config()),
@@ -1281,15 +1282,7 @@ fn arb_generation_config() -> impl Strategy<Value = GenerationConfig> {
                 stop_sequences,
                 thinking_summaries,
             ),
-            (
-                tool_choice,
-                presence_penalty,
-                frequency_penalty,
-                speech_config,
-                image_config,
-                video_config,
-                transcription_config,
-            ),
+            (tool_choice, speech_config, image_config, video_config, transcription_config),
         )| {
             GenerationConfig {
                 temperature,
@@ -1300,8 +1293,6 @@ fn arb_generation_config() -> impl Strategy<Value = GenerationConfig> {
                 stop_sequences,
                 thinking_summaries,
                 tool_choice,
-                presence_penalty,
-                frequency_penalty,
                 speech_config,
                 image_config,
                 video_config,
@@ -2089,12 +2080,20 @@ fn arb_stream_chunk() -> impl Strategy<Value = StreamChunk> {
         // Created variant
         arb_interaction_response().prop_map(|interaction| StreamChunk::Created { interaction }),
         // StatusUpdate variant
-        (arb_identifier(), arb_interaction_status()).prop_map(|(interaction_id, status)| {
-            StreamChunk::StatusUpdate {
-                interaction_id,
-                status,
-            }
-        }),
+        (
+            proptest::option::of(arb_identifier()),
+            arb_interaction_status(),
+            proptest::option::of(arb_usage_metadata()),
+            proptest::option::of(arb_identifier()),
+        )
+            .prop_map(|(interaction_id, status, usage, continuation_token)| {
+                StreamChunk::StatusUpdate {
+                    interaction_id,
+                    status,
+                    usage,
+                    continuation_token,
+                }
+            }),
         // StepStart variant
         (any::<usize>(), arb_step())
             .prop_map(|(index, step)| StreamChunk::StepStart { index, step }),

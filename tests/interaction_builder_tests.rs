@@ -161,8 +161,6 @@ mod basic {
             temperature: Some(2.0),
             max_output_tokens: Some(8192),
             top_p: Some(1.0),
-            presence_penalty: Some(2.0),
-            frequency_penalty: Some(-2.0),
             ..Default::default()
         };
 
@@ -179,8 +177,6 @@ mod basic {
         assert_eq!(config["temperature"], json!(2.0));
         assert_eq!(config["max_output_tokens"], json!(8192));
         assert_eq!(config["top_p"], json!(1.0));
-        assert_eq!(config["presence_penalty"], json!(2.0));
-        assert_eq!(config["frequency_penalty"], json!(-2.0));
     }
 
     #[test]
@@ -1271,34 +1267,6 @@ mod new_request_options {
             let value = serde_json::to_value(&request).expect("Should serialize");
             assert_eq!(value["service_tier"], json!(wire));
         }
-    }
-
-    #[test]
-    fn test_with_presence_and_frequency_penalty() {
-        let client = Client::new("test-api-key".to_string());
-
-        let request = client
-            .interaction()
-            .with_model(genai_rs::DEFAULT_MODEL)
-            .with_text("Hello")
-            .with_presence_penalty(0.5)
-            .with_frequency_penalty(-0.25)
-            .build()
-            .expect("Should build successfully");
-
-        let config = request
-            .generation_config
-            .as_ref()
-            .expect("Should have generation config");
-        assert_eq!(config.presence_penalty, Some(0.5));
-        assert_eq!(config.frequency_penalty, Some(-0.25));
-
-        let value = serde_json::to_value(&request).expect("Should serialize");
-        assert_eq!(value["generation_config"]["presence_penalty"], json!(0.5));
-        assert_eq!(
-            value["generation_config"]["frequency_penalty"],
-            json!(-0.25)
-        );
     }
 
     #[test]

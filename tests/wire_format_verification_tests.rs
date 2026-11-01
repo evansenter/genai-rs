@@ -424,6 +424,18 @@ mod code_execution_language {
     fn display_prints_lowercase() {
         assert_eq!(CodeExecutionLanguage::Python.to_string(), "python");
     }
+
+    #[test]
+    fn bash_round_trips() {
+        assert_eq!(
+            serde_json::to_value(CodeExecutionLanguage::Bash).unwrap(),
+            "bash"
+        );
+        assert!(matches!(
+            serde_json::from_value::<CodeExecutionLanguage>(json!("bash")).unwrap(),
+            CodeExecutionLanguage::Bash
+        ));
+    }
 }
 
 // =============================================================================

@@ -32,10 +32,17 @@ wire_enum! {
 /// Generation configuration for model behavior
 #[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct GenerationConfig {
+    /// Sampling temperature. Deprecated in the google-genai 2.34.0 bindings,
+    /// but still accepted (live 2026-11-01).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
+    /// Output cap. With decoding continuation it counts across
+    /// continuations; see
+    /// [`InteractionBuilder::with_continuation_token`](crate::InteractionBuilder::with_continuation_token).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<i32>,
+    /// Nucleus sampling. Deprecated in the google-genai 2.34.0 bindings, but
+    /// still accepted (live 2026-11-01).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f32>,
     /// Thinking level for chain-of-thought reasoning
@@ -63,14 +70,6 @@ pub struct GenerationConfig {
     /// `allowed_tools` restriction object. See [`ToolChoice`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
-    /// Positive values penalize tokens that already appeared in the text,
-    /// increasing the likelihood of new topics. Range: [-2.0, 2.0].
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub presence_penalty: Option<f32>,
-    /// Positive values penalize tokens proportionally to their frequency in
-    /// the text so far, reducing repetition. Range: [-2.0, 2.0].
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub frequency_penalty: Option<f32>,
     /// Speech configuration for text-to-speech audio output.
     ///
     /// Required when using the `audio` response modality. The wire format is
@@ -135,6 +134,8 @@ pub struct GenerationConfig {
 #[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct TranscriptionConfig {
     /// Phrases to bias recognition toward (contextual adaptation).
+    /// Deprecated in the google-genai 2.34.0 bindings, but still accepted
+    /// (live 2026-11-01).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub adaptation_phrases: Option<Vec<String>>,
     /// Domain-specific vocabulary to bias recognition toward.
