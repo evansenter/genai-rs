@@ -109,8 +109,8 @@ job runs this configuration.
 | `SafetyThreshold` | snake_case | `"block_only_high"`, `"off"` | Four values accepted live 2026-10-30; `block_none` is Vertex-only |
 | `SafetyMethod` | lowercase | `"severity"`, `"probability"` | Both accepted live 2026-10-30 |
 | `EnvironmentStatus` | lowercase | `"active"`, `"expired"` | `"active"` verified live 2026-08-08 |
-| `TriggerStatus` | lowercase | `"active"`, `"paused"`, `"error"` | From the SDK spec; creation is agent-gated, so pending live verification |
-| `TriggerExecutionStatus` | snake_case | `"in_progress"`, `"timed_out"` | From the SDK spec; pending live verification |
+| `TriggerStatus` | lowercase | `"active"`, `"paused"`, `"error"` | `active`/`paused` verified live 2026-11-01; `error` is output-only (sending it is a 400) |
+| `TriggerExecutionStatus` | snake_case | `"in_progress"`, `"timed_out"` | `completed` verified live 2026-11-01; the rest from the SDK spec |
 | `InteractionStatus` | snake_case | `"in_progress"`, `"requires_action"`, `"budget_exceeded"` | `budget_exceeded` pending live verification. `Default` is `InProgress` |
 | `SearchType` | snake_case | `"web_search"`, `"image_search"`, `"enterprise_web_search"` | `enterprise_web_search` pending live verification |
 | `GroundingToolCount` | `{"type": ..., "count": n}` | `{"type": "google_search", "count": 1}` | In `usage.grounding_tool_count`; observed live 2026-07 |

@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `~/.gemini/antigravity/brain`. `AgentBuilder::with_workspace_containment(false)`
   restores the old behavior.
 
+- `Trigger` re-serializes `max_consecutive_failures`,
+  `consecutive_failure_count` and `execution_timeout_seconds` as plain JSON
+  numbers, the trigger API's own wire form (verified live 2026-11-01). It
+  used the protobuf-JSON string form (`"5"`). Deserializing still accepts
+  both.
+
 ### Fixed
 
 - `docs/ANTIGRAVITY.md`: on 0.1.23, `create_file`'s new `Append` argument
@@ -32,6 +38,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "new files only" gate must check `Append` too; a trigger before the first
   turn no longer crashes the harness; and the harness's own prompt does list
   the workspaces, which only `with_system_instructions` hides.
+- The triggers resource is verified live end to end (2026-11-01), now that
+  custom agents can be created: create, get, list, update, run, list
+  executions and delete. The docs no longer call its shapes unverified, and
+  record what the probe found. `Triggers::run` returns an empty
+  `TriggerExecution`, because the API answers `{}`; find the firing with
+  `list_executions`. Only `display_name` and `status` are updatable, and the
+  PATCH applies exactly the fields sent. A stored trigger's `interaction`
+  echoes `store: true`, which create rejects, so clear it before reuse.
+
 
 ## [0.12.0] - 2026-10-31
 
