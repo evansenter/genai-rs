@@ -103,9 +103,10 @@ pub async fn delete_trigger(ctx: &HttpContext, trigger_id: &str) -> Result<(), G
 /// Note the path shape: unlike the colon custom-method verbs on webhooks
 /// (`:ping`, `:rotateSigningSecret`), run-now is spec'd as a POST to the
 /// `executions` sub-collection — verified against the google-genai 2.17.0
-/// generated bindings (`path="/{api_version}/triggers/{trigger_id}/executions"`).
-/// Not live-verifiable here: reaching it requires an existing trigger, and
-/// trigger creation is agent-gated on standard keys.
+/// generated bindings (`path="/{api_version}/triggers/{trigger_id}/executions"`)
+/// and live (2026-11-01), where the response is `{}`; see [`Triggers::run`].
+///
+/// [`Triggers::run`]: crate::Triggers::run
 pub async fn run_trigger(
     ctx: &HttpContext,
     trigger_id: &str,

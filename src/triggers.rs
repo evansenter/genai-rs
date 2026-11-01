@@ -12,13 +12,16 @@
 //! [`update`](Triggers::update), [`delete`](Triggers::delete),
 //! [`run`](Triggers::run) and [`list_executions`](Triggers::list_executions).
 //!
-//! Server-side constraint (verified live 2026-08-08): the trigger's
+//! The whole lifecycle is verified live (2026-11-01) against a custom agent
+//! built on [`DEFAULT_ANTIGRAVITY_AGENT`](crate::DEFAULT_ANTIGRAVITY_AGENT):
+//! create, get, list, update, run, list executions and delete. The trigger's
 //! `interaction` must target a custom `agent` (an [`agents`](crate::agents)
-//! resource ID) — plain `model` interactions are rejected ("Agent '' is
-//! invalid or not found") and `store` is not allowed in the nested request.
-//! Custom-agent creation was gated on standard API keys through 2026-10-08
-//! and works as of 2026-10-30; trigger creation against such an agent has
-//! not been re-verified since.
+//! resource ID): plain `model` interactions are rejected ("Agent '' is
+//! invalid or not found"), and `store` is not allowed in the nested request
+//! ("Field 'store' is not allowed in 'interaction'"). A malformed cron
+//! schedule gets only a generic 400 ("Request contains an invalid
+//! argument"). Before 2026-10-30 custom agents could not be created on a
+//! standard API key, so only `list` was verifiable.
 //!
 //! This is distinct from
 //! `antigravity::TriggerConfig` (feature `antigravity`), which schedules
@@ -84,20 +87,20 @@ wire_enum! {
 /// A server-side scheduled trigger, as returned by `/v1beta/triggers`.
 ///
 /// All fields are optional with a struct-level serde default (the Evergreen
-/// preserve-don't-reject posture, mirroring [`Agent`](crate::agents::Agent)):
-/// this resource shape is not yet fully live-verified — creation is
-/// agent-gated — so a projection that elides fields must degrade per-field
-/// rather than failing the whole list response.
+/// preserve-don't-reject posture, mirroring [`Agent`](crate::agents::Agent)),
+/// so a field the API stops sending, or a projection that elides fields,
+/// degrades per-field rather than failing the whole list response. The
+/// shape is verified live (2026-11-01): a paused trigger has no
+/// `next_run_time`, and `environment_id`, `last_run_time` and
+/// `previous_interaction_id` appear once it has fired.
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 #[serde(default)]
 #[non_exhaustive]
 pub struct Trigger {
     /// Output only. The ID of the trigger — the value the ID-taking
     /// [`Triggers`] methods ([`get`](Triggers::get),
-    /// [`delete`](Triggers::delete), ...) expect.
-    /// Like its siblings on this wire-unverified family (see
-    /// [`Trigger::environment_id`]), it may arrive in `triggers/...`
-    /// resource-name form; strip such a prefix before passing it back.
+    /// [`delete`](Triggers::delete), ...) expect. A bare UUID on the wire
+    /// (live 2026-11-01), not a `triggers/...` resource name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     /// Cron expression the trigger fires on.
@@ -119,6 +122,13 @@ pub struct Trigger {
     /// [`InteractionRequest`]: interaction fields this crate does not model
     /// are dropped (it has no `extra`), and a bare `[Content]` input
     /// re-serializes as a `user_input` step.
+    ///
+    /// The server normalizes what it stores (live 2026-11-01): a text input
+    /// comes back as one `user_input` step, and the echo carries
+    /// `store: true` (plus `object: "interaction"`, dropped here). To reuse a
+    /// stored trigger's interaction in a new [`TriggerCreateParams`], clear
+    /// [`store`](InteractionRequest::store) first: the API rejects it on
+    /// create.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -128,31 +138,27 @@ pub struct Trigger {
     /// Human-readable display name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
-    /// ID of the environment fired interactions run against.
-    ///
-    /// This wire-unverified family may deliver IDs in `environments/...`
-    /// resource-name form; strip such a prefix before passing the value
-    /// back to an ID-taking client method (they percent-encode a slash
-    /// into the path — see [`Environments::get`](crate::Environments::get)).
+    /// ID of the environment fired interactions run against, as a bare ID
+    /// for [`Environments::get`](crate::Environments::get). Without
+    /// [`TriggerCreateParams::with_environment_id`], the first firing
+    /// creates one and the trigger reports it from then on (live
+    /// 2026-11-01).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment_id: Option<String>,
     /// Output only. The current status of the trigger.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<TriggerStatus>,
-    /// Consecutive failures before the trigger is disabled.
+    /// Consecutive failures before the trigger is disabled (the server
+    /// defaults it to 5).
     ///
-    /// Tolerates the protobuf-JSON string form on deserialize (live-verified
-    /// on the environments resource's int64s) so one string-encoded int
-    /// can't fail the whole list response, and re-serializes in the same
-    /// string form for roundtrip uniformity with [`Environment`]'s counts.
-    /// (The send direction is [`TriggerCreateParams`], which emits plain
-    /// numbers — protobuf-JSON accepts both on input.)
-    ///
-    /// [`Environment`]: crate::environments::Environment
+    /// The API sends the trigger's int64s as plain JSON numbers (live
+    /// 2026-11-01), and they re-serialize that way. The protobuf-JSON string
+    /// form (`"5"`, which the environments resource uses) is also accepted
+    /// on deserialize, so one string-encoded value can't fail the whole
+    /// list response.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        serialize_with = "crate::serde_util::serialize_string_i64",
         deserialize_with = "crate::serde_util::deserialize_string_i64::<_, crate::serde_util::ForTrigger>"
     )]
     pub max_consecutive_failures: Option<i64>,
@@ -160,31 +166,27 @@ pub struct Trigger {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        serialize_with = "crate::serde_util::serialize_string_i64",
         deserialize_with = "crate::serde_util::deserialize_string_i64::<_, crate::serde_util::ForTrigger>"
     )]
     pub consecutive_failure_count: Option<i64>,
-    /// Per-execution timeout in seconds.
+    /// Per-execution timeout in seconds (the server defaults it to 600).
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        serialize_with = "crate::serde_util::serialize_string_i64",
         deserialize_with = "crate::serde_util::deserialize_string_i64::<_, crate::serde_util::ForTrigger>"
     )]
     pub execution_timeout_seconds: Option<i64>,
-    /// Output only. ID of the previous fired interaction, chained into the
-    /// next firing's context. May arrive in `interactions/...` resource-name
-    /// form on this wire-unverified family — strip the prefix before
-    /// feeding it back to an ID-taking client method (see
-    /// [`Trigger::environment_id`]).
+    /// Output only. ID of the interaction the latest firing created, chained
+    /// into the next firing's context; a bare ID for
+    /// [`Interactions::get`](crate::Interactions::get).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_interaction_id: Option<String>,
     /// Output only. When the trigger was created.
     ///
-    /// The SDK spec spells this `create_time` while the live-verified
-    /// environments resource next door uses `created` — the alias hedges
-    /// that documented bet (deserialize-only; serialization keeps the
-    /// spec spelling). One arm still hard-fails: *both* spellings in one
+    /// The wire spells this `create_time`, as the SDK spec does (live
+    /// 2026-11-01). The environments resource next door uses `created`, so
+    /// that spelling is accepted too (deserialize-only; serialization keeps
+    /// `create_time`). One arm still hard-fails: *both* spellings in one
     /// object is a serde duplicate-field error, raised before any
     /// lenient deserializer runs (inside a listed page the element-drop
     /// arm absorbs it, costing the one trigger).
@@ -237,9 +239,7 @@ pub struct Trigger {
     ///
     /// Without this, a deserialize-then-serialize cycle silently drops any
     /// field the crate has not modeled yet — invisible to the caller, and
-    /// unrecoverable. This is the sharpest case in the family: trigger creation is
-    /// agent-gated, so the response shape has never been live-verified and a
-    /// field the API returns today would be both invisible and unrecoverable.
+    /// unrecoverable.
     ///
     /// A key that collides with a modeled field **wins on serialize** via
     /// `serde_json::to_value`, matching the request-side escape hatches.
@@ -384,9 +384,7 @@ pub struct TriggerCreateParams {
     )]
     pub execution_timeout_seconds: Option<i64>,
     /// Unrecognized fields, preserved for roundtrip (Evergreen) — lets an
-    /// unmodeled create-request field be set without a crate release,
-    /// which matters here because trigger creation is agent-gated and the
-    /// body cannot be live-verified against the wire.
+    /// unmodeled create-request field be set without a crate release.
     ///
     /// The inherent cost: a *typo'd optional* key in a deserialized
     /// config (`dispaly_name`, ...) is silently absorbed here and
@@ -405,8 +403,7 @@ pub struct TriggerCreateParams {
 }
 
 /// Pre-flight warnings for a trigger's nested interaction, each a
-/// server-side rejection or a silent failure the agent gate would otherwise
-/// hide until the round-trip:
+/// server-side rejection or a silent failure caught before the round-trip:
 /// - `store` set: the API rejects it inside a trigger's interaction.
 /// - no `agent`: a trigger must target a custom agent; a model-only request
 ///   is refused ("Agent '' is invalid or not found").
@@ -414,8 +411,8 @@ pub struct TriggerCreateParams {
 ///
 /// Called from [`TriggerCreateParams::new`], the deserialize path, and
 /// [`Triggers::create`] (which also catches struct literals and later
-/// mutation), so `new`-then-create warns twice. Warns rather than errors: the
-/// full shape can't be validated while creation is agent-gated.
+/// mutation), so `new`-then-create warns twice. Warns rather than errors, so
+/// the server stays the authority if it relaxes a rule.
 pub(crate) fn warn_on_interaction_footguns(interaction: &InteractionRequest) {
     if interaction.store.is_some() {
         tracing::warn!(
@@ -513,12 +510,11 @@ impl TriggerCreateParams {
 /// Unlike webhook updates
 /// ([`WebhookUpdate::update_mask`](crate::WebhookUpdate::update_mask)), the
 /// SDK spec exposes **no `update_mask` parameter** for trigger updates
-/// (google-genai 2.17.0: `triggers.update(id, display_name, status)` only),
-/// so field omission is the only scoping mechanism available. The sibling
-/// webhooks PATCH was observed live (2026-07) to apply exactly the fields
-/// present in the body, but trigger updates are not live-verifiable while
-/// creation is agent-gated — treat the partial-update semantics as
-/// unconfirmed until then.
+/// (google-genai 2.34.0: `triggers.update(id, display_name, status)` only),
+/// so field omission is the only scoping mechanism. It works: the PATCH
+/// applies exactly the fields present in the body (live 2026-11-01).
+/// Nothing else is updatable; sending `schedule` gets
+/// `400 Unknown parameter 'schedule'`, so a new schedule means a new trigger.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct TriggerUpdate {
     /// New display name.
@@ -561,10 +557,10 @@ impl TriggerUpdate {
     ///
     /// [`Active`](TriggerStatus::Active) resumes the trigger and
     /// [`Paused`](TriggerStatus::Paused) pauses it — the two values a
-    /// caller meaningfully sends. [`Error`](TriggerStatus::Error) is
-    /// output-only (the server sets it after consecutive failures); the
-    /// open enum accepts it here per the Evergreen posture, but sending it
-    /// is untested against the live API.
+    /// caller can send. [`Error`](TriggerStatus::Error) is output-only (the
+    /// server sets it after consecutive failures): sending it gets
+    /// `400 Invalid status transition from active to error` (live
+    /// 2026-11-01). The open enum accepts it here per the Evergreen posture.
     ///
     /// In a read-modify-write flow, don't echo back a status whose
     /// [`is_unknown()`](TriggerStatus::is_unknown) type came from a
@@ -589,18 +585,17 @@ pub struct TriggerExecution {
     /// Output only. The ID of the execution.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
-    /// Output only. The ID of the trigger that fired. Like the other IDs
-    /// on this wire-unverified family, may arrive in `triggers/...`
-    /// resource-name form — strip the prefix before feeding it back to an
-    /// ID-taking client method (see [`Trigger::environment_id`]).
+    /// Output only. The ID of the trigger that fired (a bare ID, live
+    /// 2026-11-01).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trigger_id: Option<String>,
-    /// Output only. The interaction created by this firing (same
-    /// resource-name caveat as [`TriggerExecution::trigger_id`]).
+    /// Output only. The interaction created by this firing, a bare ID for
+    /// [`Interactions::get`](crate::Interactions::get).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub interaction_id: Option<String>,
-    /// Output only. The environment the firing ran against (same
-    /// resource-name caveat as [`TriggerExecution::trigger_id`]).
+    /// Output only. The environment the firing ran against. In the spec;
+    /// not sent on a completed manual run (live 2026-11-01), where
+    /// [`Trigger::environment_id`] carries it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment_id: Option<String>,
     /// Output only. Status of this execution.
@@ -609,7 +604,8 @@ pub struct TriggerExecution {
     /// Output only. Error message when the execution failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// Output only. When the firing was scheduled for.
+    /// Output only. When the firing was scheduled for. Absent on a manual
+    /// [`run`](Triggers::run) (live 2026-11-01).
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -635,8 +631,7 @@ pub struct TriggerExecution {
     ///
     /// Without this, a deserialize-then-serialize cycle silently drops any
     /// field the crate has not modeled yet — invisible to the caller, and
-    /// unrecoverable. Same unverified-shape caveat as [`Trigger`]: the executions
-    /// listing has not been observed against a real agent-gated trigger.
+    /// unrecoverable.
     ///
     /// A key that collides with a modeled field **wins on serialize** via
     /// `serde_json::to_value`, matching the request-side escape hatches.
@@ -677,8 +672,9 @@ paging::impl_list_page!(TriggerListResponse, triggers: Trigger);
 pub struct TriggerExecutionListResponse {
     /// The executions in this page. A null or malformed list degrades to
     /// empty; malformed elements drop individually. The envelope key is
-    /// the unverified `trigger_executions` per the SDK spec; `executions`
-    /// (the path-segment spelling) is accepted on deserialize as a hedge.
+    /// `trigger_executions`, as in the SDK spec (live 2026-11-01);
+    /// `executions` (the path-segment spelling) is accepted on deserialize
+    /// as a hedge.
     /// Both keys in one envelope is a serde duplicate-field error raised
     /// before the lenient helper runs — the one alias arm that fails the
     /// whole call rather than degrading.
@@ -834,11 +830,16 @@ impl<'a> Triggers<'a> {
     /// Fires a trigger immediately, outside its schedule.
     ///
     /// This posts to the `executions` sub-collection (not a `:run` colon
-    /// verb), the path in the google-genai generated bindings. The path
-    /// exists server-side (live 2026-09-26: a missing trigger is a
-    /// structured `404 NOT_FOUND`), but the response shape is unverified: it
-    /// needs an existing trigger, and trigger creation is agent-gated (see
-    /// [`triggers`](crate::triggers)).
+    /// verb), the path in the google-genai generated bindings. The firing
+    /// is asynchronous, and works on a paused trigger too.
+    ///
+    /// **The returned execution is empty today.** The bindings type the
+    /// response as a `TriggerExecution`, but the API answers `{}` (live
+    /// 2026-11-01), so every field is `None`. Find the execution with
+    /// [`list_executions`](Self::list_executions), whose entries carry the
+    /// ID, status and the fired interaction's ID. The return type keeps the
+    /// spec's shape so that callers see the fields if the API starts
+    /// sending them.
     ///
     /// # Errors
     ///
@@ -855,8 +856,7 @@ impl<'a> Triggers<'a> {
     ///
     /// Reads the same `executions` sub-collection [`run`](Self::run) posts
     /// to. A trigger that does not exist lists as an empty page, not a 404
-    /// (live 2026-09-26). The execution shape is unverified, for the reason
-    /// given on [`run`](Self::run).
+    /// (live 2026-09-26). The execution shape is verified live (2026-11-01).
     pub fn list_executions(self, trigger_id: &str) -> ListTriggerExecutions<'a> {
         ListTriggerExecutions {
             client: self.client,

@@ -979,90 +979,254 @@ async fn test_environment_crud_lifecycle() {
 }
 
 // =============================================================================
-// Triggers resource: list is live; create is agent-gated
+// Triggers resource: the full lifecycle, against a custom agent
 // =============================================================================
 
+/// Create, get, list, update, run, list executions and delete, verified live
+/// 2026-11-01. A trigger needs a custom agent, which a standard key could not
+/// create until 2026-10-30, so this was a gated-create probe before then.
 #[tokio::test]
 #[ignore = "Requires API key"]
-async fn test_triggers_list_and_gated_create() {
+async fn test_trigger_lifecycle() {
     let Some(client) = get_client() else {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
     };
 
-    use genai_rs::{InteractionInput, InteractionRequest, TriggerCreateParams};
+    use genai_rs::{
+        InteractionRequest, TriggerCreateParams, TriggerExecutionStatus, TriggerStatus,
+        TriggerUpdate,
+    };
 
-    // List works on standard keys (returns `{}` when empty — the default
-    // deserialization path this asserts). Reads retry transients like the
-    // neighbouring CRUD tests.
-    let listed = crate::retry_request!([client] => {
-        client.triggers().list().with_page_size(10).send().await
-    })
-    .expect("triggers.list");
-    println!("Triggers listed: {}", listed.triggers.len());
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock before epoch")
+        .subsec_nanos();
+    let agent_id = format!("genai-rs-test-trigger-agent-{nanos}");
+    let display_name = format!("genai-rs trigger test {nanos}");
+    // Not retried: a retry after a lost response would 409 on the id.
+    client
+        .agents()
+        .create(&Agent::new(&agent_id, genai_rs::DEFAULT_ANTIGRAVITY_AGENT))
+        .await
+        .expect("agents.create");
 
-    // Create requires a custom agent, which is gated/allowlisted on
-    // standard API keys (verified live 2026-08-08: a model-only
-    // interaction is rejected with "Agent '' is invalid or not found").
-    // Tolerate the gate; assert the payload schema itself was accepted.
-    let interaction = InteractionRequest {
-        model: Some(genai_rs::DEFAULT_MODEL.to_string()),
-        input: InteractionInput::Text("Say OK".to_string()),
+    let interaction = || InteractionRequest {
+        agent: Some(agent_id.clone()),
+        input: InteractionInput::Text("Say OK.".to_string()),
         ..Default::default()
     };
-    let params = TriggerCreateParams::new("0 5 1 1 *", "UTC", interaction)
-        .with_display_name("genai-rs trigger schema probe");
+    // Once a year, so the schedule never fires during a run.
+    let params = TriggerCreateParams::new("0 5 1 1 *", "UTC", interaction())
+        .with_display_name(&display_name)
+        .with_max_consecutive_failures(3)
+        .with_execution_timeout_seconds(300);
     // Deliberately NOT retry-wrapped: create is a non-idempotent POST, and
-    // a retry after a lost response could leave a second, *scheduled*
-    // trigger behind with no ID to clean up. A transient create failure is
-    // a legible test failure, not a flake worth papering over.
-    match client.triggers().create(&params).await {
-        Ok(trigger) => {
-            println!("Trigger created (agent gate open): id={:?}", trigger.id);
-            if let Some(id) = &trigger.id {
-                // A leaked trigger keeps firing on schedule — if the delete
-                // fails, say so loudly instead of leaving it silent.
-                match client.triggers().delete(id).await {
-                    Ok(()) => println!("Deleted trigger {id}"),
-                    Err(e) => println!("triggers.delete failed: {e} - delete {id} manually"),
+    // a retry after a lost response could leave a second, scheduled trigger
+    // behind with no ID to clean up.
+    let created = match client.triggers().create(&params).await {
+        Ok(created) => created,
+        Err(e) => {
+            let _ = client.agents().delete(&agent_id).await;
+            panic!("triggers.create: {e}");
+        }
+    };
+    let Some(trigger_id) = created.id.clone() else {
+        let _ = client.agents().delete(&agent_id).await;
+        panic!(
+            "trigger created without an id: a trigger named {display_name:?} is \
+             leaked; hunt it down via triggers().list()"
+        );
+    };
+    println!("Created trigger {trigger_id} on agent {agent_id}");
+
+    // The firing's interaction, for cleanup even if a check panics.
+    let fired = std::sync::Mutex::new(None::<String>);
+    let checks = async {
+        // Create echoes the definition, with the server's defaults filled in.
+        assert_eq!(created.schedule.as_deref(), Some("0 5 1 1 *"));
+        assert_eq!(created.time_zone.as_deref(), Some("UTC"));
+        assert_eq!(created.display_name.as_deref(), Some(display_name.as_str()));
+        assert_eq!(created.status, Some(TriggerStatus::Active));
+        assert_eq!(created.max_consecutive_failures, Some(3));
+        assert_eq!(created.execution_timeout_seconds, Some(300));
+        assert_eq!(created.consecutive_failure_count, Some(0));
+        assert!(created.create_time.is_some() && created.next_run_time.is_some());
+        let echoed = created.interaction.as_ref().expect("interaction echo");
+        assert_eq!(echoed.agent.as_deref(), Some(agent_id.as_str()));
+        // The echo carries `store: true`, which create rejects; Trigger's
+        // docs tell callers to clear it before reuse.
+        assert_eq!(echoed.store, Some(true));
+        assert!(created.extra.is_empty(), "unmodeled: {:?}", created.extra);
+
+        let fetched = client.triggers().get(&trigger_id).await.expect("get");
+        assert_eq!(fetched.id.as_deref(), Some(trigger_id.as_str()));
+        assert_eq!(fetched.display_name, created.display_name);
+
+        // Every page: triggers leaked by runs that died before cleanup can
+        // push this one past the first.
+        let listed: Vec<genai_rs::Trigger> = client
+            .triggers()
+            .list()
+            .with_page_size(50)
+            .items()
+            .try_collect()
+            .await
+            .expect("list");
+        assert!(
+            listed
+                .iter()
+                .any(|t| t.id.as_deref() == Some(trigger_id.as_str())),
+            "created trigger should appear in list"
+        );
+
+        // PATCH applies only the fields in the body: pausing keeps the name,
+        // and renaming keeps the pause.
+        let paused = client
+            .triggers()
+            .update(
+                &trigger_id,
+                &TriggerUpdate::new().with_status(TriggerStatus::Paused),
+            )
+            .await
+            .expect("pause");
+        assert_eq!(paused.status, Some(TriggerStatus::Paused));
+        assert!(paused.last_pause_time.is_some());
+        assert_eq!(paused.display_name, created.display_name);
+        let renamed_to = format!("{display_name} (renamed)");
+        let renamed = client
+            .triggers()
+            .update(
+                &trigger_id,
+                &TriggerUpdate::new().with_display_name(&renamed_to),
+            )
+            .await
+            .expect("rename");
+        assert_eq!(renamed.display_name.as_deref(), Some(renamed_to.as_str()));
+        assert_eq!(renamed.status, Some(TriggerStatus::Paused));
+        // Run now, while paused: a manual run doesn't need an active
+        // schedule. The API answers `{}` (live 2026-11-01), so the firing is
+        // found through the executions listing.
+        let run = client.triggers().run(&trigger_id).await.expect("run");
+        println!("run returned: {run:?}");
+        let mut execution = None;
+        for _ in 0..36 {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            let executions: Vec<genai_rs::TriggerExecution> = client
+                .triggers()
+                .list_executions(&trigger_id)
+                .items()
+                .try_collect()
+                .await
+                .expect("list_executions");
+            if let Some(e) = executions.into_iter().next() {
+                if let Some(id) = &e.interaction_id {
+                    *fired.lock().unwrap() = Some(id.clone());
                 }
-            } else {
-                // No ID means no handle to delete by — the scheduled
-                // trigger is now leaked. Panic with the only remaining
-                // handle (the display name) rather than fall through.
-                panic!(
-                    "trigger created without an id (protocol violation) — a scheduled \
-                     trigger named {:?} is leaked; hunt it down via triggers().list()",
-                    trigger.display_name
-                );
+                if e.status != Some(TriggerExecutionStatus::InProgress) {
+                    execution = Some(e);
+                    break;
+                }
             }
         }
-        // Only a structured 4xx API rejection proves anything about the
-        // payload schema — a transport failure would pass the marker check
-        // vacuously, so fail loudly on anything else.
-        Err(genai_rs::GenaiError::Api {
-            status_code,
-            message,
-            ..
-        }) if (400..500).contains(&status_code) => {
-            println!("Trigger create gated as expected: {message}");
-            // Positive pin first: the 4xx must actually be the agent gate
-            // (live-observed "Agent '' is invalid or not found") — an
-            // unrelated rejection (bad cron, rejected time_zone) must not
-            // read as a pass.
-            assert!(
-                message.contains("is invalid or not found"),
-                "expected the agent-gate rejection, got a different 4xx: {message}"
-            );
-            // "Unknown parameter" covers top-level params; a bad field
-            // inside the JSON body (incl. the nested interaction) comes
-            // back as protobuf-JSON "Unknown name" — check both.
-            assert!(
-                !message.contains("Unknown parameter") && !message.contains("Unknown name"),
-                "trigger payload schema itself was rejected: {message}"
-            );
+        let execution = execution.expect("the run did not finish within 180s");
+        println!("Execution: {execution:?}");
+        assert_eq!(execution.trigger_id.as_deref(), Some(trigger_id.as_str()));
+        assert!(execution.id.is_some() && execution.start_time.is_some());
+        assert!(
+            execution.status.as_ref().is_some_and(|s| !s.is_unknown()),
+            "unrecognized execution status: {:?}",
+            execution.status
+        );
+        if execution.status == Some(TriggerExecutionStatus::Completed) {
+            assert!(execution.interaction_id.is_some());
         }
-        Err(e) => panic!("expected a 4xx agent-gate rejection, got: {e}"),
+        assert!(
+            execution.extra.is_empty(),
+            "unmodeled: {:?}",
+            execution.extra
+        );
+
+        let resumed = client
+            .triggers()
+            .update(
+                &trigger_id,
+                &TriggerUpdate::new().with_status(TriggerStatus::Active),
+            )
+            .await
+            .expect("resume");
+        assert_eq!(resumed.status, Some(TriggerStatus::Active));
+        assert!(resumed.last_resume_time.is_some());
+
+        // `error` is output-only.
+        match client
+            .triggers()
+            .update(
+                &trigger_id,
+                &TriggerUpdate::new().with_status(TriggerStatus::Error),
+            )
+            .await
+        {
+            Err(genai_rs::GenaiError::Api {
+                status_code: 400,
+                message,
+                ..
+            }) if message.contains("Invalid status transition") => {}
+            other => panic!("expected the status-transition 400, got {other:?}"),
+        }
+
+        // `store` in the nested request is rejected, which is why
+        // TriggerCreateParams warns about it.
+        let with_store = TriggerCreateParams::new(
+            "0 5 1 1 *",
+            "UTC",
+            InteractionRequest {
+                store: Some(true),
+                ..interaction()
+            },
+        );
+        match client.triggers().create(&with_store).await {
+            Err(genai_rs::GenaiError::Api {
+                status_code: 400,
+                message,
+                ..
+            }) if message.contains("'store' is not allowed") => {}
+            Ok(t) => {
+                if let Some(id) = t.id.as_deref() {
+                    let _ = client.triggers().delete(id).await;
+                }
+                panic!(
+                    "a trigger with `store` set was accepted; update the TriggerCreateParams warning"
+                );
+            }
+            Err(e) => panic!("expected the `store` 400, got {e}"),
+        }
+    };
+    let outcome = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(checks)).await;
+
+    // Best effort: the run stores an interaction and creates an environment.
+    let fired = fired.into_inner().unwrap_or_else(|p| p.into_inner());
+    if let Some(id) = fired {
+        let _ = client.interactions().delete(&id).await;
+    }
+    if let Ok(trigger) = client.triggers().get(&trigger_id).await
+        && let Some(env) = trigger.environment_id
+    {
+        let _ = client.environments().delete(&env).await;
+    }
+    let trigger_deleted = client.triggers().delete(&trigger_id).await;
+    let agent_deleted = client.agents().delete(&agent_id).await;
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    trigger_deleted.expect("triggers.delete");
+    agent_deleted.expect("agents.delete");
+
+    match client.triggers().get(&trigger_id).await {
+        Err(genai_rs::GenaiError::Api {
+            status_code: 404, ..
+        }) => {}
+        other => panic!("expected 404 after delete, got {other:?}"),
     }
 }
 
@@ -1074,10 +1238,9 @@ async fn test_trigger_list_streams_end_on_the_last_page() {
         return;
     };
 
-    // Trigger creation is agent-gated, so a standard key lists no triggers
-    // (`{}`, verified 2026-09-26). This pins the end-of-list rule on a real
-    // response; following several pages is covered offline in
-    // http_mock_resources.rs.
+    // The test key usually holds no triggers (`{}`, verified 2026-09-26),
+    // so this pins the end-of-list rule on a real response; following
+    // several pages is covered offline in http_mock_resources.rs.
     let pages: Vec<_> = client
         .triggers()
         .list()
