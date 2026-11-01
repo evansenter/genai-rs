@@ -157,9 +157,10 @@ impl AgentBuilder {
     /// Controls whether the agent's configured workspace root(s) are
     /// announced to the model. **On by default.**
     ///
-    /// The harness points its built-in tools at the workspaces but never
-    /// tells the model their absolute paths, so agents otherwise guess
-    /// (`/workdir`, `/workspace`, …) and wander. When on and at least one
+    /// The harness's own prompt lists the workspaces, but
+    /// [`Self::with_system_instructions`] replaces that prompt, and agents
+    /// that don't know the paths guess (`/workdir`, `/workspace`, …) and
+    /// wander. When on and at least one
     /// workspace is configured, `spawn()` appends a short, clearly
     /// delimited note listing the configured root(s) to the effective system
     /// instructions (composed at send time — the string passed to

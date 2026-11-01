@@ -66,7 +66,7 @@ pub struct Agent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// The tools available to the agent (subset: `code_execution`,
-    /// `url_context`, `google_search`, `mcp_server`).
+    /// `function`, `google_search`, `mcp_server`, `url_context`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<Tool>>,
     /// The environment configuration for the agent — a string environment ID
@@ -131,8 +131,9 @@ impl Agent {
 
     /// Adds a tool to the agent's tool list.
     ///
-    /// The API accepts the subset `code_execution`, `url_context`,
-    /// `google_search`, and `mcp_server` for agents.
+    /// The API accepts the subset `code_execution`, `function`,
+    /// `google_search`, `mcp_server` and `url_context` for agents (verified
+    /// live 2026-11-01).
     #[must_use]
     pub fn add_tool(mut self, tool: impl Into<Tool>) -> Self {
         self.tools.get_or_insert_with(Vec::new).push(tool.into());

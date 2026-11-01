@@ -331,6 +331,10 @@ start, which is how to watch a long agent run live.
 - `ClientBuilder::with_timeout()` is a total-request timeout that also covers
   reading the streamed body, so it cuts long streams off. Leave it unset for
   streaming clients.
+- `ClientBuilder::with_read_timeout()` bounds the wait for the headers and
+  for each next chunk, so it ends a stalled connection without capping a
+  healthy long stream. It is the only client-level bound that reaches
+  `interactions().stream()` and `resume_stream()`.
 
 See [Reliability](RELIABILITY.md#timeouts).
 

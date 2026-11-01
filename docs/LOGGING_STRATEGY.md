@@ -57,7 +57,7 @@ LOUD_WIRE=1 cargo run --example simple_interaction
 
 | Value | Prints |
 |-------|--------|
-| `1`, `true`, or empty | Everything, pretty-printed |
+| `1`, `true`, `yes`, `on`, `all`, or empty | Everything, pretty-printed |
 | `request`, `response`, `sse`, `upload` | Only those HTTP event kinds (combine with commas) |
 | `ws`, `harness`, or a WebSocket payload key such as `toolCall` | Antigravity harness traffic (see [ANTIGRAVITY.md](ANTIGRAVITY.md)) |
 | `summary` | Modifier: one line per event instead of full bodies |

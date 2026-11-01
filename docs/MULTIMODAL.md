@@ -71,9 +71,14 @@ Speech recognition is tunable via
 `with_transcription_config(TranscriptionConfig::new()...)`:
 
 - BCP-47 `with_language_codes` hints (omit for auto-detect)
-- `with_adaptation_phrases` / `with_custom_vocabulary` biasing
-- `with_diarization_mode("speaker")`
-- `with_timestamp_granularities(["word"])`
+- `with_custom_vocabulary` biasing
+- `with_mode(TranscriptionMode::Verbatim { diarization_mode, timestamp_granularities })`
+  for speaker diarization (`"speaker"`) and word timestamps (`"word"`), or
+  `TranscriptionMode::Smart`
+
+`with_adaptation_phrases`, `with_diarization_mode` and
+`with_timestamp_granularities` still work but are deprecated in the
+google-genai 2.34.0 bindings in favor of `with_mode`.
 
 These are the SDK-documented value sets, kept as open strings for forward
 compatibility. `examples/audio_input.rs` is a runnable demo.

@@ -356,11 +356,9 @@ impl Client {
     ///     .with_text("Count to 5")
     ///     .build()?;
     ///
-    /// let mut last_event_id = None;
     /// let mut stream = client.execute_stream(request);
     /// while let Some(result) = stream.next().await {
     ///     let event = result?;
-    ///     last_event_id = event.event_id.clone();  // Track for resume
     ///     match event.chunk {
     ///         StreamChunk::StepDelta { delta, .. } => {
     ///             if let Some(text) = delta.as_text() {
@@ -430,7 +428,8 @@ impl Client {
     /// Returns a stream of [`StreamEvent`](crate::StreamEvent) items as they arrive.
     /// Each event contains:
     /// - `chunk`: The content (delta or complete response)
-    /// - `event_id`: Optional ID for resuming interrupted streams
+    /// - `event_id`: Optional ID for resuming; only background interactions
+    ///   carry it (a foreground stream can't be resumed)
     ///
     /// # Example
     ///

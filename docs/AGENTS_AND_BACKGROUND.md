@@ -249,8 +249,8 @@ which the egress proxy replaces with the secret in requests to its
 A trigger runs a stored interaction on a cron schedule, server-side. The
 nested interaction must target a **custom agent**: a model-only interaction
 is rejected. Custom-agent creation was gated on standard keys through
-2026-10-08 and works as of 2026-10-30; trigger creation against such an
-agent has not been re-verified since.
+2026-10-08 and works as of 2026-10-30; the trigger lifecycle against such an
+agent is verified live (2026-11-01, see below).
 
 ```rust,no_run
 use futures_util::TryStreamExt;
@@ -427,7 +427,8 @@ async fn poll_until_done(
 | `Failed` | Failed |
 | `Cancelled` | Cancelled |
 | `RequiresAction` | Waiting for input |
-| `Incomplete` | Ended before completion (for example a token limit); inspect partial results |
+| `Incomplete` | Ended before completion (for example a token limit); inspect partial results. On `CONTINUATION_MODEL` it carries a `continuation_token` to resume the decode |
+| `RequiresContinuation` | In the spec, never observed: continuable responses report `Incomplete` |
 | `BudgetExceeded` | The configured budget ran out; inspect partial results |
 
 Persist the interaction id as soon as `create()` returns, so a restart can

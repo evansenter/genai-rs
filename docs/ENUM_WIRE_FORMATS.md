@@ -361,11 +361,12 @@ Verified live 2026-09-26 (list paging):
 | `TriggerStatus` | `active`, `paused`, `error` |
 | `TriggerExecutionStatus` | `in_progress`, `completed`, `failed`, `skipped`, `timed_out` |
 
-The values come from the SDK spec. Live verification is blocked because
-creation needs a custom agent, which is gated. Verified live 2026-08-08: a
-model-only trigger interaction is rejected ("Agent '' is invalid or not
-found"), and an empty `GET /v1beta/triggers` returns `{}`. The unverified
-shapes are hedged:
+The values come from the SDK spec; `active`, `paused` and `completed` are
+verified live (2026-11-01, the full lifecycle against a custom agent).
+Verified live 2026-08-08: a model-only trigger interaction is rejected
+("Agent '' is invalid or not found"), and an empty `GET /v1beta/triggers`
+returns `{}`. The live wire uses the spec spellings; these hedges remain
+for robustness:
 
 - `create_time` / `update_time` (the spec) also accept the Environments
   spelling `created` / `updated`.
@@ -383,7 +384,8 @@ Verified live 2026-09-26 (list paging, no triggers on the key):
   not exist, not a 404; `GET /v1beta/triggers/{id}` on the same ID is a
   `404 NOT_FOUND`. `POST .../executions` (run now) on it is a structured
   `404 NOT_FOUND`, while an unknown sub-collection is an empty-body 404, so
-  the executions path exists server-side. Execution shapes stay unverified.
+  the executions path exists server-side. Execution shapes are verified
+  live as of 2026-11-01.
 
 ### ThinkingSummaries
 
@@ -984,9 +986,9 @@ Types with neither `Default` nor a constructor need a JSON fixture:
 
 `genai_rs::antigravity::protocol` speaks the localharness proto-JSON
 protocol (see [ANTIGRAVITY.md](ANTIGRAVITY.md)). It was verified against the
-descriptor set and a live harness from the `google-antigravity` 0.1.18 wheel
-(`LOUD_WIRE=1` sessions, plus a descriptor diff against 0.1.10), and earlier
-against 0.1.10 and 0.1.5.
+descriptor set and a live harness from the `google-antigravity` 0.1.23 wheel
+(the full harness suite, plus a descriptor diff against 0.1.18), and earlier
+against 0.1.18, 0.1.10 and 0.1.5.
 
 - Field names are **camelCase**; enums are **SCREAMING_SNAKE_CASE** strings.
 - 64-bit integers (`seqNum`, token counts) arrive as JSON strings; both
@@ -1025,5 +1027,6 @@ These enums accept a value renamed between harness revisions, and
 `TrajectoryState`), so the asymmetry never reaches the wire. What it buys is
 one build that *reads* either revision. Preserving the old spelling as
 `Unknown` instead is what broke 0.1.5 → 0.1.10: only `Idle` ends a turn, so
-every turn ran to its timeout. (0.1.18 changed the outbound `userInput` shape,
-which no alias can cover, so this build *drives* 0.1.18 only.)
+every turn ran to its timeout. (Outbound shapes can't be aliased: 0.1.18
+changed `userInput`, and 0.1.23 rejects nothing this build sends but 0.1.18
+rejects its `runWorkflow` toggle, so this build *drives* 0.1.23 only.)
