@@ -63,6 +63,10 @@ every item probed live; #463).
 
 ### Fixed
 
+- `LOUD_WIRE` and the `wire` tracing target printed header secrets in full:
+  an MCP server's `headers` (`Authorization: Bearer ...`) and an environment
+  allowlist entry's `transform`. Every value under those keys is now
+  redacted; the header names stay visible.
 - `wait_until_active` (files and file-search documents) bounds each status
   request by the time left, so a stalled connection can no longer hold the
   wait past its deadline (the default client has no HTTP timeout), and it

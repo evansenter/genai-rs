@@ -255,6 +255,12 @@ const REDACT_FIELDS: &[&str] = &[
 /// environment variable's value inside an `env` map (`RemoteEnvironment`).
 const CONTEXT_REDACT_FIELD: &str = "value";
 
+/// Fields holding a header map whose *values* are secret while the names
+/// are worth seeing: an MCP server's `headers` (`{"Authorization": "Bearer
+/// ..."}`) and an environment allowlist entry's `transform` list of header
+/// maps. Every string beneath them is redacted; the keys stay.
+const REDACT_VALUES_BENEATH: &[&str] = &["headers", "transform"];
+
 /// Replacement value for redacted fields.
 const REDACTED_PLACEHOLDER: &str = "[REDACTED]";
 
@@ -293,6 +299,17 @@ fn truncate_long_fields(value: &mut serde_json::Value) {
     redact_walk(value, false);
 }
 
+/// Replaces every string in `value` with the placeholder, keeping object
+/// keys and structure.
+fn redact_strings(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::String(s) => *s = REDACTED_PLACEHOLDER.to_string(),
+        serde_json::Value::Object(map) => map.values_mut().for_each(redact_strings),
+        serde_json::Value::Array(arr) => arr.iter_mut().for_each(redact_strings),
+        _ => {}
+    }
+}
+
 /// The walk behind [`truncate_long_fields`]; `in_env` is true anywhere
 /// beneath an `env` key.
 fn redact_walk(value: &mut serde_json::Value, in_env: bool) {
@@ -303,7 +320,11 @@ fn redact_walk(value: &mut serde_json::Value, in_env: bool) {
                     == Some("environment_variable");
             for (key, val) in map.iter_mut() {
                 let key = key.as_str();
-                if REDACT_FIELDS.contains(&key) || (redact_value && key == CONTEXT_REDACT_FIELD) {
+                if REDACT_VALUES_BENEATH.contains(&key) {
+                    redact_strings(val);
+                } else if REDACT_FIELDS.contains(&key)
+                    || (redact_value && key == CONTEXT_REDACT_FIELD)
+                {
                     if !val.is_null() {
                         *val = serde_json::Value::String(REDACTED_PLACEHOLDER.to_string());
                     }
