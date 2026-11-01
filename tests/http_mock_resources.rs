@@ -814,9 +814,10 @@ async fn trigger_response_parses_string_counts_timestamp_aliases_and_sparse_inte
     assert_eq!(interaction.agent.as_deref(), Some("agents/nightly"));
     assert!(matches!(&interaction.input, InteractionInput::Text(t) if t.is_empty()));
     assert_eq!(trigger.extra["owner"], "users/42");
-    // Counts go back out in the protobuf-JSON string form they came in.
+    // Counts go back out as plain numbers, the trigger API's own wire form
+    // (live 2026-11-01), whichever form came in.
     let back = serde_json::to_value(&trigger).unwrap();
-    assert_eq!(back["max_consecutive_failures"], "3");
+    assert_eq!(back["max_consecutive_failures"], 3);
 }
 
 #[cfg(not(feature = "strict-unknown"))]

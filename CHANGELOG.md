@@ -44,6 +44,11 @@ every item probed live; #463).
 - `temperature`, `top_p` and `TranscriptionConfig::adaptation_phrases` are
   documented as deprecated upstream (google-genai 2.34.0); the API still
   accepts them.
+- `Trigger` re-serializes `max_consecutive_failures`,
+  `consecutive_failure_count` and `execution_timeout_seconds` as plain JSON
+  numbers, the trigger API's own wire form (verified live 2026-11-01). It
+  used the protobuf-JSON string form (`"5"`). Deserializing still accepts
+  both.
 
 ### Fixed
 
@@ -55,6 +60,15 @@ every item probed live; #463).
   can't: a foreground stream carries no `event_id`, and when its connection
   drops the server cancels the interaction. Only background interactions
   resume (`docs/STREAMING_API.md`).
+- The triggers resource is verified live end to end (2026-11-01), now that
+  custom agents can be created: create, get, list, update, run, list
+  executions and delete. The docs no longer call its shapes unverified, and
+  record what the probe found. `Triggers::run` returns an empty
+  `TriggerExecution`, because the API answers `{}`; find the firing with
+  `list_executions`. Only `display_name` and `status` are updatable, and the
+  PATCH applies exactly the fields sent. A stored trigger's `interaction`
+  echoes `store: true`, which create rejects, so clear it before reuse.
+
 
 ## [0.12.0] - 2026-10-31
 
