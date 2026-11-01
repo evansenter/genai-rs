@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Tracks the Interactions API as of `google-genai` 2.34.0 (swept 2026-11-01,
+every item probed live; #463).
+
 ### Added
 
 - `ClientBuilder::with_read_timeout`: the longest gap between chunks of a
@@ -14,6 +17,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stream (a dropped NAT mapping, a half-open proxy) without capping a healthy
   long one, and it reaches `interactions().stream()` / `resume_stream()`,
   which no request-level timeout does.
+- Decoding continuation. A response cut off by `max_output_tokens` carries
+  `InteractionResponse::continuation_token`; resend the same input with
+  `InteractionBuilder::with_continuation_token(token)` and a larger
+  `max_output_tokens` (it counts across continuations) to continue it. Only
+  `CONTINUATION_MODEL` (`gemini-4-argon`) supports it; other models answer
+  `400 Decoding continuation is not enabled for this model` (verified live
+  2026-11-01). `InteractionStatus::RequiresContinuation` is modeled from the
+  spec but never observed: continuable responses report `Incomplete`.
+- `InteractionResponse::errors` (`InteractionError`, with a string `code`
+  such as `"CANCELLED"`), `UsageMetadata::initial_input_tokens`,
+  `PromptedVoice::base_voice` and `CreateVoiceRequest::with_base_voice`,
+  `CodeExecutionLanguage::Bash` (spec only) and `ServiceTier::Deferred`
+  (Vertex-only).
+
 
 ### Changed
 
@@ -21,6 +38,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that can't be built (a scheme-less `with_base_url`, a rejected header) or a
   redirect loop. They fail identically every time, and a retry loop spent its
   whole budget on them.
+- **Breaking: `StreamChunk::StatusUpdate` gains `usage` and
+  `continuation_token`, and `interaction_id` becomes `Option<String>`.** A
+  `store: false` stream's status updates carry no interaction ID (verified
+  live 2026-11-01), and the crate dropped them with a `warn!`; they now reach
+  the caller. Background streams send `usage` mid-run.
+- **Breaking: removed `GenerationConfig::presence_penalty` and
+  `frequency_penalty`, with `with_presence_penalty()` and
+  `with_frequency_penalty()`.** The API rejects both (`400 Unknown parameter
+  'presence_penalty' at 'generation_config'`, 2026-11-01), and google-genai
+  2.34.0 does not list them, so any request that set one failed.
+- A stream whose body ends before `interaction.completed` or an error event
+  now ends with `Err(GenaiError::MalformedResponse)`, so a cut-off connection
+  can't pass for a finished stream. A stream whose last event is
+  unrecognized still ends cleanly, since that may be a new terminal event.
+- `temperature`, `top_p` and `TranscriptionConfig::adaptation_phrases` are
+  documented as deprecated upstream (google-genai 2.34.0); the API still
+  accepts them.
 - `Trigger` re-serializes `max_consecutive_failures`,
   `consecutive_failure_count` and `execution_timeout_seconds` as plain JSON
   numbers, the trigger API's own wire form (verified live 2026-11-01). It
@@ -41,6 +75,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaying the step fail with `400 ... missing signature`.
 - A harness output key without a decoding arm is preserved as
   `OutputPayload::Unknown` instead of panicking.
+- A mid-stream error ended a stream silently. The API sends it as a bare
+  JSON line with no `data:` prefix, then closes the connection (a recitation
+  block, live 2026-11-01), and the SSE parser dropped the line. It now
+  arrives as `StreamChunk::Error`, with `code: Some("recitation")`.
+- The streaming docs said a stored foreground stream could be resumed. It
+  can't: a foreground stream carries no `event_id`, and when its connection
+  drops the server cancels the interaction. Only background interactions
+  resume (`docs/STREAMING_API.md`).
 - The triggers resource is verified live end to end (2026-11-01), now that
   custom agents can be created: create, get, list, update, run, list
   executions and delete. The docs no longer call its shapes unverified, and
@@ -49,6 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `list_executions`. Only `display_name` and `status` are updatable, and the
   PATCH applies exactly the fields sent. A stored trigger's `interaction`
   echoes `store: true`, which create rejects, so clear it before reuse.
+
 
 ## [0.12.0] - 2026-10-31
 

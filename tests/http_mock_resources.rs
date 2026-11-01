@@ -357,10 +357,11 @@ fn every_call(c: &genai_rs::Client) -> Vec<(&'static str, Returns, Call<'_>)> {
             Resource,
             call(c.interactions().cancel("int-1")),
         ),
-        // A stream's first item; a body without SSE frames is just empty.
+        // A stream's first item. A body without a terminal SSE event is a
+        // cut-off stream, so it reads like a malformed resource.
         (
             "interactions.stream",
-            Nothing,
+            Resource,
             call(async move {
                 match c.interactions().stream("int-1").next().await {
                     Some(item) => item.map(drop),
@@ -3225,6 +3226,7 @@ async fn interactions_stream_without_resume_token_streams_the_lifecycle() {
 async fn interactions_stream_preserves_unknown_events() {
     let stub = Stub::replying(vec![Reply::sse(&[
         "data: {\"event_type\":\"interaction.paused\",\"reason\":\"maintenance\",\"event_id\":\"e9\"}\n\n",
+        "data: {\"event_type\":\"interaction.completed\",\"interaction\":{\"id\":\"int-1\",\"status\":\"completed\"}}\n\n",
     ])])
     .await;
 
@@ -3235,9 +3237,10 @@ async fn interactions_stream_preserves_unknown_events() {
         .collect()
         .await;
 
-    let [Ok(event)] = events.as_slice() else {
-        panic!("expected one event, got {events:?}");
+    let [Ok(event), Ok(done)] = events.as_slice() else {
+        panic!("expected two events, got {events:?}");
     };
+    assert!(done.is_terminal());
     assert_eq!(event.event_id.as_deref(), Some("e9"));
     assert_eq!(event.chunk.unknown_chunk_type(), Some("interaction.paused"));
     assert_eq!(event.chunk.unknown_data().unwrap()["reason"], "maintenance");
@@ -3265,6 +3268,7 @@ async fn interactions_stream_is_lazy_owned_and_spawnable() {
 
     let stub = Stub::replying(vec![Reply::sse(&[
         "data: {\"event_type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"b\"},\"event_id\":\"e2\"}\n\n",
+        "data: {\"event_type\":\"interaction.completed\",\"interaction\":{\"id\":\"int-1\",\"status\":\"completed\"}}\n\n",
     ])])
     .await;
 
@@ -3278,8 +3282,8 @@ async fn interactions_stream_is_lazy_owned_and_spawnable() {
     assert!(stub.requests().is_empty(), "nothing is sent before a poll");
 
     let events: Vec<_> = tokio::spawn(stream.collect::<Vec<_>>()).await.unwrap();
-    let [Ok(event)] = events.as_slice() else {
-        panic!("expected one event, got {events:?}");
+    let [Ok(event), Ok(_completed)] = events.as_slice() else {
+        panic!("expected two events, got {events:?}");
     };
     assert_eq!(event.event_id.as_deref(), Some("e2"));
     let [request] = stub.requests().try_into().unwrap();
@@ -3805,13 +3809,15 @@ async fn reserved_characters_in_ids_are_percent_encoded() {
                 "GET",
                 "/v1beta/interactions/int%2F1?alt=sse&stream=true&last_event_id=evt%2B1%26x",
                 None,
+                // Only the request matters here: the stub's body has no
+                // terminal event, so the stream ends in an error.
                 async move {
-                    c.interactions()
+                    let _ = c
+                        .interactions()
                         .resume_stream("int/1", "evt+1&x")
                         .collect::<Vec<_>>()
-                        .await
-                        .into_iter()
-                        .collect::<Result<Vec<_>, _>>()
+                        .await;
+                    Ok::<_, GenaiError>(())
                 },
             ),
             wire(
@@ -4201,7 +4207,7 @@ async fn unit_endpoints_accept_an_empty_no_content_reply() {
         .into_iter()
         .filter(|(_, returns, _)| *returns == Returns::Nothing)
         .collect();
-    assert!(unit_calls.len() >= 10, "every delete, ping, and the stream");
+    assert!(unit_calls.len() >= 10, "every delete and ping");
     for (name, _, call) in unit_calls {
         call.await
             .unwrap_or_else(|e| panic!("{name} on 204: {e:?}"));

@@ -24,6 +24,7 @@ fn test_serialize_create_interaction_request_with_model() {
         environment: None,
         safety_settings: None,
         labels: None,
+        continuation_token: None,
     };
 
     let json = serde_json::to_string(&request).expect("Serialization failed");
@@ -45,8 +46,6 @@ fn test_generation_config_serialization() {
         stop_sequences: None,
         thinking_summaries: None,
         tool_choice: None,
-        presence_penalty: None,
-        frequency_penalty: None,
         speech_config: None,
         image_config: None,
         video_config: None,
@@ -72,8 +71,6 @@ fn test_generation_config_new_fields_serialization() {
         stop_sequences: Some(vec!["END".to_string(), "---".to_string()]),
         thinking_summaries: Some(ThinkingSummaries::Auto),
         tool_choice: None,
-        presence_penalty: Some(0.5),
-        frequency_penalty: Some(-0.25),
         speech_config: None,
         image_config: None,
         video_config: None,
@@ -88,8 +85,6 @@ fn test_generation_config_new_fields_serialization() {
     assert_eq!(value["stop_sequences"][1], "---");
     assert_eq!(value["thinking_summaries"], "auto");
     assert_eq!(value["thinking_level"], "high");
-    assert_eq!(value["presence_penalty"], 0.5);
-    assert_eq!(value["frequency_penalty"], -0.25);
 }
 
 #[test]
@@ -103,8 +98,6 @@ fn test_generation_config_roundtrip() {
         stop_sequences: Some(vec!["STOP".to_string()]),
         thinking_summaries: Some(ThinkingSummaries::None),
         tool_choice: Some(ToolChoice::Mode(FunctionCallingMode::Auto)),
-        presence_penalty: Some(1.5),
-        frequency_penalty: Some(0.25),
         speech_config: None,
         image_config: None,
         video_config: None,
@@ -123,8 +116,6 @@ fn test_generation_config_roundtrip() {
     assert_eq!(deserialized.stop_sequences, config.stop_sequences);
     assert_eq!(deserialized.thinking_summaries, config.thinking_summaries);
     assert_eq!(deserialized.tool_choice, config.tool_choice);
-    assert_eq!(deserialized.presence_penalty, config.presence_penalty);
-    assert_eq!(deserialized.frequency_penalty, config.frequency_penalty);
 }
 
 #[test]
@@ -566,6 +557,7 @@ fn test_create_interaction_request_with_agent_config() {
         environment: None,
         safety_settings: None,
         labels: None,
+        continuation_token: None,
     };
 
     let json = serde_json::to_string(&request).expect("Serialization failed");
@@ -648,6 +640,7 @@ fn test_interaction_request_roundtrip() {
         environment: None,
         safety_settings: None,
         labels: None,
+        continuation_token: None,
     };
 
     // Serialize to JSON
@@ -714,6 +707,7 @@ fn test_response_format_serializes_as_snake_case() {
         environment: None,
         safety_settings: None,
         labels: None,
+        continuation_token: None,
     };
 
     let json = serde_json::to_string(&request).expect("Serialization failed");
@@ -931,6 +925,7 @@ fn test_request_with_webhook_config_and_environment_wire_shape() {
         ),
         safety_settings: None,
         labels: None,
+        continuation_token: None,
     };
 
     let value = serde_json::to_value(&request).unwrap();
