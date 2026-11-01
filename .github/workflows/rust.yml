@@ -5,6 +5,12 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  # Weekly, so live-API drift surfaces before release day. The v0.12.0 release
+  # found three server-side changes that had gone unnoticed for three weeks,
+  # because the live suite ran only when someone pushed.
+  schedule:
+    - cron: '23 5 * * 3' # Wednesday 05:23 UTC
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -67,10 +73,11 @@ jobs:
       - name: Run unit tests with antigravity feature
         run: cargo nextest run --workspace --features antigravity
       # The only end-to-end guard against a harness protocol change. Key-gated
-      # per step, not per job, so forks still run the unit tests. Owner check:
-      # `push` also fires on a fork's main, where the secret is absent.
+      # per step, not per job, so forks still run the unit tests. Only a fork's
+      # pull_request lacks the secret; owner check: push, schedule and
+      # workflow_dispatch also fire on a fork's own main, where it is absent.
       - name: Run harness integration tests
-        if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
+        if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
         # --retries 2: the shared key sees occasional 429s; retried tests show
         # as FLAKY.
         run: |
@@ -86,7 +93,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       # Run, not just compiled: some bugs only show up in a real run.
       - name: Smoke-run antigravity examples
-        if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
+        if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
         # A runner-budget cap, not a bound on the retry loop's worst case: the
         # per-attempt `timeout` below is what names a hung example. repo_auditor
         # runs last so a hang there cannot cost the others their coverage.
@@ -142,9 +149,9 @@ jobs:
     name: Integration Tests (${{ matrix.group }})
     needs: check
     runs-on: ubuntu-latest
-    # Owner check: `push` also fires on a fork's main, where the secret is
-    # absent.
-    if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
+    # Owner check: push, schedule and workflow_dispatch also fire on a fork's
+    # own main, where the secret is absent.
+    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
     strategy:
       fail-fast: false
       matrix:
@@ -210,7 +217,7 @@ jobs:
     needs: check
     runs-on: ubuntu-latest
     # Same owner gating as test-integration.
-    if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -565,3 +572,41 @@ jobs:
           path: current-sizes.json
           retention-days: 90
 
+  # Scheduled runs fail quietly (an email to whoever last committed this file),
+  # so a red weekly run opens or updates a `ci-health-escalation` issue and a
+  # green one closes it. Its own job, so it sees every job's result.
+  scheduled-run-status:
+    name: Scheduled Run Status
+    # Every other job, so a job added later can't go red unreported.
+    # tests/ci_coverage.rs enforces it. Push- or PR-only jobs report
+    # `skipped` here, which neither escalates nor blocks the resolve.
+    needs: [check, test, test-strict-unknown, test-antigravity, test-integration, example-smoke, fmt, shell-scripts, clippy, doc, msrv, cross-platform, coverage, build-metrics]
+    if: always() && github.event_name == 'schedule' && github.repository_owner == 'evansenter'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Escalate a failing scheduled run
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # From context, not a literal: it is the join key between reporter and
+          # resolver.
+          SELF_WORKFLOW_NAME: ${{ github.workflow }}
+        run: |
+          .github/scripts/report_scheduled_failure.sh "$SELF_WORKFLOW_NAME" "$RUN_URL" \
+            "The weekly run exercises the live API against \`main\` with nothing
+          pushed, so a red integration job usually means the API changed: a new
+          required field, a renamed key, a retired model. Probe with
+          \`LOUD_WIRE=1\` before changing code, and see CLAUDE.md, Tests: live
+          tests must fail, not skip. A red non-live job is toolchain drift, such
+          as a new stable clippy lint."
+      - name: Clear the failure issue once the run recovers
+        if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SELF_WORKFLOW_NAME: ${{ github.workflow }}
+        run: .github/scripts/resolve_scheduled_failure.sh "$SELF_WORKFLOW_NAME"
