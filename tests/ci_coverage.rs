@@ -124,3 +124,45 @@ fn live_tests_use_the_standard_ignore_reason() {
         offenders.join("\n  ")
     );
 }
+
+/// Job ids under `jobs:` in `rust.yml`: its two-space-indented keys.
+fn rust_yml_jobs(workflow: &str) -> BTreeSet<String> {
+    let jobs = workflow
+        .split("\njobs:\n")
+        .nth(1)
+        .expect("rust.yml has no jobs: section");
+    jobs.lines()
+        .filter(|line| line.starts_with("  ") && !line.starts_with("   "))
+        .filter_map(|line| line.trim().strip_suffix(':'))
+        .map(str::to_string)
+        .collect()
+}
+
+/// `scheduled-run-status` escalates a red weekly run by reading
+/// `needs.*.result`, so a job missing from its `needs` could fail on the
+/// schedule without opening the escalation issue, and the resolve step would
+/// even close an open one.
+#[test]
+fn scheduled_run_status_needs_every_other_job() {
+    let workflow =
+        std::fs::read_to_string(root().join(".github/workflows/rust.yml")).expect("read rust.yml");
+    let job = workflow
+        .split("\n  scheduled-run-status:\n")
+        .nth(1)
+        .expect("rust.yml has no scheduled-run-status job");
+    let needs: BTreeSet<String> = job
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("needs: ["))
+        .expect("scheduled-run-status has no one-line `needs: [...]`")
+        .trim_end_matches(']')
+        .split(',')
+        .map(|job| job.trim().to_string())
+        .collect();
+    let mut expected = rust_yml_jobs(&workflow);
+    assert!(expected.len() > 5, "parsed too few jobs: {expected:?}");
+    assert!(expected.remove("scheduled-run-status"));
+    assert_eq!(
+        needs, expected,
+        "scheduled-run-status must need every other rust.yml job"
+    );
+}
