@@ -7,8 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `ClientBuilder::with_read_timeout`: the longest gap between chunks of a
+  response, reset by each one. Unlike `with_timeout`, it bounds a stalled
+  stream (a dropped NAT mapping, a half-open proxy) without capping a healthy
+  long one, and it reaches `interactions().stream()` / `resume_stream()`,
+  which no request-level timeout does.
+
 ### Changed
 
+- `GenaiError::is_retryable()` is false for an HTTP error from a request
+  that can't be built (a scheme-less `with_base_url`, a rejected header) or a
+  redirect loop. They fail identically every time, and a retry loop spent its
+  whole budget on them.
 - `Trigger` re-serializes `max_consecutive_failures`,
   `consecutive_failure_count` and `execution_timeout_seconds` as plain JSON
   numbers, the trigger API's own wire form (verified live 2026-11-01). It
@@ -17,6 +29,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `wait_until_active` (files and file-search documents) bounds each status
+  request by the time left, so a stalled connection can no longer hold the
+  wait past its deadline (the default client has no HTTP timeout), and it
+  polls through a retryable error such as a 503 instead of ending a long
+  wait on it. Both waits now share one implementation.
+- `EnvironmentFileList`, `FileMetadata` and `FileUploadResponse` keep fields
+  the crate doesn't model (`extra`), like every other resource type.
+- The streaming step accumulator no longer lets an empty `signature`
+  fragment overwrite the real one an earlier event carried, which made
+  replaying the step fail with `400 ... missing signature`.
+- A harness output key without a decoding arm is preserved as
+  `OutputPayload::Unknown` instead of panicking.
 - The triggers resource is verified live end to end (2026-11-01), now that
   custom agents can be created: create, get, list, update, run, list
   executions and delete. The docs no longer call its shapes unverified, and

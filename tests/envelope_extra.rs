@@ -52,6 +52,20 @@ fn list_envelopes_keep_unknown_fields() {
     assert_envelope_keeps_unknown_fields!(genai_rs::FileSearchStoreListResponse, "nextPageToken");
     assert_envelope_keeps_unknown_fields!(genai_rs::DocumentListResponse, "nextPageToken");
     assert_envelope_keeps_unknown_fields!(genai_rs::ListFilesResponse, "nextPageToken");
+    assert_envelope_keeps_unknown_fields!(genai_rs::EnvironmentFileList, "next_page_token");
+}
+
+#[test]
+fn file_metadata_keeps_unknown_fields() {
+    let wire = json!({
+        "name": "files/abc",
+        "mimeType": "text/plain",
+        "uri": "u",
+        "futureField": {"nested": true}
+    });
+    let file: genai_rs::FileMetadata = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(file.extra["futureField"], json!({"nested": true}));
+    assert_eq!(serde_json::to_value(&file).unwrap(), wire);
 }
 
 #[test]

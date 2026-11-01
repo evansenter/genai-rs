@@ -112,6 +112,10 @@ pub struct FileMetadata {
     /// Video metadata (if this is a video file)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub video_metadata: Option<VideoMetadata>,
+    /// Fields the API returned that this struct does not model, preserved
+    /// for roundtrip (Evergreen), as on the other resource types.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl FileMetadata {
@@ -235,6 +239,9 @@ paging::impl_list_page!(ListFilesResponse, files: FileMetadata);
 pub struct FileUploadResponse {
     /// The uploaded file metadata
     pub file: FileMetadata,
+    /// Fields the crate does not model yet, preserved for roundtrip.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// The file name, used as the display name of path-based uploads.
@@ -411,9 +418,9 @@ impl PollOptions {
         }
     }
 
-    /// Gives up once `timeout` has passed since the wait started. It is
-    /// checked after each status request, so a wait can run over by up to
-    /// one poll interval and one request.
+    /// Gives up once `timeout` has passed since the wait started. Each
+    /// status request is bounded by the time left (at least a second), so a
+    /// stalled connection can't hold the wait past its deadline.
     #[must_use]
     pub const fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
@@ -436,6 +443,69 @@ impl PollOptions {
     pub(crate) fn poll_interval_or(self, default: Duration) -> Duration {
         self.poll_interval.unwrap_or(default)
     }
+
+    /// Polls `get` until `check` reports the resource ready, `check` or the
+    /// API fails it, or the deadline passes. The waiting behind every
+    /// `wait_until_active`.
+    ///
+    /// Each status request is bounded by the time left, and at least a
+    /// second, so one hung request can't outlive the deadline (the default
+    /// client has no HTTP timeout). A retryable error (a 5xx, a 429, a
+    /// dropped connection) is logged and polled through rather than ending
+    /// a long wait; any other error returns at once.
+    ///
+    /// The deadline error is `Internal`, not `Timeout`, so that
+    /// `is_retryable()` stays false: the resource may still be processing,
+    /// and retrying the whole wait is the caller's call.
+    pub(crate) async fn wait<T, Fut>(
+        self,
+        what: &str,
+        defaults: (Duration, Duration),
+        mut get: impl FnMut() -> Fut,
+        mut check: impl FnMut(T) -> Result<PollStep<T>, GenaiError>,
+    ) -> Result<T, GenaiError>
+    where
+        Fut: std::future::Future<Output = Result<T, GenaiError>>,
+    {
+        let timeout = self.timeout_or(defaults.0);
+        let interval = self.poll_interval_or(defaults.1);
+        let start = std::time::Instant::now();
+        let mut last_state = "unknown".to_string();
+        loop {
+            let bound = timeout
+                .saturating_sub(start.elapsed())
+                .max(Duration::from_secs(1));
+            match tokio::time::timeout(bound, get()).await {
+                Ok(Ok(current)) => match check(current)? {
+                    PollStep::Ready(done) => return Ok(done),
+                    PollStep::Pending(state) => last_state = state,
+                },
+                Ok(Err(e)) if e.is_retryable() => {
+                    tracing::warn!("Polling {what} failed ({e}); retrying until the deadline");
+                }
+                Ok(Err(e)) => return Err(e),
+                Err(_) => tracing::warn!("Polling {what}: no answer within {bound:?}"),
+            }
+            let waited = start.elapsed();
+            if waited > timeout {
+                return Err(GenaiError::Internal(format!(
+                    "Timeout waiting for {what} to become active (waited {waited:?}, last \
+                     state: {last_state}). It may still be processing - try again with a \
+                     longer timeout."
+                )));
+            }
+            tracing::debug!("{what} not active yet, waiting {interval:?}...");
+            tokio::time::sleep(interval).await;
+        }
+    }
+}
+
+/// What one status read during [`PollOptions::wait`] found.
+pub(crate) enum PollStep<T> {
+    /// Done: the wait returns it.
+    Ready(T),
+    /// Not yet. The string names its state, for the timeout message.
+    Pending(String),
 }
 
 /// [`Files::wait_until_active`] gives up after this long by default.
@@ -655,67 +725,45 @@ impl<'a> Files<'a> {
         file_name: &str,
         poll: PollOptions,
     ) -> Result<FileMetadata, GenaiError> {
-        let timeout = poll.timeout_or(FILE_WAIT_TIMEOUT);
-        let poll_interval = poll.poll_interval_or(FILE_POLL_INTERVAL);
-        let start = std::time::Instant::now();
-
-        loop {
-            let current = self.get(file_name).await?;
-
-            if current.is_active() {
-                return Ok(current);
-            }
-
-            if current.is_failed() {
-                // `Internal`, not `Api`: the file will never process, and a
-                // fabricated 5xx would make `is_retryable()` say otherwise.
-                // `FileError::code` is a google.rpc code, not an HTTP status.
-                let detail = current
-                    .error
-                    .as_ref()
-                    .map_or_else(|| "no details".to_string(), ToString::to_string);
-                tracing::error!("File '{}' processing failed: {}", file_name, detail);
-                return Err(GenaiError::Internal(format!(
-                    "File '{file_name}' failed processing ({detail}). This is terminal — \
-                     re-uploading is the only recovery."
-                )));
-            }
-
-            // Log unknown states per Evergreen logging strategy
-            if let Some(state) = &current.state
-                && state.is_unknown()
-            {
-                tracing::warn!(
-                    "File '{}' is in unknown state {:?}, continuing to poll. \
-                     This may indicate API evolution - consider updating genai-rs.",
-                    file_name,
-                    state
-                );
-            }
-
-            if start.elapsed() > timeout {
-                // Use Internal error since this is an operational issue, not invalid input
-                let state_info = current
-                    .state
-                    .as_ref()
-                    .map(|s| format!("{:?}", s))
-                    .unwrap_or_else(|| "unknown".to_string());
-                return Err(GenaiError::Internal(format!(
-                    "Timeout waiting for file '{}' to be ready (waited {:?}, last state: {}). \
-                     The file may still be processing - try again with a longer timeout.",
-                    file_name,
-                    start.elapsed(),
-                    state_info
-                )));
-            }
-
-            tracing::debug!(
-                "File '{}' still processing, waiting {:?}...",
-                file_name,
-                poll_interval
-            );
-            tokio::time::sleep(poll_interval).await;
-        }
+        let what = format!("file '{file_name}'");
+        poll.wait(
+            &what,
+            (FILE_WAIT_TIMEOUT, FILE_POLL_INTERVAL),
+            || self.get(file_name),
+            |current| {
+                if current.is_active() {
+                    return Ok(PollStep::Ready(current));
+                }
+                if current.is_failed() {
+                    // `Internal`, not `Api`: the file will never process, and a
+                    // fabricated 5xx would make `is_retryable()` say otherwise.
+                    // `FileError::code` is a google.rpc code, not an HTTP status.
+                    let detail = current
+                        .error
+                        .as_ref()
+                        .map_or_else(|| "no details".to_string(), ToString::to_string);
+                    tracing::error!("File '{file_name}' processing failed: {detail}");
+                    return Err(GenaiError::Internal(format!(
+                        "File '{file_name}' failed processing ({detail}). This is terminal — \
+                         re-uploading is the only recovery."
+                    )));
+                }
+                // Log unknown states per Evergreen logging strategy
+                if let Some(state) = &current.state
+                    && state.is_unknown()
+                {
+                    tracing::warn!(
+                        "File '{file_name}' is in unknown state {state:?}, continuing to poll. \
+                         This may indicate API evolution - consider updating genai-rs."
+                    );
+                }
+                Ok(PollStep::Pending(current.state.as_ref().map_or_else(
+                    || "unknown".to_string(),
+                    |s| format!("{s:?}"),
+                )))
+            },
+        )
+        .await
     }
 }
 

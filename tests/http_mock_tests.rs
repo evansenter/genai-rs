@@ -748,3 +748,39 @@ async fn streaming_auto_functions_surface_in_stream_errors() {
         ),
     );
 }
+
+/// `with_read_timeout` ends a stream whose connection goes quiet: the first
+/// event arrives, then nothing, and the stream fails instead of waiting
+/// forever.
+#[tokio::test]
+async fn read_timeout_ends_a_stalled_stream() {
+    let mut reply = Reply::sse(&[
+        &format!("data: {}\n\n", delta_event("first")),
+        &format!("data: {}\n\n", delta_event("never")),
+    ]);
+    reply.parts[1].0 = Duration::from_secs(30);
+    let stub = Stub::replying(vec![reply]).await;
+    let client = Client::builder("test-key".to_string())
+        .with_base_url(&stub.base_url)
+        .with_read_timeout(Duration::from_millis(300))
+        .build()
+        .unwrap();
+    let request = client
+        .interaction()
+        .with_model("test-model")
+        .with_text("Hi")
+        .build()
+        .unwrap();
+
+    let started = std::time::Instant::now();
+    let events: Vec<_> = client.execute_stream(request).collect().await;
+
+    assert!(started.elapsed() < Duration::from_secs(10));
+    assert!(
+        matches!(
+            events.as_slice(),
+            [Ok(_), Err(GenaiError::Http(e))] if e.is_timeout()
+        ),
+        "{events:?}"
+    );
+}

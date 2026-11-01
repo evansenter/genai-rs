@@ -3592,6 +3592,48 @@ async fn wait_until_active_times_out_with_the_last_state() {
     assert!(stub.requests().len() >= 2, "it polled before giving up");
 }
 
+/// A retryable error mid-poll (here a 503) is polled through: one bad
+/// status read must not end a long processing wait.
+#[tokio::test]
+async fn wait_until_active_polls_through_a_retryable_error() {
+    let stub = Stub::replying(vec![
+        Reply::json(200, file("PROCESSING")),
+        Reply::json(
+            503,
+            json!({"error": {"code": 503, "message": "Backend unavailable", "status": "UNAVAILABLE"}}),
+        ),
+        Reply::json(200, file("ACTIVE")),
+    ])
+    .await;
+
+    let ready = wait_for_file(&stub, Duration::from_secs(5)).await.unwrap();
+
+    assert!(ready.is_active());
+    assert_eq!(stub.requests().len(), 3);
+}
+
+/// A status request that never answers is cut off at the deadline, not
+/// left to hang (the default client has no HTTP timeout).
+#[tokio::test]
+async fn wait_until_active_bounds_a_stalled_request() {
+    let stub =
+        Stub::start(|_, _| Reply::json(200, file("PROCESSING")).delayed(Duration::from_secs(60)))
+            .await;
+
+    let started = std::time::Instant::now();
+    let err = wait_for_file(&stub, Duration::from_millis(200))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
+    assert!(err.to_string().contains("Timeout"), "{err}");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "the wait outlived its deadline: {:?}",
+        started.elapsed()
+    );
+}
+
 #[cfg(not(feature = "strict-unknown"))]
 #[tokio::test]
 async fn wait_until_active_keeps_polling_through_unknown_states() {

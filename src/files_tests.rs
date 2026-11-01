@@ -231,6 +231,7 @@ fn test_size_bytes_as_u64() {
         state: None,
         error: None,
         video_metadata: None,
+        extra: serde_json::Map::new(),
     };
     assert_eq!(file.size_bytes_as_u64(), Some(1234567890));
 
@@ -247,6 +248,7 @@ fn test_size_bytes_as_u64() {
         state: None,
         error: None,
         video_metadata: None,
+        extra: serde_json::Map::new(),
     };
     assert_eq!(file.size_bytes_as_u64(), None);
 
@@ -263,6 +265,7 @@ fn test_size_bytes_as_u64() {
         state: None,
         error: None,
         video_metadata: None,
+        extra: serde_json::Map::new(),
     };
     assert_eq!(file.size_bytes_as_u64(), None);
 
@@ -279,6 +282,7 @@ fn test_size_bytes_as_u64() {
         state: None,
         error: None,
         video_metadata: None,
+        extra: serde_json::Map::new(),
     };
     assert_eq!(file.size_bytes_as_u64(), Some(2147483648));
 }
@@ -616,6 +620,7 @@ mod proptest_tests {
                         state,
                         error,
                         video_metadata,
+                        extra: serde_json::Map::new(),
                     }
                 },
             )

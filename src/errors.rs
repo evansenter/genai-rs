@@ -157,8 +157,11 @@ impl GenaiError {
     #[must_use]
     pub fn is_retryable(&self) -> bool {
         match self {
-            // Network-level errors are typically transient
-            GenaiError::Http(_) => true,
+            // Network-level errors are typically transient. A builder error
+            // (an unparsable URL such as a scheme-less `with_base_url`, a
+            // rejected header) or a redirect loop fails the same way every
+            // time, so retrying it only burns the retry budget.
+            GenaiError::Http(e) => !(e.is_builder() || e.is_redirect()),
 
             // API errors: 429 (rate limit) and 5xx (server errors) are retryable
             GenaiError::Api { status_code, .. } => *status_code == 429 || *status_code >= 500,
@@ -444,6 +447,29 @@ mod tests {
                 status_code
             );
         }
+    }
+
+    #[test]
+    fn test_is_retryable_http_builder_error_is_permanent() {
+        // What a scheme-less base URL produces at send time.
+        let err = reqwest::Client::new()
+            .get("localhost:8080/v1beta/interactions")
+            .build()
+            .unwrap_err();
+        assert!(err.is_builder());
+        assert!(!GenaiError::Http(err).is_retryable());
+    }
+
+    #[tokio::test]
+    async fn test_is_retryable_http_connect_error_is_transient() {
+        // Nothing listens on port 9 of localhost.
+        let err = reqwest::Client::new()
+            .get("http://127.0.0.1:9/")
+            .send()
+            .await
+            .unwrap_err();
+        assert!(err.is_connect(), "{err:?}");
+        assert!(GenaiError::Http(err).is_retryable());
     }
 
     #[test]
