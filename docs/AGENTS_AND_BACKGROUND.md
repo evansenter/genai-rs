@@ -281,12 +281,15 @@ client.triggers().delete(&id).await?;
 # }
 ```
 
-The nested request must not set `store`: the API rejects it there.
-`TriggerUpdate` omits unset fields from the PATCH body. The endpoint takes no
-`update_mask`, so partial-update behavior rests on that omission, and it is
-unverified until trigger updates can be live-tested. `TriggerExecutionStatus`
-lists the execution outcomes. `list_executions` on a trigger ID that does not
-exist returns an empty list, not a 404 (live, 2026-09-26).
+The whole lifecycle is verified live (2026-11-01) with a custom agent built
+on `DEFAULT_ANTIGRAVITY_AGENT`. The nested request must target that agent and
+must not set `store`; the API rejects both a model-only request and `store`.
+`TriggerUpdate` omits unset fields from the PATCH body, and the server applies
+exactly those fields; only `display_name` and `status` are updatable. `run`
+fires asynchronously and the API returns `{}`, so the `TriggerExecution` it
+returns is empty: find the firing with `list_executions`, whose entries carry
+the status and the fired interaction's ID. `list_executions` on a trigger ID
+that does not exist returns an empty list, not a 404 (live, 2026-09-26).
 
 ## Background execution
 
