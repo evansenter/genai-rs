@@ -12,6 +12,9 @@ jobs:
   validate:
     name: Validate Release
     runs-on: ubuntu-latest
+    # The live suite takes ~20 minutes; a hung test is killed by
+    # .config/nextest.toml after 10.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -22,6 +25,23 @@ jobs:
         run: cargo check --workspace --all-targets --all-features
       - name: Run unit tests
         run: cargo nextest run --workspace
+      # The antigravity feature ships too, so it is validated like the rest:
+      # its unit tests, then the harness suite against the pinned wheel
+      # (keep the pin equal to SUPPORTED_HARNESS_VERSION).
+      - name: Run unit tests (antigravity feature)
+        run: cargo nextest run --workspace --features antigravity
+      - name: Install pinned localharness wheel
+        run: pip install google-antigravity==0.1.23
+      - name: Run harness integration tests
+        run: |
+          set -eo pipefail
+          if [ -z "${GEMINI_API_KEY//[[:space:]]/}" ]; then
+            echo "::error::GEMINI_API_KEY is empty or unset — the harness tests would self-skip"
+            exit 1
+          fi
+          cargo nextest run --features antigravity --run-ignored all --retries 2 --no-fail-fast -E 'binary(antigravity_harness)'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       - name: Run doctests (default features)
         run: cargo test --workspace --doc
       - name: Run doctests (all features)
@@ -36,7 +56,10 @@ jobs:
             exit 1
           fi
           rc=0
-          cargo nextest run --workspace --run-ignored all --success-output=final 2>&1 | tee /tmp/integration.log || rc=$?
+          # --no-fail-fast: report every drift in one run, not the first.
+          # --retries 2 as in rust.yml: a capacity 429/503 is retried rather
+          # than failing the release.
+          cargo nextest run --workspace --run-ignored all --retries 2 --no-fail-fast --success-output=final 2>&1 | tee /tmp/integration.log || rc=$?
           # Both markers, as in rust.yml.
           skips=$(grep -cE 'SEMANTIC_VALIDATION_SKIPPED|LIVE_TOOL_EVIDENCE_SKIPPED' /tmp/integration.log || true)
           # 10, not rust.yml's 3 per binary: this is one whole-workspace run

@@ -152,6 +152,9 @@ jobs:
     # Owner check: push, schedule and workflow_dispatch also fire on a fork's
     # own main, where the secret is absent.
     if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository_owner == 'evansenter'
+    # A hung test is killed by .config/nextest.toml after 10 minutes; this
+    # caps the whole group, retries included.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -184,16 +187,20 @@ jobs:
             echo "::error::GEMINI_API_KEY is empty or unset — every integration test would self-skip and this job would pass having verified nothing"
             exit 1
           fi
+          # Every binary runs even after one fails: stopping at the first
+          # failure once hid three binaries' results on a main push (the
+          # three #476 had changed). The failures are listed at the end.
+          failed=()
           for test in ${{ matrix.tests }}; do
             echo "::group::Running $test"
             # --success-output=final keeps passing tests' *_SKIPPED markers in
             # the log. rc is captured so the group closes and the skip check
             # still runs on a failure.
             rc=0
-            # --retries 2: the shared key sees occasional 429s, and nextest's
-            # fail-fast would drop the rest of the group; retried tests show as
-            # FLAKY.
-            cargo nextest run --test $test --run-ignored all --retries 2 --success-output=final 2>&1 | tee "/tmp/$test.log" || rc=$?
+            # --retries 2: the shared key sees occasional 429s; retried tests
+            # show as FLAKY. --no-fail-fast: one failure must not drop the
+            # binary's remaining tests.
+            cargo nextest run --test $test --run-ignored all --retries 2 --no-fail-fast --success-output=final 2>&1 | tee "/tmp/$test.log" || rc=$?
             echo "::endgroup::"
             # LIVE_TOOL_EVIDENCE_SKIPPED: a live tool test that could not show
             # the server was reached. Occasional is noise; persistent is a
@@ -207,8 +214,12 @@ jobs:
             elif [ "${skips:-0}" -gt 0 ]; then
               echo "::warning::$test: $skips unverified assertion(s) or tolerated failure(s) (grep SEMANTIC_VALIDATION_SKIPPED or LIVE_TOOL_EVIDENCE_SKIPPED in the log for causes)"
             fi
-            [ "$rc" -eq 0 ] || exit "$rc"
+            [ "$rc" -eq 0 ] || failed+=("$test")
           done
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "::error::failed: ${failed[*]}"
+            exit 1
+          fi
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
