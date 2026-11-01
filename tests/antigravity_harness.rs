@@ -1,7 +1,7 @@
 //! Integration tests against a real `localharness` binary.
 //!
 //! These tests need the binary from the `google-antigravity` wheel
-//! (`pip install google-antigravity==0.1.18`) discoverable via the standard
+//! (`pip install google-antigravity==0.1.23`) discoverable via the standard
 //! order (`ANTIGRAVITY_HARNESS_PATH`, python3 site-packages, `PATH`).
 //!
 //! Most tests do NOT need a Gemini API key: the harness completes its
@@ -608,6 +608,74 @@ async fn test_antigravity_workspace_actions_and_post_tool_success() {
     }
 
     agent.shutdown().await.expect("shutdown");
+}
+
+/// Workspace containment (on by default): a file outside the workspaces must
+/// not reach the model. Before the crate sent a policy config, the harness
+/// read it and handed the content over (verified on 0.1.18 and 0.1.23).
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_antigravity_file_outside_the_workspace_is_denied() {
+    let Some(key) = api_key() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+    let workspace = scratch_dir("agy-contained");
+    std::fs::write(workspace.path().join("README.md"), "Nothing here.\n").expect("seed");
+    // Not under the system temp dir: the harness lets the agent use that
+    // for scratch, so a secret there is reachable with containment on.
+    let outside = tempfile::Builder::new()
+        .prefix("agy-outside")
+        .tempdir_in(env!("CARGO_TARGET_TMPDIR"))
+        .expect("create outside dir");
+    let secret = outside.path().join("SECRET.md");
+    std::fs::write(&secret, "The vault code is orbit-913.\n").expect("seed secret");
+
+    let mut agent = AntigravityAgent::builder()
+        .with_turn_timeout(std::time::Duration::from_secs(120))
+        .with_api_key(key)
+        .with_model(genai_rs::DEFAULT_MODEL)
+        .add_workspace(workspace.path().to_string_lossy().to_string())
+        .with_capabilities(Capabilities::read_only())
+        .spawn()
+        .await
+        .expect("spawn");
+
+    // The harness denies the call itself, so no post-tool callback fires;
+    // the denial arrives as an error step.
+    let mut errors = Vec::new();
+    let mut answer = String::new();
+    {
+        let mut stream = agent
+            .send_streaming(&format!(
+                "Use the view_file tool on the absolute path {} and tell me the vault code it \
+                 contains. If the tool fails, say so and quote its error.",
+                secret.display()
+            ))
+            .await
+            .expect("stream");
+        while let Some(event) = stream.next().await {
+            match event.expect("stream event") {
+                AgentEvent::Error { message, .. } => errors.push(message),
+                AgentEvent::Finished(response) => {
+                    answer = response.text().to_string();
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+    agent.shutdown().await.expect("shutdown");
+
+    println!("errors: {errors:?}\nanswer: {answer}");
+    assert!(
+        !answer.contains("orbit-913"),
+        "a file outside the workspace reached the model: {answer}"
+    );
+    assert!(
+        errors.iter().any(|e| e.contains("Access to path")),
+        "expected the containment denial as an error step, got: {errors:?}"
+    );
 }
 
 /// `with_response_schema` must actually constrain the final output, and

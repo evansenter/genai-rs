@@ -31,7 +31,7 @@
 //! ## Running
 //!
 //! ```bash
-//! pip install google-antigravity==0.1.18   # or set ANTIGRAVITY_HARNESS_PATH
+//! pip install google-antigravity==0.1.23   # or set ANTIGRAVITY_HARNESS_PATH
 //! export GEMINI_API_KEY=your_api_key
 //! cargo run --example repo_auditor --features antigravity
 //! LOUD_WIRE=1 cargo run --example repo_auditor --features antigravity  # wire trace

@@ -12,8 +12,8 @@ every item probed live; #463).
 
 ### Added
 
-- `ClientBuilder::with_read_timeout`: the longest gap between chunks of a
-  response, reset by each one. Unlike `with_timeout`, it bounds a stalled
+- `ClientBuilder::with_read_timeout`: the longest wait for the response
+  headers or the next chunk, reset by each one. Unlike `with_timeout`, it bounds a stalled
   stream (a dropped NAT mapping, a half-open proxy) without capping a healthy
   long one, and it reaches `interactions().stream()` / `resume_stream()`,
   which no request-level timeout does.
@@ -31,13 +31,27 @@ every item probed live; #463).
   `CodeExecutionLanguage::Bash` (spec only) and `ServiceTier::Deferred`
   (Vertex-only).
 
-
 ### Changed
 
 - `GenaiError::is_retryable()` is false for an HTTP error from a request
   that can't be built (a scheme-less `with_base_url`, a rejected header) or a
   redirect loop. They fail identically every time, and a retry loop spent its
   whole budget on them.
+- **Breaking: the Antigravity bridge drives harness 0.1.23**
+  (`google-antigravity==0.1.23`, `SUPPORTED_HARNESS_VERSION`). It writes
+  0.1.23's new `runWorkflow` toggle (disabled), which 0.1.18 rejects at init,
+  and models the new non-terminal `TrajectoryState::WaitingForSubagents`,
+  which otherwise read as version drift. The full harness suite passes on
+  0.1.23.
+- **Antigravity agents are confined to their workspaces by default.** The
+  harness contains its file tools only when the client sends a policy
+  config, which this crate never did: an agent could read any file the
+  process could, and the content reached the model (verified on harness
+  0.1.18 and 0.1.23). With a workspace configured, `spawn()` now sends one;
+  a read outside the workspaces fails with `Access to path "…" is denied`.
+  The harness still allows the system temp directory and
+  `~/.gemini/antigravity/brain`. `AgentBuilder::with_workspace_containment(false)`
+  restores the old behavior.
 - **Breaking: `StreamChunk::StatusUpdate` gains `usage` and
   `continuation_token`, and `interaction_id` becomes `Option<String>`.** A
   `store: false` stream's status updates carry no interaction ID (verified
@@ -79,6 +93,11 @@ every item probed live; #463).
   replaying the step fail with `400 ... missing signature`.
 - A harness output key without a decoding arm is preserved as
   `OutputPayload::Unknown` instead of panicking.
+- `docs/ANTIGRAVITY.md`: on 0.1.23, `create_file`'s new `Append` argument
+  lets `{Overwrite: false, Append: true}` modify an existing file, so a
+  "new files only" gate must check `Append` too; a trigger before the first
+  turn no longer crashes the harness; and the harness's own prompt does list
+  the workspaces, which only `with_system_instructions` hides.
 - A mid-stream error ended a stream silently. The API sends it as a bare
   JSON line with no `data:` prefix, then closes the connection (a recitation
   block, live 2026-11-01), and the SSE parser dropped the line. It now
@@ -95,7 +114,6 @@ every item probed live; #463).
   `list_executions`. Only `display_name` and `status` are updatable, and the
   PATCH applies exactly the fields sent. A stored trigger's `interaction`
   echoes `store: true`, which create rejects, so clear it before reuse.
-
 
 ## [0.12.0] - 2026-10-31
 

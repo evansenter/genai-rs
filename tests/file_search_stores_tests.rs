@@ -194,11 +194,13 @@ async fn test_store_lifecycle() {
                 .await
                 .expect("delete store failed");
 
-            // Deleted stores are gone.
-            assert!(
-                client.file_search_stores().get(&store.name).await.is_err(),
-                "get should fail after delete"
-            );
+            // Deleted stores are gone: a 404, not just any error.
+            match client.file_search_stores().get(&store.name).await {
+                Err(GenaiError::Api {
+                    status_code: 404, ..
+                }) => {}
+                other => panic!("expected 404 after delete, got {other:?}"),
+            }
         }
     })
     .await;
@@ -255,15 +257,22 @@ async fn test_document_upload_and_indexing() {
 
             // An indexed document needs force=true; without it the API rejects the
             // delete with "Cannot delete non-empty Document".
-            assert!(
-                client
-                    .file_search_stores()
-                    .documents()
-                    .delete(&document.name)
-                    .await
-                    .is_err(),
-                "deleting an indexed document without force should fail"
-            );
+            match client
+                .file_search_stores()
+                .documents()
+                .delete(&document.name)
+                .await
+            {
+                Err(GenaiError::Api {
+                    status_code: 400,
+                    message,
+                    ..
+                }) if message.contains("non-empty") => {}
+                other => panic!(
+                    "deleting an indexed document without force should get the \
+                     non-empty 400, got {other:?}"
+                ),
+            }
             client
                 .file_search_stores()
                 .documents()
@@ -383,9 +392,13 @@ async fn test_store_delete_without_force_rejects_non_empty() {
             let unforced = client.file_search_stores().delete(&store_name).await;
             println!("unforced delete of non-empty store: {unforced:?}");
             assert!(
-                unforced.is_err(),
-                "deleting a store that still holds documents must be rejected \
-             without force=true; got Ok"
+                matches!(
+                    &unforced,
+                    Err(GenaiError::Api { status_code: 400, message, .. })
+                        if message.contains("non-empty")
+                ),
+                "deleting a store that still holds documents must get the \
+                 non-empty 400 without force=true; got {unforced:?}"
             );
         }
     })

@@ -71,17 +71,11 @@ async fn test_webhook_crud_lifecycle() {
         assert_eq!(fetched.name, created.name);
         assert!(fetched.new_signing_secret.is_none());
 
-        let list = client
-            .webhooks()
-            .list()
-            .with_page_size(50)
-            .send()
-            .await
-            .expect("webhooks.list");
         assert!(
-            list.webhooks
-                .iter()
-                .any(|w| w.id.as_deref() == Some(id.as_str())),
+            common::listed(client.webhooks().list().with_page_size(50).items(), |w| {
+                w.id.as_deref() == Some(id.as_str())
+            })
+            .await,
             "created webhook should appear in list"
         );
 
