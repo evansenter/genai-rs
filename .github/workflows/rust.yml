@@ -27,6 +27,10 @@ jobs:
       - uses: ./.github/actions/setup-mold
       - name: Check workspace
         run: cargo check --workspace --all-targets --all-features
+      # Nothing else builds without the default features, and the library's
+      # tokio features are now named per use, so a missing one only shows here.
+      - name: Check library without default features
+        run: cargo check --lib --no-default-features
 
   test:
     name: Test Suite
@@ -390,8 +394,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.88.0
       - uses: Swatinem/rust-cache@v2
       - uses: ./.github/actions/setup-mold
+      # All features: the antigravity module and its dependencies must build
+      # on the MSRV too, not just the default feature set.
       - name: Check workspace with MSRV
-        run: cargo check --workspace
+        run: cargo check --workspace --all-features
 
   cross-platform:
     name: Cross Platform (${{ matrix.os }}, ${{ matrix.rust }})

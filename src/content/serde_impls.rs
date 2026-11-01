@@ -59,7 +59,7 @@ impl<'de> Deserialize<'de> for Content {
         }
 
         // Try to deserialize as a known type
-        match serde_json::from_value::<KnownContent>(value.clone()) {
+        match KnownContent::deserialize(&value) {
             Ok(known) => Ok(match known {
                 KnownContent::Text { text, annotations } => Content::Text { text, annotations },
                 KnownContent::Image {

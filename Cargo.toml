@@ -4,6 +4,9 @@ members = [
 ]
 
 [workspace.lints.rust]
+# A new `unsafe` is a reviewed decision: each existing site carries an
+# explicit `#[allow(unsafe_code)]` and a SAFETY comment.
+unsafe_code = "deny"
 # No source currently branches on cfg(docsrs); this allowance keeps the
 # docs.rs rustdoc-arg below lint-clean if a #[cfg(docsrs)] is ever added.
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)"] }
@@ -12,7 +15,9 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 reqwest = { version = "0.13", features = ["json", "rustls", "stream"] }
-tokio = { version = "1.52", features = ["full"] }
+# No default features: each member names what it uses, so a consumer isn't
+# handed tokio's full feature set (rt-multi-thread, signal, process, ...).
+tokio = { version = "1.52", default-features = false }
 async-stream = "0.3"
 futures-util = "0.3"
 thiserror = "2.0"
@@ -57,7 +62,7 @@ genai-rs-macros = { version = "0.12.0", path = "./genai-rs-macros" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["fs", "time"] }
 async-stream = { workspace = true }
 futures-util = { workspace = true }
 thiserror = { workspace = true }
@@ -82,7 +87,7 @@ tokio-tungstenite = { version = "0.29", optional = true }
 libc = { version = "0.2", optional = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["full", "test-util"] }
 trybuild = "1.0.114"
 tempfile = "3.15"
 bytes = { workspace = true }
@@ -124,7 +129,15 @@ strict-unknown = []
 ## Rust tools, and enforce tool policies. See `docs/ANTIGRAVITY.md`.
 ##
 ## Default: disabled
-antigravity = ["dep:tokio-tungstenite", "dep:libc"]
+antigravity = [
+    "dep:tokio-tungstenite",
+    "dep:libc",
+    "tokio/io-util",
+    "tokio/net",
+    "tokio/process",
+    "tokio/rt",
+    "tokio/sync",
+]
 
 # Feature-gated integration tests
 [[test]]

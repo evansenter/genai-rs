@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
+use super::within;
 use crate::{InteractionInput, InteractionResponse, StreamChunk, UsageMetadata};
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
@@ -344,16 +345,7 @@ impl<'a> InteractionBuilder<'a> {
             );
 
             // Apply per-API-call timeout if set (function execution time not included)
-            let response = match timeout {
-                Some(duration) => {
-                    let future = client.execute(request.clone());
-                    tokio::time::timeout(duration, future).await.map_err(|_| {
-                        warn!("Auto-function API call timed out after {:?}", duration);
-                        GenaiError::Timeout(duration)
-                    })??
-                }
-                None => client.execute(request.clone()).await?,
-            };
+            let response = within(timeout, client.execute(request.clone())).await??;
 
             // When store != false (validated at function entry), the API should always
             // return an interaction ID. Return an error if the API violates this contract,
@@ -620,21 +612,7 @@ impl<'a> InteractionBuilder<'a> {
 
                 // Apply per-chunk timeout if set (function execution time not included)
                 loop {
-                    let next_chunk = stream.next();
-                    let result = match timeout {
-                        Some(duration) => {
-                            match tokio::time::timeout(duration, next_chunk).await {
-                                Ok(Some(result)) => Some(result),
-                                Ok(None) => None,
-                                Err(_) => {
-                                    warn!("Auto-function stream chunk timed out after {:?}", duration);
-                                    Err(GenaiError::Timeout(duration))?;
-                                    unreachable!()
-                                }
-                            }
-                        }
-                        None => next_chunk.await,
-                    };
+                    let result = within(timeout, stream.next()).await?;
 
                     let Some(result) = result else { break };
                     let event = result?;

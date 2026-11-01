@@ -395,7 +395,7 @@ impl<'de> Deserialize<'de> for Annotation {
             },
         }
 
-        match serde_json::from_value::<KnownAnnotation>(value.clone()) {
+        match KnownAnnotation::deserialize(&value) {
             Ok(known) => Ok(match known {
                 KnownAnnotation::UrlCitation {
                     url,

@@ -252,7 +252,7 @@ impl<'de> Deserialize<'de> for Tool {
         }
 
         // Try to deserialize as a known type
-        match serde_json::from_value::<KnownTool>(value.clone()) {
+        match KnownTool::deserialize(&value) {
             Ok(known) => Ok(match known {
                 KnownTool::Function {
                     name,

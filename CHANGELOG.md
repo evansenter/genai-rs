@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `genai-rs` no longer turns on tokio's full feature set: it asks for `fs`
+  and `time` (plus `io-util`, `net`, `process`, `rt` and `sync` with the
+  `antigravity` feature). A crate that wrote `#[tokio::main]` while relying
+  on genai-rs to enable `rt-multi-thread` and `macros` must now enable them
+  itself.
 - `Trigger` re-serializes `max_consecutive_failures`,
   `consecutive_failure_count` and `execution_timeout_seconds` as plain JSON
   numbers, the trigger API's own wire form (verified live 2026-11-01). It

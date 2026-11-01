@@ -245,15 +245,7 @@ impl<'a> InteractionBuilder<'a> {
         let timeout = self.timeout;
         let request = self.build()?;
 
-        let future = client.execute(request);
-
-        match timeout {
-            Some(duration) => tokio::time::timeout(duration, future).await.map_err(|_| {
-                debug!("Request timed out after {:?}", duration);
-                GenaiError::Timeout(duration)
-            })?,
-            None => future.await,
-        }
+        within(timeout, client.execute(request)).await?
     }
 
     /// Creates a streaming interaction that yields chunks as they arrive.
@@ -346,21 +338,7 @@ impl<'a> InteractionBuilder<'a> {
             let mut stream = client.execute_stream(request);
 
             loop {
-                let next_chunk = stream.next();
-                let result = match timeout {
-                    Some(duration) => {
-                        match tokio::time::timeout(duration, next_chunk).await {
-                            Ok(Some(result)) => Some(result),
-                            Ok(None) => None,
-                            Err(_) => {
-                                debug!("Stream chunk timed out after {:?}", duration);
-                                Err(GenaiError::Timeout(duration))?;
-                                unreachable!()
-                            }
-                        }
-                    }
-                    None => next_chunk.await,
-                };
+                let result = within(timeout, stream.next()).await?;
 
                 match result {
                     Some(Ok(event)) => yield event,
@@ -511,6 +489,21 @@ impl<'a> InteractionBuilder<'a> {
             safety_settings: self.safety_settings,
             labels: self.labels,
         })
+    }
+}
+
+/// Awaits `future`, bounded by `timeout` when one is set: the per-request
+/// and per-chunk limit behind [`InteractionBuilder::with_timeout`].
+pub(super) async fn within<F: std::future::Future>(
+    timeout: Option<Duration>,
+    future: F,
+) -> Result<F::Output, GenaiError> {
+    match timeout {
+        Some(duration) => tokio::time::timeout(duration, future).await.map_err(|_| {
+            debug!("Timed out after {duration:?}");
+            GenaiError::Timeout(duration)
+        }),
+        None => Ok(future.await),
     }
 }
 

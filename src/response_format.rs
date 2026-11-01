@@ -287,7 +287,7 @@ impl<'de> Deserialize<'de> for ResponseFormat {
             },
         }
 
-        match serde_json::from_value::<KnownFormat>(value.clone()) {
+        match KnownFormat::deserialize(&value) {
             Ok(known) => Ok(match known {
                 KnownFormat::Text { mime_type, schema } => Self::Text { mime_type, schema },
                 KnownFormat::Audio {
