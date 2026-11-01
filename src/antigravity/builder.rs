@@ -184,7 +184,13 @@ impl AgentBuilder {
 
     /// Controls whether the harness confines its file tools to the
     /// configured workspaces. **On by default** whenever a workspace is
-    /// configured.
+    /// configured; without one there is nothing to confine to, so `true`
+    /// does nothing (and logs a warning at `spawn()`).
+    ///
+    /// It covers the file tools (`view_file`, `list_directory`, …), not
+    /// `run_command`: a shell command can read any path the process can, so
+    /// keep `run_command` off, or gate it with a hook or policy, if the
+    /// workspace boundary matters.
     ///
     /// The harness enforces containment only when the client sends a
     /// policy config, and before this setting existed this crate never
@@ -716,9 +722,16 @@ impl AgentBuilder {
             enabled_hooks,
             custom_subagents,
             agent_behavior: self.agent_behavior.map(AgentBehavior::to_wire),
-            policy_config: (self.workspace_containment.unwrap_or(true)
-                && !self.workspaces.is_empty())
-            .then(protocol::PolicyConfig::default),
+            policy_config: {
+                if self.workspace_containment == Some(true) && self.workspaces.is_empty() {
+                    tracing::warn!(
+                        "with_workspace_containment(true) has no effect: no workspace is \
+                         configured, so there is nothing to confine the agent to"
+                    );
+                }
+                (self.workspace_containment.unwrap_or(true) && !self.workspaces.is_empty())
+                    .then(protocol::PolicyConfig::default)
+            },
         }
     }
 }

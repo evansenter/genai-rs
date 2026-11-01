@@ -112,9 +112,11 @@ persistence either.
 ## Workspaces
 
 `add_workspace(path)` (or `with_workspace(path)` to replace) points the
-harness's built-in tools at a directory and, by default, **confines them to
-it**: a file read outside the workspaces fails with `Access to path "…" is
-denied`. The harness still allows the system temp directory and its own
+harness's built-in tools at a directory and, by default, **confines the file
+tools to it**: a file read outside the workspaces fails with `Access to path
+"…" is denied`. `run_command` is not path-contained (a shell command reads
+whatever the process can), so keep it off or gate it when the boundary
+matters. The harness still allows the system temp directory and its own
 `~/.gemini/antigravity/brain`, so don't treat `$TMPDIR` as private from the
 agent. The harness enforces containment only when the client sends a policy
 config; before `with_workspace_containment` (on by default), this crate
