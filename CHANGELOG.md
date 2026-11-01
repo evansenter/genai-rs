@@ -12,6 +12,11 @@ every item probed live; #463).
 
 ### Added
 
+- `ClientBuilder::with_read_timeout`: the longest wait for the response
+  headers or the next chunk, reset by each one. Unlike `with_timeout`, it bounds a stalled
+  stream (a dropped NAT mapping, a half-open proxy) without capping a healthy
+  long one, and it reaches `interactions().stream()` / `resume_stream()`,
+  which no request-level timeout does.
 - Decoding continuation. A response cut off by `max_output_tokens` carries
   `InteractionResponse::continuation_token`; resend the same input with
   `InteractionBuilder::with_continuation_token(token)` and a larger
@@ -33,6 +38,10 @@ every item probed live; #463).
   `antigravity` feature). A crate that wrote `#[tokio::main]` while relying
   on genai-rs to enable `rt-multi-thread` and `macros` must now enable them
   itself.
+- `GenaiError::is_retryable()` is false for an HTTP error from a request
+  that can't be built (a scheme-less `with_base_url`, a rejected header) or a
+  redirect loop. They fail identically every time, and a retry loop spent its
+  whole budget on them.
 - **Breaking: the Antigravity bridge drives harness 0.1.23**
   (`google-antigravity==0.1.23`, `SUPPORTED_HARNESS_VERSION`). It writes
   0.1.23's new `runWorkflow` toggle (disabled), which 0.1.18 rejects at init,
@@ -74,6 +83,22 @@ every item probed live; #463).
 
 ### Fixed
 
+- `LOUD_WIRE` and the `wire` tracing target printed header secrets in full:
+  an MCP server's `headers` (`Authorization: Bearer ...`) and an environment
+  allowlist entry's `transform`. Every value under those keys is now
+  redacted; the header names stay visible.
+- `wait_until_active` (files and file-search documents) bounds each status
+  request by the time left, so a stalled connection can no longer hold the
+  wait past its deadline (the default client has no HTTP timeout), and it
+  polls through a retryable error such as a 503 instead of ending a long
+  wait on it. Both waits now share one implementation.
+- `EnvironmentFileList`, `FileMetadata` and `FileUploadResponse` keep fields
+  the crate doesn't model (`extra`), like every other resource type.
+- The streaming step accumulator no longer lets an empty `signature`
+  fragment overwrite the real one an earlier event carried, which made
+  replaying the step fail with `400 ... missing signature`.
+- A harness output key without a decoding arm is preserved as
+  `OutputPayload::Unknown` instead of panicking.
 - `docs/ANTIGRAVITY.md`: on 0.1.23, `create_file`'s new `Append` argument
   lets `{Overwrite: false, Append: true}` modify an existing file, so a
   "new files only" gate must check `Append` too; a trigger before the first

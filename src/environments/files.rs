@@ -88,6 +88,10 @@ pub struct EnvironmentFileList {
     /// Token for the next page, absent on the last page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_page_token: Option<String>,
+    /// Fields the crate does not model yet, kept so a deserialize/serialize
+    /// round trip preserves them (the other ten list envelopes have one).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 paging::impl_list_page!(EnvironmentFileList, files: EnvironmentFile);

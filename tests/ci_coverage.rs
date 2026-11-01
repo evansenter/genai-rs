@@ -43,8 +43,7 @@ fn test_sources() -> Vec<(String, String)> {
 
 /// Binaries named in the matrix's `tests: "…"` lines.
 fn matrix_binaries() -> Vec<String> {
-    let workflow =
-        std::fs::read_to_string(root().join(".github/workflows/rust.yml")).expect("read rust.yml");
+    let workflow = rust_yml();
     let job = workflow
         .split("\n  test-integration:")
         .nth(1)
@@ -125,6 +124,14 @@ fn live_tests_use_the_standard_ignore_reason() {
     );
 }
 
+/// `rust.yml` with line endings normalized: a Windows checkout has CRLF
+/// (autocrlf), and the parsers here split on `\n`-delimited headers.
+fn rust_yml() -> String {
+    std::fs::read_to_string(root().join(".github/workflows/rust.yml"))
+        .expect("read rust.yml")
+        .replace("\r\n", "\n")
+}
+
 /// Job ids under `jobs:` in `rust.yml`: its two-space-indented keys.
 fn rust_yml_jobs(workflow: &str) -> BTreeSet<String> {
     let jobs = workflow
@@ -144,8 +151,7 @@ fn rust_yml_jobs(workflow: &str) -> BTreeSet<String> {
 /// even close an open one.
 #[test]
 fn scheduled_run_status_needs_every_other_job() {
-    let workflow =
-        std::fs::read_to_string(root().join(".github/workflows/rust.yml")).expect("read rust.yml");
+    let workflow = rust_yml();
     let job = workflow
         .split("\n  scheduled-run-status:\n")
         .nth(1)
