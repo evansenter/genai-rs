@@ -78,6 +78,12 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
   status only when no call is pending.
 - **`cancel` fails on `antigravity-preview-09-2026`** with `400 There was a
   problem processing your request` (the retired 05-2026 agent accepted it).
+- **url_context loops under a response schema (server bug, 2026-11-01).**
+  With `response_format` set to a JSON schema, `url_context` refetches until
+  the API gives up with `400 too_many_tool_calls ... Please retry the
+  request` after ~117 s, in 8 of 12 requests. Without the schema, 6 of 6
+  answered in ~5 s. `test_structured_output_with_url_context` gives each
+  attempt 30 s and 4 tries.
 - **Uploaded environment files carry no `size_bytes`** (2026-10-06), in the
   upload response or in listings; files from environment sources still
   report it.

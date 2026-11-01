@@ -75,18 +75,14 @@ async fn test_bearer_credential_lifecycle() {
                 assert_eq!(fetched.credential_type, Some(CredentialType::BearerToken));
                 assert_eq!(fetched.status, Some(CredentialStatus::Active));
 
-                let listed = client
-                    .credentials()
-                    .list()
-                    .with_page_size(50)
-                    .send()
-                    .await
-                    .expect("list failed");
+                // Every page: the list runs in creation order, so the new
+                // credential comes last.
                 assert!(
-                    listed
-                        .credentials
-                        .iter()
-                        .any(|c| c.id.as_deref() == Some(id.as_str())),
+                    common::listed(
+                        client.credentials().list().with_page_size(50).items(),
+                        |c| c.id.as_deref() == Some(id.as_str())
+                    )
+                    .await,
                     "created credential not listed"
                 );
 
@@ -99,20 +95,29 @@ async fn test_bearer_credential_lifecycle() {
                     .update(&id, &update.with_update_mask("prefix"))
                     .await
                     .expect("update failed");
-                assert!(updated.update_time >= fetched.update_time);
+                // Strictly later: `>=` also held when the update changed
+                // nothing, and for two `None`s.
+                assert!(
+                    updated.update_time.is_some() && updated.update_time > fetched.update_time,
+                    "update must advance update_time: {:?} -> {:?}",
+                    fetched.update_time,
+                    updated.update_time
+                );
 
                 let mismatched = client
                     .credentials()
                     .update(&id, &CredentialUpdate::new(CredentialType::OAuth2))
                     .await
                     .expect_err("type-mismatched update was accepted");
-                assert!(matches!(
-                    mismatched,
-                    GenaiError::Api {
-                        status_code: 400,
-                        ..
-                    }
-                ));
+                println!("type-mismatched update: {mismatched}");
+                assert!(
+                    matches!(
+                        &mismatched,
+                        GenaiError::Api { status_code: 400, message, .. }
+                            if message.contains("Cannot update 'oauth2' config")
+                    ),
+                    "expected the config-type 400 (live 2026-11-01), got {mismatched:?}"
+                );
 
                 client
                     .credentials()

@@ -192,6 +192,14 @@ Version bump — update all of:
 | `docs/ANTIGRAVITY.md` | `genai-rs = { version = "X.Y", ... }` |
 | `CHANGELOG.md` | `## [Unreleased]` → `## [X.Y.Z] - YYYY-MM-DD` |
 
+Harness bump (`SUPPORTED_HARNESS_VERSION` in `src/antigravity/config.rs`):
+update every pin and "currently" mention
+(`git grep -n 'google-antigravity==\|currently .0\.1\.'`), add a row to the
+upgrade table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`, and run
+`cargo nextest run --features antigravity --run-ignored all -E
+'binary(antigravity_harness)'` against the new wheel with its venv first on
+`PATH` (the drift guard imports the wheel's protos with `python3`).
+
 ## Release
 
 1. Build docs on nightly first (docs.rs builds on nightly; CI checks stable,
