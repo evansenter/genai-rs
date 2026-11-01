@@ -21,6 +21,16 @@ fn merge_signature(existing: &mut Option<String>, fragment: Option<&str>) {
     }
 }
 
+/// Takes a delta's signature for a tool step, unless it is empty: a `""`
+/// fragment (the placeholder `step.start` uses, see [`merge_signature`])
+/// must not wipe the real value an earlier event carried, or replaying the
+/// step fails with `400 ... missing signature`.
+fn replace_signature(existing: &mut Option<String>, incoming: Option<&str>) {
+    if let Some(signature) = incoming.filter(|s| !s.is_empty()) {
+        *existing = Some(signature.to_string());
+    }
+}
+
 /// Accumulates `step.start` / `step.delta` / `step.stop` events into complete
 /// [`Step`]s, so streaming consumers get a fully-populated `steps` array on
 /// the final response even when the server's `interaction.completed` payload
@@ -288,9 +298,7 @@ impl StepAccumulator {
                     if let Some(c) = code {
                         existing_code.push_str(c);
                     }
-                    if signature.is_some() {
-                        *sig = signature.clone();
-                    }
+                    replace_signature(sig, signature.as_deref());
                 }
             }
             StepDelta::CodeExecutionResult {
@@ -309,9 +317,7 @@ impl StepAccumulator {
                     if let Some(e) = is_error {
                         *err = *e;
                     }
-                    if signature.is_some() {
-                        *sig = signature.clone();
-                    }
+                    replace_signature(sig, signature.as_deref());
                 }
             }
             StepDelta::UrlContextCall { urls, signature } => {
@@ -322,9 +328,7 @@ impl StepAccumulator {
                 } = &mut entry.step
                 {
                     existing.extend(urls.iter().cloned());
-                    if signature.is_some() {
-                        *sig = signature.clone();
-                    }
+                    replace_signature(sig, signature.as_deref());
                 }
             }
             StepDelta::UrlContextResult {
@@ -343,9 +347,7 @@ impl StepAccumulator {
                     if is_error.is_some() {
                         *err = *is_error;
                     }
-                    if signature.is_some() {
-                        *sig = signature.clone();
-                    }
+                    replace_signature(sig, signature.as_deref());
                 }
             }
             StepDelta::GoogleSearchCall { queries, signature } => {
@@ -356,9 +358,7 @@ impl StepAccumulator {
                 } = &mut entry.step
                 {
                     existing.extend(queries.iter().cloned());
-                    if signature.is_some() {
-                        *sig = signature.clone();
-                    }
+                    replace_signature(sig, signature.as_deref());
                 }
             }
             StepDelta::GoogleSearchResult {
@@ -377,9 +377,7 @@ impl StepAccumulator {
                     if is_error.is_some() {
                         *err = *is_error;
                     }
-                    if signature.is_some() {
-                        *sig = signature.clone();
-                    }
+                    replace_signature(sig, signature.as_deref());
                 }
             }
             StepDelta::McpServerToolCall {
@@ -421,10 +419,8 @@ impl StepAccumulator {
                 }
             }
             StepDelta::FileSearchCall { signature } => {
-                if let Step::FileSearchCall { signature: sig, .. } = &mut entry.step
-                    && signature.is_some()
-                {
-                    *sig = signature.clone();
+                if let Step::FileSearchCall { signature: sig, .. } = &mut entry.step {
+                    replace_signature(sig, signature.as_deref());
                 }
             }
             StepDelta::FileSearchResult { result, signature } => {
@@ -435,9 +431,7 @@ impl StepAccumulator {
                 } = &mut entry.step
                 {
                     existing.extend(result.iter().cloned());
-                    if signature.is_some() {
-                        *sig = signature.clone();
-                    }
+                    replace_signature(sig, signature.as_deref());
                 }
             }
             StepDelta::GoogleMapsCall { queries, signature } => {
@@ -448,9 +442,7 @@ impl StepAccumulator {
                 } = &mut entry.step
                 {
                     existing.extend(queries.iter().cloned());
-                    if signature.is_some() {
-                        *sig = signature.clone();
-                    }
+                    replace_signature(sig, signature.as_deref());
                 }
             }
             StepDelta::GoogleMapsResult { result, signature } => {
@@ -461,9 +453,7 @@ impl StepAccumulator {
                 } = &mut entry.step
                 {
                     existing.extend(result.iter().cloned());
-                    if signature.is_some() {
-                        *sig = signature.clone();
-                    }
+                    replace_signature(sig, signature.as_deref());
                 }
             }
             StepDelta::ProcessingCall { signature } => {

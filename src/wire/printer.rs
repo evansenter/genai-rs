@@ -307,7 +307,8 @@ fn is_envelope_key(key: &str) -> bool {
 /// - SSE frames labelled in blue
 /// - Pretty-printed (and, with the `wire-color` feature, colored) JSON
 /// - Base64-heavy `data`/`signature` fields truncated to keep output readable
-/// - Secret fields (e.g. third-party retrieval `api_key`s) fully redacted
+/// - Secret fields (e.g. third-party retrieval `api_key`s, MCP and allowlist
+///   header values) fully redacted
 #[derive(Debug, Clone, Default)]
 pub struct LoudWirePrinter {
     filter: WireFilter,

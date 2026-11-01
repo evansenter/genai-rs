@@ -1,0 +1,6 @@
+# Bounds a hung test. Without this, nextest's slow-timeout only warns, and a
+# live test stuck on a silent connection held its runner until the job's
+# 6-hour default. 120s x 5 is well above the longest legitimate test (the
+# live suite's own budgets top out at 300s), so only a hang is killed.
+[profile.default]
+slow-timeout = { period = "120s", terminate-after = 5 }
