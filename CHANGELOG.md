@@ -40,7 +40,8 @@ every item probed live; #463).
   2.34.0 does not list them, so any request that set one failed.
 - A stream whose body ends before `interaction.completed` or an error event
   now ends with `Err(GenaiError::MalformedResponse)`, so a cut-off connection
-  can't pass for a finished stream.
+  can't pass for a finished stream. A stream whose last event is
+  unrecognized still ends cleanly, since that may be a new terminal event.
 - `temperature`, `top_p` and `TranscriptionConfig::adaptation_phrases` are
   documented as deprecated upstream (google-genai 2.34.0); the API still
   accepts them.

@@ -241,6 +241,25 @@ async fn stream_without_a_terminal_event_ends_in_an_error() {
     );
 }
 
+/// A stream that ends on an event the crate doesn't recognize may have
+/// ended on a new terminal event, so it ends cleanly (Evergreen).
+#[tokio::test]
+async fn stream_ending_on_an_unknown_event_is_not_cut_off() {
+    let events = stream_events(&[
+        &format!("data: {}\n\n", delta_event("a")),
+        "data: {\"event_type\":\"interaction.archived\"}\n\n",
+    ])
+    .await;
+    assert!(
+        matches!(
+            events.as_slice(),
+            [Ok(_), Ok(StreamEvent { chunk: StreamChunk::Unknown { chunk_type, .. }, .. })]
+                if chunk_type == "interaction.archived"
+        ),
+        "{events:?}"
+    );
+}
+
 /// A bare JSON line right after an unterminated `data:` event still parses
 /// as its own error event, rather than joining the pending payload.
 #[tokio::test]

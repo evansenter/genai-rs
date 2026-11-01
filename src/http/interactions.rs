@@ -205,7 +205,9 @@ pub fn create_interaction_stream<'a>(
 ///
 /// A body that ends before a terminal event (`Completed` or `Error`) yields
 /// [`GenaiError::MalformedResponse`] last, so a cut-off stream can't pass for
-/// a finished one.
+/// a finished one. The exception is a stream whose last event is one this
+/// crate doesn't recognize: that may be a new terminal event, so it ends
+/// cleanly, with a `warn!` (Evergreen).
 fn stream_events(
     ctx: &HttpContext,
     request_id: u64,
@@ -219,6 +221,7 @@ fn stream_events(
 
         let mut accumulator = StepAccumulator::new();
         let mut terminated = false;
+        let mut last_was_unknown = false;
         while let Some(result) = parsed_stream.next().await {
             let event = result?;
             debug!(
@@ -229,10 +232,16 @@ fn stream_events(
             let event_id = event.event_id.clone();
             if let Some(chunk) = dispatch_stream_event(event, &mut accumulator) {
                 terminated |= chunk.is_terminal();
+                last_was_unknown = chunk.is_unknown();
                 yield StreamEvent::new(chunk, event_id);
             }
         }
-        if !terminated {
+        if !terminated && last_was_unknown {
+            tracing::warn!(
+                "the stream ended on an unrecognized event, with no interaction.completed; \
+                 treating it as a new terminal event"
+            );
+        } else if !terminated {
             Err(GenaiError::MalformedResponse(
                 "the stream ended before interaction.completed or an error event \
                  (the connection was cut off)"
