@@ -67,9 +67,21 @@ STUB
   chmod +x "$WORK/gh"
 }
 
+# Fixed-string match. As a regex, `Still failing.**` matched any line that
+# merely starts with the prefix on GNU grep (so the cap assertions were inert)
+# and is rejected outright by BSD grep. `check_re` is for the one assertion
+# that needs a pattern.
 check() {
-  local label="$1" expected="$2" actual="$3"
-  if grep -q -- "$expected" <<<"$actual"; then
+  _check "$1" "$2" "$3" -F
+}
+
+check_re() {
+  _check "$1" "$2" "$3" -E
+}
+
+_check() {
+  local label="$1" expected="$2" actual="$3" mode="$4"
+  if grep -q "$mode" -- "$expected" <<<"$actual"; then
     echo "ok   - $label"
   else
     echo "FAIL - $label"
@@ -130,7 +142,7 @@ check "reporting: files a new issue when none matches" "issue create" "$out"
 # string — so an unanchored grep passed even with the label dropped from
 # `issue create`. An issue filed without it is invisible to the resolver,
 # which then no-ops forever.
-check "reporting: labels it for the scoped lookup" "issue create.*ci-health-escalation" "$out"
+check_re "reporting: labels it for the scoped lookup" "issue create.*ci-health-escalation" "$out"
 
 # --- Resolving: an open issue is commented on and closed.
 make_gh_stub "[{\"title\":\"$TITLE_FLAKY\",\"number\":77}]"
