@@ -805,8 +805,10 @@ async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
     // The threshold is deliberately not "the first delta" — the harness
     // emits a step before the upstream request is even in flight, and
     // halting there cancelled the POST rather than a running generation.
-    // Any real answer to this prompt clears this bar many times over, so
-    // failing to reach it means something is broken, not merely fast.
+    // The deadline trades some of that away: a halt at `HALT_AFTER` may
+    // land while the model is still thinking, before any output. That is
+    // still an in-flight turn, and it is what makes the test conclusive
+    // when the harness doesn't stream; the printout says which fired.
     /// Characters of streamed text/thinking to see before halting.
     const OUTPUT_BEFORE_CANCEL: usize = 200;
 
@@ -824,11 +826,14 @@ async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
                     // deadline: the turn finished on its own.
                     return None;
                 }
+                let halted_at = std::time::Instant::now();
+                Some((handle.cancel().await, halted_at, "output"))
             }
-            () = tokio::time::sleep(HALT_AFTER) => {}
+            () = tokio::time::sleep(HALT_AFTER) => {
+                let halted_at = std::time::Instant::now();
+                Some((handle.cancel().await, halted_at, "deadline"))
+            }
         }
-        let halted_at = std::time::Instant::now();
-        Some((handle.cancel().await, halted_at))
     });
 
     let started = std::time::Instant::now();
@@ -870,9 +875,9 @@ async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
         (finished, produced, outcome)
     };
     let ended = std::time::Instant::now();
-    let halted_at = match canceller.await.expect("canceller task") {
-        Some((Ok(()), halted_at)) => halted_at,
-        Some((Err(err), _)) => panic!(
+    let (halted_at, trigger) = match canceller.await.expect("canceller task") {
+        Some((Ok(()), halted_at, trigger)) => (halted_at, trigger),
+        Some((Err(err), _, _)) => panic!(
             "the halt request itself failed after {produced} chars of output: \
              {err:?}"
         ),
@@ -886,10 +891,19 @@ async fn test_antigravity_cancel_handle_halts_an_in_flight_turn() {
     // The assertion that actually proves cancellation: the turn stopped
     // promptly once halted, long before the turn timeout could have ended
     // it.
-    let after_halt = ended.saturating_duration_since(halted_at);
+    // A halt sent after the turn had already ended (the deadline firing
+    // just as it finished on its own) proves nothing.
+    let Some(after_halt) = ended.checked_duration_since(halted_at) else {
+        panic!(
+            "the turn ended {:?} in, before the {trigger} halt was sent — this \
+             run proves nothing about cancellation",
+            ended.duration_since(started)
+        );
+    };
     println!(
-        "halted {:?} into the turn after {produced} chars; it ended {after_halt:?} later",
-        halted_at.saturating_duration_since(started)
+        "halted on {trigger} {:?} into the turn after {produced} chars; it ended \
+         {after_halt:?} later",
+        halted_at.duration_since(started)
     );
     assert!(
         after_halt < MUST_END_WITHIN,
