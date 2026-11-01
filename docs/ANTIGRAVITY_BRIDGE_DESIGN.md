@@ -102,7 +102,7 @@ The wire protocol is not publicly documented and changes across 0.1.x
 releases. Mitigations:
 
 1. **Pin a supported harness version per genai-rs release** (documented
-   constant `SUPPORTED_HARNESS_VERSION`, currently `"0.1.18"`); integration
+   constant `SUPPORTED_HARNESS_VERSION`, currently `"0.1.23"`); integration
    tests run against exactly that wheel.
 2. **Evergreen at the wire layer**: every event envelope deserializes unknown
    oneof variants into `Unknown { event_type, data }` and continues; unknown
@@ -342,6 +342,7 @@ now implemented:
 |------|-----------|-----------|----------|
 | 0.1.5 → 0.1.10 | `STATE_IDLE` → `STATE_FULLY_IDLE`; `usageMetadata` → `usageUpdate` | inbound | Aliased (D-003); one build reads both |
 | 0.1.10 → 0.1.18 | `userInput` string arm removed, `complexUserInput` renamed to `userInput` (a `UserInput` message) | outbound | Cannot be aliased — the harness accepts one shape — so the build drives 0.1.18 only |
+| 0.1.18 → 0.1.23 | `STATE_WAITING_FOR_SUBAGENTS` added (non-terminal); `runWorkflow` toggle added (0.1.18 rejects it); `create_file` gained `Append` | inbound and outbound | State modeled; `runWorkflow` written disabled, so the build drives 0.1.23 only |
 
 Lessons from 0.1.18, each now encoded somewhere:
 
