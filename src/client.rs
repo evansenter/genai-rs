@@ -153,8 +153,9 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the read timeout: the longest the client waits for *more* of a
-    /// response once it has started, reset by every chunk that arrives.
+    /// Sets the read timeout: the longest the client waits for the next
+    /// read, from the response headers onward, reset by every chunk that
+    /// arrives.
     ///
     /// Unlike [`with_timeout`](Self::with_timeout), which caps the whole
     /// request and so has to be left generous (or unset) for long streams,
@@ -163,9 +164,12 @@ impl ClientBuilder {
     /// otherwise waits forever. The stream then ends with a
     /// [`GenaiError::Http`] error.
     ///
-    /// Leave room for the longest silence the API legitimately has, such as
-    /// a background agent between status updates. If not set, reads wait
-    /// indefinitely.
+    /// It also bounds the wait for the response headers, so it applies to
+    /// every request on the client: a non-streaming `create()` against a
+    /// model that thinks longer than this before answering fails with it
+    /// too. Leave room for the longest silence the API legitimately has (a
+    /// long think, a background agent between status updates). If not set,
+    /// reads wait indefinitely.
     ///
     /// # Example
     ///
