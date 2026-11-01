@@ -438,10 +438,10 @@ out=$(bash "$SCRIPT" render "$WORK/render.json" 2>&1) || rc=$?
 expect_rc     "render: exits 0" 0
 # Order, not just presence: asserting the row exists passes whichever way
 # `sort_by` points, which is how the first version of this check went inert.
-if [ "$(grep -o '^| \(big\|round\|tiny\) ' <<<"$out" | tr -d '| ' | paste -sd,)" = "big,round,tiny" ]; then
+if [ "$(grep -oE '^\| (big|round|tiny) ' <<<"$out" | tr -d '| ' | paste -sd, -)" = "big,round,tiny" ]; then
   echo "ok   - render: largest first"
 else
-  echo "FAIL - render: expected big,round,tiny; got $(grep -o '^| \(big\|round\|tiny\) ' <<<"$out" | tr -d '| ' | paste -sd,)"
+  echo "FAIL - render: expected big,round,tiny; got $(grep -oE '^\| (big|round|tiny) ' <<<"$out" | tr -d '| ' | paste -sd, -)"
   failures=$((failures + 1))
 fi
 # One decimal always: 13.0 must not render as `13` beside a `13.4` neighbour.
