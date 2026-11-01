@@ -66,29 +66,25 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
   auto-function loops resolve it. MCP tools run server-side appear as an
   answered `function_call` / `function_result` pair named `<server>:<tool>`,
   not `tool_call` steps; `pending_function_calls()` leaves them out.
-- **Streamed multi-turn function calling fails (server bug).** When the user
-  turn and the turn before it were both streamed, the function result is
-  rejected with `400 Please ensure that function response turn comes
-  immediately after a function call turn`, whatever name it carries. Any
-  non-streamed turn in the pair avoids it, so
-  `test_multiturn_streaming_auto_functions` streams only its second turn
-  until this is fixed.
-- **An MCP interaction ends in `requires_action` (server bug)** after the
-  server has run every MCP call and produced the final `model_output`.
-  `test_mcp_server_tool_round_trip` accepts that status only when no call is
-  pending.
+- **Streamed multi-turn function calling failed (server bug, fixed by
+  2026-11-01).** When the user turn and the turn before it were both
+  streamed, the function result was rejected with `400 Please ensure that
+  function response turn comes immediately after a function call turn`.
+  `test_multiturn_streaming_auto_functions` streams both turns again.
+- **An MCP interaction ends in `requires_action` (server bug, still present
+  2026-11-01)** after the server has run every MCP call and produced the
+  final `model_output`. `test_mcp_server_tool_round_trip` accepts that
+  status only when no call is pending.
 - **`cancel` fails on `antigravity-preview-09-2026`** with `400 There was a
   problem processing your request`; it works on `antigravity-preview-05-2026`.
 - **Uploaded environment files carry no `size_bytes`** (2026-10-06), in the
   upload response or in listings; files from environment sources still
   report it.
-- **Agentic video processing often fails.** On 2026-10-01 2 of 6 identical
-  raw-HTTP requests hung past 150 s; on 2026-10-06 3 of 5 returned `500
-  Internal error encountered` (a stream `error` event when streamed), while
-  `static` processing of the same video succeeded 5 of 5. A stateless
-  replay of such a turn can fail too. `processing_steps_tests` retries a
-  timeout, 5xx or stream error up to 5 times and reports
-  `LIVE_TOOL_EVIDENCE_SKIPPED` if no attempt answers.
+- **Agentic video processing often failed (fixed by 2026-11-01).** On
+  2026-10-01 2 of 6 identical raw-HTTP requests hung past 150 s; on
+  2026-10-06 3 of 5 returned `500 Internal error encountered`. On 2026-11-01
+  all 16 requests answered, 10 of them concurrent, so
+  `processing_steps_tests` no longer retries.
 
 ## Sweep 2.18.1 → 2.25.0 (2026-09-24)
 
