@@ -48,7 +48,7 @@ every item probed live; #463).
   and models the new non-terminal `TrajectoryState::WaitingForSubagents`,
   which otherwise read as version drift. The full harness suite passes on
   0.1.23.
-- **Antigravity agents are confined to their workspaces by default.** The
+- **Breaking: Antigravity agents are confined to their workspaces by default.** The
   harness contains its file tools only when the client sends a policy
   config, which this crate never did: an agent could read any file the
   process could, and the content reached the model (verified on harness
