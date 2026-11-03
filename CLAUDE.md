@@ -227,6 +227,10 @@ upgrade table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`, and run
   lists the failures; `.config/nextest.toml` kills a test hung past 10
   minutes. A red scheduled run opens a `ci-health-escalation` issue
   (`scheduled-run-status`).
+- Required on `main` (strict, up to date): Check, Test Suite, Format, Clippy,
+  Documentation, Test Suite (antigravity), Test Suite (strict-unknown) and the
+  five Integration Tests groups. A live group skipped on a fork PR counts as
+  passing; renaming a job or group means updating branch protection too.
 - Other workflows: `audit.yml`, `api-surface-sweep.yml`, `consumer-crate.yml`,
   `ci-flakiness-report.yml`, `release.yml`, `release-drafter.yml`,
   `claude.yml`, `claude-code-review.yml`.
