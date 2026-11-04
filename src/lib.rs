@@ -311,6 +311,8 @@ pub use multimodal::{
 // =============================================================================
 
 #[cfg(test)]
+mod coverage_oracle;
+#[cfg(test)]
 mod proptest_tests;
 #[cfg(test)]
 mod streaming_tests;
