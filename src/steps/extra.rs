@@ -161,10 +161,20 @@ impl StepDelta {
         known_variants!(StepDelta, self, extra => Some(extra), else None)
     }
 
+    /// Mutable access to [`extra`](Self::extra).
+    pub fn extra_mut(&mut self) -> Option<&mut Map<String, Value>> {
+        known_variants!(StepDelta, self, extra => Some(extra), else None)
+    }
+
     /// The unmodeled keys of a call delta's `arguments` object; see
     /// [`Step::arguments_extra`].
     #[must_use]
     pub fn arguments_extra(&self) -> Option<&Map<String, Value>> {
+        reshaped_calls!(StepDelta, self, arguments_extra => Some(arguments_extra), else None)
+    }
+
+    /// Mutable access to [`arguments_extra`](Self::arguments_extra).
+    pub fn arguments_extra_mut(&mut self) -> Option<&mut Map<String, Value>> {
         reshaped_calls!(StepDelta, self, arguments_extra => Some(arguments_extra), else None)
     }
 }

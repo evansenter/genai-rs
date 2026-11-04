@@ -276,6 +276,58 @@ fn struct_extras_never_shadow_a_modeled_field() {
     );
 }
 
+/// `Step`, `StepDelta`, `Content` and `Annotation` all let a caller edit
+/// the unmodeled fields before replay, and the edit is what goes out.
+#[test]
+fn extra_mut_edits_round_trip_on_every_union() {
+    use genai_rs::{Annotation, StepDelta};
+
+    let mut annotation: Annotation = serde_json::from_value(json!({
+        "type": "url_citation", "url": "https://a.example",
+        "start_index": 0, "end_index": 2, "stale": true
+    }))
+    .unwrap();
+    let extra = annotation.extra_mut().unwrap();
+    extra.remove("stale");
+    extra.insert("fresh".into(), json!(1));
+    assert_eq!(
+        serde_json::to_value(&annotation).unwrap(),
+        json!({"type": "url_citation", "url": "https://a.example",
+               "start_index": 0, "end_index": 2, "fresh": 1})
+    );
+
+    let mut delta: StepDelta = serde_json::from_value(json!({
+        "type": "url_context_call", "arguments": {"urls": ["https://a.example"]}
+    }))
+    .unwrap();
+    delta
+        .extra_mut()
+        .unwrap()
+        .insert("trace".into(), json!("t1"));
+    delta
+        .arguments_extra_mut()
+        .unwrap()
+        .insert("max_pages".into(), json!(3));
+    assert_eq!(
+        serde_json::to_value(&delta).unwrap(),
+        json!({"type": "url_context_call",
+               "arguments": {"urls": ["https://a.example"], "max_pages": 3},
+               "trace": "t1"})
+    );
+
+    let mut text: StepDelta =
+        serde_json::from_value(json!({"type": "text", "text": "hi"})).unwrap();
+    assert!(
+        text.arguments_extra_mut().is_none(),
+        "only reshaped calls have one"
+    );
+    text.extra_mut().unwrap().insert("lang".into(), json!("en"));
+    assert_eq!(
+        serde_json::to_value(&text).unwrap(),
+        json!({"type": "text", "text": "hi", "lang": "en"})
+    );
+}
+
 #[test]
 fn malformed_known_steps_are_kept_whole_as_unknown() {
     // A non-object `arguments` cannot be modeled, so the step stays whole.

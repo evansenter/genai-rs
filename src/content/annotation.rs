@@ -232,6 +232,18 @@ impl Annotation {
         }
     }
 
+    /// Mutable access to [`extra`](Self::extra).
+    pub fn extra_mut(&mut self) -> Option<&mut Map<String, Value>> {
+        match self {
+            Self::UrlCitation { extra, .. }
+            | Self::FileCitation { extra, .. }
+            | Self::PlaceCitation { extra, .. }
+            | Self::SpeechMetadata { extra, .. }
+            | Self::WordInfo { extra, .. } => Some(extra),
+            Self::Unknown { .. } => None,
+        }
+    }
+
     /// Check if this is an unknown annotation type.
     #[must_use]
     pub const fn is_unknown(&self) -> bool {
