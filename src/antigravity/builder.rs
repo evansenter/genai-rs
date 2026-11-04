@@ -420,6 +420,12 @@ impl AgentBuilder {
     /// Defaults to [`DEFAULT_TURN_TIMEOUT`]. Raise it for agents that
     /// legitimately run long (deep subagent trees, many tool calls); lower
     /// it for interactive use where a stall should surface fast.
+    ///
+    /// The budget includes custom tools and hooks. Each tool call runs on a
+    /// task of its own that the deadline aborts; a synchronous tool body
+    /// that blocks its thread is abandoned on a multi-thread runtime, but
+    /// on a current-thread runtime it holds the only thread until it
+    /// returns. Make such a tool `async`, or call `spawn_blocking` inside it.
     #[must_use]
     pub fn with_turn_timeout(mut self, timeout: Duration) -> Self {
         self.turn_timeout = TurnBudget::Explicit(timeout);

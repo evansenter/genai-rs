@@ -2,7 +2,7 @@
 //! existing function-calling machinery (`#[tool]` macro / global
 //! [`FunctionRegistry`](crate::function_calling), [`ToolService`]).
 
-use crate::function_calling::{CallableFunction, get_global_function_registry};
+use crate::function_calling::{CallableFunction, FunctionError, get_global_function_registry};
 use crate::{FunctionDeclaration, ToolService};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -109,9 +109,9 @@ impl ToolDispatcher {
         tools
     }
 
-    fn resolve(&self, name: &str) -> Option<ResolvedTool<'_>> {
+    fn resolve(&self, name: &str) -> Option<ResolvedTool> {
         if let Some(tool) = self.service_tools.get(name) {
-            return Some(ResolvedTool::Service(tool));
+            return Some(ResolvedTool::Service(Arc::clone(tool)));
         }
         if self.declarations.iter().any(|d| d.name() == name)
             && let Some(function) = get_global_function_registry().get(name)
@@ -125,6 +125,9 @@ impl ToolDispatcher {
     /// expects (`{"result": ...}` / verbatim object on success,
     /// `{"error": ...}` on failure). Never fails: errors become error
     /// results so the model can react — mirroring the reference SDK.
+    ///
+    /// The tool runs on a task of its own (see [`run_tool`]), so the turn
+    /// deadline can abandon it.
     pub(crate) async fn execute(&self, name: &str, args: Value) -> Value {
         let Some(tool) = self.resolve(name) else {
             tracing::warn!("Harness called unregistered tool '{name}'.");
@@ -134,11 +137,7 @@ impl ToolDispatcher {
                 )
             });
         };
-        let result = match tool {
-            ResolvedTool::Service(t) => t.call(args).await,
-            ResolvedTool::Registry(t) => t.call(args).await,
-        };
-        match result {
+        match run_tool(tool, args).await {
             Ok(Value::Object(map)) => Value::Object(map),
             Ok(other) => json!({ "result": other }),
             Err(err) => {
@@ -149,16 +148,59 @@ impl ToolDispatcher {
     }
 }
 
-enum ResolvedTool<'a> {
-    Service(&'a Arc<dyn CallableFunction>),
-    Registry(&'a dyn CallableFunction),
+/// A tool a dispatch task can own: service tools are shared `Arc`s, and
+/// registry tools live in the `'static` global registry.
+enum ResolvedTool {
+    Service(Arc<dyn CallableFunction>),
+    Registry(&'static dyn CallableFunction),
+}
+
+impl ResolvedTool {
+    async fn call(&self, args: Value) -> Result<Value, FunctionError> {
+        match self {
+            Self::Service(tool) => tool.call(args).await,
+            Self::Registry(tool) => tool.call(args).await,
+        }
+    }
+}
+
+/// Runs a tool call on a task of its own.
+///
+/// Called inline, a tool whose body blocks (a synchronous `#[tool]` fn runs
+/// its body directly inside `call`) holds the task that polls the turn
+/// deadline, so the deadline cannot fire until the tool returns. On its own
+/// task, the turn waits on a join handle the deadline can abandon, and on a
+/// multi-thread runtime another worker drives the timer. On a
+/// current-thread runtime a blocking body still holds the only thread;
+/// nothing in this crate can preempt it there.
+///
+/// Abandoning the call aborts the task: an async tool is cancelled at its
+/// next `.await`, as it was when the call ran inline, and a blocking body
+/// runs to completion with its result discarded. A panicking tool re-raises
+/// its panic here, as an inline call would.
+async fn run_tool(tool: ResolvedTool, args: Value) -> Result<Value, FunctionError> {
+    let mut task = AbortOnDrop(tokio::spawn(async move { tool.call(args).await }));
+    match (&mut task.0).await {
+        Ok(result) => result,
+        Err(e) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
+        Err(e) => Err(FunctionError::ExecutionError(Box::new(e))),
+    }
+}
+
+/// Aborts the task when the waiter goes away (the turn deadline fired, or
+/// the turn was dropped).
+struct AbortOnDrop<T>(tokio::task::JoinHandle<T>);
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::FunctionParameters;
-    use crate::function_calling::FunctionError;
     use async_trait::async_trait;
 
     struct EchoTool;
@@ -297,6 +339,96 @@ mod tests {
             .execute("test_function_global", json!({"param": "World"}))
             .await;
         assert_eq!(result["result"], "Global says: Hello, World");
+    }
+
+    /// Blocks its thread until released (or 30s pass).
+    struct BlockingTool(Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>);
+
+    #[async_trait]
+    impl CallableFunction for BlockingTool {
+        fn declaration(&self) -> FunctionDeclaration {
+            FunctionDeclaration::new(
+                "antigravity_blocks".to_string(),
+                "Blocks its thread".to_string(),
+                FunctionParameters::new("object".to_string(), json!({}), vec![]),
+            )
+        }
+
+        async fn call(&self, _args: Value) -> Result<Value, FunctionError> {
+            let _ = self
+                .0
+                .lock()
+                .unwrap()
+                .recv_timeout(std::time::Duration::from_secs(30));
+            Ok(json!("released"))
+        }
+    }
+
+    struct BlockingService(Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>);
+
+    impl ToolService for BlockingService {
+        fn tools(&self) -> Vec<Arc<dyn CallableFunction>> {
+            vec![Arc::new(BlockingTool(Arc::clone(&self.0)))]
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_a_blocking_tool_does_not_hold_the_callers_timer() {
+        // Regression: the tool ran inline on the turn's task, so a body that
+        // blocked held the poll the turn deadline needed, and a 2s turn ran
+        // as long as the tool.
+        let (release, blocked) = std::sync::mpsc::channel();
+        let services: Vec<Arc<dyn ToolService>> = vec![Arc::new(BlockingService(Arc::new(
+            std::sync::Mutex::new(blocked),
+        )))];
+        let d = ToolDispatcher::new(vec![], &services);
+        let start = std::time::Instant::now();
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            d.execute("antigravity_blocks", json!({})),
+        )
+        .await;
+        let elapsed = start.elapsed();
+        release.send(()).unwrap();
+        assert!(outcome.is_err(), "the timeout must win: {outcome:?}");
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "the timer fired late: {elapsed:?}"
+        );
+    }
+
+    struct PanickingTool;
+
+    #[async_trait]
+    impl CallableFunction for PanickingTool {
+        fn declaration(&self) -> FunctionDeclaration {
+            FunctionDeclaration::new(
+                "antigravity_panics".to_string(),
+                "Panics".to_string(),
+                FunctionParameters::new("object".to_string(), json!({}), vec![]),
+            )
+        }
+
+        async fn call(&self, _args: Value) -> Result<Value, FunctionError> {
+            panic!("tool panic 4417");
+        }
+    }
+
+    struct PanickingService;
+
+    impl ToolService for PanickingService {
+        fn tools(&self) -> Vec<Arc<dyn CallableFunction>> {
+            vec![Arc::new(PanickingTool)]
+        }
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "tool panic 4417")]
+    async fn test_a_panicking_tool_panics_the_caller() {
+        // Same as an inline call: the panic is not turned into a tool error.
+        let services: Vec<Arc<dyn ToolService>> = vec![Arc::new(PanickingService)];
+        let d = ToolDispatcher::new(vec![], &services);
+        let _ = d.execute("antigravity_panics", json!({})).await;
     }
 
     #[tokio::test]

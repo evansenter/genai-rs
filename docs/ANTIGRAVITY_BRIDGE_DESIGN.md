@@ -302,8 +302,9 @@ transports feed one canonical debugging surface:
   `with_gemini_base_url`, so turns run end to end with no key and a
   deterministic "model" — builtins through the pre-tool hook, custom tools
   through policies, containment both ways, cancellation, a trigger turn,
-  backend and tool errors, the turn deadline over a hung tool and a
-  blocking hook, and the process-tree kill. This replaced the planned
+  backend and tool errors, the turn deadline over a hung async tool, a
+  blocking sync tool and a blocking hook, the key-free harness environment
+  under a custom host, and the process-tree kill. This replaced the planned
   mockable transport trait: it tests the bridge *and* the harness behavior
   it depends on, which a mock of the socket could not. CI runs it in the
   required `Test Suite (antigravity)` job with the key blanked, forks
