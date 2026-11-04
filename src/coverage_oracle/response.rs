@@ -458,8 +458,17 @@ fn count(items: &[String], item: &str) -> usize {
     items.iter().filter(|i| *i == item).count()
 }
 
-/// Everything wrong with one body.
-fn analyze(surface: &Surface, ty: &Ty, body: &Value, probe: Probe, name: &str) -> Vec<Finding> {
+/// Everything wrong with one body. `traced` holds the sites already traced
+/// to an `extra` key or an `Unknown` value in an earlier body, whose
+/// candidates need no second round of removals.
+fn analyze(
+    surface: &Surface,
+    ty: &Ty,
+    body: &Value,
+    probe: Probe,
+    name: &str,
+    traced: &mut BTreeSet<String>,
+) -> Vec<Finding> {
     let sites = surface.sites(ty, body);
     let finding = |path: &str, site: String, message: String| Finding {
         path: format!("{name} {path}"),
@@ -494,11 +503,22 @@ fn analyze(surface: &Surface, ty: &Ty, body: &Value, probe: Probe, name: &str) -
     let extras = debug_extra_keys(&debug);
     for key in extras.iter().collect::<BTreeSet<_>>() {
         let before = count(&extras, key);
-        for path in paths.iter().filter(|p| p.ends_with(&format!(".{key}"))) {
+        let candidates: Vec<&String> = paths
+            .iter()
+            .filter(|p| p.ends_with(&format!(".{key}")))
+            .collect();
+        if candidates
+            .iter()
+            .all(|p| traced.contains(&format!("extra {}", site_of(&sites, p))))
+        {
+            continue;
+        }
+        for path in candidates {
             let fewer = without(path)
                 .and_then(|v| probe(v).ok())
                 .is_some_and(|(d, _)| count(&debug_extra_keys(&d), key) < before);
             if fewer {
+                traced.insert(format!("extra {}", site_of(&sites, path)));
                 out.push(finding(
                     path,
                     site_of(&sites, path),
@@ -511,17 +531,25 @@ fn analyze(surface: &Surface, ty: &Ty, body: &Value, probe: Probe, name: &str) -
     let unknowns = debug_unknown_values(&debug);
     for value in unknowns.iter().collect::<BTreeSet<_>>() {
         let before = count(&unknowns, value);
-        for (path, s) in string_values(body) {
-            if s != *value {
-                continue;
-            }
-            let path = key_path(&path);
+        let candidates: BTreeSet<String> = string_values(body)
+            .into_iter()
+            .filter(|(_, s)| s == value)
+            .map(|(path, _)| key_path(&path).to_string())
+            .collect();
+        if candidates
+            .iter()
+            .all(|p| traced.contains(&format!("unknown {}={value}", site_of(&sites, p))))
+        {
+            continue;
+        }
+        for path in &candidates {
             let fewer = without(path).is_none_or(|v| {
                 probe(v).map_or(true, |(d, _)| {
                     count(&debug_unknown_values(&d), value) < before
                 })
             });
             if fewer {
+                traced.insert(format!("unknown {}={value}", site_of(&sites, path)));
                 out.push(finding(
                     path,
                     format!("{}={value}", site_of(&sites, path)),
@@ -568,13 +596,21 @@ fn findings(surface: &Surface, pick: impl Fn(&Target) -> Option<&'static str>) -
         ..SynthOptions::default()
     };
     let mut out = BTreeSet::new();
+    let mut traced = BTreeSet::new();
     for target in targets() {
         let Some(class) = pick(&target) else { continue };
         let ty = surface.ty(class);
         let bodies = surface.fixtures(&ty, &options);
         assert!(!bodies.is_empty(), "{}: no fixtures", target.name);
         for body in &bodies {
-            out.extend(analyze(surface, &ty, body, target.probe, target.name));
+            out.extend(analyze(
+                surface,
+                &ty,
+                body,
+                target.probe,
+                target.name,
+                &mut traced,
+            ));
         }
     }
     // One finding per site and message is enough to act on.
