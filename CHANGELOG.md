@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.13.0] - 2026-11-03
 
 Tracks the Interactions API as of `google-genai` 2.34.0 (swept 2026-11-01,
 every item probed live; #463).
@@ -33,11 +33,11 @@ every item probed live; #463).
 
 ### Changed
 
-- `genai-rs` no longer turns on tokio's full feature set: it asks for `fs`
-  and `time` (plus `io-util`, `net`, `process`, `rt` and `sync` with the
-  `antigravity` feature). A crate that wrote `#[tokio::main]` while relying
-  on genai-rs to enable `rt-multi-thread` and `macros` must now enable them
-  itself.
+- **Breaking: `genai-rs` no longer turns on tokio's full feature set.** It
+  asks for `fs` and `time` (plus `io-util`, `net`, `process`, `rt` and `sync`
+  with the `antigravity` feature). A crate that wrote `#[tokio::main]` while
+  relying on genai-rs to enable `rt-multi-thread` and `macros` must now
+  enable them itself.
 - `GenaiError::is_retryable()` is false for an HTTP error from a request
   that can't be built (a scheme-less `with_base_url`, a rejected header) or a
   redirect loop. They fail identically every time, and a retry loop spent its
@@ -48,7 +48,7 @@ every item probed live; #463).
   and models the new non-terminal `TrajectoryState::WaitingForSubagents`,
   which otherwise read as version drift. The full harness suite passes on
   0.1.23.
-- **Antigravity agents are confined to their workspaces by default.** The
+- **Breaking: Antigravity agents are confined to their workspaces by default.** The
   harness contains its file tools only when the client sends a policy
   config, which this crate never did: an agent could read any file the
   process could, and the content reached the model (verified on harness
