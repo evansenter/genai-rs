@@ -1,3 +1,5 @@
+use serde_json::{Map, Value};
+
 use crate::content::Content;
 
 use super::{Step, StepDelta};
@@ -31,10 +33,25 @@ fn replace_signature(existing: &mut Option<String>, incoming: Option<&str>) {
     }
 }
 
+/// Copies a delta's unmodeled fields onto what it builds, later values
+/// winning, so the accumulated step round-trips them as the step a
+/// non-streamed response carries would (#491).
+fn absorb(target: &mut Map<String, Value>, extra: &Map<String, Value>) {
+    target.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
+}
+
+/// The content blocks of a `user_input` / `model_output` step.
+fn content_of(step: &mut Step) -> Option<&mut Vec<Content>> {
+    match step {
+        Step::UserInput { content, .. } | Step::ModelOutput { content, .. } => Some(content),
+        _ => None,
+    }
+}
+
 /// Accumulates `step.start` / `step.delta` / `step.stop` events into complete
 /// [`Step`]s, so streaming consumers get a fully-populated `steps` array on
 /// the final response even when the server's `interaction.completed` payload
-/// omits it.
+/// omits it (as it did on every stream observed 2026-11-04).
 #[derive(Debug, Default)]
 pub(crate) struct StepAccumulator {
     steps: std::collections::BTreeMap<usize, AccumulatedStep>,
@@ -75,36 +92,69 @@ impl StepAccumulator {
         let entry = self.steps.entry(index).or_insert_with(|| AccumulatedStep {
             // Deltas without a preceding step.start most commonly belong to a
             // model_output step; start one so the content is not dropped.
-            step: Step::ModelOutput {
-                content: Vec::new(),
-                error: None,
-            },
+            step: Step::model_output(Vec::new()),
             args_buffer: String::new(),
         });
 
-        match delta {
-            StepDelta::Text { text } => {
-                if let Step::UserInput { content } | Step::ModelOutput { content, .. } =
-                    &mut entry.step
-                {
-                    if let Some(Content::Text { text: Some(t), .. }) = content.last_mut() {
-                        t.push_str(text);
-                    } else {
-                        content.push(Content::text(text.clone()));
-                    }
-                }
+        if Self::apply_content_delta(&mut entry.step, delta) {
+            return;
+        }
+        if Self::apply_tool_delta(entry, delta) {
+            // The delta matched the step it builds: keep its unmodeled
+            // fields there too.
+            if let (Some(target), Some(extra)) = (entry.step.extra_mut(), delta.extra()) {
+                absorb(target, extra);
             }
-            StepDelta::TextAnnotation { annotations } => {
-                if let Step::UserInput { content } | Step::ModelOutput { content, .. } =
-                    &mut entry.step
-                    && let Some(Content::Text {
-                        annotations: annots,
-                        ..
-                    }) = content.last_mut()
+            if let (Some(target), Some(extra)) =
+                (entry.step.arguments_extra_mut(), delta.arguments_extra())
+            {
+                absorb(target, extra);
+            }
+        }
+    }
+
+    /// Applies a delta that builds a content block (text, annotations,
+    /// media). Returns `false` for every other delta type. The delta's
+    /// unmodeled fields go on the block it extends or starts.
+    fn apply_content_delta(step: &mut Step, delta: &StepDelta) -> bool {
+        let Some(content) = content_of(step) else {
+            return matches!(
+                delta,
+                StepDelta::Text { .. }
+                    | StepDelta::TextAnnotation { .. }
+                    | StepDelta::Image { .. }
+                    | StepDelta::Audio { .. }
+                    | StepDelta::Video { .. }
+                    | StepDelta::Document { .. }
+            );
+        };
+        match delta {
+            StepDelta::Text { text, extra } => match content.last_mut() {
+                Some(Content::Text {
+                    text: Some(t),
+                    extra: block_extra,
+                    ..
+                }) => {
+                    t.push_str(text);
+                    absorb(block_extra, extra);
+                }
+                _ => content.push(Content::Text {
+                    text: Some(text.clone()),
+                    annotations: None,
+                    extra: extra.clone(),
+                }),
+            },
+            StepDelta::TextAnnotation { annotations, extra } => {
+                if let Some(Content::Text {
+                    annotations: annots,
+                    extra: block_extra,
+                    ..
+                }) = content.last_mut()
                 {
                     annots
                         .get_or_insert_with(Vec::new)
                         .extend(annotations.iter().cloned());
+                    absorb(block_extra, extra);
                 }
             }
             StepDelta::Image {
@@ -112,31 +162,32 @@ impl StepAccumulator {
                 uri,
                 mime_type,
                 resolution,
+                extra,
             } => {
-                if let Step::UserInput { content } | Step::ModelOutput { content, .. } =
-                    &mut entry.step
-                {
-                    // Images may stream in multiple chunks; append base64 data
-                    // to the previous image block when present.
-                    if let (
+                // Images may stream in multiple chunks; append base64 data
+                // to the previous image block when present.
+                match (content.last_mut(), data) {
+                    (
                         Some(Content::Image {
                             data: Some(existing),
+                            extra: block_extra,
                             ..
                         }),
                         Some(new_data),
-                    ) = (content.last_mut(), data.as_ref())
-                    {
+                    ) => {
                         existing.push_str(new_data);
-                    } else {
-                        content.push(Content::Image {
-                            data: data.clone(),
-                            uri: uri.clone(),
-                            mime_type: mime_type.clone(),
-                            resolution: resolution.clone(),
-                        });
+                        absorb(block_extra, extra);
                     }
+                    _ => content.push(Content::Image {
+                        data: data.clone(),
+                        uri: uri.clone(),
+                        mime_type: mime_type.clone(),
+                        resolution: resolution.clone(),
+                        extra: extra.clone(),
+                    }),
                 }
             }
+            // Audio, video and documents append the same way.
             StepDelta::Audio {
                 data,
                 uri,
@@ -144,389 +195,421 @@ impl StepAccumulator {
                 rate,
                 sample_rate,
                 channels,
-            } => {
-                if let Step::UserInput { content } | Step::ModelOutput { content, .. } =
-                    &mut entry.step
-                {
-                    // Audio may stream in multiple chunks; append base64 data to
-                    // the previous audio block when present.
-                    if let (
-                        Some(Content::Audio {
-                            data: Some(existing),
-                            ..
-                        }),
-                        Some(new_data),
-                    ) = (content.last_mut(), data.as_ref())
-                    {
-                        existing.push_str(new_data);
-                    } else {
-                        content.push(Content::Audio {
-                            data: data.clone(),
-                            uri: uri.clone(),
-                            mime_type: mime_type.clone(),
-                            sample_rate: sample_rate.or(*rate),
-                            channels: *channels,
-                        });
-                    }
+                extra,
+            } => match (content.last_mut(), data) {
+                (
+                    Some(Content::Audio {
+                        data: Some(existing),
+                        extra: block_extra,
+                        ..
+                    }),
+                    Some(new_data),
+                ) => {
+                    existing.push_str(new_data);
+                    absorb(block_extra, extra);
                 }
-            }
+                _ => content.push(Content::Audio {
+                    data: data.clone(),
+                    uri: uri.clone(),
+                    mime_type: mime_type.clone(),
+                    sample_rate: sample_rate.or(*rate),
+                    channels: *channels,
+                    extra: extra.clone(),
+                }),
+            },
             StepDelta::Video {
                 data,
                 uri,
                 mime_type,
                 resolution,
-            } => {
-                if let Step::UserInput { content } | Step::ModelOutput { content, .. } =
-                    &mut entry.step
-                {
-                    // Video may stream in multiple chunks; append base64 data
-                    // to the previous video block when present.
-                    if let (
-                        Some(Content::Video {
-                            data: Some(existing),
-                            ..
-                        }),
-                        Some(new_data),
-                    ) = (content.last_mut(), data.as_ref())
-                    {
-                        existing.push_str(new_data);
-                    } else {
-                        content.push(Content::Video {
-                            data: data.clone(),
-                            uri: uri.clone(),
-                            mime_type: mime_type.clone(),
-                            resolution: resolution.clone(),
-                            processing: None,
-                            name: None,
-                        });
-                    }
+                extra,
+            } => match (content.last_mut(), data) {
+                (
+                    Some(Content::Video {
+                        data: Some(existing),
+                        extra: block_extra,
+                        ..
+                    }),
+                    Some(new_data),
+                ) => {
+                    existing.push_str(new_data);
+                    absorb(block_extra, extra);
                 }
-            }
+                _ => content.push(Content::Video {
+                    data: data.clone(),
+                    uri: uri.clone(),
+                    mime_type: mime_type.clone(),
+                    resolution: resolution.clone(),
+                    processing: None,
+                    name: None,
+                    extra: extra.clone(),
+                }),
+            },
             StepDelta::Document {
                 data,
                 uri,
                 mime_type,
-            } => {
-                if let Step::UserInput { content } | Step::ModelOutput { content, .. } =
-                    &mut entry.step
+                extra,
+            } => match (content.last_mut(), data) {
+                (
+                    Some(Content::Document {
+                        data: Some(existing),
+                        extra: block_extra,
+                        ..
+                    }),
+                    Some(new_data),
+                ) => {
+                    existing.push_str(new_data);
+                    absorb(block_extra, extra);
+                }
+                _ => content.push(Content::Document {
+                    data: data.clone(),
+                    uri: uri.clone(),
+                    mime_type: mime_type.clone(),
+                    extra: extra.clone(),
+                }),
+            },
+            _ => return false,
+        }
+        true
+    }
+
+    /// Applies a thought, function or tool delta. Returns `true` when the
+    /// delta matched the step at its index, so its `extra` belongs there.
+    fn apply_tool_delta(entry: &mut AccumulatedStep, delta: &StepDelta) -> bool {
+        match (delta, &mut entry.step) {
+            (
+                StepDelta::ThoughtSummary {
+                    content: Some(c), ..
+                },
+                Step::Thought { summary, .. },
+            ) => {
+                // Consecutive text summaries merge; other content appends.
+                if let (
+                    Some(Content::Text { text: Some(t), .. }),
+                    Content::Text {
+                        text: Some(new), ..
+                    },
+                ) = (summary.last_mut(), c)
                 {
-                    // Documents may stream in multiple chunks; append base64
-                    // data to the previous document block when present.
-                    if let (
-                        Some(Content::Document {
-                            data: Some(existing),
-                            ..
-                        }),
-                        Some(new_data),
-                    ) = (content.last_mut(), data.as_ref())
-                    {
-                        existing.push_str(new_data);
-                    } else {
-                        content.push(Content::Document {
-                            data: data.clone(),
-                            uri: uri.clone(),
-                            mime_type: mime_type.clone(),
-                        });
-                    }
+                    t.push_str(new);
+                } else {
+                    summary.push(c.clone());
                 }
             }
-            StepDelta::ThoughtSummary { content } => {
-                if let Step::Thought { summary, .. } = &mut entry.step
-                    && let Some(c) = content
-                {
-                    // Consecutive text summaries merge; other content appends.
-                    if let (
-                        Some(Content::Text { text: Some(t), .. }),
-                        Content::Text {
-                            text: Some(new), ..
-                        },
-                    ) = (summary.last_mut(), c)
-                    {
-                        t.push_str(new);
-                    } else {
-                        summary.push(c.clone());
-                    }
-                }
-            }
-            StepDelta::ThoughtSignature { signature } => {
-                if let Step::Thought { signature: sig, .. } = &mut entry.step
-                    && let Some(fragment) = signature
-                {
+            (StepDelta::ThoughtSummary { content: None, .. }, Step::Thought { .. }) => {}
+            (
+                StepDelta::ThoughtSignature { signature, .. },
+                Step::Thought { signature: sig, .. },
+            ) => {
+                if let Some(fragment) = signature {
                     sig.get_or_insert_with(String::new).push_str(fragment);
                 }
             }
-            StepDelta::ArgumentsDelta { arguments } => {
+            (StepDelta::ArgumentsDelta { arguments, .. }, _) => {
                 entry.args_buffer.push_str(arguments);
+                return matches!(entry.step, Step::FunctionCall { .. });
             }
-            StepDelta::FunctionResult {
-                call_id,
-                name,
-                result,
-                is_error,
-            } => {
+            (
+                StepDelta::FunctionResult {
+                    call_id,
+                    name,
+                    result,
+                    is_error,
+                    ..
+                },
+                step,
+            ) => {
                 // Keep what step.start delivered: the delta carries no
                 // signature, and may carry no call_id.
-                let (start_call_id, signature) = match &entry.step {
+                let (start_call_id, signature, extra) = match step {
                     Step::FunctionResult {
-                        call_id, signature, ..
-                    } => (Some(call_id.clone()), signature.clone()),
-                    _ => (None, None),
+                        call_id,
+                        signature,
+                        extra,
+                        ..
+                    } => (
+                        Some(std::mem::take(call_id)),
+                        signature.take(),
+                        std::mem::take(extra),
+                    ),
+                    _ => (None, None, Map::new()),
                 };
-                entry.step = Step::FunctionResult {
+                *step = Step::FunctionResult {
                     call_id: call_id.clone().or(start_call_id).unwrap_or_default(),
                     name: name.clone(),
                     result: result.clone(),
                     is_error: *is_error,
                     signature,
+                    extra,
                 };
             }
-            StepDelta::CodeExecutionCall {
-                language,
-                code,
-                signature,
-            } => {
-                if let Step::CodeExecutionCall {
+            (
+                StepDelta::CodeExecutionCall {
+                    language,
+                    code,
+                    signature,
+                    ..
+                },
+                Step::CodeExecutionCall {
                     language: lang,
                     code: existing_code,
                     signature: sig,
                     ..
-                } = &mut entry.step
-                {
-                    if let Some(l) = language {
-                        *lang = l.clone();
-                    }
-                    if let Some(c) = code {
-                        existing_code.push_str(c);
-                    }
-                    replace_signature(sig, signature.as_deref());
+                },
+            ) => {
+                if let Some(l) = language {
+                    *lang = l.clone();
                 }
+                if let Some(c) = code {
+                    existing_code.push_str(c);
+                }
+                replace_signature(sig, signature.as_deref());
             }
-            StepDelta::CodeExecutionResult {
-                result,
-                is_error,
-                signature,
-            } => {
-                if let Step::CodeExecutionResult {
+            (
+                StepDelta::CodeExecutionResult {
+                    result,
+                    is_error,
+                    signature,
+                    ..
+                },
+                Step::CodeExecutionResult {
                     result: existing,
                     is_error: err,
                     signature: sig,
                     ..
-                } = &mut entry.step
-                {
-                    existing.push_str(result);
-                    if let Some(e) = is_error {
-                        *err = *e;
-                    }
-                    replace_signature(sig, signature.as_deref());
+                },
+            ) => {
+                existing.push_str(result);
+                if let Some(e) = is_error {
+                    *err = *e;
                 }
+                replace_signature(sig, signature.as_deref());
             }
-            StepDelta::UrlContextCall { urls, signature } => {
-                if let Step::UrlContextCall {
+            (
+                StepDelta::UrlContextCall {
+                    urls, signature, ..
+                },
+                Step::UrlContextCall {
                     urls: existing,
                     signature: sig,
                     ..
-                } = &mut entry.step
-                {
-                    existing.extend(urls.iter().cloned());
-                    replace_signature(sig, signature.as_deref());
-                }
-            }
-            StepDelta::UrlContextResult {
-                result,
-                is_error,
-                signature,
-            } => {
-                if let Step::UrlContextResult {
-                    result: existing,
-                    is_error: err,
-                    signature: sig,
+                },
+            )
+            | (
+                StepDelta::GoogleSearchCall {
+                    queries: urls,
+                    signature,
                     ..
-                } = &mut entry.step
-                {
-                    existing.extend(result.iter().cloned());
-                    if is_error.is_some() {
-                        *err = *is_error;
-                    }
-                    replace_signature(sig, signature.as_deref());
-                }
-            }
-            StepDelta::GoogleSearchCall { queries, signature } => {
-                if let Step::GoogleSearchCall {
+                },
+                Step::GoogleSearchCall {
                     queries: existing,
                     signature: sig,
                     ..
-                } = &mut entry.step
-                {
-                    existing.extend(queries.iter().cloned());
-                    replace_signature(sig, signature.as_deref());
-                }
+                },
+            )
+            | (
+                StepDelta::GoogleMapsCall {
+                    queries: urls,
+                    signature,
+                    ..
+                },
+                Step::GoogleMapsCall {
+                    queries: existing,
+                    signature: sig,
+                    ..
+                },
+            ) => {
+                existing.extend(urls.iter().cloned());
+                replace_signature(sig, signature.as_deref());
             }
-            StepDelta::GoogleSearchResult {
-                result,
-                is_error,
-                signature,
-            } => {
-                if let Step::GoogleSearchResult {
+            (
+                StepDelta::UrlContextResult {
+                    result,
+                    is_error,
+                    signature,
+                    ..
+                },
+                Step::UrlContextResult {
                     result: existing,
                     is_error: err,
                     signature: sig,
                     ..
-                } = &mut entry.step
-                {
-                    existing.extend(result.iter().cloned());
-                    if is_error.is_some() {
-                        *err = *is_error;
-                    }
-                    replace_signature(sig, signature.as_deref());
+                },
+            ) => {
+                existing.extend(result.iter().cloned());
+                if is_error.is_some() {
+                    *err = *is_error;
                 }
+                replace_signature(sig, signature.as_deref());
             }
-            StepDelta::McpServerToolCall {
-                name,
-                server_name,
-                arguments,
-            } => {
-                if let Step::McpServerToolCall {
+            (
+                StepDelta::GoogleSearchResult {
+                    result,
+                    is_error,
+                    signature,
+                    ..
+                },
+                Step::GoogleSearchResult {
+                    result: existing,
+                    is_error: err,
+                    signature: sig,
+                    ..
+                },
+            ) => {
+                existing.extend(result.iter().cloned());
+                if is_error.is_some() {
+                    *err = *is_error;
+                }
+                replace_signature(sig, signature.as_deref());
+            }
+            (
+                StepDelta::McpServerToolCall {
+                    name,
+                    server_name,
+                    arguments,
+                    ..
+                },
+                Step::McpServerToolCall {
                     name: n,
                     server_name: sn,
                     arguments: args,
                     ..
-                } = &mut entry.step
-                {
-                    *n = name.clone();
-                    *sn = server_name.clone();
-                    *args = arguments.clone();
-                }
+                },
+            ) => {
+                n.clone_from(name);
+                sn.clone_from(server_name);
+                args.clone_from(arguments);
             }
-            StepDelta::McpServerToolResult {
-                name,
-                server_name,
-                result,
-            } => {
-                if let Step::McpServerToolResult {
+            (
+                StepDelta::McpServerToolResult {
+                    name,
+                    server_name,
+                    result,
+                    ..
+                },
+                Step::McpServerToolResult {
                     name: n,
                     server_name: sn,
                     result: r,
                     ..
-                } = &mut entry.step
-                {
-                    if name.is_some() {
-                        *n = name.clone();
-                    }
-                    if server_name.is_some() {
-                        *sn = server_name.clone();
-                    }
-                    *r = result.clone();
+                },
+            ) => {
+                if name.is_some() {
+                    n.clone_from(name);
                 }
-            }
-            StepDelta::FileSearchCall { signature } => {
-                if let Step::FileSearchCall { signature: sig, .. } = &mut entry.step {
-                    replace_signature(sig, signature.as_deref());
+                if server_name.is_some() {
+                    sn.clone_from(server_name);
                 }
+                r.clone_from(result);
             }
-            StepDelta::FileSearchResult { result, signature } => {
-                if let Step::FileSearchResult {
+            (
+                StepDelta::FileSearchCall { signature, .. },
+                Step::FileSearchCall { signature: sig, .. },
+            ) => replace_signature(sig, signature.as_deref()),
+            (
+                StepDelta::FileSearchResult {
+                    result, signature, ..
+                },
+                Step::FileSearchResult {
                     result: existing,
                     signature: sig,
                     ..
-                } = &mut entry.step
-                {
-                    existing.extend(result.iter().cloned());
-                    replace_signature(sig, signature.as_deref());
-                }
+                },
+            ) => {
+                existing.extend(result.iter().cloned());
+                replace_signature(sig, signature.as_deref());
             }
-            StepDelta::GoogleMapsCall { queries, signature } => {
-                if let Step::GoogleMapsCall {
-                    queries: existing,
-                    signature: sig,
-                    ..
-                } = &mut entry.step
-                {
-                    existing.extend(queries.iter().cloned());
-                    replace_signature(sig, signature.as_deref());
-                }
-            }
-            StepDelta::GoogleMapsResult { result, signature } => {
-                if let Step::GoogleMapsResult {
+            (
+                StepDelta::GoogleMapsResult {
+                    result, signature, ..
+                },
+                Step::GoogleMapsResult {
                     result: existing,
                     signature: sig,
                     ..
-                } = &mut entry.step
-                {
-                    existing.extend(result.iter().cloned());
-                    replace_signature(sig, signature.as_deref());
-                }
+                },
+            ) => {
+                existing.extend(result.iter().cloned());
+                replace_signature(sig, signature.as_deref());
             }
-            StepDelta::ProcessingCall { signature } => {
-                if let Step::ProcessingCall { signature: sig, .. } = &mut entry.step {
-                    merge_signature(sig, signature.as_deref());
-                }
-            }
-            StepDelta::ProcessingResult { signature } => {
-                if let Step::ProcessingResult { signature: sig, .. } = &mut entry.step {
-                    merge_signature(sig, signature.as_deref());
-                }
-            }
-            StepDelta::RetrievalCall {
-                queries,
-                retrieval_type,
-                signature,
-            } => {
-                if let Step::RetrievalCall {
+            (
+                StepDelta::ProcessingCall { signature, .. },
+                Step::ProcessingCall { signature: sig, .. },
+            )
+            | (
+                StepDelta::ProcessingResult { signature, .. },
+                Step::ProcessingResult { signature: sig, .. },
+            ) => merge_signature(sig, signature.as_deref()),
+            (
+                StepDelta::RetrievalCall {
+                    queries,
+                    retrieval_type,
+                    signature,
+                    ..
+                },
+                Step::RetrievalCall {
                     queries: existing,
                     retrieval_type: rt,
                     signature: sig,
                     ..
-                } = &mut entry.step
-                {
-                    existing.extend(queries.iter().cloned());
-                    if retrieval_type.is_some() {
-                        *rt = retrieval_type.clone();
-                    }
-                    merge_signature(sig, signature.as_deref());
+                },
+            ) => {
+                existing.extend(queries.iter().cloned());
+                if retrieval_type.is_some() {
+                    rt.clone_from(retrieval_type);
                 }
+                merge_signature(sig, signature.as_deref());
             }
-            StepDelta::RetrievalResult {
-                is_error,
-                signature,
-            } => {
-                if let Step::RetrievalResult {
+            (
+                StepDelta::RetrievalResult {
+                    is_error,
+                    signature,
+                    ..
+                },
+                Step::RetrievalResult {
                     is_error: err,
                     signature: sig,
                     ..
-                } = &mut entry.step
-                {
-                    if is_error.is_some() {
-                        *err = *is_error;
-                    }
-                    merge_signature(sig, signature.as_deref());
+                },
+            ) => {
+                if is_error.is_some() {
+                    *err = *is_error;
+                }
+                merge_signature(sig, signature.as_deref());
+            }
+            (
+                StepDelta::Unknown { delta_type, data },
+                Step::Unknown {
+                    step_type,
+                    data: Value::Object(step_obj),
+                },
+            ) if step_type == delta_type
+                && data.get("signature").and_then(Value::as_str).is_some() =>
+            {
+                // A signature is the one field known to matter for replay,
+                // so carry it onto a same-typed Unknown step rather than
+                // drop it.
+                let fragment = data.get("signature").and_then(Value::as_str);
+                let mut sig = step_obj
+                    .get("signature")
+                    .and_then(Value::as_str)
+                    .map(String::from);
+                merge_signature(&mut sig, fragment);
+                if let Some(sig) = sig {
+                    step_obj.insert("signature".into(), Value::String(sig));
                 }
             }
-            StepDelta::Unknown { delta_type, data } => {
-                // A signature is the one field known to matter for replay, so
-                // carry it onto a same-typed Unknown step rather than drop it.
-                if let Step::Unknown {
-                    step_type,
-                    data: serde_json::Value::Object(step_obj),
-                } = &mut entry.step
-                    && step_type == delta_type
-                    && let Some(fragment) = data.get("signature").and_then(|v| v.as_str())
-                {
-                    let mut sig = step_obj
-                        .get("signature")
-                        .and_then(|v| v.as_str())
-                        .map(String::from);
-                    merge_signature(&mut sig, Some(fragment));
-                    if let Some(sig) = sig {
-                        step_obj.insert("signature".into(), serde_json::Value::String(sig));
-                    }
-                } else {
-                    tracing::debug!(
-                        "Skipping unknown StepDelta type '{}' during accumulation",
-                        delta_type
-                    );
-                }
+            (delta, step) => {
+                tracing::debug!(
+                    "Skipping '{}' delta for a '{}' step during accumulation",
+                    delta.delta_type(),
+                    step.step_type()
+                );
+                return false;
             }
         }
+        true
     }
 
     /// Finalizes the step at `index` (called on `step.stop`).
@@ -555,7 +638,7 @@ impl StepAccumulator {
             return;
         }
         if let Step::FunctionCall { arguments, .. } = &mut entry.step {
-            match serde_json::from_str::<serde_json::Value>(&entry.args_buffer) {
+            match serde_json::from_str::<Value>(&entry.args_buffer) {
                 Ok(parsed) => *arguments = parsed,
                 Err(e) => {
                     tracing::warn!(
@@ -563,7 +646,7 @@ impl StepAccumulator {
                          Preserving raw string.",
                         e
                     );
-                    *arguments = serde_json::Value::String(std::mem::take(&mut entry.args_buffer));
+                    *arguments = Value::String(std::mem::take(&mut entry.args_buffer));
                 }
             }
         }

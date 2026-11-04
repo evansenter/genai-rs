@@ -70,6 +70,7 @@ pub(crate) mod serde_util;
 #[cfg(test)]
 pub(crate) mod test_subscriber;
 pub(crate) mod wire_enum;
+pub(crate) mod wire_fields;
 
 // =============================================================================
 // Model defaults

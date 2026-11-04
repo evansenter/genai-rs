@@ -43,6 +43,9 @@ pub struct GoogleSearchResultItem {
     /// Search suggestions rendering payload (if provided by the API)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub search_suggestions: Option<String>,
+    /// Fields not yet modeled, kept for round trip (Evergreen, #491).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl GoogleSearchResultItem {
@@ -54,6 +57,7 @@ impl GoogleSearchResultItem {
             url: url.into(),
             rendered_content: None,
             search_suggestions: None,
+            extra: serde_json::Map::new(),
         }
     }
 
@@ -132,6 +136,9 @@ pub struct GoogleMapsResultItem {
     /// Widget context token for rendering interactive map widgets
     #[serde(skip_serializing_if = "Option::is_none")]
     pub widget_context_token: Option<String>,
+    /// Fields not yet modeled, kept for round trip (Evergreen, #491).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 // =============================================================================
@@ -162,6 +169,9 @@ pub struct UrlContextResultItem {
     pub url: String,
     /// Status of the fetch operation (e.g., "success", "error", "paywall", "unsafe")
     pub status: String,
+    /// Fields not yet modeled, kept for round trip (Evergreen, #491).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl UrlContextResultItem {
@@ -171,6 +181,7 @@ impl UrlContextResultItem {
         Self {
             url: url.into(),
             status: status.into(),
+            extra: serde_json::Map::new(),
         }
     }
 
@@ -245,6 +256,9 @@ pub struct FileSearchResultItem {
     /// Name of the file search store containing this result
     #[serde(rename = "file_search_store")]
     pub store: String,
+    /// Fields not yet modeled, kept for round trip (Evergreen, #491).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl FileSearchResultItem {
@@ -259,6 +273,7 @@ impl FileSearchResultItem {
             title: title.into(),
             text: text.into(),
             store: store.into(),
+            extra: serde_json::Map::new(),
         }
     }
 

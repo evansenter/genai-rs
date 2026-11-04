@@ -711,6 +711,7 @@ mod common {
         let text = Content::Text {
             text: Some("hello".to_string()),
             annotations: None,
+            extra: Default::default(),
         };
         let json = serde_json::to_value(&text).unwrap();
         assert_eq!(json["type"], "text");
@@ -721,6 +722,7 @@ mod common {
             uri: None,
             mime_type: Some("image/png".to_string()),
             resolution: None,
+            extra: Default::default(),
         };
         let json = serde_json::to_value(&image).unwrap();
         assert_eq!(json["type"], "image");
@@ -733,6 +735,7 @@ mod common {
             mime_type: Some("audio/wav".to_string()),
             sample_rate: Some(24000),
             channels: Some(1),
+            extra: Default::default(),
         };
         let json = serde_json::to_value(&audio).unwrap();
         assert_eq!(json["type"], "audio");
@@ -745,6 +748,7 @@ mod common {
         let thought = Step::Thought {
             signature: Some("Eq0JCqoJ...signature".to_string()),
             summary: vec![],
+            extra: Default::default(),
         };
         let json = serde_json::to_value(&thought).unwrap();
         assert_eq!(json["type"], "thought");

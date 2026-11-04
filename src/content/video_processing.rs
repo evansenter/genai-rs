@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+
+use crate::wire_fields::{ModeledMap, WireFields};
 use std::fmt;
 
 /// How the model processes a video for understanding
@@ -118,6 +120,8 @@ pub enum VideoProcessing {
         end_offset: Option<String>,
         /// Video frame-rate sampling density.
         fps: Option<f64>,
+        /// Unmodeled keys of the object, kept for round trip (#491).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Unknown processing mode (for forward compatibility).
     ///
@@ -221,6 +225,7 @@ impl VideoProcessingBuilder {
             start_offset: self.start_offset,
             end_offset: self.end_offset,
             fps: self.fps,
+            extra: serde_json::Map::new(),
         }
     }
 }
@@ -230,8 +235,6 @@ impl Serialize for VideoProcessing {
     where
         S: serde::Serializer,
     {
-        use serde::ser::SerializeMap;
-
         match self {
             Self::Static => serializer.serialize_str("static"),
             Self::Agentic => serializer.serialize_str("agentic"),
@@ -239,23 +242,30 @@ impl Serialize for VideoProcessing {
                 start_offset,
                 end_offset,
                 fps,
+                extra,
             } => {
-                let mut map = serializer.serialize_map(None)?;
-                map.serialize_entry("type", "static")?;
-                if let Some(s) = start_offset {
-                    map.serialize_entry("start_offset", s)?;
-                }
-                if let Some(e) = end_offset {
-                    map.serialize_entry("end_offset", e)?;
-                }
-                if let Some(f) = fps {
-                    map.serialize_entry("fps", f)?;
-                }
-                map.end()
+                let mut map = ModeledMap::tagged(serializer, "static")?;
+                map.opt("start_offset", start_offset.as_ref())?;
+                map.opt("end_offset", end_offset.as_ref())?;
+                map.opt("fps", fps.as_ref())?;
+                map.end(extra)
             }
             Self::Unknown { data, .. } => data.serialize(serializer),
         }
     }
+}
+
+/// Reads the `{"type": "static", ...}` object form.
+fn read_segment(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<VideoProcessing, serde_json::Error> {
+    let mut f = WireFields::tagged(object);
+    Ok(VideoProcessing::StaticSegment {
+        start_offset: f.optional("start_offset")?,
+        end_offset: f.optional("end_offset")?,
+        fps: f.optional("fps")?,
+        extra: f.extra(),
+    })
 }
 
 impl<'de> Deserialize<'de> for VideoProcessing {
@@ -285,21 +295,14 @@ impl<'de> Deserialize<'de> for VideoProcessing {
             });
         }
 
-        // Object form: {"type": "static", start_offset, end_offset, fps}.
+        // Object form: {"type": "static", start_offset, end_offset, fps}. A
+        // mistyped modeled field falls through to Unknown, which keeps it.
         if let Some(obj) = value.as_object() {
             let tag = obj.get("type").and_then(serde_json::Value::as_str);
-            if tag == Some("static") {
-                return Ok(Self::StaticSegment {
-                    start_offset: obj
-                        .get("start_offset")
-                        .and_then(serde_json::Value::as_str)
-                        .map(ToString::to_string),
-                    end_offset: obj
-                        .get("end_offset")
-                        .and_then(serde_json::Value::as_str)
-                        .map(ToString::to_string),
-                    fps: obj.get("fps").and_then(serde_json::Value::as_f64),
-                });
+            if tag == Some("static")
+                && let Ok(segment) = read_segment(obj)
+            {
+                return Ok(segment);
             }
 
             let processing_type = tag.unwrap_or("<missing type>").to_string();

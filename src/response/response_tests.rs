@@ -148,10 +148,12 @@ fn tool_call_steps_are_counted_and_not_attributed_to_mcp() {
             Step::ToolCall {
                 id: "call_1".to_string(),
                 signature: Some("sig".to_string()),
+                extra: Default::default(),
             },
             Step::ToolCall {
                 id: "call_2".to_string(),
                 signature: None,
+                extra: Default::default(),
             },
             Step::model_text("the answer"),
         ],
@@ -230,6 +232,7 @@ fn test_interaction_response_thoughts() {
             Step::Thought {
                 signature: None,
                 summary: vec![],
+                extra: Default::default(),
             },
         ],
         ..Default::default()
@@ -269,6 +272,7 @@ fn test_interaction_response_thought_summaries() {
             Step::Thought {
                 signature: Some("sig".to_string()),
                 summary: vec![Content::text("Summarized reasoning")],
+                extra: Default::default(),
             },
             Step::model_text("Answer"),
         ],
@@ -300,6 +304,7 @@ fn test_interaction_response_function_calls() {
                 name: "get_time".to_string(),
                 arguments: serde_json::json!({"timezone": "UTC"}),
                 signature: Some("sig-abc".to_string()),
+                extra: Default::default(),
             },
         ],
         ..Default::default()
@@ -535,41 +540,52 @@ fn test_step_summary_with_built_in_tools() {
                 language: CodeExecutionLanguage::Python,
                 code: "print(1)".to_string(),
                 signature: None,
+                arguments_extra: Default::default(),
+                extra: Default::default(),
             },
             Step::CodeExecutionCall {
                 id: "call_2".to_string(),
                 language: CodeExecutionLanguage::Python,
                 code: "print(2)".to_string(),
                 signature: None,
+                arguments_extra: Default::default(),
+                extra: Default::default(),
             },
             Step::CodeExecutionResult {
                 call_id: "call_1".to_string(),
                 is_error: false,
                 result: "1\n2\n".to_string(),
                 signature: None,
+                extra: Default::default(),
             },
             Step::GoogleSearchCall {
                 id: "search1".to_string(),
                 queries: vec!["test".to_string()],
                 search_type: None,
                 signature: None,
+                arguments_extra: Default::default(),
+                extra: Default::default(),
             },
             Step::GoogleSearchResult {
                 call_id: "search1".to_string(),
                 result: vec![],
                 is_error: None,
                 signature: None,
+                extra: Default::default(),
             },
             Step::UrlContextCall {
                 id: "ctx_123".to_string(),
                 urls: vec!["https://example.com".to_string()],
                 signature: None,
+                arguments_extra: Default::default(),
+                extra: Default::default(),
             },
             Step::UrlContextResult {
                 call_id: "ctx_123".to_string(),
                 result: vec![],
                 is_error: None,
                 signature: None,
+                extra: Default::default(),
             },
         ],
         ..Default::default()
@@ -601,12 +617,15 @@ fn test_interaction_response_code_execution_helpers() {
                 language: CodeExecutionLanguage::Python,
                 code: "print(42)".to_string(),
                 signature: None,
+                arguments_extra: Default::default(),
+                extra: Default::default(),
             },
             Step::CodeExecutionResult {
                 call_id: "call_123".to_string(),
                 is_error: false,
                 result: "42\n".to_string(),
                 signature: None,
+                extra: Default::default(),
             },
         ],
         ..Default::default()
@@ -646,6 +665,7 @@ fn test_interaction_response_google_search_helpers() {
                 result: vec![GoogleSearchResultItem::new("Test", "https://example.com")],
                 is_error: None,
                 signature: None,
+                extra: Default::default(),
             },
             Step::model_text("Based on search results..."),
         ],
@@ -671,6 +691,7 @@ fn test_interaction_response_url_context_helpers() {
             result: vec![UrlContextResultItem::new("https://example.com", "success")],
             is_error: None,
             signature: None,
+            extra: Default::default(),
         }],
         ..Default::default()
     };
@@ -705,7 +726,9 @@ fn test_interaction_response_google_maps_helpers() {
                         ..Default::default()
                     }]),
                     widget_context_token: Some("token123".to_string()),
+                    extra: Default::default(),
                 }],
+                extra: Default::default(),
             },
             Step::model_text("Here are the maps results."),
         ],
@@ -822,12 +845,16 @@ fn test_interaction_response_google_search_call_helpers() {
                 queries: vec!["Rust programming language".to_string()],
                 search_type: None,
                 signature: None,
+                arguments_extra: Default::default(),
+                extra: Default::default(),
             },
             Step::GoogleSearchCall {
                 id: "search2".to_string(),
                 queries: vec!["async await Rust".to_string()],
                 search_type: None,
                 signature: None,
+                arguments_extra: Default::default(),
+                extra: Default::default(),
             },
             Step::model_text("Search results..."),
         ],
@@ -869,6 +896,8 @@ fn test_interaction_response_url_context_call_helpers() {
                 id: "ctx_1".to_string(),
                 urls: vec!["https://docs.rs".to_string()],
                 signature: None,
+                arguments_extra: Default::default(),
+                extra: Default::default(),
             },
             Step::UrlContextCall {
                 id: "ctx_2".to_string(),
@@ -877,6 +906,8 @@ fn test_interaction_response_url_context_call_helpers() {
                     "https://crates.io".to_string(),
                 ],
                 signature: None,
+                arguments_extra: Default::default(),
+                extra: Default::default(),
             },
         ],
         ..Default::default()
@@ -919,12 +950,16 @@ fn test_interaction_response_code_execution_call_singular() {
                 language: CodeExecutionLanguage::Python,
                 code: "print('first')".to_string(),
                 signature: None,
+                arguments_extra: Default::default(),
+                extra: Default::default(),
             },
             Step::CodeExecutionCall {
                 id: "call_second".to_string(),
                 language: CodeExecutionLanguage::Python,
                 code: "print('second')".to_string(),
                 signature: None,
+                arguments_extra: Default::default(),
+                extra: Default::default(),
             },
         ],
         ..Default::default()
@@ -962,12 +997,16 @@ fn test_interaction_response_code_execution_calls_plural() {
                 language: CodeExecutionLanguage::Python,
                 code: "print('first')".to_string(),
                 signature: None,
+                arguments_extra: Default::default(),
+                extra: Default::default(),
             },
             Step::CodeExecutionCall {
                 id: "call_2".to_string(),
                 language: CodeExecutionLanguage::Python,
                 code: "print('second')".to_string(),
                 signature: None,
+                arguments_extra: Default::default(),
+                extra: Default::default(),
             },
             Step::model_text("Results"),
         ],
@@ -998,12 +1037,14 @@ fn test_interaction_response_code_execution_results() {
                 is_error: false,
                 result: "first output".to_string(),
                 signature: None,
+                extra: Default::default(),
             },
             Step::CodeExecutionResult {
                 call_id: "call_2".to_string(),
                 is_error: true,
                 result: "error message".to_string(),
                 signature: None,
+                extra: Default::default(),
             },
         ],
         ..Default::default()
@@ -1055,6 +1096,7 @@ fn test_interaction_response_google_search_results() {
                 )],
                 is_error: None,
                 signature: None,
+                extra: Default::default(),
             },
             Step::GoogleSearchResult {
                 call_id: "search2".to_string(),
@@ -1064,6 +1106,7 @@ fn test_interaction_response_google_search_results() {
                 )],
                 is_error: None,
                 signature: None,
+                extra: Default::default(),
             },
         ],
         ..Default::default()
@@ -1106,12 +1149,14 @@ fn test_interaction_response_url_context_results() {
                 ],
                 is_error: None,
                 signature: None,
+                extra: Default::default(),
             },
             Step::UrlContextResult {
                 call_id: "ctx_2".to_string(),
                 result: vec![UrlContextResultItem::new("https://blocked.com", "error")],
                 is_error: None,
                 signature: None,
+                extra: Default::default(),
             },
         ],
         ..Default::default()
@@ -1177,12 +1222,15 @@ fn test_interaction_response_complex_roundtrip() {
                 language: CodeExecutionLanguage::Python,
                 code: "print(2 + 2)".to_string(),
                 signature: None,
+                arguments_extra: Default::default(),
+                extra: Default::default(),
             },
             Step::CodeExecutionResult {
                 call_id: "code-exec-001".to_string(),
                 is_error: false,
                 result: "4".to_string(),
                 signature: None,
+                extra: Default::default(),
             },
             // Google search
             Step::GoogleSearchCall {
@@ -1190,6 +1238,8 @@ fn test_interaction_response_complex_roundtrip() {
                 queries: vec!["weather in Tokyo".to_string()],
                 search_type: None,
                 signature: None,
+                arguments_extra: Default::default(),
+                extra: Default::default(),
             },
             Step::GoogleSearchResult {
                 call_id: "gsearch-001".to_string(),
@@ -1199,18 +1249,22 @@ fn test_interaction_response_complex_roundtrip() {
                 )],
                 is_error: None,
                 signature: None,
+                extra: Default::default(),
             },
             // URL context
             Step::UrlContextCall {
                 id: "ctx_123".to_string(),
                 urls: vec!["https://example.com".to_string()],
                 signature: None,
+                arguments_extra: Default::default(),
+                extra: Default::default(),
             },
             Step::UrlContextResult {
                 call_id: "ctx_123".to_string(),
                 result: vec![UrlContextResultItem::new("https://example.com", "success")],
                 is_error: None,
                 signature: None,
+                extra: Default::default(),
             },
             // Final model output (text + image)
             Step::model_output(vec![
@@ -1664,6 +1718,7 @@ fn test_interaction_response_has_annotations() {
                 19,
                 25,
             )]),
+            extra: Default::default(),
         }])],
         ..Default::default()
     };
@@ -1695,6 +1750,7 @@ fn test_interaction_response_empty_annotations_not_counted() {
         steps: vec![Step::model_output(vec![Content::Text {
             text: Some("Text with empty annotations.".to_string()),
             annotations: Some(vec![]), // Empty array
+            extra: Default::default(),
         }])],
         ..Default::default()
     };
@@ -1718,6 +1774,7 @@ fn test_interaction_response_all_annotations() {
                     0,
                     11,
                 )]),
+                extra: Default::default(),
             }]),
             Step::thought("sig_thinking"),
             Step::model_output(vec![
@@ -1727,10 +1784,12 @@ fn test_interaction_response_all_annotations() {
                         Annotation::url_citation("https://source-b.com", None, 0, 6),
                         Annotation::url_citation("https://source-c.com", None, 11, 16),
                     ]),
+                    extra: Default::default(),
                 },
                 Content::Text {
                     text: Some("Text without annotations.".to_string()),
                     annotations: None,
+                    extra: Default::default(),
                 },
             ]),
         ],
@@ -1782,6 +1841,7 @@ fn test_interaction_response_all_annotations_skips_non_text() {
                         0,
                         4,
                     )]),
+                    extra: Default::default(),
                 },
             ]),
             Step::CodeExecutionResult {
@@ -1789,6 +1849,7 @@ fn test_interaction_response_all_annotations_skips_non_text() {
                 is_error: false,
                 result: "result".to_string(),
                 signature: None,
+                extra: Default::default(),
             },
         ],
         ..Default::default()
@@ -1815,8 +1876,10 @@ fn test_interaction_response_has_file_search_results() {
                 title: "Technical Doc".to_string(),
                 text: "Relevant content...".to_string(),
                 store: "stores/my-store".to_string(),
+                extra: Default::default(),
             }],
             signature: None,
+            extra: Default::default(),
         }],
         ..Default::default()
     };
@@ -1851,14 +1914,17 @@ fn test_interaction_response_file_search_results_extraction() {
                         title: "Doc 1".to_string(),
                         text: "Content from doc 1".to_string(),
                         store: "stores/store-a".to_string(),
+                        extra: Default::default(),
                     },
                     FileSearchResultItem {
                         title: "Doc 2".to_string(),
                         text: "Content from doc 2".to_string(),
                         store: "stores/store-a".to_string(),
+                        extra: Default::default(),
                     },
                 ],
                 signature: None,
+                extra: Default::default(),
             },
             Step::model_text("Summary of search results"),
             Step::FileSearchResult {
@@ -1867,8 +1933,10 @@ fn test_interaction_response_file_search_results_extraction() {
                     title: "Doc 3".to_string(),
                     text: "Content from doc 3".to_string(),
                     store: "stores/store-b".to_string(),
+                    extra: Default::default(),
                 }],
                 signature: None,
+                extra: Default::default(),
             },
         ],
         ..Default::default()
@@ -1896,6 +1964,7 @@ fn test_interaction_response_file_search_results_empty_results() {
             call_id: "call_empty".to_string(),
             result: vec![], // Empty results array
             signature: None,
+            extra: Default::default(),
         }],
         ..Default::default()
     };
@@ -1962,6 +2031,7 @@ fn test_image_info_mime_type() {
             uri: None,
             mime_type: None,
             resolution: None,
+            extra: Default::default(),
         },
     ]);
 
@@ -2021,6 +2091,7 @@ fn test_image_info_extension_none_mime_type_defaults_to_png() {
         uri: None,
         mime_type: None,
         resolution: None,
+        extra: Default::default(),
     }]);
     let images: Vec<_> = response.images().collect();
     assert_eq!(images[0].extension(), "png"); // Defaults to png when no MIME type
@@ -2163,6 +2234,7 @@ fn test_audio_info_sample_rate_and_channels() {
         mime_type: Some("audio/wav".to_string()),
         sample_rate: Some(24000),
         channels: Some(1),
+        extra: Default::default(),
     }]);
 
     let audio = response.first_audio().expect("Should have audio");
@@ -2556,6 +2628,7 @@ fn make_response_with_image(base64_data: &str, mime_type: Option<&str>) -> Inter
             mime_type: mime_type.map(String::from),
             uri: None,
             resolution: None,
+            extra: Default::default(),
         }])],
         status: InteractionStatus::Completed,
         ..Default::default()
@@ -2623,6 +2696,7 @@ fn test_audio_channels_and_sample_rate_exposed() {
             mime_type: Some("audio/l16".into()),
             sample_rate: Some(24000),
             channels: Some(1),
+            extra: Default::default(),
         }])],
         ..Default::default()
     };

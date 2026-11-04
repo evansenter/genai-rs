@@ -14,12 +14,14 @@ fn test_accumulator_text_stream() {
         0,
         &StepDelta::Text {
             text: "Hello ".into(),
+            extra: Default::default(),
         },
     );
     acc.apply_delta(
         0,
         &StepDelta::Text {
             text: "world".into(),
+            extra: Default::default(),
         },
     );
     acc.stop(0);
@@ -39,6 +41,7 @@ fn test_accumulator_image_deltas_accumulate_into_one_block() {
             uri: None,
             mime_type: Some("image/png".into()),
             resolution: None,
+            extra: Default::default(),
         },
     );
     acc.apply_delta(
@@ -48,6 +51,7 @@ fn test_accumulator_image_deltas_accumulate_into_one_block() {
             uri: None,
             mime_type: Some("image/png".into()),
             resolution: None,
+            extra: Default::default(),
         },
     );
     acc.stop(0);
@@ -64,6 +68,52 @@ fn test_accumulator_image_deltas_accumulate_into_one_block() {
     }
 }
 
+/// A delta's unmodeled fields land on what it builds: the content block for
+/// text and media, the step for a tool delta. The accumulated steps then
+/// round-trip them like the steps of a non-streamed response (#491).
+#[test]
+fn test_accumulator_keeps_unmodeled_delta_fields() {
+    let mut acc = StepAccumulator::new();
+    acc.start(0, Step::model_output(vec![]));
+    for delta in [
+        json!({"type": "text", "text": "a", "lang": "en"}),
+        json!({"type": "text", "text": "b"}),
+        json!({"type": "image", "mime_type": "image/png", "data": "AA", "seed": 7}),
+    ] {
+        acc.apply_delta(0, &serde_json::from_value(delta).unwrap());
+    }
+    acc.start(
+        1,
+        serde_json::from_value(json!({
+            "type": "url_context_call", "id": "c1",
+            "arguments": {"urls": []}, "start_only": true
+        }))
+        .unwrap(),
+    );
+    acc.apply_delta(
+        1,
+        &serde_json::from_value(json!({
+            "type": "url_context_call",
+            "arguments": {"urls": ["https://example.com"], "max_pages": 3},
+            "trace": "t1"
+        }))
+        .unwrap(),
+    );
+    let steps = acc.finish();
+    assert_eq!(
+        serde_json::to_value(&steps).unwrap(),
+        json!([
+            {"type": "model_output", "content": [
+                {"type": "text", "text": "ab", "lang": "en"},
+                {"type": "image", "mime_type": "image/png", "data": "AA", "seed": 7}
+            ]},
+            {"type": "url_context_call", "id": "c1",
+             "arguments": {"urls": ["https://example.com"], "max_pages": 3},
+             "start_only": true, "trace": "t1"}
+        ])
+    );
+}
+
 #[test]
 fn test_accumulator_video_and_document_deltas_accumulate() {
     let mut acc = StepAccumulator::new();
@@ -75,6 +125,7 @@ fn test_accumulator_video_and_document_deltas_accumulate() {
             uri: None,
             mime_type: Some("video/mp4".into()),
             resolution: None,
+            extra: Default::default(),
         },
     );
     acc.apply_delta(
@@ -84,6 +135,7 @@ fn test_accumulator_video_and_document_deltas_accumulate() {
             uri: None,
             mime_type: Some("video/mp4".into()),
             resolution: None,
+            extra: Default::default(),
         },
     );
     acc.apply_delta(
@@ -92,6 +144,7 @@ fn test_accumulator_video_and_document_deltas_accumulate() {
             data: Some("DD".into()),
             uri: None,
             mime_type: Some("application/pdf".into()),
+            extra: Default::default(),
         },
     );
     acc.apply_delta(
@@ -100,6 +153,7 @@ fn test_accumulator_video_and_document_deltas_accumulate() {
             data: Some("EE".into()),
             uri: None,
             mime_type: Some("application/pdf".into()),
+            extra: Default::default(),
         },
     );
     acc.stop(0);
@@ -133,6 +187,7 @@ fn test_accumulator_image_uri_delta_pushes_new_block() {
             uri: None,
             mime_type: Some("image/png".into()),
             resolution: None,
+            extra: Default::default(),
         },
     );
     acc.apply_delta(
@@ -142,6 +197,7 @@ fn test_accumulator_image_uri_delta_pushes_new_block() {
             uri: Some("https://example.com/img.png".into()),
             mime_type: Some("image/png".into()),
             resolution: None,
+            extra: Default::default(),
         },
     );
     acc.stop(0);
@@ -162,18 +218,21 @@ fn test_accumulator_function_call_arguments_delta() {
             name: "get_weather".into(),
             arguments: serde_json::Value::Null,
             signature: None,
+            extra: Default::default(),
         },
     );
     acc.apply_delta(
         0,
         &StepDelta::ArgumentsDelta {
             arguments: "{\"city\": ".into(),
+            extra: Default::default(),
         },
     );
     acc.apply_delta(
         0,
         &StepDelta::ArgumentsDelta {
             arguments: "\"Tokyo\"}".into(),
+            extra: Default::default(),
         },
     );
     acc.stop(0);
@@ -192,29 +251,35 @@ fn test_accumulator_thought_summary_and_signature() {
         Step::Thought {
             signature: None,
             summary: vec![],
+            extra: Default::default(),
         },
     );
     acc.apply_delta(
         0,
         &StepDelta::ThoughtSummary {
             content: Some(Content::text("Consider ")),
+            extra: Default::default(),
         },
     );
     acc.apply_delta(
         0,
         &StepDelta::ThoughtSummary {
             content: Some(Content::text("the problem")),
+            extra: Default::default(),
         },
     );
     acc.apply_delta(
         0,
         &StepDelta::ThoughtSignature {
             signature: Some("sig-xyz".into()),
+            extra: Default::default(),
         },
     );
     let steps = acc.finish();
     match &steps[0] {
-        Step::Thought { signature, summary } => {
+        Step::Thought {
+            signature, summary, ..
+        } => {
             assert_eq!(signature.as_deref(), Some("sig-xyz"));
             assert_eq!(summary[0].as_text(), Some("Consider the problem"));
         }
@@ -229,6 +294,7 @@ fn test_accumulator_delta_without_start_creates_model_output() {
         0,
         &StepDelta::Text {
             text: "orphan".into(),
+            extra: Default::default(),
         },
     );
     let steps = acc.finish();
@@ -381,6 +447,8 @@ fn test_accumulator_empty_delta_signature_keeps_the_real_one() {
         &StepDelta::GoogleSearchCall {
             queries: vec!["rust".into()],
             signature: Some(String::new()),
+            arguments_extra: Default::default(),
+            extra: Default::default(),
         },
     );
     acc.stop(0);

@@ -17,7 +17,6 @@ pub use results::{
 pub use video_processing::{VideoProcessing, VideoProcessingBuilder};
 
 use crate::wire_enum::wire_enum;
-use serde::Serialize;
 
 wire_enum! {
     /// Programming language for code execution.
@@ -97,7 +96,8 @@ wire_enum! {
 ///
 /// This enum is marked `#[non_exhaustive]`; unrecognized content types are
 /// captured as [`Content::Unknown`] rather than causing a deserialization
-/// error, and roundtrip losslessly.
+/// error, and roundtrip losslessly. A known type keeps the fields it does
+/// not model in `extra` ([`Content::extra`]), so they round-trip too.
 ///
 /// # Example
 ///
@@ -115,8 +115,7 @@ wire_enum! {
 ///     }
 /// }
 /// ```
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum Content {
     /// Text content with optional source annotations.
@@ -130,70 +129,61 @@ pub enum Content {
         /// `Option<String>` because streaming may announce a text block
         /// before any text arrives. For non-streaming responses this is
         /// always `Some`.
-        #[serde(skip_serializing_if = "Option::is_none")]
         text: Option<String>,
         /// Source annotations for portions of the text.
-        #[serde(skip_serializing_if = "crate::serde_util::is_none_or_empty")]
         annotations: Option<Vec<Annotation>>,
+        /// Unmodeled wire fields, kept for round trip ([`Content::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Image content
     Image {
         /// Base64-encoded image data.
-        #[serde(skip_serializing_if = "Option::is_none")]
         data: Option<String>,
         /// URI reference (e.g., Files API URI).
-        #[serde(skip_serializing_if = "Option::is_none")]
         uri: Option<String>,
         /// MIME type (e.g., `image/png`).
-        #[serde(skip_serializing_if = "Option::is_none")]
         mime_type: Option<String>,
         /// Processing resolution.
-        #[serde(skip_serializing_if = "Option::is_none")]
         resolution: Option<Resolution>,
+        /// Unmodeled wire fields, kept for round trip ([`Content::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Audio content
     Audio {
         /// Base64-encoded audio data.
-        #[serde(skip_serializing_if = "Option::is_none")]
         data: Option<String>,
         /// URI reference (e.g., Files API URI).
-        #[serde(skip_serializing_if = "Option::is_none")]
         uri: Option<String>,
         /// MIME type (e.g., `audio/wav`).
-        #[serde(skip_serializing_if = "Option::is_none")]
         mime_type: Option<String>,
         /// Sample rate in Hz (e.g., 24000 for TTS output).
-        #[serde(skip_serializing_if = "Option::is_none")]
         sample_rate: Option<u32>,
         /// Number of audio channels (e.g., 1 for mono).
-        #[serde(skip_serializing_if = "Option::is_none")]
         channels: Option<u32>,
+        /// Unmodeled wire fields, kept for round trip ([`Content::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Video content
     Video {
         /// Base64-encoded video data.
-        #[serde(skip_serializing_if = "Option::is_none")]
         data: Option<String>,
         /// URI reference (e.g., Files API URI).
-        #[serde(skip_serializing_if = "Option::is_none")]
         uri: Option<String>,
         /// MIME type (e.g., `video/mp4`).
-        #[serde(skip_serializing_if = "Option::is_none")]
         mime_type: Option<String>,
         /// Processing resolution.
-        #[serde(skip_serializing_if = "Option::is_none")]
         resolution: Option<Resolution>,
         /// How the model processes this video for understanding.
         ///
         /// Controls segment clipping, frame-rate sampling, and static vs
         /// agentic processing. Has a large effect on token cost — see
         /// [`VideoProcessing`].
-        #[serde(skip_serializing_if = "Option::is_none")]
         processing: Option<VideoProcessing>,
         /// Optional label for the video. Accepted on input (verified live
         /// 2026-09-24); no effect on the output was observed.
-        #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<String>,
+        /// Unmodeled wire fields, kept for round trip ([`Content::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Document content for file-based inputs.
     ///
@@ -202,14 +192,13 @@ pub enum Content {
     /// HTML, and XML are processed as plain text only, losing visual structure.
     Document {
         /// Base64-encoded document data.
-        #[serde(skip_serializing_if = "Option::is_none")]
         data: Option<String>,
         /// URI reference (e.g., Files API URI).
-        #[serde(skip_serializing_if = "Option::is_none")]
         uri: Option<String>,
         /// MIME type (e.g., `application/pdf`).
-        #[serde(skip_serializing_if = "Option::is_none")]
         mime_type: Option<String>,
+        /// Unmodeled wire fields, kept for round trip ([`Content::extra`]).
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Unknown content type for forward compatibility.
     ///
@@ -223,10 +212,6 @@ pub enum Content {
     /// `"type"` field and the remaining `data` fields flattened alongside it,
     /// enabling lossless roundtrip in multi-turn conversations. Non-object
     /// `data` is placed under a `"data"` key; null data is omitted.
-    #[serde(
-        untagged,
-        serialize_with = "crate::serde_util::serialize_unknown_merged"
-    )]
     Unknown {
         /// The unrecognized type name from the API
         content_type: String,
@@ -345,6 +330,7 @@ impl Content {
         Self::Text {
             text: Some(text.into()),
             annotations: None,
+            extra: serde_json::Map::new(),
         }
     }
 
@@ -374,6 +360,7 @@ impl Content {
                 Some(speaker.into()),
                 None,
             )]),
+            extra: serde_json::Map::new(),
         }
     }
 
@@ -396,6 +383,7 @@ impl Content {
             uri: None,
             mime_type: Some(mime_type.into()),
             resolution: None,
+            extra: serde_json::Map::new(),
         }
     }
 
@@ -415,6 +403,7 @@ impl Content {
             uri: Some(uri.into()),
             mime_type: Some(mime_type.into()),
             resolution: None,
+            extra: serde_json::Map::new(),
         }
     }
 
@@ -435,6 +424,7 @@ impl Content {
             mime_type: Some(mime_type.into()),
             sample_rate: None,
             channels: None,
+            extra: serde_json::Map::new(),
         }
     }
 
@@ -455,6 +445,7 @@ impl Content {
             mime_type: Some(mime_type.into()),
             sample_rate: None,
             channels: None,
+            extra: serde_json::Map::new(),
         }
     }
 
@@ -476,6 +467,7 @@ impl Content {
             resolution: None,
             processing: None,
             name: None,
+            extra: serde_json::Map::new(),
         }
     }
 
@@ -497,6 +489,7 @@ impl Content {
             resolution: None,
             processing: None,
             name: None,
+            extra: serde_json::Map::new(),
         }
     }
 
@@ -515,6 +508,7 @@ impl Content {
             data: Some(data.into()),
             uri: None,
             mime_type: Some(mime_type.into()),
+            extra: serde_json::Map::new(),
         }
     }
 
@@ -533,6 +527,7 @@ impl Content {
             data: None,
             uri: Some(uri.into()),
             mime_type: Some(mime_type.into()),
+            extra: serde_json::Map::new(),
         }
     }
 
@@ -569,41 +564,17 @@ impl Content {
     /// ```
     #[must_use]
     pub fn from_uri_and_mime(uri: impl Into<String>, mime_type: impl Into<String>) -> Self {
-        let uri_str = uri.into();
-        let mime_str = mime_type.into();
-
-        // Choose the appropriate content type based on MIME type prefix
-        if mime_str.starts_with("image/") {
-            Self::Image {
-                data: None,
-                uri: Some(uri_str),
-                mime_type: Some(mime_str),
-                resolution: None,
-            }
-        } else if mime_str.starts_with("audio/") {
-            Self::Audio {
-                data: None,
-                uri: Some(uri_str),
-                mime_type: Some(mime_str),
-                sample_rate: None,
-                channels: None,
-            }
-        } else if mime_str.starts_with("video/") {
-            Self::Video {
-                data: None,
-                uri: Some(uri_str),
-                mime_type: Some(mime_str),
-                resolution: None,
-                processing: None,
-                name: None,
-            }
+        let mime_type = mime_type.into();
+        // Choose the content type by MIME type prefix; PDFs, text files and
+        // everything else are documents.
+        if mime_type.starts_with("image/") {
+            Self::image_uri(uri, mime_type)
+        } else if mime_type.starts_with("audio/") {
+            Self::audio_uri(uri, mime_type)
+        } else if mime_type.starts_with("video/") {
+            Self::video_uri(uri, mime_type)
         } else {
-            // Default to document for PDFs, text files, and other types
-            Self::Document {
-                data: None,
-                uri: Some(uri_str),
-                mime_type: Some(mime_str),
-            }
+            Self::document_uri(uri, mime_type)
         }
     }
 
@@ -662,42 +633,17 @@ impl Content {
     /// For content types that don't support resolution (Text, Audio, Document),
     /// this method logs a warning and returns the content unchanged.
     #[must_use]
-    pub fn with_resolution(self, resolution: Resolution) -> Self {
-        match self {
-            Self::Image {
-                data,
-                uri,
-                mime_type,
-                ..
-            } => Self::Image {
-                data,
-                uri,
-                mime_type,
-                resolution: Some(resolution),
-            },
-            Self::Video {
-                data,
-                uri,
-                mime_type,
-                processing,
-                name,
-                ..
-            } => Self::Video {
-                data,
-                uri,
-                mime_type,
-                resolution: Some(resolution),
-                processing,
-                name,
-            },
-            other => {
-                tracing::warn!(
-                    "with_resolution() called on content type that doesn't support resolution. \
-                     Resolution is only applicable to Image and Video content."
-                );
-                other
+    pub fn with_resolution(mut self, resolution: Resolution) -> Self {
+        match &mut self {
+            Self::Image { resolution: r, .. } | Self::Video { resolution: r, .. } => {
+                *r = Some(resolution);
             }
+            _ => tracing::warn!(
+                "with_resolution() called on content type that doesn't support resolution. \
+                 Resolution is only applicable to Image and Video content."
+            ),
         }
+        self
     }
 
     /// Sets how the model processes this video for understanding.
@@ -723,57 +669,69 @@ impl Content {
     ///     .with_processing(VideoProcessing::segment().end_offset("10s").fps(1.0).build());
     /// ```
     #[must_use]
-    pub fn with_processing(self, processing: VideoProcessing) -> Self {
-        match self {
-            Self::Video {
-                data,
-                uri,
-                mime_type,
-                resolution,
-                name,
-                ..
-            } => Self::Video {
-                data,
-                uri,
-                mime_type,
-                resolution,
-                processing: Some(processing),
-                name,
-            },
-            other => {
-                tracing::warn!(
-                    "with_processing() called on content type that doesn't support processing. \
-                     Processing is only applicable to Video content."
-                );
-                other
-            }
+    pub fn with_processing(mut self, processing: VideoProcessing) -> Self {
+        if let Self::Video { processing: p, .. } = &mut self {
+            *p = Some(processing);
+        } else {
+            tracing::warn!(
+                "with_processing() called on content type that doesn't support processing. \
+                 Processing is only applicable to Video content."
+            );
         }
+        self
     }
 
     /// Sets a label on video content; other content is returned unchanged
     /// with a warning. Accepted by the API (verified live 2026-09-24).
     #[must_use]
-    pub fn with_video_name(self, name: impl Into<String>) -> Self {
+    pub fn with_video_name(mut self, name: impl Into<String>) -> Self {
+        if let Self::Video { name: n, .. } = &mut self {
+            *n = Some(name.into());
+        } else {
+            tracing::warn!("with_video_name() called on non-video content; ignoring.");
+        }
+        self
+    }
+
+    /// The fields of this block that the crate does not model.
+    ///
+    /// Deserializing a known block keeps every key it does not read here,
+    /// and serializing writes them back after the modeled fields, so a field
+    /// the API adds survives replayed history (#491). An entry named `type`
+    /// or after a modeled field is never written. `None` for
+    /// [`Content::Unknown`], whose `data` holds the whole object.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use genai_rs::Content;
+    ///
+    /// let wire = serde_json::json!({"type": "text", "text": "hi", "future_field": 1});
+    /// let content: Content = serde_json::from_value(wire.clone()).unwrap();
+    /// assert_eq!(content.extra().unwrap()["future_field"], 1);
+    /// assert_eq!(serde_json::to_value(&content).unwrap(), wire);
+    /// ```
+    #[must_use]
+    pub fn extra(&self) -> Option<&serde_json::Map<String, serde_json::Value>> {
         match self {
-            Self::Video {
-                data,
-                uri,
-                mime_type,
-                resolution,
-                processing,
-                ..
-            } => Self::Video {
-                data,
-                uri,
-                mime_type,
-                resolution,
-                processing,
-                name: Some(name.into()),
-            },
-            other => {
-                tracing::warn!("with_video_name() called on non-video content; ignoring.");
-                other
-            }
+            Self::Text { extra, .. }
+            | Self::Image { extra, .. }
+            | Self::Audio { extra, .. }
+            | Self::Video { extra, .. }
+            | Self::Document { extra, .. } => Some(extra),
+            Self::Unknown { .. } => None,
+        }
+    }
+
+    /// Mutable access to [`extra`](Self::extra).
+    pub fn extra_mut(&mut self) -> Option<&mut serde_json::Map<String, serde_json::Value>> {
+        match self {
+            Self::Text { extra, .. }
+            | Self::Image { extra, .. }
+            | Self::Audio { extra, .. }
+            | Self::Video { extra, .. }
+            | Self::Document { extra, .. } => Some(extra),
+            Self::Unknown { .. } => None,
         }
     }
 }

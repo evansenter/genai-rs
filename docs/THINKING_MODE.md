@@ -122,13 +122,13 @@ let mut stream = client
 while let Some(event) = stream.next().await {
     if let StreamChunk::StepDelta { delta, .. } = event?.chunk {
         match delta {
-            StepDelta::ThoughtSummary { content: Some(c) } => {
+            StepDelta::ThoughtSummary { content: Some(c), .. } => {
                 if let Some(text) = c.as_text() {
                     eprint!("[thinking] {text}");
                 }
             }
             StepDelta::ThoughtSignature { .. } => {} // opaque; the Completed response carries it
-            StepDelta::Text { text } => print!("{text}"),
+            StepDelta::Text { text, .. } => print!("{text}"),
             _ => {}
         }
     }

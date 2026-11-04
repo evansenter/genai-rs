@@ -26,10 +26,12 @@ mod basic {
             Content::Text {
                 text: Some("First message".to_string()),
                 annotations: None,
+                extra: Default::default(),
             },
             Content::Text {
                 text: Some("Second message".to_string()),
                 annotations: None,
+                extra: Default::default(),
             },
             Content::image_data("base64data", "image/png"),
         ]);

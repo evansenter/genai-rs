@@ -890,6 +890,7 @@ mod tests {
         // Test Delta variant roundtrip (payload is the StepDelta wire form)
         let delta = AutoFunctionStreamChunk::Delta(StepDelta::Text {
             text: "Hello, world!".to_string(),
+            extra: Default::default(),
         });
 
         let json_str = serde_json::to_string(&delta).expect("Serialization should succeed");
@@ -1236,6 +1237,7 @@ mod tests {
         let event = AutoFunctionStreamEvent::new(
             AutoFunctionStreamChunk::Delta(StepDelta::Text {
                 text: "Hello from auto-function".to_string(),
+                extra: Default::default(),
             }),
             Some("evt_auto_abc123".to_string()),
         );
@@ -1291,6 +1293,7 @@ mod tests {
         let event = AutoFunctionStreamEvent::new(
             AutoFunctionStreamChunk::Delta(StepDelta::Text {
                 text: "Test".to_string(),
+                extra: Default::default(),
             }),
             Some(String::new()),
         );

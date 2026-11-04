@@ -982,6 +982,7 @@ fn test_with_content_cannot_combine_with_history() {
     let content = vec![Content::Text {
         text: Some("test".to_string()),
         annotations: None,
+        extra: Default::default(),
     }];
 
     let result = client
@@ -1010,6 +1011,7 @@ fn test_with_content_and_text_merge() {
         uri: None,
         mime_type: Some("image/png".to_string()),
         resolution: None,
+        extra: Default::default(),
     };
 
     // with_text() then with_content() - text should be prepended to content
@@ -1072,6 +1074,7 @@ fn test_with_content_alone_works() {
     let content = vec![Content::Text {
         text: Some("test".to_string()),
         annotations: None,
+        extra: Default::default(),
     }];
 
     let result = client
@@ -1114,6 +1117,7 @@ fn test_conversation_builder_with_parts_content() {
     let parts = vec![Content::Text {
         text: Some("What is in this image?".to_string()),
         annotations: None,
+        extra: Default::default(),
     }];
 
     let builder = client
