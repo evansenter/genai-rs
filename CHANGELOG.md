@@ -34,8 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `on_post_tool`, `on_questions`) therefore no longer stalls the runtime,
   and the turn deadline still fires. A hook abandoned at the deadline runs
   on until it returns, but holds up neither runtime shutdown nor process
-  exit. A hook that read thread-local state from the calling thread must
-  take that state in through its captures instead;
+  exit. A hook no longer sees the turn's thread-local state, a tokio
+  `task_local!` scoped around the turn, or the turn's current tracing span;
+  take such state in through the hook's captures, and enter a span inside
+  the hook if its events should nest under one.
   `tokio::runtime::Handle::current()` still works inside one. A panicking
   hook still panics the turn.
 - **Breaking: the Antigravity turn deadline covers this crate's own work in
