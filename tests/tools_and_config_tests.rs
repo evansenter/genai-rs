@@ -486,7 +486,9 @@ mod mcp_server {
     /// unsupported on Gemini 3).
     ///
     /// Loud failures are the ones that are ours: the API rejecting the tool,
-    /// or an interaction left waiting on a call nobody answered. Since
+    /// an interaction left waiting on a call nobody answered, or a call the
+    /// server ran that `mcp_calls()` cannot attribute to its server and tool
+    /// (#459). Since
     /// 2026-10-01 the API ends an MCP interaction in `requires_action` even
     /// after running every MCP call and producing the answer
     /// (`docs/INTERACTIONS_API_GAP.md`), so that status passes only when no
@@ -564,10 +566,6 @@ mod mcp_server {
                 "MCP call names its server: {call:?}"
             );
             assert!(!call.tool.is_empty(), "MCP call names its tool: {call:?}");
-            assert!(
-                call.result.is_some(),
-                "MCP call carries its result: {call:?}"
-            );
         }
         let prefixed = response
             .function_calls()
@@ -580,15 +578,33 @@ mod mcp_server {
             "every `deepwiki:` call should read back as an MCP call; steps {step_types:?}"
         );
 
-        // Tool-use tokens are non-zero only if the server was called; the
-        // declaration alone costs none (measured 2026-08-16). MCP calls came
-        // back as `tool_call` steps before 2026-10-01.
+        // Any sign the server ran a call means that call must be
+        // attributable to its server and tool (#459): a lost `<server>:`
+        // prefix, or a return to the anonymous `tool_call` shape of
+        // 2026-08-16, leaves `mcp_calls()` empty. Tool-use tokens are
+        // non-zero only if the server was called; the declaration alone costs
+        // none (measured 2026-08-16).
         let tool_tokens = response.tool_use_tokens().unwrap_or(0);
+        let answered_call = response.function_calls().iter().any(|call| {
+            response.steps.iter().any(|step| {
+                matches!(
+                    step,
+                    genai_rs::Step::FunctionResult { call_id, .. }
+                        if call_id == call.id
+                )
+            })
+        });
         let called = tool_tokens > 0
-            || !mcp_calls.is_empty()
+            || answered_call
             || step_types.contains(&"tool_call")
             || step_types.contains(&"mcp_server_tool_call");
-        if !called {
+        if called {
+            assert!(
+                !mcp_calls.is_empty(),
+                "the MCP server was called (tool-use tokens {tool_tokens}), but no call \
+                 names its server and tool; steps {step_types:?}"
+            );
+        } else {
             println!(
                 "LIVE_TOOL_EVIDENCE_SKIPPED: the interaction completed but shows no \
                  evidence the MCP server was called (tool-use tokens 0, steps \
