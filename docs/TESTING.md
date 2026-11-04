@@ -10,7 +10,8 @@ follow.
 | Unit | `#[cfg(test)]` modules and `src/*_tests.rs` | No | `make test` |
 | Property (proptest) | `src/proptest_tests.rs` | No | `make test` (or `cargo test proptest`) |
 | Offline HTTP | `tests/http_mock_tests.rs`, `tests/http_mock_resources.rs` | No | `make test` |
-| Guards | `tests/ci_coverage.rs`, `tests/model_literals.rs`, `tests/non_exhaustive_responses.rs` | No | `make test` |
+| Coverage oracle | `src/coverage_oracle/`, `tests/request_wire_oracle.rs` (see [Coverage oracle](#coverage-oracle)) | No | `make test` |
+| Guards | `tests/ci_coverage.rs`, `tests/live_verb_coverage.rs`, `tests/model_literals.rs`, `tests/non_exhaustive_responses.rs` | No | `make test` |
 | Compile-time (trybuild) | `tests/ui/` via `tests/ui_tests.rs` | No | `cargo test --test ui_tests` |
 | Live integration | The other `tests/*.rs` files; each test is `#[ignore = "Requires API key"]` | Yes | `make test-all` |
 | Doctests | Rustdoc examples and the markdown guides (`doc_comment!` in `src/lib.rs`) | No | `cargo test --workspace --doc --all-features` (CI only; `make` skips them) |
@@ -208,4 +209,81 @@ Serialization is tested twice, on purpose:
 | Property | `src/proptest_tests.rs` | Random values round-trip, and Unknown variants keep their data. The strategies are in-crate so there is only one set to maintain |
 | Example | `src/*_tests.rs`, `tests/wire_format_verification_tests.rs`, `tests/unknown_variant_tests.rs` | Documents specific wire shapes and catches regressions quickly |
 
-Keep both: the examples are documentation, and they run fast.
+Keep both: the examples are documentation, and they run fast. Both take
+their expected shapes from the crate's own serde attributes, so neither can
+catch a wrong wire key; the coverage oracle below can.
+
+## Coverage oracle
+
+"Full Interactions API coverage" is checked offline against a committed
+snapshot of the API surface in `tests/fixtures/api_surface/`:
+
+| File | What it is | Written by |
+|------|------------|------------|
+| `bindings.json` | google-genai's generated classes, every type reference resolved, plus the Files, File Search Store and Document classes from its `types.py` (camelCase on the wire). The version is the one in `.github/last-swept-sdk-version` | `dump_bindings_schema.py --json` |
+| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose, fetched 2026-11-01 (the published URL now 404s) | `snapshot_openapi.py` |
+
+`tests/api_surface/mod.rs` loads either source into one type model. The
+checks on it:
+
+- **Request keys** (`src/coverage_oracle/request.rs`). Each request type
+  (the interaction body in its model and agent forms, `GenerationConfig`,
+  every `Tool`, `SafetySetting`, every `AgentConfig`, `SpeechConfig`, the
+  response formats, the environment, and every resource's create and update
+  body) is built fully populated as struct literals with no
+  `..Default::default()`, so a new field does not compile until it is
+  populated, plus proptest samples for the union arms and enum values. Every
+  key it serializes to, at every depth, must exist on the binding class it
+  is sent as, and every required key must be sent. The reverse test lists
+  every field of a reached request class that nothing sends.
+- **Request bodies on the wire** (`tests/request_wire_oracle.rs`). Each
+  verb with a body runs against the local stub, and the captured body is
+  checked the same way, wrapping included.
+- **Response fields** (`src/coverage_oracle/response.rs`). For each
+  response type, bodies are generated from the snapshot that together carry
+  every field, union arm and enum value its class reaches. Each must
+  deserialize with no key in an `extra` map, no `Unknown` variant, and no
+  key dropped when the value is serialized again; each finding is traced to
+  its `Class.field` by removing keys until it goes away. It runs against the
+  bindings and the v1beta spec (whose `writeOnly` fields are left out of
+  responses), and not under `strict-unknown`.
+- **Live coverage per handle** (`tests/live_verb_coverage.rs`). Every
+  public verb on every resource handle must be called, on a receiver of
+  that handle's type, by a live test or a helper one reaches.
+
+### Reading a failure
+
+A finding names a site: `Class.field` (`interactions.Interaction.status`
+for the bindings, `Interaction.status` for the spec), with `=value` for an
+enum value or a union tag. Either fix the crate, or add an entry with the
+reason to the list that fits:
+
+| List | For |
+|------|-----|
+| `ALLOWED` (request, response, wire) | Deliberate: a key the crate sends that the bindings lack but the API needs (`signature` on `function_call`), a deprecated or Vertex-only field (D-005), a value never served |
+| `NOT_SENT` (request) | A request field nothing sends: deprecated, rejected live, or not modeled yet |
+| `GAPS` (response) | Served or specified but not modeled yet, the work list for the next modeling pass |
+
+Date every live fact in a reason (D-010). An entry that matches nothing
+fails the test, so the lists only shrink when the crate catches up. A
+`values()` override in `response.rs` replaces a synthesized value where the
+snapshot's type is looser than what the API sends (a function's
+`parameters`, a protobuf int64 sent as a string).
+
+### Refreshing the snapshot
+
+`api-surface-sweep` opens an issue when google-genai moves past the
+baseline, and attaches the snapshot regenerated for the new release. To take
+it:
+
+```bash
+.github/scripts/refresh_api_snapshot.sh --version X.Y.Z   # bumps the baseline and bindings.json together
+cargo nextest run -E 'test(/coverage_oracle/)'            # every new field fails until modeled or listed
+```
+
+Then update the `docs/INTERACTIONS_API_GAP.md` header (CI checks it matches
+the baseline). With a newer copy of the OpenAPI spec, add
+`--spec-v1beta FILE --spec-v1 FILE --spec-fetched YYYY-MM-DD`. Every sweep
+run also checks that the committed `bindings.json` matches a fresh dump of
+the baseline release, so a dump-script change needs a refresh too (run the
+script without `--version`).
