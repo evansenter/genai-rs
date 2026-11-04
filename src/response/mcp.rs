@@ -22,16 +22,35 @@ pub struct McpCallInfo<'a> {
     /// The arguments the model passed to the tool.
     pub arguments: &'a serde_json::Value,
     /// What the tool returned, when the response carries the result. On the
-    /// live `function_result` shape this is an object with the tool's text
-    /// under `result` and the raw MCP `CallToolResult` as a JSON string
-    /// under `call_tool_result_json` (observed 2026-11-04).
+    /// live `function_result` shape (observed 2026-11-04) this is an object
+    /// with the tool's text under `result` and the raw MCP `CallToolResult`
+    /// as a JSON string under `call_tool_result_json`. A failed call adds
+    /// `is_error: true`; a successful one may add `structured_content`, the
+    /// tool's structured output as an object.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<&'a FunctionResultPayload>,
-    /// The result step's `is_error`. The live API has sent `false` here
-    /// while the tool's own `call_tool_result_json` reported
-    /// `"isError": true` (2026-11-04), so check both.
+    /// Whether the tool call failed: `true` when either the result step's
+    /// `is_error` or the result object's own `is_error` key is `true`. On
+    /// failed calls the live API set the step's flag to `false` and only the
+    /// result object's key to `true` (2026-11-04), so the step's flag alone
+    /// misses them. `None` when neither says.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_error: Option<bool>,
+}
+
+/// Whether an MCP call failed, from the result step's `is_error` and the
+/// `is_error` key of its result object. Either one being `true` is a
+/// failure; the live API has sent the step's as `false` on a failed call
+/// (2026-11-04).
+fn call_failed(step_flag: Option<bool>, result: Option<&FunctionResultPayload>) -> Option<bool> {
+    let payload_flag = result
+        .and_then(FunctionResultPayload::as_json)
+        .and_then(|value| value.get("is_error"))
+        .and_then(serde_json::Value::as_bool);
+    match (step_flag, payload_flag) {
+        (None, None) => None,
+        (step, payload) => Some(step == Some(true) || payload == Some(true)),
+    }
 }
 
 /// Splits a `<server>:<tool>` function name at its first colon.
@@ -55,7 +74,10 @@ impl InteractionResponse {
     ///   be named `a:b` (the API accepted `weather:get` as a declared name on
     ///   2026-11-04), but the client answers its own calls in a later
     ///   request, so a call answered within the response was run by the
-    ///   server. The name splits at its first colon.
+    ///   server. The name splits at its first colon. A failed call is
+    ///   marked in the result object (`is_error: true`) while the step's
+    ///   own `is_error` stays `false`, which [`McpCallInfo::is_error`]
+    ///   accounts for.
     /// - **Spec-only:** `mcp_server_tool_call` steps, which carry
     ///   `server_name` and `name` directly, paired with
     ///   `mcp_server_tool_result` by id. Never observed.
@@ -99,7 +121,7 @@ impl InteractionResponse {
                         tool,
                         arguments,
                         result: Some(result),
-                        is_error,
+                        is_error: call_failed(is_error, Some(result)),
                     })
                 }
                 Step::McpServerToolCall {
@@ -108,19 +130,22 @@ impl InteractionResponse {
                     server_name,
                     arguments,
                     ..
-                } => Some(McpCallInfo {
-                    id,
-                    server: server_name,
-                    tool: name,
-                    arguments,
-                    result: self.steps.iter().find_map(|s| match s {
+                } => {
+                    let result = self.steps.iter().find_map(|s| match s {
                         Step::McpServerToolResult {
                             call_id, result, ..
                         } if call_id == id => Some(result),
                         _ => None,
-                    }),
-                    is_error: None,
-                }),
+                    });
+                    Some(McpCallInfo {
+                        id,
+                        server: server_name,
+                        tool: name,
+                        arguments,
+                        result,
+                        is_error: call_failed(None, result),
+                    })
+                }
                 _ => None,
             })
             .collect()

@@ -252,8 +252,11 @@ them into `urls`, `queries`, `language` and `code`; any other key of
 `{"type": "mcp_server", "name": "wikiprobe", ...}`, the call was named
 `wikiprobe:read_wiki_structure`, so `<server>` is the declared name. The
 result is an object with the tool's text under `result` and the raw MCP
-`CallToolResult` as a JSON string under `call_tool_result_json`; the step's
-own `is_error` was `false` while that JSON said `"isError": true`. Streamed,
+`CallToolResult` as a JSON string under `call_tool_result_json`. A successful
+call added `structured_content` (the tool's structured output, an object). On
+three failed calls the object added `is_error: true` (matching `"isError":
+true` in the JSON string) while the step's own `is_error` stayed `false`, so
+`McpCallInfo::is_error` is `true` when either flag is. Streamed,
 the call arrives as `step.start` (`arguments: {}`) plus `arguments_delta`, and
 the result as `step.start` (no `result`) plus a `function_result` delta; no
 `mcp_server_tool_*` step or delta appeared. A client function may also

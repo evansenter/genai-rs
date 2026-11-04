@@ -411,7 +411,11 @@ for call in response.mcp_calls() {
 
 It counts a `<server>:<tool>` call only when its result is in the same
 response, because a function you declare may contain a colon too (the API
-accepted `weather:get` on 2026-11-04). `response.function_calls()` includes
+accepted `weather:get` on 2026-11-04). The result is an object holding the
+tool's text (`result`), the raw MCP `CallToolResult` as a JSON string
+(`call_tool_result_json`), and `structured_content` on success or
+`is_error: true` on failure. A failed call's step still says
+`is_error: false` (2026-11-04), so read `call.is_error`, which checks both. `response.function_calls()` includes
 MCP calls, and `pending_function_calls()` leaves them out, so the
 auto-function loops don't try to run them. Before 2026-10-01 (verified
 2026-08-16) they arrived as generic `Step::ToolCall { id, signature, .. }`

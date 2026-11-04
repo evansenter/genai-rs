@@ -17,6 +17,7 @@ fn live_mcp_steps() -> serde_json::Value {
         {"type": "function_result", "call_id": "call_472212", "signature": "s2",
          "name": "wikiprobe:read_wiki_structure", "is_error": false,
          "result": {"result": "Available pages for facebook/react: ...",
+                    "structured_content": {"result": "Available pages for facebook/react: ..."},
                     "call_tool_result_json": "{\"content\":[],\"isError\":false}"}},
         {"type": "thought", "signature": "s3"},
         {"type": "model_output", "content": [{"type": "text", "text": "Overview."}]}
@@ -39,8 +40,55 @@ fn mcp_calls_reads_the_live_function_call_shape() {
         .and_then(FunctionResultPayload::as_json)
         .unwrap();
     assert!(result["call_tool_result_json"].is_string());
+    assert!(result["structured_content"].is_object());
     // Answered by the server, so nothing is left for the client.
     assert!(response.pending_function_calls().is_empty());
+}
+
+/// A failed MCP call as the live API returned it (2026-11-04,
+/// `gemini-3.8-flash`, deepwiki asked about a repository it had not
+/// indexed): the step's `is_error` is `false`, and only the result object's
+/// own `is_error` (and the `isError` in `call_tool_result_json`) says the
+/// tool failed.
+#[test]
+fn mcp_calls_reports_a_failure_flagged_only_inside_the_result() {
+    let response = response(json!([
+        {"type": "function_call", "id": "call_221719", "signature": "s1",
+         "name": "deepwiki:read_wiki_structure",
+         "arguments": {"repoName": "evansenter/genai-rs"}},
+        {"type": "function_result", "call_id": "call_221719", "signature": "s2",
+         "name": "deepwiki:read_wiki_structure", "is_error": false,
+         "result": {"result": "Error fetching wiki for evansenter/genai-rs: Repository not found.",
+                    "call_tool_result_json": "{\"content\":[{\"type\":\"text\",\"text\":\"Error fetching wiki\"}],\"isError\":true}",
+                    "is_error": true}}
+    ]));
+    let calls = response.mcp_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].is_error, Some(true));
+    // The step itself still says `false`; only the helper combines the two.
+    assert!(matches!(
+        &response.steps[1],
+        Step::FunctionResult {
+            is_error: Some(false),
+            ..
+        }
+    ));
+}
+
+#[test]
+fn mcp_calls_is_error_reads_the_step_flag_and_is_none_without_either() {
+    let response = response(json!([
+        {"type": "function_call", "id": "c1", "name": "docs:search", "arguments": {}},
+        {"type": "function_result", "call_id": "c1", "is_error": true, "result": "boom"},
+        {"type": "function_call", "id": "c2", "name": "docs:search", "arguments": {}},
+        {"type": "function_result", "call_id": "c2", "result": {"result": "ok"}},
+        {"type": "mcp_server_tool_call", "id": "m1", "name": "search",
+         "server_name": "docs", "arguments": {}},
+        {"type": "mcp_server_tool_result", "call_id": "m1",
+         "result": {"result": "no", "is_error": true}}
+    ]));
+    let flags: Vec<Option<bool>> = response.mcp_calls().iter().map(|c| c.is_error).collect();
+    assert_eq!(flags, [Some(true), None, Some(true)]);
 }
 
 /// A client function may carry a colon too (the API accepted `weather:get`
