@@ -1089,15 +1089,15 @@ fn unknown_request_keys_deserialize_into_extra_and_round_trip() {
 }
 
 #[test]
-fn with_extra_inserts_and_replaces_per_key() {
+fn add_extra_accumulates_and_replaces_per_key() {
     let client = crate::Client::new("k".to_string());
     let request = client
         .interaction()
         .with_model("test-model")
         .with_text("Hello")
-        .with_extra("a", 1)
-        .with_extra("b", "two")
-        .with_extra("a", serde_json::json!([3]))
+        .add_extra("a", 1)
+        .add_extra("b", "two")
+        .add_extra("a", serde_json::json!([3]))
         .build()
         .unwrap();
     assert_eq!(request.extra.len(), 2);

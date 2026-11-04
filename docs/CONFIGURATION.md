@@ -158,7 +158,7 @@ reasoning is in [Reliability](RELIABILITY.md#why-only-a-connect-timeout-by-defau
 | `with_system_instruction(str)` | System prompt for this interaction |
 | `with_store_enabled()` / `with_store_disabled()` | Server-side storage (on by default); see [Builder API](BUILDER_API.md#validation-errors) |
 | `with_background(true)` | Return immediately and run in the background; see [Agents and Background Execution](AGENTS_AND_BACKGROUND.md) |
-| `with_extra(key, value)` | Sends a request field this crate does not model yet, flat beside the modeled ones (`InteractionRequest::extra`). The server validates it like any field: an unknown name is `400 Unknown parameter`. A key naming a modeled field overrides it, since the API keeps the last of a repeated key (verified live 2026-11-04) |
+| `add_extra(key, value)` | Adds a request field this crate does not model yet, sent flat beside the modeled ones (`InteractionRequest::extra`); a repeated key replaces its value. The server validates it like any field: an unknown name is `400 Unknown parameter`. A key naming a modeled field overrides it, since the API keeps the last of a repeated key (verified live 2026-11-04) |
 
 ## Cached content
 

@@ -374,10 +374,11 @@ impl<'a> InteractionBuilder<'a> {
         self
     }
 
-    /// Sends a request field this crate does not model yet, flat alongside
-    /// the modeled ones (it lands in
+    /// Adds a request field this crate does not model yet, sent flat
+    /// alongside the modeled ones (it lands in
     /// [`InteractionRequest::extra`](crate::InteractionRequest::extra)).
-    /// Calling it again with the same key replaces the value.
+    /// Fields added earlier are kept, and a repeated key replaces its
+    /// previous value, as with [`Self::add_label`].
     ///
     /// The server validates it like any other field: an unknown name is a
     /// `400 Unknown parameter`. A key that names a modeled field overrides
@@ -390,7 +391,7 @@ impl<'a> InteractionBuilder<'a> {
     ///     .interaction()
     ///     .with_model(genai_rs::DEFAULT_MODEL)
     ///     .with_text("Hello")
-    ///     .with_extra("brand_new_field", serde_json::json!({"enabled": true}))
+    ///     .add_extra("brand_new_field", serde_json::json!({"enabled": true}))
     ///     .build()?;
     ///
     /// let body = serde_json::to_value(&request).unwrap();
@@ -398,7 +399,7 @@ impl<'a> InteractionBuilder<'a> {
     /// # Ok::<(), genai_rs::GenaiError>(())
     /// ```
     #[must_use]
-    pub fn with_extra(
+    pub fn add_extra(
         mut self,
         key: impl Into<String>,
         value: impl Into<serde_json::Value>,

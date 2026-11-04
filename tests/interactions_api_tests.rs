@@ -789,7 +789,7 @@ mod error_handling {
 }
 
 // =============================================================================
-// Unmodeled request fields (`with_extra`)
+// Unmodeled request fields (`add_extra`)
 // =============================================================================
 
 mod extra_fields {
@@ -808,7 +808,7 @@ mod extra_fields {
         let result = interaction_builder(&client)
             .with_text("Reply with the single word ok.")
             .with_store_disabled()
-            .with_extra("genai_rs_unmodeled_probe", 1)
+            .add_extra("genai_rs_unmodeled_probe", 1)
             .create()
             .await;
 
@@ -838,7 +838,7 @@ mod extra_fields {
         let response = client
             .interaction()
             .with_model("nonexistent-model-12345")
-            .with_extra("model", genai_rs::DEFAULT_MODEL)
+            .add_extra("model", genai_rs::DEFAULT_MODEL)
             .with_text("Reply with the single word ok.")
             .with_store_disabled()
             .create()

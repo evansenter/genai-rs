@@ -105,7 +105,7 @@ pub struct InteractionBuilder<'a> {
     safety_settings: Option<Vec<SafetySetting>>,
     labels: Option<std::collections::BTreeMap<String, String>>,
     continuation_token: Option<String>,
-    /// Unmodeled request fields (set by `with_extra()`)
+    /// Unmodeled request fields (set by `add_extra()`)
     extra: serde_json::Map<String, serde_json::Value>,
     /// Maximum iterations for auto function calling loop
     max_function_call_loops: usize,

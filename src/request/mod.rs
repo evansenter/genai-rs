@@ -499,7 +499,7 @@ pub struct InteractionRequest {
     /// Fields this crate does not model, sent flat alongside the modeled
     /// ones: the escape hatch for a new request field before a release
     /// models it. Set with
-    /// [`InteractionBuilder::with_extra`](crate::InteractionBuilder::with_extra).
+    /// [`InteractionBuilder::add_extra`](crate::InteractionBuilder::add_extra).
     ///
     /// Deserializing keeps unrecognized keys here too, so a stored
     /// [`Trigger::interaction`](crate::Trigger) round-trips the fields this
