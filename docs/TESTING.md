@@ -109,7 +109,10 @@ the harness's tool-schema names (`AbsolutePath`, `CommandLine`), which a
 behaviors to know: it allows the system temp directory besides the
 workspaces, so a file meant to be outside them goes under
 `CARGO_TARGET_TMPDIR`; and a turn with a backgrounded `run_command` does not
-finish until the command does.
+finish until the command does. A test of the turn deadline over a
+synchronous tool that blocks needs
+`#[tokio::test(flavor = "multi_thread")]`: on `#[tokio::test]`'s
+current-thread runtime the blocked body holds the only thread.
 
 ## Live tests
 

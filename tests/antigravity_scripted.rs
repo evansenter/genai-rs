@@ -22,7 +22,7 @@
 
 mod common;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -630,6 +630,55 @@ async fn test_scripted_turn_deadline_bounds_a_hung_custom_tool() {
         "the timeout must name what held the turn: {operation}"
     );
     // 2s budget plus the bounded halt-and-drain, nowhere near the tool's 600s.
+    assert!(elapsed < Duration::from_secs(20), "took {elapsed:?}");
+    agent.shutdown().await.expect("shutdown");
+}
+
+/// Set to let `blocking_scripted_tool` return.
+static RELEASE_BLOCKING_TOOL: AtomicBool = AtomicBool::new(false);
+
+/// A synchronous tool whose body blocks its thread (until released, or for
+/// 60s), the way a sync `#[tool]` fn doing blocking I/O does.
+#[tool(key(description = "Any key"))]
+fn blocking_scripted_tool(key: String) -> String {
+    let until = Instant::now() + Duration::from_secs(60);
+    while !RELEASE_BLOCKING_TOOL.load(Ordering::SeqCst) && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    key
+}
+
+// Multi-thread: on a current-thread runtime a blocking tool body holds the
+// only thread, and no deadline can fire until it returns (docs/ANTIGRAVITY.md).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "Requires localharness binary"]
+async fn test_scripted_turn_deadline_bounds_a_blocking_sync_tool() {
+    // Regression: a sync `#[tool]` body runs inside the tool's `call`, which
+    // was awaited on the turn's own task. A body that blocked held the poll
+    // the deadline timer needed, so a 2s turn lasted as long as the tool.
+    let fake = FakeGemini::start(vec![
+        ModelTurn::call("blocking_scripted_tool", json!({"key": "k"})),
+        ModelTurn::text("recovered-3307"),
+    ])
+    .await;
+    let mut agent = scripted_agent(&fake)
+        .add_tool(BlockingScriptedToolCallable.declaration())
+        .with_turn_timeout(Duration::from_secs(2))
+        .spawn()
+        .await
+        .expect("spawn");
+
+    let start = Instant::now();
+    let err = agent.chat("call the blocking tool").await.unwrap_err();
+    let elapsed = start.elapsed();
+    RELEASE_BLOCKING_TOOL.store(true, Ordering::SeqCst);
+    let AntigravityError::Timeout { operation, .. } = &err else {
+        panic!("expected Timeout, got {err:?}");
+    };
+    assert!(
+        operation.contains("custom tool 'blocking_scripted_tool'"),
+        "the timeout must name what held the turn: {operation}"
+    );
     assert!(elapsed < Duration::from_secs(20), "took {elapsed:?}");
     agent.shutdown().await.expect("shutdown");
 }

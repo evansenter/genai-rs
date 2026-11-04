@@ -333,10 +333,11 @@ in neither of the harness's encodings is answered with an error instead of
 running the tool on `Null`.
 
 Hooks are synchronous closures, and they run on tokio's blocking pool, so
-the turn deadline bounds them: a hook (or custom tool) still running when
-the turn's budget runs out ends the turn with `AntigravityError::Timeout`,
-whose `operation` names it. The hook's thread is not stopped; its result is
-discarded when it returns.
+the turn deadline bounds them on any runtime: a hook still running when the
+turn's budget runs out ends the turn with `AntigravityError::Timeout`, whose
+`operation` names it. The hook's thread is not stopped; its result is
+discarded when it returns. Custom tools are bounded too, with one limit;
+see the turn deadline under [Streaming](#streaming).
 
 Arguments can also change meaning. 0.1.23 added `Append` to `create_file`:
 `{Overwrite: false, Append: true}` now appends to an existing file, where
@@ -634,7 +635,22 @@ The deadline is absolute, stamped when the turn starts, and it covers the
 whole turn rather than the gaps between harness events: that includes this
 crate's own work inside the turn, so a custom tool or hook that hangs ends
 the turn on time, with the `Timeout`'s `operation` naming it
-(`agent turn (custom tool 'x' was still running at the deadline)`). For
+(`agent turn (custom tool 'x' was still running at the deadline)`).
+
+Each custom tool call runs on a tokio task of its own, and a call the
+deadline abandons is aborted: an async tool stops at its next `.await`. A
+tool body that **blocks its thread** (a synchronous `#[tool]` fn doing
+blocking I/O or `std::thread::sleep`) cannot be stopped; it runs to
+completion on its worker and its result is discarded. On a multi-thread
+runtime (`#[tokio::main]`'s default) the deadline still fires on time. On a
+current-thread runtime (`#[tokio::main(flavor = "current_thread")]`, and
+`#[tokio::test]`'s default) the blocked body holds the only thread, so the
+turn cannot end before the tool returns. Make such a tool `async` with
+non-blocking I/O, or move the blocking part into
+`tokio::task::spawn_blocking` inside it. Hooks need neither: they always
+run on the blocking pool.
+
+For
 `send_streaming` that includes time **your** code spends between polls of
 the stream — so a consumer that renders events interactively, or awaits a
 confirmation mid-turn, is spending the same budget the harness is. Raise it,
@@ -901,6 +917,9 @@ variants, never on message text. Key variants: `HarnessNotFound{searched}`,
 - **Hooks are synchronous**: `on_pre_tool` / `on_post_tool` /
   `on_questions` are sync closures (run on the blocking pool and bounded by
   the turn deadline); async hooks are a follow-up.
+- **A blocking tool body can't be preempted on a current-thread runtime**:
+  the turn deadline abandons a blocked synchronous tool on a multi-thread
+  runtime only (see the turn deadline under [Streaming](#streaming)).
 - **Only the bespoke `localharness` protocol**: the harness's
   Interactions-mode transport (`use_interactions_api`) is not used. On
   0.1.23 it rejects every `interaction.create` that carries an agent config,
