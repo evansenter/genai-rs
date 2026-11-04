@@ -615,10 +615,14 @@ the roughly 800-line limit (D-014).
 | From | To |
 |------|----|
 | `AntigravityAgent::answer_tool_confirmation`, `answer_questions`, `process_tool_call`, `process_hook_request`, `decide`, and `run_hook` in `src/antigravity/turn.rs` | `src/antigravity/turn_requests.rs` |
+| The inline `mod tests` in `src/antigravity/process.rs` | `src/antigravity/process_tests.rs` |
 
-`turn.rs` keeps event dispatch and `TurnState`. New private module in the
-same work: `src/antigravity/process_tree.rs` (signals the harness's process
-group and its children's groups), with tests in `process_tree_tests.rs`.
+`turn.rs` keeps event dispatch and `TurnState`, and `process.rs` drops back
+under the limit. New private module in the same work:
+`src/antigravity/process_tree.rs` (signals the harness's process group and
+its children's groups), with tests in `process_tree_tests.rs`; the hook
+runner's tests are in `turn_requests_tests.rs`.
 
 **Consequences.** Links to `src/antigravity/turn.rs:<line>` for the request
-handlers written before 2026-11-04 point at the old layout.
+handlers, or to `src/antigravity/process.rs:<line>` for its tests, written
+before 2026-11-04 point at the old layout.
