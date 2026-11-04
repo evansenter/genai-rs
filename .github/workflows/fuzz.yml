@@ -1,0 +1,119 @@
+name: Fuzz
+
+# A short, bounded run of every cargo-fuzz target in fuzz/ (see
+# fuzz/README.md): the SSE parser, the stream pipeline over
+# InteractionStreamEvent, and Step, StepDelta and Content deserialization.
+# Each target checks for panics and a round trip where the input is valid.
+# Weekly, on demand, and on pull requests that touch the fuzzed code.
+on:
+  schedule:
+    - cron: '41 3 * * 6' # Saturday 03:41 UTC
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "Seconds to fuzz each target"
+        required: false
+        default: "60"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "src/http/sse_parser.rs"
+      - "src/http/interactions.rs"
+      - "src/wire_streaming.rs"
+      - "src/steps/**"
+      - "src/content/**"
+      - "src/fuzzing.rs"
+      - "src/fuzzing_tests.rs"
+      - "fuzz/**"
+      - ".github/workflows/fuzz.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: Fuzz ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      # Every target runs, so one crash doesn't hide another.
+      fail-fast: false
+      matrix:
+        target: [sse_parser, stream_event, step, step_delta, content]
+    steps:
+      - uses: actions/checkout@v4
+      # libFuzzer and the sanitizer flags cargo-fuzz passes need nightly.
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Fuzz for a bounded time
+        working-directory: fuzz
+        env:
+          TARGET: ${{ matrix.target }}
+          # Not a free-form expression in the script: the input is passed
+          # through the environment and checked to be a number.
+          SECONDS_PER_TARGET: ${{ github.event.inputs.seconds || '60' }}
+        run: |
+          case "$SECONDS_PER_TARGET" in
+            ''|*[!0-9]*) echo "::error::seconds must be a whole number, got '$SECONDS_PER_TARGET'"; exit 1 ;;
+          esac
+          mkdir -p "corpus/$TARGET"
+          # The committed seeds are read but never written; new finds go to
+          # the scratch corpus. -timeout flags a hang on one input.
+          cargo +nightly fuzz run "$TARGET" "corpus/$TARGET" "seeds/$TARGET" -- \
+            -max_total_time="$SECONDS_PER_TARGET" -timeout=10
+      - name: Upload the failing input
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-${{ matrix.target }}-crash
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # Scheduled runs fail quietly (an email to whoever last committed this
+  # file), so a red weekly run opens or updates a `ci-health-escalation` issue
+  # and a green one closes it, as rust.yml does.
+  scheduled-run-status:
+    name: Scheduled Run Status
+    needs: [fuzz]
+    if: always() && github.event_name == 'schedule' && github.repository_owner == 'evansenter'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Escalate a failing scheduled run
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # From context, not a literal: it is the join key between reporter and
+          # resolver.
+          SELF_WORKFLOW_NAME: ${{ github.workflow }}
+        run: |
+          .github/scripts/report_scheduled_failure.sh "$SELF_WORKFLOW_NAME" "$RUN_URL" \
+            "The weekly fuzz run found an input that panics a target or breaks
+          its round trip, or the toolchain broke. Download the target's
+          \`fuzz-<target>-crash\` artifact from the run, reproduce with
+          \`cargo +nightly fuzz run <target> <file>\` in \`fuzz/\`, fix it, and
+          keep the input as a regression test in \`src/fuzzing_tests.rs\`
+          (see \`fuzz/README.md\`). A red build step with no artifact is
+          nightly or cargo-fuzz drift."
+      - name: Clear the failure issue once the run recovers
+        if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SELF_WORKFLOW_NAME: ${{ github.workflow }}
+        run: .github/scripts/resolve_scheduled_failure.sh "$SELF_WORKFLOW_NAME"
