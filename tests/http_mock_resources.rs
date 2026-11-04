@@ -2525,8 +2525,10 @@ async fn document_wait_until_active_failed_state_is_terminal() {
 #[tokio::test]
 async fn document_wait_until_active_times_out_with_the_last_state() {
     let stub = Stub::start(|_, _| document(Some("STATE_PENDING"))).await;
+    // Each status read is cut off at the deadline, so leave a loaded runner
+    // room for the first round trip; the last state must come from one.
     let poll = PollOptions::new()
-        .with_timeout(Duration::from_millis(60))
+        .with_timeout(Duration::from_secs(1))
         .with_poll_interval(Duration::from_millis(10));
 
     let err = stub
@@ -3585,7 +3587,9 @@ async fn wait_for_file(stub: &Stub, timeout: Duration) -> Result<FileMetadata, G
 async fn wait_until_active_times_out_with_the_last_state() {
     let stub = Stub::start(|_, _| Reply::json(200, file("PROCESSING"))).await;
 
-    let err = wait_for_file(&stub, Duration::from_millis(60))
+    // Each status read is cut off at the deadline, so leave a loaded runner
+    // room for the first round trip; the last state must come from one.
+    let err = wait_for_file(&stub, Duration::from_secs(1))
         .await
         .unwrap_err();
 
