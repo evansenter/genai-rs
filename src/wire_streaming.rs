@@ -279,6 +279,12 @@ impl StreamChunk {
             }
             Self::Unknown { chunk_type, data } => {
                 map.serialize_entry("chunk_type", chunk_type)?;
+                // An unknown type spelled like a known `chunk_type` (a wire
+                // event named `created`, say) would read back as that known
+                // chunk; the marker keeps it unknown. Found by fuzzing.
+                if KNOWN_CHUNK_TYPES.contains(&chunk_type.as_str()) {
+                    map.serialize_entry("unknown", &true)?;
+                }
                 if !data.is_null() {
                     map.serialize_entry("data", data)?;
                 }
@@ -287,6 +293,17 @@ impl StreamChunk {
         Ok(())
     }
 }
+
+/// The `chunk_type` values the known [`StreamChunk`] variants serialize as.
+const KNOWN_CHUNK_TYPES: [&str; 7] = [
+    "created",
+    "status_update",
+    "step_start",
+    "step_delta",
+    "step_stop",
+    "completed",
+    "error",
+];
 
 impl Serialize for StreamChunk {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -347,7 +364,14 @@ impl<'de> Deserialize<'de> for StreamChunk {
                 })
         }
 
+        // Written by an `Unknown` whose type collides with a known one.
+        let marked_unknown = value.get("unknown") == Some(&serde_json::Value::Bool(true));
+
         match chunk_type {
+            chunk_type if marked_unknown => Ok(Self::Unknown {
+                chunk_type: chunk_type.to_string(),
+                data: data_of(&value),
+            }),
             "created" => {
                 let interaction: InteractionResponse = serde_json::from_value(data_of(&value))
                     .map_err(|e| {
@@ -870,6 +894,29 @@ mod tests {
         let reserialized = serde_json::to_string(&deserialized).expect("Should serialize");
         assert!(reserialized.contains("future_chunk_type"));
         assert!(reserialized.contains("value"));
+        assert!(!reserialized.contains("\"unknown\""), "{reserialized}");
+    }
+
+    #[test]
+    fn test_unknown_chunk_named_like_a_known_one_stays_unknown() {
+        // Found by fuzzing (fuzz/, `stream_event`).
+        for name in KNOWN_CHUNK_TYPES {
+            let chunk = StreamChunk::Unknown {
+                chunk_type: name.to_string(),
+                data: serde_json::json!({"event_type": name}),
+            };
+            let value = serde_json::to_value(&chunk).unwrap();
+            assert_eq!(value["unknown"], true, "{value}");
+            let back: StreamChunk = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(back.unknown_chunk_type(), Some(name), "{back:?}");
+            assert_eq!(serde_json::to_value(&back).unwrap(), value);
+        }
+        // Without the marker, the known name means the known chunk.
+        let known: StreamChunk = serde_json::from_value(
+            serde_json::json!({"chunk_type": "error", "data": {"message": "m"}}),
+        )
+        .unwrap();
+        assert!(matches!(known, StreamChunk::Error { .. }), "{known:?}");
     }
 
     #[test]
