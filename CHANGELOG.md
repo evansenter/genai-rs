@@ -5,6 +5,97 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `InteractionResponse::mcp_calls()` returns the MCP tool calls the server
+  ran, as `McpCallInfo { id, server, tool, arguments, result, is_error }`.
+  Since 2026-10-01 the API returns each MCP call as an answered
+  `function_call` named `<server>:<tool>`, where `<server>` is the name the
+  request gave `McpServerConfig` (verified live 2026-11-04 on
+  `gemini-3.8-flash`, streamed and not). A client function may also contain
+  a colon (the API accepted `weather:get` on 2026-11-04), so a call counts
+  only when its result is in the same response. `is_error` is `Some(true)`
+  when either the result step's `is_error` or the result object's own
+  `is_error` key is `true`: on failed calls the API leaves the step's flag
+  `false` (verified live 2026-11-04). The result object holds `result`,
+  `call_tool_result_json` (the raw MCP `CallToolResult` as a JSON string),
+  and `is_error: true` on failure or `structured_content` on success. The
+  spec-only `mcp_server_tool_call` / `mcp_server_tool_result` pair is read
+  too (#459).
+- `extra()` and `extra_mut()` on `Step`, `StepDelta`, `Content` and
+  `Annotation`, and `arguments_extra()` / `arguments_extra_mut()` on `Step`
+  and `StepDelta`, expose the wire fields the crate does not model, for
+  reading or editing before replay (#491).
+- `GoogleSearchResultItem`, `GoogleMapsResultItem`, `UrlContextResultItem`,
+  `FileSearchResultItem`, `ReviewSnippet` and `StepError` have a public
+  `extra` map for unmodeled fields, like `Place`. As on the unions, an
+  entry named after a modeled field is never serialized.
+
+### Changed
+
+- **Breaking: every known variant of `Step`, `StepDelta`, `Content` and
+  `Annotation` has a new `extra` field.** It is a
+  `serde_json::Map<String, serde_json::Value>`. The call variants
+  `CodeExecutionCall`, `UrlContextCall`, `GoogleSearchCall`,
+  `GoogleMapsCall` and `RetrievalCall` (on both `Step` and `StepDelta`) also
+  have `arguments_extra`, and `VideoProcessing::StaticSegment` gains `extra`.
+  The enums are `#[non_exhaustive]` but their variants are not, so patterns
+  that list every field and struct literals stop compiling. Migration: add
+  `..` to such patterns (`StepDelta::Text { text, .. }`,
+  `Step::Thought { signature, summary, .. }`). In struct literals, add
+  `extra: Default::default()` (and `arguments_extra: Default::default()`),
+  or use the constructors (`Step::user_text`, `Step::function_call`,
+  `Content::text`, `Content::image_data`,
+  `VideoProcessing::segment()...build()`), which set them empty.
+- **Breaking: `Annotation::speech_metadata` is no longer a `const fn`.** Its
+  `extra` map cannot be built in a const context. Migration: call it at
+  runtime.
+- **Breaking: a known step, delta, content block or annotation whose
+  modeled field is malformed now deserializes as `Unknown`.** `Unknown`
+  keeps the whole object. Examples: a non-object `arguments`, a non-string
+  element in `urls` or `queries`. These used to be read leniently, dropping
+  the bad value. A static video `processing` object with a mistyped field
+  becomes `VideoProcessing::Unknown`. Under `strict-unknown`, a malformed
+  `Step` or `Content` is an error that names the field and why
+  (``field `arguments`: expected an object``) instead of calling the type
+  unknown; that includes an unrecognized `language` on
+  `code_execution_call`, which strict mode used to read as Python.
+  Well-formed API responses are unaffected. Migration: none, unless you
+  relied on the lenient reading.
+
+### Fixed
+
+- Unknown fields on known `Step`, `StepDelta`, `Content` and `Annotation`
+  variants now survive a deserialize/re-serialize round trip, and so do
+  unknown fields on the result items, review snippets, step errors and
+  static video segments nested in them. Replayed stateless history keeps a
+  field the API adds before the crate models it. Previously a
+  `function_call` lost an unknown top-level field, and a `text` block lost
+  an unknown field. A `url_context_call` lost `arguments` keys other than
+  `urls`; `google_search_call`, `google_maps_call` and `retrieval_call` lost
+  keys other than `queries`; `code_execution_call` lost keys other than
+  `language` and `code` (#491).
+- `Place` no longer serializes an `extra` entry named after one of its
+  modeled fields. Only a hand-built map can hold one, and it overrode the
+  field under `serde_json::to_value` and wrote the key twice in a request
+  body.
+- Streaming: two images in one `model_output` step now stay two
+  `Content::Image` blocks. The accumulator appended each image delta to the
+  previous image block in the step. That would merge two images into one
+  corrupt base64 string whenever `interaction.completed` omits `steps`,
+  which it did on every stream observed 2026-11-04. Each streamed image
+  arrives whole in one delta that names its `mime_type` (verified live
+  2026-11-04, `gemini-3.1-flash-image`), so such a delta now starts a new
+  block. In three live streams that day each image came in its own step,
+  which was already handled; the same-step case is defensive (#491).
+- Streaming: the assembled `Completed` response keeps the unmodeled fields
+  that deltas carry, on the content block or step each delta builds,
+  including every chunk of a merged thought summary.
+- `StepDelta::CodeExecutionCall` no longer serializes an absent `language`
+  or `code` as `null`.
+
 ## [0.13.0] - 2026-11-03
 
 Tracks the Interactions API as of `google-genai` 2.34.0 (swept 2026-11-01,
