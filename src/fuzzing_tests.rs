@@ -69,7 +69,13 @@ fn stream_event_runs_a_full_lifecycle() {
 #[test]
 fn regression_unknown_event_named_like_a_known_chunk_type() {
     stream_event(b"l\n{\"event_type\":\"created\"}\n{\0\0\0\0");
-    for name in ["status_update", "step_start", "step_delta", "step_stop", "completed"] {
+    for name in [
+        "status_update",
+        "step_start",
+        "step_delta",
+        "step_stop",
+        "completed",
+    ] {
         stream_event(format!("{{\"event_type\":\"{name}\",\"x\":1}}\n").as_bytes());
     }
 }

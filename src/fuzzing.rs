@@ -76,7 +76,9 @@ where
 
 /// What a parse produced, comparable across runs: each event's value, or
 /// the kind of error.
-fn outcomes(results: &[Result<serde_json::Value, GenaiError>]) -> Vec<Result<&serde_json::Value, &'static str>> {
+fn outcomes(
+    results: &[Result<serde_json::Value, GenaiError>],
+) -> Vec<Result<&serde_json::Value, &'static str>> {
     results
         .iter()
         .map(|result| match result {
@@ -113,7 +115,10 @@ pub fn sse_parser(data: &[u8]) {
         .iter()
         .map(|r| r.as_ref().expect("a canonical event parses"))
         .collect();
-    assert_eq!(values, again, "the canonical re-encoding parsed differently");
+    assert_eq!(
+        values, again,
+        "the canonical re-encoding parsed differently"
+    );
 }
 
 /// The stream pipeline on an SSE body of `InteractionStreamEvent`s: no
