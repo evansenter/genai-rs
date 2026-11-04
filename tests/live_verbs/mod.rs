@@ -1,22 +1,29 @@
-//! Guards that every public verb on every resource handle is called by a
-//! live test, on that handle.
+//! Finds every public verb on every resource handle, and every verb a live
+//! test calls on its handle, for `tests/ci_coverage.rs`.
 //!
 //! The handles are the structs marked `#[must_use = "a resource handle does
-//! nothing until you call one of its methods"]`; their verbs are the public
-//! methods of their `impl` blocks, wherever those live. A live test is a test
-//! carrying `#[ignore = "Requires API key"]`, together with every function in
-//! `tests/` it reaches by name (cleanup helpers count).
+//! nothing until you call one of its methods"]` (`docs/BUILDER_API.md`,
+//! "Resource handles and list builders"); their verbs are the public methods
+//! of their `impl` blocks, wherever those live. The marker is checked from
+//! the other side too: every `Client` accessor that returns a borrowed
+//! struct, and every borrowed struct a handle returns that is not a request
+//! builder, must carry it, so a handle written without the marker is
+//! reported rather than skipped ([`Handles::problems`]).
 //!
-//! A call counts only on a receiver whose handle type is known: a chain from
-//! an accessor (`client.file_search_stores().documents().get(..)`), or a
-//! local bound to one (`let stores = client.file_search_stores();`). So
-//! `client.webhooks().get(..)` does not cover `Agents::get`, which a match
-//! on `.get(` anywhere would. Calls inside macros (`assert!`, `tokio::join!`)
+//! A live test is a test carrying `#[ignore = "Requires API key"]`, together
+//! with every function in `tests/` it reaches by name (cleanup helpers
+//! count). A call counts only on a receiver whose handle type is known: a
+//! chain from an accessor (`client.file_search_stores().documents().get(..)`),
+//! or a local bound to one (`let stores = client.file_search_stores();`). So
+//! `client.webhooks().get(..)` does not cover `Agents::get`, which a match on
+//! `.get(` anywhere would. Calls inside macros (`assert!`, `tokio::join!`)
 //! are read too, and the source is parsed with `syn`, so formatting cannot
 //! hide or fake a call.
 //!
-//! A verb added without a live test fails here; add the test, or an
-//! [`EXEMPT`] entry saying why it cannot have one.
+//! Not a test target itself: Cargo only builds `tests/*.rs` and
+//! `tests/*/main.rs`.
+
+#![allow(dead_code)]
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -25,13 +32,18 @@ use syn::visit::{self, Visit};
 use syn::{Expr, ImplItem, Item, Pat, ReturnType, Type};
 
 /// The attribute that marks a resource handle.
-const HANDLE_MARKER: &str = "a resource handle does nothing until you call one of its methods";
+pub const HANDLE_MARKER: &str = "a resource handle does nothing until you call one of its methods";
 
 /// The one ignore reason for a live test (CLAUDE.md, "Tests").
-const LIVE_REASON: &str = "Requires API key";
+pub const LIVE_REASON: &str = "Requires API key";
 
-/// `Handle::verb` pairs no live test needs to call, each with its reason.
-const EXEMPT: &[(&str, &str)] = &[];
+/// Borrowed structs a `Client` accessor returns that are not resource
+/// handles, each with its reason.
+pub const NOT_HANDLES: &[(&str, &str)] = &[(
+    "InteractionBuilder",
+    "A request builder, not a resource handle: `client.interaction()` builds \
+     the request `create()` sends, which every live interaction test does.",
+)];
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -80,12 +92,30 @@ fn attr_string(attr: &syn::Attribute, name: &str) -> Option<String> {
 
 /// Every handle and its verbs, and every accessor: `(receiver, method)` to
 /// the handle it returns, with `Client` as the receiver of the root ones.
-struct Handles {
-    verbs: BTreeMap<String, BTreeSet<String>>,
-    accessors: HashMap<(String, String), String>,
+pub struct Handles {
+    pub verbs: BTreeMap<String, BTreeSet<String>>,
+    pub accessors: HashMap<(String, String), String>,
+    /// Handles declared without the marker, and stale [`NOT_HANDLES`]
+    /// entries.
+    pub problems: Vec<String>,
 }
 
-fn handles() -> Handles {
+/// The struct a return type borrows into (`Webhooks<'_>`,
+/// `ListWebhooks<'a>`): a path type with a lifetime argument.
+fn borrowed_struct(ty: &Type) -> Option<String> {
+    let Type::Path(p) = ty else { return None };
+    let last = p.path.segments.last()?;
+    let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
+        return None;
+    };
+    args.args
+        .iter()
+        .any(|a| matches!(a, syn::GenericArgument::Lifetime(_)))
+        .then(|| last.ident.to_string())
+}
+
+/// The handles in `src/` (without the antigravity runtime).
+pub fn handles() -> Handles {
     let mut files = Vec::new();
     rust_files(&root().join("src"), &mut files);
     let files: Vec<syn::File> = files
@@ -93,7 +123,18 @@ fn handles() -> Handles {
         .filter(|p| !p.components().any(|c| c.as_os_str() == "antigravity"))
         .map(|p| parse(p))
         .collect();
+    handles_in(&files)
+}
 
+/// A public method with a receiver.
+struct Method {
+    name: String,
+    by_ref: bool,
+    /// The struct it returns, when that borrows (`X<'_>`).
+    returns: Option<String>,
+}
+
+pub fn handles_in(files: &[syn::File]) -> Handles {
     fn flatten(items: &[Item], out: &mut Vec<Item>) {
         for item in items {
             if let Item::Mod(m) = item
@@ -105,27 +146,25 @@ fn handles() -> Handles {
         }
     }
     let mut all = Vec::new();
-    for file in &files {
+    for file in files {
         flatten(&file.items, &mut all);
     }
 
-    let names: BTreeSet<String> = all
+    // Every struct, and whether it carries the marker.
+    let structs: BTreeMap<String, bool> = all
         .iter()
         .filter_map(|item| match item {
-            Item::Struct(s)
-                if s.attrs
+            Item::Struct(s) => Some((
+                s.ident.to_string(),
+                s.attrs
                     .iter()
-                    .any(|a| attr_string(a, "must_use").as_deref() == Some(HANDLE_MARKER)) =>
-            {
-                Some(s.ident.to_string())
-            }
+                    .any(|a| attr_string(a, "must_use").as_deref() == Some(HANDLE_MARKER)),
+            )),
             _ => None,
         })
         .collect();
-
-    let mut verbs: BTreeMap<String, BTreeSet<String>> =
-        names.iter().map(|n| (n.clone(), BTreeSet::new())).collect();
-    let mut accessors = HashMap::new();
+    // Every type's public methods, from its inherent impls.
+    let mut methods: BTreeMap<String, Vec<Method>> = BTreeMap::new();
     for item in &all {
         let Item::Impl(imp) = item else { continue };
         if imp.trait_.is_some() {
@@ -134,27 +173,103 @@ fn handles() -> Handles {
         let Some(owner) = last_ident(&imp.self_ty) else {
             continue;
         };
-        if owner != "Client" && !names.contains(&owner) {
-            continue;
-        }
         for item in &imp.items {
             let ImplItem::Fn(f) = item else { continue };
-            if !matches!(f.vis, syn::Visibility::Public(_)) || f.sig.receiver().is_none() {
+            let Some(receiver) = f.sig.receiver() else {
+                continue;
+            };
+            if !matches!(f.vis, syn::Visibility::Public(_)) {
                 continue;
             }
-            let method = f.sig.ident.to_string();
-            if let ReturnType::Type(_, ty) = &f.sig.output
-                && let Some(ret) = last_ident(ty)
-                && names.contains(&ret)
-            {
-                accessors.insert((owner.clone(), method.clone()), ret);
-            }
-            if let Some(set) = verbs.get_mut(&owner) {
-                set.insert(method);
+            let returns = match &f.sig.output {
+                ReturnType::Type(_, ty) => {
+                    borrowed_struct(ty).filter(|name| structs.contains_key(name))
+                }
+                ReturnType::Default => None,
+            };
+            methods.entry(owner.clone()).or_default().push(Method {
+                name: f.sig.ident.to_string(),
+                by_ref: receiver.reference.is_some(),
+                returns,
+            });
+        }
+    }
+    let names: BTreeSet<String> = structs
+        .iter()
+        .filter(|(_, marked)| **marked)
+        .map(|(name, _)| name.clone())
+        .collect();
+
+    let mut problems = Vec::new();
+    let no_methods = Vec::new();
+    let methods_of = |owner: &str| methods.get(owner).unwrap_or(&no_methods);
+    // A root handle is what a `&self` accessor on `Client` returns.
+    let mut not_handles_used = BTreeSet::new();
+    for m in methods_of("Client") {
+        let Some(ret) = &m.returns else { continue };
+        if !m.by_ref {
+            continue;
+        }
+        if NOT_HANDLES.iter().any(|(name, _)| *name == ret.as_str()) {
+            not_handles_used.insert(ret.clone());
+        } else if !names.contains(ret) {
+            problems.push(format!(
+                "Client::{} returns {ret}, which lacks the handle marker \
+                 #[must_use = \"{HANDLE_MARKER}\"] (or list it in NOT_HANDLES with \
+                 the reason)",
+                m.name
+            ));
+        }
+    }
+    for (name, _) in NOT_HANDLES {
+        if !not_handles_used.contains(*name) {
+            problems.push(format!(
+                "NOT_HANDLES: no Client accessor returns {name}; delete the entry"
+            ));
+        }
+    }
+    // A nested handle is a borrowed struct a handle returns that is not a
+    // request builder (one with a `send` method, like the list builders).
+    for handle in &names {
+        for m in methods_of(handle) {
+            let Some(ret) = &m.returns else { continue };
+            let builder = methods_of(ret).iter().any(|m| m.name == "send");
+            if !names.contains(ret) && !builder {
+                problems.push(format!(
+                    "{handle}::{} returns {ret}, which is neither a request builder \
+                     (no `send`) nor marked as a handle: add \
+                     #[must_use = \"{HANDLE_MARKER}\"]",
+                    m.name
+                ));
             }
         }
     }
-    Handles { verbs, accessors }
+
+    let mut verbs: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut accessors = HashMap::new();
+    for owner in names.iter().map(String::as_str).chain(["Client"]) {
+        for m in methods_of(owner) {
+            if let Some(ret) = &m.returns
+                && names.contains(ret)
+            {
+                accessors.insert((owner.to_string(), m.name.clone()), ret.clone());
+            }
+            if owner != "Client" {
+                verbs
+                    .entry(owner.to_string())
+                    .or_default()
+                    .insert(m.name.clone());
+            }
+        }
+    }
+    for name in &names {
+        verbs.entry(name.clone()).or_default();
+    }
+    Handles {
+        verbs,
+        accessors,
+        problems,
+    }
 }
 
 // =============================================================================
@@ -267,13 +382,21 @@ fn macro_stmts(mac: &syn::Macro) -> Vec<syn::Stmt> {
 
 /// Records `(handle, verb)` for every call on a receiver of known handle
 /// type.
-struct Calls<'a> {
+pub struct Calls<'a> {
     handles: &'a Handles,
     locals: HashMap<String, String>,
-    found: BTreeSet<(String, String)>,
+    pub found: BTreeSet<(String, String)>,
 }
 
-impl Calls<'_> {
+impl<'a> Calls<'a> {
+    pub fn new(handles: &'a Handles) -> Self {
+        Self {
+            handles,
+            locals: HashMap::new(),
+            found: BTreeSet::new(),
+        }
+    }
+
     fn handle_of(&self, expr: &Expr) -> Option<String> {
         match expr {
             Expr::MethodCall(call) => {
@@ -326,7 +449,7 @@ impl Visit<'_> for Calls<'_> {
 }
 
 /// Every `(handle, verb)` a live test calls, directly or through a helper.
-fn live_calls(handles: &Handles) -> BTreeSet<(String, String)> {
+pub fn live_calls(handles: &Handles) -> BTreeSet<(String, String)> {
     let fns = test_fns();
     let by_name: HashMap<&str, Vec<&TestFn>> = fns.iter().fold(HashMap::new(), |mut m, f| {
         m.entry(f.name.as_str()).or_default().push(f);
@@ -340,11 +463,7 @@ fn live_calls(handles: &Handles) -> BTreeSet<(String, String)> {
         if !seen.insert(f as *const TestFn) {
             continue;
         }
-        let mut calls = Calls {
-            handles,
-            locals: HashMap::new(),
-            found: BTreeSet::new(),
-        };
+        let mut calls = Calls::new(handles);
         calls.visit_block(&f.block);
         found.extend(calls.found);
         let mut callees = Callees::default();
@@ -356,102 +475,4 @@ fn live_calls(handles: &Handles) -> BTreeSet<(String, String)> {
         }
     }
     found
-}
-
-#[test]
-fn every_handle_verb_has_a_live_test() {
-    let handles = handles();
-    let verb_count: usize = handles.verbs.values().map(BTreeSet::len).sum();
-    assert!(
-        handles.verbs.len() >= 11 && verb_count > 50,
-        "parsed too few handles ({}) or verbs ({verb_count}): {:?}",
-        handles.verbs.len(),
-        handles.verbs.keys()
-    );
-    let called = live_calls(&handles);
-
-    let mut missing = Vec::new();
-    let mut stale = Vec::new();
-    for (handle, verbs) in &handles.verbs {
-        for verb in verbs {
-            let key = format!("{handle}::{verb}");
-            let exempt = EXEMPT.iter().any(|(k, _)| *k == key);
-            let covered = called.contains(&(handle.clone(), verb.clone()));
-            if !covered && !exempt {
-                missing.push(key);
-            } else if covered && exempt {
-                stale.push(format!("{key} (now called live)"));
-            }
-        }
-    }
-    for (key, _) in EXEMPT {
-        let known = key
-            .split_once("::")
-            .is_some_and(|(h, v)| handles.verbs.get(h).is_some_and(|verbs| verbs.contains(v)));
-        if !known {
-            stale.push(format!("{key} (no such verb)"));
-        }
-    }
-    assert!(
-        missing.is_empty() && stale.is_empty(),
-        "Verbs no live test calls on their handle ({}): add a live test \
-         (#[ignore = \"{LIVE_REASON}\"]) that calls each, or an EXEMPT entry \
-         with the reason:\n  {}\n\nStale EXEMPT entries ({}):\n  {}",
-        missing.len(),
-        missing.join("\n  "),
-        stale.len(),
-        stale.join("\n  ")
-    );
-}
-
-/// The receiver typing is what makes the guard per handle: a `get` on one
-/// handle must not count for another.
-#[test]
-fn a_call_counts_only_on_its_own_handle() {
-    let handles = handles();
-    let block: syn::Block = syn::parse_quote!({
-        let stores = client.file_search_stores();
-        stores.create(&request).await;
-        client.webhooks().get("id").await;
-        assert!(
-            client
-                .environments()
-                .files()
-                .list("e", "")
-                .send()
-                .await
-                .is_ok()
-        );
-        let _ = client.files().get("f");
-        self.client.voices().delete("v");
-    });
-    let mut calls = Calls {
-        handles: &handles,
-        locals: HashMap::new(),
-        found: BTreeSet::new(),
-    };
-    calls.visit_block(&block);
-    let found: BTreeSet<String> = calls
-        .found
-        .iter()
-        .map(|(h, v)| format!("{h}::{v}"))
-        .collect();
-    let expected: BTreeSet<String> = [
-        "Client::file_search_stores",
-        "FileSearchStores::create",
-        "Client::webhooks",
-        "Webhooks::get",
-        "Client::environments",
-        "Environments::files",
-        "EnvironmentFiles::list",
-        "Client::files",
-        "Files::get",
-        "Client::voices",
-        "Voices::delete",
-    ]
-    .into_iter()
-    .filter(|k| !k.starts_with("Client::"))
-    .map(String::from)
-    .collect();
-    assert_eq!(found, expected);
 }

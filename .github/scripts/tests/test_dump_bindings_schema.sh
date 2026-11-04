@@ -142,6 +142,10 @@ class File(_common.BaseModel):
     create_time: Optional[datetime.datetime] = None
     state: Optional[FileState] = None
 EOF
+cat >"$genai/_gaos/agents.py" <<'PY'
+def get():
+    return dict(method="GET", path="/{api_version}/agents/{agentsId}")
+PY
 for name in ListFilesResponse FileSearchStore ListFileSearchStoresResponse \
     CreateFileSearchStoreConfig Document ListDocumentsResponse \
     UploadToFileSearchStoreConfig ImportFileConfig; do
@@ -157,6 +161,7 @@ c, a = d["classes"], d["aliases"]
 agent = c["agents.Agent"]["fields"]
 ok = [
     d["sdk_version"] == "9.9.9",
+    d["endpoints"] == ["GET /{}/agents/{}"],
     agent["tools"]["type"] == {"kind": "list", "item": {"kind": "ref", "name": "interactions.Tool"}},
     a["interactions.Tool"] == {"kind": "ref", "name": "interactions.CodeExecution"},
     agent["usage"]["type"] == {"kind": "ref", "name": "interactions.Usage"},

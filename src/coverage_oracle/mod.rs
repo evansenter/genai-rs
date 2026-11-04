@@ -109,21 +109,96 @@ fn assert_clean(
     );
 }
 
-/// The bindings snapshot is the version `api-surface-sweep` is swept to.
+/// Binding classes no request case or response target reaches, each with
+/// its reason. (Like the response side, checked in the default build only.)
+#[cfg(not(feature = "strict-unknown"))]
+const UNMAPPED: &[Allowed] = &[
+    (
+        "interactions.Empty",
+        "The empty body some deletes return; the crate reads no body there.",
+    ),
+    (
+        "interactions.InteractionSSEStreamEvent",
+        "The SSE frame (`{data: InteractionSSEEvent}`): the crate parses the \
+         `data:` line itself (src/http/sse_parser.rs), and the response side \
+         checks InteractionSSEEvent.",
+    ),
+    ("legacy.UploadToFileSearchStoreConfig", UPLOAD_CONFIG),
+    ("legacy.ChunkingConfig", UPLOAD_CONFIG),
+    ("legacy.WhiteSpaceConfig", UPLOAD_CONFIG),
+    (
+        "legacy.ImportFileConfig",
+        "The config of `file_search_stores.import_file`, which the crate does not \
+         model (docs/RESOURCES.md); WP2.",
+    ),
+    (
+        "types.Security",
+        "The SDK's client credentials (api key, access token), not API surface.",
+    ),
+    (
+        "types.Unset",
+        "The SDK's sentinel for an unset field, not API surface.",
+    ),
+    (
+        "voices.DeleteVoiceResponse",
+        "Empty; `Voices::delete` reads no body.",
+    ),
+    (
+        "webhooks.PingWebhookRequest",
+        "Empty; `Webhooks::ping` sends `{}`.",
+    ),
+    (
+        "webhooks.WebhookPingResponse",
+        "Empty; `Webhooks::ping` returns `()`.",
+    ),
+    (
+        "webhooks.RotateSigningSecretRequest",
+        "Checked at the wire by tests/request_wire_oracle.rs: \
+         `rotate_signing_secret` builds the body itself from its arguments.",
+    ),
+];
+
+#[cfg(not(feature = "strict-unknown"))]
+const UPLOAD_CONFIG: &str = "The document upload config of \
+     `file_search_stores.upload_to_file_search_store`. The crate's raw-protocol \
+     upload sends `displayName` as a query parameter and `mimeType` as the \
+     Content-Type, with no JSON body; `customMetadata` and `chunkingConfig` \
+     (with ChunkingConfig and WhiteSpaceConfig) are not modeled \
+     (docs/RESOURCES.md); WP2.";
+
+/// Every binding class is reached from a request case or a response target,
+/// or listed in [`UNMAPPED`] with its reason. The checks only see classes
+/// those tables reach, so a class a baseline bump adds (a new resource, a
+/// new request body) fails here until it is mapped.
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
-fn snapshot_matches_the_sweep_baseline() {
-    let baseline = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/last-swept-sdk-version"),
-    )
-    .expect("read .github/last-swept-sdk-version");
-    let bindings = Surface::bindings();
-    assert_eq!(
-        bindings.version,
-        baseline.trim(),
-        "tests/fixtures/api_surface/bindings.json is for google-genai {}, the sweep \
-         baseline is {}: regenerate it with .github/scripts/refresh_api_snapshot.sh",
-        bindings.version,
-        baseline.trim()
+fn every_binding_class_is_mapped() {
+    let surface = Surface::bindings();
+    let mut reached = BTreeSet::new();
+    for class in request::case_classes()
+        .into_iter()
+        .chain(response::target_classes())
+    {
+        reached.extend(surface.reachable_classes(&surface.ty(class)));
+    }
+    let findings = surface
+        .classes
+        .keys()
+        .filter(|class| !reached.contains(*class))
+        .map(|class| Finding {
+            path: class.clone(),
+            site: class.clone(),
+            message: "no request case or response target reaches it".into(),
+        })
+        .collect();
+    assert_clean(
+        &format!(
+            "Binding classes the oracle does not check (google-genai {})",
+            surface.version
+        ),
+        &surface,
+        findings,
+        &[("UNMAPPED", UNMAPPED)],
     );
 }
 

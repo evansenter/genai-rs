@@ -1219,6 +1219,13 @@ fn cases() -> Vec<Case> {
     ]
 }
 
+/// The binding class of every case, for the completeness check in
+/// [`super`].
+#[cfg(not(feature = "strict-unknown"))]
+pub(super) fn case_classes() -> Vec<&'static str> {
+    cases().into_iter().map(|case| case.binding).collect()
+}
+
 /// `InteractionInput` serializes faithfully (a bare content array); only the
 /// request field wraps content in a `user_input` step. Check the wrapped
 /// shape, which is what goes on the wire.
@@ -1256,7 +1263,7 @@ fn findings(surface: &Surface) -> Vec<Finding> {
 }
 
 #[test]
-fn request_keys_exist_on_their_binding_classes() {
+fn request_wire_keys_exist_in_bindings() {
     let surface = Surface::bindings();
     assert_clean(
         &format!("Request keys vs google-genai {} bindings", surface.version),
