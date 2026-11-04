@@ -25,12 +25,30 @@ PROSE = {
 }
 
 
+# Keys whose value maps names to schemas. A name there is data, not a schema
+# keyword: a field called `description` or `title` (Function.description,
+# UrlCitation.title) is kept, and only its schema is stripped.
+NAME_MAPS = {"properties", "patternProperties", "$defs", "definitions"}
+
+
 def strip(node):
+    """A schema without its prose keywords."""
     if isinstance(node, dict):
-        return {k: strip(v) for k, v in node.items() if k not in PROSE}
+        return {
+            k: strip_names(v) if k in NAME_MAPS else strip(v)
+            for k, v in node.items()
+            if k not in PROSE
+        }
     if isinstance(node, list):
         return [strip(v) for v in node]
     return node
+
+
+def strip_names(node):
+    """A name -> schema map with every name kept."""
+    if isinstance(node, dict):
+        return {name: strip(schema) for name, schema in node.items()}
+    return strip(node)
 
 
 def main():
@@ -53,7 +71,7 @@ def main():
         "fetched": fetched,
         "version": spec.get("info", {}).get("version"),
         "endpoints": endpoints,
-        "schemas": strip(schemas),
+        "schemas": strip_names(schemas),
     }
     print(json.dumps(snapshot, indent=1, sort_keys=True, ensure_ascii=False))
 

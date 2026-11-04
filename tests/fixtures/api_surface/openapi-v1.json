@@ -859,6 +859,9 @@
   },
   "Function": {
    "properties": {
+    "description": {
+     "type": "string"
+    },
     "name": {
      "type": "string"
     },
@@ -2260,6 +2263,9 @@
     "review_id": {
      "type": "string"
     },
+    "title": {
+     "type": "string"
+    },
     "url": {
      "type": "string"
     }
@@ -2762,6 +2768,9 @@
     "start_index": {
      "format": "int32",
      "type": "integer"
+    },
+    "title": {
+     "type": "string"
     },
     "type": {
      "const": "url_citation"

@@ -35,9 +35,12 @@ cat >"$work/spec.json" <<'EOF'
       "properties": {
         "id": {"type": "string", "readOnly": true, "description": "The id."},
         "size": {"type": "string", "format": "int64", "example": "7"},
-        "kind": {"type": "string", "enum": ["a", "b"], "x-google-enum-descriptions": ["A", "B"]}
+        "kind": {"type": "string", "enum": ["a", "b"], "x-google-enum-descriptions": ["A", "B"]},
+        "description": {"type": "string", "description": "A field named like a prose keyword."},
+        "title": {"type": "object", "properties": {"title": {"type": "string", "title": "T"}}}
       }
-    }
+    },
+    "title": {"type": "string", "description": "A schema named like a prose keyword."}
   }}
 }
 EOF
@@ -58,6 +61,11 @@ ok = [
     thing["properties"]["id"]["readOnly"] is True,
     thing["properties"]["size"]["format"] == "int64",
     thing["required"] == ["id"],
+    # A field or schema whose *name* is a prose keyword is data: kept, with
+    # only its own prose stripped, at any depth.
+    thing["properties"].get("description") == {"type": "string"},
+    thing["properties"].get("title", {}).get("properties", {}).get("title") == {"type": "string"},
+    d["schemas"].get("title") == {"type": "string"},
 ]
 print(" ".join("ok" if x else f"fail{i}" for i, x in enumerate(ok)))
 ' <<<"$out")
