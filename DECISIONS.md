@@ -541,3 +541,84 @@ handle.
 **Consequences.** Breaking for the five methods (D-007); the table above is
 also in `docs/RESOURCES.md`. `src/client.rs` holds only `Client`,
 `ClientBuilder`, the builder entry point and `execute`/`execute_stream`.
+
+---
+
+## D-018 — Antigravity stays on the bespoke `localharness` proto (2026-11-04)
+
+**Context.** Harness 0.1.23 can speak a second transport: set
+`InputConfig.use_interactions_api` (handshake field 6) and the same
+WebSocket carries Interactions-mode events (`interaction.create`,
+`step.start`/`step.delta`/`step.stop`, `state_update`). #494 asked whether
+the crate should adopt it, keep the bespoke proto, or offer both behind a
+switch. The attraction is one event model (`Step`, `StepDelta`) for hosted
+and local agents.
+
+**Decision.** Stay on the bespoke proto; build neither the
+Interactions-mode transport nor a builder switch for it. Probed on 0.1.23
+(darwin arm64, 2026-11-04): the handshake succeeds, then every
+`interaction.create` that carries an agent config is rejected
+(`genai.AgentInteraction.dynamic_config has json_only_discriminator 'type'
+but 'type' is not a reserved field in message genai.DynamicAgentConfig`),
+the Python SDK's own `InteractionsAgentConfig` included, while
+`LocalAgentConfig` completes a turn against the same scripted model. Mapped
+from the SDK's client source (no turn could run), the mode also has no
+trigger event, takes static policies only (no `policyDecisionRequest`
+equivalent), answers questions by choice label, and emits local step
+types (`view_file_*`, `edit_file_*`, `elicitation_call` and others) that
+`Step` lacks. The shape table and gap list for triggers,
+hooks and policy round trips are in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`
+("Interactions-mode transport (#494): decision").
+
+**Consequences.** Nothing to maintain twice, and the hosted and local event
+models stay separate. Revisit when Python makes Interactions mode the
+default (the `antigravity-release-watch` workflow quotes where each new
+wheel sets `use_interactions_api`), when a scripted probe completes a turn
+in this mode, or when the bespoke proto shows signs of deprecation. A
+re-probe needs only field 6 on `handshake::InputConfig` and
+`tests/common/fake_gemini.rs`.
+
+---
+
+## D-019 — A harness version mismatch warns; it does not refuse (2026-11-04)
+
+**Context.** #499 asked for a spawn-time check of the running harness
+against `SUPPORTED_HARNESS_VERSION`. The binary has no version flag, but the
+wheel's `google_antigravity-<version>.dist-info/METADATA` sits beside it, so
+`spawn()` can read it. Warn or error was left open.
+
+**Decision.** `spawn()` logs a `warn!` on a known mismatch, exposes the
+version as `AntigravityAgent::harness_version()`, and names a known
+mismatch in `InitFailed` messages and turn-`Timeout` diagnoses. It does not
+fail. The failures a mismatch causes are already loud: an init rejection
+with the harness's own reason, or a turn timeout whose diagnosis now names
+the version. Running a newer wheel on purpose is how a harness bump is
+tested, and an error would force a code change before the first test run.
+A binary outside a wheel install has no version to compare (`None`), and
+refusing it would break `ANTIGRAVITY_HARNESS_PATH` setups.
+
+**Consequences.** A mismatch can go unnoticed by code that installs no
+`tracing` subscriber until something fails, and when it fails the error
+says why. Callers who want a hard stop compare `harness_version()` with
+`SUPPORTED_HARNESS_VERSION` themselves (`docs/ANTIGRAVITY.md`, "Version
+pinning").
+
+---
+
+## D-020 — Antigravity turn request handlers move to `turn_requests.rs` (2026-11-04)
+
+**Context.** The #499 deadline work pushed `src/antigravity/turn.rs` past
+the roughly 800-line limit (D-014).
+
+**Decision.** Moved, per D-011, with no behavior change:
+
+| From | To |
+|------|----|
+| `AntigravityAgent::answer_tool_confirmation`, `answer_questions`, `process_tool_call`, `process_hook_request`, `decide`, and `run_hook` in `src/antigravity/turn.rs` | `src/antigravity/turn_requests.rs` |
+
+`turn.rs` keeps event dispatch and `TurnState`. New private module in the
+same work: `src/antigravity/process_tree.rs` (signals the harness's process
+group and its children's groups), with tests in `process_tree_tests.rs`.
+
+**Consequences.** Links to `src/antigravity/turn.rs:<line>` for the request
+handlers written before 2026-11-04 point at the old layout.

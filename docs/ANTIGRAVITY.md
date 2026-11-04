@@ -77,10 +77,11 @@ venv) and logs a `warn!` when it differs from `SUPPORTED_HARNESS_VERSION`.
 is not inside a wheel install). A known mismatch is also named in an
 `InitFailed` message and in a turn's `Timeout` diagnosis.
 
-It warns rather than refuses because the failures a mismatch causes are
-already loud (an init rejection with the harness's reason, or a timeout that
-now names the version), and because running a newer wheel on purpose is
-how a harness bump is tested. To refuse one, compare the two yourself:
+It warns rather than refuses (D-019) because the failures a mismatch
+causes are already loud (an init rejection with the harness's reason, or a
+timeout that now names the version), and because running a newer wheel on
+purpose is how a harness bump is tested. To refuse one, compare the two
+yourself:
 
 ```rust,ignore
 use genai_rs::antigravity::SUPPORTED_HARNESS_VERSION;
