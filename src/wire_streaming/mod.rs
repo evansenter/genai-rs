@@ -554,6 +554,95 @@ mod tests {
         assert!(matches!(known, StreamChunk::Error { .. }), "{known:?}");
     }
 
+    /// The `chunk_type` each known variant actually writes.
+    fn written_chunk_types() -> std::collections::BTreeSet<String> {
+        let samples = [
+            StreamChunk::Created {
+                interaction: InteractionResponse::default(),
+            },
+            StreamChunk::StatusUpdate {
+                interaction_id: None,
+                status: InteractionStatus::InProgress,
+                usage: None,
+                continuation_token: None,
+            },
+            StreamChunk::StepStart {
+                index: 0,
+                step: Step::model_output(vec![]),
+            },
+            StreamChunk::StepDelta {
+                index: 0,
+                delta: StepDelta::Text {
+                    text: String::new(),
+                },
+            },
+            StreamChunk::StepStop {
+                index: 0,
+                usage: None,
+                step_usage: None,
+            },
+            StreamChunk::Completed(InteractionResponse::default()),
+            StreamChunk::Error {
+                message: String::new(),
+                code: None,
+            },
+        ];
+        for sample in &samples {
+            // No wildcard: a new variant stops this compiling until it has a
+            // sample above.
+            match sample {
+                StreamChunk::Created { .. }
+                | StreamChunk::StatusUpdate { .. }
+                | StreamChunk::StepStart { .. }
+                | StreamChunk::StepDelta { .. }
+                | StreamChunk::StepStop { .. }
+                | StreamChunk::Completed(_)
+                | StreamChunk::Error { .. } => {}
+                StreamChunk::Unknown { .. } => unreachable!("samples are known chunks"),
+            }
+        }
+        let written: std::collections::BTreeSet<String> = samples
+            .iter()
+            .map(|sample| {
+                serde_json::to_value(sample).unwrap()["chunk_type"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(written.len(), samples.len(), "two variants share a name");
+        written
+    }
+
+    #[test]
+    fn test_known_chunk_types_are_the_serializers_names() {
+        // The collision marker is only as good as this hand-kept list.
+        let known: std::collections::BTreeSet<String> = serde_impls::KNOWN_CHUNK_TYPES
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(known, written_chunk_types());
+    }
+
+    #[test]
+    fn test_enum_wire_formats_doc_lists_the_serializers_names() {
+        // The StreamChunk table in docs/ENUM_WIRE_FORMATS.md is hand-kept.
+        let doc = include_str!("../../docs/ENUM_WIRE_FORMATS.md");
+        let section = doc
+            .split("\n### StreamChunk\n")
+            .nth(1)
+            .expect("a `### StreamChunk` section");
+        let section = section.split("\n#").next().unwrap();
+        let documented: std::collections::BTreeSet<String> = section
+            .lines()
+            .filter_map(|line| line.strip_prefix("| `"))
+            .filter_map(|rest| rest.split_once('`'))
+            .map(|(name, _)| name.to_string())
+            .filter(|name| name != "chunk_type")
+            .collect();
+        assert_eq!(documented, written_chunk_types());
+    }
+
     #[test]
     fn test_stream_chunk_created_roundtrip() {
         let response = InteractionResponse {
