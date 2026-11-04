@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `Interactions::get_with_input` docs no longer say the input is not
+  echoed. With `include_input=true` the API returns the input as a list
+  holding one `user_input` step, and on that read it repeats every entry of
+  the stored request's lists (`stop_sequences`, `response_modalities`,
+  `safety_settings`, speech speakers), which arrive unmodeled in `extra`
+  (verified live 2026-11-04).
+- `docs/ENUM_WIRE_FORMATS.md` no longer says reads echo no
+  `generation_config`. A stored interaction read back carries it, with
+  `speech_config` in the `{"speakers": [...]}` form whichever form was sent,
+  and `response_format`, `response_modalities` and `safety_settings` too;
+  `InteractionResponse` does not model them yet, so they arrive in `extra`
+  (verified live 2026-11-04).
+
+### Fixed
+
+- `Webhooks::create` sent a `Webhook`'s output-only fields (`id`, `state`,
+  `signing_secrets`, `new_signing_secret`, `create_time`, `update_time`)
+  whenever they were set, as on a webhook read back from the API. The
+  create body is now what google-genai's `WebhookInput` defines: `uri`,
+  `subscribed_events` and `name`, plus anything in `extra`.
+
 ## [0.13.0] - 2026-11-03
 
 Tracks the Interactions API as of `google-genai` 2.34.0 (swept 2026-11-01,
