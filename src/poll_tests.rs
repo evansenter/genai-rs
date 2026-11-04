@@ -32,6 +32,8 @@ enum Read {
     Fail(GenaiError),
     /// Never answers.
     Hang,
+    /// Answers ready after this long, as a real request takes a round trip.
+    SlowReady(Duration),
 }
 
 fn rate_limited(retry_after: Option<Duration>) -> GenaiError {
@@ -66,6 +68,7 @@ async fn scripted_wait(
                         Read::Pending => Read::Pending,
                         Read::Ready => Read::Ready,
                         Read::Hang => Read::Hang,
+                        Read::SlowReady(after) => Read::SlowReady(*after),
                         // `GenaiError` isn't `Clone`; the scripts only
                         // repeat these two kinds.
                         Read::Fail(GenaiError::InvalidInput(m)) => {
@@ -80,6 +83,10 @@ async fn scripted_wait(
                         Read::Ready => Ok("ready"),
                         Read::Fail(e) => Err(e),
                         Read::Hang => std::future::pending().await,
+                        Read::SlowReady(after) => {
+                            tokio::time::sleep(after).await;
+                            Ok("ready")
+                        }
                     }
                 }
             },
@@ -192,7 +199,14 @@ async fn wait_cuts_a_hung_status_read_at_the_deadline() {
     assert_eq!(reads, secs(&[0, 4]));
     // Exactly the deadline: no one-second floor, no extra interval.
     assert_eq!(start.elapsed(), Duration::from_secs(10));
-    assert!(err.to_string().contains("no answer within 6s"), "{err}");
+    let message = err.to_string();
+    assert!(
+        message.contains("cut off by the wait's deadline, unanswered after 6s"),
+        "{message}"
+    );
+    // The last state is still the one the earlier read saw.
+    assert!(message.contains("last state: pending"), "{message}");
+    assert!(!message.contains("failed"), "nothing failed: {message}");
 }
 
 #[tokio::test(start_paused = true)]
@@ -210,10 +224,39 @@ async fn wait_with_a_zero_timeout_reads_once() {
         "{result:?}"
     );
     assert_eq!(reads, secs(&[0]));
+}
 
+#[tokio::test(start_paused = true)]
+async fn wait_shorter_than_one_round_trip_reports_the_cut_off() {
+    // A real status request takes a round trip, so a timeout shorter than
+    // that can't see even a resource that is already active. The error must
+    // blame the deadline, not a failed request.
+    let round_trip = Duration::from_millis(80);
+    for timeout in [Duration::ZERO, Duration::from_millis(50)] {
+        let start = tokio::time::Instant::now();
+        let (result, reads) = scripted_wait(
+            PollOptions::new().with_timeout(timeout),
+            vec![Read::SlowReady(round_trip)],
+        )
+        .await;
+        let err = result.unwrap_err();
+        assert_eq!(reads, secs(&[0]), "timeout {timeout:?}");
+        assert_eq!(start.elapsed(), timeout, "cut off at the deadline");
+        assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
+        let message = err.to_string();
+        assert!(
+            message.contains(
+                "last state: unknown; the last status request was cut off by the wait's deadline"
+            ),
+            "{message}"
+        );
+        assert!(!message.contains("failed"), "nothing failed: {message}");
+    }
+
+    // A timeout that leaves room for the round trip sees it.
     let (result, _) = scripted_wait(
-        PollOptions::new().with_timeout(Duration::ZERO),
-        vec![Read::Ready],
+        PollOptions::new().with_timeout(round_trip * 2),
+        vec![Read::SlowReady(round_trip)],
     )
     .await;
     assert_eq!(result.unwrap(), "ready");

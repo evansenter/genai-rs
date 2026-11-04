@@ -36,6 +36,10 @@ impl PollOptions {
     /// Gives up once `timeout` has passed since the wait started, and never
     /// later: each status request is cut off at the deadline, and a poll
     /// that would start past it isn't made (the wait returns then instead).
+    ///
+    /// The timeout must be longer than one status request's round trip, or
+    /// even a resource that is already active can't be seen: the first
+    /// request is cut off too, and the error says so.
     #[must_use]
     pub const fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
@@ -69,7 +73,9 @@ impl PollOptions {
     /// has no read timeout), and the wait gives up as soon as the next poll
     /// would start at or past it rather than sleeping into it. The first
     /// status request is always made, so a zero timeout still reports an
-    /// error `get` returns at once (an invalid name).
+    /// error `get` returns at once (an invalid name). A request the deadline
+    /// cuts off is reported as cut off, not as failed: with a timeout
+    /// shorter than one round trip, that is how every wait ends.
     ///
     /// A retryable error (a 5xx, a 429, a dropped connection) is logged and
     /// polled through rather than ending a long wait; any other error returns
@@ -103,10 +109,11 @@ impl PollOptions {
         let mut last_state = "unknown".to_string();
         loop {
             let bound = time_left();
-            // This round's transient failure, if any, so a deadline caused
-            // by an outage says so.
+            // What went wrong with this round's status request, if anything,
+            // so a deadline caused by an outage, or by the deadline itself,
+            // says so.
             let mut retry_after = None;
-            let last_error = match tokio::time::timeout(bound, get()).await {
+            let last_problem = match tokio::time::timeout(bound, get()).await {
                 Ok(Ok(current)) => {
                     match check(current)? {
                         PollStep::Ready(done) => return Ok(done),
@@ -117,20 +124,24 @@ impl PollOptions {
                 Ok(Err(e)) if e.is_retryable() => {
                     tracing::warn!("Polling {what} failed ({e}); retrying until the deadline");
                     retry_after = e.retry_after();
-                    Some(e.to_string())
+                    Some(format!("the last status request failed: {e}"))
                 }
                 Ok(Err(e)) => return Err(e),
+                // Nothing failed: the wait's own deadline ended the request.
                 Err(_) => {
-                    tracing::warn!("Polling {what}: no answer within {bound:?}");
-                    Some(format!("no answer within {bound:?}"))
+                    tracing::warn!("Polling {what}: status request cut off at the deadline");
+                    Some(format!(
+                        "the last status request was cut off by the wait's deadline, \
+                         unanswered after {bound:?}"
+                    ))
                 }
             };
 
             let delay = retry_after.map_or(interval, |asked| asked.max(interval));
             if delay >= time_left() {
                 let waited = start.elapsed();
-                let mut cause = last_error
-                    .map(|e| format!("; the last status request failed: {e}"))
+                let mut cause = last_problem
+                    .map(|problem| format!("; {problem}"))
                     .unwrap_or_default();
                 if let Some(asked) = retry_after.filter(|asked| *asked > interval) {
                     cause.push_str(&format!(

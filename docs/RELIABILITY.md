@@ -267,6 +267,10 @@ default, polling every 2 s and 500 ms):
   deadline, and the wait gives up as soon as the next poll would start at or
   past it, rather than sleeping into it. The first status request always
   runs, so an invalid name is reported even with a zero timeout.
+- **The timeout must be longer than one round trip.** The first status
+  request is cut off at the deadline too, so a shorter timeout fails even
+  for a resource that is already active. The error then says the request
+  was cut off by the wait's deadline (no request failed).
 - **Transient errors are polled through.** A retryable error (a 5xx, a 429,
   a dropped connection) is logged and the wait goes on; any other error
   ends it.
