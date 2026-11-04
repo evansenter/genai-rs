@@ -41,6 +41,8 @@ mod handshake;
 mod hook_mapping;
 mod hooks;
 mod process;
+#[cfg(unix)]
+mod process_tree;
 pub mod protocol;
 mod session;
 mod streaming;
