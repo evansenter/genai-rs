@@ -14,6 +14,7 @@ follow.
 | Compile-time (trybuild) | `tests/ui/` via `tests/ui_tests.rs` | No | `cargo test --test ui_tests` |
 | Live integration | The other `tests/*.rs` files; each test is `#[ignore = "Requires API key"]` | Yes | `make test-all` |
 | Doctests | Rustdoc examples and the markdown guides (`doc_comment!` in `src/lib.rs`) | No | `cargo test --workspace --doc --all-features` (CI only; `make` skips them) |
+| Scripted harness | `tests/antigravity_scripted.rs`; each test is `#[ignore = "Requires localharness binary"]` | No, only `localharness` | See [Scripted harness tests](#scripted-harness-tests) |
 | Harness | `tests/antigravity_harness.rs` | Yes, plus `localharness` | See [ANTIGRAVITY.md](ANTIGRAVITY.md) |
 
 ```bash
@@ -57,6 +58,58 @@ canned `Reply`s: JSON, text, SSE chunks, extra headers, or a delay.
 
 Prefer an offline test for anything that doesn't depend on model behavior;
 it's fast and runs on every PR.
+
+## Scripted harness tests
+
+`tests/antigravity_scripted.rs` runs the real `localharness` binary against
+a scripted model instead of Gemini. `AgentBuilder::with_gemini_base_url`
+points the harness's model calls at `tests/common/fake_gemini.rs`, a
+`FakeGemini` built on the HTTP stub that answers request *n* with turn *n*
+of a script (the last one repeats):
+
+```rust,ignore
+let fake = FakeGemini::start(vec![
+    ModelTurn::call("view_file", json!({"AbsolutePath": path,
+        "toolSummary": "File read", "toolAction": "Reading file"})),
+    ModelTurn::text("read it"),
+])
+.await;
+let mut agent = AntigravityAgent::builder()
+    .with_api_key("scripted-placeholder-key")
+    .with_model(genai_rs::DEFAULT_MODEL)
+    .with_gemini_base_url(fake.base_url())
+    .add_workspace(dir)
+    .spawn()
+    .await?;
+agent.chat("read the file").await?;
+// What the harness told the model the call returned:
+let told = fake.function_responses(1);
+```
+
+The script decides what the "model" does, so the assertions are exact: the
+harness's own builtins, hooks, policies, workspace containment, triggers,
+cancellation and error handling run for real, and the test checks what
+reached the model (`function_responses`, `request_json`) and what the bridge
+reported. `ModelTurn::error(400, ..)` fails the backend call, and
+`.delayed(..)` holds a reply back (for cancellation and deadline tests).
+
+The suite needs no API key and takes a few seconds, so CI runs it on every
+PR, forks included, as a step of the required `Test Suite (antigravity)`
+job, with `GEMINI_API_KEY` blanked. Locally, with the pinned wheel
+installed (its venv first on `PATH`, or `ANTIGRAVITY_HARNESS_PATH` set):
+
+```bash
+cargo nextest run --features antigravity --run-ignored all -E 'binary(antigravity_scripted)'
+```
+
+Write a scripted test, not a live one, for anything about the bridge or the
+harness rather than about a model's choices. Function-call arguments use
+the harness's tool-schema names (`AbsolutePath`, `CommandLine`), which a
+`LOUD_WIRE` trace or `fake.request_json(0)["tools"]` shows. Two harness
+behaviors to know: it allows the system temp directory besides the
+workspaces, so a file meant to be outside them goes under
+`CARGO_TARGET_TMPDIR`; and a turn with a backgrounded `run_command` does not
+finish until the command does.
 
 ## Live tests
 

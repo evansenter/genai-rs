@@ -282,6 +282,11 @@ impl AgentBuilder {
 
     /// Sets a pre-tool hook, consulted before every tool dispatch and for
     /// `confirm(...)` policies.
+    ///
+    /// It runs on tokio's blocking pool and is bounded by the turn
+    /// deadline. A call whose arguments the harness sent as invalid JSON is
+    /// denied without consulting the hook, which would otherwise judge a
+    /// placeholder.
     #[must_use]
     pub fn on_pre_tool(
         mut self,
@@ -299,11 +304,11 @@ impl AgentBuilder {
     /// so the harness never deadlocks — that fallback covers only the
     /// *hookless* case.
     ///
-    /// The hook is synchronous and runs inline in the harness event pump:
-    /// **do not block in it** waiting for a human. Answer from policy or
-    /// pre-collected state (e.g. a channel drained with `try_recv`);
-    /// blocking stalls all event processing for as long as the answer
-    /// takes.
+    /// The hook is synchronous and the turn waits for it: **do not block in
+    /// it** waiting for a human. Answer from policy or pre-collected state
+    /// (e.g. a channel drained with `try_recv`). It runs on tokio's blocking
+    /// pool, so the turn deadline still bounds it, but every second it
+    /// takes is spent from that budget.
     ///
     /// The hook only fires if [`BuiltinTool::AskQuestion`] is enabled —
     /// it is *not* in [`Capabilities::read_only()`] (the default), so on a
