@@ -133,16 +133,21 @@ let client = Client::builder("api-key".to_string())
 # Ok::<(), genai_rs::GenaiError>(())
 ```
 
-| `ClientBuilder` method | Effect |
-|------------------------|--------|
-| `with_timeout(Duration)` | Total-request timeout for every request, **including streamed bodies**. A request-level timeout cannot extend it |
-| `with_connect_timeout(Duration)` | Connection timeout |
-| `with_read_timeout(Duration)` | Longest wait for the headers or the next chunk, reset by each one: bounds a stalled stream without capping a long one. Set it above the longest a call thinks before answering |
-| `with_base_url(String)` | Send requests to a proxy or mock server instead of `generativelanguage.googleapis.com` |
-| `add_wire_inspector(Arc<dyn WireInspector>)` | Observe raw API traffic; see [Logging Strategy](LOGGING_STRATEGY.md#wire-inspection-api) |
+| `ClientBuilder` method | Default | Effect |
+|------------------------|---------|--------|
+| `with_timeout(Duration)` | None | Total-request timeout for every request, **including streamed bodies**. A request-level timeout cannot extend it |
+| `with_connect_timeout(Duration)` | 30 s (`DEFAULT_CONNECT_TIMEOUT`) | Connection timeout: DNS, TCP and TLS |
+| `with_read_timeout(Duration)` | None | Longest wait for the headers or the next chunk, reset by each one: bounds a stalled stream without capping a long one. Set it above the longest a call thinks before answering |
+| `with_base_url(String)` | The Gemini API host | Send requests to a proxy or mock server instead of `generativelanguage.googleapis.com` |
+| `add_wire_inspector(Arc<dyn WireInspector>)` | None (`LOUD_WIRE` adds a printer) | Observe raw API traffic; see [Logging Strategy](LOGGING_STRATEGY.md#wire-inspection-api) |
 
-`Client::new(api_key)` is `Client::builder(api_key).build()` with no
-timeouts.
+`Client::new(api_key)` is `Client::builder(api_key).build()`, panicking
+instead of returning an error, so both get the same defaults: a 30 s connect
+timeout and no read or total timeout. There is no default read or total
+timeout because a non-streaming response's headers arrive only after
+generation finishes, so any default short enough to catch a hung connection
+would cut off a long legitimate generation (decided 2026-11-04; the
+reasoning is in [Reliability](RELIABILITY.md#why-only-a-connect-timeout-by-default)).
 
 ## Request-level settings
 
@@ -153,6 +158,7 @@ timeouts.
 | `with_system_instruction(str)` | System prompt for this interaction |
 | `with_store_enabled()` / `with_store_disabled()` | Server-side storage (on by default); see [Builder API](BUILDER_API.md#validation-errors) |
 | `with_background(true)` | Return immediately and run in the background; see [Agents and Background Execution](AGENTS_AND_BACKGROUND.md) |
+| `with_extra(key, value)` | Sends a request field this crate does not model yet, flat beside the modeled ones (`InteractionRequest::extra`). The server validates it like any field: an unknown name is `400 Unknown parameter`. A key naming a modeled field overrides it, since the API keeps the last of a repeated key (verified live 2026-11-04) |
 
 ## Cached content
 

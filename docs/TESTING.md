@@ -9,12 +9,13 @@ follow.
 |------|-------|-------------|----------|
 | Unit | `#[cfg(test)]` modules and `src/*_tests.rs` | No | `make test` |
 | Property (proptest) | `src/proptest_tests.rs` | No | `make test` (or `cargo test proptest`) |
-| Offline HTTP | `tests/http_mock_tests.rs`, `tests/http_mock_resources.rs` | No | `make test` |
+| Offline HTTP | `tests/http_mock_tests.rs`, `tests/http_mock_resources.rs`, `tests/reliability_tests.rs` | No | `make test` |
 | Guards | `tests/ci_coverage.rs`, `tests/model_literals.rs`, `tests/non_exhaustive_responses.rs` | No | `make test` |
 | Compile-time (trybuild) | `tests/ui/` via `tests/ui_tests.rs` | No | `cargo test --test ui_tests` |
 | Live integration | The other `tests/*.rs` files; each test is `#[ignore = "Requires API key"]` | Yes | `make test-all` |
 | Doctests | Rustdoc examples and the markdown guides (`doc_comment!` in `src/lib.rs`) | No | `cargo test --workspace --doc --all-features` (CI only; `make` skips them) |
 | Harness | `tests/antigravity_harness.rs` | Yes, plus `localharness` | See [ANTIGRAVITY.md](ANTIGRAVITY.md) |
+| Fuzz | `fuzz/` (cargo-fuzz targets over `src/fuzzing.rs`; failing inputs replayed by `src/fuzzing_tests.rs`) | No | `cargo +nightly fuzz run <target>` in `fuzz/`; see [fuzz/README.md](../fuzz/README.md) |
 
 ```bash
 make test                                             # everything offline
@@ -45,6 +46,12 @@ canned `Reply`s: JSON, text, SSE chunks, extra headers, or a delay.
 - **`http_mock_tests.rs`** covers client behavior that only shows on the
   wire: request shapes, error mapping, SSE framing, and the auto-function
   loop.
+- **`reliability_tests.rs`** covers the default timeouts, how a cut-off
+  stream is classified, the stop at a stream's terminal event, and
+  `Retry-After` in a poll. Its paused-clock tests hold a `spawn_blocking`
+  gate until the stub has the request: tokio advances a paused clock
+  whenever the runtime is idle, even with localhost I/O in flight, and the
+  gate keeps that from firing a timer early.
 - **`http_mock_resources.rs`** pins every resource endpoint on method, path
   (percent-encoding included), query and JSON body. It parses a realistic
   response, preserving `Unknown` and `extra`, and covers the wait helpers'
