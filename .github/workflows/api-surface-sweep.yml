@@ -62,23 +62,6 @@ jobs:
         with:
           python-version: '3.12'
 
-      # The coverage oracle (`src/coverage_oracle/`) reads the committed
-      # bindings snapshot, and checks offline only that its version matches
-      # the baseline file. This checks the content: a dump-script change, or
-      # a baseline bump made without the refresh script, leaves the oracle
-      # testing against surface the baseline release does not have.
-      - name: Committed snapshot matches the baseline release
-        run: |
-          set -euo pipefail
-          .github/scripts/refresh_api_snapshot.sh --out "$RUNNER_TEMP/snapshot-baseline"
-          if ! diff -u tests/fixtures/api_surface/bindings.json \
-              "$RUNNER_TEMP/snapshot-baseline/bindings.json" > snapshot.diff; then
-            head -c 20000 snapshot.diff
-            echo "::error file=tests/fixtures/api_surface/bindings.json::The committed bindings snapshot does not match a fresh dump of the baseline release. Run .github/scripts/refresh_api_snapshot.sh and commit the result."
-            exit 1
-          fi
-          echo "tests/fixtures/api_surface/bindings.json matches the baseline release."
-
       - name: Compare latest SDK against the recorded baseline
         id: diff
         run: |
@@ -213,8 +196,9 @@ jobs:
             echo "   coverage oracle's snapshot (\`tests/fixtures/api_surface/\`)"
             echo "   together; the regenerated snapshot is also attached to this run"
             echo "   as the \`api-surface-snapshot\` artifact. Then run"
-            echo "   \`cargo nextest run -E 'test(/coverage_oracle/)'\`: every new"
-            echo "   field fails there until it is modeled or listed with a reason."
+            echo "   \`cargo nextest run -E 'test(/coverage_oracle/) | binary(ci_coverage)'\`:"
+            echo "   every new field, class or endpoint fails there until it is"
+            echo "   handled or listed with a reason."
             echo "   The bump is what closes this loop: the next run sees baseline"
             echo "   == latest and closes this issue itself, which is what clears"
             echo "   the staleness signal the tracker header points readers at."
@@ -460,3 +444,24 @@ jobs:
           gh issue comment "$EXISTING" --body-file close_comment.md
           gh issue close "$EXISTING" --reason completed
           echo "Closed issue #$EXISTING"
+
+      # The coverage oracle (`src/coverage_oracle/`) reads the committed
+      # bindings snapshot, and checks offline only that its version matches
+      # the baseline file. This checks the content: a dump-script change, or
+      # a baseline bump made without the refresh script, leaves the oracle
+      # testing against surface the baseline release does not have. PR CI
+      # runs the same check when the dump script or the snapshot changes
+      # (`rust.yml`, shell-scripts).
+      #
+      # Last, and after `!cancelled()`, so a drifted snapshot turns the run
+      # red without stopping the detection above: the sweep's job is to
+      # report new surface, and it must keep doing that while the snapshot
+      # is being fixed.
+      - name: Committed snapshot matches the baseline release
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          if ! .github/scripts/refresh_api_snapshot.sh --check; then
+            echo "::error file=tests/fixtures/api_surface/bindings.json::The committed bindings snapshot does not match a fresh dump of the baseline release. Run .github/scripts/refresh_api_snapshot.sh and commit the result."
+            exit 1
+          fi
