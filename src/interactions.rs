@@ -80,7 +80,11 @@ impl Interactions<'_> {
     /// parameter so the response's `input` field is populated.
     ///
     /// The input comes back as a step list, a single `user_input` step for a
-    /// text prompt (live 2026-11-04; it was not echoed in 2026-07).
+    /// text prompt (live 2026-11-04; it was not echoed in 2026-07). On this
+    /// read the API also repeats every entry of the stored request's lists
+    /// (`stop_sequences`, `response_modalities`, `safety_settings`, speech
+    /// speakers), which arrive unmodeled in
+    /// [`extra`](InteractionResponse::extra) (live 2026-11-04).
     ///
     /// # Errors
     ///

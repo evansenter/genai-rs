@@ -60,8 +60,9 @@ facts from 2026-11-04:
 - **Served, landing in `extra`:** on a stored interaction read back,
   `generation_config` (with `speech_config` in the `{"speakers": [...]}`
   form, whichever form was sent), `response_format`, `response_modalities`
-  and `safety_settings`. With `include_input=true` the same read lists each
-  `speakers` entry and each `response_modalities` value twice.
+  and `safety_settings`. With `include_input=true` every one of those lists
+  (`speakers`, `stop_sequences`, `response_modalities`, `safety_settings`)
+  comes back with each entry twice, which modeling them has to allow for.
   `FileSearchStore.activeDocumentsCount` and `sizeBytes` (string int64s);
   `File.updateTime` and `File.source` (`UPLOADED`).
 - **In the snapshot, not modeled, not seen live yet:** the `queued` status
