@@ -21,6 +21,10 @@
 //! are read too, and the source is parsed with `syn`, so formatting cannot
 //! hide or fake a call.
 //!
+//! [`body_verbs`] finds, for `tests/request_wire_oracle.rs`, the verbs whose
+//! implementation reaches a POST, PATCH or PUT request through the
+//! functions it calls by name: the verbs that send a body.
+//!
 //! Not a test target itself: Cargo only builds `tests/*.rs` and
 //! `tests/*/main.rs`.
 
