@@ -19,7 +19,7 @@ on:
     paths:
       - "src/http/sse_parser.rs"
       - "src/http/interactions.rs"
-      - "src/wire_streaming.rs"
+      - "src/wire_streaming/**"
       - "src/steps/**"
       - "src/content/**"
       - "src/fuzzing.rs"

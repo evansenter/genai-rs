@@ -59,7 +59,7 @@ installs a `tracing` subscriber.
 | `src/client.rs`, `src/request_builder/` | `Client`, `ClientBuilder`, `interaction()`, `execute`/`execute_stream`, `InteractionBuilder` (one file per concern: `input`, `tools`, `output`, `generation`; `ConversationBuilder` in `conversation.rs`), the auto-function loop (`auto_functions.rs`) |
 | `src/request/`, `src/content/`, `src/tools/` | Request types (`generation_config.rs`, `agent_config.rs`), `Content` (annotations, result items, video processing alongside), tool configs (`function`, `choice`, `retrieval`, `builtin`) |
 | `src/steps/`, `src/response/` | The steps response model (`Step`, `StepDelta`, the stream `accumulator`), `InteractionResponse` and its accessors (usage, view types and `StepSummary` alongside) |
-| `src/wire_streaming.rs`, `src/streaming.rs` | Stream chunk/event types; auto-function stream types |
+| `src/wire_streaming/`, `src/streaming.rs` | Stream chunk/event types (their wire format in `wire_streaming/serde_impls.rs`); auto-function stream types |
 | `src/webhooks.rs`, `triggers.rs`, `agents.rs`, `environments/`, `files.rs`, `file_search_stores.rs`, `credentials.rs`, `voices.rs` | Resource types (`/v1beta/...`) and each resource's accessor, handle and list builders (D-016; the old-to-new map is `docs/RESOURCES.md`) |
 | `src/interactions.rs` | The `Interactions` handle: get, stream, resume, cancel and delete a stored interaction by id (D-017) |
 | `src/paging.rs` | `pub(crate)` paging engine behind every list builder's `.pages()` / `.items()` |

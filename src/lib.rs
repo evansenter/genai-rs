@@ -66,6 +66,7 @@
 // =============================================================================
 pub(crate) mod http;
 pub(crate) mod paging;
+pub(crate) mod poll;
 pub(crate) mod serde_util;
 #[cfg(test)]
 pub(crate) mod test_subscriber;
