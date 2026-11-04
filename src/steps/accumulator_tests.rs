@@ -303,6 +303,31 @@ fn test_accumulator_thought_summary_and_signature() {
     }
 }
 
+/// Merging consecutive summary text chunks keeps every chunk's unmodeled
+/// content fields on the merged block, as the text and media merges do, so
+/// the thought replays like a non-streamed one (#491).
+#[test]
+fn test_accumulator_thought_summary_merge_keeps_each_chunks_extra() {
+    let mut acc = StepAccumulator::new();
+    acc.start(
+        0,
+        serde_json::from_value(json!({"type": "thought", "signature": "sig"})).unwrap(),
+    );
+    for delta in [
+        json!({"type": "thought_summary", "content": {"type": "text", "text": "Consider ", "first": 1}}),
+        json!({"type": "thought_summary", "content": {"type": "text", "text": "this", "later": 2}}),
+    ] {
+        acc.apply_delta(0, &serde_json::from_value(delta).unwrap());
+    }
+    let steps = acc.finish();
+    assert_eq!(
+        serde_json::to_value(&steps[0]).unwrap(),
+        json!({"type": "thought", "signature": "sig", "summary": [
+            {"type": "text", "text": "Consider this", "first": 1, "later": 2}
+        ]})
+    );
+}
+
 #[test]
 fn test_accumulator_delta_without_start_creates_model_output() {
     let mut acc = StepAccumulator::new();

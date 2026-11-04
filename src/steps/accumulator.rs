@@ -293,15 +293,23 @@ impl StepAccumulator {
                 },
                 Step::Thought { summary, .. },
             ) => {
-                // Consecutive text summaries merge; other content appends.
+                // Consecutive text summaries merge, keeping each chunk's
+                // unmodeled fields on the block; other content appends.
                 if let (
-                    Some(Content::Text { text: Some(t), .. }),
+                    Some(Content::Text {
+                        text: Some(t),
+                        extra: block_extra,
+                        ..
+                    }),
                     Content::Text {
-                        text: Some(new), ..
+                        text: Some(new),
+                        extra: new_extra,
+                        ..
                     },
                 ) = (summary.last_mut(), c)
                 {
                     t.push_str(new);
+                    absorb(block_extra, new_extra);
                 } else {
                     summary.push(c.clone());
                 }
