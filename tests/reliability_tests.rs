@@ -4,9 +4,11 @@
 //!
 //! The paused-clock tests do real localhost I/O. Tokio advances a paused
 //! clock to the next timer whenever the runtime is idle, even while I/O is
-//! in flight, so they hold a blocking task (which stops the auto-advance)
-//! until the stub has the request: from then on the only timers are the
-//! stub's delays and any timeout the client has.
+//! in flight, so the ones that need the client's real defaults hold a
+//! blocking task (which stops the auto-advance) until the stub has the
+//! request: from then on the only timers are the stub's delays and any
+//! timeout the client has. The other way, turning the connect timeout off
+//! with `Duration::MAX`, is tested here too.
 
 mod common;
 

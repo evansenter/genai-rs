@@ -85,7 +85,9 @@ fn regression_unknown_event_named_like_a_known_chunk_type() {
 /// bare number) reads as `Unknown` tagged `"<missing type>"`, and the write
 /// puts that tag in its data. Intended (pinned in `tools_tests.rs`,
 /// `annotation_tests.rs` and `serialize_tests.rs`), so [`Normalize`]
-/// expects it, at the top level and nested.
+/// expects it, at the top level and nested. (Under `strict-unknown` these
+/// inputs don't parse, and the targets skip them.)
+#[cfg(not(feature = "strict-unknown"))]
 #[test]
 fn regression_typeless_input_is_tagged_missing_type() {
     step(b"0");
