@@ -418,13 +418,16 @@ Process lifecycle findings (0.1.23, 2026-11-04, same technique):
   children, not the harness.
 - Stdio MCP servers inherit the harness's group and exit on their own
   stdin EOF when it dies.
-- With a custom `baseUrl` and no `apiKey`, the harness sends its own
-  environment's `GEMINI_API_KEY` to that host, so `with_gemini_base_url`
-  requires `with_api_key`.
+- With a custom `baseUrl` and no `apiKey` (or `apiKey: ""`, which proto3
+  JSON treats as unset), the harness sends its own environment's
+  `GEMINI_API_KEY` to that host. So `with_gemini_base_url` requires a
+  non-blank `with_api_key`, and while a base URL is set the bridge starts
+  the harness without `GEMINI_API_KEY` and `GOOGLE_API_KEY` in its
+  environment. Commands the harness runs inherit its environment.
 
 ## Interactions-mode transport (#494): decision
 
-**Stay on the bespoke `localharness` proto.** Do not build the
+**Stay on the bespoke `localharness` proto** (D-018). Do not build the
 Interactions-mode transport or a builder switch for it now.
 
 ### Probe (google-antigravity 0.1.23, darwin arm64, 2026-11-04)

@@ -121,6 +121,10 @@ impl AgentBuilder {
     }
 
     /// Sets the Gemini API key used by the harness for model calls.
+    ///
+    /// A blank key (empty or whitespace) counts as no key: the harness
+    /// would treat it as unset and fall back to its environment's
+    /// `GEMINI_API_KEY`, so `spawn()` treats it the same way.
     #[must_use]
     pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
         self.api_key = Some(api_key.into());
@@ -133,13 +137,16 @@ impl AgentBuilder {
     /// `/v1beta/models/<model>:streamGenerateContent?alt=sse` path and sends
     /// the key in the `x-goog-api-key` header.
     ///
-    /// Needs [`Self::with_api_key`]; `spawn()` fails with
+    /// Needs a non-blank [`Self::with_api_key`]; `spawn()` fails with
     /// [`AntigravityError::Config`] without one. Without a configured key
-    /// the harness falls back to its own environment's `GEMINI_API_KEY`
-    /// and sends *that* to the custom host (verified on harness 0.1.23,
-    /// 2026-11-04), which would hand a real key to whatever the URL names.
-    /// Pass the key that host expects, or any placeholder for a server that
-    /// checks none.
+    /// (an empty one included) the harness falls back to its own
+    /// environment's `GEMINI_API_KEY` and sends *that* to the custom host
+    /// (verified on harness 0.1.23, 2026-11-04), which would hand a real key
+    /// to whatever the URL names. Pass the key that host expects, or any
+    /// placeholder for a server that checks none. As a second guard, the
+    /// harness is started without `GEMINI_API_KEY` and `GOOGLE_API_KEY` in
+    /// its environment while a base URL is set, so commands it runs
+    /// (`run_command`) don't see them either.
     #[must_use]
     pub fn with_gemini_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.gemini_base_url = Some(base_url.into());
@@ -483,8 +490,8 @@ impl AgentBuilder {
     ///
     /// - [`AntigravityError::Config`] when write-capable built-ins or MCP
     ///   servers are enabled without any policy or pre-tool hook (safety
-    ///   parity with the reference SDK), or when a model is configured
-    ///   without an API key.
+    ///   parity with the reference SDK), or when a model or a Gemini base
+    ///   URL is configured without a non-blank API key.
     /// - [`AntigravityError::HarnessNotFound`] when discovery fails.
     /// - [`AntigravityError::HandshakeFailed`] / [`AntigravityError::InitFailed`]
     ///   with the harness's stderr tail when startup fails.
@@ -513,15 +520,18 @@ impl AgentBuilder {
                     .to_string(),
             ));
         }
-        if self.model.is_some() && self.api_key.is_none() {
+        if self.model.is_some() && self.api_key().is_none() {
             return Err(AntigravityError::Config(
-                "a model is configured without an API key; call with_api_key(..)".to_string(),
+                "a model is configured without an API key; call with_api_key(..) with a \
+                 non-empty key"
+                    .to_string(),
             ));
         }
-        if self.gemini_base_url.is_some() && self.api_key.is_none() {
+        if self.gemini_base_url.is_some() && self.api_key().is_none() {
             return Err(AntigravityError::Config(
-                "with_gemini_base_url(..) needs with_api_key(..): without one the harness \
-                 sends its environment's GEMINI_API_KEY to the custom host"
+                "with_gemini_base_url(..) needs with_api_key(..) with a non-empty key: \
+                 without one the harness sends its environment's GEMINI_API_KEY to the \
+                 custom host"
                     .to_string(),
             ));
         }
@@ -618,8 +628,11 @@ impl AgentBuilder {
                 language_version: env!("CARGO_PKG_RUST_VERSION").to_string(),
             }),
         };
+        // With a custom host, the harness gets no key to fall back on: the
+        // configured one is the only key it can send there.
+        let scrub_key_env = self.gemini_base_url.is_some();
         let (mut harness, output_config) =
-            HarnessProcess::spawn(&binary, &input_config, &wire).await?;
+            HarnessProcess::spawn(&binary, &input_config, scrub_key_env, &wire).await?;
 
         // WebSocket connect (retry with backoff).
         let session = match Session::connect(output_config.port, &output_config.api_key, wire).await
@@ -695,6 +708,13 @@ impl AgentBuilder {
         }
     }
 
+    /// The configured API key, unless it is blank. The harness treats an
+    /// empty key as unset and falls back to its environment's
+    /// `GEMINI_API_KEY`, so a blank key must count as none here too.
+    fn api_key(&self) -> Option<&str> {
+        self.api_key.as_deref().filter(|key| !key.trim().is_empty())
+    }
+
     /// Whether workspace announcement is enabled (default on).
     fn announce_workspaces(&self) -> bool {
         self.workspace_announcement.unwrap_or(true)
@@ -710,8 +730,7 @@ impl AgentBuilder {
         }
 
         let models = self
-            .api_key
-            .as_ref()
+            .api_key()
             .map(|api_key| {
                 vec![protocol::ModelConfig {
                     // A real model id, not a placeholder: this is the id the
@@ -724,7 +743,7 @@ impl AgentBuilder {
                     ),
                     types: vec![protocol::ModelType::Text],
                     gemini_api_endpoint: Some(protocol::GeminiApiEndpoint {
-                        api_key: Some(api_key.clone()),
+                        api_key: Some(api_key.to_string()),
                         base_url: self.gemini_base_url.clone(),
                         ..Default::default()
                     }),

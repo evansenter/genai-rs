@@ -242,30 +242,53 @@ where
     }
 }
 
+/// The environment variables the harness reads a Gemini API key from when
+/// its model config carries none (the Go genai SDK's two names; both appear
+/// in the 0.1.23 binary).
+const API_KEY_ENV_VARS: [&str; 2] = ["GEMINI_API_KEY", "GOOGLE_API_KEY"];
+
+/// The harness command line: piped stdio, its own process group on Unix,
+/// and, with `scrub_key_env`, none of [`API_KEY_ENV_VARS`] in its
+/// environment.
+fn harness_command(binary: &Path, scrub_key_env: bool) -> Command {
+    let mut command = Command::new(binary);
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    // A harness pointed at a custom Gemini host falls back to these when
+    // its configured key is missing or empty, and would send that key to
+    // the custom host (verified on 0.1.23, 2026-11-04). The builder
+    // refuses a blank key; this makes the fallback impossible as well.
+    if scrub_key_env {
+        for var in API_KEY_ENV_VARS {
+            command.env_remove(var);
+        }
+    }
+    // Its own process group, so a forced kill reaches what it started
+    // (see `process_tree`). This also keeps a terminal's Ctrl-C from
+    // killing the harness outright: the signal reaches this process,
+    // and when it exits the harness sees stdin EOF and shuts down
+    // gracefully, stopping its commands itself. No `kill_on_drop` on
+    // unix: `Drop` kills the whole tree instead.
+    #[cfg(unix)]
+    command.process_group(0);
+    #[cfg(not(unix))]
+    command.kill_on_drop(true);
+    command
+}
+
 impl HarnessProcess {
     /// Spawns the harness, performs the stdio handshake, and starts the
-    /// stderr drain task.
+    /// stderr drain task. With `scrub_key_env`, the harness starts without
+    /// [`API_KEY_ENV_VARS`] in its environment (see [`harness_command`]).
     pub(crate) async fn spawn(
         binary: &Path,
         input_config: &InputConfig,
+        scrub_key_env: bool,
         wire: &WireContext,
     ) -> Result<(Self, OutputConfig), AntigravityError> {
-        let mut command = Command::new(binary);
-        command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        // Its own process group, so a forced kill reaches what it started
-        // (see `process_tree`). This also keeps a terminal's Ctrl-C from
-        // killing the harness outright: the signal reaches this process,
-        // and when it exits the harness sees stdin EOF and shuts down
-        // gracefully, stopping its commands itself. No `kill_on_drop` on
-        // unix: `Drop` kills the whole tree instead.
-        #[cfg(unix)]
-        command.process_group(0);
-        #[cfg(not(unix))]
-        command.kill_on_drop(true);
-        let mut child = command
+        let mut child = harness_command(binary, scrub_key_env)
             .spawn()
             .map_err(|e| AntigravityError::HandshakeFailed {
                 message: format!("failed to spawn harness at {}: {e}", binary.display()),
@@ -789,6 +812,28 @@ mod tests {
             None
         );
         assert_eq!(metadata_version("Version: 0.1.23\n"), None);
+    }
+
+    #[test]
+    fn test_harness_command_scrubs_key_env_only_when_asked() {
+        let removed = |command: &Command| -> Vec<String> {
+            command
+                .as_std()
+                .get_envs()
+                .filter(|(_, value)| value.is_none())
+                .map(|(key, _)| key.to_string_lossy().into_owned())
+                .collect()
+        };
+        let scrubbed = harness_command(Path::new("/nonexistent/localharness"), true);
+        let mut names = removed(&scrubbed);
+        names.sort();
+        assert_eq!(names, ["GEMINI_API_KEY", "GOOGLE_API_KEY"]);
+
+        let inherited = harness_command(Path::new("/nonexistent/localharness"), false);
+        assert!(
+            removed(&inherited).is_empty(),
+            "without a custom host the harness keeps its environment"
+        );
     }
 
     #[test]

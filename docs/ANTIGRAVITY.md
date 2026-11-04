@@ -796,10 +796,14 @@ stderr saying it failed to unmarshal a message this session sent.
 Gemini API host — a gateway or recording proxy — instead of
 `generativelanguage.googleapis.com`. The harness calls
 `{url}/v1beta/models/<model>:streamGenerateContent?alt=sse` with the key
-in `x-goog-api-key`. It needs `with_api_key`: without a configured key the
-harness falls back to its own environment's `GEMINI_API_KEY` and sends
-that to the custom host (verified on 0.1.23, 2026-11-04), so `spawn()`
-refuses the combination.
+in `x-goog-api-key`. It needs a non-empty `with_api_key`: without a
+configured key, or with an empty one, the harness falls back to its own
+environment's `GEMINI_API_KEY` and sends that to the custom host (verified
+on 0.1.23, 2026-11-04), so `spawn()` refuses the combination. As a second
+guard, while a base URL is set the harness starts with `GEMINI_API_KEY` and
+`GOOGLE_API_KEY` removed from its environment, so there is no key to fall
+back on; commands the agent runs (`run_command`) inherit that environment
+and don't see them either.
 
 Pointed at a local server that answers with scripted `streamGenerateContent`
 events, the real harness runs real builtins, hooks, policies, containment,
