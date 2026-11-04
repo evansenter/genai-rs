@@ -256,6 +256,9 @@ pub struct StreamResult {
     pub saw_thought: bool,
     /// Every `event_id` seen, in order.
     pub event_ids: Vec<String>,
+    /// For each entry of `event_ids`, the length of `collected_text` once
+    /// that event was applied: the text a resume from that id should skip.
+    pub event_text_offsets: Vec<usize>,
     /// Event types the crate didn't recognize (`StreamChunk::Unknown`), in
     /// order, without duplicates: API drift worth a look.
     pub unknown_event_types: Vec<String>,
@@ -286,6 +289,7 @@ pub async fn consume_stream(
         saw_function_call: false,
         saw_thought: false,
         event_ids: Vec::new(),
+        event_text_offsets: Vec::new(),
         unknown_event_types: Vec::new(),
     };
 
@@ -293,9 +297,7 @@ pub async fn consume_stream(
         let event = item.unwrap_or_else(|e| {
             panic!("stream failed after {} delta(s): {e:?}", result.delta_count)
         });
-        if let Some(eid) = event.event_id {
-            result.event_ids.push(eid);
-        }
+        let event_id = event.event_id;
 
         match event.chunk {
             StreamChunk::StepStart { step, .. } => match step {
@@ -331,6 +333,11 @@ pub async fn consume_stream(
                 }
             }
             _ => {}
+        }
+
+        if let Some(eid) = event_id {
+            result.event_ids.push(eid);
+            result.event_text_offsets.push(result.collected_text.len());
         }
     }
 
