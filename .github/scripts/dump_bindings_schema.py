@@ -12,8 +12,9 @@ Output lines:
   alias <file>:<Name> = <annotation>
   endpoint <METHOD> <path>          (path parameters normalized to {})
 
-`--json` prints the same classes with every type reference resolved through
-the module's imports, for the offline coverage oracle (`src/coverage_oracle/`),
+`--json` prints the same classes and endpoints with every type reference
+resolved through the module's imports, for the offline coverage oracle
+(`src/coverage_oracle/`, and the endpoint check in `tests/ci_coverage.rs`),
 plus the Files, File Search Store and Document classes from the hand-written
 `google/genai/types.py` next to `_gaos` (camelCase on the wire). The snapshot
 lives in `tests/fixtures/api_surface/bindings.json`; see
@@ -125,10 +126,20 @@ def dump_types(root, out):
 ENDPOINT = re.compile(r'method="([A-Z]+)",\s*path="([^"]+)"')
 
 
+def endpoints(root):
+    """`METHOD /path` for every endpoint, path parameters normalized to {}."""
+    return sorted(
+        {
+            f"{method} {re.sub(r'{[^}]*}', '{}', url)}"
+            for path in sorted(root.glob("*.py"))
+            for method, url in ENDPOINT.findall(path.read_text(encoding="utf-8"))
+        }
+    )
+
+
 def dump_endpoints(root, out):
-    for path in sorted(root.glob("*.py")):
-        for method, url in ENDPOINT.findall(path.read_text(encoding="utf-8")):
-            out.add(f"endpoint {method} {re.sub(r'{[^}]*}', '{}', url)}")
+    for endpoint in endpoints(root):
+        out.add(f"endpoint {endpoint}")
 
 
 # ---------------------------------------------------------------------------
@@ -459,7 +470,12 @@ def compact(value):
 
 def render_json(root, resolver):
     """Line-oriented JSON: one class field or alias per line, so it greps and diffs."""
-    out = ["{", f'  "sdk_version": {compact(sdk_version(root))},', '  "aliases": {']
+    out = [
+        "{",
+        f'  "sdk_version": {compact(sdk_version(root))},',
+        f'  "endpoints": {compact(endpoints(root))},',
+        '  "aliases": {',
+    ]
     aliases = sorted(resolver.aliases.items())
     for i, (key, ty) in enumerate(aliases):
         out.append(f"    {compact(key)}: {compact(ty)}" + ("," if i + 1 < len(aliases) else ""))

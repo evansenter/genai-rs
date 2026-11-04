@@ -429,6 +429,12 @@ fn targets() -> Vec<Target> {
     ]
 }
 
+/// The binding class of every target, for the completeness check in
+/// [`super`].
+pub(super) fn target_classes() -> Vec<&'static str> {
+    targets().iter().filter_map(|t| t.binding).collect()
+}
+
 /// The `Class.field` site of a JSON path: the path's own, or its nearest
 /// ancestor's (a key inside a free-form map has none of its own).
 fn site_of(sites: &BTreeMap<String, String>, path: &str) -> String {
@@ -675,7 +681,7 @@ fn a_new_field_on_a_list_element_is_reported() {
 }
 
 #[test]
-fn response_fields_from_the_bindings_are_modeled() {
+fn binding_fields_deserialize_without_extra() {
     let surface = Surface::bindings();
     assert_clean(
         &format!(
@@ -689,7 +695,7 @@ fn response_fields_from_the_bindings_are_modeled() {
 }
 
 #[test]
-fn response_fields_from_the_spec_are_modeled() {
+fn spec_fields_deserialize_without_extra() {
     let surface = Surface::openapi("openapi-v1beta.json");
     assert_clean(
         &format!(
