@@ -61,6 +61,7 @@ impl TurnBudget {
 pub struct AgentBuilder {
     harness_path: Option<PathBuf>,
     api_key: Option<String>,
+    gemini_base_url: Option<String>,
     model: Option<String>,
     system_instructions: Option<String>,
     workspaces: Vec<String>,
@@ -97,6 +98,7 @@ impl std::fmt::Debug for AgentBuilder {
         f.debug_struct("AgentBuilder")
             .field("harness_path", &self.harness_path)
             .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
+            .field("gemini_base_url", &self.gemini_base_url)
             .field("model", &self.model)
             .field("workspaces", &self.workspaces)
             .field("tools", &self.tools.len())
@@ -122,6 +124,25 @@ impl AgentBuilder {
     #[must_use]
     pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
         self.api_key = Some(api_key.into());
+        self
+    }
+
+    /// Points the harness's model calls at another Gemini API host: a
+    /// gateway or recording proxy, or a scripted local server in tests (see
+    /// `docs/TESTING.md`). The harness appends the usual
+    /// `/v1beta/models/<model>:streamGenerateContent?alt=sse` path and sends
+    /// the key in the `x-goog-api-key` header.
+    ///
+    /// Needs [`Self::with_api_key`]; `spawn()` fails with
+    /// [`AntigravityError::Config`] without one. Without a configured key
+    /// the harness falls back to its own environment's `GEMINI_API_KEY`
+    /// and sends *that* to the custom host (verified on harness 0.1.23,
+    /// 2026-11-04), which would hand a real key to whatever the URL names.
+    /// Pass the key that host expects, or any placeholder for a server that
+    /// checks none.
+    #[must_use]
+    pub fn with_gemini_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.gemini_base_url = Some(base_url.into());
         self
     }
 
@@ -492,6 +513,13 @@ impl AgentBuilder {
                 "a model is configured without an API key; call with_api_key(..)".to_string(),
             ));
         }
+        if self.gemini_base_url.is_some() && self.api_key.is_none() {
+            return Err(AntigravityError::Config(
+                "with_gemini_base_url(..) needs with_api_key(..): without one the harness \
+                 sends its environment's GEMINI_API_KEY to the custom host"
+                    .to_string(),
+            ));
+        }
         if let Some(trigger) = self.triggers.iter().find(|t| t.interval.is_zero()) {
             return Err(AntigravityError::Config(format!(
                 "trigger '{}' has a zero interval; trigger intervals must be non-zero",
@@ -692,6 +720,7 @@ impl AgentBuilder {
                     types: vec![protocol::ModelType::Text],
                     gemini_api_endpoint: Some(protocol::GeminiApiEndpoint {
                         api_key: Some(api_key.clone()),
+                        base_url: self.gemini_base_url.clone(),
                         ..Default::default()
                     }),
                     vertex_endpoint: None,

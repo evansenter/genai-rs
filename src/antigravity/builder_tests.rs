@@ -265,6 +265,44 @@ fn test_builder_subagents_reach_harness_config() {
 }
 
 #[test]
+fn test_builder_gemini_base_url_reaches_the_model_endpoint() {
+    let builder = AntigravityAgent::builder()
+        .with_api_key("test-key")
+        .with_gemini_base_url("http://127.0.0.1:9");
+    let config = builder.build_harness_config(&ToolDispatcher::new(vec![], &[]));
+    let endpoint = config.models[0]
+        .gemini_api_endpoint
+        .as_ref()
+        .expect("a Gemini endpoint");
+    assert_eq!(endpoint.base_url.as_deref(), Some("http://127.0.0.1:9"));
+    assert_eq!(endpoint.api_key.as_deref(), Some("test-key"));
+
+    // Unset, the field stays off the wire and the harness uses its default.
+    let default = AntigravityAgent::builder()
+        .with_api_key("test-key")
+        .build_harness_config(&ToolDispatcher::new(vec![], &[]));
+    let endpoint = default.models[0].gemini_api_endpoint.as_ref().unwrap();
+    assert_eq!(endpoint.base_url, None);
+}
+
+#[tokio::test]
+async fn test_spawn_gemini_base_url_without_api_key_is_config_error() {
+    // Without a key the harness sends its environment's GEMINI_API_KEY to
+    // the custom host (verified 2026-11-04), so this must not get as far
+    // as spawning it.
+    let err = AntigravityAgent::builder()
+        .with_gemini_base_url("http://127.0.0.1:9")
+        .spawn()
+        .await
+        .unwrap_err();
+    let AntigravityError::Config(message) = &err else {
+        panic!("expected Config error, got {err:?}");
+    };
+    assert!(message.contains("with_api_key"), "got: {message}");
+    assert!(message.contains("GEMINI_API_KEY"), "got: {message}");
+}
+
+#[test]
 fn test_builder_no_api_key_sends_no_models() {
     let builder = AntigravityAgent::builder();
     let dispatcher = ToolDispatcher::new(vec![], &[]);
