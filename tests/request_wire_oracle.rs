@@ -5,11 +5,15 @@
 //! The in-crate oracle (`src/coverage_oracle/`) checks each request *type*
 //! fully populated; this checks what each *verb* puts on the wire, wrapping
 //! included (`{"file": {...}}` on an upload, the rotate body the crate builds
-//! itself). A body sent to an endpoint the table below does not map fails
-//! the test, so a new verb with a body has to be added here.
+//! itself). Every verb that sends a body (one whose implementation reaches a
+//! POST, PATCH or PUT request, found by `tests/live_verbs/`) must be called
+//! here or listed in [`NO_JSON_BODY`] with its reason, and a body sent to an
+//! endpoint `class_for` does not map fails the test, so a new verb with a
+//! body fails here until it is added.
 
 mod api_surface;
 mod common;
+mod live_verbs;
 
 use api_surface::Surface;
 use common::http_stub::{Recorded, Reply, Stub};
@@ -23,6 +27,7 @@ use genai_rs::{
     TriggerUpdate, VoiceAudio, Webhook, WebhookConfig, WebhookEvent, WebhookState, WebhookUpdate,
 };
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 
 /// Findings the bindings get wrong for the live API, each with its evidence.
 const ALLOWED: &[(&str, &str)] = &[(
@@ -31,12 +36,36 @@ const ALLOWED: &[(&str, &str)] = &[(
      server-assigned UUID (live 2026-11-04).",
 )];
 
+/// Verbs that make a POST, PATCH or PUT request with no JSON body, each with
+/// its reason.
+const NO_JSON_BODY: &[(&str, &str)] = &[
+    (
+        "EnvironmentFiles::upload",
+        "A resumable upload: an empty PUT starts the session, then a POST \
+         carries the file's bytes.",
+    ),
+    (
+        "FileSearchStores::upload",
+        "A raw-protocol upload: the file's bytes, with the display name as a \
+         query parameter and the MIME type as the Content-Type.",
+    ),
+];
+
+/// Stands for an endpoint whose binding method takes no request body. The
+/// crate sends `{}` there, and nothing else may be sent.
+const NO_CLASS: &str = "<no request class: the body must be {}>";
+
 /// The binding class a captured body is sent as, by method and path.
 fn class_for(request: &Recorded) -> Option<(&'static str, Value)> {
     let path = request.target.split('?').next().unwrap_or_default();
     let body = request.json();
     let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     let class = match (request.method.as_str(), segments.as_slice()) {
+        ("POST", ["v1beta", "interactions", _, "cancel"]) => NO_CLASS,
+        ("POST", ["v1beta", "triggers", _, "executions"]) => NO_CLASS,
+        ("POST", ["v1beta", "webhooks", id]) if id.ends_with(":ping") => {
+            "webhooks.PingWebhookRequest"
+        }
         ("POST", ["v1beta", "interactions"]) if body.get("agent").is_some() => {
             "interactions.CreateAgentInteraction"
         }
@@ -144,20 +173,23 @@ fn interaction(agent: bool) -> InteractionRequest {
 #[tokio::test]
 async fn every_request_body_a_verb_sends_fits_its_binding_class() {
     let stub = stub().await;
-    let c = stub.client();
+    let client = stub.client();
     let network = || {
         NetworkConfig::allowlist(vec![
             AllowlistEntry::new("example.com").with_credential("credentials/c"),
         ])
     };
 
-    c.execute(interaction(false))
+    client
+        .execute(interaction(false))
         .await
         .expect("model interaction");
-    c.execute(interaction(true))
+    client
+        .execute(interaction(true))
         .await
         .expect("agent interaction");
-    c.webhooks()
+    client
+        .webhooks()
         .create(
             &Webhook::new(
                 "https://example.com/hook",
@@ -167,7 +199,8 @@ async fn every_request_body_a_verb_sends_fits_its_binding_class() {
         )
         .await
         .expect("webhooks.create");
-    c.webhooks()
+    client
+        .webhooks()
         .update(
             "wh-1",
             &WebhookUpdate::new()
@@ -179,14 +212,16 @@ async fn every_request_body_a_verb_sends_fits_its_binding_class() {
         )
         .await
         .expect("webhooks.update");
-    c.webhooks()
+    client
+        .webhooks()
         .rotate_signing_secret(
             "wh-1",
             Some(RevocationBehavior::RevokePreviousSecretsAfterH24),
         )
         .await
         .expect("webhooks.rotate_signing_secret");
-    c.triggers()
+    client
+        .triggers()
         .create(
             &TriggerCreateParams::new("0 5 1 1 *", "UTC", interaction(true))
                 .with_display_name("daily")
@@ -196,7 +231,8 @@ async fn every_request_body_a_verb_sends_fits_its_binding_class() {
         )
         .await
         .expect("triggers.create");
-    c.triggers()
+    client
+        .triggers()
         .update(
             "t-1",
             &TriggerUpdate::new()
@@ -205,7 +241,8 @@ async fn every_request_body_a_verb_sends_fits_its_binding_class() {
         )
         .await
         .expect("triggers.update");
-    c.agents()
+    client
+        .agents()
         .create(
             &Agent::new("my-agent", "base")
                 .with_system_instruction("be brief")
@@ -215,7 +252,8 @@ async fn every_request_body_a_verb_sends_fits_its_binding_class() {
         )
         .await
         .expect("agents.create");
-    c.environments()
+    client
+        .environments()
         .create(
             &CreateEnvironmentRequest::new()
                 .add_source(EnvironmentSource::gcs("gs://b/d", "/data").with_encoding("raw"))
@@ -223,7 +261,8 @@ async fn every_request_body_a_verb_sends_fits_its_binding_class() {
         )
         .await
         .expect("environments.create");
-    c.credentials()
+    client
+        .credentials()
         .create(
             &CreateCredentialRequest::environment_variable(
                 "v",
@@ -234,7 +273,8 @@ async fn every_request_body_a_verb_sends_fits_its_binding_class() {
         )
         .await
         .expect("credentials.create");
-    c.credentials()
+    client
+        .credentials()
         .create(&CreateCredentialRequest::new(CredentialConfig::OAuth2 {
             client_id: "c".into(),
             client_secret: "s".into(),
@@ -248,11 +288,13 @@ async fn every_request_body_a_verb_sends_fits_its_binding_class() {
     update.token = Some("t".into());
     update.header_name = Some("X-Token".into());
     update.prefix = Some("Bearer".into());
-    c.credentials()
+    client
+        .credentials()
         .update("cred", &update.with_update_mask("token"))
         .await
         .expect("credentials.update");
-    c.voices()
+    client
+        .voices()
         .create(
             &CreateVoiceRequest::prompted("a calm narrator")
                 .with_display_name("narrator")
@@ -261,21 +303,31 @@ async fn every_request_body_a_verb_sends_fits_its_binding_class() {
         )
         .await
         .expect("voices.create");
-    c.voices()
+    client
+        .voices()
         .create(&CreateVoiceRequest::replicated(
             VoiceAudio::new("AAAA", "audio/wav"),
             VoiceAudio::new("AAAA", "audio/wav"),
         ))
         .await
         .expect("voices.create (replicated)");
-    c.file_search_stores()
+    client
+        .file_search_stores()
         .create(&CreateFileSearchStoreRequest::new().with_display_name("docs"))
         .await
         .expect("file_search_stores.create");
-    c.files()
+    client
+        .files()
         .upload(FileUpload::from_bytes(b"hi".to_vec(), "text/plain").with_display_name("f"))
         .await
         .expect("files.upload");
+    client.webhooks().ping("wh-1").await.expect("webhooks.ping");
+    client.triggers().run("t-1").await.expect("triggers.run");
+    client
+        .interactions()
+        .cancel("i-1")
+        .await
+        .expect("interactions.cancel");
 
     let surface = Surface::bindings();
     let mut problems = Vec::new();
@@ -296,6 +348,15 @@ async fn every_request_body_a_verb_sends_fits_its_binding_class() {
             continue;
         };
         bodies += 1;
+        if class == NO_CLASS {
+            if body != json!({}) {
+                problems.push(format!(
+                    "{} {}: the bindings send no body here, but the crate sent {body}",
+                    request.method, request.target
+                ));
+            }
+            continue;
+        }
         for finding in surface.check(&surface.ty(class), &body) {
             match ALLOWED.iter().find(|(site, _)| *site == finding.site) {
                 Some((site, _)) => used.push(*site),
@@ -305,7 +366,7 @@ async fn every_request_body_a_verb_sends_fits_its_binding_class() {
             }
         }
     }
-    assert_eq!(bodies, 16, "one body per call above");
+    assert_eq!(bodies, 19, "one body per call above");
     for (site, _) in ALLOWED {
         if !used.contains(site) {
             problems.push(format!(
@@ -318,5 +379,97 @@ async fn every_request_body_a_verb_sends_fits_its_binding_class() {
         "request bodies that do not fit google-genai {}:\n  {}",
         surface.version,
         problems.join("\n  ")
+    );
+}
+
+/// Every verb that sends a body is called by the test above, or listed in
+/// [`NO_JSON_BODY`]: a new verb with a body fails here until its body is
+/// checked.
+#[test]
+fn every_verb_with_a_body_is_called_above() {
+    let handles = live_verbs::handles();
+    let with_body = live_verbs::body_verbs(&handles);
+    assert!(
+        with_body.len() > 15,
+        "found only {} verbs with a body: {with_body:?}",
+        with_body.len()
+    );
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(file!());
+    let source = std::fs::read_to_string(&path).expect("read this file");
+    let file = syn::parse_file(&source).expect("parse this file");
+    let called = live_verbs::calls_from(
+        &file,
+        "every_request_body_a_verb_sends_fits_its_binding_class",
+        &handles,
+    );
+
+    let key = |(handle, verb): &(String, String)| format!("{handle}::{verb}");
+    let exempt: BTreeSet<&str> = NO_JSON_BODY.iter().map(|(verb, _)| *verb).collect();
+    let mut problems = Vec::new();
+    for verb in &with_body {
+        let k = key(verb);
+        match (called.contains(verb), exempt.contains(k.as_str())) {
+            (false, false) => problems.push(format!(
+                "{k} sends a body, but the wire test does not call it: call it \
+                 there, or list it in NO_JSON_BODY with the reason"
+            )),
+            (true, true) => problems.push(format!("NO_JSON_BODY: {k} is called; delete the entry")),
+            _ => {}
+        }
+    }
+    for k in exempt {
+        if !with_body.iter().any(|verb| key(verb) == k) {
+            problems.push(format!(
+                "NO_JSON_BODY: {k} is not a verb with a body; delete the entry"
+            ));
+        }
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+/// The discovery follows a verb through the functions it calls by name, and
+/// leaves out a verb whose requests carry no body.
+#[test]
+fn verbs_with_a_body_are_found_through_helpers() {
+    let file: syn::File = syn::parse_quote! {
+        #[must_use = "a resource handle does nothing until you call one of its methods"]
+        pub struct Things<'a> { client: &'a Client }
+        impl Client {
+            pub fn things(&self) -> Things<'_> { todo!() }
+        }
+        impl<'a> Things<'a> {
+            pub async fn create(self, t: &Thing) -> Result<Thing, GenaiError> {
+                crate::http::things::create_thing(&self.client.http, t).await
+            }
+            pub async fn get(self, id: &str) -> Result<Thing, GenaiError> {
+                crate::http::things::get_thing(&self.client.http, id).await
+            }
+            pub async fn upload(self, data: Vec<u8>) -> Result<Thing, GenaiError> {
+                start_upload(&self.client.http, data).await
+            }
+        }
+        pub async fn create_thing(ctx: &HttpContext, t: &Thing) -> Result<Thing, GenaiError> {
+            send_and_read(ctx, reqwest::Method::POST, &url(ctx), Some(t)).await
+        }
+        pub async fn get_thing(ctx: &HttpContext, id: &str) -> Result<Thing, GenaiError> {
+            send_and_read(ctx, reqwest::Method::GET, &url(ctx), NO_BODY).await
+        }
+        async fn start_upload(ctx: &HttpContext, data: Vec<u8>) -> Result<Thing, GenaiError> {
+            finish_upload(ctx.http_client.post(&url(ctx)).body(data)).await
+        }
+        #[cfg(test)]
+        mod tests {
+            fn get_thing() { let _ = reqwest::Method::PUT; }
+        }
+    };
+    let files = [file];
+    let handles = live_verbs::handles_in(&files);
+    let found: BTreeSet<String> = live_verbs::body_verbs_in(&files, &handles)
+        .into_iter()
+        .map(|(handle, verb)| format!("{handle}::{verb}"))
+        .collect();
+    assert_eq!(
+        found,
+        BTreeSet::from(["Things::create".to_string(), "Things::upload".to_string()])
     );
 }

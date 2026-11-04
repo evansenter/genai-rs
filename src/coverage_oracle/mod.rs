@@ -145,7 +145,8 @@ const UNMAPPED: &[Allowed] = &[
     ),
     (
         "webhooks.PingWebhookRequest",
-        "Empty; `Webhooks::ping` sends `{}`.",
+        "Empty. Checked at the wire by tests/request_wire_oracle.rs: \
+         `Webhooks::ping` sends `{}`.",
     ),
     (
         "webhooks.WebhookPingResponse",

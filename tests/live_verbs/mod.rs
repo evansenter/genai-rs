@@ -115,16 +115,20 @@ fn borrowed_struct(ty: &Type) -> Option<String> {
         .then(|| last.ident.to_string())
 }
 
-/// The handles in `src/` (without the antigravity runtime).
-pub fn handles() -> Handles {
+/// The source files in `src/`, without the antigravity runtime.
+fn src_files() -> Vec<syn::File> {
     let mut files = Vec::new();
     rust_files(&root().join("src"), &mut files);
-    let files: Vec<syn::File> = files
+    files
         .iter()
         .filter(|p| !p.components().any(|c| c.as_os_str() == "antigravity"))
         .map(|p| parse(p))
-        .collect();
-    handles_in(&files)
+        .collect()
+}
+
+/// The handles in `src/` (without the antigravity runtime).
+pub fn handles() -> Handles {
+    handles_in(&src_files())
 }
 
 /// A public method with a receiver.
@@ -518,6 +522,181 @@ pub fn live_calls(handles: &Handles) -> BTreeSet<(String, String)> {
                 queue.extend(helpers.iter().filter(|h| !h.live));
             }
         }
+    }
+    found
+}
+
+// =============================================================================
+// Verbs that send a request body
+// =============================================================================
+
+/// Whether an item is compiled for tests only (`#[cfg(test)]`).
+fn test_only(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|a| {
+        a.path().is_ident("cfg")
+            && a.parse_args::<syn::Ident>()
+                .is_ok_and(|ident| ident == "test")
+    })
+}
+
+/// What a function body does: whether it makes a request that can carry a
+/// body (`Method::POST`, `PATCH` or `PUT`, or reqwest's `.post(..)`,
+/// `.put(..)`, `.patch(..)`), and the functions it calls by name.
+#[derive(Default)]
+struct Reach {
+    sends: bool,
+    callees: BTreeSet<String>,
+}
+
+impl Visit<'_> for Reach {
+    fn visit_expr_path(&mut self, path: &syn::ExprPath) {
+        let names: Vec<String> = path
+            .path
+            .segments
+            .iter()
+            .map(|s| s.ident.to_string())
+            .collect();
+        if let [.., method, verb] = names.as_slice()
+            && method == "Method"
+            && matches!(verb.as_str(), "POST" | "PATCH" | "PUT")
+        {
+            self.sends = true;
+        }
+        visit::visit_expr_path(self, path);
+    }
+
+    fn visit_expr_method_call(&mut self, call: &syn::ExprMethodCall) {
+        if matches!(call.method.to_string().as_str(), "post" | "put" | "patch") {
+            self.sends = true;
+        }
+        visit::visit_expr_method_call(self, call);
+    }
+
+    fn visit_expr_call(&mut self, call: &syn::ExprCall) {
+        if let Expr::Path(p) = &*call.func
+            && let Some(segment) = p.path.segments.last()
+        {
+            self.callees.insert(segment.ident.to_string());
+        }
+        visit::visit_expr_call(self, call);
+    }
+
+    fn visit_macro(&mut self, mac: &syn::Macro) {
+        for stmt in macro_stmts(mac) {
+            self.visit_stmt(&stmt);
+        }
+    }
+}
+
+/// Every `(handle, verb)` that sends a request body: whose implementation
+/// reaches a POST, PATCH or PUT request through the functions it calls by
+/// name (`crate::http::webhooks::ping_webhook(..)`), test code aside.
+pub fn body_verbs(handles: &Handles) -> BTreeSet<(String, String)> {
+    body_verbs_in(&src_files(), handles)
+}
+
+pub fn body_verbs_in(files: &[syn::File], handles: &Handles) -> BTreeSet<(String, String)> {
+    fn collect(
+        items: &[Item],
+        handles: &Handles,
+        fns: &mut HashMap<String, Vec<Reach>>,
+        verbs: &mut Vec<((String, String), Reach)>,
+    ) {
+        let reach = |block: &syn::Block| {
+            let mut reach = Reach::default();
+            reach.visit_block(block);
+            reach
+        };
+        for item in items {
+            match item {
+                Item::Fn(f) if !test_only(&f.attrs) => {
+                    fns.entry(f.sig.ident.to_string())
+                        .or_default()
+                        .push(reach(&f.block));
+                }
+                Item::Mod(m) if !test_only(&m.attrs) => {
+                    if let Some((_, inner)) = &m.content {
+                        collect(inner, handles, fns, verbs);
+                    }
+                }
+                Item::Impl(imp) if !test_only(&imp.attrs) => {
+                    let owner = last_ident(&imp.self_ty).unwrap_or_default();
+                    for item in &imp.items {
+                        let ImplItem::Fn(f) = item else { continue };
+                        let name = f.sig.ident.to_string();
+                        let is_verb = imp.trait_.is_none()
+                            && handles
+                                .verbs
+                                .get(&owner)
+                                .is_some_and(|verbs| verbs.contains(&name));
+                        if is_verb {
+                            verbs.push(((owner.clone(), name), reach(&f.block)));
+                        } else {
+                            fns.entry(name).or_default().push(reach(&f.block));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut fns = HashMap::new();
+    let mut verbs = Vec::new();
+    for file in files {
+        collect(&file.items, handles, &mut fns, &mut verbs);
+    }
+    let mut out = BTreeSet::new();
+    for (verb, reach) in verbs {
+        let mut sends = reach.sends;
+        let mut queue: Vec<String> = reach.callees.into_iter().collect();
+        let mut seen = BTreeSet::new();
+        while let Some(name) = queue.pop() {
+            if sends {
+                break;
+            }
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            for callee in fns.get(&name).into_iter().flatten() {
+                sends |= callee.sends;
+                queue.extend(callee.callees.iter().cloned());
+            }
+        }
+        if sends {
+            out.insert(verb);
+        }
+    }
+    out
+}
+
+/// Every `(handle, verb)` called on its handle by the function `name` in
+/// `file`, or by a function in `file` it reaches by name.
+pub fn calls_from(file: &syn::File, name: &str, handles: &Handles) -> BTreeSet<(String, String)> {
+    let fns: HashMap<String, &syn::Block> = file
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Fn(f) => Some((f.sig.ident.to_string(), &*f.block)),
+            _ => None,
+        })
+        .collect();
+    assert!(fns.contains_key(name), "no fn {name} in the file");
+    let mut queue = vec![name.to_string()];
+    let mut seen = BTreeSet::new();
+    let mut found = BTreeSet::new();
+    while let Some(name) = queue.pop() {
+        let Some(block) = fns.get(&name) else {
+            continue;
+        };
+        if !seen.insert(name) {
+            continue;
+        }
+        let mut calls = Calls::new(handles);
+        calls.visit_block(block);
+        found.extend(calls.found);
+        let mut callees = Callees::default();
+        callees.visit_block(block);
+        queue.extend(callees.0);
     }
     found
 }
