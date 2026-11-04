@@ -511,3 +511,34 @@ fn a_call_counts_only_on_its_own_handle() {
     .collect();
     assert_eq!(found, expected);
 }
+
+/// An accessor on a receiver of unknown type counts only when it cannot
+/// pick the wrong handle. `.files()` is on both `Client` and
+/// `Environments`, so on an untracked `envs` (a helper's parameter, say) it
+/// counts for neither `Files` nor `EnvironmentFiles`. A receiver named like
+/// a client is a `Client`, and an accessor only one type has resolves to
+/// its handle.
+#[test]
+fn an_ambiguous_accessor_on_an_unknown_receiver_counts_for_neither() {
+    use syn::visit::Visit;
+
+    let handles = live_verbs::handles();
+    let block: syn::Block = syn::parse_quote!({
+        envs.files().list("e");
+        envs.files().upload("e", "/a.txt", b"x");
+        stub.client().files().delete("f");
+        harness.webhooks().ping("w");
+    });
+    let mut calls = live_verbs::Calls::new(&handles);
+    calls.visit_block(&block);
+    let found: BTreeSet<String> = calls
+        .found
+        .iter()
+        .map(|(h, v)| format!("{h}::{v}"))
+        .collect();
+    let expected: BTreeSet<String> = ["Files::delete", "Webhooks::ping"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    assert_eq!(found, expected);
+}

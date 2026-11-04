@@ -16,7 +16,8 @@
 //! chain from an accessor (`client.file_search_stores().documents().get(..)`),
 //! or a local bound to one (`let stores = client.file_search_stores();`). So
 //! `client.webhooks().get(..)` does not cover `Agents::get`, which a match on
-//! `.get(` anywhere would. Calls inside macros (`assert!`, `tokio::join!`)
+//! `.get(` anywhere would, and `envs.files().list(..)` on an untracked `envs`
+//! covers neither `Files::list` nor `EnvironmentFiles::list`. Calls inside macros (`assert!`, `tokio::join!`)
 //! are read too, and the source is parsed with `syn`, so formatting cannot
 //! hide or fake a call.
 //!
@@ -397,17 +398,38 @@ impl<'a> Calls<'a> {
         }
     }
 
+    /// The handle type `expr` evaluates to, when it is known.
+    ///
+    /// An accessor on a receiver of unknown type is resolved only when that
+    /// cannot pick the wrong handle: on a receiver named like a client
+    /// (`client`, `self.client`, `get_client()`), as a `Client` accessor;
+    /// otherwise only when every type with an accessor of that name returns
+    /// the same handle. `.files()` is on both `Client` and `Environments`,
+    /// so `envs.files()` on an untracked `envs` counts for neither.
     fn handle_of(&self, expr: &Expr) -> Option<String> {
         match expr {
             Expr::MethodCall(call) => {
                 let method = call.method.to_string();
                 match self.handle_of(&call.receiver) {
                     Some(owner) => self.handles.accessors.get(&(owner, method)).cloned(),
-                    None => self
+                    None if names_a_client(&call.receiver) => self
                         .handles
                         .accessors
                         .get(&("Client".to_string(), method))
                         .cloned(),
+                    None => {
+                        let returns: BTreeSet<&String> = self
+                            .handles
+                            .accessors
+                            .iter()
+                            .filter(|((_, name), _)| *name == method)
+                            .map(|(_, handle)| handle)
+                            .collect();
+                        match returns.into_iter().collect::<Vec<_>>().as_slice() {
+                            [only] => Some((*only).clone()),
+                            _ => None,
+                        }
+                    }
                 }
             }
             Expr::Path(p) => p
@@ -419,6 +441,29 @@ impl<'a> Calls<'a> {
             _ => None,
         }
     }
+}
+
+/// Whether an expression is named like a client: a path, field, call or
+/// method call whose last name is `client` or ends in `client`
+/// (`client`, `self.client`, `test_client`, `stub.client()`).
+fn names_a_client(expr: &Expr) -> bool {
+    let name = match expr {
+        Expr::Path(p) => p.path.segments.last().map(|s| s.ident.to_string()),
+        Expr::Field(f) => match &f.member {
+            syn::Member::Named(ident) => Some(ident.to_string()),
+            syn::Member::Unnamed(_) => None,
+        },
+        Expr::Call(call) => match &*call.func {
+            Expr::Path(p) => p.path.segments.last().map(|s| s.ident.to_string()),
+            _ => None,
+        },
+        Expr::MethodCall(call) => Some(call.method.to_string()),
+        Expr::Paren(e) => return names_a_client(&e.expr),
+        Expr::Reference(e) => return names_a_client(&e.expr),
+        Expr::Try(e) => return names_a_client(&e.expr),
+        _ => None,
+    };
+    name.is_some_and(|n| n.to_ascii_lowercase().ends_with("client"))
 }
 
 impl Visit<'_> for Calls<'_> {
