@@ -22,7 +22,7 @@
 
 mod common;
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -577,8 +577,48 @@ async fn test_scripted_failed_builtin_surfaces_an_error_event_and_continues() {
 // The turn deadline covers client-side work
 // =============================================================================
 
+/// Turn budgets a deadline test tries, shortest first.
+///
+/// The deadline has to fire while the client-side work under test runs, so
+/// that work must start well inside the budget. On a slow runner the first
+/// budget can run out before the harness even asks for it. The test then
+/// retries on a fresh agent with the next budget instead of failing; it
+/// fails only if the work never starts within half of the largest one.
+const DEADLINE_BUDGETS: [Duration; 3] = [
+    Duration::from_secs(2),
+    Duration::from_secs(6),
+    Duration::from_secs(20),
+];
+
+/// What a timed-out turn may take beyond its budget: the bounded
+/// halt-and-drain (5s) plus slack. Every tool or hook below blocks for
+/// longer than the largest budget plus this, so a turn that ends within it
+/// was ended by the deadline.
+const HALT_SLACK: Duration = Duration::from_secs(18);
+
+/// Whether the work a deadline test blocks on started in the first half of
+/// the turn's budget. Then the deadline fired while it ran, and the
+/// follow-up turn, which runs under the same budget, has room too.
+fn started_in_time(started: Option<Instant>, turn_start: Instant, budget: Duration) -> bool {
+    started.is_some_and(|at| at.saturating_duration_since(turn_start) <= budget / 2)
+}
+
+/// Records when the work a deadline test blocks on first started.
+#[derive(Clone, Default)]
+struct Started(Arc<Mutex<Option<Instant>>>);
+
+impl Started {
+    fn mark(&self) {
+        self.0.lock().unwrap().get_or_insert_with(Instant::now);
+    }
+
+    fn at(&self) -> Option<Instant> {
+        *self.0.lock().unwrap()
+    }
+}
+
 /// A custom tool that never returns in any reasonable time.
-struct HangingTool;
+struct HangingTool(Started);
 
 #[async_trait]
 impl CallableFunction for HangingTool {
@@ -589,16 +629,17 @@ impl CallableFunction for HangingTool {
     }
 
     async fn call(&self, _args: Value) -> Result<Value, FunctionError> {
+        self.0.mark();
         tokio::time::sleep(Duration::from_secs(600)).await;
         Ok(json!("unreachable"))
     }
 }
 
-struct HangingService;
+struct HangingService(Started);
 
 impl ToolService for HangingService {
     fn tools(&self) -> Vec<Arc<dyn CallableFunction>> {
-        vec![Arc::new(HangingTool)]
+        vec![Arc::new(HangingTool(self.0.clone()))]
     }
 }
 
@@ -607,42 +648,65 @@ impl ToolService for HangingService {
 async fn test_scripted_turn_deadline_bounds_a_hung_custom_tool() {
     // Regression (#499): the deadline covered only waiting for harness
     // events, so a tool that hung held the turn indefinitely.
-    let fake = FakeGemini::start(vec![
-        ModelTurn::call("hanging_tool", json!({})),
-        ModelTurn::text("recovered-9120"),
-    ])
-    .await;
-    let mut agent = scripted_agent(&fake)
-        .with_tool_service(Arc::new(HangingService))
-        .with_turn_timeout(Duration::from_secs(2))
-        .spawn()
-        .await
-        .expect("spawn");
+    for budget in DEADLINE_BUDGETS {
+        let started = Started::default();
+        let fake = FakeGemini::start(vec![
+            ModelTurn::call("hanging_tool", json!({})),
+            ModelTurn::text("recovered-9120"),
+        ])
+        .await;
+        let mut agent = scripted_agent(&fake)
+            .with_tool_service(Arc::new(HangingService(started.clone())))
+            .with_turn_timeout(budget)
+            .spawn()
+            .await
+            .expect("spawn");
 
-    let start = Instant::now();
-    let err = agent.chat("call the hanging tool").await.unwrap_err();
-    let elapsed = start.elapsed();
-    let AntigravityError::Timeout { operation, .. } = &err else {
-        panic!("expected Timeout, got {err:?}");
-    };
-    assert!(
-        operation.contains("custom tool 'hanging_tool'"),
-        "the timeout must name what held the turn: {operation}"
-    );
-    // 2s budget plus the bounded halt-and-drain, nowhere near the tool's 600s.
-    assert!(elapsed < Duration::from_secs(20), "took {elapsed:?}");
-    agent.shutdown().await.expect("shutdown");
+        let turn_start = Instant::now();
+        let err = agent.chat("call the hanging tool").await.unwrap_err();
+        let elapsed = turn_start.elapsed();
+        let AntigravityError::Timeout { operation, .. } = &err else {
+            panic!("expected Timeout, got {err:?}");
+        };
+        if !started_in_time(started.at(), turn_start, budget) {
+            println!("hanging_tool did not start early in a {budget:?} turn; retrying");
+            agent.shutdown().await.expect("shutdown");
+            continue;
+        }
+        assert!(
+            operation.contains("custom tool 'hanging_tool'"),
+            "the timeout must name what held the turn: {operation}"
+        );
+        // The budget plus the bounded halt-and-drain, nowhere near the
+        // tool's 600s.
+        assert!(elapsed < budget + HALT_SLACK, "took {elapsed:?}");
+
+        // The halt-and-drain left the agent usable: the abandoned call's
+        // events don't leak into the next turn, which completes.
+        let next = agent.chat("are you still there?").await.expect("next turn");
+        assert_eq!(next.text(), "recovered-9120");
+        agent.shutdown().await.expect("shutdown");
+        return;
+    }
+    panic!("hanging_tool never started early enough in any of {DEADLINE_BUDGETS:?}");
 }
 
-/// Set to let `blocking_scripted_tool` return.
-static RELEASE_BLOCKING_TOOL: AtomicBool = AtomicBool::new(false);
+/// When each `blocking_scripted_tool` call started, by its key.
+static BLOCKING_TOOL_STARTED: Mutex<Vec<(String, Instant)>> = Mutex::new(Vec::new());
+/// The keys whose `blocking_scripted_tool` calls may return.
+static BLOCKING_TOOL_RELEASED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-/// A synchronous tool whose body blocks its thread (until released, or for
-/// 60s), the way a sync `#[tool]` fn doing blocking I/O does.
+/// A synchronous tool whose body blocks its thread (until its key is
+/// released, or for 60s), the way a sync `#[tool]` fn doing blocking I/O
+/// does.
 #[tool(key(description = "Any key"))]
 fn blocking_scripted_tool(key: String) -> String {
+    BLOCKING_TOOL_STARTED
+        .lock()
+        .unwrap()
+        .push((key.clone(), Instant::now()));
     let until = Instant::now() + Duration::from_secs(60);
-    while !RELEASE_BLOCKING_TOOL.load(Ordering::SeqCst) && Instant::now() < until {
+    while !BLOCKING_TOOL_RELEASED.lock().unwrap().contains(&key) && Instant::now() < until {
         std::thread::sleep(Duration::from_millis(20));
     }
     key
@@ -656,31 +720,49 @@ async fn test_scripted_turn_deadline_bounds_a_blocking_sync_tool() {
     // Regression: a sync `#[tool]` body runs inside the tool's `call`, which
     // was awaited on the turn's own task. A body that blocked held the poll
     // the deadline timer needed, so a 2s turn lasted as long as the tool.
-    let fake = FakeGemini::start(vec![
-        ModelTurn::call("blocking_scripted_tool", json!({"key": "k"})),
-        ModelTurn::text("recovered-3307"),
-    ])
-    .await;
-    let mut agent = scripted_agent(&fake)
-        .add_tool(BlockingScriptedToolCallable.declaration())
-        .with_turn_timeout(Duration::from_secs(2))
-        .spawn()
-        .await
-        .expect("spawn");
+    for budget in DEADLINE_BUDGETS {
+        // Each attempt calls the tool with a key of its own, so releasing
+        // one attempt's call never lets a later attempt's return early.
+        let key = format!("attempt-{}ms", budget.as_millis());
+        let fake = FakeGemini::start(vec![
+            ModelTurn::call("blocking_scripted_tool", json!({"key": key})),
+            ModelTurn::text("recovered-3307"),
+        ])
+        .await;
+        let mut agent = scripted_agent(&fake)
+            .add_tool(BlockingScriptedToolCallable.declaration())
+            .with_turn_timeout(budget)
+            .spawn()
+            .await
+            .expect("spawn");
 
-    let start = Instant::now();
-    let err = agent.chat("call the blocking tool").await.unwrap_err();
-    let elapsed = start.elapsed();
-    RELEASE_BLOCKING_TOOL.store(true, Ordering::SeqCst);
-    let AntigravityError::Timeout { operation, .. } = &err else {
-        panic!("expected Timeout, got {err:?}");
-    };
-    assert!(
-        operation.contains("custom tool 'blocking_scripted_tool'"),
-        "the timeout must name what held the turn: {operation}"
-    );
-    assert!(elapsed < Duration::from_secs(20), "took {elapsed:?}");
-    agent.shutdown().await.expect("shutdown");
+        let turn_start = Instant::now();
+        let err = agent.chat("call the blocking tool").await.unwrap_err();
+        let elapsed = turn_start.elapsed();
+        BLOCKING_TOOL_RELEASED.lock().unwrap().push(key.clone());
+        let AntigravityError::Timeout { operation, .. } = &err else {
+            panic!("expected Timeout, got {err:?}");
+        };
+        let started = BLOCKING_TOOL_STARTED
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, at)| *at);
+        if !started_in_time(started, turn_start, budget) {
+            println!("blocking_scripted_tool did not start early in a {budget:?} turn; retrying");
+            agent.shutdown().await.expect("shutdown");
+            continue;
+        }
+        assert!(
+            operation.contains("custom tool 'blocking_scripted_tool'"),
+            "the timeout must name what held the turn: {operation}"
+        );
+        assert!(elapsed < budget + HALT_SLACK, "took {elapsed:?}");
+        agent.shutdown().await.expect("shutdown");
+        return;
+    }
+    panic!("blocking_scripted_tool never started early enough in any of {DEADLINE_BUDGETS:?}");
 }
 
 #[tokio::test]
@@ -690,37 +772,56 @@ async fn test_scripted_turn_deadline_bounds_a_blocking_pre_tool_hook() {
     // runtime thread, where no timer could fire.
     let workspace = scratch_dir("agy-scripted-hook");
     let path = write_file(&workspace, "f.txt", "x");
-    let fake = FakeGemini::start(vec![view_file(&path), ModelTurn::text("done")]).await;
-    let (release, blocked) = std::sync::mpsc::channel::<()>();
-    let blocked = Mutex::new(blocked);
-    let mut agent = scripted_agent(&fake)
-        .add_workspace(workspace.path().to_string_lossy())
-        .with_turn_timeout(Duration::from_secs(2))
-        .on_pre_tool(move |_| {
-            // Blocks until the test releases it (or 60s pass).
-            let _ = blocked
-                .lock()
-                .unwrap()
-                .recv_timeout(Duration::from_secs(60));
-            PreToolDecision::Allow
-        })
-        .spawn()
-        .await
-        .expect("spawn");
+    for budget in DEADLINE_BUDGETS {
+        let started = Started::default();
+        let fake =
+            FakeGemini::start(vec![view_file(&path), ModelTurn::text("recovered-5530")]).await;
+        // Dropping `release` lets every call of the hook return.
+        let (release, blocked) = std::sync::mpsc::channel::<()>();
+        let blocked = Mutex::new(blocked);
+        let hook_started = started.clone();
+        let mut agent = scripted_agent(&fake)
+            .add_workspace(workspace.path().to_string_lossy())
+            .with_turn_timeout(budget)
+            .on_pre_tool(move |_| {
+                hook_started.mark();
+                // Blocks until the test releases it (or 60s pass).
+                let _ = blocked
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(60));
+                PreToolDecision::Allow
+            })
+            .spawn()
+            .await
+            .expect("spawn");
 
-    let start = Instant::now();
-    let err = agent.chat("read it").await.unwrap_err();
-    let elapsed = start.elapsed();
-    let _ = release.send(());
-    let AntigravityError::Timeout { operation, .. } = &err else {
-        panic!("expected Timeout, got {err:?}");
-    };
-    assert!(
-        operation.contains("pre-tool hook for 'view_file'"),
-        "the timeout must name the hook: {operation}"
-    );
-    assert!(elapsed < Duration::from_secs(20), "took {elapsed:?}");
-    agent.shutdown().await.expect("shutdown");
+        let turn_start = Instant::now();
+        let err = agent.chat("read it").await.unwrap_err();
+        let elapsed = turn_start.elapsed();
+        drop(release);
+        let AntigravityError::Timeout { operation, .. } = &err else {
+            panic!("expected Timeout, got {err:?}");
+        };
+        if !started_in_time(started.at(), turn_start, budget) {
+            println!("the pre-tool hook did not start early in a {budget:?} turn; retrying");
+            agent.shutdown().await.expect("shutdown");
+            continue;
+        }
+        assert!(
+            operation.contains("pre-tool hook for 'view_file'"),
+            "the timeout must name the hook: {operation}"
+        );
+        assert!(elapsed < budget + HALT_SLACK, "took {elapsed:?}");
+
+        // The turn abandoned the harness mid-request (it was waiting for the
+        // hook's verdict), then halted it. The next turn still completes.
+        let next = agent.chat("are you still there?").await.expect("next turn");
+        assert_eq!(next.text(), "recovered-5530");
+        agent.shutdown().await.expect("shutdown");
+        return;
+    }
+    panic!("the pre-tool hook never started early enough in any of {DEADLINE_BUDGETS:?}");
 }
 
 // =============================================================================

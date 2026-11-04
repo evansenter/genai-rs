@@ -112,7 +112,11 @@ workspaces, so a file meant to be outside them goes under
 finish until the command does. A test of the turn deadline over a
 synchronous tool that blocks needs
 `#[tokio::test(flavor = "multi_thread")]`: on `#[tokio::test]`'s
-current-thread runtime the blocked body holds the only thread.
+current-thread runtime the blocked body holds the only thread. A deadline
+test also records when the tool or hook it blocks on starts, and retries on
+a fresh agent with a larger budget when the deadline fired first
+(`DEADLINE_BUDGETS`): a slow runner may not reach that work within a short
+budget, and this suite is a required check, so it must not flake.
 
 ## Live tests
 
