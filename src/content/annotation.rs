@@ -8,22 +8,37 @@ use crate::wire_fields::{Fallback, ModeledMap, WireFields};
 // =============================================================================
 
 /// A review snippet attached to a place citation.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 #[non_exhaustive]
 pub struct ReviewSnippet {
     /// Title of the review.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     /// URL of the review.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     /// Identifier of the review.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub review_id: Option<String>,
-    /// Fields not yet modeled, kept for round trip (Evergreen).
+    /// Fields not yet modeled, kept for round trip (Evergreen). An entry
+    /// named after a modeled field is not written.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// The modeled fields, then the extras that do not name one (#491).
+impl Serialize for ReviewSnippet {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let Self {
+            title,
+            url,
+            review_id,
+            extra,
+        } = self;
+        let mut map = ModeledMap::untagged(serializer)?;
+        map.opt("title", title.as_ref())?;
+        map.opt("url", url.as_ref())?;
+        map.opt("review_id", review_id.as_ref())?;
+        map.end(extra)
+    }
 }
 
 /// A citation annotation attached to text content.

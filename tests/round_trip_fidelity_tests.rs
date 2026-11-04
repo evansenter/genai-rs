@@ -165,6 +165,115 @@ fn extras_never_shadow_a_modeled_field_or_the_type() {
         .unwrap()
         .insert("urls".into(), json!(["https://forged.example"]));
     assert_eq!(serde_json::to_value(&step).unwrap(), wire);
+    // `to_value` would let a duplicate key win silently; the request body
+    // is a string, so check that no key is written twice there either.
+    assert_eq!(
+        serde_json::to_string(&step).unwrap(),
+        r#"{"type":"url_context_call","id":"c1","arguments":{"urls":["https://a.example"]}}"#
+    );
+}
+
+/// Parses `wire` as a `T`, adds a forged entry under each of `modeled` (the
+/// type's wire field names, set or not), a `type` and an unknown key to its
+/// `extra`, and serializes it to the string a request body would carry.
+fn forge<T>(
+    wire: Value,
+    extra: impl FnOnce(&mut T) -> &mut serde_json::Map<String, Value>,
+    modeled: &[&str],
+) -> String
+where
+    T: serde::de::DeserializeOwned + serde::Serialize,
+{
+    let mut item: T = serde_json::from_value(wire).unwrap();
+    let map = extra(&mut item);
+    for key in modeled {
+        map.insert((*key).to_string(), json!("forged"));
+    }
+    map.insert("type".into(), json!("data"));
+    map.insert("x_future".into(), json!(1));
+    serde_json::to_string(&item).unwrap()
+}
+
+/// The plain structs nested in steps keep unknown keys in a flattened
+/// `extra` too. An entry there named after a modeled field, set or not, is
+/// not written: neither shadowing the field nor duplicating its key. They
+/// have no tag, so `type` is ordinary data and goes out.
+#[test]
+fn struct_extras_never_shadow_a_modeled_field() {
+    use genai_rs::{
+        FileSearchResultItem, GoogleMapsResultItem, GoogleSearchResultItem, Place, ReviewSnippet,
+        StepError, UrlContextResultItem,
+    };
+
+    assert_eq!(
+        forge::<GoogleSearchResultItem>(
+            json!({"title": "t", "url": "https://real.example"}),
+            |item| &mut item.extra,
+            &["title", "url", "rendered_content", "search_suggestions"],
+        ),
+        r#"{"title":"t","url":"https://real.example","type":"data","x_future":1}"#
+    );
+    assert_eq!(
+        forge::<UrlContextResultItem>(
+            json!({"url": "https://real.example", "status": "success"}),
+            |item| &mut item.extra,
+            &["url", "status"],
+        ),
+        r#"{"url":"https://real.example","status":"success","type":"data","x_future":1}"#
+    );
+    assert_eq!(
+        forge::<FileSearchResultItem>(
+            json!({"title": "Doc", "text": "chunk", "file_search_store": "stores/s"}),
+            |item| &mut item.extra,
+            &["title", "text", "file_search_store"],
+        ),
+        r#"{"title":"Doc","text":"chunk","file_search_store":"stores/s","type":"data","x_future":1}"#
+    );
+    assert_eq!(
+        forge::<GoogleMapsResultItem>(
+            json!({"widget_context_token": "w"}),
+            |item| &mut item.extra,
+            &["places", "widget_context_token"],
+        ),
+        r#"{"widget_context_token":"w","type":"data","x_future":1}"#
+    );
+    assert_eq!(
+        forge::<Place>(
+            json!({"name": "Cafe", "lat": 1.5}),
+            |place| &mut place.extra,
+            &[
+                "name",
+                "formatted_address",
+                "place_id",
+                "url",
+                "lat",
+                "lng",
+                "types",
+                "rating",
+                "user_ratings_total",
+                "website",
+                "phone_number",
+                "review_snippets",
+            ],
+        ),
+        r#"{"name":"Cafe","lat":1.5,"type":"data","x_future":1}"#
+    );
+    assert_eq!(
+        forge::<ReviewSnippet>(
+            json!({"title": "Good"}),
+            |snippet| &mut snippet.extra,
+            &["title", "url", "review_id"],
+        ),
+        r#"{"title":"Good","type":"data","x_future":1}"#
+    );
+    assert_eq!(
+        forge::<StepError>(
+            json!({"code": 3, "message": "partial"}),
+            |error| &mut error.extra,
+            &["code", "message", "details"],
+        ),
+        r#"{"code":3,"message":"partial","type":"data","x_future":1}"#
+    );
 }
 
 #[test]

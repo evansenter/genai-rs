@@ -12,6 +12,11 @@
 //! modeled fields, recording each key whether or not it was written, then the
 //! extras minus `type` and every recorded key. A hand-built `extra` can
 //! therefore never duplicate a modeled field or change the variant's `type`.
+//!
+//! The plain structs nested in those unions (the result items, `Place`,
+//! `ReviewSnippet`, `StepError`) derive `Deserialize` with a flattened
+//! `extra`, and serialize through [`ModeledMap::untagged`] for the same
+//! guarantee. They have no tag, so a `type` key in their extras is data.
 
 use serde::Deserialize;
 use serde::de::Error as _;
@@ -201,6 +206,18 @@ impl<M: SerializeMap> ModeledMap<M> {
         Ok(Self {
             map,
             modeled: vec!["type"],
+        })
+    }
+
+    /// Opens a map for a plain struct. It has no tag, so an extra named
+    /// `type` is ordinary data and is written.
+    pub(crate) fn untagged<S>(serializer: S) -> Result<Self, S::Error>
+    where
+        S: Serializer<SerializeMap = M, Error = M::Error>,
+    {
+        Ok(Self {
+            map: serializer.serialize_map(None)?,
+            modeled: Vec::new(),
         })
     }
 

@@ -110,6 +110,42 @@ fn extras_never_override_type_or_modeled_fields() {
     );
 }
 
+struct PlainProbe {
+    url: Option<String>,
+    extra: Map<String, Value>,
+}
+
+impl Serialize for PlainProbe {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = ModeledMap::untagged(serializer)?;
+        map.opt("url", self.url.as_ref())?;
+        map.end(&self.extra)
+    }
+}
+
+/// A plain struct has no tag: its extras cannot shadow a modeled field,
+/// set or not, but a `type` among them is data and goes out.
+#[test]
+fn untagged_extras_never_override_modeled_fields_but_keep_type() {
+    let extra = object(json!({"url": "shadow", "type": "data", "future": true}));
+    let unset = PlainProbe {
+        url: None,
+        extra: extra.clone(),
+    };
+    assert_eq!(
+        serde_json::to_string(&unset).unwrap(),
+        r#"{"future":true,"type":"data"}"#
+    );
+    let set = PlainProbe {
+        url: Some("real".into()),
+        extra,
+    };
+    assert_eq!(
+        serde_json::to_string(&set).unwrap(),
+        r#"{"url":"real","future":true,"type":"data"}"#
+    );
+}
+
 #[test]
 fn merged_arguments_put_modeled_entries_first_and_win() {
     let extra = object(json!({"urls": ["shadow"], "code": "shadow", "max_pages": 3}));

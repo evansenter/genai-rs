@@ -39,22 +39,37 @@ pub use delta::StepDelta;
 /// Error details attached to a `model_output` step.
 ///
 /// Mirrors the API's status shape: `{code, message, details}`.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(default)]
 #[non_exhaustive]
 pub struct StepError {
     /// Numeric error code, if provided.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<i64>,
     /// Human-readable error message.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
     /// Additional structured error details.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<Vec<serde_json::Value>>,
-    /// Fields not yet modeled, kept for round trip (Evergreen, #491).
+    /// Fields not yet modeled, kept for round trip (Evergreen, #491). An
+    /// entry named after a modeled field is not written.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// The modeled fields, then the extras that do not name one (#491).
+impl Serialize for StepError {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let Self {
+            code,
+            message,
+            details,
+            extra,
+        } = self;
+        let mut map = crate::wire_fields::ModeledMap::untagged(serializer)?;
+        map.opt("code", code.as_ref())?;
+        map.opt("message", message.as_ref())?;
+        map.opt("details", details.as_ref())?;
+        map.end(extra)
+    }
 }
 
 // =============================================================================
