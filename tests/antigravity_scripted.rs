@@ -712,8 +712,9 @@ fn blocking_scripted_tool(key: String) -> String {
     key
 }
 
-// Multi-thread: on a current-thread runtime a blocking tool body holds the
-// only thread, and no deadline can fire until it returns (docs/ANTIGRAVITY.md).
+// Two workers: only workers drive the timer, so on a current-thread runtime,
+// or a multi-thread one with a single worker, a blocking tool body holds the
+// only one and no deadline can fire until it returns (docs/ANTIGRAVITY.md).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "Requires localharness binary"]
 async fn test_scripted_turn_deadline_bounds_a_blocking_sync_tool() {

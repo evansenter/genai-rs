@@ -45,12 +45,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the deadline)`). Before, only waiting for harness events was bounded. Each
   custom tool call runs on a tokio task of its own that the deadline aborts,
   so an async tool stops at its next `.await`. A synchronous tool body that
-  blocks its thread is abandoned on time on a multi-thread runtime, but on a
-  current-thread runtime it holds the only thread until it returns; make
-  such a tool `async`, or call `spawn_blocking` inside it. A tool that read
-  a tokio `task_local!` of the turn's task no longer sees it; pass the value
-  as an argument or through the tool service's state. Raise the budget, or
-  call `without_turn_timeout()`, for tools that legitimately run long.
+  blocks its thread is abandoned on time on a multi-thread runtime with two
+  or more workers. On a current-thread runtime, or a multi-thread one with a
+  single worker (`#[tokio::main]` on a one-CPU host or a container limited
+  to one CPU), it holds the thread that drives the timer until it returns;
+  make such a tool `async`, or call `spawn_blocking` inside it. A tool that
+  read a tokio `task_local!` of the turn's task no longer sees it; pass the
+  value as an argument or through the tool service's state. Raise the
+  budget, or call `without_turn_timeout()`, for tools that legitimately run
+  long.
 - **Breaking: unparseable Antigravity pre-tool hook arguments fail
   closed.** When the harness sends tool arguments that are not valid JSON
   and a pre-tool hook is set, the call is denied before the hook runs, with

@@ -429,9 +429,11 @@ impl AgentBuilder {
     ///
     /// The budget includes custom tools and hooks. Each tool call runs on a
     /// task of its own that the deadline aborts; a synchronous tool body
-    /// that blocks its thread is abandoned on a multi-thread runtime, but
-    /// on a current-thread runtime it holds the only thread until it
-    /// returns. Make such a tool `async`, or call `spawn_blocking` inside it.
+    /// that blocks its thread is abandoned on a multi-thread runtime with
+    /// two or more workers. On a current-thread runtime, or with one worker
+    /// (`#[tokio::main]` on a one-CPU host), it holds the timer's thread
+    /// until it returns. Make such a tool `async`, or call `spawn_blocking`
+    /// inside it.
     #[must_use]
     pub fn with_turn_timeout(mut self, timeout: Duration) -> Self {
         self.turn_timeout = TurnBudget::Explicit(timeout);

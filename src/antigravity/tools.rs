@@ -170,9 +170,10 @@ impl ResolvedTool {
 /// its body directly inside `call`) holds the task that polls the turn
 /// deadline, so the deadline cannot fire until the tool returns. On its own
 /// task, the turn waits on a join handle the deadline can abandon, and on a
-/// multi-thread runtime another worker drives the timer. On a
-/// current-thread runtime a blocking body still holds the only thread;
-/// nothing in this crate can preempt it there.
+/// multi-thread runtime with another worker free, that worker drives the
+/// timer. Only workers drive a multi-thread runtime's timer, so with a
+/// single worker, as on a current-thread runtime, a blocking body holds the
+/// only thread that could; nothing in this crate can preempt it there.
 ///
 /// Abandoning the call aborts the task: an async tool is cancelled at its
 /// next `.await`, as it was when the call ran inline, and a blocking body
@@ -341,8 +342,13 @@ mod tests {
         assert_eq!(result["result"], "Global says: Hello, World");
     }
 
-    /// Blocks its thread until released (or 30s pass).
-    struct BlockingTool(Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>);
+    /// Reports that its body started, then blocks its thread until released
+    /// (or 30s pass).
+    #[derive(Clone)]
+    struct BlockingTool {
+        started: std::sync::mpsc::Sender<()>,
+        release: Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>,
+    }
 
     #[async_trait]
     impl CallableFunction for BlockingTool {
@@ -355,8 +361,9 @@ mod tests {
         }
 
         async fn call(&self, _args: Value) -> Result<Value, FunctionError> {
+            let _ = self.started.send(());
             let _ = self
-                .0
+                .release
                 .lock()
                 .unwrap()
                 .recv_timeout(std::time::Duration::from_secs(30));
@@ -364,12 +371,30 @@ mod tests {
         }
     }
 
-    struct BlockingService(Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>);
+    struct BlockingService(BlockingTool);
 
     impl ToolService for BlockingService {
         fn tools(&self) -> Vec<Arc<dyn CallableFunction>> {
-            vec![Arc::new(BlockingTool(Arc::clone(&self.0)))]
+            vec![Arc::new(self.0.clone())]
         }
+    }
+
+    /// A dispatcher whose one tool, `antigravity_blocks`, blocks its thread.
+    /// Returns it with the sender that releases the tool and the receiver
+    /// that hears when the tool's body starts.
+    fn blocking_dispatcher() -> (
+        ToolDispatcher,
+        std::sync::mpsc::Sender<()>,
+        std::sync::mpsc::Receiver<()>,
+    ) {
+        let (started_tx, started) = std::sync::mpsc::channel();
+        let (release, release_rx) = std::sync::mpsc::channel();
+        let tool = BlockingTool {
+            started: started_tx,
+            release: Arc::new(std::sync::Mutex::new(release_rx)),
+        };
+        let services: Vec<Arc<dyn ToolService>> = vec![Arc::new(BlockingService(tool))];
+        (ToolDispatcher::new(vec![], &services), release, started)
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -377,11 +402,7 @@ mod tests {
         // Regression: the tool ran inline on the turn's task, so a body that
         // blocked held the poll the turn deadline needed, and a 2s turn ran
         // as long as the tool.
-        let (release, blocked) = std::sync::mpsc::channel();
-        let services: Vec<Arc<dyn ToolService>> = vec![Arc::new(BlockingService(Arc::new(
-            std::sync::Mutex::new(blocked),
-        )))];
-        let d = ToolDispatcher::new(vec![], &services);
+        let (d, release, _started) = blocking_dispatcher();
         let start = std::time::Instant::now();
         let outcome = tokio::time::timeout(
             std::time::Duration::from_millis(200),
@@ -394,6 +415,40 @@ mod tests {
         assert!(
             elapsed < std::time::Duration::from_secs(5),
             "the timer fired late: {elapsed:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_a_blocking_tool_holds_a_single_worker_runtimes_timer() {
+        // Pins what with_turn_timeout, docs/ANTIGRAVITY.md and the CHANGELOG
+        // tell users: only a multi-thread runtime's workers drive its timer,
+        // so with one worker (`#[tokio::main]` on a one-CPU host) a blocking
+        // tool body stops the deadline until the body returns, as on a
+        // current-thread runtime. If the deadline starts firing on time
+        // here, those docs can drop the single-worker caveat.
+        const HOLD: std::time::Duration = std::time::Duration::from_millis(500);
+        let (d, release, started) = blocking_dispatcher();
+        let mut call = Box::pin(d.execute("antigravity_blocks", json!({})));
+        // Start the call, then wait on this (non-worker) thread until the
+        // tool's body holds the only worker, so the timer below cannot have
+        // fired before the body blocked.
+        let first = std::future::poll_fn(|cx| std::task::Poll::Ready(call.as_mut().poll(cx))).await;
+        assert!(first.is_pending(), "the call must still be running");
+        started
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the tool's body never started");
+        let start = std::time::Instant::now();
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(HOLD);
+            release.send(()).unwrap();
+        });
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(100), &mut call).await;
+        let elapsed = start.elapsed();
+        releaser.join().unwrap();
+        assert!(
+            elapsed >= HOLD,
+            "the 100ms timer fired while the only worker was blocked ({elapsed:?}); \
+             the single-worker caveat in the docs no longer holds"
         );
     }
 

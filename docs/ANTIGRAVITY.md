@@ -648,13 +648,16 @@ deadline abandons is aborted: an async tool stops at its next `.await`. A
 tool body that **blocks its thread** (a synchronous `#[tool]` fn doing
 blocking I/O or `std::thread::sleep`) cannot be stopped; it runs to
 completion on its worker and its result is discarded. On a multi-thread
-runtime (`#[tokio::main]`'s default) the deadline still fires on time. On a
-current-thread runtime (`#[tokio::main(flavor = "current_thread")]`, and
-`#[tokio::test]`'s default) the blocked body holds the only thread, so the
-turn cannot end before the tool returns. Make such a tool `async` with
-non-blocking I/O, or move the blocking part into
-`tokio::task::spawn_blocking` inside it. Hooks need neither: each call
-always runs on a thread of its own.
+runtime with two or more workers the deadline still fires on time, because
+a free worker drives the timer. Only workers drive it, though, so a body
+blocking the only worker stops the deadline until it returns. That happens
+on a current-thread runtime (`#[tokio::main(flavor = "current_thread")]`,
+and `#[tokio::test]`'s default), and on a multi-thread runtime with one
+worker: `#[tokio::main]` starts one worker per CPU, so a one-CPU host or a
+container limited to one CPU gets one. There the turn cannot end before the
+tool returns. Make such a tool `async` with non-blocking I/O, or move the
+blocking part into `tokio::task::spawn_blocking` inside it. Hooks need
+neither: each call always runs on a thread of its own.
 
 For
 `send_streaming` that includes time **your** code spends between polls of
@@ -923,9 +926,10 @@ variants, never on message text. Key variants: `HarnessNotFound{searched}`,
 - **Hooks are synchronous**: `on_pre_tool` / `on_post_tool` /
   `on_questions` are sync closures (each call runs on a thread of its own
   and is bounded by the turn deadline); async hooks are a follow-up.
-- **A blocking tool body can't be preempted on a current-thread runtime**:
-  the turn deadline abandons a blocked synchronous tool on a multi-thread
-  runtime only (see the turn deadline under [Streaming](#streaming)).
+- **A blocking tool body can't be preempted on a current-thread or
+  single-worker runtime**: the turn deadline abandons a blocked synchronous
+  tool only on a multi-thread runtime with two or more workers (see the turn
+  deadline under [Streaming](#streaming)).
 - **Only the bespoke `localharness` protocol**: the harness's
   Interactions-mode transport (`use_interactions_api`) is not used. On
   0.1.23 it rejects every `interaction.create` that carries an agent config,
