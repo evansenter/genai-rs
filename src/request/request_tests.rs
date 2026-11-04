@@ -1089,6 +1089,23 @@ fn unknown_request_keys_deserialize_into_extra_and_round_trip() {
 }
 
 #[test]
+fn a_misplaced_deserialized_key_is_sent_until_extra_is_cleared() {
+    // The CHANGELOG's migration for the Breaking entry: 0.13.0 dropped a
+    // key it didn't model; now it is sent, and clearing `extra` drops it.
+    let mut request: InteractionRequest =
+        serde_json::from_str(r#"{"model":"m","input":"hi","temperature":0.2}"#).unwrap();
+    assert_eq!(request.extra["temperature"], 0.2);
+    let sent = serde_json::to_value(&request).unwrap();
+    assert_eq!(sent["temperature"], 0.2, "sent at the top level: {sent}");
+
+    request.extra.clear();
+    assert_eq!(
+        serde_json::to_value(&request).unwrap(),
+        serde_json::json!({"model": "m", "input": "hi"})
+    );
+}
+
+#[test]
 fn add_extra_accumulates_and_replaces_per_key() {
     let client = crate::Client::new("k".to_string());
     let request = client

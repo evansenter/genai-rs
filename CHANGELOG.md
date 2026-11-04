@@ -61,6 +61,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking: `InteractionRequest` has a new public field, `extra`.**
   Migration: a struct literal needs `extra: Default::default()`, or
   `..Default::default()`; `client.interaction()...build()` is unaffected.
+- **Breaking: a deserialized `InteractionRequest` keeps the keys it doesn't
+  model, in `extra`, and sends them.** 0.13.0 dropped them silently. This
+  covers a request loaded from JSON or a config file, and the nested
+  `interaction` of a deserialized `TriggerCreateParams`. A stale, misplaced
+  or misspelled key, such as a top-level `temperature` that belongs in
+  `generation_config`, now reaches the server, which rejects a name it
+  doesn't know with `400 Unknown parameter '<name>'`. Migration: remove the
+  key from the JSON, or call `request.extra.clear()` before sending to send
+  what 0.13.0 sent.
 - **Breaking: a `wait_until_active` timeout shorter than one status
   request's round trip now always fails.** Each status request used to get
   at least a second, so a zero timeout read the state once. Now the first

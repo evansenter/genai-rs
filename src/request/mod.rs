@@ -514,7 +514,8 @@ pub struct InteractionRequest {
     /// the crate gets wrong. The same typo cost as
     /// [`TriggerCreateParams::extra`](crate::TriggerCreateParams::extra)
     /// applies to a deserialized request: a misspelled key lands here and is
-    /// sent as is.
+    /// sent as is. Clear this map before sending to drop every such key, as
+    /// 0.13.0 did.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
