@@ -7,8 +7,10 @@
 //! in flight, so the ones that need the client's real defaults hold a
 //! blocking task (which stops the auto-advance) until the stub has the
 //! request: from then on the only timers are the stub's delays and any
-//! timeout the client has. The other way, turning the connect timeout off
-//! with `Duration::MAX`, is tested here too.
+//! timeout the client has. A test that sends several requests uses
+//! `Stub::paused_clock_client`, which holds the clock for each request
+//! until its response is read. The other way, turning the connect timeout
+//! off with `Duration::MAX`, is tested here too.
 
 mod common;
 
@@ -368,8 +370,9 @@ async fn plain_stream_ends_at_an_error_event() {
 // =============================================================================
 
 /// A 429's `Retry-After` reaches the poll: the next status read waits for
-/// it, not the 10 ms interval. (Real time, one second.)
-#[tokio::test]
+/// it, not the 10 ms interval. Each request holds the paused clock while in
+/// flight, so the gap is exactly the one second the poll slept.
+#[tokio::test(start_paused = true)]
 async fn wait_until_active_waits_out_a_429_retry_after() {
     let file = |state: &str| json!({"name": "files/abc", "mimeType": "video/mp4", "uri": "u", "state": state});
     let arrivals = Arc::new(Mutex::new(Vec::new()));
@@ -385,7 +388,7 @@ async fn wait_until_active_waits_out_a_429_retry_after() {
         Some(Reply::json(200, file("ACTIVE"))),
     ]);
     let stub = Stub::start(move |_, n| {
-        seen.lock().unwrap().push(std::time::Instant::now());
+        seen.lock().unwrap().push(tokio::time::Instant::now());
         replies.lock().unwrap()[n].take().unwrap()
     })
     .await;
@@ -393,8 +396,9 @@ async fn wait_until_active_waits_out_a_429_retry_after() {
     let poll = PollOptions::new()
         .with_poll_interval(Duration::from_millis(10))
         .with_timeout(Duration::from_secs(30));
+    let start = tokio::time::Instant::now();
     let ready = stub
-        .client()
+        .paused_clock_client()
         .files()
         .wait_until_active("files/abc", poll)
         .await
@@ -403,6 +407,7 @@ async fn wait_until_active_waits_out_a_429_retry_after() {
     assert!(ready.is_active());
     let arrivals = arrivals.lock().unwrap();
     assert_eq!(arrivals.len(), 2);
+    assert_eq!(arrivals[0], start);
     let gap = arrivals[1] - arrivals[0];
-    assert!(gap >= Duration::from_secs(1), "polled again after {gap:?}");
+    assert_eq!(gap, Duration::from_secs(1), "polled again after {gap:?}");
 }

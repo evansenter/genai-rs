@@ -72,7 +72,9 @@ built on `genai-rs` too. Either build the test client with
 `with_connect_timeout(Duration::MAX)`, which arms no connect timer, and set
 no other timeout; or hold the clock with a running `spawn_blocking` task
 until the stub has the request, as `reliability_tests.rs`'s `hold_clock`
-does when a test needs the real defaults. See
+does when a test needs the real defaults. For a test that sends several
+requests (a poll), `Stub::paused_clock_client()` holds the clock for each
+request until its response is read, with every default in place. See
 [Reliability](RELIABILITY.md#tests-on-a-paused-clock).
 
 ## Live tests

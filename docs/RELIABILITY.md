@@ -167,13 +167,17 @@ out:
 
 - Turn the connect timeout off in the test client with
   `with_connect_timeout(Duration::MAX)`, which arms no timer, and set no
-  read, total or request-level timeout. `wait_until_active` has the same
-  problem: it bounds each status request with its deadline, so drive it
-  with real time against a server.
+  read, total or request-level timeout. This is not enough for
+  `wait_until_active`, which bounds each status request with its deadline.
 - Or stop the auto-advance while I/O is in flight: a
   `tokio::task::spawn_blocking` task that is still running holds the clock.
   `tests/reliability_tests.rs` (`hold_clock`) releases it once the mock
-  server has the request, which keeps the client's real defaults.
+  server has the request, which keeps the client's real defaults. For code
+  that sends several requests, such as `wait_until_active`, a wire
+  inspector can hold the clock per request: `ClockHold` in
+  `tests/common/http_stub.rs` starts the task on `WireEvent::Request` and
+  ends it once the response body is read, so the sleeps between polls
+  still advance.
 
 ```rust,no_run
 use genai_rs::Client;
@@ -287,8 +291,8 @@ default, polling every 2 s and 500 ms):
   resource may still be processing, and whether to wait again is yours.
 
 The wait runs on tokio time. Against a server on a paused clock, though,
-its deadline is a timer that tokio's auto-advance fires while the status
-request is in flight, so test it in real time with a short interval; see
+its deadline is a timer that tokio's auto-advance fires while a status
+request is in flight, unless each request holds the clock; see
 [Tests on a paused clock](#tests-on-a-paused-clock).
 
 ## Cancellation
