@@ -229,7 +229,9 @@ upgrade table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`, and run
   (`scheduled-run-status`).
 - Other workflows: `audit.yml`, `api-surface-sweep.yml`, `consumer-crate.yml`,
   `ci-flakiness-report.yml`, `release.yml`, `release-drafter.yml`,
-  `claude.yml`, `claude-code-review.yml`.
+  `claude.yml`, `claude-code-review.yml`, `antigravity-release-watch.yml`
+  (daily; an `antigravity-release` issue when PyPI's `google-antigravity`
+  differs from `SUPPORTED_HARNESS_VERSION`).
 - **Example size gate:** `build-metrics` fails when an example binary grows
   more than 15% against the last main build. For intended growth, add the
   `size-growth-ok` label **and push a commit** (a re-run replays the old event
