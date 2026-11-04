@@ -6,6 +6,8 @@
 //! streamed live carry an `event_id` (a long answer yields three or four).
 //! Observed 2026-09-26: a resumed replay can tag fewer deltas than the live
 //! stream did, so resumption is checked on the text, not the id list.
+//! Observed 2026-11-04: thought deltas carry an `event_id` too (the first id
+//! decoded to `0_thought_4:0`), so an id can come before any text.
 //!
 //! ```bash
 //! cargo nextest run --test streaming_resume_tests --run-ignored all
@@ -66,9 +68,10 @@ async fn test_interactions_stream_follows_background_interaction() {
 
 /// Resuming from an event replays only what came after it.
 ///
-/// Needs a stream with at least two ids to have a suffix to compare. The
-/// server decides how many it sends, so a run that saw only one starts a new
-/// interaction (up to three) rather than weakening the assertion.
+/// Needs an id with text on both sides of it, so there is a skipped prefix
+/// and a replayed suffix to compare. The server decides which events carry
+/// ids, so a run without one starts a new interaction (up to three) rather
+/// than weakening the assertion.
 #[tokio::test]
 #[ignore = "Requires API key"]
 async fn test_stream_resume_with_last_event_id() {
@@ -79,31 +82,39 @@ async fn test_stream_resume_with_last_event_id() {
 
     with_timeout(STREAM_BUDGET, async {
         let mut seen = Vec::new();
-        let (id, full) = loop {
+        let (id, full, at) = loop {
             let id = start_background(&client).await;
             let full = consume_stream(client.interactions().stream(&id)).await;
-            seen.push(full.event_ids.len());
-            if full.event_ids.len() >= 2 {
-                break (id, full);
+            let len = full.collected_text.len();
+            let at = full
+                .event_text_offsets
+                .iter()
+                .position(|&offset| offset > 0 && offset < len);
+            seen.push((full.event_ids.clone(), full.event_text_offsets.clone(), len));
+            if let Some(at) = at {
+                break (id, full, at);
             }
             assert!(
                 seen.len() < 3,
-                "no retrieval stream carried two event_ids (counts: {seen:?})"
+                "no retrieval stream carried an event_id with text on both sides \
+                 (ids, text offsets, text length): {seen:?}"
             );
         };
 
-        let resume_from = &full.event_ids[0];
+        let resume_from = &full.event_ids[at];
+        let skipped = full.event_text_offsets[at];
         let resumed = consume_stream(client.interactions().resume_stream(&id, resume_from)).await;
 
         // Which deltas carry an id differs between the live stream and the
         // replay (a replay can tag fewer), so the ids cannot be compared as
-        // lists. The text can: it must be a proper, non-empty tail.
+        // lists. The text can: it must be a non-empty tail of the full text
+        // that leaves out everything up to the resume point.
         assert!(
             !resumed.collected_text.is_empty()
-                && resumed.collected_text.len() < full.collected_text.len()
+                && resumed.collected_text.len() <= full.collected_text.len() - skipped
                 && full.collected_text.ends_with(&resumed.collected_text),
-            "resuming from {resume_from} should replay only the text after it: \
-             got {} of {} bytes, tail match: {}",
+            "resuming from {resume_from} (after {skipped} bytes) should replay only the text \
+             after it: got {} of {} bytes, tail match: {}",
             resumed.collected_text.len(),
             full.collected_text.len(),
             full.collected_text.ends_with(&resumed.collected_text)
