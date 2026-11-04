@@ -4,7 +4,7 @@ name: Fuzz
 # fuzz/README.md): the SSE parser, the stream pipeline over
 # InteractionStreamEvent, and Step, StepDelta and Content deserialization.
 # Each target checks for panics and a round trip where the input is valid.
-# Weekly, on demand, and on pull requests that touch the fuzzed code.
+# Weekly, on demand, and on pull requests that touch code the targets build.
 on:
   schedule:
     - cron: '41 3 * * 6' # Saturday 03:41 UTC
@@ -16,14 +16,14 @@ on:
         default: "60"
   pull_request:
     branches: [ "main" ]
+    # Everything the targets compile: the crate (without the antigravity
+    # feature, which fuzz/Cargo.toml does not enable), its macros crate, and
+    # the fuzz crate with its own lockfile (the root Cargo.lock is not used).
     paths:
-      - "src/http/sse_parser.rs"
-      - "src/http/interactions.rs"
-      - "src/wire_streaming/**"
-      - "src/steps/**"
-      - "src/content/**"
-      - "src/fuzzing.rs"
-      - "src/fuzzing_tests.rs"
+      - "src/**"
+      - "!src/antigravity/**"
+      - "genai-rs-macros/**"
+      - "Cargo.toml"
       - "fuzz/**"
       - ".github/workflows/fuzz.yml"
 

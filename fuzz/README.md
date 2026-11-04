@@ -36,6 +36,7 @@ directory so new finds land in `corpus/`, which is gitignored with
    same entry point, with a comment saying what it found.
 
 `.github/workflows/fuzz.yml` runs every target for a minute weekly, on
-demand (with a chosen duration), and on pull requests that touch the fuzzed
-code. A failed scheduled run opens a `ci-health-escalation` issue and uploads
+demand (with a chosen duration), and on pull requests that touch anything
+the targets build (`src/` outside `antigravity/`, `genai-rs-macros/`, the root
+`Cargo.toml` or `fuzz/`). A failed scheduled run opens a `ci-health-escalation` issue and uploads
 the failing input as the `fuzz-<target>-crash` artifact.
