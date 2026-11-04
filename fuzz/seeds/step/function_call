@@ -1,0 +1,1 @@
+{"type": "function_call", "id": "c1", "name": "f", "arguments": {"x": [1, 2.5, null, true]}}

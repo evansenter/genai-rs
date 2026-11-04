@@ -285,6 +285,14 @@ pub mod __private {
     pub use serde_json;
 }
 
+/// Entry points for the `cargo fuzz` targets in `fuzz/`. **Not a public
+/// API**: it exists only under `cfg(fuzzing)` (set by `cargo fuzz`) and in
+/// this crate's tests.
+#[cfg(any(fuzzing, test))]
+#[doc(hidden)]
+#[path = "fuzzing.rs"]
+pub mod __fuzz;
+
 // =============================================================================
 // Streaming Types for Auto Function Calling
 // =============================================================================

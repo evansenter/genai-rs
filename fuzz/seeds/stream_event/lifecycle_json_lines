@@ -1,0 +1,10 @@
+{"event_type":"interaction.created","interaction":{"id":"i1","status":"in_progress"},"event_id":"e0"}
+{"event_type":"interaction.status_update","interaction_id":"i1","status":"in_progress"}
+{"event_type":"step.start","index":0,"step":{"type":"thought","signature":""}}
+{"event_type":"step.delta","index":0,"delta":{"type":"thought_signature","signature":"abc"}}
+{"event_type":"step.stop","index":0}
+{"event_type":"step.start","index":1,"step":{"type":"model_output","content":[]}}
+{"event_type":"step.delta","index":1,"delta":{"type":"text","text":"Hi"}}
+{"event_type":"step.delta","index":1,"delta":{"type":"image","data":"AAAA","mime_type":"image/jpeg"}}
+{"event_type":"step.stop","index":1,"usage":{"total_tokens":9},"step_usage":{"total_output_tokens":2}}
+{"event_type":"interaction.completed","interaction":{"id":"i1","status":"completed"},"metadata":{"total_usage":{"total_tokens":12}}}
