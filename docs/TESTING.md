@@ -243,7 +243,10 @@ checks on it:
   request class that nothing sends.
 - **Request bodies on the wire** (`tests/request_wire_oracle.rs`). Each
   verb with a body runs against the local stub, and the captured body is
-  checked the same way, wrapping included.
+  checked the same way, wrapping included. `every_verb_with_a_body_is_called_above`
+  finds the verbs that send a body (their implementation reaches a POST,
+  PATCH or PUT request; the parsing is in `tests/live_verbs/`) and fails
+  when one is not called there or listed in `NO_JSON_BODY`.
 - **Response fields** (`src/coverage_oracle/response.rs`,
   `binding_fields_deserialize_without_extra` and
   `spec_fields_deserialize_without_extra`). For each
@@ -288,6 +291,7 @@ reason to the list that fits:
 | `GAPS` (response) | Served or specified but not modeled yet, the work list for the next modeling pass |
 | `UNMAPPED` (`mod.rs`) | A binding class no table reaches: SDK plumbing, an empty body, a body checked at the wire, or a request not modeled yet |
 | `ENDPOINTS_WITHOUT_A_VERB`, `EXEMPT` (`tests/ci_coverage.rs`) | An endpoint no handle verb calls; a verb no live test can call |
+| `NO_JSON_BODY` (`tests/request_wire_oracle.rs`) | A verb whose POST, PATCH or PUT carries no JSON body (an upload's bytes) |
 
 Date every live fact in a reason (D-010). An entry that matches nothing
 fails the test, so the lists only shrink when the crate catches up. A
@@ -303,13 +307,16 @@ it:
 
 ```bash
 .github/scripts/refresh_api_snapshot.sh --version X.Y.Z   # bumps the baseline and bindings.json together
-cargo nextest run -E 'test(/coverage_oracle/) | binary(ci_coverage) | binary(request_wire_oracle)'
+cargo nextest run -E 'test(/coverage_oracle/) | binary(request_wire_oracle) | binary(ci_coverage)'
                                                           # every new field, class or endpoint fails until handled
 ```
 
 Then update the `docs/INTERACTIONS_API_GAP.md` header (CI checks it matches
 the baseline). With a newer copy of the OpenAPI spec, add
-`--spec-v1beta FILE --spec-v1 FILE --spec-fetched YYYY-MM-DD`.
+`--spec-v1beta FILE --spec-v1 FILE --spec-fetched YYYY-MM-DD` (and
+`--spec-source URL` once the spec has a public URL again; it defaults to
+`manual`). The baseline is written last, so a failed download or dump
+leaves it and the snapshot unchanged.
 
 The committed `bindings.json` must match a fresh dump of the baseline
 release, so a dump-script change needs a refresh too (run the script

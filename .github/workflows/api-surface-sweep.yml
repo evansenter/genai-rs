@@ -196,7 +196,7 @@ jobs:
             echo "   coverage oracle's snapshot (\`tests/fixtures/api_surface/\`)"
             echo "   together; the regenerated snapshot is also attached to this run"
             echo "   as the \`api-surface-snapshot\` artifact. Then run"
-            echo "   \`cargo nextest run -E 'test(/coverage_oracle/) | binary(ci_coverage)'\`:"
+            echo "   \`cargo nextest run -E 'test(/coverage_oracle/) | binary(request_wire_oracle) | binary(ci_coverage)'\`:"
             echo "   every new field, class or endpoint fails there until it is"
             echo "   handled or listed with a reason."
             echo "   The bump is what closes this loop: the next run sees baseline"
