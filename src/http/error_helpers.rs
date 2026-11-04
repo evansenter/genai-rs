@@ -178,6 +178,17 @@ pub fn deserialize_with_context<T: DeserializeOwned>(
     })
 }
 
+/// The error for a successful streaming response whose body is not SSE (a
+/// captive portal's HTML page, a plain JSON interaction): a
+/// [`GenaiError::MalformedResponse`] naming the content type, with a preview
+/// of the body. Not a cut-off stream: no stream ever started.
+pub(crate) fn not_an_event_stream(content_type: &str, body: &str) -> GenaiError {
+    let preview = truncate_for_context(body, ERROR_BODY_PREVIEW_LENGTH);
+    GenaiError::MalformedResponse(format!(
+        "expected an SSE stream (text/event-stream), got {content_type}: {preview}"
+    ))
+}
+
 /// Truncates a string to specified length, adding "..." if truncated.
 ///
 /// Uses character-boundary-aware slicing to prevent panics on multi-byte UTF-8 characters.

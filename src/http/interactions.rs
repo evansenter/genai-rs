@@ -2,7 +2,7 @@ use super::common::{
     NO_BODY, api_request, path_segment, require_id, send_and_read, send_checked, with_query,
 };
 use super::context::HttpContext;
-use super::error_helpers::deserialize_with_context;
+use super::error_helpers::{deserialize_with_context, not_an_event_stream};
 use super::sse_parser::parse_sse_stream;
 use crate::errors::GenaiError;
 use crate::steps::StepAccumulator;
@@ -203,11 +203,19 @@ pub fn create_interaction_stream<'a>(
 /// Sends a streaming request and turns its SSE body into [`StreamEvent`]s,
 /// accumulating steps so the final `Completed` response is whole.
 ///
-/// A body that ends before a terminal event (`Completed` or `Error`) yields
-/// [`GenaiError::MalformedResponse`] last, so a cut-off stream can't pass for
-/// a finished one. The exception is a stream whose last event is one this
-/// crate doesn't recognize: that may be a new terminal event, so it ends
-/// cleanly, with a `warn!` (Evergreen).
+/// The stream ends at the first terminal event (`Completed` or `Error`) and
+/// reads nothing after it, so a late error (a reset while the server closes,
+/// a stray frame) can't follow a finished interaction and undo it, in
+/// particular a finished auto-function round. The API sends only
+/// `event: done` / `data: [DONE]` after `interaction.completed` (live
+/// 2026-11-04), which the parser skips anyway.
+///
+/// A body that ends before a terminal event yields
+/// [`GenaiError::StreamInterrupted`] last, so a cut-off stream can't pass for
+/// a finished one; the parser gives a transport failure mid-body the same
+/// error. The exception is a stream whose last event is one this crate
+/// doesn't recognize: that may be a new terminal event, so it ends cleanly,
+/// with a `warn!` (Evergreen).
 fn stream_events(
     ctx: &HttpContext,
     request_id: u64,
@@ -215,14 +223,52 @@ fn stream_events(
 ) -> impl Stream<Item = Result<StreamEvent, GenaiError>> + Send + '_ {
     try_stream! {
         let response = send_checked(ctx, request_id, builder).await?;
+        // The API answers `text/event-stream` (live 2026-11-04). Another
+        // declared type is a body that was never a stream (a captive
+        // portal's page, a plain JSON interaction), so its end is not a
+        // cut-off. A missing header is given the benefit of the doubt.
+        if let Some(content_type) = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .filter(|value| !is_event_stream(value))
+            .map(str::to_owned)
+        {
+            let body = response.text().await?;
+            ctx.emit_response_body(request_id, &body);
+            Err(not_an_event_stream(&content_type, &body))?;
+            return;
+        }
         let parsed_stream =
             parse_sse_stream::<InteractionStreamEvent>(response.bytes_stream(), ctx, request_id);
-        futures_util::pin_mut!(parsed_stream);
+        let events = interaction_events(parsed_stream);
+        futures_util::pin_mut!(events);
+        while let Some(event) = events.next().await {
+            yield event?;
+        }
+    }
+}
 
+/// Whether a `Content-Type` value is `text/event-stream`, ignoring case and
+/// parameters (`; charset=utf-8`).
+fn is_event_stream(content_type: &str) -> bool {
+    content_type
+        .split(';')
+        .next()
+        .is_some_and(|media_type| media_type.trim().eq_ignore_ascii_case("text/event-stream"))
+}
+
+/// Turns parsed SSE events into [`StreamEvent`]s: dispatch, accumulation,
+/// the stop at the first terminal event, and the cut-off check. Split from
+/// [`stream_events`] so it runs without HTTP (unit tests, fuzzing).
+pub(crate) fn interaction_events(
+    parsed: impl Stream<Item = Result<InteractionStreamEvent, GenaiError>> + Send,
+) -> impl Stream<Item = Result<StreamEvent, GenaiError>> + Send {
+    try_stream! {
+        futures_util::pin_mut!(parsed);
         let mut accumulator = StepAccumulator::new();
-        let mut terminated = false;
         let mut last_was_unknown = false;
-        while let Some(result) = parsed_stream.next().await {
+        while let Some(result) = parsed.next().await {
             let event = result?;
             debug!(
                 "SSE event received: event_type={:?}, index={:?}, event_id={:?}",
@@ -231,22 +277,28 @@ fn stream_events(
 
             let event_id = event.event_id.clone();
             if let Some(chunk) = dispatch_stream_event(event, &mut accumulator) {
-                terminated |= chunk.is_terminal();
+                let terminal = chunk.is_terminal();
                 last_was_unknown = chunk.is_unknown();
                 yield StreamEvent::new(chunk, event_id);
+                if terminal {
+                    // Dropping `parsed` drops the body, closing the
+                    // connection instead of reading what follows.
+                    return;
+                }
             }
         }
-        if !terminated && last_was_unknown {
+        if last_was_unknown {
             tracing::warn!(
                 "the stream ended on an unrecognized event, with no interaction.completed; \
                  treating it as a new terminal event"
             );
-        } else if !terminated {
-            Err(GenaiError::MalformedResponse(
-                "the stream ended before interaction.completed or an error event \
-                 (the connection was cut off)"
+        } else {
+            Err(GenaiError::StreamInterrupted {
+                message: "the body ended before interaction.completed or an error event \
+                          (the server closed the connection)"
                     .to_string(),
-            ))?;
+                source: None,
+            })?;
         }
     }
 }
@@ -402,6 +454,7 @@ mod tests {
             safety_settings: None,
             labels: None,
             continuation_token: None,
+            extra: serde_json::Map::new(),
         };
 
         let json = serde_json::to_string(&request).expect("Serialization should work");
@@ -686,6 +739,114 @@ mod tests {
                 assert_eq!(response.as_text(), Some("authoritative"));
             }
             other => panic!("Expected Completed, got {other:?}"),
+        }
+    }
+
+    // =========================================================================
+    // Terminal events and cut-offs
+    // =========================================================================
+
+    fn events_from(
+        items: Vec<Result<&str, GenaiError>>,
+    ) -> Vec<Result<InteractionStreamEvent, GenaiError>> {
+        items
+            .into_iter()
+            .map(|item| item.map(parse_event))
+            .collect()
+    }
+
+    async fn run(
+        items: Vec<Result<InteractionStreamEvent, GenaiError>>,
+    ) -> (Vec<Result<StreamEvent, GenaiError>>, usize) {
+        let pulled = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = pulled.clone();
+        let source = futures_util::stream::iter(items).inspect(move |_| {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        });
+        let out = interaction_events(source).collect().await;
+        (out, pulled.load(std::sync::atomic::Ordering::SeqCst))
+    }
+
+    const CREATED: &str =
+        r#"{"event_type":"interaction.created","interaction":{"id":"i1","status":"in_progress"}}"#;
+    const COMPLETED: &str =
+        r#"{"event_type":"interaction.completed","interaction":{"id":"i1","status":"completed"}}"#;
+
+    #[tokio::test]
+    async fn test_nothing_is_read_after_completed() {
+        let late = GenaiError::StreamInterrupted {
+            message: "reset while closing".to_string(),
+            source: None,
+        };
+        let (events, pulled) = run(events_from(vec![
+            Ok(CREATED),
+            Ok(COMPLETED),
+            Err(late),
+            Ok(r#"{"event_type":"step.delta","index":0,"delta":{"type":"text","text":"late"}}"#),
+        ]))
+        .await;
+        assert!(
+            matches!(events.as_slice(), [Ok(_), Ok(last)] if last.chunk.is_terminal()),
+            "{events:?}"
+        );
+        assert_eq!(pulled, 2, "the event after the terminal one is never read");
+    }
+
+    #[tokio::test]
+    async fn test_nothing_is_read_after_an_error_event() {
+        let (events, pulled) = run(events_from(vec![
+            Ok(r#"{"event_type":"error","error":{"message":"blocked","code":"recitation"}}"#),
+            Ok(COMPLETED),
+        ]))
+        .await;
+        assert!(
+            matches!(
+                events.as_slice(),
+                [Ok(StreamEvent {
+                    chunk: StreamChunk::Error { .. },
+                    ..
+                })]
+            ),
+            "{events:?}"
+        );
+        assert_eq!(pulled, 1);
+    }
+
+    #[tokio::test]
+    async fn test_end_before_a_terminal_event_is_interrupted() {
+        let (events, _) = run(events_from(vec![Ok(CREATED)])).await;
+        let [Ok(_), Err(err)] = events.as_slice() else {
+            panic!("expected the created event, then the cut-off: {events:?}");
+        };
+        assert!(
+            matches!(err, GenaiError::StreamInterrupted { source: None, .. }),
+            "{err:?}"
+        );
+        assert!(err.is_retryable());
+
+        // An empty body is cut off too.
+        let (events, _) = run(Vec::new()).await;
+        assert!(
+            matches!(
+                events.as_slice(),
+                [Err(GenaiError::StreamInterrupted { .. })]
+            ),
+            "{events:?}"
+        );
+    }
+
+    #[test]
+    fn test_is_event_stream() {
+        for yes in [
+            "text/event-stream",
+            "TEXT/Event-Stream",
+            "text/event-stream; charset=utf-8",
+            " text/event-stream ;charset=UTF-8",
+        ] {
+            assert!(is_event_stream(yes), "{yes}");
+        }
+        for no in ["application/json", "text/html", "text/event-streamx", ""] {
+            assert!(!is_event_stream(no), "{no}");
         }
     }
 }

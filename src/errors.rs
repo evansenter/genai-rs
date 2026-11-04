@@ -67,12 +67,39 @@ pub enum GenaiError {
     /// Unlike `InvalidInput` (user's fault), this represents an issue with
     /// the API response itself.
     ///
-    /// A stream whose body ends before `interaction.completed` or an error
-    /// event (a cut-off connection) also ends with this. It is not
-    /// [`is_retryable`](Self::is_retryable): re-sending starts a new
-    /// generation, and only a background interaction can resume.
+    /// A stream cut off before its terminal event is
+    /// [`StreamInterrupted`](Self::StreamInterrupted), not this.
     #[error("Malformed API response: {0}")]
     MalformedResponse(String),
+    /// A stream's body ended before its terminal event
+    /// (`interaction.completed` or an error event): the connection was cut
+    /// off.
+    ///
+    /// Every way a body can end early lands here, so a caller sees one
+    /// error for one event:
+    ///
+    /// - the server closed the connection between events or in the middle
+    ///   of one (`source` is `None`);
+    /// - the transport failed mid-body: a reset, a
+    ///   [read timeout](crate::ClientBuilder::with_read_timeout) between
+    ///   chunks, a decode error (`source` is the [`reqwest::Error`]).
+    ///
+    /// [`is_retryable`](Self::is_retryable) is true; see there for why. A
+    /// background interaction can be resumed instead of re-sent:
+    /// [`Interactions::resume_stream`](crate::Interactions::resume_stream)
+    /// continues the same generation from the last `event_id` you saw.
+    ///
+    /// A failure before the response headers arrive (connect, TLS, the
+    /// read timeout while the model thinks) is [`Http`](Self::Http): no
+    /// stream had started.
+    #[error("Stream interrupted: {message}")]
+    StreamInterrupted {
+        /// What ended the body.
+        message: String,
+        /// The transport error, when the transport reported one.
+        #[source]
+        source: Option<reqwest::Error>,
+    },
     /// Request timed out after the specified duration.
     ///
     /// Returned when a request exceeds
@@ -110,12 +137,37 @@ impl GenaiError {
     /// - **Rate limits (429)**: Temporary throttling, retry after backoff
     /// - **Server errors (5xx)**: Temporary server issues
     /// - **Timeouts**: Request took too long but may succeed with retry
+    /// - **Cut-off streams** ([`StreamInterrupted`](Self::StreamInterrupted)):
+    ///   the body ended before the terminal event
     ///
     /// Errors that return `false` are typically permanent and retrying won't help:
     /// - **Client errors (4xx except 429)**: Bad request, unauthorized, not found
     /// - **Parse/JSON errors**: Response format issues
     /// - **Invalid input**: Request validation failures
     /// - **Malformed response**: API contract violations
+    ///
+    /// # Cut-off streams
+    ///
+    /// A stream can be cut off two ways: the server closes the connection
+    /// early, or the transport fails mid-body (a reset, a read timeout).
+    /// Both are [`StreamInterrupted`](Self::StreamInterrupted) and both are
+    /// retryable, for three reasons:
+    ///
+    /// - The failure belongs to the connection, not the request: the same
+    ///   request succeeds when re-sent. A non-streaming `create()` whose body
+    ///   read fails the same way has always been a retryable
+    ///   [`Http`](Self::Http) error, and a cut-off stream is no different.
+    /// - Calling one of them permanent would make a caller retrying
+    ///   "transient" errors treat the same event two ways, depending on
+    ///   whether the peer closed cleanly or reset.
+    /// - A background interaction keeps running server-side, so the
+    ///   recovery is often a resume rather than a re-send.
+    ///
+    /// Retryable does not mean free. A foreground stream's generation is
+    /// cancelled server-side when its connection drops (verified live
+    /// 2026-11-01), so a retry is a new generation: discard the partial
+    /// output you showed, or the retry repeats it. Retrying an auto-function
+    /// stream re-runs its functions, as any retry of that loop does.
     ///
     /// # Example
     ///
@@ -173,6 +225,9 @@ impl GenaiError {
 
             // Timeouts may succeed on retry
             GenaiError::Timeout(_) => true,
+
+            // A cut-off stream is a connection failure (see the docs above)
+            GenaiError::StreamInterrupted { .. } => true,
 
             // These are permanent errors - retrying won't help
             GenaiError::Parse(_)
