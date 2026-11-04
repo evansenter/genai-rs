@@ -400,6 +400,10 @@ jobs:
       - uses: ./.github/actions/setup-mold
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      # --all-features turns on strict-unknown, which compiles code out (the
+      # coverage oracle's response side), so lint the default set too.
+      - name: Run clippy (without strict-unknown)
+        run: cargo clippy --workspace --all-targets --features antigravity -- -D warnings
 
   doc:
     name: Documentation
