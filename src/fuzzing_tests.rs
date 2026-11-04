@@ -80,6 +80,37 @@ fn regression_unknown_event_named_like_a_known_chunk_type() {
     }
 }
 
+/// `step`, `step_delta` and `content`, 2026-11-04, once the check compared
+/// the first read with the second: an input with no string `type` (here a
+/// bare number) reads as `Unknown` tagged `"<missing type>"`, and the write
+/// puts that tag in its data. Intended (pinned in `tools_tests.rs`,
+/// `annotation_tests.rs` and `serialize_tests.rs`), so [`Normalize`]
+/// expects it, at the top level and nested.
+#[test]
+fn regression_typeless_input_is_tagged_missing_type() {
+    step(b"0");
+    step_delta(b"1");
+    content(b"0");
+    for json in [r#"0"#, r#"{"x":1}"#, r#"{"type":5,"x":1}"#, "null"] {
+        normalized_round_trip::<Step>(json);
+        normalized_round_trip::<StepDelta>(json);
+        normalized_round_trip::<Content>(json);
+    }
+    normalized_round_trip::<Step>(r#"{"type":"model_output","content":[{"text":"no type"}]}"#);
+    normalized_round_trip::<Content>(
+        r#"{"type":"text","text":"a","annotations":[{"start_index":1}]}"#,
+    );
+    normalized_round_trip::<StepDelta>(
+        r#"{"type":"text_annotation_delta","annotations":[{"end_index":2}]}"#,
+    );
+    // A real unknown type is already in its data: no change at all.
+    let real = r#"{"type":"brand_new","x":[1]}"#;
+    let first: Step = serde_json::from_str(real).unwrap();
+    let mut normalized = first.clone();
+    normalized.normalize();
+    assert_eq!(first, normalized);
+}
+
 #[test]
 fn deserializers_round_trip_known_shapes() {
     step(br#"{"type":"model_output","content":[{"type":"text","text":"hi"}]}"#);
@@ -94,4 +125,59 @@ fn deserializers_round_trip_known_shapes() {
     // Not even JSON: rejected without a panic.
     step(b"\xff");
     content(b"[");
+}
+
+/// Asserts the first write of `json` does change it (so the input
+/// exercises [`Normalize`]), then runs the full check.
+fn normalized_round_trip<T>(json: &str)
+where
+    T: DeserializeOwned + Serialize + PartialEq + std::fmt::Debug + Normalize,
+{
+    let first: T = serde_json::from_str(json).unwrap();
+    let second: T = serde_json::from_value(serde_json::to_value(&first).unwrap()).unwrap();
+    assert_ne!(first, second, "{json} needs no normalization");
+    round_trip::<T>(json.as_bytes());
+}
+
+#[test]
+fn round_trip_allows_only_the_empty_annotation_normalization() {
+    // An empty annotation list is not written, wherever the text sits.
+    let text = r#"{"type":"text","text":"hi","annotations":[]}"#;
+    normalized_round_trip::<Content>(text);
+    for step_json in [
+        format!(r#"{{"type":"model_output","content":[{text}]}}"#),
+        format!(r#"{{"type":"user_input","content":[{text}]}}"#),
+        format!(r#"{{"type":"thought","signature":"s","summary":[{text}]}}"#),
+        format!(r#"{{"type":"function_result","call_id":"c","result":[{text}]}}"#),
+        format!(r#"{{"type":"mcp_server_tool_result","call_id":"c","result":[{text}]}}"#),
+    ] {
+        normalized_round_trip::<Step>(&step_json);
+    }
+    for delta_json in [
+        format!(r#"{{"type":"thought_summary","content":{text}}}"#),
+        format!(r#"{{"type":"function_result","call_id":"c","result":[{text}]}}"#),
+        format!(r#"{{"type":"mcp_server_tool_result","result":[{text}]}}"#),
+    ] {
+        normalized_round_trip::<StepDelta>(&delta_json);
+    }
+}
+
+/// A type whose serializer drops a field: the bug the round-trip check is
+/// for. It passes a fixed-point check (both later reads lack the field) and
+/// must fail this one.
+#[derive(Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+struct DropsAField {
+    kept: u8,
+    #[serde(skip_serializing)]
+    dropped: Option<u8>,
+}
+
+impl Normalize for DropsAField {
+    fn normalize(&mut self) {}
+}
+
+#[test]
+#[should_panic(expected = "a field was lost or changed on write")]
+fn round_trip_catches_a_field_dropped_on_write() {
+    round_trip::<DropsAField>(br#"{"kept":1,"dropped":2}"#);
 }

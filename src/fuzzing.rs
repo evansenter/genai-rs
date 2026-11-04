@@ -13,15 +13,16 @@
 //! - [`stream_event`]: a body of `InteractionStreamEvent`s runs through the
 //!   whole stream pipeline (dispatch, step accumulation, the terminal stop),
 //!   and every `StreamEvent` it yields serializes and parses back unchanged.
-//! - [`step`], [`step_delta`], [`content`]: a value that deserializes
-//!   reaches a fixed point after one serialization: it may be normalized
-//!   once, but writing and reading it again changes nothing.
+//! - [`step`], [`step_delta`], [`content`]: a value that deserializes reads
+//!   back equal after one serialization, apart from two normalizations the
+//!   crate makes on purpose (see `Normalize`), and a second write and read
+//!   changes neither the wire form nor the value.
 
 use crate::http::context::HttpContext;
 use crate::http::interactions::interaction_events;
 use crate::http::sse_parser::parse_sse_stream;
 use crate::wire_streaming::InteractionStreamEvent;
-use crate::{Content, GenaiError, Step, StepDelta, StreamEvent};
+use crate::{Annotation, Content, FunctionResultPayload, GenaiError, Step, StepDelta, StreamEvent};
 use bytes::Bytes;
 use futures_util::{FutureExt, Stream, StreamExt, stream};
 use serde::Serialize;
@@ -135,22 +136,130 @@ pub fn stream_event(data: &[u8]) {
     }
 }
 
-/// Deserializes `data` as a `T` and, if that works, checks the round trip.
+/// The differences a round trip makes on purpose. Every other field must
+/// survive the first write unchanged.
 ///
-/// The first serialization may normalize (an empty annotation list is
-/// omitted, for one), so the property is a fixed point: what this crate
-/// writes parses back, and writing that again changes neither the wire form
-/// nor the value.
+/// - `Content::Text` leaves an empty annotation list unwritten, so
+///   `Some(vec![])` reads back as `None`.
+/// - An `Unknown` is written as its type tag merged with its data (see
+///   [`unknown_read_back`]). Read from the wire, its data already holds that
+///   tag, so nothing changes; an input with no string `type` is tagged
+///   `"<missing type>"`, and that tag is in its data from then on.
+trait Normalize {
+    fn normalize(&mut self);
+}
+
+/// The data an `Unknown` reads back with: the documented wire form of
+/// `serialize_unknown_merged` and the `Step`/`StepDelta` serializers, which
+/// write `type` and then the data's other entries (non-object data under
+/// `data`, null data not at all).
+fn unknown_read_back(type_name: &str, data: &mut serde_json::Value) {
+    let mut merged = serde_json::Map::new();
+    merged.insert("type".to_string(), type_name.into());
+    match std::mem::take(data) {
+        serde_json::Value::Object(entries) => {
+            merged.extend(entries.into_iter().filter(|(key, _)| key != "type"));
+        }
+        serde_json::Value::Null => {}
+        other => {
+            merged.insert("data".to_string(), other);
+        }
+    }
+    *data = serde_json::Value::Object(merged);
+}
+
+impl Normalize for Annotation {
+    fn normalize(&mut self) {
+        if let Self::Unknown {
+            annotation_type,
+            data,
+        } = self
+        {
+            unknown_read_back(annotation_type, data);
+        }
+    }
+}
+
+impl Normalize for Content {
+    fn normalize(&mut self) {
+        match self {
+            Self::Text { annotations, .. } => {
+                if annotations.as_ref().is_some_and(Vec::is_empty) {
+                    *annotations = None;
+                }
+                annotations
+                    .iter_mut()
+                    .flatten()
+                    .for_each(Normalize::normalize);
+            }
+            Self::Unknown { content_type, data } => unknown_read_back(content_type, data),
+            _ => {}
+        }
+    }
+}
+
+impl Normalize for FunctionResultPayload {
+    fn normalize(&mut self) {
+        if let Self::Contents(contents) = self {
+            contents.iter_mut().for_each(Normalize::normalize);
+        }
+    }
+}
+
+impl Normalize for Step {
+    fn normalize(&mut self) {
+        match self {
+            Self::UserInput { content }
+            | Self::ModelOutput { content, .. }
+            | Self::Thought {
+                summary: content, ..
+            } => content.iter_mut().for_each(Normalize::normalize),
+            Self::FunctionResult { result, .. } | Self::McpServerToolResult { result, .. } => {
+                result.normalize();
+            }
+            Self::Unknown { step_type, data } => unknown_read_back(step_type, data),
+            _ => {}
+        }
+    }
+}
+
+impl Normalize for StepDelta {
+    fn normalize(&mut self) {
+        match self {
+            Self::ThoughtSummary {
+                content: Some(content),
+            } => content.normalize(),
+            Self::FunctionResult { result, .. } | Self::McpServerToolResult { result, .. } => {
+                result.normalize();
+            }
+            Self::TextAnnotation { annotations } => {
+                annotations.iter_mut().for_each(Normalize::normalize);
+            }
+            Self::Unknown { delta_type, data } => unknown_read_back(delta_type, data),
+            _ => {}
+        }
+    }
+}
+
+/// Deserializes `data` as a `T` and, if that works, checks the round trip:
+/// what this crate writes parses back to the value it was written from
+/// (after [`Normalize`]), and writing and reading that again changes
+/// neither the wire form nor the value.
 fn round_trip<T>(data: &[u8])
 where
-    T: DeserializeOwned + Serialize + PartialEq + std::fmt::Debug,
+    T: DeserializeOwned + Serialize + PartialEq + std::fmt::Debug + Normalize,
 {
-    let Ok(first) = serde_json::from_slice::<T>(data) else {
+    let Ok(mut first) = serde_json::from_slice::<T>(data) else {
         return;
     };
     let wire = serde_json::to_value(&first).expect("a deserialized value serializes");
     let second: T = serde_json::from_value(wire.clone())
         .unwrap_or_else(|e| panic!("a serialized value must parse: {e}\n{wire}"));
+    first.normalize();
+    assert_eq!(
+        first, second,
+        "a field was lost or changed on write: {wire}"
+    );
     let wire_again = serde_json::to_value(&second).expect("a deserialized value serializes");
     assert_eq!(wire, wire_again, "the wire form changed on a round trip");
     let third: T = serde_json::from_value(wire_again)

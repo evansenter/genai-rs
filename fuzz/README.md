@@ -8,7 +8,7 @@ checks a round trip where the input is valid:
 |--------|-------|----------|
 | `sse_parser` | A control byte (how many read sizes follow), the read sizes, then an SSE body | The events don't depend on where the body splits into reads, and re-encoding them as plain `data:` events parses back to the same values |
 | `stream_event` | An SSE body of `InteractionStreamEvent`s (JSON lines work: a line starting with `{` is an event) | The whole stream pipeline (dispatch, step accumulation, the stop at the terminal event) runs, and every `StreamEvent` it yields serializes and parses back unchanged |
-| `step`, `step_delta`, `content` | JSON | A value that deserializes reaches a fixed point after one serialization |
+| `step`, `step_delta`, `content` | JSON | A value that deserializes reads back equal after one serialization, and a second write and read changes neither the wire form nor the value. Two differences are intended: an empty `Content::Text` annotation list reads back as none (it isn't written), and an input with no string `type` reads back with the `"<missing type>"` tag it was given in its data |
 
 The entry points live in the library, in `src/fuzzing.rs` (`genai_rs::__fuzz`,
 compiled only under `cfg(fuzzing)` and in tests), so the targets here are one
