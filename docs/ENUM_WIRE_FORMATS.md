@@ -634,8 +634,13 @@ one entry for a single voice, one per `speaker` for multi-speaker TTS.
   2026-09-24).
 - The nested `voiceConfig.prebuiltVoiceConfig.voiceName` form from Google's
   docs returns 400 (`no such field: 'voiceConfig'`, 2026-01-10).
-- The API does not echo `speech_config` (or any `generation_config`) on
-  reads, and `include_input=true` was a no-op for it (live 2026-07).
+- A stored interaction read back serves `generation_config`, with
+  `speech_config` in the `{"speakers": [...]}` form whichever form was sent
+  (live 2026-11-04, `gemini-3.8-flash-tts`, sent as the list form). The
+  crate does not model it on `InteractionResponse` yet, so it lands in
+  `extra` (#504, WP2). With `include_input=true` the input comes back as a
+  `user_input` step, and the same read lists each `speakers` entry and each
+  `response_modalities` value twice. Neither was echoed in 2026-07.
 
 #### speech_config wire forms
 
