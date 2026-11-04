@@ -110,7 +110,8 @@ up the *same* generation from the last `event_id` with
 ### Cut-off streams
 
 A stream whose body ends before `interaction.completed` or an `error` event
-ends with `GenaiError::StreamInterrupted`, however it was cut off:
+ends with `GenaiError::StreamInterrupted`, however the connection cut it
+off:
 
 | How the body ended | `source` |
 |--------------------|----------|
@@ -124,6 +125,11 @@ request, so the same request succeeds when re-sent, just as a non-streaming
 of them as permanent would make a retry loop handle the same event two ways.
 Retrying a foreground stream is a new generation: discard the partial output
 you showed first. For a background interaction, resume instead.
+
+A stream stopped by the request's own per-chunk limit
+(`InteractionBuilder::with_timeout()` on `create_stream()`) ends with
+`GenaiError::Timeout` instead: the limit you set ran out, and the connection
+was not at fault. It is retryable too.
 
 A failure before the response headers arrive (connect, TLS, a read timeout
 while the model thinks) is `Http`, since no stream had started. A successful

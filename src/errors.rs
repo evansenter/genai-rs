@@ -75,14 +75,20 @@ pub enum GenaiError {
     /// (`interaction.completed` or an error event): the connection was cut
     /// off.
     ///
-    /// Every way a body can end early lands here, so a caller sees one
-    /// error for one event:
+    /// Every way the connection can end a body early lands here, so a
+    /// caller sees one error for one event:
     ///
     /// - the server closed the connection between events or in the middle
     ///   of one (`source` is `None`);
-    /// - the transport failed mid-body: a reset, a
-    ///   [read timeout](crate::ClientBuilder::with_read_timeout) between
-    ///   chunks, a decode error (`source` is the [`reqwest::Error`]).
+    /// - the transport failed mid-body: a reset, the client's
+    ///   [read](crate::ClientBuilder::with_read_timeout) or
+    ///   [total](crate::ClientBuilder::with_timeout) timeout between chunks,
+    ///   a decode error (`source` is the [`reqwest::Error`]).
+    ///
+    /// A stream stopped by the request's own per-chunk limit
+    /// ([`InteractionBuilder::with_timeout`](crate::InteractionBuilder::with_timeout)
+    /// on `create_stream`) ends with [`Timeout`](Self::Timeout) instead: the
+    /// limit the caller set ran out, and the connection was not at fault.
     ///
     /// [`is_retryable`](Self::is_retryable) is true; see there for why. A
     /// background interaction can be resumed instead of re-sent:
@@ -148,10 +154,10 @@ impl GenaiError {
     ///
     /// # Cut-off streams
     ///
-    /// A stream can be cut off two ways: the server closes the connection
-    /// early, or the transport fails mid-body (a reset, a read timeout).
-    /// Both are [`StreamInterrupted`](Self::StreamInterrupted) and both are
-    /// retryable, for three reasons:
+    /// The connection can cut a stream off two ways: the server closes it
+    /// early, or the transport fails mid-body (a reset, the client's read
+    /// timeout). Both are [`StreamInterrupted`](Self::StreamInterrupted) and
+    /// both are retryable, for three reasons:
     ///
     /// - The failure belongs to the connection, not the request: the same
     ///   request succeeds when re-sent. A non-streaming `create()` whose body
@@ -162,6 +168,10 @@ impl GenaiError {
     ///   whether the peer closed cleanly or reset.
     /// - A background interaction keeps running server-side, so the
     ///   recovery is often a resume rather than a re-send.
+    ///
+    /// A stream stopped by the request's own per-chunk limit
+    /// ([`InteractionBuilder::with_timeout`](crate::InteractionBuilder::with_timeout))
+    /// is [`Timeout`](Self::Timeout) instead, and retryable like any timeout.
     ///
     /// Retryable does not mean free. A foreground stream's generation is
     /// cancelled server-side when its connection drops (verified live
