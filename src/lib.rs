@@ -255,7 +255,7 @@ pub use files::{
 // =============================================================================
 
 pub mod client;
-pub use client::{Client, ClientBuilder};
+pub use client::{Client, ClientBuilder, DEFAULT_CONNECT_TIMEOUT};
 
 mod interactions;
 pub use interactions::Interactions;

@@ -63,7 +63,29 @@ fn with_env_inspectors(mut inspectors: Vec<Arc<dyn WireInspector>>) -> Vec<Arc<d
     inspectors
 }
 
+/// The connect timeout a client gets unless
+/// [`ClientBuilder::with_connect_timeout`] sets another: 30 seconds.
+///
+/// It covers DNS, the TCP handshake and the TLS handshake, which take well
+/// under a second to Google's front ends. 30 s rides out four lost SYNs on
+/// Linux (retransmits at 1, 3, 7 and 15 s) and a slow mobile or satellite
+/// link, while a black-holed route fails in 30 s instead of the OS default
+/// (about 75 s on macOS, about 127 s on Linux).
+///
+/// There is deliberately no default read or total timeout. A non-streaming
+/// request's response headers arrive only after generation finishes, so any
+/// default short enough to catch a hung connection would cut off a long
+/// legitimate generation (thinking, a 4K image, deep context). Bound those
+/// with [`ClientBuilder::with_read_timeout`] or
+/// [`InteractionBuilder::with_timeout`](crate::InteractionBuilder::with_timeout)
+/// once you know your workload; see `docs/RELIABILITY.md`.
+pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Builder for `Client` instances.
+///
+/// Every client gets [`DEFAULT_CONNECT_TIMEOUT`] (30 s) unless
+/// [`with_connect_timeout`](Self::with_connect_timeout) sets another, and no
+/// read or total timeout unless one is set.
 ///
 /// # Example
 ///
@@ -107,10 +129,11 @@ impl ClientBuilder {
     /// including connection time, sending the request, and receiving the response.
     ///
     /// For LLM requests that may take a long time to generate responses,
-    /// consider setting a longer timeout (e.g., 120-300 seconds).
+    /// consider setting a longer timeout (e.g., 120-300 seconds). It also
+    /// caps reading a streamed body, so it cuts off long streams.
     ///
-    /// If not set, requests will wait indefinitely (no timeout).
-    /// Connection-level timeouts like TCP keepalive may still apply at the OS level.
+    /// If not set, requests have no total timeout (only the
+    /// [connect timeout](Self::with_connect_timeout) applies by default).
     ///
     /// # Example
     ///
@@ -131,10 +154,13 @@ impl ClientBuilder {
 
     /// Sets the connection timeout.
     ///
-    /// This is the maximum time to wait for establishing a connection to the server.
-    /// A shorter timeout here can help fail fast if the network is unavailable.
+    /// This is the maximum time to wait for establishing a connection to the
+    /// server: DNS, TCP and TLS. A shorter timeout here can help fail fast if
+    /// the network is unavailable. Exceeding it is a [`GenaiError::Http`]
+    /// whose `is_connect()` and `is_timeout()` are true, and which
+    /// [`is_retryable`](GenaiError::is_retryable).
     ///
-    /// If not set, the connection phase will wait indefinitely (no timeout).
+    /// If not set, it is [`DEFAULT_CONNECT_TIMEOUT`] (30 s).
     ///
     /// # Example
     ///
@@ -161,15 +187,17 @@ impl ClientBuilder {
     /// request and so has to be left generous (or unset) for long streams,
     /// this suits SSE streams: a healthy stream keeps sending events, while
     /// a stalled connection (a dropped NAT mapping, a half-open proxy)
-    /// otherwise waits forever. The stream then ends with a
-    /// [`GenaiError::Http`] error.
+    /// otherwise waits forever. The stream then ends with
+    /// [`GenaiError::StreamInterrupted`], whose `source` is the timed-out
+    /// [`reqwest::Error`].
     ///
     /// It also bounds the wait for the response headers, so it applies to
     /// every request on the client: a non-streaming `create()` against a
     /// model that thinks longer than this before answering fails with it
-    /// too. Leave room for the longest silence the API legitimately has (a
-    /// long think, a background agent between status updates). If not set,
-    /// reads wait indefinitely.
+    /// too, as a [`GenaiError::Http`]. Leave room for the longest silence the
+    /// API legitimately has (a long think, a background agent between status
+    /// updates). If not set, reads wait indefinitely: there is no default,
+    /// for that reason.
     ///
     /// # Example
     ///
@@ -245,24 +273,31 @@ impl ClientBuilder {
     /// Returns an error if the underlying HTTP client cannot be constructed. This should only
     /// happen in exceptional circumstances such as TLS backend initialization failures.
     pub fn build(self) -> Result<Client, GenaiError> {
-        let mut builder = ReqwestClient::builder();
+        let http_client = self
+            .reqwest_builder()
+            .build()
+            .map_err(|e| GenaiError::ClientBuild(e.to_string()))?;
+        Ok(self.finish(http_client))
+    }
+
+    /// The reqwest builder with this builder's timeouts applied. Split from
+    /// [`build`](Self::build) so tests can add a resolver before building.
+    fn reqwest_builder(&self) -> reqwest::ClientBuilder {
+        let mut builder = ReqwestClient::builder()
+            .connect_timeout(self.connect_timeout.unwrap_or(DEFAULT_CONNECT_TIMEOUT));
 
         if let Some(timeout) = self.timeout {
             builder = builder.timeout(timeout);
-        }
-
-        if let Some(connect_timeout) = self.connect_timeout {
-            builder = builder.connect_timeout(connect_timeout);
         }
 
         if let Some(read_timeout) = self.read_timeout {
             builder = builder.read_timeout(read_timeout);
         }
 
-        let http_client = builder
-            .build()
-            .map_err(|e| GenaiError::ClientBuild(e.to_string()))?;
+        builder
+    }
 
+    fn finish(self, http_client: ReqwestClient) -> Client {
         let mut http = HttpContext::new(
             http_client,
             self.api_key,
@@ -271,7 +306,7 @@ impl ClientBuilder {
         if let Some(base_url) = self.base_url {
             http = http.with_base_url(base_url);
         }
-        Ok(Client { http })
+        Client { http }
     }
 }
 
@@ -293,7 +328,10 @@ impl Client {
         }
     }
 
-    /// Creates a new `GenAI` client, with no timeouts.
+    /// Creates a new `GenAI` client with the default timeouts:
+    /// [`DEFAULT_CONNECT_TIMEOUT`] and no read or total timeout. The same as
+    /// `Client::builder(api_key).build()`, panicking instead of returning
+    /// the error.
     ///
     /// # Arguments
     ///
@@ -307,12 +345,9 @@ impl Client {
     /// reports the same failure as [`GenaiError::ClientBuild`] instead.
     #[must_use]
     pub fn new(api_key: String) -> Self {
-        Self {
-            http: HttpContext::new(
-                ReqwestClient::new(),
-                api_key,
-                with_env_inspectors(Vec::new()),
-            ),
+        match Self::builder(api_key).build() {
+            Ok(client) => client,
+            Err(e) => panic!("{e}"),
         }
     }
 
@@ -582,6 +617,81 @@ mod tests {
     fn test_client_new() {
         let client = Client::new("test_key".to_string());
         assert_eq!(client.http.api_key, "test_key");
+    }
+
+    /// A resolver that never answers, so a request sits in the connect
+    /// phase with no I/O for the paused clock to race.
+    struct NeverResolves;
+
+    impl reqwest::dns::Resolve for NeverResolves {
+        fn resolve(&self, _: reqwest::dns::Name) -> reqwest::dns::Resolving {
+            Box::pin(std::future::pending())
+        }
+    }
+
+    /// How long a request through `builder`'s client waits to connect
+    /// before failing, on the paused clock, and the error it fails with.
+    async fn connect_wait(builder: &ClientBuilder) -> (Duration, reqwest::Error) {
+        let client = builder
+            .reqwest_builder()
+            .dns_resolver(NeverResolves)
+            .build()
+            .unwrap();
+        let start = tokio::time::Instant::now();
+        let err = client
+            .get("http://never-resolves.test/")
+            .send()
+            .await
+            .unwrap_err();
+        (start.elapsed(), err)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_default_connect_timeout_is_thirty_seconds() {
+        let (waited, err) = connect_wait(&Client::builder("k".to_string())).await;
+        assert!(
+            waited >= DEFAULT_CONNECT_TIMEOUT
+                && waited < DEFAULT_CONNECT_TIMEOUT + Duration::from_secs(1),
+            "waited {waited:?}"
+        );
+        assert!(err.is_connect() && err.is_timeout(), "{err:?}");
+        assert!(GenaiError::Http(err).is_retryable());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_with_connect_timeout_replaces_the_default() {
+        let builder = Client::builder("k".to_string()).with_connect_timeout(Duration::from_secs(5));
+        let (waited, err) = connect_wait(&builder).await;
+        assert!(
+            waited >= Duration::from_secs(5) && waited < Duration::from_secs(6),
+            "waited {waited:?}"
+        );
+        assert!(err.is_timeout(), "{err:?}");
+    }
+
+    #[test]
+    fn test_no_default_read_or_total_timeout() {
+        // reqwest's Debug lists a total or read timeout only when one is
+        // set. (`tests/reliability_tests.rs` checks the behavior: an answer
+        // an hour late still arrives.)
+        for client in [
+            Client::new("k".to_string()),
+            Client::builder("k".to_string()).build().unwrap(),
+        ] {
+            let debug = format!("{:?}", client.http.http_client);
+            assert!(!debug.contains("read_timeout"), "{debug}");
+            assert!(!debug.contains("Timeout"), "{debug}");
+        }
+        let with_both = Client::builder("k".to_string())
+            .with_timeout(Duration::from_secs(1))
+            .with_read_timeout(Duration::from_secs(1))
+            .build()
+            .unwrap();
+        let debug = format!("{:?}", with_both.http.http_client);
+        assert!(
+            debug.contains("read_timeout") && debug.contains("Timeout"),
+            "the check above would miss a timeout: {debug}"
+        );
     }
 
     #[test]
