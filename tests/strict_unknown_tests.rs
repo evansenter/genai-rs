@@ -476,6 +476,69 @@ mod strict_mode {
         );
     }
 
+    /// A known step whose modeled field cannot be read is an error in
+    /// strict mode. The error names the field and why, not an unknown type,
+    /// and gives the strict-mode guidance once.
+    #[test]
+    fn malformed_known_step_error_names_the_field() {
+        let err = serde_json::from_value::<Step>(json!({
+            "type": "code_execution_call",
+            "id": "c",
+            "arguments": {"language": "javascript", "code": "x"}
+        }))
+        .expect_err("an unknown language fails in strict mode");
+        assert_eq!(
+            err.to_string(),
+            "Step 'code_execution_call' has a field this crate cannot read: \
+             field `arguments.language`: Unknown CodeExecutionLanguage 'javascript'. \
+             Strict mode is enabled via the 'strict-unknown' feature flag. \
+             Either update the library or disable strict mode."
+        );
+
+        // Kept whole as `Step::Unknown` without strict mode.
+        let err = serde_json::from_value::<Step>(json!({
+            "type": "url_context_call",
+            "id": "c",
+            "arguments": "https://a.example"
+        }))
+        .expect_err("a non-object `arguments` fails in strict mode");
+        assert_eq!(
+            err.to_string(),
+            "Step 'url_context_call' has a field this crate cannot read: \
+             field `arguments`: expected an object, got \"https://a.example\". \
+             Strict mode is enabled via the 'strict-unknown' feature flag, which \
+             rejects what would otherwise be kept whole as Step::Unknown. \
+             Either update the library or disable strict mode."
+        );
+    }
+
+    /// The same for content, and for content nested in a step: the cause
+    /// chain reaches the field that failed.
+    #[test]
+    fn malformed_known_content_error_names_the_field() {
+        let content_error = "Content 'text' has a field this crate cannot read: \
+             field `text`: invalid type: integer `7`, expected a string. \
+             Strict mode is enabled via the 'strict-unknown' feature flag, which \
+             rejects what would otherwise be kept whole as Content::Unknown. \
+             Either update the library or disable strict mode.";
+        let err = serde_json::from_value::<Content>(json!({"type": "text", "text": 7}))
+            .expect_err("a non-string `text` fails in strict mode");
+        assert_eq!(err.to_string(), content_error);
+
+        let err = serde_json::from_value::<Step>(json!({
+            "type": "model_output",
+            "content": [{"type": "text", "text": 7}]
+        }))
+        .expect_err("nested malformed content fails in strict mode");
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "Step 'model_output' has a field this crate cannot read: \
+                 field `content`: {content_error}"
+            )
+        );
+    }
+
     #[test]
     fn model_output_with_unknown_content_fails() {
         // Unknown Content nested inside a known Step also fails in strict mode.

@@ -20,8 +20,14 @@ use serde::{Serialize, Serializer};
 use serde_json::{Map, Value};
 
 /// Reads a JSON object field by field, remembering which keys were read.
+///
+/// Every error names the field, with its path from the tagged object
+/// (`arguments.language`), so the cause survives into the warning and the
+/// `strict-unknown` error for a known type that falls back to `Unknown`.
 pub(crate) struct WireFields<'a> {
     object: &'a Map<String, Value>,
+    /// This object's path inside the tagged one, ending in `.`, or empty.
+    prefix: String,
     modeled: Vec<&'static str>,
 }
 
@@ -30,17 +36,19 @@ impl<'a> WireFields<'a> {
     pub(crate) fn tagged(object: &'a Map<String, Value>) -> Self {
         Self {
             object,
+            prefix: String::new(),
             modeled: vec!["type"],
         }
     }
 
-    /// A nested object (such as a call step's `arguments`), where a `type`
-    /// key is ordinary data.
-    pub(crate) fn nested(object: &'a Map<String, Value>) -> Self {
-        Self {
-            object,
-            modeled: Vec::new(),
-        }
+    /// The object's `type`, if it is a string.
+    pub(crate) fn tag(&self) -> Option<&'a str> {
+        self.object.get("type").and_then(Value::as_str)
+    }
+
+    /// An error about `key`, naming its full path.
+    fn field_error(&self, key: &str, cause: impl std::fmt::Display) -> serde_json::Error {
+        serde_json::Error::custom(format!("field `{}{key}`: {cause}", self.prefix))
     }
 
     /// A field the variant requires. Absent is an error.
@@ -50,8 +58,8 @@ impl<'a> WireFields<'a> {
     ) -> Result<T, serde_json::Error> {
         self.modeled.push(key);
         match self.object.get(key) {
-            Some(value) => T::deserialize(value),
-            None => Err(serde_json::Error::missing_field(key)),
+            Some(value) => T::deserialize(value).map_err(|e| self.field_error(key, e)),
+            None => Err(self.field_error(key, "missing")),
         }
     }
 
@@ -64,7 +72,9 @@ impl<'a> WireFields<'a> {
         self.modeled.push(key);
         match self.object.get(key) {
             None | Some(Value::Null) => Ok(None),
-            Some(value) => T::deserialize(value).map(Some),
+            Some(value) => T::deserialize(value)
+                .map(Some)
+                .map_err(|e| self.field_error(key, e)),
         }
     }
 
@@ -76,7 +86,8 @@ impl<'a> WireFields<'a> {
         Ok(self.optional(key)?.unwrap_or_default())
     }
 
-    /// An optional nested object, read with its own [`WireFields`]. A
+    /// An optional nested object (such as a call step's `arguments`), read
+    /// with its own [`WireFields`], where a `type` key is ordinary data. A
     /// present, non-null value that is not an object is an error: the
     /// variant cannot model it, and failing sends the whole object to the
     /// union's `Unknown` variant, which keeps it.
@@ -87,10 +98,12 @@ impl<'a> WireFields<'a> {
         self.modeled.push(key);
         match self.object.get(key) {
             None | Some(Value::Null) => Ok(None),
-            Some(Value::Object(inner)) => Ok(Some(WireFields::nested(inner))),
-            Some(other) => Err(serde_json::Error::custom(format!(
-                "expected `{key}` to be an object, got {other}"
-            ))),
+            Some(Value::Object(inner)) => Ok(Some(WireFields {
+                object: inner,
+                prefix: format!("{}{key}.", self.prefix),
+                modeled: Vec::new(),
+            })),
+            Some(other) => Err(self.field_error(key, format!("expected an object, got {other}"))),
         }
     }
 
@@ -104,11 +117,71 @@ impl<'a> WireFields<'a> {
     }
 }
 
-/// The JSON object behind a tagged union, or an error for any other value.
-pub(crate) fn as_object(value: &Value) -> Result<&Map<String, Value>, serde_json::Error> {
-    value
-        .as_object()
-        .ok_or_else(|| serde_json::Error::custom(format!("expected an object, got {value}")))
+/// Why a tagged union's value did not read as a known variant. The union
+/// keeps the value whole as its `Unknown` variant, or, where
+/// `strict-unknown` applies (`Step`, `Content`), fails with the cause.
+#[derive(Debug)]
+pub(crate) enum Fallback {
+    /// Not an object with a string `type` that the crate models.
+    UnknownType,
+    /// A known `type` with a modeled field that could not be read. The
+    /// error names the field and says why.
+    Malformed(serde_json::Error),
+}
+
+impl From<serde_json::Error> for Fallback {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Malformed(error)
+    }
+}
+
+impl Fallback {
+    /// Reads `value` with a union's known-variant reader. A value that is
+    /// not an object has no type to know.
+    pub(crate) fn read<T>(
+        value: &Value,
+        read_known: impl FnOnce(&Map<String, Value>) -> Result<T, Self>,
+    ) -> Result<T, Self> {
+        value.as_object().map_or(Err(Self::UnknownType), read_known)
+    }
+
+    /// The cause, for the warning logged when the value becomes `Unknown`.
+    pub(crate) fn describe(&self, union: &str, type_name: &str) -> String {
+        match self {
+            Self::UnknownType => format!("unknown {union} type '{type_name}'"),
+            Self::Malformed(error) => {
+                format!("{union} '{type_name}' has a field this crate cannot read: {error}")
+            }
+        }
+    }
+
+    /// The `strict-unknown` error: an unknown type, or a known one with a
+    /// field the crate cannot read, with that field and why.
+    #[cfg(feature = "strict-unknown")]
+    pub(crate) fn strict_message(&self, union: &str, type_name: &str) -> String {
+        const GUIDANCE: &str = "Either update the library or disable strict mode.";
+        match self {
+            Self::UnknownType => format!(
+                "Unknown {union} type '{type_name}'. Strict mode is enabled via the \
+                 'strict-unknown' feature flag. {GUIDANCE}"
+            ),
+            Self::Malformed(error) => {
+                let cause = error.to_string();
+                // A nested value that strict mode rejected (an unknown enum
+                // value or content type) already says so; say it once.
+                if cause.contains("'strict-unknown'") {
+                    self.describe(union, type_name)
+                } else {
+                    format!(
+                        "{}. Strict mode is enabled via the 'strict-unknown' feature \
+                         flag, which rejects what would otherwise be kept whole as \
+                         {union}::Unknown. {GUIDANCE}",
+                        self.describe(union, type_name)
+                    )
+                }
+            }
+        }
+    }
 }
 
 /// Writes a variant's modeled fields, then its extras.

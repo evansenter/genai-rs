@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::content::CodeExecutionLanguage;
-use crate::wire_fields::{ModeledMap, WireFields, as_object, merged_arguments};
+use crate::wire_fields::{Fallback, ModeledMap, WireFields, merged_arguments};
 
 use super::{FunctionResultPayload, Step};
 
@@ -336,12 +336,12 @@ pub(super) fn unknown_fields(data: &Value) -> Map<String, Value> {
 /// Reads a known step from its wire object. An error means the type is
 /// unrecognized or a modeled field is malformed; the caller keeps the object
 /// as [`Step::Unknown`].
-fn read_known(object: &Map<String, Value>) -> Result<Step, serde_json::Error> {
-    use serde::de::Error as _;
-
+fn read_known(object: &Map<String, Value>) -> Result<Step, Fallback> {
     let mut f = WireFields::tagged(object);
-    let step_type: String = f.required("type")?;
-    let step = match step_type.as_str() {
+    let Some(step_type) = f.tag() else {
+        return Err(Fallback::UnknownType);
+    };
+    let step = match step_type {
         "user_input" => Step::UserInput {
             content: f.or_default("content")?,
             extra: f.extra(),
@@ -504,11 +504,7 @@ fn read_known(object: &Map<String, Value>) -> Result<Step, serde_json::Error> {
             signature: f.optional("signature")?,
             extra: f.extra(),
         },
-        other => {
-            return Err(serde_json::Error::custom(format!(
-                "unknown variant `{other}`"
-            )));
-        }
+        _ => return Err(Fallback::UnknownType),
     };
     Ok(step)
 }
@@ -523,35 +519,32 @@ impl<'de> Deserialize<'de> for Step {
 
         let value = Value::deserialize(deserializer)?;
 
-        match as_object(&value).and_then(read_known) {
+        match Fallback::read(&value, read_known) {
             Ok(step) => Ok(step),
-            Err(parse_error) => {
+            Err(fallback) => {
                 let step_type = value
                     .get("type")
                     .and_then(|v| v.as_str())
                     .unwrap_or("<missing type>")
                     .to_string();
 
-                tracing::warn!(
-                    "Encountered unknown Step type '{}'. Parse error: {}. \
-                     This may indicate a new API feature or a malformed response. \
-                     The step will be preserved in the Unknown variant.",
-                    step_type,
-                    parse_error
-                );
-
+                // An unknown type and a known type with a field the crate
+                // cannot read both keep the whole object; the cause says
+                // which.
                 #[cfg(feature = "strict-unknown")]
                 {
-                    Err(D::Error::custom(format!(
-                        "Unknown Step type '{}'. \
-                         Strict mode is enabled via the 'strict-unknown' feature flag. \
-                         Either update the library or disable strict mode.",
-                        step_type
-                    )))
+                    Err(D::Error::custom(
+                        fallback.strict_message("Step", &step_type),
+                    ))
                 }
 
                 #[cfg(not(feature = "strict-unknown"))]
                 {
+                    tracing::warn!(
+                        "Keeping a step whole in Step::Unknown: {}. \
+                         This may indicate a new API feature or a malformed response.",
+                        fallback.describe("Step", &step_type)
+                    );
                     Ok(Step::Unknown {
                         step_type,
                         data: value,

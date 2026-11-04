@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::wire_fields::{ModeledMap, WireFields, as_object};
+use crate::wire_fields::{Fallback, ModeledMap, WireFields};
 
 use super::StepDelta;
 use super::step_serde::{
@@ -281,12 +281,12 @@ impl Serialize for StepDelta {
 
 /// Reads a known delta from its wire object; an error keeps it as
 /// [`StepDelta::Unknown`].
-fn read_known(object: &Map<String, Value>) -> Result<StepDelta, serde_json::Error> {
-    use serde::de::Error as _;
-
+fn read_known(object: &Map<String, Value>) -> Result<StepDelta, Fallback> {
     let mut f = WireFields::tagged(object);
-    let delta_type: String = f.required("type")?;
-    let delta = match delta_type.as_str() {
+    let Some(delta_type) = f.tag() else {
+        return Err(Fallback::UnknownType);
+    };
+    let delta = match delta_type {
         "text" => StepDelta::Text {
             text: f.or_default("text")?,
             extra: f.extra(),
@@ -449,11 +449,7 @@ fn read_known(object: &Map<String, Value>) -> Result<StepDelta, serde_json::Erro
             signature: f.optional("signature")?,
             extra: f.extra(),
         },
-        other => {
-            return Err(serde_json::Error::custom(format!(
-                "unknown variant `{other}`"
-            )));
-        }
+        _ => return Err(Fallback::UnknownType),
     };
     Ok(delta)
 }
@@ -465,9 +461,9 @@ impl<'de> Deserialize<'de> for StepDelta {
     {
         let value = Value::deserialize(deserializer)?;
 
-        match as_object(&value).and_then(read_known) {
+        match Fallback::read(&value, read_known) {
             Ok(delta) => Ok(delta),
-            Err(parse_error) => {
+            Err(fallback) => {
                 let delta_type = value
                     .get("type")
                     .and_then(|v| v.as_str())
@@ -475,10 +471,8 @@ impl<'de> Deserialize<'de> for StepDelta {
                     .to_string();
 
                 tracing::warn!(
-                    "Encountered unknown StepDelta type '{}'. Parse error: {}. \
-                     The delta will be preserved in the Unknown variant.",
-                    delta_type,
-                    parse_error
+                    "Keeping a delta whole in StepDelta::Unknown: {}.",
+                    fallback.describe("StepDelta", &delta_type)
                 );
 
                 Ok(StepDelta::Unknown {

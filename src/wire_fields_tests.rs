@@ -39,6 +39,42 @@ fn missing_required_and_mistyped_fields_are_errors() {
     assert!(fields.object("arguments").is_err());
 }
 
+/// Every read error names the field, with its path from the tagged object,
+/// so the warning and the `strict-unknown` error give the real cause.
+#[test]
+fn errors_name_the_field_and_its_path() {
+    let wire = object(json!({"type": "t", "id": 7, "arguments": {"language": 5}, "meta": "x"}));
+    let mut fields = WireFields::tagged(&wire);
+    assert_eq!(
+        fields.required::<String>("id").unwrap_err().to_string(),
+        "field `id`: invalid type: integer `7`, expected a string"
+    );
+    assert_eq!(
+        fields.required::<String>("name").unwrap_err().to_string(),
+        "field `name`: missing"
+    );
+    assert_eq!(
+        fields.object("meta").err().unwrap().to_string(),
+        r#"field `meta`: expected an object, got "x""#
+    );
+    let mut arguments = fields.object("arguments").unwrap().unwrap();
+    let error = arguments.optional::<String>("language").unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "field `arguments.language`: invalid type: integer `5`, expected a string"
+    );
+
+    assert_eq!(
+        Fallback::from(error).describe("Step", "code_execution_call"),
+        "Step 'code_execution_call' has a field this crate cannot read: \
+         field `arguments.language`: invalid type: integer `5`, expected a string"
+    );
+    assert_eq!(
+        Fallback::UnknownType.describe("Step", "future_step"),
+        "unknown Step type 'future_step'"
+    );
+}
+
 struct Probe {
     signature: Option<String>,
     extra: Map<String, Value>,

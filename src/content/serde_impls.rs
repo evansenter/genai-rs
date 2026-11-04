@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::wire_fields::{ModeledMap, WireFields, as_object};
+use crate::wire_fields::{Fallback, ModeledMap, WireFields};
 
 use super::Content;
 
@@ -96,12 +96,12 @@ impl Serialize for Content {
 }
 
 /// Reads a known content block; an error keeps it as [`Content::Unknown`].
-fn read_known(object: &Map<String, Value>) -> Result<Content, serde_json::Error> {
-    use serde::de::Error as _;
-
+fn read_known(object: &Map<String, Value>) -> Result<Content, Fallback> {
     let mut f = WireFields::tagged(object);
-    let content_type: String = f.required("type")?;
-    let content = match content_type.as_str() {
+    let Some(content_type) = f.tag() else {
+        return Err(Fallback::UnknownType);
+    };
+    let content = match content_type {
         "text" => Content::Text {
             text: f.optional("text")?,
             annotations: f.optional("annotations")?,
@@ -137,11 +137,7 @@ fn read_known(object: &Map<String, Value>) -> Result<Content, serde_json::Error>
             mime_type: f.optional("mime_type")?,
             extra: f.extra(),
         },
-        other => {
-            return Err(serde_json::Error::custom(format!(
-                "unknown variant `{other}`"
-            )));
-        }
+        _ => return Err(Fallback::UnknownType),
     };
     Ok(content)
 }
@@ -158,38 +154,32 @@ impl<'de> Deserialize<'de> for Content {
 
         let value = Value::deserialize(deserializer)?;
 
-        match as_object(&value).and_then(read_known) {
+        match Fallback::read(&value, read_known) {
             Ok(content) => Ok(content),
-            Err(parse_error) => {
+            Err(fallback) => {
                 let content_type = value
                     .get("type")
                     .and_then(|v| v.as_str())
                     .unwrap_or("<missing type>")
                     .to_string();
 
-                // The parse error distinguishes a truly unknown type from a
-                // malformed known one.
-                tracing::warn!(
-                    "Encountered unknown Content type '{}'. \
-                     Parse error: {}. \
-                     This may indicate a new API feature or a malformed response. \
-                     The content will be preserved in the Unknown variant.",
-                    content_type,
-                    parse_error
-                );
-
+                // An unknown type and a known type with a field the crate
+                // cannot read both keep the whole object; the cause says
+                // which.
                 #[cfg(feature = "strict-unknown")]
                 {
-                    Err(D::Error::custom(format!(
-                        "Unknown Content type '{}'. \
-                         Strict mode is enabled via the 'strict-unknown' feature flag. \
-                         Either update the library or disable strict mode.",
-                        content_type
-                    )))
+                    Err(D::Error::custom(
+                        fallback.strict_message("Content", &content_type),
+                    ))
                 }
 
                 #[cfg(not(feature = "strict-unknown"))]
                 {
+                    tracing::warn!(
+                        "Keeping a content block whole in Content::Unknown: {}. \
+                         This may indicate a new API feature or a malformed response.",
+                        fallback.describe("Content", &content_type)
+                    );
                     Ok(Content::Unknown {
                         content_type,
                         data: value,

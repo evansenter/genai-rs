@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::wire_fields::{ModeledMap, WireFields, as_object};
+use crate::wire_fields::{Fallback, ModeledMap, WireFields};
 
 // =============================================================================
 // Annotations (typed citations)
@@ -427,12 +427,12 @@ impl Serialize for Annotation {
 }
 
 /// Reads a known annotation; an error keeps it as [`Annotation::Unknown`].
-fn read_known(object: &Map<String, Value>) -> Result<Annotation, serde_json::Error> {
-    use serde::de::Error as _;
-
+fn read_known(object: &Map<String, Value>) -> Result<Annotation, Fallback> {
     let mut f = WireFields::tagged(object);
-    let annotation_type: String = f.required("type")?;
-    let annotation = match annotation_type.as_str() {
+    let Some(annotation_type) = f.tag() else {
+        return Err(Fallback::UnknownType);
+    };
+    let annotation = match annotation_type {
         "url_citation" => Annotation::UrlCitation {
             url: f.optional("url")?,
             title: f.optional("title")?,
@@ -476,11 +476,7 @@ fn read_known(object: &Map<String, Value>) -> Result<Annotation, serde_json::Err
             end_index: f.optional("end_index")?,
             extra: f.extra(),
         },
-        other => {
-            return Err(serde_json::Error::custom(format!(
-                "unknown variant `{other}`"
-            )));
-        }
+        _ => return Err(Fallback::UnknownType),
     };
     Ok(annotation)
 }
@@ -492,9 +488,9 @@ impl<'de> Deserialize<'de> for Annotation {
     {
         let value = Value::deserialize(deserializer)?;
 
-        match as_object(&value).and_then(read_known) {
+        match Fallback::read(&value, read_known) {
             Ok(annotation) => Ok(annotation),
-            Err(parse_error) => {
+            Err(fallback) => {
                 let annotation_type = value
                     .get("type")
                     .and_then(|v| v.as_str())
@@ -502,10 +498,8 @@ impl<'de> Deserialize<'de> for Annotation {
                     .to_string();
 
                 tracing::warn!(
-                    "Encountered unknown Annotation type '{}'. Parse error: {}. \
-                     The annotation will be preserved in the Unknown variant.",
-                    annotation_type,
-                    parse_error
+                    "Keeping an annotation whole in Annotation::Unknown: {}.",
+                    fallback.describe("Annotation", &annotation_type)
                 );
 
                 Ok(Annotation::Unknown {

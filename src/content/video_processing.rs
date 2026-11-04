@@ -299,18 +299,21 @@ impl<'de> Deserialize<'de> for VideoProcessing {
         // mistyped modeled field falls through to Unknown, which keeps it.
         if let Some(obj) = value.as_object() {
             let tag = obj.get("type").and_then(serde_json::Value::as_str);
-            if tag == Some("static")
-                && let Ok(segment) = read_segment(obj)
-            {
-                return Ok(segment);
-            }
-
             let processing_type = tag.unwrap_or("<missing type>").to_string();
+            let cause = if tag == Some("static") {
+                match read_segment(obj) {
+                    Ok(segment) => return Ok(segment),
+                    Err(error) => {
+                        format!("a static segment has a field this crate cannot read: {error}")
+                    }
+                }
+            } else {
+                format!("unknown VideoProcessing object type '{processing_type}'")
+            };
             tracing::warn!(
-                "Encountered unknown VideoProcessing object type '{}'. \
-                 This may indicate a new API feature. \
-                 The value will be preserved in the Unknown variant.",
-                processing_type
+                "Keeping a processing object whole in VideoProcessing::Unknown: {}. \
+                 This may indicate a new API feature.",
+                cause
             );
             return Ok(Self::Unknown {
                 processing_type,
