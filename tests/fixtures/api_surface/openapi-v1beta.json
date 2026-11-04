@@ -62,6 +62,9 @@
       }
      ]
     },
+    "description": {
+     "type": "string"
+    },
     "id": {
      "type": "string"
     },
@@ -1535,6 +1538,9 @@
   },
   "Function": {
    "properties": {
+    "description": {
+     "type": "string"
+    },
     "name": {
      "type": "string"
     },
@@ -3444,6 +3450,9 @@
     "review_id": {
      "type": "string"
     },
+    "title": {
+     "type": "string"
+    },
     "url": {
      "type": "string"
     }
@@ -4390,6 +4399,9 @@
      "format": "int32",
      "type": "integer"
     },
+    "title": {
+     "type": "string"
+    },
     "type": {
      "const": "url_citation"
     },
@@ -4813,6 +4825,9 @@
      "type": "string"
     },
     "context": {
+     "type": "string"
+    },
+    "description": {
      "type": "string"
     },
     "display_name": {

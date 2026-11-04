@@ -117,12 +117,6 @@ const GAPS: &[Allowed] = &[
     ("Agent.agent_config", UNSEEN),
     ("interactions.Environment.environment_id", UNSEEN),
     ("EnvironmentConfig.environment_id", UNSEEN),
-    (
-        "Function.type=function",
-        "`Tool::Function` requires `description`, which the spec omits and the \
-         bindings make optional, so a served function tool without one reads as \
-         `Unknown`; WP2.",
-    ),
     // Files and File Search Stores.
     (
         "legacy.FileSearchStore.activeDocumentsCount",
