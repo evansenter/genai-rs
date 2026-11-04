@@ -349,6 +349,51 @@ async fn sse_step_accumulation_fills_the_completed_response() {
     assert_eq!(texts.last().map(String::as_str), Some("<completed Hello>"));
 }
 
+/// Shaped like a live `gemini-3.1-flash-image` stream (2026-11-04): a bare
+/// `model_output` on `step.start`, each image whole in one delta naming its
+/// mime_type, and an `interaction.completed` with no `steps`, so the
+/// accumulator is the only source of the final steps. Two images in one step
+/// must stay two blocks (#491); merged, they were one corrupt base64 string.
+#[tokio::test]
+async fn sse_two_images_in_one_step_stay_two_blocks() {
+    let image = |data: &str| {
+        format!(
+            "data: {}\n\n",
+            json!({"event_type": "step.delta", "index": 0,
+                   "delta": {"mime_type": "image/jpeg", "data": data, "type": "image"}})
+        )
+    };
+    let chunks = [
+        "data: {\"event_type\":\"interaction.created\",\"interaction\":{\"id\":\"i\",\"object\":\"interaction\"}}\n\n".to_string(),
+        "data: {\"event_type\":\"step.start\",\"index\":0,\"step\":{\"type\":\"model_output\"}}\n\n".to_string(),
+        image("/9j/4AAQSkZJRgABAQAAAQ=="),
+        image("/9j/4AAQSkZJRgABAgAAAQ=="),
+        format!("data: {}\n\n", delta_event("Two steps.")),
+        "data: {\"event_type\":\"step.stop\",\"index\":0}\n\n".to_string(),
+        "data: {\"event_type\":\"interaction.completed\",\"interaction\":{\"id\":\"i\",\"status\":\"completed\"}}\n\ndata: [DONE]\n\n".to_string(),
+    ];
+    let chunks: Vec<&str> = chunks.iter().map(String::as_str).collect();
+    let events = stream_events(&chunks).await;
+    let response = events
+        .into_iter()
+        .find_map(|event| match event.expect("stream event").chunk {
+            StreamChunk::Completed(response) => Some(response),
+            _ => None,
+        })
+        .expect("a completed response");
+
+    // Each block decodes on its own; the merged string, with `==` padding
+    // mid-way, did not.
+    let images: Vec<Vec<u8>> = response
+        .images()
+        .map(|image| image.bytes().expect("each image decodes"))
+        .collect();
+    assert_eq!(images.len(), 2, "two images, two blocks");
+    assert_eq!(images[0][..4], [0xFF, 0xD8, 0xFF, 0xE0], "a JPEG header");
+    assert_ne!(images[0], images[1]);
+    assert_eq!(response.as_text(), Some("Two steps."));
+}
+
 // =============================================================================
 // Error mapping
 // =============================================================================

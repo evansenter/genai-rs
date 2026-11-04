@@ -164,8 +164,13 @@ impl StepAccumulator {
                 resolution,
                 extra,
             } => {
-                // Images may stream in multiple chunks; append base64 data
-                // to the previous image block when present.
+                // Each image arrives whole in one delta that names its
+                // mime_type (verified live 2026-11-04, `gemini-3.1-flash-image`,
+                // streamed), so a delta with a mime_type or uri starts a new
+                // block. Only a bare data fragment continues the last image;
+                // keying on the block kind alone merged two images into one
+                // corrupt base64 string (#491).
+                let fragment = mime_type.is_none() && uri.is_none();
                 match (content.last_mut(), data) {
                     (
                         Some(Content::Image {
@@ -174,7 +179,7 @@ impl StepAccumulator {
                             ..
                         }),
                         Some(new_data),
-                    ) => {
+                    ) if fragment => {
                         existing.push_str(new_data);
                         absorb(block_extra, extra);
                     }
@@ -187,7 +192,9 @@ impl StepAccumulator {
                     }),
                 }
             }
-            // Audio, video and documents append the same way.
+            // Audio, video and documents have no observed chunking (no live
+            // capture of a streamed one), so consecutive data deltas still
+            // concatenate into the last block of the same kind.
             StepDelta::Audio {
                 data,
                 uri,

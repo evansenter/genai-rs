@@ -30,42 +30,57 @@ fn test_accumulator_text_stream() {
     assert_eq!(steps[0].as_text(), Some("Hello world"));
 }
 
+/// The image data each delta carried, in block order.
+fn image_blocks(step: &Step) -> Vec<&str> {
+    step.content()
+        .expect("a content step")
+        .iter()
+        .map(|block| match block {
+            Content::Image { data, .. } => data.as_deref().unwrap_or_default(),
+            other => panic!("Expected Image, got {other:?}"),
+        })
+        .collect()
+}
+
+/// Each streamed image arrives whole in one delta that names its mime_type
+/// (live 2026-11-04, `gemini-3.1-flash-image`), so two of them in one step
+/// are two blocks. Merging them by kind produced one corrupt base64 string
+/// whenever `interaction.completed` omitted `steps` (#491).
 #[test]
-fn test_accumulator_image_deltas_accumulate_into_one_block() {
+fn test_accumulator_streamed_images_stay_separate_blocks() {
+    let mut acc = StepAccumulator::new();
+    acc.start(0, Step::model_output(vec![]));
+    for data in ["/9j/AAAA", "/9j/BBBB"] {
+        acc.apply_delta(
+            0,
+            &serde_json::from_value(
+                json!({"type": "image", "mime_type": "image/jpeg", "data": data}),
+            )
+            .unwrap(),
+        );
+    }
+    acc.stop(0);
+    let steps = acc.finish();
+    assert_eq!(image_blocks(&steps[0]), ["/9j/AAAA", "/9j/BBBB"]);
+}
+
+/// A delta carrying only `data` (no mime_type, no uri) has never been seen,
+/// but would be a continuation of the image before it.
+#[test]
+fn test_accumulator_bare_image_fragment_continues_the_last_image() {
     let mut acc = StepAccumulator::new();
     acc.start(0, Step::model_output(vec![]));
     acc.apply_delta(
         0,
-        &StepDelta::Image {
-            data: Some("AAAA".into()),
-            uri: None,
-            mime_type: Some("image/png".into()),
-            resolution: None,
-            extra: Default::default(),
-        },
+        &serde_json::from_value(json!({"type": "image", "mime_type": "image/png", "data": "AAAA"}))
+            .unwrap(),
     );
     acc.apply_delta(
         0,
-        &StepDelta::Image {
-            data: Some("BBBB".into()),
-            uri: None,
-            mime_type: Some("image/png".into()),
-            resolution: None,
-            extra: Default::default(),
-        },
+        &serde_json::from_value(json!({"type": "image", "data": "BBBB"})).unwrap(),
     );
-    acc.stop(0);
     let steps = acc.finish();
-    match &steps[0] {
-        Step::ModelOutput { content, .. } => {
-            assert_eq!(content.len(), 1);
-            match &content[0] {
-                Content::Image { data, .. } => assert_eq!(data.as_deref(), Some("AAAABBBB")),
-                other => panic!("Expected Image, got {other:?}"),
-            }
-        }
-        other => panic!("Expected ModelOutput, got {other:?}"),
-    }
+    assert_eq!(image_blocks(&steps[0]), ["AAAABBBB"]);
 }
 
 /// A delta's unmodeled fields land on what it builds: the content block for
