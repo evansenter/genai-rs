@@ -248,7 +248,8 @@ checks on it:
   `binding_fields_deserialize_without_extra` and
   `spec_fields_deserialize_without_extra`). For each
   response type, bodies are generated from the snapshot that together carry
-  every field, union arm and enum value its class reaches. Each must
+  every field, union arm and enum value its class reaches (the generator
+  fails if they do not). Each must
   deserialize with no key in an `extra` map, no `Unknown` variant, and no
   key dropped when the value is serialized again, including keys on an
   object that sits directly in a list (an annotation, a search result),

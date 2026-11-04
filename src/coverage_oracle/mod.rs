@@ -25,6 +25,7 @@ mod request;
 mod response;
 
 use api_surface::{Finding, Surface};
+use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A reasoned exception: the site (or `prefix.*`) it covers, and why.
@@ -226,4 +227,71 @@ fn snapshot_sources_load() {
             "{file} lacks Interaction"
         );
     }
+}
+
+/// A synthetic bindings document: `t.Root` reaches `t.X` first through a
+/// chain of `depth` required links (below the synthesizer's depth limit
+/// when `depth` is large), and with `shallow`, also directly. `t.X` has an
+/// optional field and an optional `t.Y`, which only `t.X` reaches.
+fn deep_first_surface(depth: usize, shallow: bool) -> Surface {
+    let link = |name: String| json!({"required": true, "type": {"kind": "ref", "name": name}});
+    let optional = |ty: serde_json::Value| json!({"required": false, "type": ty});
+    let mut classes = serde_json::Map::new();
+    let mut root = json!({"a_deep": optional(json!({"kind": "ref", "name": "t.L1"}))});
+    if shallow {
+        root["b_shallow"] = optional(json!({"kind": "ref", "name": "t.X"}));
+    }
+    classes.insert("t.Root".into(), json!({ "fields": root }));
+    for i in 1..=depth {
+        let next = if i == depth {
+            "t.X".to_string()
+        } else {
+            format!("t.L{}", i + 1)
+        };
+        classes.insert(format!("t.L{i}"), json!({"fields": {"next": link(next)}}));
+    }
+    classes.insert(
+        "t.X".into(),
+        json!({"fields": {
+            "opt": optional(json!({"kind": "str"})),
+            "child": optional(json!({"kind": "ref", "name": "t.Y"})),
+        }}),
+    );
+    classes.insert(
+        "t.Y".into(),
+        json!({"fields": {"leaf": optional(json!({"kind": "str"}))}}),
+    );
+    Surface::from_bindings(&json!({
+        "sdk_version": "test",
+        "aliases": {},
+        "classes": classes,
+    }))
+}
+
+/// A class first reached below the depth limit, where it gets only its
+/// required fields, is synthesized in full where it is reached shallow:
+/// the cut-down form is not reused there. So `t.X.opt` and `t.Y.leaf`,
+/// reachable only through `t.X`, are in the bodies.
+#[test]
+fn fixtures_cover_a_class_first_reached_deep() {
+    let surface = deep_first_surface(13, true);
+    let ty = surface.ty("t.Root");
+    let bodies = surface.fixtures(&ty, &api_surface::SynthOptions::default());
+    let sites: BTreeSet<String> = bodies
+        .iter()
+        .flat_map(|body| surface.sites(&ty, body).into_values())
+        .collect();
+    for site in ["t.X.opt", "t.X.child", "t.Y.leaf"] {
+        assert!(sites.contains(site), "{site} not synthesized: {sites:?}");
+    }
+}
+
+/// Fields the depth limit leaves out fail `fixtures` loudly, rather than
+/// shrinking the coverage unseen.
+#[test]
+#[should_panic(expected = "miss 4 site(s)")]
+fn fixtures_fail_on_a_field_they_cannot_reach() {
+    let surface = deep_first_surface(13, false);
+    let ty = surface.ty("t.Root");
+    surface.fixtures(&ty, &api_surface::SynthOptions::default());
 }
