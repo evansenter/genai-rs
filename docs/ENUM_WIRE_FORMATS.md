@@ -96,26 +96,34 @@ job runs this configuration.
 
 An unknown *field* on a known type round-trips too (#491). Every known
 variant of `Step`, `StepDelta`, `Content` and `Annotation` has an `extra`
-map holding the keys it does not model, read with `extra()` (and
-`extra_mut()` on `Step` and `Content`). The call steps and deltas that
-flatten a nested `arguments` object (`code_execution_call`,
-`url_context_call`, `google_search_call`, `google_maps_call`,
-`retrieval_call`) keep its other keys in `arguments_extra`, merged back into
-`arguments` on serialize. The result items (`GoogleSearchResultItem`,
-`UrlContextResultItem`, `GoogleMapsResultItem`, `FileSearchResultItem`),
-`Place`, `ReviewSnippet`, `StepError` and `VideoProcessing::StaticSegment`
-keep theirs in a flattened `extra` field. So a field the API adds survives
-stateless history replay before the crate models it, which is how
-`signature` once broke replay.
+map holding the keys it does not model, read with `extra()` and edited
+with `extra_mut()`. The call steps and deltas that flatten a nested
+`arguments` object (`code_execution_call`, `url_context_call`,
+`google_search_call`, `google_maps_call`, `retrieval_call`) keep its other
+keys in `arguments_extra`, merged back into `arguments` on serialize. The
+result items (`GoogleSearchResultItem`, `UrlContextResultItem`,
+`GoogleMapsResultItem`, `FileSearchResultItem`), `Place`, `ReviewSnippet`,
+`StepError` and `VideoProcessing::StaticSegment` keep theirs in a flattened
+`extra` field. So a field the API adds survives stateless history replay
+before the crate models it, which is how `signature` once broke replay.
 
-- Serializing writes the modeled fields first, then `extra`. An `extra`
-  entry named `type` or after one of the variant's modeled fields is never
-  written, so a hand-built map cannot retag a value or shadow a field.
+- Serializing writes the modeled fields first, then `extra`, for every type
+  listed above. An `extra` entry named after one of the type's modeled
+  fields, set or not, is never written, so a hand-built map cannot shadow a
+  field or write its key twice. On the tagged types (the four unions and
+  `StaticSegment`) `type` counts as modeled, so it cannot retag a value
+  either; on the plain structs a `type` entry is ordinary data and is
+  written. An `arguments_extra` entry named after a modeled argument
+  (`urls`, `queries`, `language`, `code`) is never merged into `arguments`.
+  Other types with a flattened `extra`, such as `InteractionResponse` and
+  `UsageMetadata`, write it unfiltered.
 - A known type whose modeled field is malformed becomes `Unknown`, which
   keeps the whole object. That was already so for a missing `id` or a
   mistyped `signature`. A non-object `arguments`, a non-string in `urls` or
   `queries`, and a mistyped `fps` on a static video segment used to be read
-  leniently, dropping the bad value.
+  leniently, dropping the bad value. For `Step` and `Content` under
+  `strict-unknown` this is an error that names the field and why (for
+  example ``field `arguments`: expected an object``), not an unknown type.
 - `strict-unknown` does not apply to fields: an unknown field is kept in
   `extra` in both configurations.
 - `src/proptest_unknown_fields.rs` injects an unknown key into every object,
