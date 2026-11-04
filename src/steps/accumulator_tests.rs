@@ -44,8 +44,9 @@ fn image_blocks(step: &Step) -> Vec<&str> {
 
 /// Each streamed image arrives whole in one delta that names its mime_type
 /// (live 2026-11-04, `gemini-3.1-flash-image`), so two of them in one step
-/// are two blocks. Merging them by kind produced one corrupt base64 string
-/// whenever `interaction.completed` omitted `steps` (#491).
+/// are two blocks. Live, each image came in its own step; this same-step
+/// shape is defensive. Merging by kind would make one corrupt base64 string
+/// whenever `interaction.completed` omits `steps` (#491).
 #[test]
 fn test_accumulator_streamed_images_stay_separate_blocks() {
     let mut acc = StepAccumulator::new();

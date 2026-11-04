@@ -349,11 +349,97 @@ async fn sse_step_accumulation_fills_the_completed_response() {
     assert_eq!(texts.last().map(String::as_str), Some("<completed Hello>"));
 }
 
-/// Shaped like a live `gemini-3.1-flash-image` stream (2026-11-04): a bare
-/// `model_output` on `step.start`, each image whole in one delta naming its
-/// mime_type, and an `interaction.completed` with no `steps`, so the
-/// accumulator is the only source of the final steps. Two images in one step
-/// must stay two blocks (#491); merged, they were one corrupt base64 string.
+/// The `Completed` response the accumulator assembles from a stream.
+async fn completed_from(chunks: &[String]) -> genai_rs::InteractionResponse {
+    let chunks: Vec<&str> = chunks.iter().map(String::as_str).collect();
+    stream_events(&chunks)
+        .await
+        .into_iter()
+        .find_map(|event| match event.expect("stream event").chunk {
+            StreamChunk::Completed(response) => Some(response),
+            _ => None,
+        })
+        .expect("a completed response")
+}
+
+/// The multi-image stream as it came live (2026-11-04,
+/// `gemini-3.1-flash-image`, asked for an illustrated two-step guide): a
+/// text-only `model_output`, then for each image a `thought` step carrying
+/// only a signature delta and a `model_output` step whose first delta is the
+/// whole image (naming its mime_type) and whose next is text. One image per
+/// step, and an `interaction.completed` without `steps`, so the accumulator
+/// is the only source of the final steps.
+#[tokio::test]
+async fn sse_images_in_separate_steps_as_streamed_live() {
+    let event = |value: Value| format!("data: {value}\n\n");
+    let mut chunks = vec![
+        event(
+            json!({"event_type": "interaction.created", "interaction": {"id": "i", "object": "interaction"}}),
+        ),
+        event(json!({"event_type": "step.start", "index": 0, "step": {"type": "model_output"}})),
+        event(
+            json!({"event_type": "step.delta", "index": 0, "delta": {"type": "text", "text": "Two steps."}}),
+        ),
+        event(json!({"event_type": "step.stop", "index": 0})),
+    ];
+    for (index, data) in [
+        (1, "/9j/4AAQSkZJRgABAQAAAQ=="),
+        (3, "/9j/4AAQSkZJRgABAgAAAQ=="),
+    ] {
+        chunks.extend([
+            event(json!({"event_type": "step.start", "index": index, "step": {"type": "thought"}})),
+            event(json!({"event_type": "step.delta", "index": index,
+                         "delta": {"type": "thought_signature", "signature": "sig"}})),
+            event(json!({"event_type": "step.stop", "index": index})),
+            event(json!({"event_type": "step.start", "index": index + 1,
+                         "step": {"type": "model_output"}})),
+            event(json!({"event_type": "step.delta", "index": index + 1,
+                         "delta": {"type": "image", "mime_type": "image/jpeg", "data": data}})),
+            event(json!({"event_type": "step.delta", "index": index + 1,
+                         "delta": {"type": "text", "text": "\n***"}})),
+            event(json!({"event_type": "step.stop", "index": index + 1})),
+        ]);
+    }
+    chunks.push(
+        "data: {\"event_type\":\"interaction.completed\",\"interaction\":{\"id\":\"i\",\"status\":\"completed\"}}\n\ndata: [DONE]\n\n".to_string(),
+    );
+    let response = completed_from(&chunks).await;
+
+    let kinds: Vec<&str> = response
+        .steps
+        .iter()
+        .map(genai_rs::Step::step_type)
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "model_output",
+            "thought",
+            "model_output",
+            "thought",
+            "model_output"
+        ]
+    );
+    for step in [&response.steps[2], &response.steps[4]] {
+        let content = step.content().expect("a content step");
+        assert_eq!(content.len(), 2, "one image, then its text: {content:?}");
+        assert!(content[0].is_image() && content[1].as_text() == Some("\n***"));
+    }
+    let images: Vec<Vec<u8>> = response
+        .images()
+        .map(|image| image.bytes().expect("each image decodes"))
+        .collect();
+    assert_eq!(images.len(), 2);
+    assert_ne!(images[0], images[1]);
+}
+
+/// Two images in one `model_output` step must stay two blocks (#491);
+/// merged by kind, they were one corrupt base64 string. This shape is
+/// defensive: no live stream has shown it (three `gemini-3.1-flash-image`
+/// probes on 2026-11-04 put each image in its own step, as in
+/// `sse_images_in_separate_steps_as_streamed_live`). It keeps their delta
+/// shape, each image whole in one delta naming its mime_type, and the
+/// `interaction.completed` without `steps`.
 #[tokio::test]
 async fn sse_two_images_in_one_step_stay_two_blocks() {
     let image = |data: &str| {
@@ -372,15 +458,7 @@ async fn sse_two_images_in_one_step_stay_two_blocks() {
         "data: {\"event_type\":\"step.stop\",\"index\":0}\n\n".to_string(),
         "data: {\"event_type\":\"interaction.completed\",\"interaction\":{\"id\":\"i\",\"status\":\"completed\"}}\n\ndata: [DONE]\n\n".to_string(),
     ];
-    let chunks: Vec<&str> = chunks.iter().map(String::as_str).collect();
-    let events = stream_events(&chunks).await;
-    let response = events
-        .into_iter()
-        .find_map(|event| match event.expect("stream event").chunk {
-            StreamChunk::Completed(response) => Some(response),
-            _ => None,
-        })
-        .expect("a completed response");
+    let response = completed_from(&chunks).await;
 
     // Each block decodes on its own; the merged string, with `==` padding
     // mid-way, did not.

@@ -167,9 +167,11 @@ impl StepAccumulator {
                 // Each image arrives whole in one delta that names its
                 // mime_type (verified live 2026-11-04, `gemini-3.1-flash-image`,
                 // streamed), so a delta with a mime_type or uri starts a new
-                // block. Only a bare data fragment continues the last image;
-                // keying on the block kind alone merged two images into one
-                // corrupt base64 string (#491).
+                // block. Only a bare data fragment continues the last image.
+                // Live, each image came in its own model_output step; two in
+                // one step was never observed, but keying on the block kind
+                // alone would merge them into one corrupt base64 string
+                // (#491).
                 let fragment = mime_type.is_none() && uri.is_none();
                 match (content.last_mut(), data) {
                     (

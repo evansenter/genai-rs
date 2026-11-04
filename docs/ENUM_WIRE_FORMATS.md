@@ -283,7 +283,7 @@ Deltas build up the step that the matching `step.start` announced.
 | Wire `type` | Variant | Notes |
 |-------------|---------|-------|
 | `text` | `Text` | Text fragment |
-| `image` / `audio` / `video` / `document` | media variants | `Content` field shapes (audio also accepts legacy `rate`). Each streamed image arrived whole in one `image` delta with its `mime_type` and a complete base64 JPEG (live 2026-11-04, `gemini-3.1-flash-image`), so an image delta with a `mime_type` or `uri` starts a new block and only a bare `data` fragment continues the last one. Audio, video and document data deltas, never captured streamed, still concatenate into the last block of their kind |
+| `image` / `audio` / `video` / `document` | media variants | `Content` field shapes (audio also accepts legacy `rate`). Each streamed image arrived whole in one `image` delta with its `mime_type` and a complete base64 JPEG, in its own `model_output` step after a `thought` step and before any text in that step (live 2026-11-04, `gemini-3.1-flash-image`, three streams, up to four images; two images in one step never appeared). An image delta with a `mime_type` or `uri` starts a new block, so the unobserved same-step case stays two blocks, and only a bare `data` fragment continues the last one. Audio, video and document data deltas, never captured streamed, still concatenate into the last block of their kind |
 | `thought_summary` | `ThoughtSummary` | `{"content": Content}` |
 | `thought_signature` | `ThoughtSignature` | `{"signature": "..."}` |
 | `text_annotation_delta` | `TextAnnotation` | **Tag differs from the variant name.** `{"annotations": [Annotation]}` |
