@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A Rust client library for Google's Generative AI (Gemini) API, built on the
-[Interactions API](https://ai.google.dev/static/api/interactions-api.md.txt)
+[Interactions API](https://aistudio.google.com/docs/interactions-overview.md)
 (wire revision **2026-05-20**) — plus an optional native client for Google's
 Antigravity local agent runtime.
 
@@ -353,8 +353,8 @@ agentic code-review application with subagents and a structured report.
 
 | Resource | Description |
 |----------|-------------|
-| [Interactions API Reference](https://ai.google.dev/static/api/interactions.md.txt) | Official API specification |
-| [Interactions API Guide](https://ai.google.dev/static/api/interactions-api.md.txt) | Usage patterns |
+| [Interactions API Reference](https://aistudio.google.com/api-reference/interactions-api.md) | Official API specification |
+| [Interactions API Guide](https://aistudio.google.com/docs/interactions-overview.md) | Usage patterns |
 | [Function Calling Guide](https://ai.google.dev/gemini-api/docs/function-calling.md.txt) | Google's function calling docs |
 
 ## Debugging & Wire Inspection
