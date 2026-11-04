@@ -38,40 +38,50 @@ the bindings is modeled until it is probed. From the 2.25.0 sweep:
 Completeness against ranks 1 and 1b is a CI check, not a sweep finding:
 `src/coverage_oracle/` and `tests/request_wire_oracle.rs` check every
 request key against the binding classes and every response field for an
-empty `extra`, offline, against the committed snapshot; and
-`tests/live_verb_coverage.rs` requires a live test per handle verb. How it
-works and how to refresh the snapshot is in `docs/TESTING.md`
-("Coverage oracle"). Its exception lists are this file's working list: the
-`GAPS` and `NOT_SENT` entries are what is not modeled yet.
+empty `extra`, offline, against the committed snapshot; every binding class
+must be reached by those checks or listed with a reason; and
+`tests/ci_coverage.rs` maps every endpoint to the handle verbs that call it
+and requires a live test per handle verb. How it works and how to refresh
+the snapshot is in `docs/TESTING.md` ("Coverage oracle"). Its exception
+lists are this file's working list: the `GAPS`, `NOT_SENT` and `UNMAPPED`
+entries are what is not modeled yet.
 
 What the first run found (google-genai 2.34.0, spec of 2026-11-01), live
 facts from 2026-11-04:
 
 - **No wrong request keys.** Every key the crate sends is on its binding
-  class, except response data a caller sends back in history: `signature`
-  on `function_call` (required, the bindings omit it) and on
-  `function_result`; `Place` fields beyond `place_id`, `name` and `url`
-  (not served); `GoogleSearchResultItem.title`/`url`/`rendered_content`
-  (not served); and `file_search_result.result` (the bindings dropped it,
-  and it was never filled). The bindings mark a credential's `id` required;
-  the API assigns one when it is omitted.
+  class, `response_format` included, except response data a caller sends
+  back in history: `signature` on `function_call` (required, the bindings
+  omit it) and on `function_result`; `Place` fields beyond `place_id`,
+  `name` and `url` (not served); `GoogleSearchResultItem.title`/`url`/
+  `rendered_content` (not served); and `file_search_result.result` (the
+  bindings dropped it, and it was never filled). The bindings mark a
+  credential's `id` required; the API assigns one when it is omitted.
 - **Served, landing in `extra`:** on a stored interaction read back,
-  `generation_config`, `response_format`, `response_modalities` and
-  `safety_settings`; `FileSearchStore.activeDocumentsCount` and `sizeBytes`
-  (string int64s); `File.updateTime` and `File.source` (`UPLOADED`).
+  `generation_config` (with `speech_config` in the `{"speakers": [...]}`
+  form, whichever form was sent), `response_format`, `response_modalities`
+  and `safety_settings`. With `include_input=true` the same read lists each
+  `speakers` entry and each `response_modalities` value twice.
+  `FileSearchStore.activeDocumentsCount` and `sizeBytes` (string int64s);
+  `File.updateTime` and `File.source` (`UPLOADED`).
 - **In the snapshot, not modeled, not seen live yet:** the `queued` status
   (#501); `Interaction.agent_config`, `environment`, `continuation_ids`,
   `output_audio`/`_image`/`_video`, and the spec's `max_total_tokens`;
   `Agent.agent_config`; the inline environment's `environment_id`; the
   CodeMender agent config (#501); `CreateFileSearchStoreConfig.embeddingModel`;
+  the document upload config's `customMetadata` and `chunkingConfig`, and
+  `import_file` (`UploadToFileSearchStoreConfig`, `ImportFileConfig`);
   nine `VoiceInput` fields (accent, context, description, gender,
   language_code, persona, pitch, region_code, sample_audio);
   `FileSearchStore.pending`/`failedDocumentsCount`; `Document.customMetadata`;
   `File.downloadUri`; `FileStatus.details` (dropped, no `extra`).
 - **Read but lost:** `StreamChunk::StepDelta` drops the event's
-  `metadata.total_usage`; `Tool::Function` requires a `description`, which
-  the bindings make optional and the spec omits, so a function tool served
-  without one reads as `Unknown`.
+  `metadata.total_usage`. The spec types `file_search_result` delta items
+  as opaque objects, and `FileSearchResultItem` keeps only `title`, `text`
+  and `file_search_store` (#429). `Tool::Function` requires `name`,
+  `description` and `parameters`, which the bindings and the spec make
+  optional, so a function tool served without one reads as `Unknown`; the
+  oracle's bodies set every field, so this one was found by reading.
 - **Live coverage:** `FileSearchDocuments::get` and
   `Interactions::get_with_input` had no live test; both have one now.
   `include_input=true` now echoes the input as a `user_input` step.

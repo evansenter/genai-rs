@@ -32,7 +32,10 @@ order (D-004):
 `.github/last-swept-sdk-version`) and the spec as a snapshot, and the
 coverage oracle (`src/coverage_oracle/`, `tests/request_wire_oracle.rs`)
 checks the crate against it offline: request keys against the binding
-classes, and every response field for an empty `extra`. Bump the baseline
+classes, every response field for an empty `extra`, and every class
+reached or listed with a reason. `tests/ci_coverage.rs` maps every endpoint
+to the handle verbs that call it and requires a live test of each verb on
+its handle. Bump the baseline
 with `.github/scripts/refresh_api_snapshot.sh --version X.Y.Z`, which
 regenerates the snapshot too; see `docs/TESTING.md`.
 
