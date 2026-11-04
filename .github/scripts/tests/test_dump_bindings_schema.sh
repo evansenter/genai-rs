@@ -77,6 +77,104 @@ if python3 "$DUMP" "$work/empty" >/dev/null 2>&1; then
     fail "a tree without types/ exited 0"
 fi
 
+# --json resolves references through imports (a sibling module, a module
+# alias from another package, a union alias), drops the SDK's Unknown*
+# fallback arms, and reads the hand-written classes in ../types.py with
+# camelCase wire names.
+genai="$work/genai"
+mkdir -p "$genai/_gaos/types/interactions" "$genai/_gaos/types/agents"
+cat >"$genai/version.py" <<'EOF'
+__version__ = '9.9.9'
+EOF
+cat >"$genai/_gaos/types/__init__.py" <<'EOF'
+from .basemodel import BaseModel
+EOF
+cat >"$genai/_gaos/types/interactions/usage.py" <<'EOF'
+from .. import BaseModel
+from typing import Optional
+
+
+class Usage(BaseModel):
+    total_tokens: Optional[int] = None
+EOF
+cat >"$genai/_gaos/types/interactions/tool.py" <<'EOF'
+from .. import BaseModel, UnrecognizedStr
+from typing import Any, Literal, Optional, Union
+
+
+class CodeExecution(BaseModel):
+    type: Literal["code_execution"] = "code_execution"
+
+
+class UnknownTool(BaseModel):
+    type: Literal["UNKNOWN"] = "UNKNOWN"
+    raw: Any
+    is_unknown: Literal[True] = True
+
+
+Mode = Union[Literal["a", "b"], UnrecognizedStr]
+
+Tool = Union[CodeExecution, UnknownTool]
+EOF
+cat >"$genai/_gaos/types/agents/agent.py" <<'EOF'
+from .. import BaseModel
+from ..interactions import tool as interactions_tool, usage as interactions_usage
+from typing import List, Optional
+
+
+class Agent(BaseModel):
+    tools: Optional[List[interactions_tool.Tool]] = None
+    usage: Optional[interactions_usage.Usage] = None
+    mode: interactions_tool.Mode
+EOF
+cat >"$genai/types.py" <<'EOF'
+import datetime
+from typing import Optional
+from . import _common
+
+
+class FileState(_common.CaseInSensitiveEnum):
+    ACTIVE = 'ACTIVE'
+
+
+class File(_common.BaseModel):
+    display_name: Optional[str] = None
+    create_time: Optional[datetime.datetime] = None
+    state: Optional[FileState] = None
+EOF
+for name in ListFilesResponse FileSearchStore ListFileSearchStoresResponse \
+    CreateFileSearchStoreConfig Document ListDocumentsResponse \
+    UploadToFileSearchStoreConfig ImportFileConfig; do
+    printf '\n\nclass %s(_common.BaseModel):\n    http_options: Optional[str] = None\n' "$name" >>"$genai/types.py"
+done
+if ! json_dump=$(python3 "$DUMP" --json "$genai/_gaos" 2>&1); then
+    fail "--json failed: $json_dump"
+else
+    checks=$(python3 -c '
+import json, sys
+d = json.loads(sys.stdin.read())
+c, a = d["classes"], d["aliases"]
+agent = c["agents.Agent"]["fields"]
+ok = [
+    d["sdk_version"] == "9.9.9",
+    agent["tools"]["type"] == {"kind": "list", "item": {"kind": "ref", "name": "interactions.Tool"}},
+    a["interactions.Tool"] == {"kind": "ref", "name": "interactions.CodeExecution"},
+    agent["usage"]["type"] == {"kind": "ref", "name": "interactions.Usage"},
+    agent["mode"]["required"] is True,
+    a["interactions.Mode"] == {"kind": "literal", "values": ["a", "b"], "open": True},
+    "interactions.UnknownTool" not in c,
+    set(c["legacy.File"]["fields"]) == {"displayName", "createTime", "state"},
+    c["legacy.File"]["fields"]["createTime"]["type"] == {"kind": "datetime"},
+    c["legacy.File"]["fields"]["state"]["type"]["values"] == ["ACTIVE"],
+    c["legacy.CreateFileSearchStoreConfig"]["fields"] == {},
+]
+print(" ".join("ok" if x else f"fail{i}" for i, x in enumerate(ok)))
+' <<<"$json_dump")
+    case "$checks" in
+        *fail*) fail "--json output wrong: $checks" ;;
+    esac
+fi
+
 if [ "$failures" -gt 0 ]; then
     echo "$failures failure(s)" >&2
     exit 1
