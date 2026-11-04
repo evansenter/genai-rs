@@ -290,24 +290,49 @@ impl AntigravityAgent {
     }
 }
 
-/// Runs a user hook on tokio's blocking pool.
+/// Runs a user hook on a thread of its own.
 ///
 /// Hooks are synchronous closures. Called inline, one that blocks holds the
 /// runtime thread, and the turn deadline (a timer polled by that same task)
-/// can never fire. On the blocking pool the turn waits on a join handle the
+/// can never fire. On its own thread, the turn waits on a channel the
 /// deadline can abandon. The hook's thread is not stopped: it runs to
-/// completion and its result is discarded. A panicking hook re-raises its
-/// panic here, exactly as an inline call would.
+/// completion and its result is discarded.
+///
+/// The thread is detached rather than taken from tokio's blocking pool,
+/// because dropping a runtime waits for the blocking tasks still running on
+/// it. A hook abandoned at the deadline and still blocked would then hang
+/// the end of `#[tokio::main]`; a detached thread holds up neither runtime
+/// shutdown nor process exit. The thread enters the caller's runtime, so a
+/// hook can still use `Handle::current()` as it could on the blocking pool.
+///
+/// A panicking hook re-raises its panic here, exactly as an inline call
+/// would.
 async fn run_hook<T, F>(hook: F) -> Result<T, AntigravityError>
 where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
-    match tokio::task::spawn_blocking(hook).await {
-        Ok(value) => Ok(value),
-        Err(e) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
-        Err(e) => Err(AntigravityError::Turn(format!(
-            "a hook did not run to completion: {e}"
-        ))),
+    let runtime = tokio::runtime::Handle::current();
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("antigravity-hook".to_string())
+        .spawn(move || {
+            let _runtime = runtime.enter();
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(hook));
+            // Fails only when the turn stopped waiting (its deadline fired),
+            // and then nobody wants the result.
+            let _ = sender.send(outcome);
+        })
+        .map_err(|e| AntigravityError::Turn(format!("could not start a hook's thread: {e}")))?;
+    match receiver.await {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(panic)) => std::panic::resume_unwind(panic),
+        Err(_) => Err(AntigravityError::Turn(
+            "a hook's thread ended without a result".to_string(),
+        )),
     }
 }
+
+#[cfg(test)]
+#[path = "turn_requests_tests.rs"]
+mod tests;

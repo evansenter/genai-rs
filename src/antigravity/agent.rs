@@ -38,7 +38,8 @@ pub struct AntigravityAgent {
     pub(super) harness: HarnessProcess,
     pub(super) session: Session,
     pub(super) dispatcher: ToolDispatcher,
-    /// Shared with hook calls on the blocking pool (see `turn::run_hook`).
+    /// Shared with hook calls on their own threads (see
+    /// `turn_requests::run_hook`).
     pub(super) policy_engine: Arc<PolicyEngine>,
     pub(super) pre_tool: Option<PreToolHook>,
     pub(super) questions: Option<QuestionHook>,

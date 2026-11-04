@@ -333,12 +333,17 @@ since they never read arguments. A custom tool call whose arguments decode
 in neither of the harness's encodings is answered with an error instead of
 running the tool on `Null`.
 
-Hooks are synchronous closures, and they run on tokio's blocking pool, so
-the turn deadline bounds them on any runtime: a hook still running when the
-turn's budget runs out ends the turn with `AntigravityError::Timeout`, whose
-`operation` names it. The hook's thread is not stopped; its result is
-discarded when it returns. Custom tools are bounded too, with one limit;
-see the turn deadline under [Streaming](#streaming).
+Hooks are synchronous closures, and each call runs on a thread of its own,
+so the turn deadline bounds them on any runtime: a hook still running when
+the turn's budget runs out ends the turn with `AntigravityError::Timeout`,
+whose `operation` names it. The hook's thread is not stopped; its result is
+discarded when it returns. The thread is detached, so a hook still blocked
+after a timeout holds up neither runtime shutdown (the end of
+`#[tokio::main]`) nor process exit. It does keep running, and keeps what it
+captured alive, until it returns, so keep hooks bounded. The thread enters
+the turn's runtime, so `tokio::runtime::Handle::current()` works inside a
+hook. Custom tools are bounded too, with one limit; see the turn deadline
+under [Streaming](#streaming).
 
 Arguments can also change meaning. 0.1.23 added `Append` to `create_file`:
 `{Overwrite: false, Append: true}` now appends to an existing file, where
@@ -447,7 +452,7 @@ to `Unanswered` rather than selecting index 0 of an empty list).
 `AgentQuestion::unknown(extra)` builds that fixture for unit tests.
 
 The hook is synchronous, and the turn waits for it — don't block in it
-waiting for a human. It runs on tokio's blocking pool, so a slow answer no
+waiting for a human. It runs on a thread of its own, so a slow answer no
 longer stalls the runtime, but it still spends the turn's budget, and one
 still blocked at the deadline ends the turn with `Timeout`. For interactive
 flows, collect the answer out-of-band (chat reply, CLI prompt in another
@@ -648,8 +653,8 @@ current-thread runtime (`#[tokio::main(flavor = "current_thread")]`, and
 `#[tokio::test]`'s default) the blocked body holds the only thread, so the
 turn cannot end before the tool returns. Make such a tool `async` with
 non-blocking I/O, or move the blocking part into
-`tokio::task::spawn_blocking` inside it. Hooks need neither: they always
-run on the blocking pool.
+`tokio::task::spawn_blocking` inside it. Hooks need neither: each call
+always runs on a thread of its own.
 
 For
 `send_streaming` that includes time **your** code spends between polls of
@@ -916,8 +921,8 @@ variants, never on message text. Key variants: `HarnessNotFound{searched}`,
   automatically (never deadlocks) unless an `on_questions` hook is set —
   see [Answering agent questions](#answering-agent-questions).
 - **Hooks are synchronous**: `on_pre_tool` / `on_post_tool` /
-  `on_questions` are sync closures (run on the blocking pool and bounded by
-  the turn deadline); async hooks are a follow-up.
+  `on_questions` are sync closures (each call runs on a thread of its own
+  and is bounded by the turn deadline); async hooks are a follow-up.
 - **A blocking tool body can't be preempted on a current-thread runtime**:
   the turn deadline abandons a blocked synchronous tool on a multi-thread
   runtime only (see the turn deadline under [Streaming](#streaming)).

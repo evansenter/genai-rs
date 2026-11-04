@@ -290,10 +290,12 @@ impl AgentBuilder {
     /// Sets a pre-tool hook, consulted before every tool dispatch and for
     /// `confirm(...)` policies.
     ///
-    /// It runs on tokio's blocking pool and is bounded by the turn
-    /// deadline. A call whose arguments the harness sent as invalid JSON is
-    /// denied without consulting the hook, which would otherwise judge a
-    /// placeholder.
+    /// Like every hook, it runs on a thread of its own and is bounded by the
+    /// turn deadline. A hook still running at the deadline is abandoned,
+    /// not stopped: its thread runs on until the hook returns, but holds up
+    /// neither runtime shutdown nor process exit. A call whose arguments the
+    /// harness sent as invalid JSON is denied without consulting the hook,
+    /// which would otherwise judge a placeholder.
     #[must_use]
     pub fn on_pre_tool(
         mut self,
@@ -313,9 +315,10 @@ impl AgentBuilder {
     ///
     /// The hook is synchronous and the turn waits for it: **do not block in
     /// it** waiting for a human. Answer from policy or pre-collected state
-    /// (e.g. a channel drained with `try_recv`). It runs on tokio's blocking
-    /// pool, so the turn deadline still bounds it, but every second it
-    /// takes is spent from that budget.
+    /// (e.g. a channel drained with `try_recv`). It runs on a thread of its
+    /// own, so the turn deadline still bounds it (see
+    /// [`on_pre_tool`](Self::on_pre_tool)), but every second it takes is
+    /// spent from that budget.
     ///
     /// The hook only fires if [`BuiltinTool::AskQuestion`] is enabled —
     /// it is *not* in [`Capabilities::read_only()`] (the default), so on a
@@ -345,6 +348,9 @@ impl AgentBuilder {
     }
 
     /// Sets a post-tool hook, observing completed custom tool calls.
+    ///
+    /// It runs on a thread of its own and is bounded by the turn deadline,
+    /// as [`on_pre_tool`](Self::on_pre_tool) describes.
     #[must_use]
     pub fn on_post_tool(mut self, hook: impl Fn(&ToolOutcome) + Send + Sync + 'static) -> Self {
         self.post_tool = Some(Arc::new(hook));
