@@ -30,6 +30,10 @@ pub struct Client {
     /// Shared HTTP context: reqwest client, API key, wire inspectors, and
     /// the request-id counter for wire-event correlation.
     pub(crate) http: HttpContext,
+    /// The connect timeout `http`'s reqwest client was built with (`None`:
+    /// none), as `ClientBuilder::reqwest_builder` applied it. reqwest's
+    /// built client doesn't show it, so `Debug` shows this instead.
+    connect_timeout: Option<Duration>,
 }
 
 // Resource handles hand out futures and `'static` list streams that carry the
@@ -46,6 +50,7 @@ impl std::fmt::Debug for Client {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Client")
             .field("api_key", &"[REDACTED]")
+            .field("connect_timeout", &self.connect_timeout)
             .field("http_client", &self.http.http_client)
             .finish()
     }
@@ -285,24 +290,29 @@ impl ClientBuilder {
     /// Returns an error if the underlying HTTP client cannot be constructed. This should only
     /// happen in exceptional circumstances such as TLS backend initialization failures.
     pub fn build(self) -> Result<Client, GenaiError> {
-        let http_client = self
-            .reqwest_builder()
+        let (builder, connect_timeout) = self.reqwest_builder();
+        let http_client = builder
             .build()
             .map_err(|e| GenaiError::ClientBuild(e.to_string()))?;
-        Ok(self.finish(http_client))
+        Ok(self.finish(http_client, connect_timeout))
     }
 
-    /// The reqwest builder with this builder's timeouts applied. Split from
-    /// [`build`](Self::build) so tests can add a resolver before building.
-    fn reqwest_builder(&self) -> reqwest::ClientBuilder {
+    /// The reqwest builder with this builder's timeouts applied, and the
+    /// connect timeout it set (`None`: none), for the `Client` to record.
+    /// Split from [`build`](Self::build) so tests can add a resolver before
+    /// building.
+    fn reqwest_builder(&self) -> (reqwest::ClientBuilder, Option<Duration>) {
         let mut builder = ReqwestClient::builder();
 
         // `Duration::MAX` sets none. reqwest would otherwise arm a timer
         // decades out, and a paused test clock auto-advances to any timer.
-        match self.connect_timeout.unwrap_or(DEFAULT_CONNECT_TIMEOUT) {
-            Duration::MAX => {}
-            connect_timeout => builder = builder.connect_timeout(connect_timeout),
-        }
+        let connect_timeout = match self.connect_timeout.unwrap_or(DEFAULT_CONNECT_TIMEOUT) {
+            Duration::MAX => None,
+            connect_timeout => {
+                builder = builder.connect_timeout(connect_timeout);
+                Some(connect_timeout)
+            }
+        };
 
         if let Some(timeout) = self.timeout {
             builder = builder.timeout(timeout);
@@ -312,10 +322,10 @@ impl ClientBuilder {
             builder = builder.read_timeout(read_timeout);
         }
 
-        builder
+        (builder, connect_timeout)
     }
 
-    fn finish(self, http_client: ReqwestClient) -> Client {
+    fn finish(self, http_client: ReqwestClient, connect_timeout: Option<Duration>) -> Client {
         let mut http = HttpContext::new(
             http_client,
             self.api_key,
@@ -324,7 +334,10 @@ impl ClientBuilder {
         if let Some(base_url) = self.base_url {
             http = http.with_base_url(base_url);
         }
-        Client { http }
+        Client {
+            http,
+            connect_timeout,
+        }
     }
 }
 
@@ -652,6 +665,7 @@ mod tests {
     async fn connect_wait(builder: &ClientBuilder) -> (Duration, reqwest::Error) {
         let client = builder
             .reqwest_builder()
+            .0
             .dns_resolver(NeverResolves)
             .build()
             .unwrap();
@@ -692,7 +706,7 @@ mod tests {
         // reqwest's builder Debug lists a connect timeout only when one is
         // set; with none, nothing is armed for a paused clock to fire.
         // (`tests/reliability_tests.rs` checks the paused-clock behavior.)
-        let debug = |builder: ClientBuilder| format!("{:?}", builder.reqwest_builder());
+        let debug = |builder: ClientBuilder| format!("{:?}", builder.reqwest_builder().0);
         let default = debug(Client::builder("k".to_string()));
         assert!(default.contains("connect_timeout: 30s"), "{default}");
         let long = debug(
@@ -701,6 +715,31 @@ mod tests {
         assert!(long.contains("connect_timeout: 86400s"), "{long}");
         let off = debug(Client::builder("k".to_string()).with_connect_timeout(Duration::MAX));
         assert!(!off.contains("connect_timeout"), "{off}");
+    }
+
+    #[test]
+    fn test_public_constructors_carry_the_connect_timeout() {
+        // reqwest's built client doesn't show its connect timeout, so the
+        // `Client` records the one `reqwest_builder` applied. This pins that
+        // `Client::new` and `build()` both go through it.
+        for client in [
+            Client::new("k".to_string()),
+            Client::builder("k".to_string()).build().unwrap(),
+        ] {
+            assert_eq!(client.connect_timeout, Some(DEFAULT_CONNECT_TIMEOUT));
+            let debug = format!("{client:?}");
+            assert!(debug.contains("connect_timeout: Some(30s)"), "{debug}");
+        }
+        let set = Client::builder("k".to_string())
+            .with_connect_timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        assert_eq!(set.connect_timeout, Some(Duration::from_secs(5)));
+        let off = Client::builder("k".to_string())
+            .with_connect_timeout(Duration::MAX)
+            .build()
+            .unwrap();
+        assert_eq!(off.connect_timeout, None);
     }
 
     #[test]
