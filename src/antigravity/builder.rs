@@ -612,7 +612,7 @@ impl AgentBuilder {
             harness,
             session,
             dispatcher,
-            policy_engine: PolicyEngine::new(self.policies),
+            policy_engine: Arc::new(PolicyEngine::new(self.policies)),
             pre_tool: self.pre_tool,
             questions: self.questions,
             post_tool: self.post_tool,
@@ -657,7 +657,7 @@ impl AgentBuilder {
             Err(e) => {
                 agent.session.close().await;
                 agent.harness.kill().await;
-                Err(e)
+                Err(e.with_version_note(agent.harness.version()))
             }
         }
     }

@@ -1,9 +1,9 @@
 use super::agent::TurnGuard;
 use super::hook_mapping::{
-    confirmation_decision, map_question_reply, map_questions, normalize_tool_error,
-    pre_tool_invocation, unwrap_result_string, unwrap_result_value,
+    confirmation_decision, map_question_reply, map_questions, normalize_tool_error, pre_tool_gate,
+    tool_call_arguments, unwrap_result_string, unwrap_result_value,
 };
-use super::hooks;
+use super::hooks::{self, PolicyDecision};
 use super::protocol::{
     self, HookDecision, HookVerdict, InputEvent, OutputEvent, OutputPayload, StepSource, StepState,
     StepTarget, StepUpdate, TrajectoryState,
@@ -14,6 +14,7 @@ use super::{
 };
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Model backend HTTP codes that abort the turn (bad request / auth
@@ -247,7 +248,7 @@ impl AntigravityAgent {
             if let Some(questions) = &step.questions_request
                 && turn.mark_wait_handled(&step_key, "questions_request")
             {
-                self.answer_questions(&step, questions).await?;
+                self.answer_questions(&step, questions, turn).await?;
             }
         }
         Ok(())
@@ -266,7 +267,17 @@ impl AntigravityAgent {
         step_key: &(String, u32),
         turn: &mut TurnState,
     ) -> Result<(), AntigravityError> {
-        let decision = confirmation_decision(step, &self.policy_engine, self.pre_tool.as_ref());
+        let decision = match self.pre_tool.clone() {
+            None => confirmation_decision(step, &self.policy_engine, None),
+            Some(hook) => {
+                let (engine, owned) = (Arc::clone(&self.policy_engine), step.clone());
+                turn.running = Some("the pre-tool hook for a tool confirmation".to_string());
+                let decision =
+                    run_hook(move || confirmation_decision(&owned, &engine, Some(&hook))).await?;
+                turn.running = None;
+                decision
+            }
+        };
         let accepted = matches!(decision, PreToolDecision::Allow);
         if let PreToolDecision::Deny { reason } = &decision
             && let Some(action) = streaming::ToolAction::from_step(step)
@@ -301,10 +312,17 @@ impl AntigravityAgent {
         &mut self,
         step: &StepUpdate,
         request: &protocol::UserQuestionsRequest,
+        turn: &mut TurnState,
     ) -> Result<(), AntigravityError> {
         let batch = map_questions(request);
-        let reply = match &self.questions {
-            Some(hook) => Some(hook(&batch)),
+        let reply = match self.questions.clone() {
+            Some(hook) => {
+                let owned = batch.clone();
+                turn.running = Some("the questions hook".to_string());
+                let reply = run_hook(move || hook(&owned)).await?;
+                turn.running = None;
+                Some(reply)
+            }
             None => {
                 tracing::warn!(
                     "Harness asked {} user question(s) but no questions hook \
@@ -395,29 +413,29 @@ impl AntigravityAgent {
     ) -> Result<(), AntigravityError> {
         let id = call.id.clone().unwrap_or_default();
         let name = call.name.clone().unwrap_or_default();
-        let args: Value = match call
-            .arguments_json
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .map(serde_json::from_str)
-        {
-            Some(Ok(value)) => value,
-            // `arguments` is the harness's `genai.Struct` encoding, not
-            // plain JSON: handing it over raw gave the tool
-            // `{"fields": [{"name": .., "value": {"stringValue": ..}}]}`
-            // instead of its arguments.
-            Some(Err(e)) => {
-                tracing::warn!("Unparseable arguments for tool '{name}': {e}");
-                call.arguments
-                    .as_ref()
-                    .and_then(protocol::decode_genai_struct)
-                    .unwrap_or(Value::Null)
+        // Fail closed: a tool run on a placeholder (or a hook judging one)
+        // is worse than a call the model sees fail and can retry.
+        let args = match tool_call_arguments(&call) {
+            Ok(args) => args,
+            Err(error) => {
+                tracing::warn!("Not running custom tool '{name}': {error}");
+                return self
+                    .session
+                    .send(&InputEvent::ToolResponse(protocol::ToolResponse {
+                        id,
+                        response_json: Some(
+                            serde_json::json!({
+                                "error": format!(
+                                    "Tool execution denied: the arguments could not be parsed \
+                                     ({error})"
+                                )
+                            })
+                            .to_string(),
+                        ),
+                        ..Default::default()
+                    }))
+                    .await;
             }
-            None => call
-                .arguments
-                .as_ref()
-                .and_then(protocol::decode_genai_struct)
-                .unwrap_or_else(|| Value::Object(Default::default())),
         };
 
         let invocation = ToolInvocation {
@@ -425,7 +443,7 @@ impl AntigravityAgent {
             args: args.clone(),
             id: Some(id.clone()),
         };
-        let result = match hooks::decide(&self.policy_engine, self.pre_tool.as_ref(), &invocation) {
+        let result = match self.decide(invocation, turn).await? {
             PreToolDecision::Deny { reason } => {
                 tracing::info!("Denying custom tool '{name}': {reason}");
                 serde_json::json!({
@@ -433,8 +451,10 @@ impl AntigravityAgent {
                 })
             }
             PreToolDecision::Allow => {
+                turn.running = Some(format!("custom tool '{name}'"));
                 let result = self.dispatcher.execute(&name, args).await;
-                if let Some(post_tool) = &self.post_tool {
+                turn.running = None;
+                if let Some(post_tool) = self.post_tool.clone() {
                     // Hand the hook the inner value, not the `{"result": ...}`
                     // wire envelope the harness expects (Item: unwrap
                     // ToolOutcome.result). The error branch keeps the
@@ -450,7 +470,9 @@ impl AntigravityAgent {
                         result: error.is_none().then(|| unwrap_result_value(&result)),
                         error,
                     };
-                    post_tool(&outcome);
+                    turn.running = Some(format!("the post-tool hook for '{name}'"));
+                    run_hook(move || post_tool(&outcome)).await?;
+                    turn.running = None;
                     turn.reported_calls.insert(id.clone());
                 }
                 turn.queue.push_back(AgentEvent::ToolCallDispatched {
@@ -482,34 +504,36 @@ impl AntigravityAgent {
             ..Default::default()
         };
         if let Some(pre_tool_args) = &request.pre_tool_args {
-            let invocation = pre_tool_invocation(pre_tool_args);
-            let verdict =
-                match hooks::decide(&self.policy_engine, self.pre_tool.as_ref(), &invocation) {
-                    PreToolDecision::Allow => HookVerdict {
-                        decision: Some(HookDecision::Allow),
-                        reason: None,
-                    },
-                    PreToolDecision::Deny { reason } => {
-                        turn.hook_denials.push(HookDenial {
-                            trajectory_id: pre_tool_args.trajectory_id.clone(),
-                            reason: reason.clone(),
-                        });
-                        HookVerdict {
-                            decision: Some(HookDecision::Deny),
-                            reason: Some(reason),
-                        }
+            let decision = match pre_tool_gate(pre_tool_args, self.pre_tool.is_some()) {
+                Ok(invocation) => self.decide(invocation, turn).await?,
+                Err(denial) => denial,
+            };
+            let verdict = match decision {
+                PreToolDecision::Allow => HookVerdict {
+                    decision: Some(HookDecision::Allow),
+                    reason: None,
+                },
+                PreToolDecision::Deny { reason } => {
+                    turn.hook_denials.push(HookDenial {
+                        trajectory_id: pre_tool_args.trajectory_id.clone(),
+                        reason: reason.clone(),
+                    });
+                    HookVerdict {
+                        decision: Some(HookDecision::Deny),
+                        reason: Some(reason),
                     }
-                };
+                }
+            };
             response.pre_tool_result = Some(verdict);
         } else if let Some(post_tool_args) = &request.post_tool_args {
             // Harness 0.1.18 also fires its post-tool callback for custom
             // tools, which the dispatch path has already reported — once
             // per call is the contract.
             let already_reported = turn.take_reported_call(post_tool_args.call_id.as_deref());
-            if let Some(post_tool) = &self.post_tool
+            if let Some(post_tool) = self.post_tool.clone()
                 && !already_reported
             {
-                post_tool(&ToolOutcome {
+                let outcome = ToolOutcome {
                     name: protocol::hook_tool_name(
                         post_tool_args.tool_name.as_deref().unwrap_or_default(),
                         post_tool_args.server_name.as_deref(),
@@ -518,7 +542,10 @@ impl AntigravityAgent {
                     // with the custom-tool dispatch path.
                     result: post_tool_args.result.as_deref().map(unwrap_result_string),
                     error: normalize_tool_error(post_tool_args.error.clone()),
-                });
+                };
+                turn.running = Some(format!("the post-tool hook for '{}'", outcome.name));
+                run_hook(move || post_tool(&outcome)).await?;
+                turn.running = None;
             }
             response.empty_result = Some(protocol::EmptyResult {});
         } else {
@@ -527,6 +554,57 @@ impl AntigravityAgent {
         self.session
             .send(&InputEvent::CallHookResponse(response))
             .await
+    }
+
+    /// The policy-then-hook verdict for a tool call. The pre-tool hook, when
+    /// it gets a say, runs through [`run_hook`] so the turn deadline bounds
+    /// it; a policy denial needs no hook and stays on this thread.
+    async fn decide(
+        &self,
+        invocation: ToolInvocation,
+        turn: &mut TurnState,
+    ) -> Result<PreToolDecision, AntigravityError> {
+        let hook = match &self.pre_tool {
+            Some(hook)
+                if self.policy_engine.evaluate(&invocation.name) != Some(PolicyDecision::Deny) =>
+            {
+                Arc::clone(hook)
+            }
+            _ => {
+                return Ok(hooks::decide(
+                    &self.policy_engine,
+                    self.pre_tool.as_ref(),
+                    &invocation,
+                ));
+            }
+        };
+        let engine = Arc::clone(&self.policy_engine);
+        turn.running = Some(format!("the pre-tool hook for '{}'", invocation.name));
+        let decision = run_hook(move || hooks::decide(&engine, Some(&hook), &invocation)).await?;
+        turn.running = None;
+        Ok(decision)
+    }
+}
+
+/// Runs a user hook on tokio's blocking pool.
+///
+/// Hooks are synchronous closures. Called inline, one that blocks holds the
+/// runtime thread, and the turn deadline (a timer polled by that same task)
+/// can never fire. On the blocking pool the turn waits on a join handle the
+/// deadline can abandon. The hook's thread is not stopped: it runs to
+/// completion and its result is discarded. A panicking hook re-raises its
+/// panic here, exactly as an inline call would.
+pub(super) async fn run_hook<T, F>(hook: F) -> Result<T, AntigravityError>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    match tokio::task::spawn_blocking(hook).await {
+        Ok(value) => Ok(value),
+        Err(e) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
+        Err(e) => Err(AntigravityError::Turn(format!(
+            "a hook did not run to completion: {e}"
+        ))),
     }
 }
 
@@ -611,6 +689,10 @@ pub(super) struct TurnState {
     /// Custom tool calls (by call id) whose outcome `on_post_tool` has
     /// already seen via the dispatch path.
     reported_calls: HashSet<String>,
+    /// The client-side work in flight (a custom tool or a hook), while it
+    /// runs. Still set when the turn deadline cancels it, which is how the
+    /// timeout error names what held the turn.
+    pub(super) running: Option<String>,
     pub(super) timeout: Option<Duration>,
     pub(super) deadline: Option<tokio::time::Instant>,
     /// Held for the turn's lifetime; dropping the state marks the agent
@@ -639,6 +721,7 @@ impl TurnState {
             stop_reason: None,
             hook_denials: Vec::new(),
             reported_calls: HashSet::new(),
+            running: None,
             timeout,
             deadline: timeout.map(|t| tokio::time::Instant::now() + t),
             _turn_guard: turn_guard,
@@ -662,7 +745,17 @@ impl TurnState {
     /// `userInput` change: `failed to unmarshal InputEvent`), never on the
     /// socket, so the turn simply never starts; `stderr` is the harness's
     /// retained stderr tail, searched for that line.
-    pub(super) fn stall_diagnosis(&self, stderr: &str) -> String {
+    ///
+    /// Two more cases name themselves: a custom tool or hook of this
+    /// client's that was still running at the deadline (the stall is on
+    /// this side, not the harness's), and a harness whose installed
+    /// version (`harness_version`) differs from
+    /// [`SUPPORTED_HARNESS_VERSION`](super::SUPPORTED_HARNESS_VERSION).
+    pub(super) fn stall_diagnosis(&self, stderr: &str, harness_version: Option<&str>) -> String {
+        if let Some(running) = &self.running {
+            return format!("agent turn ({running} was still running at the deadline)");
+        }
+        let mismatch = super::process::version_mismatch(harness_version);
         let mut causes = Vec::new();
         if !self.unknown_trajectory_states.is_empty() {
             let states: Vec<_> = self
@@ -689,8 +782,12 @@ impl TurnState {
             ));
         }
         if causes.is_empty() {
-            return "agent turn".to_string();
+            return match mismatch {
+                Some(mismatch) => format!("agent turn ({mismatch})"),
+                None => "agent turn".to_string(),
+            };
         }
+        causes.extend(mismatch);
         format!(
             "agent turn ({} — most likely a harness/bridge version mismatch, \
              see antigravity::SUPPORTED_HARNESS_VERSION)",
