@@ -147,6 +147,40 @@ There are independent timeouts, and they behave differently.
 | **Request-level** | `InteractionBuilder::with_timeout()` | None | `tokio::time::timeout` around the call | `GenaiError::Timeout(duration)` |
 
 `Client::new()` and `Client::builder(..).build()` get the same defaults.
+`with_connect_timeout(Duration::MAX)` turns the connect timeout off.
+
+### Tests on a paused clock
+
+Tokio advances a paused clock (`#[tokio::test(start_paused = true)]`) to the
+next timer whenever the runtime is idle, even while a socket operation is in
+flight. Any timeout the client arms is such a timer, and since 0.14 every
+client arms one while it connects (`DEFAULT_CONNECT_TIMEOUT`). So a
+paused-clock test that sends a real request to a local mock server usually
+fails with a connect timeout "after 30 s" that took no real time. Two ways
+out:
+
+- Turn the connect timeout off in the test client with
+  `with_connect_timeout(Duration::MAX)`, which arms no timer, and set no
+  read, total or request-level timeout. `wait_until_active` has the same
+  problem: it bounds each status request with its deadline, so drive it
+  with real time against a server.
+- Or stop the auto-advance while I/O is in flight: a
+  `tokio::task::spawn_blocking` task that is still running holds the clock.
+  `tests/reliability_tests.rs` (`hold_clock`) releases it once the mock
+  server has the request, which keeps the client's real defaults.
+
+```rust,no_run
+use genai_rs::Client;
+use std::time::Duration;
+
+# fn mock_client(mock_server_url: &str) -> Result<Client, genai_rs::GenaiError> {
+let client = Client::builder("test-key".to_string())
+    .with_base_url(mock_server_url)
+    .with_connect_timeout(Duration::MAX) // no timer for a paused clock to fire
+    .build()?;
+# Ok(client)
+# }
+```
 
 ### Why only a connect timeout by default
 
@@ -242,7 +276,10 @@ default, polling every 2 s and 500 ms):
 - The deadline error is `Internal`, so `is_retryable()` is false: the
   resource may still be processing, and whether to wait again is yours.
 
-The wait runs on tokio time, so a test can drive it with a paused clock.
+The wait runs on tokio time. Against a server on a paused clock, though,
+its deadline is a timer that tokio's auto-advance fires while the status
+request is in flight, so test it in real time with a short interval; see
+[Tests on a paused clock](#tests-on-a-paused-clock).
 
 ## Cancellation
 

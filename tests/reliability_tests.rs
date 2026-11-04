@@ -149,6 +149,35 @@ async fn default_client_waits_an_hour_between_stream_events() {
     gate.await.unwrap();
 }
 
+/// The documented way to test against a local server on a paused clock
+/// without holding it: `Duration::MAX` turns the connect timeout off, so no
+/// timer is armed while the connect is in flight. (With the default, auto-
+/// advance fires the 30 s timeout first on most runs.)
+#[tokio::test(start_paused = true)]
+async fn paused_clock_requests_succeed_with_the_connect_timeout_off() {
+    for attempt in 0..20 {
+        let stub = Stub::replying(vec![Reply::json(
+            200,
+            json!({"id": "int-1", "status": "completed"}),
+        )])
+        .await;
+        let client = genai_rs::Client::builder("test-key".to_string())
+            .with_base_url(&stub.base_url)
+            .with_connect_timeout(Duration::MAX)
+            .build()
+            .unwrap();
+        let start = tokio::time::Instant::now();
+        let result = client
+            .interaction()
+            .with_model("test-model")
+            .with_text("Hi")
+            .create()
+            .await;
+        assert!(result.is_ok(), "attempt {attempt}: {result:?}");
+        assert_eq!(start.elapsed(), Duration::ZERO, "attempt {attempt}");
+    }
+}
+
 // =============================================================================
 // Cut-off streams: one error, retryable, however the body ends
 // =============================================================================

@@ -48,10 +48,7 @@ canned `Reply`s: JSON, text, SSE chunks, extra headers, or a delay.
   loop.
 - **`reliability_tests.rs`** covers the default timeouts, how a cut-off
   stream is classified, the stop at a stream's terminal event, and
-  `Retry-After` in a poll. Its paused-clock tests hold a `spawn_blocking`
-  gate until the stub has the request: tokio advances a paused clock
-  whenever the runtime is idle, even with localhost I/O in flight, and the
-  gate keeps that from firing a timer early.
+  `Retry-After` in a poll.
 - **`http_mock_resources.rs`** pins every resource endpoint on method, path
   (percent-encoding included), query and JSON body. It parses a realistic
   response, preserving `Unknown` and `extra`, and covers the wait helpers'
@@ -64,6 +61,19 @@ canned `Reply`s: JSON, text, SSE chunks, extra headers, or a delay.
 
 Prefer an offline test for anything that doesn't depend on model behavior;
 it's fast and runs on every PR.
+
+### Paused-clock tests against the stub
+
+Tokio advances a paused clock to the next timer whenever the runtime is
+idle, even with localhost I/O in flight, so any timer armed during a request
+fires early: the client's default 30 s connect timeout fails most
+paused-clock requests to the stub. This applies to your own tests of code
+built on `genai-rs` too. Either build the test client with
+`with_connect_timeout(Duration::MAX)`, which arms no connect timer, and set
+no other timeout; or hold the clock with a running `spawn_blocking` task
+until the stub has the request, as `reliability_tests.rs`'s `hold_clock`
+does when a test needs the real defaults. See
+[Reliability](RELIABILITY.md#tests-on-a-paused-clock).
 
 ## Live tests
 

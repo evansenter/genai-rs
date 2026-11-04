@@ -79,6 +79,15 @@ fn with_env_inspectors(mut inspectors: Vec<Arc<dyn WireInspector>>) -> Vec<Arc<d
 /// with [`ClientBuilder::with_read_timeout`] or
 /// [`InteractionBuilder::with_timeout`](crate::InteractionBuilder::with_timeout)
 /// once you know your workload; see `docs/RELIABILITY.md`.
+///
+/// # Tests on a paused tokio clock
+///
+/// Tokio advances a paused clock to the next timer whenever the runtime is
+/// idle, even while a socket operation is in flight. The connect timeout is
+/// such a timer, so a `#[tokio::test(start_paused = true)]` request to a
+/// local mock server usually fails with a connect timeout "after 30 s" that
+/// took no real time. Turn the timeout off in those tests with
+/// `with_connect_timeout(Duration::MAX)`, which registers no timer.
 pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Builder for `Client` instances.
@@ -160,7 +169,10 @@ impl ClientBuilder {
     /// whose `is_connect()` and `is_timeout()` are true, and which
     /// [`is_retryable`](GenaiError::is_retryable).
     ///
-    /// If not set, it is [`DEFAULT_CONNECT_TIMEOUT`] (30 s).
+    /// If not set, it is [`DEFAULT_CONNECT_TIMEOUT`] (30 s). `Duration::MAX`
+    /// turns it off: the client then registers no connect timer at all,
+    /// which is what a test on a paused tokio clock against a local server
+    /// needs (see [`DEFAULT_CONNECT_TIMEOUT`]).
     ///
     /// # Example
     ///
@@ -283,8 +295,14 @@ impl ClientBuilder {
     /// The reqwest builder with this builder's timeouts applied. Split from
     /// [`build`](Self::build) so tests can add a resolver before building.
     fn reqwest_builder(&self) -> reqwest::ClientBuilder {
-        let mut builder = ReqwestClient::builder()
-            .connect_timeout(self.connect_timeout.unwrap_or(DEFAULT_CONNECT_TIMEOUT));
+        let mut builder = ReqwestClient::builder();
+
+        // `Duration::MAX` sets none. reqwest would otherwise arm a timer
+        // decades out, and a paused test clock auto-advances to any timer.
+        match self.connect_timeout.unwrap_or(DEFAULT_CONNECT_TIMEOUT) {
+            Duration::MAX => {}
+            connect_timeout => builder = builder.connect_timeout(connect_timeout),
+        }
 
         if let Some(timeout) = self.timeout {
             builder = builder.timeout(timeout);
@@ -667,6 +685,22 @@ mod tests {
             "waited {waited:?}"
         );
         assert!(err.is_timeout(), "{err:?}");
+    }
+
+    #[test]
+    fn test_connect_timeout_of_duration_max_sets_none() {
+        // reqwest's builder Debug lists a connect timeout only when one is
+        // set; with none, nothing is armed for a paused clock to fire.
+        // (`tests/reliability_tests.rs` checks the paused-clock behavior.)
+        let debug = |builder: ClientBuilder| format!("{:?}", builder.reqwest_builder());
+        let default = debug(Client::builder("k".to_string()));
+        assert!(default.contains("connect_timeout: 30s"), "{default}");
+        let long = debug(
+            Client::builder("k".to_string()).with_connect_timeout(Duration::from_secs(86_400)),
+        );
+        assert!(long.contains("connect_timeout: 86400s"), "{long}");
+        let off = debug(Client::builder("k".to_string()).with_connect_timeout(Duration::MAX));
+        assert!(!off.contains("connect_timeout"), "{off}");
     }
 
     #[test]

@@ -136,7 +136,7 @@ let client = Client::builder("api-key".to_string())
 | `ClientBuilder` method | Default | Effect |
 |------------------------|---------|--------|
 | `with_timeout(Duration)` | None | Total-request timeout for every request, **including streamed bodies**. A request-level timeout cannot extend it |
-| `with_connect_timeout(Duration)` | 30 s (`DEFAULT_CONNECT_TIMEOUT`) | Connection timeout: DNS, TCP and TLS |
+| `with_connect_timeout(Duration)` | 30 s (`DEFAULT_CONNECT_TIMEOUT`) | Connection timeout: DNS, TCP and TLS. `Duration::MAX` turns it off, for tests on a paused tokio clock ([why](RELIABILITY.md#tests-on-a-paused-clock)) |
 | `with_read_timeout(Duration)` | None | Longest wait for the headers or the next chunk, reset by each one: bounds a stalled stream without capping a long one. Set it above the longest a call thinks before answering |
 | `with_base_url(String)` | The Gemini API host | Send requests to a proxy or mock server instead of `generativelanguage.googleapis.com` |
 | `add_wire_inspector(Arc<dyn WireInspector>)` | None (`LOUD_WIRE` adds a printer) | Observe raw API traffic; see [Logging Strategy](LOGGING_STRATEGY.md#wire-inspection-api) |
