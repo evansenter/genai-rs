@@ -789,6 +789,68 @@ mod error_handling {
 }
 
 // =============================================================================
+// Unmodeled request fields (`with_extra`)
+// =============================================================================
+
+mod extra_fields {
+    use super::*;
+
+    /// An `extra` key reaches the server as a top-level field: the API
+    /// rejects a name it doesn't know (live 2026-11-04).
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_extra_field_reaches_the_wire() {
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        let result = interaction_builder(&client)
+            .with_text("Reply with the single word ok.")
+            .with_store_disabled()
+            .with_extra("genai_rs_unmodeled_probe", 1)
+            .create()
+            .await;
+
+        match result {
+            Err(GenaiError::Api {
+                status_code: 400,
+                message,
+                ..
+            }) => assert!(
+                message.contains("genai_rs_unmodeled_probe"),
+                "the 400 should name the field: {message}"
+            ),
+            other => panic!("expected a 400 for an unknown field, got: {other:?}"),
+        }
+    }
+
+    /// A key that collides with a modeled field overrides it: the body
+    /// carries both, the `extra` one last, and the API keeps the last.
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_extra_field_overrides_a_modeled_one() {
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+
+        let response = client
+            .interaction()
+            .with_model("nonexistent-model-12345")
+            .with_extra("model", genai_rs::DEFAULT_MODEL)
+            .with_text("Reply with the single word ok.")
+            .with_store_disabled()
+            .create()
+            .await
+            .expect("the extra `model` should replace the unknown one");
+
+        assert_eq!(response.status, InteractionStatus::Completed);
+        assert!(response.as_text().is_some(), "{response:?}");
+    }
+}
+
+// =============================================================================
 // Store Parameter
 // =============================================================================
 

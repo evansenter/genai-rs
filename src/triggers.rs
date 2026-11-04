@@ -118,15 +118,16 @@ pub struct Trigger {
     /// silently, so don't treat `interaction.input` as evidence of the stored
     /// prompt. [`TriggerCreateParams`]'s send side stays strict.
     ///
-    /// Two roundtrip asymmetries follow from this being an
-    /// [`InteractionRequest`]: interaction fields this crate does not model
-    /// are dropped (it has no `extra`), and a bare `[Content]` input
-    /// re-serializes as a `user_input` step.
+    /// Interaction fields this crate does not model are kept in
+    /// [`InteractionRequest::extra`] and sent back on reuse. One roundtrip
+    /// asymmetry remains: a bare `[Content]` input re-serializes as a
+    /// `user_input` step.
     ///
     /// The server normalizes what it stores (live 2026-11-01): a text input
     /// comes back as one `user_input` step, and the echo carries
-    /// `store: true` (plus `object: "interaction"`, dropped here). To reuse a
-    /// stored trigger's interaction in a new [`TriggerCreateParams`], clear
+    /// `store: true` plus `object: "interaction"` (kept in `extra`, and
+    /// accepted back on create, live 2026-11-04). To reuse a stored
+    /// trigger's interaction in a new [`TriggerCreateParams`], clear
     /// [`store`](InteractionRequest::store) first: the API rejects it on
     /// create.
     #[serde(
@@ -390,11 +391,11 @@ pub struct TriggerCreateParams {
     /// [`Trigger::interaction`] covers the nested request and the
     /// required top-level fields, not optional key spellings.
     ///
-    /// A key that collides with a modeled field **wins on serialize** via
-    /// `serde_json::to_value` — the form the request path uses — so the
-    /// escape hatch can also override a modeled field whose wire shape
-    /// turns out wrong. (`to_string` on a flattened struct emits both keys
-    /// rather than deduplicating; don't hand-serialize colliding params.)
+    /// A key that collides with a modeled field **wins**, so the escape
+    /// hatch can also override a modeled field whose wire shape turns out
+    /// wrong. The request body is written with both keys, the `extra` one
+    /// last, and the API keeps the last of a repeated key (live 2026-11-04);
+    /// `serde_json::to_value` keeps only the `extra` one.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }

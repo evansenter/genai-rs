@@ -25,6 +25,7 @@ fn test_serialize_create_interaction_request_with_model() {
         safety_settings: None,
         labels: None,
         continuation_token: None,
+        extra: serde_json::Map::new(),
     };
 
     let json = serde_json::to_string(&request).expect("Serialization failed");
@@ -558,6 +559,7 @@ fn test_create_interaction_request_with_agent_config() {
         safety_settings: None,
         labels: None,
         continuation_token: None,
+        extra: serde_json::Map::new(),
     };
 
     let json = serde_json::to_string(&request).expect("Serialization failed");
@@ -641,6 +643,7 @@ fn test_interaction_request_roundtrip() {
         safety_settings: None,
         labels: None,
         continuation_token: None,
+        extra: serde_json::Map::new(),
     };
 
     // Serialize to JSON
@@ -708,6 +711,7 @@ fn test_response_format_serializes_as_snake_case() {
         safety_settings: None,
         labels: None,
         continuation_token: None,
+        extra: serde_json::Map::new(),
     };
 
     let json = serde_json::to_string(&request).expect("Serialization failed");
@@ -926,6 +930,7 @@ fn test_request_with_webhook_config_and_environment_wire_shape() {
         safety_settings: None,
         labels: None,
         continuation_token: None,
+        extra: serde_json::Map::new(),
     };
 
     let value = serde_json::to_value(&request).unwrap();
@@ -1019,4 +1024,83 @@ fn speech_config_empty_speakers_object_yields_empty_list_not_a_null_config() {
         configs.is_empty(),
         "an empty speakers list should stay empty, not become one blank config"
     );
+}
+
+// =============================================================================
+// The `extra` escape hatch
+// =============================================================================
+
+fn text_request(model: &str) -> InteractionRequest {
+    InteractionRequest {
+        model: Some(model.to_string()),
+        input: InteractionInput::Text("Hello".to_string()),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn extra_fields_are_sent_flat_beside_the_modeled_ones() {
+    let mut request = text_request("test-model");
+    request.extra.insert(
+        "brand_new_field".to_string(),
+        serde_json::json!({"on": true}),
+    );
+
+    let body = serde_json::to_value(&request).unwrap();
+    assert_eq!(body["brand_new_field"], serde_json::json!({"on": true}));
+    assert_eq!(body["model"], "test-model");
+    assert!(body.get("extra").is_none(), "flattened, not nested: {body}");
+
+    // Empty, it adds nothing to the body.
+    let plain = serde_json::to_value(text_request("test-model")).unwrap();
+    assert_eq!(plain.as_object().unwrap().len(), 2, "{plain}");
+}
+
+#[test]
+fn a_colliding_extra_key_is_written_last_so_it_wins() {
+    // The request path writes bytes with `to_vec`, which emits both keys;
+    // the API keeps the last of a repeated key (live 2026-11-04).
+    let mut request = text_request("modeled-model");
+    request
+        .extra
+        .insert("model".to_string(), serde_json::json!("override-model"));
+
+    let bytes = String::from_utf8(serde_json::to_vec(&request).unwrap()).unwrap();
+    let modeled = bytes.find("\"modeled-model\"").expect("modeled value sent");
+    let extra = bytes.find("\"override-model\"").expect("extra value sent");
+    assert!(modeled < extra, "the extra key must come last: {bytes}");
+    // A JSON reader that keeps the last key sees the override.
+    let parsed: serde_json::Value = serde_json::from_str(&bytes).unwrap();
+    assert_eq!(parsed["model"], "override-model");
+}
+
+#[test]
+fn unknown_request_keys_deserialize_into_extra_and_round_trip() {
+    let wire = serde_json::json!({
+        "model": "test-model",
+        "input": "Hello",
+        "object": "interaction",
+        "future_knob": {"level": 3}
+    });
+    let request: InteractionRequest = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(request.extra["object"], "interaction");
+    assert_eq!(request.extra["future_knob"]["level"], 3);
+    assert_eq!(serde_json::to_value(&request).unwrap(), wire);
+}
+
+#[test]
+fn with_extra_inserts_and_replaces_per_key() {
+    let client = crate::Client::new("k".to_string());
+    let request = client
+        .interaction()
+        .with_model("test-model")
+        .with_text("Hello")
+        .with_extra("a", 1)
+        .with_extra("b", "two")
+        .with_extra("a", serde_json::json!([3]))
+        .build()
+        .unwrap();
+    assert_eq!(request.extra.len(), 2);
+    assert_eq!(request.extra["a"], serde_json::json!([3]));
+    assert_eq!(request.extra["b"], "two");
 }

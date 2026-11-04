@@ -105,6 +105,8 @@ pub struct InteractionBuilder<'a> {
     safety_settings: Option<Vec<SafetySetting>>,
     labels: Option<std::collections::BTreeMap<String, String>>,
     continuation_token: Option<String>,
+    /// Unmodeled request fields (set by `with_extra()`)
+    extra: serde_json::Map<String, serde_json::Value>,
     /// Maximum iterations for auto function calling loop
     max_function_call_loops: usize,
     /// Tool service for dependency-injected functions
@@ -137,6 +139,7 @@ impl std::fmt::Debug for InteractionBuilder<'_> {
             .field("safety_settings", &self.safety_settings)
             .field("labels", &self.labels)
             .field("continuation_token", &self.continuation_token)
+            .field("extra", &self.extra)
             .field("max_function_call_loops", &self.max_function_call_loops)
             .field("tool_service", &self.tool_service.as_ref().map(|_| "..."))
             .field("timeout", &self.timeout)
@@ -174,6 +177,7 @@ impl<'a> InteractionBuilder<'a> {
             safety_settings: None,
             labels: None,
             continuation_token: None,
+            extra: serde_json::Map::new(),
             max_function_call_loops: DEFAULT_MAX_FUNCTION_CALL_LOOPS,
             tool_service: None,
             timeout: None,
@@ -491,6 +495,7 @@ impl<'a> InteractionBuilder<'a> {
             safety_settings: self.safety_settings,
             labels: self.labels,
             continuation_token: self.continuation_token,
+            extra: self.extra,
         })
     }
 }

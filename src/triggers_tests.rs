@@ -443,14 +443,14 @@ fn live_trigger_body_parses_every_field() {
 #[test]
 fn live_trigger_body_round_trips_in_wire_form() {
     // Numbers stay numbers, and `create_time` keeps its spelling. The
-    // nested interaction's unmodeled `object` is the one key dropped.
+    // nested interaction's unmodeled `object` survives in its `extra`.
     let mut wire: serde_json::Value = serde_json::from_str(LIVE_TRIGGER).unwrap();
     let trigger: Trigger = serde_json::from_value(wire.clone()).unwrap();
     let mut back = serde_json::to_value(&trigger).unwrap();
-    wire["interaction"]
-        .as_object_mut()
-        .unwrap()
-        .remove("object");
+    assert_eq!(
+        trigger.interaction.as_ref().unwrap().extra["object"],
+        "interaction"
+    );
     // Timestamps re-serialize via chrono, which trims nothing but may
     // differ in fractional-second rendering; compare them parsed.
     for key in [
