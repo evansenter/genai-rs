@@ -51,6 +51,86 @@ pub(super) fn pre_tool_invocation(args: &protocol::PreToolArgs) -> ToolInvocatio
     }
 }
 
+/// Why a pre-tool hook request's `arguments_json` did not parse, if it is
+/// present and not JSON. Blank or absent arguments are a call with none.
+fn arguments_error(args: &protocol::PreToolArgs) -> Option<String> {
+    let raw = args.arguments_json.as_deref()?;
+    if raw.trim().is_empty() {
+        return None;
+    }
+    serde_json::from_str::<Value>(raw)
+        .err()
+        .map(|e| e.to_string())
+}
+
+/// Resolves a harness pre-tool hook request to the invocation policies and
+/// the hook should judge, or to a denial when they cannot judge it.
+///
+/// Fails closed on unparseable arguments when a pre-tool hook is set: the
+/// hook is what reads arguments (policies match names only), and a hook
+/// handed a placeholder such as `{}` would pass a path gate it should have
+/// failed. Without a hook the policies decide by name as usual, since the
+/// arguments play no part in that decision. Either way a `warn!` records
+/// the parse error.
+pub(super) fn pre_tool_gate(
+    args: &protocol::PreToolArgs,
+    has_hook: bool,
+) -> Result<ToolInvocation, PreToolDecision> {
+    let invocation = pre_tool_invocation(args);
+    let Some(error) = arguments_error(args) else {
+        return Ok(invocation);
+    };
+    if has_hook {
+        tracing::warn!(
+            "Denying '{}': its arguments did not parse ({error}), so the pre-tool hook \
+             cannot judge the call.",
+            invocation.name
+        );
+        return Err(PreToolDecision::deny(format!(
+            "Tool '{}' denied: its arguments could not be parsed ({error}), so the pre-tool \
+             hook could not check them (failing closed).",
+            invocation.name
+        )));
+    }
+    tracing::warn!(
+        "Arguments for '{}' did not parse ({error}); no pre-tool hook is set, so the \
+         name-based policies decide.",
+        invocation.name
+    );
+    Ok(invocation)
+}
+
+/// Decodes a custom tool call's arguments: `argumentsJson` when it parses,
+/// else the harness's `genai.Struct` encoding in `arguments`.
+///
+/// An error when neither decodes, so the tool is never run on a
+/// placeholder: the caller answers the call with the error instead. Absent
+/// arguments are an empty object.
+pub(super) fn tool_call_arguments(call: &protocol::ToolCall) -> Result<Value, String> {
+    let structured = || call.arguments.as_ref().map(protocol::decode_genai_struct);
+    match call
+        .arguments_json
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        Some(raw) => match serde_json::from_str(raw) {
+            Ok(value) => Ok(value),
+            // `arguments` is the harness's `genai.Struct` encoding, not
+            // plain JSON: handing it over raw gave the tool
+            // `{"fields": [{"name": .., "value": {"stringValue": ..}}]}`.
+            Err(e) => match structured() {
+                Some(Some(value)) => Ok(value),
+                _ => Err(format!("argumentsJson is not JSON ({e})")),
+            },
+        },
+        None => match structured() {
+            Some(Some(value)) => Ok(value),
+            Some(None) => Err("arguments are in an encoding this client does not know".into()),
+            None => Ok(Value::Object(Default::default())),
+        },
+    }
+}
+
 // =============================================================================
 // Tool-confirmation decision
 // =============================================================================
