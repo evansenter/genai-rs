@@ -23,8 +23,9 @@ use genai_rs::{
     CredentialUpdate, DeepResearchConfig, EnvVar, EnvironmentSource, FileUpload, GenerationConfig,
     HarmCategory, InjectionLocation, InteractionInput, InteractionRequest, NetworkConfig,
     RemoteEnvironment, ResponseFormat, ResponseFormatSpec, RevocationBehavior, SafetySetting,
-    SafetyThreshold, SpeechConfig, ThinkingLevel, Tool, TriggerCreateParams, TriggerStatus,
-    TriggerUpdate, VoiceAudio, Webhook, WebhookConfig, WebhookEvent, WebhookState, WebhookUpdate,
+    SafetyThreshold, SigningSecret, SpeechConfig, ThinkingLevel, Tool, TriggerCreateParams,
+    TriggerStatus, TriggerUpdate, VoiceAudio, Webhook, WebhookConfig, WebhookEvent, WebhookState,
+    WebhookUpdate,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -188,15 +189,22 @@ async fn every_request_body_a_verb_sends_fits_its_binding_class() {
         .execute(interaction(true))
         .await
         .expect("agent interaction");
+    // A webhook read back from the API carries the output-only fields, which
+    // the create body (the bindings' WebhookInput) does not take.
+    let mut webhook = Webhook::new(
+        "https://example.com/hook",
+        vec![WebhookEvent::InteractionCompleted],
+    )
+    .with_name("hook");
+    webhook.id = Some("wh-1".into());
+    webhook.state = Some(WebhookState::Enabled);
+    webhook.signing_secrets = Some(vec![SigningSecret::default()]);
+    webhook.new_signing_secret = Some("secret".into());
+    webhook.create_time = Some(chrono::DateTime::UNIX_EPOCH);
+    webhook.update_time = Some(chrono::DateTime::UNIX_EPOCH);
     client
         .webhooks()
-        .create(
-            &Webhook::new(
-                "https://example.com/hook",
-                vec![WebhookEvent::InteractionCompleted],
-            )
-            .with_name("hook"),
-        )
+        .create(&webhook)
         .await
         .expect("webhooks.create");
     client

@@ -233,7 +233,8 @@ checks on it:
   response formats, the environment, and every resource's create and update
   body) is built fully populated as struct literals with no
   `..Default::default()`, so a new field does not compile until it is
-  populated, plus proptest samples for the union arms and enum values. Every
+  populated (the agent configs, whose fields are private, through every
+  builder), plus proptest samples for the union arms and enum values. Every
   key it serializes to, at every depth, must exist on the binding class it
   is sent as, and every required key must be sent. A value carrying a
   union arm's tag is held to that arm, so a free-form arm (`ResponseFormat`'s

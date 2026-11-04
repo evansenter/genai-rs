@@ -1459,7 +1459,7 @@ fn arb_function_parameters() -> impl Strategy<Value = FunctionParameters> {
         })
 }
 
-pub(crate) fn arb_tool() -> impl Strategy<Value = Tool> {
+fn arb_tool() -> impl Strategy<Value = Tool> {
     prop_oneof![
         // Function tool
         (arb_identifier(), arb_text(), arb_function_parameters()).prop_map(

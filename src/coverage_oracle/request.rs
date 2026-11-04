@@ -2,7 +2,10 @@
 //!
 //! Each request type is serialized fully populated, as struct literals with
 //! no `..Default::default()`, so a field added to one of these structs fails
-//! to compile here until it is populated and checked. Samples from the
+//! to compile here until it is populated and checked. (The agent configs keep
+//! their fields private, so they are built with every builder instead; a
+//! binding field none of them sets still fails the reverse test below.)
+//! Samples from the
 //! proptest strategies add the union arms and enum values the literals do not
 //! reach. Each value is walked, recursively and path by path, against the
 //! google-genai binding class it is sent as (rank 1, D-004; the spec lags
@@ -29,6 +32,7 @@ use crate::environments::{
     NetworkConfig, RemoteEnvironment, SourceType,
 };
 use crate::file_search_stores::CreateFileSearchStoreRequest;
+use crate::http::webhooks::WebhookInput;
 use crate::proptest_tests as strategies;
 use crate::request::{
     AgentConfig, AntigravityConfig, DeepResearchConfig, DynamicConfig, GenerationConfig,
@@ -50,7 +54,9 @@ use crate::triggers::{TriggerCreateParams, TriggerStatus, TriggerUpdate};
 use crate::voices::{
     CreateVoiceRequest, PromptedVoice, ReplicatedVoice, VoiceAudio, VoiceSpec, VoiceType,
 };
-use crate::webhooks::{Webhook, WebhookConfig, WebhookEvent, WebhookState, WebhookUpdate};
+use crate::webhooks::{
+    SigningSecret, Webhook, WebhookConfig, WebhookEvent, WebhookState, WebhookUpdate,
+};
 
 /// Keys the crate sends that a class lacks, each on purpose.
 const ALLOWED: &[Allowed] = &[
@@ -825,6 +831,8 @@ fn agent_requests() -> Vec<InteractionRequest> {
         .collect()
 }
 
+/// What `Webhooks::create` sends for a fully populated [`Webhook`]: the
+/// output-only fields stay off the wire.
 fn webhooks() -> Vec<Value> {
     let webhook = Webhook {
         uri: "https://example.com/hook".into(),
@@ -834,17 +842,15 @@ fn webhooks() -> Vec<Value> {
             WebhookEvent::VideoGenerated,
         ],
         name: Some("hook".into()),
-        // Output-only fields: not sent on create (`Webhooks::create` serializes
-        // the value as given, so a caller could set them; the API ignores them).
-        id: None,
-        state: None,
-        signing_secrets: None,
-        new_signing_secret: None,
-        create_time: None,
-        update_time: None,
+        id: Some("wh-1".into()),
+        state: Some(WebhookState::Enabled),
+        signing_secrets: Some(vec![SigningSecret::default()]),
+        new_signing_secret: Some("secret".into()),
+        create_time: Some(chrono::DateTime::UNIX_EPOCH),
+        update_time: Some(chrono::DateTime::UNIX_EPOCH),
         extra: serde_json::Map::new(),
     };
-    vec![to_value(&webhook)]
+    vec![to_value(&WebhookInput::from(&webhook))]
 }
 
 fn webhook_updates() -> Vec<Value> {
