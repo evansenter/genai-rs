@@ -889,7 +889,7 @@ fn agents() -> Vec<Value> {
         .map(|base_environment| {
             to_value(&Agent {
                 id: Some("my-agent".into()),
-                base_agent: Some("antigravity-preview-09-2026".into()),
+                base_agent: Some(crate::DEFAULT_ANTIGRAVITY_AGENT.into()),
                 system_instruction: Some("be brief".into()),
                 description: Some("d".into()),
                 tools: Some(vec![
