@@ -15,11 +15,13 @@ use crate::steps::Step;
 use crate::tools::Tool;
 use crate::wire_enum::wire_enum;
 
+mod mcp;
 mod step_summary;
 mod tool_steps;
 mod usage;
 mod views;
 
+pub use mcp::McpCallInfo;
 pub use step_summary::StepSummary;
 pub use usage::{GroundingToolCount, ModalityTokens, UsageMetadata};
 pub use views::{

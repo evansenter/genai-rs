@@ -217,8 +217,8 @@ pub mod response;
 pub use response::{
     AudioInfo, CodeExecutionCallInfo, CodeExecutionResultInfo, FunctionCallInfo,
     FunctionResultInfo, GoogleMapsResultInfo, GroundingToolCount, ImageInfo, InteractionError,
-    InteractionResponse, InteractionStatus, ModalityTokens, OwnedFunctionCallInfo, StepSummary,
-    ToolCallInfo, UrlContextResultInfo, UsageMetadata,
+    InteractionResponse, InteractionStatus, McpCallInfo, ModalityTokens, OwnedFunctionCallInfo,
+    StepSummary, ToolCallInfo, UrlContextResultInfo, UsageMetadata,
 };
 
 // Tool types (function declarations, built-in tools)

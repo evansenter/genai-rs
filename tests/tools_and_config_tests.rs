@@ -553,18 +553,41 @@ mod mcp_server {
             response.status
         );
 
+        // Since 2026-10-01 each MCP call is an answered `function_call` named
+        // `deepwiki:<tool>`, and `mcp_calls()` recovers the server and tool
+        // from it (#459, re-verified 2026-11-04). Every such call must come
+        // back as one, naming the server this request declared.
+        let mcp_calls = response.mcp_calls();
+        for call in &mcp_calls {
+            assert_eq!(
+                call.server, "deepwiki",
+                "MCP call names its server: {call:?}"
+            );
+            assert!(!call.tool.is_empty(), "MCP call names its tool: {call:?}");
+            assert!(
+                call.result.is_some(),
+                "MCP call carries its result: {call:?}"
+            );
+        }
+        let prefixed = response
+            .function_calls()
+            .iter()
+            .filter(|call| call.name.starts_with("deepwiki:"))
+            .count();
+        assert_eq!(
+            mcp_calls.len(),
+            prefixed,
+            "every `deepwiki:` call should read back as an MCP call; steps {step_types:?}"
+        );
+
         // Tool-use tokens are non-zero only if the server was called; the
         // declaration alone costs none (measured 2026-08-16). MCP calls came
-        // back as `tool_call` steps, and since 2026-10-01 as answered
-        // `function_call` steps named `deepwiki:<tool>`.
+        // back as `tool_call` steps before 2026-10-01.
         let tool_tokens = response.tool_use_tokens().unwrap_or(0);
         let called = tool_tokens > 0
+            || !mcp_calls.is_empty()
             || step_types.contains(&"tool_call")
-            || step_types.contains(&"mcp_server_tool_call")
-            || response
-                .function_calls()
-                .iter()
-                .any(|call| call.name.starts_with("deepwiki:"));
+            || step_types.contains(&"mcp_server_tool_call");
         if !called {
             println!(
                 "LIVE_TOOL_EVIDENCE_SKIPPED: the interaction completed but shows no \
