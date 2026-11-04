@@ -223,10 +223,10 @@ snapshot of the API surface in `tests/fixtures/api_surface/`:
 | `bindings.json` | google-genai's generated classes, every type reference resolved, plus the Files, File Search Store and Document classes from its `types.py` (camelCase on the wire), and its endpoints. The version is the one in `.github/last-swept-sdk-version` | `dump_bindings_schema.py --json` |
 | `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose, fetched 2026-11-01 (the published URL now 404s) | `snapshot_openapi.py` |
 
-`tests/api_surface/mod.rs` loads either source into one type model. The
+`tests/api_surface/` loads either source into one type model. The
 checks on it:
 
-- **Request keys** (`src/coverage_oracle/request.rs`,
+- **Request keys** (`src/coverage_oracle/request/`,
   `request_wire_keys_exist_in_bindings`). Each request type
   (the interaction body in its model and agent forms, `GenerationConfig`,
   every `Tool`, `SafetySetting`, every `AgentConfig`, `SpeechConfig`, the
