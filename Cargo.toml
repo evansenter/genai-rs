@@ -144,6 +144,10 @@ antigravity = [
 name = "antigravity_harness"
 required-features = ["antigravity"]
 
+[[test]]
+name = "antigravity_scripted"
+required-features = ["antigravity"]
+
 # Antigravity harness examples (examples/antigravity/). Grouped in their own
 # directory the way src/antigravity/ is: every one needs the feature and the
 # localharness binary, which is a different setup story from the rest.
