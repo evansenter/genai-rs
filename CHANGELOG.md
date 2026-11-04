@@ -5,6 +5,107 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `InteractionRequest::extra` and `InteractionBuilder::add_extra(key, value)`
+  send a request field the crate doesn't model yet, flat beside the modeled
+  ones, as `TriggerCreateParams::extra` already allowed. A repeated key
+  replaces its value, as with `add_label`. The server validates the field
+  like any other: an unknown name is `400 Unknown parameter '<name>'`. A key
+  that names a modeled field overrides it, since the API keeps the last of a
+  repeated key (both verified live 2026-11-04). A stored
+  `Trigger::interaction` now keeps the interaction fields the crate doesn't
+  model, such as `object: "interaction"`, which the API accepts back on
+  create (verified live 2026-11-04).
+- `DEFAULT_CONNECT_TIMEOUT` (30 s), the connect timeout every client now
+  gets; see Changed. `with_connect_timeout(Duration::MAX)` turns it off,
+  with no timer at all, for tests on a paused tokio clock. A `Client`'s
+  `Debug` output shows its connect timeout, which reqwest's does not.
+
+### Changed
+
+- **Breaking: a cut-off stream ends with the new
+  `GenaiError::StreamInterrupted`, which is retryable.** It covers every way
+  the connection can end a stream body before `interaction.completed` or an
+  error event. A close between events was `MalformedResponse` in 0.13.0. A
+  close in the middle of an event was a non-retryable `Parse` or `Utf8`. A
+  transport failure mid-body (a reset, the client's read or total timeout
+  between chunks, a decode error) was `Http`; that `reqwest::Error` is now
+  its `source`. One event used to be classified two ways depending on how
+  the peer closed; `is_retryable()` explains the choice. A failure before
+  the response headers is still `Http`, and a stream stopped by the
+  request-level `InteractionBuilder::with_timeout` is still `Timeout`.
+  Migration: match `GenaiError::StreamInterrupted { .. }` where you matched
+  `MalformedResponse` for a cut-off stream. Match
+  `StreamInterrupted { source: Some(e), .. } if e.is_timeout()` where you
+  matched `Http(e) if e.is_timeout()` for a stream stalled by
+  `ClientBuilder::with_read_timeout` or `ClientBuilder::with_timeout`. A
+  retry loop built on `is_retryable()` now also retries a clean early close.
+  Discard the partial output first, because a foreground retry is a new
+  generation.
+- **Breaking: `Client::new` and `ClientBuilder::build` set a 30 s connect
+  timeout.** `DEFAULT_CONNECT_TIMEOUT` covers DNS, TCP and TLS. Before,
+  there was none, so a black-holed route waited for the OS's timeout (about
+  75 s on macOS, 127 s on Linux). There is still no default read or total
+  timeout: a non-streaming response's headers arrive only after generation
+  finishes, so any such default would cut off long legitimate requests
+  (reasoning in `docs/RELIABILITY.md`). Migration: call
+  `with_connect_timeout(..)` for a different value. Tests on a paused tokio
+  clock (`#[tokio::test(start_paused = true)]`) that send a real request to
+  a local mock server now usually fail with this timeout "after 30 s",
+  because tokio auto-advances to it while the connect is in flight. Build
+  that test's client with `with_connect_timeout(Duration::MAX)`, which arms
+  no timer (see "Tests on a paused clock" in `docs/RELIABILITY.md`).
+- **Breaking: `InteractionRequest` has a new public field, `extra`.**
+  Migration: a struct literal needs `extra: Default::default()`, or
+  `..Default::default()`; `client.interaction()...build()` is unaffected.
+- **Breaking: a `wait_until_active` timeout shorter than one status
+  request's round trip now always fails.** Each status request used to get
+  at least a second, so a zero timeout read the state once. Now the first
+  request is cut off at the deadline like any other, and the error says the
+  wait's deadline cut it off rather than that it failed. Migration: to read
+  the state once, call `files().get(name)` or
+  `file_search_stores().documents().get(name)` instead.
+- `wait_until_active` (files and file-search documents):
+  - It honors the `Retry-After` of a 429 it polls through, and gives up at
+    once when that falls past the deadline.
+  - It never runs past its deadline: a status request is cut off at the
+    deadline, and a poll that would start past it is not made.
+  - It runs on tokio time instead of `std::time`. Against a real server on a
+    paused test clock, its deadline is a timer that auto-advance fires while
+    a status request is in flight, so hold the clock for each request (see
+    "Tests on a paused clock" in `docs/RELIABILITY.md`).
+  - The first status request is always made, so an invalid name is reported
+    even with a zero timeout.
+- A stream ends at its first terminal event (`Completed` or `Error`) and
+  reads nothing after it. A late error, such as a reset while the server
+  closes, no longer follows a finished interaction or fails a finished
+  auto-function round. The API sends only `event: done` / `data: [DONE]`
+  after `interaction.completed` (verified live 2026-11-04).
+- A successful streaming response whose `Content-Type` is not
+  `text/event-stream` (a captive portal's page, a plain JSON interaction)
+  fails at once with `MalformedResponse` and a preview of the body. The API
+  answers `text/event-stream` (verified live 2026-11-04).
+- One SSE event may hold up to 64 MiB. Past that, the stream fails with
+  `GenaiError::Parse`; before, a body that never sent a newline was buffered
+  without bound. The largest real events, measured live 2026-11-04 on
+  `DEFAULT_IMAGE_MODEL` at `image_size: "4K"`, are a 16.0 MB `image` delta
+  and a 15.7 MB `thought_signature` delta; TTS audio deltas are under 8 KB.
+
+### Fixed
+
+- An unknown `StreamChunk` whose type was spelled like a known `chunk_type`
+  (`created`, `step_delta`, ...) read back as that known chunk after
+  serializing. It now carries `"unknown": true` and stays unknown; chunks
+  serialized by 0.13.0 read back as before (`docs/ENUM_WIRE_FORMATS.md`).
+  Found by the new fuzz targets.
+- The `TriggerCreateParams::extra` docs said a colliding key wins because
+  the request path uses `serde_json::to_value`. In fact the body carries
+  both keys, with the `extra` one last, and it wins because the API keeps
+  the last of a repeated key (verified live 2026-11-04).
+
 ## [0.13.0] - 2026-11-03
 
 Tracks the Interactions API as of `google-genai` 2.34.0 (swept 2026-11-01,
