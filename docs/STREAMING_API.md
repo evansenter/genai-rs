@@ -70,10 +70,20 @@ falls back to the event's `metadata.total_usage`, then to the last cumulative
 `response.usage` work on `Completed` exactly as they do after `create()`.
 Accumulate deltas yourself only for live display.
 
+Each streamed image arrives whole in one `image` delta that names its
+`mime_type` (verified 2026-11-04, `gemini-3.1-flash-image`), so each becomes
+its own `Content::Image` block, two images in one step included. Audio,
+video and document data deltas concatenate into the last block of their
+kind. Fields a delta carries that the crate does not model land in the
+`extra` map of the block or step it builds, so the assembled steps replay as
+history exactly as a non-streamed response's would.
+
 ### Step deltas
 
 `StepDelta` (exported at the crate root, `#[non_exhaustive]`) is tagged on the
-wire by `type`:
+wire by `type`. Every known variant also has an `extra` map of unmodeled
+fields (`delta.extra()`), and the call deltas an `arguments_extra`; match with
+`..`:
 
 | Variant | Wire `type` | Payload |
 |---------|-------------|---------|

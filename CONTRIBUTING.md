@@ -81,6 +81,9 @@ When adding or changing an enum or request/response field:
 - [ ] Add an `Unknown` variant with all three helpers — `is_unknown()`,
       `unknown_<context>_type()`, `unknown_data()` (D-001)
 - [ ] Round-trip test: unknown data survives deserialize → serialize
+- [ ] A new `Step`, `StepDelta`, `Content` or `Annotation` variant gets an
+      `extra` field, an arm in its `src/proptest_tests.rs` strategy and an
+      ordinal in `src/proptest_unknown_fields.rs`
 - [ ] Update `docs/ENUM_WIRE_FORMATS.md` with the **verified** format and
       the date it was verified
 - [ ] Use snake_case on the wire; if the API accepts both spellings, send

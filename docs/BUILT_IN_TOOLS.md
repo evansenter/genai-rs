@@ -396,18 +396,33 @@ For a restriction with a mode, pass `AllowedTools` entries to
 `AllowedTools::new(vec!["read_file".into()]).with_mode(FunctionCallingMode::Auto)`.
 
 **MCP calls arrive as answered `function_call` / `function_result` steps.**
-Since 2026-10-01 (re-verified 2026-11-01) the API runs each MCP call
-server-side and returns both steps in the same response, with the call named
-`<server>:<tool>` (for example `deepwiki:read_wiki_structure`).
-`response.function_calls()` includes them, and `pending_function_calls()`
-leaves them out, so the auto-function loops don't try to run them. Before
-that (verified 2026-08-16) they arrived as generic `Step::ToolCall { id,
-signature }` steps, which `tool_calls()` and `step_summary().tool_call_count`
-still count. `Step::McpServerToolCall` / `McpServerToolResult` have never
-been observed (#459).
+Since 2026-10-01 (re-verified 2026-11-04, streamed and not) the API runs each
+MCP call server-side and returns both steps in the same response, with the
+call named `<server>:<tool>`, where `<server>` is the name you gave
+`McpServerConfig` (for example `deepwiki:read_wiki_structure`).
+`response.mcp_calls()` reads them back with the server, tool, arguments and
+result separated:
+
+```rust,ignore
+for call in response.mcp_calls() {
+    println!("{}/{} -> {:?}", call.server, call.tool, call.result);
+}
+```
+
+It counts a `<server>:<tool>` call only when its result is in the same
+response, because a function you declare may contain a colon too (the API
+accepted `weather:get` on 2026-11-04). `response.function_calls()` includes
+MCP calls, and `pending_function_calls()` leaves them out, so the
+auto-function loops don't try to run them. Before 2026-10-01 (verified
+2026-08-16) they arrived as generic `Step::ToolCall { id, signature, .. }`
+steps that name neither server nor tool, which `tool_calls()` and
+`step_summary().tool_call_count` still count. `Step::McpServerToolCall` /
+`McpServerToolResult` have never been observed; `mcp_calls()` reads them
+too, should they appear (#459).
 
 An MCP interaction can end in `RequiresAction` even after every call was
-answered (a server bug, #473). Treat `RequiresAction` with an empty
+answered (a server bug, #473; not reproduced in three MCP interactions on
+2026-11-04, which all ended `Completed`). Treat `RequiresAction` with an empty
 `pending_function_calls()` and a text answer as finished.
 
 ## Combining Tools
@@ -463,6 +478,7 @@ let result = client
 | `has_google_maps_results()` | Google Maps | `bool` |
 | `google_maps_results()` | Google Maps | `Vec<GoogleMapsResultInfo>` |
 | `function_calls()` | MCP (`<server>:<tool>`) and your functions | `Vec<FunctionCallInfo>` |
+| `mcp_calls()` | MCP, with server and tool split out | `Vec<McpCallInfo>` |
 | `has_tool_calls()` | Generic server-side tools (MCP before 2026-10) | `bool` |
 | `tool_calls()` | Generic server-side tools (MCP before 2026-10) | `Vec<ToolCallInfo>` |
 | `has_annotations()` | Any grounded | `bool` |

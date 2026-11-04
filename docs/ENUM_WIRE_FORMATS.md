@@ -92,6 +92,38 @@ Every type above also has `is_unknown()`, `unknown_<context>_type()` and
 `StepDelta`, `StreamChunk`, ...) are unaffected. The CI `test-strict-unknown`
 job runs this configuration.
 
+### Unknown fields on known variants
+
+An unknown *field* on a known type round-trips too (#491). Every known
+variant of `Step`, `StepDelta`, `Content` and `Annotation` has an `extra`
+map holding the keys it does not model, read with `extra()` (and
+`extra_mut()` on `Step` and `Content`). The call steps and deltas that
+flatten a nested `arguments` object (`code_execution_call`,
+`url_context_call`, `google_search_call`, `google_maps_call`,
+`retrieval_call`) keep its other keys in `arguments_extra`, merged back into
+`arguments` on serialize. The result items (`GoogleSearchResultItem`,
+`UrlContextResultItem`, `GoogleMapsResultItem`, `FileSearchResultItem`),
+`Place`, `ReviewSnippet`, `StepError` and `VideoProcessing::StaticSegment`
+keep theirs in a flattened `extra` field. So a field the API adds survives
+stateless history replay before the crate models it, which is how
+`signature` once broke replay.
+
+- Serializing writes the modeled fields first, then `extra`. An `extra`
+  entry named `type` or after one of the variant's modeled fields is never
+  written, so a hand-built map cannot retag a value or shadow a field.
+- A known type whose modeled field is malformed becomes `Unknown`, which
+  keeps the whole object. That was already so for a missing `id` or a
+  mistyped `signature`. A non-object `arguments`, a non-string in `urls` or
+  `queries`, and a mistyped `fps` on a static video segment used to be read
+  leniently, dropping the bad value.
+- `strict-unknown` does not apply to fields: an unknown field is kept in
+  `extra` in both configurations.
+- `src/proptest_unknown_fields.rs` injects an unknown key into every object,
+  at every depth, of random values of every known variant (an exhaustive
+  ordinal match checks the strategies reach them all), and
+  `tests/round_trip_fidelity_tests.rs` does the same over one wire fixture
+  per step type.
+
 ## Quick reference
 
 | Type | Wire format | Example | Status and notes |
@@ -195,8 +227,8 @@ fields, and the `function_call` `signature`) were verified live 2026-07.
 | `google_search_call` | `GoogleSearchCall` | `{"id", "arguments": {"queries": [...]}, "search_type"?, "signature"?}` |
 | `google_search_result` | `GoogleSearchResult` | `{"call_id", "result": [GoogleSearchResultItem], "is_error"?, "signature"?}` |
 | `tool_call` | `ToolCall` | `{"id", "signature"?}`. What MCP calls arrived as on 2026-08-16; since 2026-10-01 they arrive as answered `function_call` pairs |
-| `mcp_server_tool_call` | `McpServerToolCall` | `{"id", "name", "server_name", "arguments"}`. Spec-only, never observed |
-| `mcp_server_tool_result` | `McpServerToolResult` | `{"call_id", "name"?, "server_name"?, "result"}`. Spec-only, never observed |
+| `mcp_server_tool_call` | `McpServerToolCall` | `{"id", "name", "server_name", "arguments"}`, as in the google-genai 2.34.0 bindings. Spec-only, never observed (last checked 2026-11-04) |
+| `mcp_server_tool_result` | `McpServerToolResult` | `{"call_id", "name"?, "server_name"?, "result"}`, as in the 2.34.0 bindings. Spec-only, never observed (last checked 2026-11-04) |
 | `file_search_call` | `FileSearchCall` | `{"id", "signature"?}` |
 | `file_search_result` | `FileSearchResult` | `{"call_id", "result": [FileSearchResultItem], "signature"?}`. `result` (items with `title`, `text`, `file_search_store`) is spec-only and never populated (see [File Search](#file-search)) |
 | `google_maps_call` | `GoogleMapsCall` | `{"id", "arguments": {"queries": [...]}, "signature"?}` |
@@ -207,13 +239,30 @@ fields, and the `function_call` `signature`) were verified live 2026-07.
 | `retrieval_result` | `RetrievalResult` | `{"call_id", "is_error"?, "signature"?}`. Vertex-only |
 | anything else | `Unknown { step_type, data }` | Round-trips losslessly |
 
-`function_call` (and, per spec, `mcp_server_tool_call`) keep arguments at the
-top level. The built-in tool calls nest theirs in `arguments`, and the crate
-flattens them into `urls`, `queries`, `language` and `code`.
+`function_call` (and, per spec, `mcp_server_tool_call`) keep arguments raw.
+The built-in tool calls nest theirs in `arguments`, and the crate flattens
+them into `urls`, `queries`, `language` and `code`; any other key of
+`arguments` is kept in `arguments_extra` (see
+[Unknown fields on known variants](#unknown-fields-on-known-variants)).
 
-**Superseded 2026-10-01**: MCP calls now arrive as answered `function_call` /
-`function_result` steps named `<server>:<tool>` (see
-`docs/INTERACTIONS_API_GAP.md`). What follows is the 2026-08-16 shape.
+**MCP identity (#459).** Since 2026-10-01 MCP calls arrive as answered
+`function_call` / `function_result` steps named `<server>:<tool>` (see
+`docs/INTERACTIONS_API_GAP.md`). Re-verified live 2026-11-04 on
+`gemini-3.8-flash`, streamed and not: with the tool declared as
+`{"type": "mcp_server", "name": "wikiprobe", ...}`, the call was named
+`wikiprobe:read_wiki_structure`, so `<server>` is the declared name. The
+result is an object with the tool's text under `result` and the raw MCP
+`CallToolResult` as a JSON string under `call_tool_result_json`; the step's
+own `is_error` was `false` while that JSON said `"isError": true`. Streamed,
+the call arrives as `step.start` (`arguments: {}`) plus `arguments_delta`, and
+the result as `step.start` (no `result`) plus a `function_result` delta; no
+`mcp_server_tool_*` step or delta appeared. A client function may also
+contain a colon (the API accepted a declared `weather:get` the same day), so
+`InteractionResponse::mcp_calls()` returns a `<server>:<tool>` call only when
+the response also carries its result, and reads the spec's
+`mcp_server_tool_call` / `mcp_server_tool_result` pair too.
+
+What follows is the 2026-08-16 shape.
 
 **MCP arrived as `tool_call`.** Verified live 2026-08-16 (`gemini-3.7-flash`,
 a real MCP server, successful call). The response carried a `tool_call`
@@ -231,17 +280,23 @@ Deltas build up the step that the matching `step.start` announced.
 | Wire `type` | Variant | Notes |
 |-------------|---------|-------|
 | `text` | `Text` | Text fragment |
-| `image` / `audio` / `video` / `document` | media variants | `Content` field shapes (audio also accepts legacy `rate`) |
+| `image` / `audio` / `video` / `document` | media variants | `Content` field shapes (audio also accepts legacy `rate`). Each streamed image arrived whole in one `image` delta with its `mime_type` and a complete base64 JPEG (live 2026-11-04, `gemini-3.1-flash-image`), so an image delta with a `mime_type` or `uri` starts a new block and only a bare `data` fragment continues the last one. Audio, video and document data deltas, never captured streamed, still concatenate into the last block of their kind |
 | `thought_summary` | `ThoughtSummary` | `{"content": Content}` |
 | `thought_signature` | `ThoughtSignature` | `{"signature": "..."}` |
 | `text_annotation_delta` | `TextAnnotation` | **Tag differs from the variant name.** `{"annotations": [Annotation]}` |
 | `arguments_delta` | `ArgumentsDelta` | `{"arguments": "<raw JSON fragment>"}`, concatenated and parsed at `step.stop` |
 | `function_result` | `FunctionResult` | `call_id` is optional (dropped from the 2.25 bindings); the accumulator keeps the one from `step.start` |
-| `code_execution_*`, `url_context_*`, `google_search_*`, `file_search_*`, `google_maps_*`, `mcp_server_tool_*` | matching variants | Call deltas carry the flattened fields |
+| `code_execution_*`, `url_context_*`, `google_search_*`, `file_search_*`, `google_maps_*`, `mcp_server_tool_*` | matching variants | Call deltas carry the flattened fields, plus `arguments_extra`. `mcp_server_tool_*` never appeared in a streamed MCP interaction (2026-11-04) |
 | `processing_call` / `processing_result` | processing variants | `{"signature": "..."}`. `step.start` announces `signature: ""`; the value arrives only here (live 2026-09-24) |
 | `retrieval_call` / `retrieval_result` | retrieval variants | Vertex-only |
 | `tool_call` | *(none)* | Never observed as a delta: `tool_call` arrives whole on `step.start` |
 | anything else | `Unknown { delta_type, data }` | Preserved. A `signature` on it is merged onto a same-typed `Step::Unknown` at that index, so replay keeps it |
+
+The stream accumulator puts a delta's `extra` (and `arguments_extra`) on
+what it builds: the content block for text, annotation and media deltas, the
+step for the rest. The assembled `Completed` response then round-trips them
+as a non-streamed one would. `interaction.completed` carried no `steps` in
+every stream observed on 2026-11-04, so the accumulator is what fills them.
 
 SSE event types in this revision: `interaction.created`,
 `interaction.status_update`, `step.start`, `step.delta`, `step.stop` (with
@@ -252,7 +307,8 @@ SSE event types in this revision: `interaction.created`,
 
 ### Annotation
 
-A union tagged by `"type"` (previously a single struct):
+A union tagged by `"type"` (previously a single struct). Each known variant
+keeps unmodeled fields in `extra`:
 
 | Wire `type` | Variant | Fields |
 |-------------|---------|--------|
@@ -431,7 +487,7 @@ field does not disable thinking (see [Thinking Mode](THINKING_MODE.md)).
 |---------|------------|
 | `Static` | `"static"` |
 | `Agentic` | `"agentic"` |
-| `StaticSegment { start_offset, end_offset, fps }` | `{"type": "static", "start_offset": "10.5s", "end_offset": "30s", "fps": 1.0}` |
+| `StaticSegment { start_offset, end_offset, fps, extra }` | `{"type": "static", "start_offset": "10.5s", "end_offset": "30s", "fps": 1.0}`; other keys go to `extra`, and a mistyped field makes it `Unknown` |
 | `Unknown { processing_type, data }` | The original string or object |
 
 `Static` and `StaticSegment` stay distinct, so each form round-trips as it

@@ -67,6 +67,10 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
   auto-function loops resolve it. MCP tools run server-side appear as an
   answered `function_call` / `function_result` pair named `<server>:<tool>`,
   not `tool_call` steps; `pending_function_calls()` leaves them out.
+  Re-verified 2026-11-04, streamed and not: `<server>` is the declared
+  `mcp_server` name, and `mcp_calls()` reads the pairs back with server and
+  tool split (#459). A declared client function named `weather:get` was
+  accepted the same day, so the colon alone does not mark an MCP call.
 - **Streamed multi-turn function calling failed (server bug, fixed by
   2026-11-01).** When the user turn and the turn before it were both
   streamed, the function result was rejected with `400 Please ensure that
@@ -75,7 +79,8 @@ Not in the changelog or the bindings; each reproduces with raw HTTP.
 - **An MCP interaction ends in `requires_action` (server bug, still present
   2026-11-01)** after the server has run every MCP call and produced the
   final `model_output`. `test_mcp_server_tool_round_trip` accepts that
-  status only when no call is pending.
+  status only when no call is pending. Not reproduced on 2026-11-04: three
+  MCP interactions (two non-streamed, one streamed) ended `completed`.
 - **`cancel` fails on `antigravity-preview-09-2026`** with `400 There was a
   problem processing your request` (the retired 05-2026 agent accepted it).
 - **url_context loops under a response schema (server bug, 2026-11-01).**
