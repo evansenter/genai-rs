@@ -184,7 +184,9 @@ jobs:
             echo "   same change. Do **not** add a completed-items entry for something"
             echo "   still open — a struck-through line reads as shipped, which is the"
             echo "   confusion that file's header exists to prevent."
-            echo "4. Bump \`.github/last-swept-sdk-version\` to \`$LATEST\`. That is"
+            echo "4. Bump \`.github/last-swept-sdk-version\` to \`$LATEST\` and run"
+            echo "   \`.github/scripts/regen_bindings_snapshot.sh\` in the same change"
+            echo "   (\`make test-scripts\` fails until the snapshot matches). That is"
             echo "   what closes this loop: the next run sees baseline == latest"
             echo "   and closes this issue itself, which is what clears the"
             echo "   staleness signal the tracker header points readers at."
@@ -411,3 +413,20 @@ jobs:
           gh issue comment "$EXISTING" --body-file close_comment.md
           gh issue close "$EXISTING" --reason completed
           echo "Closed issue #$EXISTING"
+
+      # The committed snapshot (.github/bindings-schema.txt) is what offline
+      # tests check wire keys against (#488). `make test-scripts` already
+      # fails when its header and the baseline disagree; this step also
+      # catches a hand-edited body, which needs the real wheel to compare
+      # against. Runs on every path, so a stale snapshot shows up as a red
+      # cron run within a day rather than at the next SDK release.
+      - name: Verify the committed bindings snapshot
+        if: always() && steps.diff.outcome == 'success'
+        run: |
+          set -euo pipefail
+          BASELINE=$(tr -d '[:space:]' < .github/last-swept-sdk-version)
+          pip download "google-genai==$BASELINE" --no-deps --only-binary=:all: -q -d snapshot-check
+          (cd snapshot-check && unzip -q ./*.whl -d x)
+          python3 .github/scripts/dump_bindings_schema.py snapshot-check/x/google/genai/_gaos > snapshot-check.schema
+          .github/scripts/check_bindings_snapshot.sh \
+            .github/bindings-schema.txt .github/last-swept-sdk-version snapshot-check.schema

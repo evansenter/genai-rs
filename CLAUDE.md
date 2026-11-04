@@ -16,7 +16,10 @@ order (D-004):
 1. **Generated bindings** — `google-genai`'s `_gaos/types/` (diff two
    releases to find new surface). The published
    [OpenAPI spec](https://ai.google.dev/static/api/interactions.openapi.json)
-   is the same surface in machine-readable form.
+   is the same surface in machine-readable form (404 as of 2026-11-04).
+   `.github/bindings-schema.txt` is the committed dump for the swept
+   baseline; regenerate it with `.github/scripts/regen_bindings_snapshot.sh`
+   whenever `.github/last-swept-sdk-version` moves.
 2. **Live probe** against `generativelanguage.googleapis.com` — what the
    Gemini endpoint actually accepts, often narrower than the bindings.
    Probe with `LOUD_WIRE=1` or curl before modeling anything.

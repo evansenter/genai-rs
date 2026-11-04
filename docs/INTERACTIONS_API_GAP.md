@@ -18,7 +18,7 @@
 | Rank | Source | Why |
 |------|--------|-----|
 | 1 | **Generated bindings**: `google-genai`'s `_gaos/types/**` and the endpoint `path=` lines in `_gaos/*.py` | Ships ahead of prose. Diff two releases to find new surface. |
-| 1b | **OpenAPI specs**: `https://ai.google.dev/static/api/interactions.openapi.json` (v1beta) and `interactions-v1.openapi.json` (v1) | Machine-readable, and agrees with the bindings where both speak; found 2026-11-01. |
+| 1b | **OpenAPI specs**: `https://ai.google.dev/static/api/interactions.openapi.json` (v1beta) and `interactions-v1.openapi.json` (v1) | Machine-readable, and agrees with the bindings where both speak; found 2026-11-01. The v1beta URL returns 404 as of 2026-11-04. |
 | 2 | **Live probes** against `generativelanguage.googleapis.com` | Ground truth, and it disagrees with rank 1 in both directions. |
 | 3 | **Prose docs**: `ai.google.dev`, and this file | Both lag. Neither is evidence of absence. |
 
