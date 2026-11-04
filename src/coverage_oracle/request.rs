@@ -1266,6 +1266,73 @@ fn request_keys_exist_on_their_binding_classes() {
     );
 }
 
+/// Renames `from` to `to` in the object at the top of `value`.
+fn rename_key(mut value: Value, from: &str, to: &str) -> Value {
+    let object = value.as_object_mut().expect("an object");
+    let moved = object.remove(from).unwrap_or_else(|| panic!("no {from:?}"));
+    object.insert(to.into(), moved);
+    value
+}
+
+/// The check catches the bugs it exists for, at every depth: SafetySetting's
+/// pre-0.12.0 `category` key, and a wrong key inside `response_format`,
+/// whose union has a free-form `Dict[str, Any]` arm that would take any
+/// object if a tagged value were not held to its tagged arm.
+#[test]
+fn wrong_request_keys_are_reported() {
+    let surface = Surface::bindings();
+    let safety = rename_key(to_value(&safety_settings()[0]), "type", "category");
+    let audio = rename_key(
+        to_value(&response_formats()[1]),
+        "sample_rate",
+        "sampleRate",
+    );
+    assert_eq!(audio["type"], "audio");
+    let mut bogus = to_value(&response_formats()[0]);
+    bogus["bogus_key"] = json!(1);
+    let mut request = to_value(&model_requests()[0]);
+    request["safety_settings"] = json!([safety]);
+    request["response_format"] = json!([audio]);
+    let cases = [
+        (
+            "interactions.SafetySetting",
+            safety.clone(),
+            "interactions.SafetySetting.category",
+        ),
+        (
+            "interactions.ResponseFormat",
+            audio.clone(),
+            "interactions.AudioResponseFormat.sampleRate",
+        ),
+        (
+            "interactions.ResponseFormat",
+            bogus,
+            "interactions.TextResponseFormat.bogus_key",
+        ),
+        (
+            "interactions.CreateModelInteraction",
+            request.clone(),
+            "interactions.SafetySetting.category",
+        ),
+        (
+            "interactions.CreateModelInteraction",
+            request,
+            "interactions.AudioResponseFormat.sampleRate",
+        ),
+    ];
+    for (class, value, site) in cases {
+        let sites: BTreeSet<String> = surface
+            .check(&surface.ty(class), &value)
+            .into_iter()
+            .map(|f| f.site)
+            .collect();
+        assert!(
+            sites.contains(site),
+            "{class}: {site} not reported; got {sites:?}"
+        );
+    }
+}
+
 /// The other direction: every field of every class a request reaches is
 /// sent by some value above, or listed in [`NOT_SENT`] with its reason.
 #[test]

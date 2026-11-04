@@ -444,9 +444,14 @@ impl Surface {
         }
     }
 
-    /// Passes if any arm fits; otherwise reports the likeliest arm's
+    /// Passes if an arm fits; otherwise reports the likeliest arm's
     /// findings: the one the value is tagged as, else one of the value's JSON
     /// shape, else the one with the fewest findings.
+    ///
+    /// A value carrying an arm's tag is checked against the tagged arms
+    /// alone. Otherwise a free-form arm (`ResponseFormat`'s
+    /// `Dict[str, Any]`) would take every object, and a wrong key on
+    /// `{"type": "audio", ...}` would pass unseen.
     fn check_union(
         &self,
         name: Option<&str>,
@@ -465,8 +470,17 @@ impl Surface {
                 message: format!("no arm of {union} is tagged {tag:?}"),
             }];
         }
+        let tagged: Vec<&Ty> = arms
+            .iter()
+            .filter(|arm| self.discriminator_matches(arm, value))
+            .collect();
+        let candidates: Vec<&Ty> = if tagged.is_empty() {
+            arms.iter().collect()
+        } else {
+            tagged
+        };
         let mut best: Option<((bool, bool, usize), Vec<Finding>)> = None;
-        for arm in arms {
+        for arm in candidates {
             let findings = self.check_at(arm, value, path, site);
             if findings.is_empty() {
                 return findings;
