@@ -88,7 +88,8 @@ pub struct Surface {
     pub aliases: BTreeMap<String, Ty>,
 }
 
-fn read_json(file: &str) -> Value {
+/// A snapshot file, parsed.
+pub fn read_json(file: &str) -> Value {
     let path = fixtures_dir().join(file);
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
@@ -102,7 +103,11 @@ fn read_json(file: &str) -> Value {
 impl Surface {
     /// `bindings.json`, the google-genai classes.
     pub fn bindings() -> Self {
-        let root = read_json("bindings.json");
+        Self::from_bindings(&read_json("bindings.json"))
+    }
+
+    /// A `bindings.json` document (the oracle's self-tests edit one).
+    pub fn from_bindings(root: &Value) -> Self {
         let version = root["sdk_version"]
             .as_str()
             .expect("sdk_version")
@@ -885,7 +890,11 @@ pub fn debug_unknown_values(debug: &str) -> Vec<String> {
     values
 }
 
-/// Every object-key path in `value`.
+/// Every object-key path (`$.steps`) and list-element path (`$.steps[0]`)
+/// in `value`. The element paths matter: a key on an object that sits
+/// directly in a list (`$.steps[0].content[0].annotations[0].title`) has an
+/// element as its parent, and a key counts as dropped only under a kept
+/// parent.
 pub fn key_paths(value: &Value) -> BTreeSet<String> {
     fn walk(v: &Value, path: &str, out: &mut BTreeSet<String>) {
         match v {
@@ -898,7 +907,9 @@ pub fn key_paths(value: &Value) -> BTreeSet<String> {
             }
             Value::Array(items) => {
                 for (i, child) in items.iter().enumerate() {
-                    walk(child, &format!("{path}[{i}]"), out);
+                    let p = format!("{path}[{i}]");
+                    out.insert(p.clone());
+                    walk(child, &p, out);
                 }
             }
             _ => {}
@@ -909,7 +920,8 @@ pub fn key_paths(value: &Value) -> BTreeSet<String> {
     out
 }
 
-/// Removes the value at a `key_paths` path; false if it is not there.
+/// Removes the value at a `key_paths` path (an object key or a list
+/// element); false if it is not there.
 pub fn remove_path(value: &mut Value, path: &str) -> bool {
     let Some(rest) = path.strip_prefix('$') else {
         return false;
@@ -959,8 +971,18 @@ pub fn remove_path(value: &mut Value, path: &str) -> bool {
             },
         };
     }
-    node.as_object_mut()
-        .is_some_and(|map| map.remove(last.as_str()).is_some())
+    match last.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        Some(index) => match (index.parse::<usize>(), node.as_array_mut()) {
+            (Ok(i), Some(items)) if i < items.len() => {
+                items.remove(i);
+                true
+            }
+            _ => false,
+        },
+        None => node
+            .as_object_mut()
+            .is_some_and(|map| map.remove(last.as_str()).is_some()),
+    }
 }
 
 /// The string value at each path, for finding where an `Unknown` came from.

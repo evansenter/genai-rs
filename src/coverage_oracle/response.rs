@@ -117,6 +117,14 @@ const GAPS: &[Allowed] = &[
     ("Agent.agent_config", UNSEEN),
     ("interactions.Environment.environment_id", UNSEEN),
     ("EnvironmentConfig.environment_id", UNSEEN),
+    (
+        "FileSearchResultDelta.result",
+        "Opaque objects in the spec (`FileSearchResult` has no properties; the \
+         bindings class has no fields). The crate reads each as \
+         `FileSearchResultItem` (`title`, `text`, `file_search_store`), which \
+         keeps no other key. Not seen filled live (src/content/results.rs, \
+         #429); WP2.",
+    ),
     // Files and File Search Stores.
     (
         "legacy.FileSearchStore.activeDocumentsCount",
@@ -448,6 +456,31 @@ fn key_path(path: &str) -> &str {
     p
 }
 
+/// The body paths a kept path stands for where the crate reshapes an
+/// `input`: a single object it keeps as a one-element list
+/// (`$.input[0].text` was `$.input.text`), and content a request re-sends
+/// wrapped in one `user_input` step (a trigger's interaction:
+/// `$.interaction.input[0].content[2]` was `$.interaction.input[2]`, or
+/// `$.interaction.input` for a single object).
+fn input_aliases(path: &str) -> Vec<String> {
+    let Some(at) = path.find(".input[0]") else {
+        return Vec::new();
+    };
+    let head = &path[..at + ".input".len()];
+    let rest = &path[at + ".input[0]".len()..];
+    let mut out = vec![format!("{head}{rest}")];
+    if let Some((index, tail)) = rest
+        .strip_prefix(".content[")
+        .and_then(|r| r.split_once(']'))
+    {
+        out.push(format!("{head}[{index}]{tail}"));
+        if index == "0" {
+            out.push(format!("{head}{tail}"));
+        }
+    }
+    out
+}
+
 fn count(items: &[String], item: &str) -> usize {
     items.iter().filter(|i| *i == item).count()
 }
@@ -553,21 +586,12 @@ fn analyze(
         }
     }
 
-    // A single object the crate keeps as a one-element list (`input`) still
-    // counts as kept.
     let mut kept = key_paths(&back);
-    // So does an `input` the crate re-sends wrapped in a `user_input` step
-    // (a trigger's interaction is a request).
-    let unwrapped: Vec<String> = kept
-        .iter()
-        .flat_map(|p| {
-            [
-                p.replace("[0]", ""),
-                p.replace(".input[0].content[0]", ".input"),
-            ]
-        })
-        .collect();
-    kept.extend(unwrapped);
+    let reshaped: Vec<String> = kept.iter().flat_map(|p| input_aliases(p)).collect();
+    kept.extend(reshaped);
+    // A key or list element counts as dropped only under a kept parent (the
+    // parent's own finding covers the rest). The parent of a key on a list
+    // element is the element (`$.steps[0]`), which `key_paths` records.
     for path in &paths {
         let parent_kept = match path.rfind(['.', '[']) {
             Some(i) => &path[..i] == "$" || kept.contains(&path[..i]),
@@ -584,14 +608,18 @@ fn analyze(
     out
 }
 
-fn findings(surface: &Surface, pick: impl Fn(&Target) -> Option<&'static str>) -> Vec<Finding> {
+fn findings(
+    surface: &Surface,
+    targets: Vec<Target>,
+    pick: impl Fn(&Target) -> Option<&'static str>,
+) -> Vec<Finding> {
     let options = SynthOptions {
         values: values(),
         ..SynthOptions::default()
     };
     let mut out = BTreeSet::new();
     let mut traced = BTreeSet::new();
-    for target in targets() {
+    for target in targets {
         let Some(class) = pick(&target) else { continue };
         let ty = surface.ty(class);
         let bodies = surface.fixtures(&ty, &options);
@@ -614,6 +642,38 @@ fn findings(surface: &Surface, pick: impl Fn(&Target) -> Option<&'static str>) -
         .collect()
 }
 
+/// A new field is reported wherever its class sits, including on an object
+/// directly inside a list that keeps no `extra` (an annotation, a search
+/// result), where serde drops it without a trace.
+#[test]
+fn a_new_field_on_a_list_element_is_reported() {
+    let mut root = super::api_surface::read_json("bindings.json");
+    let classes = [
+        "interactions.URLCitation",
+        "interactions.GoogleSearchResult",
+        "interactions.URLContextResult",
+    ];
+    for class in classes {
+        root["classes"][class]["fields"]["brand_new_field"] =
+            json!({"required": false, "type": {"kind": "str"}});
+    }
+    let surface = Surface::from_bindings(&root);
+    let step = Target {
+        name: "Step",
+        binding: Some("interactions.Step"),
+        spec: None,
+        probe: probe::<crate::steps::Step>,
+    };
+    let sites: BTreeSet<String> = findings(&surface, vec![step], |t| t.binding)
+        .into_iter()
+        .map(|f| f.site)
+        .collect();
+    for class in classes {
+        let site = format!("{class}.brand_new_field");
+        assert!(sites.contains(&site), "{site} not reported; got {sites:?}");
+    }
+}
+
 #[test]
 fn response_fields_from_the_bindings_are_modeled() {
     let surface = Surface::bindings();
@@ -623,7 +683,7 @@ fn response_fields_from_the_bindings_are_modeled() {
             surface.version
         ),
         &surface,
-        findings(&surface, |t| t.binding),
+        findings(&surface, targets(), |t| t.binding),
         &[("ALLOWED", ALLOWED), ("GAPS", GAPS)],
     );
 }
@@ -637,7 +697,7 @@ fn response_fields_from_the_spec_are_modeled() {
             surface.version
         ),
         &surface,
-        findings(&surface, |t| t.spec),
+        findings(&surface, targets(), |t| t.spec),
         &[("ALLOWED", ALLOWED), ("GAPS", GAPS)],
     );
 }
