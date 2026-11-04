@@ -302,6 +302,51 @@ async fn test_spawn_gemini_base_url_without_api_key_is_config_error() {
     assert!(message.contains("GEMINI_API_KEY"), "got: {message}");
 }
 
+#[tokio::test]
+async fn test_spawn_gemini_base_url_with_a_blank_api_key_is_config_error() {
+    // Regression: `with_api_key("")` passed an is_none() check, went on the
+    // wire as an unset key, and the harness sent its environment's
+    // GEMINI_API_KEY to the custom host (verified 2026-11-04). The usual
+    // way to get here is `env::var("X").unwrap_or_default()`.
+    for blank in ["", "   "] {
+        let err = AntigravityAgent::builder()
+            .with_api_key(blank)
+            .with_gemini_base_url("http://127.0.0.1:9")
+            .spawn()
+            .await
+            .unwrap_err();
+        let AntigravityError::Config(message) = &err else {
+            panic!("expected Config error for {blank:?}, got {err:?}");
+        };
+        assert!(message.contains("non-empty key"), "got: {message}");
+    }
+}
+
+#[tokio::test]
+async fn test_spawn_model_with_a_blank_api_key_is_config_error() {
+    let err = AntigravityAgent::builder()
+        .with_api_key("")
+        .with_model(crate::DEFAULT_MODEL)
+        .spawn()
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, AntigravityError::Config(m) if m.contains("with_api_key")),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn test_builder_blank_api_key_sends_no_models() {
+    let config = AntigravityAgent::builder()
+        .with_api_key(" ")
+        .build_harness_config(&ToolDispatcher::new(vec![], &[]));
+    assert!(
+        config.models.is_empty(),
+        "a blank key must not reach the wire as a configured model"
+    );
+}
+
 #[test]
 fn test_builder_no_api_key_sends_no_models() {
     let builder = AntigravityAgent::builder();

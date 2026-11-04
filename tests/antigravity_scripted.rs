@@ -342,6 +342,55 @@ async fn test_scripted_custom_tool_runs_and_a_policy_can_deny_it() {
 }
 
 // =============================================================================
+// A custom Gemini host gets only the configured key
+// =============================================================================
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
+async fn test_scripted_custom_host_harness_has_no_key_in_its_environment() {
+    // With a custom host the harness starts without GEMINI_API_KEY and
+    // GOOGLE_API_KEY: with them it falls back to the environment's key when
+    // the configured one is empty and sends it to that host (verified
+    // 2026-11-04). The commands it runs inherit its environment, which makes
+    // the scrub visible here. `${VAR+set}` prints "set" for a variable that
+    // is defined even when empty, as CI's GEMINI_API_KEY is.
+    let workspace = scratch_dir("agy-scripted-env");
+    let ws = workspace.path().canonicalize().unwrap();
+    let fake = FakeGemini::start(vec![
+        ModelTurn::call(
+            "run_command",
+            json!({
+                "CommandLine": "echo \"gemini=[${GEMINI_API_KEY+set}] \
+                                google=[${GOOGLE_API_KEY+set}] path=[${PATH+set}]\"",
+                "Cwd": ws.to_string_lossy(),
+                "WaitMsBeforeAsync": 5000,
+                "toolSummary": "Environment check",
+                "toolAction": "Checking"
+            }),
+        ),
+        ModelTurn::text("checked"),
+    ])
+    .await;
+    let mut agent = scripted_agent(&fake)
+        .add_workspace(ws.to_string_lossy())
+        .with_capabilities(Capabilities::read_only().enable(BuiltinTool::RunCommand))
+        .add_policy(policy::allow_all())
+        .spawn()
+        .await
+        .expect("spawn");
+    let response = agent.chat("check the environment").await.expect("turn");
+    assert_eq!(response.text(), "checked");
+    let told = function_response_text(&fake, 1);
+    assert!(
+        told.contains("path=[set]"),
+        "the command must have run with the harness's environment: {told}"
+    );
+    assert!(told.contains("gemini=[] google=[]"), "{told}");
+    agent.shutdown().await.expect("shutdown");
+}
+
+// =============================================================================
 // Workspace containment
 // =============================================================================
 
