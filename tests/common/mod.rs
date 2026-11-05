@@ -201,9 +201,9 @@ where
 // Polling Utilities
 // =============================================================================
 
-/// Polls a stored interaction until it leaves `InProgress`, returning it in
-/// whatever terminal state it reached. Unknown statuses keep polling
-/// (Evergreen). Panics on an API error or when `max_wait` elapses.
+/// Polls a stored interaction until it leaves `InProgress` or `Queued`,
+/// returning it in whatever terminal state it reached. Unknown statuses keep
+/// polling (Evergreen). Panics on an API error or when `max_wait` elapses.
 #[allow(dead_code)]
 pub async fn poll_until_done(
     client: &Client,
@@ -221,7 +221,7 @@ pub async fn poll_until_done(
             .await
             .unwrap_or_else(|e| panic!("polling {interaction_id} failed: {e:?}"));
         match response.status {
-            InteractionStatus::InProgress => {}
+            InteractionStatus::InProgress | InteractionStatus::Queued => {}
             ref status if status.is_unknown() => {
                 eprintln!("unknown status {status:?} for {interaction_id}; still polling");
             }

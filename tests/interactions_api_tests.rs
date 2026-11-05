@@ -716,10 +716,12 @@ mod generation_config {
                 !rest_text.trim().is_empty(),
                 "the continuation produced no text"
             );
-            assert!(
-                !rest_text.starts_with(first_text.trim()),
-                "the continuation restarted the answer instead of continuing it"
-            );
+            if !first_text.trim().is_empty() {
+                assert!(
+                    !rest_text.starts_with(first_text.trim()),
+                    "the continuation restarted the answer instead of continuing it"
+                );
+            }
         })
         .await;
     }
@@ -763,16 +765,21 @@ mod generation_config {
             if let Some(id) = rest.id.as_deref() {
                 let _ = client.interactions().delete(id).await;
             }
+            let first_text = first.all_text();
             let rest_text = rest.all_text();
-            println!("first: {:?}\nrest: {rest_text:?}", first.all_text());
+            println!("first: {first_text:?}\nrest: {rest_text:?}");
             assert!(
                 !rest_text.trim().is_empty(),
                 "the continuation produced no text"
             );
-            assert!(
-                !rest_text.starts_with(first.all_text().trim()),
-                "the continuation restarted the answer instead of continuing it"
-            );
+            // A cut-off that spent its budget on thinking has no text to
+            // compare with; every string starts with "".
+            if !first_text.trim().is_empty() {
+                assert!(
+                    !rest_text.starts_with(first_text.trim()),
+                    "the continuation restarted the answer instead of continuing it"
+                );
+            }
         })
         .await;
     }
