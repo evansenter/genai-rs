@@ -150,15 +150,28 @@ let video = Content::video_uri("files/abc123", "video/mp4").with_processing(clip
 use genai_rs::{Content, document_from_file};
 
 let pdf = document_from_file("report.pdf").await?;
-let notes = document_from_file("notes.md").await?; // text/markdown
+let sheet = document_from_file("inventory.csv").await?; // text/csv
 let inline_pdf = Content::document_data(base64_pdf, "application/pdf");
-let plain = Content::document_data(base64_text, "text/plain");
+let notes = Content::text(std::fs::read_to_string("notes.md")?);
 ```
 
-The API accepts `application/pdf`, `text/plain` and `text/markdown` document
-content, and `document_from_file` sends those three (`.pdf`, `.txt`, `.md`).
-It rejects other text formats (CSV, JSON, HTML, XML) with a pointer to
-`Content::text()`; `document_from_file_with_mime` sends any MIME type as-is.
+Inline document content must be PDF (`application/pdf`), CSV (`text/csv`),
+or an Office or OpenDocument file (`.docx`, `.xlsx`, `.pptx`, `.doc`, `.xls`,
+`.ppt`, `.odt`, `.ods`, `.odp`); `document_from_file` sends exactly those.
+Since 2026-11-04 the API rejects every other inline document type, plain text
+and Markdown included:
+
+```text
+400 invalid_request: Unsupported mime_type 'text/plain' in document content.
+```
+
+`text/plain`, `text/markdown`, `text/html`, `application/json`,
+`application/xml` and `application/rtf` all get that answer (verified live
+2026-11-05). `document_from_file` rejects `.txt`, `.md`, `.json`, `.html`
+and `.xml` locally with a pointer to `Content::text()`. A `.txt` or `.md`
+file uploaded to the [Files API](#files-api) still works as a document by URI
+(`Content::from_file`, verified live 2026-11-05).
+`document_from_file_with_mime` sends any MIME type as-is.
 
 `examples/pdf_input.rs` is a runnable demo.
 
@@ -259,11 +272,14 @@ The constructors leave them unset; the API fills them in on audio it returns.
 | Image | `jpg`/`jpeg` → `image/jpeg`, `png`, `gif`, `webp`, `heic`, `heif` |
 | Audio | `mp3` → `audio/mp3`, `wav`, `ogg`, `flac`, `aac`, `m4a` |
 | Video | `mp4`, `webm`, `mov` → `video/quicktime`, `avi` → `video/x-msvideo`, `mkv` → `video/x-matroska` |
-| Document | `pdf` → `application/pdf`, `txt` → `text/plain`, `md` → `text/markdown`, `json`, `csv`, `html`, `xml` |
+| Document | `pdf` → `application/pdf`, `csv` → `text/csv`, `doc` → `application/msword`, `docx` → `application/vnd.openxmlformats-officedocument.wordprocessingml.document`, `xls` → `application/vnd.ms-excel`, `xlsx` → `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`, `ppt` → `application/vnd.ms-powerpoint`, `pptx` → `application/vnd.openxmlformats-officedocument.presentationml.presentation`, `odt` / `ods` / `odp` → `application/vnd.oasis.opendocument.text` / `.spreadsheet` / `.presentation` |
+| Text | `txt` → `text/plain`, `md` → `text/markdown`, `json`, `html`, `xml` |
 
-Detection doesn't guarantee the model accepts a format: `document_from_file`
-only sends the PDF, plain-text and Markdown document types (above). Always pass
-full MIME types (`"image/png"`, not `"png"`).
+Detection doesn't guarantee the API accepts a format inline:
+`document_from_file` sends only the Document row (verified live 2026-11-05)
+and rejects the Text row. The Files API upload helpers use the same
+detection for every row. Always pass full MIME types (`"image/png"`, not
+`"png"`).
 
 ## Examples
 
@@ -272,7 +288,7 @@ full MIME types (`"image/png"`, not `"png"`).
 | `multimodal_image` | Image input, comparison, resolution control |
 | `audio_input` | Audio transcription and analysis |
 | `video_input` | Video input |
-| `pdf_input` | PDF document processing |
+| `pdf_input` | PDF and CSV document input |
 | `files_api` | Upload, list, delete files |
 
 ```bash

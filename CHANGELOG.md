@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking: `document_from_file` no longer sends `.txt` or `.md` files.**
+  Since 2026-11-04 the Interactions API rejects `text/plain` and
+  `text/markdown` inline documents (`400 Unsupported mime_type 'text/plain'
+  in document content`) and accepts only PDF, CSV and Office/OpenDocument
+  files (verified live 2026-11-05). `document_from_file` now fails locally
+  with `GenaiError::InvalidInput` for `.txt` and `.md`, and sends `.csv`,
+  `.docx`, `.xlsx`, `.pptx`, `.doc`, `.xls`, `.ppt`, `.odt`, `.ods` and
+  `.odp`, which it rejected before. `detect_mime_type`, and so
+  `FileUpload::from_path`, now recognizes those Office/OpenDocument
+  extensions. Migration: send the text as
+  `Content::text(std::fs::read_to_string(path)?)`, or upload the file with
+  `client.files().upload(FileUpload::from_path(path))` and pass
+  `Content::from_file(&file)`; a `text/plain` or `text/markdown` file still
+  works as a document by URI. `Content::document_data` and
+  `document_from_file_with_mime` send any MIME type unchanged, so a
+  `text/plain` document built with them now fails at the API.
+
 ## [0.13.0] - 2026-11-03
 
 Tracks the Interactions API as of `google-genai` 2.34.0 (swept 2026-11-01,

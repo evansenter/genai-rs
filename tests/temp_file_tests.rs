@@ -182,54 +182,51 @@ async fn test_pdf_from_temp_file() {
 }
 
 // =============================================================================
-// Document File Tests (Text Formats)
+// Document File Tests (CSV and Text Formats)
 // =============================================================================
 
-/// Tests that document_from_file sends TXT and Markdown files as documents.
-///
-/// The Interactions API accepts `text/plain` and `text/markdown` document
-/// content (verified live 2026-09-24).
+/// Tests that document_from_file rejects TXT and Markdown files, which the
+/// Interactions API stopped accepting as inline documents on 2026-11-04
+/// (`400 Unsupported mime_type 'text/plain' in document content`), and points
+/// to `Content::text()` and the Files API instead.
 #[tokio::test]
-async fn test_document_from_file_accepts_txt_and_markdown() {
+async fn test_document_from_file_rejects_txt_and_markdown() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     for (name, mime) in [("test.txt", "text/plain"), ("README.md", "text/markdown")] {
         let path = temp_dir.path().join(name);
         std::fs::write(&path, "# Test content").expect("Failed to write file");
 
-        let content = document_from_file(&path)
-            .await
-            .unwrap_or_else(|e| panic!("{name} should load as a document: {e}"));
-        match content {
-            Content::Document { mime_type, .. } => {
-                assert_eq!(mime_type.as_deref(), Some(mime), "{name}");
-            }
-            other => panic!("{name}: expected Content::Document, got {other:?}"),
-        }
+        let err = document_from_file(&path).await.expect_err(name).to_string();
+        assert!(err.contains(mime), "{name}: {err}");
+        assert!(
+            err.contains("Content::text()") && err.contains("Content::from_file()"),
+            "{name} should point to the alternatives: {err}"
+        );
     }
 }
 
-/// Tests that the API reads a Markdown document from document_from_file().
+/// Tests that the API reads a CSV document from document_from_file().
 #[tokio::test]
 #[ignore = "Requires API key"]
-async fn test_markdown_document_from_temp_file() {
+async fn test_csv_document_from_temp_file() {
     let Some(client) = get_client() else {
         println!("Skipping: GEMINI_API_KEY not set");
         return;
     };
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let md_path = temp_dir.path().join("notes.md");
-    std::fs::write(
-        &md_path,
-        "# Inventory\n\nThe warehouse holds exactly 417 crates.\n",
-    )
-    .expect("Failed to write Markdown");
+    let csv_path = temp_dir.path().join("inventory.csv");
+    std::fs::write(&csv_path, "item,crates\nbolts,417\nnuts,52\n").expect("Failed to write CSV");
 
-    let doc_content = document_from_file(&md_path)
+    let doc_content = document_from_file(&csv_path)
         .await
-        .expect("Failed to load Markdown from file");
+        .expect("Failed to load CSV from file");
+    assert!(
+        matches!(&doc_content, Content::Document { mime_type: Some(m), .. } if m == "text/csv"),
+        "a .csv file should load as a text/csv document: {doc_content:?}"
+    );
     let contents = vec![
-        Content::text("How many crates does the warehouse hold? Answer with just the number."),
+        Content::text("How many crates of bolts are there? Answer with just the number."),
         doc_content,
     ];
 
@@ -239,36 +236,12 @@ async fn test_markdown_document_from_temp_file() {
             .create()
             .await
     })
-    .expect("Markdown document interaction failed");
+    .expect("CSV document interaction failed");
 
     assert_eq!(response.status, InteractionStatus::Completed);
     let text = response.as_text().expect("Should have text response");
     // A deterministic value read out of the document.
     assert!(text.contains("417"), "Expected 417 in: {text}");
-}
-
-/// Tests that document_from_file rejects CSV files, which it does not send as
-/// document content.
-#[tokio::test]
-async fn test_document_from_file_rejects_csv() {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let csv_path = temp_dir.path().join("data.csv");
-
-    let csv_content = "name,score\nAlice,95\nBob,87\nCarol,92";
-    std::fs::write(&csv_path, csv_content).expect("Failed to write CSV");
-
-    let result = document_from_file(&csv_path).await;
-
-    assert!(
-        result.is_err(),
-        "document_from_file should reject CSV files"
-    );
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("text/csv") && err.contains("text/plain"),
-        "Error should mention text/csv and the supported types: {}",
-        err
-    );
 }
 
 // =============================================================================
@@ -481,10 +454,10 @@ async fn test_image_from_file_not_found() {
 #[tokio::test]
 async fn test_document_from_file_unsupported_extension() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let docx_path = temp_dir.path().join("document.docx");
-    std::fs::write(&docx_path, "fake content").expect("Failed to write file");
+    let pages_path = temp_dir.path().join("document.pages");
+    std::fs::write(&pages_path, "fake content").expect("Failed to write file");
 
-    let result = document_from_file(&docx_path).await;
+    let result = document_from_file(&pages_path).await;
 
     assert!(
         result.is_err(),

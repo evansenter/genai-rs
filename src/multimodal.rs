@@ -125,10 +125,21 @@ use std::path::Path;
 ///
 /// ## Documents
 /// - `pdf` → `application/pdf`
+/// - `csv` → `text/csv`
+/// - `doc` → `application/msword`
+/// - `docx` → `application/vnd.openxmlformats-officedocument.wordprocessingml.document`
+/// - `xls` → `application/vnd.ms-excel`
+/// - `xlsx` → `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+/// - `ppt` → `application/vnd.ms-powerpoint`
+/// - `pptx` → `application/vnd.openxmlformats-officedocument.presentationml.presentation`
+/// - `odt` → `application/vnd.oasis.opendocument.text`
+/// - `ods` → `application/vnd.oasis.opendocument.spreadsheet`
+/// - `odp` → `application/vnd.oasis.opendocument.presentation`
+///
+/// ## Text
 /// - `txt` → `text/plain`
 /// - `md` → `text/markdown`
 /// - `json` → `application/json`
-/// - `csv` → `text/csv`
 /// - `html` → `text/html`
 /// - `xml` → `application/xml`
 ///
@@ -167,10 +178,20 @@ pub fn detect_mime_type(path: &Path) -> Option<&'static str> {
         "mkv" => Some("video/x-matroska"),
         // Documents
         "pdf" => Some("application/pdf"),
+        "csv" => Some("text/csv"),
+        "doc" => Some("application/msword"),
+        "docx" => Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        "xls" => Some("application/vnd.ms-excel"),
+        "xlsx" => Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        "ppt" => Some("application/vnd.ms-powerpoint"),
+        "pptx" => Some("application/vnd.openxmlformats-officedocument.presentationml.presentation"),
+        "odt" => Some("application/vnd.oasis.opendocument.text"),
+        "ods" => Some("application/vnd.oasis.opendocument.spreadsheet"),
+        "odp" => Some("application/vnd.oasis.opendocument.presentation"),
+        // Text
         "txt" => Some("text/plain"),
         "md" => Some("text/markdown"),
         "json" => Some("application/json"),
-        "csv" => Some("text/csv"),
         "html" => Some("text/html"),
         "xml" => Some("application/xml"),
         _ => None,
@@ -248,7 +269,7 @@ fn validate_mime_category(
             "audio_from_file()"
         } else if mime_type.starts_with("video/") {
             "video_from_file()"
-        } else if mime_type == "application/pdf" {
+        } else if DOCUMENT_MIME_TYPES.contains(&mime_type) {
             "document_from_file()"
         } else {
             "the appropriate *_from_file() function"
@@ -518,9 +539,23 @@ pub async fn video_from_file_with_mime(
     Ok(Content::video_data(data, mime_type))
 }
 
-/// MIME types [`document_from_file`] sends as document content (verified live
-/// 2026-09-24 for the text types).
-const DOCUMENT_MIME_TYPES: &[&str] = &["application/pdf", "text/plain", "text/markdown"];
+/// MIME types [`document_from_file`] sends as inline document content: the
+/// ones the Interactions API accepted, verified live 2026-11-05. Since
+/// 2026-11-04 it rejects every other inline document type, `text/plain` and
+/// `text/markdown` included, with `400 Unsupported mime_type`.
+const DOCUMENT_MIME_TYPES: &[&str] = &[
+    "application/pdf",
+    "text/csv",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.oasis.opendocument.text",
+    "application/vnd.oasis.opendocument.spreadsheet",
+    "application/vnd.oasis.opendocument.presentation",
+];
 
 /// Loads a document file with automatic MIME type detection.
 ///
@@ -528,23 +563,35 @@ const DOCUMENT_MIME_TYPES: &[&str] = &["application/pdf", "text/plain", "text/ma
 ///
 /// # Supported Formats
 ///
-/// The formats the Interactions API accepts as document content:
+/// The formats the Interactions API accepts as inline document content
+/// (verified live 2026-11-05):
 ///
 /// | Extension | MIME Type |
 /// |-----------|-----------|
 /// | `.pdf` | `application/pdf` |
-/// | `.txt` | `text/plain` |
-/// | `.md` | `text/markdown` |
+/// | `.csv` | `text/csv` |
+/// | `.docx` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` |
+/// | `.xlsx` | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` |
+/// | `.pptx` | `application/vnd.openxmlformats-officedocument.presentationml.presentation` |
+/// | `.doc` | `application/msword` |
+/// | `.xls` | `application/vnd.ms-excel` |
+/// | `.ppt` | `application/vnd.ms-powerpoint` |
+/// | `.odt` | `application/vnd.oasis.opendocument.text` |
+/// | `.ods` | `application/vnd.oasis.opendocument.spreadsheet` |
+/// | `.odp` | `application/vnd.oasis.opendocument.presentation` |
 ///
-/// For other text formats (CSV, JSON, HTML, ...), read the file and send it as
-/// [`Content::text()`], or use [`document_from_file_with_mime`] to try one.
+/// Plain text and Markdown (`.txt`, `.md`) are not accepted inline as
+/// documents since 2026-11-04, nor are JSON, HTML or XML. Read such a file
+/// and send it as [`Content::text()`]; a `.txt` or `.md` file uploaded to the
+/// Files API still works as a document by URI ([`Content::from_file()`]).
 ///
 /// # Errors
 ///
 /// Returns [`GenaiError::InvalidInput`] if:
 /// - The file cannot be read (with a suggestion based on the error type)
 /// - The file has no extension
-/// - The file is not one of the formats above
+/// - The file is not one of the formats above (the message names the
+///   alternative)
 ///
 /// # Example
 ///
@@ -579,6 +626,10 @@ pub async fn document_from_file(path: impl AsRef<Path>) -> Result<Content, Genai
             "audio_from_file()"
         } else if mime_type.starts_with("video/") {
             "video_from_file()"
+        } else if matches!(mime_type, "text/plain" | "text/markdown") {
+            "Content::text() with the file contents read via std::fs::read_to_string(), \
+             or upload it with client.files().upload() and send Content::from_file(), \
+             which the API still accepts as a document by URI"
         } else if mime_type.starts_with("text/")
             || matches!(mime_type, "application/json" | "application/xml")
         {
@@ -588,9 +639,9 @@ pub async fn document_from_file(path: impl AsRef<Path>) -> Result<Content, Genai
         };
 
         return Err(GenaiError::InvalidInput(format!(
-            "File '{}' has MIME type '{}' which is not supported for document content. \
-             The Gemini API accepts 'application/pdf', 'text/plain' and 'text/markdown' \
-             documents. For this file, use {}.",
+            "File '{}' has MIME type '{}' which is not supported for inline document content. \
+             The Interactions API accepts PDF, CSV and Office/OpenDocument documents. \
+             For this file, use {}.",
             path.display(),
             mime_type,
             suggestion
@@ -602,8 +653,9 @@ pub async fn document_from_file(path: impl AsRef<Path>) -> Result<Content, Genai
 
 /// Loads a document file with an explicit MIME type.
 ///
-/// Use this when you need to override the auto-detected MIME type,
-/// such as for text-based documents or files with non-standard extensions.
+/// Use this when the file's extension doesn't match its format. The MIME
+/// type is sent as given, unchecked: the API rejects inline document types
+/// outside the list in [`document_from_file`].
 ///
 /// # Example
 ///
@@ -611,8 +663,8 @@ pub async fn document_from_file(path: impl AsRef<Path>) -> Result<Content, Genai
 /// use genai_rs::document_from_file_with_mime;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// // Load a text file as a document
-/// let doc = document_from_file_with_mime("notes.txt", "text/plain").await?;
+/// // A PDF saved without its extension
+/// let doc = document_from_file_with_mime("report.bin", "application/pdf").await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -688,10 +740,40 @@ mod tests {
 
     #[test]
     fn test_detect_mime_type_documents() {
-        assert_eq!(
-            detect_mime_type(Path::new("doc.pdf")),
-            Some("application/pdf")
-        );
+        for (name, mime) in [
+            ("doc.pdf", "application/pdf"),
+            ("data.csv", "text/csv"),
+            ("letter.doc", "application/msword"),
+            (
+                "letter.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+            ("sheet.xls", "application/vnd.ms-excel"),
+            (
+                "sheet.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ),
+            ("deck.ppt", "application/vnd.ms-powerpoint"),
+            (
+                "deck.pptx",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            ),
+            ("letter.odt", "application/vnd.oasis.opendocument.text"),
+            (
+                "sheet.ods",
+                "application/vnd.oasis.opendocument.spreadsheet",
+            ),
+            (
+                "deck.odp",
+                "application/vnd.oasis.opendocument.presentation",
+            ),
+        ] {
+            assert_eq!(detect_mime_type(Path::new(name)), Some(mime), "{name}");
+        }
+    }
+
+    #[test]
+    fn test_detect_mime_type_text() {
         assert_eq!(
             detect_mime_type(Path::new("readme.txt")),
             Some("text/plain")
@@ -704,7 +786,6 @@ mod tests {
             detect_mime_type(Path::new("config.json")),
             Some("application/json")
         );
-        assert_eq!(detect_mime_type(Path::new("data.csv")), Some("text/csv"));
         assert_eq!(detect_mime_type(Path::new("page.html")), Some("text/html"));
         assert_eq!(
             detect_mime_type(Path::new("config.xml")),
@@ -715,8 +796,8 @@ mod tests {
     #[test]
     fn test_detect_mime_type_unknown() {
         assert_eq!(detect_mime_type(Path::new("file.xyz")), None);
-        assert_eq!(detect_mime_type(Path::new("file.doc")), None);
-        assert_eq!(detect_mime_type(Path::new("file.docx")), None);
+        assert_eq!(detect_mime_type(Path::new("file.rtf")), None);
+        assert_eq!(detect_mime_type(Path::new("file.pages")), None);
         assert_eq!(detect_mime_type(Path::new("noextension")), None);
     }
 
@@ -810,41 +891,83 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_document_from_file_accepts_pdf_text_and_markdown() {
+    async fn test_document_from_file_accepts_inline_document_types() {
         let dir = tempfile::tempdir().unwrap();
-        for (name, mime) in [
-            ("doc.pdf", "application/pdf"),
-            ("notes.txt", "text/plain"),
-            ("README.md", "text/markdown"),
-            ("SHOUT.TXT", "text/plain"),
+        let mut seen = std::collections::HashSet::new();
+        for name in [
+            "doc.pdf",
+            "data.csv",
+            "letter.docx",
+            "sheet.xlsx",
+            "deck.pptx",
+            "letter.doc",
+            "sheet.xls",
+            "deck.ppt",
+            "letter.odt",
+            "sheet.ods",
+            "deck.odp",
+            "SHOUT.PDF",
         ] {
             let path = dir.path().join(name);
             std::fs::write(&path, b"hello").unwrap();
+            let expected = detect_mime_type(&path).unwrap();
+            seen.insert(expected);
             match document_from_file(&path).await.unwrap() {
                 Content::Document {
                     mime_type, data, ..
                 } => {
-                    assert_eq!(mime_type.as_deref(), Some(mime), "{name}");
+                    assert_eq!(mime_type.as_deref(), Some(expected), "{name}");
                     assert_eq!(data.as_deref(), Some("aGVsbG8="), "{name}");
                 }
                 other => panic!("{name}: expected a document, got {other:?}"),
             }
         }
+        // The extensions cover exactly the accepted types.
+        let accepted: std::collections::HashSet<_> = DOCUMENT_MIME_TYPES.iter().copied().collect();
+        assert_eq!(seen, accepted);
     }
 
     #[tokio::test]
-    async fn test_document_from_file_rejects_other_text_formats() {
+    async fn test_document_from_file_rejects_text_formats() {
         let dir = tempfile::tempdir().unwrap();
-        for name in ["data.csv", "page.html", "data.json", "feed.xml"] {
+        for name in [
+            "notes.txt",
+            "README.md",
+            "SHOUT.TXT",
+            "page.html",
+            "data.json",
+            "feed.xml",
+        ] {
             let path = dir.path().join(name);
             std::fs::write(&path, b"x").unwrap();
             let err = document_from_file(&path).await.unwrap_err().to_string();
             assert!(
-                err.contains("not supported for document content"),
+                err.contains("not supported for inline document content"),
                 "{name}: {err}"
             );
             assert!(err.contains("Content::text()"), "{name}: {err}");
+            // The Files API route was verified live for plain text and
+            // Markdown only, so only those name it.
+            let plain_or_markdown = name.to_lowercase().ends_with(".txt") || name.ends_with(".md");
+            assert_eq!(
+                err.contains("Content::from_file()"),
+                plain_or_markdown,
+                "{name}: {err}"
+            );
         }
+    }
+
+    #[test]
+    fn test_validate_mime_category_suggests_document_from_file_for_office_types() {
+        let err = validate_mime_category(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "image/",
+            Path::new("letter.docx"),
+            "an image",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("document_from_file()"), "{err}");
     }
 
     #[tokio::test]
