@@ -299,6 +299,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the request path uses `serde_json::to_value`. In fact the body carries
   both keys, with the `extra` one last, and it wins because the API keeps
   the last of a repeated key (verified live 2026-11-04).
+- A string enum that read a non-string wire value (a number, an object,
+  `null`) into `Unknown` now serializes that value back unchanged. It used
+  to write the `"<non-string: ...>"` descriptor its `Unknown` carries, so
+  the one case did not round-trip. This covers every enum built on the
+  crate's string-enum pattern, such as `InteractionStatus`, `ServiceTier`
+  and `HarmCategory`. A hand-built `Unknown` still serializes its type
+  string.
 
 ## [0.13.0] - 2026-11-03
 

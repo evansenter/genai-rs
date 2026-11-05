@@ -8,7 +8,9 @@
 //! deserialize and normalized to the first spelling.
 //!
 //! A non-string value lands in `Unknown` with `<non-string: …>` as its type
-//! and the original JSON in `data`.
+//! and the original JSON in `data`, and serializes back as that JSON, so it
+//! round-trips like a string does. A hand-built `Unknown` always serializes
+//! its type string.
 
 macro_rules! wire_enum {
     (
@@ -76,7 +78,17 @@ macro_rules! wire_enum {
 
         impl serde::Serialize for $name {
             fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-                serializer.serialize_str(self.as_wire())
+                match self {
+                    // A non-string value read from the wire goes back out as
+                    // it came, not as its `<non-string: ...>` descriptor.
+                    Self::Unknown { $field, data }
+                        if !data.is_string()
+                            && *$field == $crate::wire_enum::non_string_descriptor(data) =>
+                    {
+                        serde::Serialize::serialize(data, serializer)
+                    }
+                    _ => serializer.serialize_str(self.as_wire()),
+                }
             }
         }
 
@@ -86,7 +98,7 @@ macro_rules! wire_enum {
                 let $field = match value.as_str() {
                     $( Some($wire $(| $alias)*) => return Ok(Self::$variant), )+
                     Some(other) => other.to_string(),
-                    None => format!("<non-string: {value}>"),
+                    None => $crate::wire_enum::non_string_descriptor(&value),
                 };
                 #[cfg(feature = "strict-unknown")]
                 {
@@ -112,6 +124,11 @@ macro_rules! wire_enum {
 }
 
 pub(crate) use wire_enum;
+
+/// The `Unknown` type `wire_enum!` gives a non-string wire value.
+pub(crate) fn non_string_descriptor(value: &serde_json::Value) -> String {
+    format!("<non-string: {value}>")
+}
 
 #[cfg(test)]
 mod tests {
@@ -168,5 +185,31 @@ mod tests {
         let number: Sample = serde_json::from_value(serde_json::json!(7)).unwrap();
         assert_eq!(number.unknown_sample_type(), Some("<non-string: 7>"));
         assert_eq!(number.unknown_data(), Some(&serde_json::json!(7)));
+    }
+
+    #[cfg(not(feature = "strict-unknown"))]
+    #[test]
+    fn a_non_string_value_round_trips() {
+        for value in [
+            serde_json::json!(7),
+            serde_json::json!(null),
+            serde_json::json!(true),
+            serde_json::json!({"mode": "x"}),
+            serde_json::json!(["a"]),
+        ] {
+            let parsed: Sample = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(serde_json::to_value(&parsed).unwrap(), value);
+        }
+    }
+
+    #[test]
+    fn a_hand_built_unknown_serializes_its_type() {
+        // `data` that does not match the type, as a caller might build it:
+        // the type string wins.
+        let unknown = Sample::Unknown {
+            sample_type: "gamma".to_string(),
+            data: serde_json::Value::Null,
+        };
+        assert_eq!(serde_json::to_value(&unknown).unwrap(), "gamma");
     }
 }
