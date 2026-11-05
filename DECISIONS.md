@@ -650,7 +650,7 @@ before 2026-11-04 point at the old layout.
 
 ---
 
-## D-021 — Continuation without input, the allowlist-disabled form, and `/v1` (2026-11-05)
+## D-024 — Continuation without input, the allowlist-disabled form, and `/v1` (2026-11-05)
 
 **Context.** #489 left three API questions open, each awaiting a probe or a
 design call. Probed live on 2026-11-05:
@@ -694,7 +694,7 @@ allowlist form; `is_disabled()` covers both.
 
 ---
 
-## D-022 — The response oracle's targets move to `response_targets.rs` (2026-11-05)
+## D-025 — The response oracle's targets move to `response_targets.rs` (2026-11-05)
 
 **Context.** The sparse-body pass and the new `InteractionResponse` fields
 pushed `src/coverage_oracle/response.rs` past the roughly 800-line limit
