@@ -3329,7 +3329,7 @@ async fn files_upload_from_path_streams_the_file_from_disk_then_finalizes() {
         .await
         .unwrap();
     assert_eq!(file.name, "files/f1");
-    assert_eq!(file.size_bytes_as_u64(), Some(data.len() as u64));
+    assert_eq!(file.size_bytes, Some(data.len() as i64));
 
     let [start, finish] = stub.requests().try_into().unwrap();
     assert_eq!(start.method, "POST");
@@ -3554,7 +3554,7 @@ async fn file_list_parses_metadata_and_preserves_unknown_states() {
     let clip = &list.files[0];
     assert!(clip.is_active());
     assert_eq!(clip.display_name.as_deref(), Some("clip.mp4"));
-    assert_eq!(clip.size_bytes_as_u64(), Some(1_048_576));
+    assert_eq!(clip.size_bytes, Some(1_048_576));
     assert!(clip.create_time.is_some() && clip.expiration_time.is_some());
     assert_eq!(
         clip.video_metadata
