@@ -481,3 +481,56 @@ fn verbs_with_a_body_are_found_through_helpers() {
         BTreeSet::from(["Things::create".to_string(), "Things::upload".to_string()])
     );
 }
+
+/// The discovery follows method calls too: a verb that sends its body
+/// through a method on `self`, or on a value it builds, is found. A method
+/// on `self` is the `impl` type's own, so another type's method of the same
+/// name that posts does not make a GET verb a verb with a body.
+#[test]
+fn verbs_with_a_body_are_found_through_methods() {
+    let file: syn::File = syn::parse_quote! {
+        #[must_use = "a resource handle does nothing until you call one of its methods"]
+        pub struct Things<'a> { client: &'a Client }
+        impl Client {
+            pub fn things(&self) -> Things<'_> { todo!() }
+        }
+        impl<'a> Things<'a> {
+            pub async fn rename(self, id: &str, name: &str) -> Result<Thing, GenaiError> {
+                self.patch_thing(id, name).await
+            }
+            pub async fn archive(self, id: &str) -> Result<Thing, GenaiError> {
+                let request = ArchiveRequest::new(id);
+                request.submit(&self.client.http).await
+            }
+            pub async fn get(self, id: &str) -> Result<Thing, GenaiError> {
+                self.fetch(id).await
+            }
+            async fn patch_thing(&self, id: &str, name: &str) -> Result<Thing, GenaiError> {
+                send_and_read(&self.client.http, reqwest::Method::PATCH, &url(id), Some(name)).await
+            }
+            async fn fetch(&self, id: &str) -> Result<Thing, GenaiError> {
+                send_and_read(&self.client.http, reqwest::Method::GET, &url(id), NO_BODY).await
+            }
+        }
+        impl ArchiveRequest {
+            pub(crate) async fn submit(&self, ctx: &HttpContext) -> Result<Thing, GenaiError> {
+                send_and_read(ctx, reqwest::Method::POST, &url(&self.id), Some(self)).await
+            }
+        }
+        impl Uploader {
+            async fn fetch(&self, id: &str) -> Result<Thing, GenaiError> {
+                send_and_read(&self.ctx, reqwest::Method::PUT, &url(id), Some(id)).await
+            }
+        }
+    };
+    let files = [file];
+    let handles = live_verbs::handles_in(&files);
+    let found: BTreeSet<String> = live_verbs::body_verbs_in(&files, &handles)
+        .into_iter()
+        .map(|(handle, verb)| format!("{handle}::{verb}"))
+        .collect();
+    assert_eq!(
+        found,
+        BTreeSet::from(["Things::archive".to_string(), "Things::rename".to_string()])
+    );
+}

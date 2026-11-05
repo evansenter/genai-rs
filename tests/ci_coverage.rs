@@ -566,3 +566,58 @@ fn an_ambiguous_accessor_on_an_unknown_receiver_counts_for_neither() {
         .collect();
     assert_eq!(found, expected);
 }
+
+/// A local rebound to something else no longer holds its old handle: by a
+/// `let` whose initializer is not a handle, by an assignment, or by a
+/// pattern (a `for` loop, a closure parameter). Otherwise a call on the new
+/// value would count for the old handle's verb. The initializer is read
+/// with the old binding, so `let stores = stores.documents()` counts
+/// `FileSearchStores::documents`, and a typed `let` takes the annotation's
+/// handle.
+#[test]
+fn a_rebound_local_drops_its_old_handle() {
+    use syn::visit::Visit;
+
+    let handles = live_verbs::handles();
+    let block: syn::Block = syn::parse_quote!({
+        let hooks = client.webhooks();
+        hooks.get("w");
+        let hooks = fixtures::hooks();
+        hooks.delete("w");
+
+        let mut agents = client.agents();
+        agents = make_agents();
+        agents.delete("a");
+
+        let voices = client.voices();
+        for voices in batches {
+            voices.delete("v");
+        }
+        let creds = client.credentials();
+        items.iter().map(|creds| creds.get("c"));
+
+        let stores = client.file_search_stores();
+        let stores = stores.documents();
+        stores.get("d");
+
+        let envs: Environments<'_> = setup();
+        envs.get("e");
+    });
+    let mut calls = live_verbs::Calls::new(&handles);
+    calls.visit_block(&block);
+    let found: BTreeSet<String> = calls
+        .found
+        .iter()
+        .map(|(h, v)| format!("{h}::{v}"))
+        .collect();
+    let expected: BTreeSet<String> = [
+        "Webhooks::get",
+        "FileSearchStores::documents",
+        "FileSearchDocuments::get",
+        "Environments::get",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+    assert_eq!(found, expected);
+}
