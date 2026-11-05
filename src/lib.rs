@@ -137,9 +137,9 @@ pub use errors::GenaiError;
 // Content types (Content and related)
 pub mod content;
 pub use content::{
-    Annotation, CodeExecutionLanguage, Content, FileSearchResultItem, GoogleMapsResultItem,
-    GoogleSearchResultItem, Place, Resolution, ReviewSnippet, UrlContextResultItem,
-    VideoProcessing, VideoProcessingBuilder,
+    Annotation, CodeExecutionLanguage, Content, GoogleMapsResultItem, GoogleSearchResultItem,
+    Place, Resolution, ReviewSnippet, UrlContextResultItem, VideoProcessing,
+    VideoProcessingBuilder,
 };
 
 // Step types (revision 2026-05-20 response model)

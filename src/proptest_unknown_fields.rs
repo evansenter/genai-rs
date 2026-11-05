@@ -76,13 +76,11 @@ proptest! {
         search in arb_google_search_result_item(),
         maps in arb_google_maps_result_item(),
         url in arb_url_context_result_item(),
-        file in arb_file_search_result_item(),
         error in arb_step_error(),
     ) {
         assert_injected_round_trip(&search)?;
         assert_injected_round_trip(&maps)?;
         assert_injected_round_trip(&url)?;
-        assert_injected_round_trip(&file)?;
         assert_injected_round_trip(&error)?;
     }
 }

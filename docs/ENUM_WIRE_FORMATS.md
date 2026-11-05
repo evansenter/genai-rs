@@ -105,7 +105,7 @@ with `extra_mut()`. The call steps and deltas that flatten a nested
 `google_search_call`, `google_maps_call`, `retrieval_call`) keep its other
 keys in `arguments_extra`, merged back into `arguments` on serialize. The
 result items (`GoogleSearchResultItem`, `UrlContextResultItem`,
-`GoogleMapsResultItem`, `FileSearchResultItem`), `Place`, `ReviewSnippet`,
+`GoogleMapsResultItem`), `Place`, `ReviewSnippet`,
 `StepError` and `VideoProcessing::StaticSegment` keep theirs in a flattened
 `extra` field. So a field the API adds survives stateless history replay
 before the crate models it, which is how `signature` once broke replay.
@@ -189,7 +189,7 @@ before the crate models it, which is how `signature` once broke replay.
 | `VideoResolution` | lowercase | `"360p"`, `"720p"`, `"1080p"`, `"4k"` | Server-validated (2026-09-24); no Interactions model outputs video to exercise it |
 | `TranscriptionMode` | string or object | `"smart"` / `{"type": "verbatim", "diarization_mode": "speaker"}` | See [TranscriptionConfig](#transcriptionconfig) |
 | `EnvironmentFileType` | **uppercase** | `"FILE"`, `"DIRECTORY"` | The bindings say lowercase; the API sends uppercase (live 2026-09-24). Both accepted; serializes uppercase |
-| `GoogleSearchResultItem` | snake_case | `{"title": "...", "url": "...", "rendered_content": "..."}` | Live 2026-07: items may carry **only** `search_suggestions` |
+| `GoogleSearchResultItem` | snake_case | `{"search_suggestions": "<html>"}` | The only field in the 2.34.0 bindings and on the wire (live 2026-07 and 2026-11-05); `title`, `url` and `rendered_content` were removed, and one that arrives lands in `extra` |
 | `UrlContextResultItem` | snake_case | `{"url": "...", "status": "success"}` | `status` is `success`/`error`/`paywall`/`unsafe`; no separate paywall field (2026-01-13) |
 | `FileState` | uppercase | `"PROCESSING"`, `"ACTIVE"`, `"FAILED"` | Files API |
 | `DocumentState` | prefixed uppercase | `"STATE_PENDING"`, `"STATE_ACTIVE"`, `"STATE_FAILED"` | File Search documents; verified live 2026-08-16 |
@@ -243,7 +243,7 @@ fields, and the `function_call` `signature`) were verified live 2026-07.
 | `mcp_server_tool_call` | `McpServerToolCall` | `{"id", "name", "server_name", "arguments"}`, as in the google-genai 2.34.0 bindings. Spec-only, never observed (last checked 2026-11-04) |
 | `mcp_server_tool_result` | `McpServerToolResult` | `{"call_id", "name"?, "server_name"?, "result"}`, as in the 2.34.0 bindings. Spec-only, never observed (last checked 2026-11-04) |
 | `file_search_call` | `FileSearchCall` | `{"id", "signature"?}` |
-| `file_search_result` | `FileSearchResult` | `{"call_id", "result": [FileSearchResultItem], "signature"?}`. `result` (items with `title`, `text`, `file_search_store`) is spec-only and never populated (see [File Search](#file-search)) |
+| `file_search_result` | `FileSearchResult` | `{"call_id", "signature"?}`, as in the bindings and the spec (live 2026-11-05). The delta's spec-only `result` items are opaque objects, kept as JSON (see [File Search](#file-search)) |
 | `google_maps_call` | `GoogleMapsCall` | `{"id", "arguments": {"queries": [...]}, "signature"?}` |
 | `google_maps_result` | `GoogleMapsResult` | `{"call_id", "result": [GoogleMapsResultItem], "signature"?}` |
 | `processing_call` | `ProcessingCall` | `{"id", "signature"?}`. Emitted for video with `processing: "agentic"`, one or more per turn (live 2026-09-24, `gemini-3.8-flash`). The ~36KB signature is **required** on stateless replay (`400 Processing call step is missing signature`) |
@@ -624,9 +624,12 @@ Behavior, all verified live 2026-08-16:
   `{"name": ".../upload/operations/...", "response": {"documentName": ...}}`.
   The crate resolves it with a follow-up GET.
 - **`file_search_result` steps carry no chunks.** Only `call_id`,
-  `signature` and `type` arrive, so `has_file_search_results()` is true
-  while `file_search_results()` is empty. The retrieved content shows only
-  in the answer (#429).
+  `signature` and `type` arrive, on a stored interaction and in the stream's
+  delta (live 2026-11-05). The retrieved content shows only in the answer,
+  cited by `file_citation` annotations (#429). The spec gives the delta a
+  `result` list of objects with no fields; `StepDelta::FileSearchResult`
+  keeps any it receives as JSON, and the accumulator puts them in the
+  step's `extra` under `result`.
 - **`file_search` can't be combined with `google_search` or
   `url_context`**: 400 `'<other>' and 'file_search' cannot be combined in the
   same request. Please choose one to continue.` `code_execution` is accepted.
@@ -655,13 +658,13 @@ Covered by `tests/file_search_stores_tests.rs` and `examples/file_search.rs`.
 
 ### Google Search steps
 
-Verified live 2026-07 with `LOUD_WIRE=1`:
+Verified live 2026-07 with `LOUD_WIRE=1`, and again 2026-11-05:
 
 - `google_search_call` carried `id`, nested `arguments.queries`,
   `search_type: "web_search"` and `signature`.
 - The `google_search_result` items carried **only** `search_suggestions`
-  (an HTML rendering payload), with no `title` / `url` / `rendered_content`.
-  Those then deserialize empty and are skipped on re-serialize.
+  (an HTML rendering payload), the one field of the bindings'
+  `GoogleSearchResult`. `GoogleSearchResultItem` models only that.
 - Citations arrived as `url_citation` annotations on the `model_output`
   text, and `usage.grounding_tool_count` was `[{"type": "google_search",
   "count": 1}]`.
@@ -670,12 +673,11 @@ Verified live 2026-07 with `LOUD_WIRE=1`:
 
 - `google_maps_call`: `id`, `arguments.queries`, `signature`.
 - `google_maps_result`: `call_id`, `result: [GoogleMapsResultItem]`,
-  `signature`. Each item has `places: [Place]` (`name`,
-  `formatted_address`, `place_id`, `lat`, `lng`, plus `url` and
-  `review_snippets` in this revision) and `widget_context_token`.
-
-Verified pre-revision as `Content`. The step form and the new `Place` fields
-are pending live verification.
+  `signature`. Each item has `places: [Place]` and `widget_context_token`.
+  A place carries `name`, `place_id` and `url` (live 2026-11-05, 30 places
+  across three results), and the bindings add `review_snippets`. The
+  older address, coordinate, rating and contact fields were never served
+  and were removed from `Place`; one that arrives lands in `extra`.
 
 ### Computer Use
 

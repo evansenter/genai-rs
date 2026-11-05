@@ -553,3 +553,59 @@ fn test_accumulator_empty_delta_signature_keeps_the_real_one() {
     let steps = acc.finish();
     assert_eq!(steps[0].signature(), Some("real-sig"));
 }
+
+#[test]
+fn test_accumulator_keeps_file_search_delta_results_in_the_step_extra() {
+    // The step has no `result` field; the spec gives the delta one.
+    let mut acc = StepAccumulator::new();
+    acc.start(
+        0,
+        serde_json::from_value(json!({"type": "file_search_result", "call_id": "c1"})).unwrap(),
+    );
+    for (i, item) in [json!({"text": "a"}), json!({"text": "b"})]
+        .into_iter()
+        .enumerate()
+    {
+        acc.apply_delta(
+            0,
+            &StepDelta::FileSearchResult {
+                result: vec![item],
+                signature: (i == 1).then(|| "c2ln".to_string()),
+                extra: Default::default(),
+            },
+        );
+    }
+    acc.stop(0);
+    let steps = acc.finish();
+    assert_eq!(
+        serde_json::to_value(&steps[0]).unwrap(),
+        json!({
+            "type": "file_search_result",
+            "call_id": "c1",
+            "signature": "c2ln",
+            "result": [{"text": "a"}, {"text": "b"}]
+        })
+    );
+}
+
+#[test]
+fn test_accumulator_file_search_delta_without_results_adds_nothing() {
+    // What a live stream sends (2026-11-05): only the signature.
+    let mut acc = StepAccumulator::new();
+    acc.start(
+        0,
+        serde_json::from_value(json!({"type": "file_search_result", "call_id": "c1"})).unwrap(),
+    );
+    let delta: StepDelta =
+        serde_json::from_value(json!({"type": "file_search_result", "signature": "c2ln"})).unwrap();
+    assert_eq!(
+        serde_json::to_value(&delta).unwrap(),
+        json!({"type": "file_search_result", "signature": "c2ln"})
+    );
+    acc.apply_delta(0, &delta);
+    acc.stop(0);
+    assert_eq!(
+        serde_json::to_value(&acc.finish()[0]).unwrap(),
+        json!({"type": "file_search_result", "call_id": "c1", "signature": "c2ln"})
+    );
+}

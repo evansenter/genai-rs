@@ -112,14 +112,6 @@ const GAPS: &[Allowed] = &[
     ("Agent.agent_config", UNSEEN),
     ("interactions.Environment.environment_id", UNSEEN),
     ("EnvironmentConfig.environment_id", UNSEEN),
-    (
-        "FileSearchResultDelta.result",
-        "Opaque objects in the spec (`FileSearchResult` has no properties; the \
-         bindings class has no fields). The crate reads each as \
-         `FileSearchResultItem` (`title`, `text`, `file_search_store`) and \
-         keeps any other key in its `extra` (#491; before, it was dropped). \
-         Not seen filled live (src/content/results.rs, #429); WP2.",
-    ),
     // Files and File Search Stores.
     (
         "legacy.FileSearchStore.activeDocumentsCount",
@@ -650,8 +642,10 @@ fn findings(
 /// Classes reached from a step or a delta whose fields the crate reads as
 /// free-form JSON, so a key the snapshot adds there is the tool's own data,
 /// kept verbatim, not a field to model: a function or MCP tool's `result`
-/// object (`FunctionResultPayload::Json`).
+/// object (`FunctionResultPayload::Json`), and a file search delta's result
+/// items, which the spec and the bindings type as objects with no fields.
 const FREE_FORM: &[&str] = &[
+    "interactions.FileSearchResult",
     "interactions.FunctionResultDeltaResult",
     "interactions.FunctionResultStepResult",
     "interactions.MCPServerToolResultDeltaResult",

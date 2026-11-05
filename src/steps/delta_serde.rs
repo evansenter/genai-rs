@@ -237,7 +237,7 @@ impl Serialize for StepDelta {
                 signature,
                 extra,
             } => {
-                map.field("result", result)?;
+                map.field_unless(result.is_empty(), "result", result)?;
                 map.opt("signature", signature.as_ref())?;
                 extra
             }

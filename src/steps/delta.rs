@@ -1,6 +1,6 @@
 use crate::content::{
-    Annotation, CodeExecutionLanguage, Content, FileSearchResultItem, GoogleMapsResultItem,
-    GoogleSearchResultItem, Resolution, UrlContextResultItem,
+    Annotation, CodeExecutionLanguage, Content, GoogleMapsResultItem, GoogleSearchResultItem,
+    Resolution, UrlContextResultItem,
 };
 
 use super::FunctionResultPayload;
@@ -240,8 +240,14 @@ pub enum StepDelta {
     },
     /// File search result delta (`type: "file_search_result"`).
     FileSearchResult {
-        /// Retrieved chunks.
-        result: Vec<FileSearchResultItem>,
+        /// Retrieved results, as the JSON objects they arrive as: the spec
+        /// and the google-genai 2.34.0 bindings type each as an object with
+        /// no fields. Empty on every stream so far, where the delta carries
+        /// only its `signature` (live 2026-11-05). The stream accumulator
+        /// keeps any it receives in the step's [`extra`](crate::Step::extra)
+        /// under `result`, since [`Step::FileSearchResult`](crate::Step)
+        /// has no such field.
+        result: Vec<serde_json::Value>,
         /// Opaque signature.
         signature: Option<String>,
         /// Unmodeled wire fields ([`StepDelta::extra`]).

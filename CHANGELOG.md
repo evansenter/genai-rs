@@ -262,6 +262,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `file_search` tool with no store names no longer writes
   `"file_search_store_names": []`; the key is left out, as for the other
   optional lists.
+- **Breaking: response fields the API never serves are removed.** Each was
+  modeled from an older spec, is in neither the google-genai 2.34.0
+  bindings nor the spec, and was checked live on 2026-11-05:
+  - `GoogleSearchResultItem` keeps only `search_suggestions`: `title`,
+    `url`, `rendered_content` and `has_rendered_content()` are gone, and
+    `GoogleSearchResultItem::new` takes the suggestions payload instead of a
+    title and URL. Search result items carry only `search_suggestions`.
+  - `Place` keeps `name`, `place_id`, `url` and `review_snippets`:
+    `formatted_address`, `lat`, `lng`, `types`, `rating`,
+    `user_ratings_total`, `website` and `phone_number` are gone (30 places
+    across three Maps results carried only the first three). `Place` is now
+    `Eq`.
+  - `FileSearchResultItem` and `InteractionResponse::file_search_results()`
+    are gone, and `Step::FileSearchResult` has no `result`: the step
+    carries only `call_id` and `signature`, stored and streamed (#429).
+    `StepDelta::FileSearchResult::result` is a `Vec<serde_json::Value>`,
+    the opaque objects the spec gives the delta; the stream accumulator
+    keeps any it receives in the step's `extra` under `result`.
+
+  Migration: a removed key that ever arrives lands in the type's `extra`,
+  so read it there (`item.extra.get("title")`). For file search, read the
+  `file_citation` annotations on the answer (`all_annotations()`);
+  `has_file_search_results()` still says whether a search ran.
 
 ### Fixed
 

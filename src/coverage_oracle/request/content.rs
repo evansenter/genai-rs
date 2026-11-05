@@ -221,9 +221,6 @@ pub(super) fn steps() -> Vec<Step> {
         Step::GoogleSearchResult {
             call_id: "c4".into(),
             result: vec![crate::content::GoogleSearchResultItem {
-                title: "t".into(),
-                url: "https://example.com".into(),
-                rendered_content: Some("<div/>".into()),
                 search_suggestions: Some("<div/>".into()),
                 extra: Map::new(),
             }],
@@ -245,12 +242,6 @@ pub(super) fn steps() -> Vec<Step> {
         },
         Step::FileSearchResult {
             call_id: "c6".into(),
-            result: vec![crate::content::FileSearchResultItem {
-                title: "t".into(),
-                text: "x".into(),
-                store: "fileSearchStores/s".into(),
-                extra: Map::new(),
-            }],
             signature: Some("c2ln".into()),
             extra: Map::new(),
         },
@@ -266,16 +257,8 @@ pub(super) fn steps() -> Vec<Step> {
             result: vec![crate::content::GoogleMapsResultItem {
                 places: Some(vec![crate::content::Place {
                     name: Some("n".into()),
-                    formatted_address: Some("1 Main St".into()),
                     place_id: Some("p".into()),
                     url: Some("https://example.com".into()),
-                    lat: Some(37.0),
-                    lng: Some(-122.0),
-                    types: Some(vec!["cafe".into()]),
-                    rating: Some(4.5),
-                    user_ratings_total: Some(10),
-                    website: Some("https://example.com".into()),
-                    phone_number: Some("555".into()),
                     review_snippets: Some(vec![crate::content::ReviewSnippet {
                         title: Some("t".into()),
                         url: Some("https://example.com".into()),

@@ -529,12 +529,19 @@ impl StepAccumulator {
                     result, signature, ..
                 },
                 Step::FileSearchResult {
-                    result: existing,
                     signature: sig,
+                    extra,
                     ..
                 },
             ) => {
-                existing.extend(result.iter().cloned());
+                // The step has no `result` field; keep what the stream sent.
+                if !result.is_empty()
+                    && let serde_json::Value::Array(existing) = extra
+                        .entry("result")
+                        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+                {
+                    existing.extend(result.iter().cloned());
+                }
                 replace_signature(sig, signature.as_deref());
             }
             (

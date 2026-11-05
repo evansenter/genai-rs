@@ -14,8 +14,8 @@
 
 use super::*;
 use crate::{
-    CodeExecutionLanguage, FileSearchResultItem, GoogleMapsResultItem, GoogleSearchResultItem,
-    Place, UrlContextResultItem,
+    CodeExecutionLanguage, GoogleMapsResultItem, GoogleSearchResultItem, Place,
+    UrlContextResultItem,
 };
 
 // --- Response Deserialization ---
@@ -662,7 +662,7 @@ fn test_interaction_response_google_search_helpers() {
         steps: vec![
             Step::GoogleSearchResult {
                 call_id: "call123".to_string(),
-                result: vec![GoogleSearchResultItem::new("Test", "https://example.com")],
+                result: vec![GoogleSearchResultItem::new("<div>Test</div>")],
                 is_error: None,
                 signature: None,
                 extra: Default::default(),
@@ -676,8 +676,10 @@ fn test_interaction_response_google_search_helpers() {
 
     let search_results = response.google_search_results();
     assert_eq!(search_results.len(), 1);
-    assert_eq!(search_results[0].title, "Test");
-    assert_eq!(search_results[0].url, "https://example.com");
+    assert_eq!(
+        search_results[0].search_suggestions.as_deref(),
+        Some("<div>Test</div>")
+    );
 }
 
 #[test]
@@ -719,10 +721,8 @@ fn test_interaction_response_google_maps_helpers() {
                 result: vec![GoogleMapsResultItem {
                     places: Some(vec![Place {
                         name: Some("Eiffel Tower".to_string()),
-                        formatted_address: Some("Paris, France".to_string()),
                         place_id: Some("ChIJLU7jZClu5kcR".to_string()),
-                        lat: Some(48.8584),
-                        lng: Some(2.2945),
+                        url: Some("https://maps.google.com/maps?cid=1".to_string()),
                         ..Default::default()
                     }]),
                     widget_context_token: Some("token123".to_string()),
@@ -746,8 +746,8 @@ fn test_interaction_response_google_maps_helpers() {
     assert_eq!(places.len(), 1);
     assert_eq!(places[0].name.as_deref(), Some("Eiffel Tower"));
     assert_eq!(
-        places[0].formatted_address.as_deref(),
-        Some("Paris, France")
+        places[0].url.as_deref(),
+        Some("https://maps.google.com/maps?cid=1")
     );
 }
 
@@ -1090,20 +1090,14 @@ fn test_interaction_response_google_search_results() {
         steps: vec![
             Step::GoogleSearchResult {
                 call_id: "search1".to_string(),
-                result: vec![GoogleSearchResultItem::new(
-                    "Rust Lang",
-                    "https://rust-lang.org",
-                )],
+                result: vec![GoogleSearchResultItem::new("<div>Rust Lang</div>")],
                 is_error: None,
                 signature: None,
                 extra: Default::default(),
             },
             Step::GoogleSearchResult {
                 call_id: "search2".to_string(),
-                result: vec![GoogleSearchResultItem::new(
-                    "Cargo",
-                    "https://doc.rust-lang.org/cargo/",
-                )],
+                result: vec![GoogleSearchResultItem::new("<div>Cargo</div>")],
                 is_error: None,
                 signature: None,
                 extra: Default::default(),
@@ -1116,8 +1110,14 @@ fn test_interaction_response_google_search_results() {
 
     let results = response.google_search_results();
     assert_eq!(results.len(), 2);
-    assert_eq!(results[0].title, "Rust Lang");
-    assert_eq!(results[1].title, "Cargo");
+    assert_eq!(
+        results[0].search_suggestions.as_deref(),
+        Some("<div>Rust Lang</div>")
+    );
+    assert_eq!(
+        results[1].search_suggestions.as_deref(),
+        Some("<div>Cargo</div>")
+    );
 }
 
 #[test]
@@ -1243,10 +1243,7 @@ fn test_interaction_response_complex_roundtrip() {
             },
             Step::GoogleSearchResult {
                 call_id: "gsearch-001".to_string(),
-                result: vec![GoogleSearchResultItem::new(
-                    "Tokyo Weather",
-                    "https://weather.example.com/tokyo",
-                )],
+                result: vec![GoogleSearchResultItem::new("<div>Tokyo Weather</div>")],
                 is_error: None,
                 signature: None,
                 extra: Default::default(),
@@ -1313,8 +1310,8 @@ fn test_interaction_response_complex_roundtrip() {
     );
     assert!(json_str.contains("print(2 + 2)"), "Should contain code");
     assert!(
-        json_str.contains("weather.example.com"),
-        "Should contain search result URL"
+        json_str.contains("Tokyo Weather"),
+        "Should contain the search suggestions"
     );
     assert!(
         json_str.contains("previous-interaction-abc"),
@@ -1365,7 +1362,10 @@ fn test_interaction_response_complex_roundtrip() {
     // Verify Google Search results
     let search_results = deserialized.google_search_results();
     assert_eq!(search_results.len(), 1);
-    assert_eq!(search_results[0].title, "Tokyo Weather");
+    assert_eq!(
+        search_results[0].search_suggestions.as_deref(),
+        Some("<div>Tokyo Weather</div>")
+    );
 
     // Verify URL context results
     let url_results = deserialized.url_context_results();
@@ -1872,12 +1872,6 @@ fn test_interaction_response_has_file_search_results() {
         status: InteractionStatus::Completed,
         steps: vec![Step::FileSearchResult {
             call_id: "call_123".to_string(),
-            result: vec![FileSearchResultItem {
-                title: "Technical Doc".to_string(),
-                text: "Relevant content...".to_string(),
-                store: "stores/my-store".to_string(),
-                extra: Default::default(),
-            }],
             signature: None,
             extra: Default::default(),
         }],
@@ -1898,83 +1892,6 @@ fn test_interaction_response_no_file_search_results() {
     };
 
     assert!(!response.has_file_search_results());
-}
-
-#[test]
-fn test_interaction_response_file_search_results_extraction() {
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("test-model".to_string()),
-        status: InteractionStatus::Completed,
-        steps: vec![
-            Step::FileSearchResult {
-                call_id: "call_1".to_string(),
-                result: vec![
-                    FileSearchResultItem {
-                        title: "Doc 1".to_string(),
-                        text: "Content from doc 1".to_string(),
-                        store: "stores/store-a".to_string(),
-                        extra: Default::default(),
-                    },
-                    FileSearchResultItem {
-                        title: "Doc 2".to_string(),
-                        text: "Content from doc 2".to_string(),
-                        store: "stores/store-a".to_string(),
-                        extra: Default::default(),
-                    },
-                ],
-                signature: None,
-                extra: Default::default(),
-            },
-            Step::model_text("Summary of search results"),
-            Step::FileSearchResult {
-                call_id: "call_2".to_string(),
-                result: vec![FileSearchResultItem {
-                    title: "Doc 3".to_string(),
-                    text: "Content from doc 3".to_string(),
-                    store: "stores/store-b".to_string(),
-                    extra: Default::default(),
-                }],
-                signature: None,
-                extra: Default::default(),
-            },
-        ],
-        ..Default::default()
-    };
-
-    assert!(response.has_file_search_results());
-
-    let results = response.file_search_results();
-    // Should collect all items from both FileSearchResult steps
-    assert_eq!(results.len(), 3);
-    assert_eq!(results[0].title, "Doc 1");
-    assert_eq!(results[1].title, "Doc 2");
-    assert_eq!(results[2].title, "Doc 3");
-    assert_eq!(results[0].store, "stores/store-a");
-    assert_eq!(results[2].store, "stores/store-b");
-}
-
-#[test]
-fn test_interaction_response_file_search_results_empty_results() {
-    let response = InteractionResponse {
-        id: Some("test_id".to_string()),
-        model: Some("test-model".to_string()),
-        status: InteractionStatus::Completed,
-        steps: vec![Step::FileSearchResult {
-            call_id: "call_empty".to_string(),
-            result: vec![], // Empty results array
-            signature: None,
-            extra: Default::default(),
-        }],
-        ..Default::default()
-    };
-
-    // has_file_search_results returns true if the step type exists
-    assert!(response.has_file_search_results());
-
-    // But file_search_results returns empty vec since result array is empty
-    let results = response.file_search_results();
-    assert!(results.is_empty());
 }
 
 // =============================================================================
