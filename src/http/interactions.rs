@@ -226,7 +226,9 @@ fn stream_events(
         // The API answers `text/event-stream` (live 2026-11-04). Another
         // declared type is a body that was never a stream (a captive
         // portal's page, a plain JSON interaction), so its end is not a
-        // cut-off. A missing header is given the benefit of the doubt.
+        // cut-off. A missing header (a proxy may strip it) is given the
+        // benefit of the doubt; a breaking change, so the CHANGELOG says how
+        // to migrate.
         if let Some(content_type) = response
             .headers()
             .get(reqwest::header::CONTENT_TYPE)

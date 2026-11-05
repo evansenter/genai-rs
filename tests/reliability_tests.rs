@@ -247,6 +247,41 @@ async fn non_sse_success_body_is_malformed_not_interrupted() {
     assert!(!err.is_retryable());
 }
 
+/// The Content-Type check rejects only a declared type other than
+/// `text/event-stream`: parameters and letter case pass, and so does a
+/// response with no `Content-Type`, as from a proxy that strips it. A proxy
+/// that rewrites it to another type fails (the CHANGELOG's migration).
+#[tokio::test]
+async fn stream_content_type_check_accepts_parameters_and_a_missing_header() {
+    let sse = |content_type: Option<&str>| {
+        let mut reply = Reply::sse(&[&delta("a"), &completed("int-1", "completed")]);
+        reply.headers = content_type
+            .map(|t| vec![("content-type".to_string(), t.to_string())])
+            .unwrap_or_default();
+        reply
+    };
+    for content_type in [
+        Some("text/event-stream; charset=utf-8"),
+        Some("Text/Event-Stream"),
+        None,
+    ] {
+        let stub = Stub::replying(vec![sse(content_type)]).await;
+        let events = stream(&stub).await;
+        assert!(
+            matches!(events.as_slice(), [Ok(_), Ok(last)] if last.is_complete()),
+            "{content_type:?}: {events:?}"
+        );
+    }
+
+    let stub = Stub::replying(vec![sse(Some("application/octet-stream"))]).await;
+    let events = stream(&stub).await;
+    assert!(
+        matches!(events.as_slice(), [Err(GenaiError::MalformedResponse(m))]
+            if m.contains("application/octet-stream")),
+        "{events:?}"
+    );
+}
+
 // =============================================================================
 // Nothing is read after the terminal event
 // =============================================================================

@@ -79,6 +79,10 @@ and `status()` for the common checks.
 
 A successful response that is not `text/event-stream` (a captive portal's
 page) is `GenaiError::MalformedResponse`, not a cut-off: no stream started.
+Parameters such as `; charset=utf-8` and letter case don't matter, and a
+response with no `Content-Type` is read as a stream. A proxy in front of the
+API (`ClientBuilder::with_base_url`) must pass the type through or send
+none.
 
 ### Event size limit
 

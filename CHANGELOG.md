@@ -137,6 +137,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wait's deadline cut it off rather than that it failed. Migration: to read
   the state once, call `files().get(name)` or
   `file_search_stores().documents().get(name)` instead.
+- **Breaking: a successful streaming response whose `Content-Type` is not
+  `text/event-stream` fails at once with `MalformedResponse`** and a preview
+  of the body. In 0.13.0 a captive portal's page or a plain JSON interaction
+  was parsed as SSE and failed only at its end, as a cut-off stream. The API
+  answers `text/event-stream` (verified live 2026-11-04). The check ignores
+  letter case and parameters (`text/event-stream; charset=utf-8` passes),
+  and a response with no `Content-Type` is still read as a stream. A proxy
+  or gateway (`ClientBuilder::with_base_url`) that rewrites the type of a
+  working stream, for example to `text/plain` or `application/octet-stream`,
+  now fails where 0.13.0 streamed. Migration: have the proxy pass the API's
+  `Content-Type` through, or send none; behind a proxy you can't change,
+  call `create()` instead of `create_stream()`.
 - The Antigravity harness runs in its own process group on Unix. A
   terminal's Ctrl-C now reaches only your process; when it exits, the
   harness sees stdin close and shuts down gracefully. To stop the harness on
@@ -169,10 +181,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   closes, no longer follows a finished interaction or fails a finished
   auto-function round. The API sends only `event: done` / `data: [DONE]`
   after `interaction.completed` (verified live 2026-11-04).
-- A successful streaming response whose `Content-Type` is not
-  `text/event-stream` (a captive portal's page, a plain JSON interaction)
-  fails at once with `MalformedResponse` and a preview of the body. The API
-  answers `text/event-stream` (verified live 2026-11-04).
 - One SSE event may hold up to 64 MiB. Past that, the stream fails with
   `GenaiError::Parse`; before, a body that never sent a newline was buffered
   without bound. The largest real events, measured live 2026-11-04 on

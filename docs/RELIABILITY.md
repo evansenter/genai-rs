@@ -134,7 +134,10 @@ was not at fault. It is retryable too.
 A failure before the response headers arrive (connect, TLS, a read timeout
 while the model thinks) is `Http`, since no stream had started. A successful
 response that is not `text/event-stream` (a captive portal's page) is
-`MalformedResponse`, not a cut-off.
+`MalformedResponse`, not a cut-off. Parameters (`; charset=utf-8`) and
+letter case don't matter, and a response with no `Content-Type` is read as
+a stream, so a proxy that strips the header still works; one that rewrites
+it to another type does not.
 
 The stream ends at its first terminal event and reads nothing after it, so
 a late error, such as a reset while the server closes, can't follow a
