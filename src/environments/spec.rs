@@ -364,6 +364,17 @@ impl<'de> Deserialize<'de> for NetworkConfig {
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(tag = "type", rename = "remote")]
 pub struct RemoteEnvironment {
+    /// An existing environment to run in, by ID
+    /// ([`Environment::id`](crate::Environment::id)).
+    ///
+    /// On an interaction's `environment`, the agent runs in that environment
+    /// with its files: the interaction reports the ID as its
+    /// `environment_id`, and an ID that does not exist is a 404 (live
+    /// 2026-11-05). On an agent's
+    /// [`base_environment`](crate::Agent::base_environment) it is accepted
+    /// and dropped, unchecked (live 2026-11-05).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment_id: Option<String>,
     /// Sources mounted into the environment.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<EnvironmentSource>,
@@ -383,6 +394,24 @@ impl RemoteEnvironment {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Runs in the existing environment with this ID (see
+    /// [`environment_id`](Self::environment_id)).
+    ///
+    /// ```
+    /// use genai_rs::RemoteEnvironment;
+    ///
+    /// let env = RemoteEnvironment::new().with_environment_id("4e0dd84a42d003f99a7f9b48810064eb");
+    /// assert_eq!(
+    ///     serde_json::to_value(&env).unwrap(),
+    ///     serde_json::json!({"type": "remote", "environment_id": "4e0dd84a42d003f99a7f9b48810064eb"})
+    /// );
+    /// ```
+    #[must_use]
+    pub fn with_environment_id(mut self, environment_id: impl Into<String>) -> Self {
+        self.environment_id = Some(environment_id.into());
+        self
     }
 
     /// Adds a source to mount into the environment.
@@ -436,6 +465,8 @@ impl<'de> Deserialize<'de> for RemoteEnvironment {
         #[derive(Deserialize)]
         struct Raw {
             #[serde(default)]
+            environment_id: Option<String>,
+            #[serde(default)]
             sources: Vec<EnvironmentSource>,
             #[serde(default)]
             network: Option<NetworkConfig>,
@@ -459,6 +490,7 @@ impl<'de> Deserialize<'de> for RemoteEnvironment {
             }
         }
         Ok(Self {
+            environment_id: raw.environment_id,
             sources: raw.sources,
             network: raw.network,
             env,
@@ -936,5 +968,23 @@ mod tests {
         assert_eq!(serde_json::to_value(&entry).unwrap(), wire);
         let back: AllowlistEntry = serde_json::from_value(wire).unwrap();
         assert_eq!(back, entry);
+    }
+
+    /// A stored agent interaction serves its environment in this shape (live
+    /// 2026-11-05); `environment_id` is modeled, not left in `extra`.
+    #[test]
+    fn environment_id_is_sent_and_read_back() {
+        let wire = json!({"environment_id": "4e0dd84a42d003f99a7f9b48810064eb", "type": "remote"});
+        let env: RemoteEnvironment = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(
+            env.environment_id.as_deref(),
+            Some("4e0dd84a42d003f99a7f9b48810064eb")
+        );
+        assert!(env.extra.is_empty(), "{:?}", env.extra);
+        assert_eq!(serde_json::to_value(&env).unwrap(), wire);
+        assert_eq!(
+            env,
+            RemoteEnvironment::new().with_environment_id("4e0dd84a42d003f99a7f9b48810064eb")
+        );
     }
 }
