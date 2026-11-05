@@ -123,7 +123,10 @@ const TRIGGER_OUTPUT_ONLY: &str = "readOnly on the params schema the spec shares
 const GAPS: &[Allowed] = &[
     ("agents.Agent.agent_config", UNSEEN),
     ("Agent.agent_config", UNSEEN),
-    ("interactions.Environment.environment_id", INLINE_ENVIRONMENT_ID),
+    (
+        "interactions.Environment.environment_id",
+        INLINE_ENVIRONMENT_ID,
+    ),
     ("EnvironmentConfig.environment_id", INLINE_ENVIRONMENT_ID),
     // Files and File Search Stores.
     (
