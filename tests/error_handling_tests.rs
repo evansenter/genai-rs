@@ -502,14 +502,15 @@ async fn test_retry_on_transient_invalid_request_fails_first_attempt() {
 
 /// A retryable error whose server-sent Retry-After exceeds what a harness
 /// timeout budget can afford aborts the retry immediately, surfacing the
-/// real error instead of sleeping toward an opaque timeout. No wall clock
-/// is spent, so this also pins that the abort happens before the sleep.
+/// real error instead of sleeping toward an opaque timeout. On the paused
+/// clock a sleep would advance virtual time, so none passing pins that the
+/// abort happens before the sleep.
 #[tokio::test(start_paused = true)]
 async fn test_retry_on_transient_aborts_on_long_retry_after() {
     let call_count = Arc::new(AtomicU32::new(0));
     let count = call_count.clone();
 
-    let start = std::time::Instant::now();
+    let start = tokio::time::Instant::now();
     let result = retry_on_transient(3, || {
         let count = count.clone();
         async move {
@@ -530,8 +531,9 @@ async fn test_retry_on_transient_aborts_on_long_retry_after() {
         1,
         "A Retry-After beyond the cap must abort instead of retrying"
     );
-    assert!(
-        start.elapsed() < std::time::Duration::from_secs(5),
+    assert_eq!(
+        start.elapsed(),
+        std::time::Duration::ZERO,
         "The abort must happen without sleeping out the requested delay"
     );
 }

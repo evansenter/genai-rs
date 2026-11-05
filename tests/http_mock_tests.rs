@@ -842,12 +842,18 @@ async fn auto_functions_with_zero_loops_is_an_error_without_a_request() {
     assert!(stub.requests().is_empty());
 }
 
-#[tokio::test]
+/// On the paused clock (#501), held until the stub has the request: the
+/// only timers left are the 100 ms timeout and the stub's 2 s delay, so the
+/// call ends at exactly 100 ms of virtual time.
+#[tokio::test(start_paused = true)]
 async fn auto_functions_timeout_applies_per_call() {
-    let stub = Stub::replying(vec![
-        Reply::json(200, text_response("int-1", "late")).delayed(Duration::from_secs(2)),
-    ])
+    let (gate, release) = hold_clock();
+    let stub = Stub::start(move |_, _| {
+        release();
+        Reply::json(200, text_response("int-1", "late")).delayed(Duration::from_secs(2))
+    })
     .await;
+    let started = tokio::time::Instant::now();
     let err = stub
         .client()
         .interaction()
@@ -857,10 +863,12 @@ async fn auto_functions_timeout_applies_per_call() {
         .create_with_auto_functions()
         .await
         .unwrap_err();
+    gate.await.unwrap();
     assert!(
         matches!(err, GenaiError::Timeout(d) if d == Duration::from_millis(100)),
         "{err:?}"
     );
+    assert_eq!(started.elapsed(), Duration::from_millis(100), "{err:?}");
 }
 
 #[tokio::test]
