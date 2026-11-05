@@ -211,8 +211,9 @@ must not flake.
   `test_source_content(text)`, which carry the `genai-rs-test` prefix (and,
   in the name, the creation time). Clean up in the test, including on a
   panic, and cancel and delete background interactions. What a dead test
-  leaves behind, the daily [janitor](#leaked-test-resources) deletes, but
-  only if it carries the marker.
+  leaves behind, the daily [janitor](#leaked-test-resources) finds, but only
+  if it carries the marker; it deletes it only once the key owner has opted
+  in (`JANITOR_DELETE`).
 
 | Group | Binaries |
 |-------|----------|

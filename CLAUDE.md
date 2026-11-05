@@ -193,7 +193,8 @@ reaches the wire must use a real id.
   a `test-integration` matrix group in `.github/workflows/rust.yml`.
 - A live test names what it creates with `test_resource_name` /
   `test_source_content` (`tests/common/mod.rs`), the marker the daily
-  test-resource janitor deletes by, and cleans up itself, background
+  test-resource janitor matches (it deletes only when `JANITOR_DELETE` is
+  `true`), and cleans up itself, background
   interactions included. A request field with no observable effect is
   checked as stored with `stored_echo` and `assert_stored`, not just
   accepted (#492).
