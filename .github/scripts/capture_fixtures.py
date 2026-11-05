@@ -12,10 +12,16 @@ API sends fails there and the new captures are kept as an artifact to
 commit.
 
 Usage: capture_fixtures.py [--out DIR] [--model MODEL]
+       capture_fixtures.py --check-age DAYS [--out DIR]
 
 Needs GEMINI_API_KEY. The model defaults to `DEFAULT_MODEL` in
 src/lib.rs. Deletes what it creates (two stored interactions and an
 environment marked for the test-resource janitor).
+
+`--check-age DAYS` captures nothing and needs no key: it fails when a
+fixture in DIR was captured more than DAYS ago, or carries no capture
+date. The weekly job runs it on the committed copies, so fixtures nobody
+refreshed go red there instead of aging silently.
 """
 
 from __future__ import annotations
@@ -89,11 +95,46 @@ def default_model() -> str:
     return match.group(1)
 
 
+def check_age(out: str, max_days: int, today: dt.date) -> int:
+    """Exit status 1 when a fixture is older than `max_days` or undated."""
+    names = sorted(n for n in os.listdir(out) if n.endswith(".json"))
+    if not names:
+        print(f"::error::no captured fixtures in {out}")
+        return 1
+    stale = 0
+    for name in names:
+        with open(os.path.join(out, name), encoding="utf-8") as handle:
+            captured = json.load(handle).get("captured")
+        try:
+            age = (today - dt.date.fromisoformat(str(captured))).days
+        except ValueError:
+            print(f"::error::{out}/{name}: no capture date (captured: {captured!r})")
+            stale += 1
+            continue
+        if age > max_days:
+            print(f"::error::{out}/{name}: captured {captured}, {age} days ago (limit {max_days})")
+            stale += 1
+    if stale:
+        print(f"{stale} of {len(names)} fixture(s) need a refresh: commit this run's "
+              "captured-fixtures artifact, or run this script with GEMINI_API_KEY set.")
+        return 1
+    print(f"All {len(names)} fixtures were captured within {max_days} days.")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--out", default="tests/fixtures/captured")
     parser.add_argument("--model", default=None)
+    parser.add_argument("--check-age", type=int, metavar="DAYS", default=None,
+                        help="capture nothing; fail on a fixture older than DAYS")
+    # For the harness: a fixed "today".
+    parser.add_argument("--today", default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.check_age is not None:
+        today = (dt.date.fromisoformat(args.today) if args.today
+                 else dt.datetime.now(dt.timezone.utc).date())
+        return check_age(args.out, args.check_age, today)
     key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not key:
         sys.exit("GEMINI_API_KEY is empty or unset")

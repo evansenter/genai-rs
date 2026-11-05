@@ -301,7 +301,7 @@ jobs:
   # from the live API and replays the fresh copies, so a change in what the
   # API sends goes red here instead of drifting past the offline suite. The
   # fresh captures are uploaded either way; commit them to refresh the
-  # fixtures (#492).
+  # fixtures (#492). Committed captures over 90 days old fail the run.
   captured-fixtures:
     name: Captured Fixtures Refresh
     needs: check
@@ -335,6 +335,15 @@ jobs:
           name: captured-fixtures-${{ github.run_id }}
           path: tests/fixtures/captured
           retention-days: 30
+      # This job cannot commit, so the committed copies (the ones the offline
+      # suite replays) are checked instead: past 90 days unrefreshed, the
+      # weekly run goes red and escalates, and the fix is to commit the
+      # artifact above.
+      - name: Committed captures are under 90 days old
+        if: ${{ !cancelled() && steps.capture.conclusion == 'success' }}
+        run: |
+          git checkout -- tests/fixtures/captured
+          python3 .github/scripts/capture_fixtures.py --check-age 90
 
   fmt:
     name: Format
