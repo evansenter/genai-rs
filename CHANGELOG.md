@@ -146,9 +146,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a response with no `Content-Type` is still read as a stream. A proxy
   or gateway (`ClientBuilder::with_base_url`) that rewrites the type of a
   working stream, for example to `text/plain` or `application/octet-stream`,
-  now fails where 0.13.0 streamed. Migration: have the proxy pass the API's
-  `Content-Type` through, or send none; behind a proxy you can't change,
-  call `create()` instead of `create_stream()`.
+  now fails where 0.13.0 streamed. The check covers every streaming call:
+  `create_stream()`, `create_stream_with_auto_functions()`, and
+  `interactions().stream()` / `resume_stream()`. Migration: have the proxy
+  pass the API's `Content-Type` through, or send none. Behind a proxy you
+  can't change, use the non-streaming call instead: `create()`,
+  `create_with_auto_functions()`, or `interactions().get(id)` for a stored
+  interaction.
 - The Antigravity harness runs in its own process group on Unix. A
   terminal's Ctrl-C now reaches only your process; when it exits, the
   harness sees stdin close and shuts down gracefully. To stop the harness on
