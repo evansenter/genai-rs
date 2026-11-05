@@ -17,8 +17,9 @@ mod live_verbs;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-/// Runs in the `test-antigravity` job's own step, not the matrix.
-const OUTSIDE_MATRIX: &[&str] = &["antigravity_harness"];
+/// Run in the `test-antigravity` job's own steps, not the matrix (see
+/// `outside_matrix_binaries_run_in_the_antigravity_job`).
+const OUTSIDE_MATRIX: &[&str] = &["antigravity_harness", "antigravity_scripted"];
 
 /// The one ignore reason for a live test (CLAUDE.md, "Test conventions").
 const LIVE_REASON: &str = "Requires API key";
@@ -110,6 +111,29 @@ fn every_live_test_binary_is_in_the_ci_matrix() {
         missing.is_empty(),
         "these binaries have live tests but no test-integration matrix group: {missing:?}"
     );
+}
+
+/// The binaries kept out of the matrix still have to run somewhere: each is
+/// named by a `--run-ignored all` filter in the `test-antigravity` job.
+#[test]
+fn outside_matrix_binaries_run_in_the_antigravity_job() {
+    let workflow = rust_yml();
+    let job = workflow
+        .split("\n  test-antigravity:\n")
+        .nth(1)
+        .expect("rust.yml has no test-antigravity job")
+        .split("\n  test-integration:")
+        .next()
+        .unwrap();
+    for binary in OUTSIDE_MATRIX {
+        let runs = job.lines().any(|line| {
+            line.contains("--run-ignored all") && line.contains(&format!("binary({binary})"))
+        });
+        assert!(
+            runs,
+            "{binary} is kept out of the matrix but no test-antigravity step runs it"
+        );
+    }
 }
 
 #[test]

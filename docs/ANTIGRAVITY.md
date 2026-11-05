@@ -68,6 +68,35 @@ aliased: the harness accepts exactly one, which is why a build drives a
 single revision (0.1.23 today). The drift guard now checks field *types* as well as names,
 since `userInput` kept its name while changing shape.
 
+**The version is checked at spawn.** The binary carries no version of its
+own, so `spawn()` reads it from the wheel install the binary sits in
+(`google_antigravity-<version>.dist-info` beside
+`google/antigravity/bin/localharness`, following a `PATH` symlink into its
+venv) and logs a `warn!` when it differs from `SUPPORTED_HARNESS_VERSION`.
+`AntigravityAgent::harness_version()` returns it (`None` for a binary that
+is not inside a wheel install). A known mismatch is also named in an
+`InitFailed` message and in a turn's `Timeout` diagnosis.
+
+It warns rather than refuses (D-019) because the failures a mismatch
+causes are already loud (an init rejection with the harness's reason, or a
+timeout that now names the version), and because running a newer wheel on
+purpose is how a harness bump is tested. To refuse one, compare the two
+yourself:
+
+```rust,ignore
+use genai_rs::antigravity::SUPPORTED_HARNESS_VERSION;
+
+if agent.harness_version() != Some(SUPPORTED_HARNESS_VERSION) {
+    agent.shutdown().await?;
+    return Err("unsupported localharness version".into());
+}
+```
+
+New releases are watched for you: the `antigravity-release-watch.yml`
+workflow compares PyPI's latest `google-antigravity` with the pin daily
+and, when they differ, opens an `antigravity-release` issue with a diff of
+the two wheels' protobuf descriptors.
+
 ### Binary discovery
 
 `spawn()` finds the binary in this order:
@@ -104,10 +133,22 @@ agent.shutdown().await?;   // graceful: the harness persists its trajectory
 
 `spawn()` launches the harness, performs the stdio handshake, connects to
 its localhost WebSocket, and initializes the conversation. `shutdown()`
-closes the WebSocket and stdin (the harness's graceful-exit signal), then
-escalates to SIGTERM/SIGKILL only if it lingers. Dropping the agent without
-`shutdown()` kills the harness immediately — no zombie, but no trajectory
-persistence either.
+closes the WebSocket and stdin (the harness's graceful-exit signal; the
+harness then stops the commands it started itself), and escalates to
+SIGTERM/SIGKILL only if it lingers. Dropping the agent without `shutdown()`
+kills the harness immediately — no zombie, but no trajectory persistence
+either.
+
+Every kill reaches the processes the harness started, not just the harness:
+on Unix it runs in its own process group, and the forced paths (drop, an
+init failure, the shutdown escalation) signal that group *and* the process
+group of each of its children. The second part matters because the harness
+gives every `run_command` command a process group of its own (0.1.23), so a
+kill of the harness or its group alone left those commands running. A
+command that detaches itself (`setsid`, a double-forked daemon) is still
+out of reach. Because the harness is in its own group, a terminal's Ctrl-C
+reaches only your process; when it exits, the harness sees stdin close and
+shuts down gracefully.
 
 ## Workspaces
 
@@ -283,6 +324,27 @@ missing key: a check that indexes a key which is not there sees `Null` and,
 written the obvious way, allows everything. Both path-gating examples in
 this repository shipped that bug against 0.1.18 before it was caught.
 
+The bridge fails closed on the case it can see: when the harness sends
+arguments that are not valid JSON, a call that a pre-tool hook would judge
+is **denied before the hook runs**, with a reason saying why (the hook
+would otherwise have been handed `{}` and passed a path gate it should have
+failed). Without a pre-tool hook, name-based policies decide as usual,
+since they never read arguments. A custom tool call whose arguments decode
+in neither of the harness's encodings is answered with an error instead of
+running the tool on `Null`.
+
+Hooks are synchronous closures, and each call runs on a thread of its own,
+so the turn deadline bounds them on any runtime: a hook still running when
+the turn's budget runs out ends the turn with `AntigravityError::Timeout`,
+whose `operation` names it. The hook's thread is not stopped; its result is
+discarded when it returns. The thread is detached, so a hook still blocked
+after a timeout holds up neither runtime shutdown (the end of
+`#[tokio::main]`) nor process exit. It does keep running, and keeps what it
+captured alive, until it returns, so keep hooks bounded. The thread enters
+the turn's runtime, so `tokio::runtime::Handle::current()` works inside a
+hook. Custom tools are bounded too, with one limit; see the turn deadline
+under [Streaming](#streaming).
+
 Arguments can also change meaning. 0.1.23 added `Append` to `create_file`:
 `{Overwrite: false, Append: true}` now appends to an existing file, where
 0.1.18 refused. A gate that allows `create_file` only when `Overwrite` is
@@ -389,12 +451,14 @@ A question whose *type* this crate doesn't model arrives with
 to `Unanswered` rather than selecting index 0 of an empty list).
 `AgentQuestion::unknown(extra)` builds that fixture for unit tests.
 
-The hook is synchronous and runs inline in the harness event pump — don't
-block in it waiting for a human. For interactive flows, collect the
-answer out-of-band (chat reply, CLI prompt in another task) into a
-channel and answer from `try_recv`, returning `Unanswered` when nothing
-has arrived; the deadlock-avoidance fallback only covers the hookless
-case.
+The hook is synchronous, and the turn waits for it — don't block in it
+waiting for a human. It runs on a thread of its own, so a slow answer no
+longer stalls the runtime, but it still spends the turn's budget, and one
+still blocked at the deadline ends the turn with `Timeout`. For interactive
+flows, collect the answer out-of-band (chat reply, CLI prompt in another
+task) into a channel and answer from `try_recv`, returning `Unanswered`
+when nothing has arrived; the deadlock-avoidance fallback only covers the
+hookless case.
 
 ## Custom tools — the same `#[tool]` functions as the Interactions API
 
@@ -574,7 +638,28 @@ drains its remaining events before returning `AntigravityError::Timeout`, so
 the next turn starts from a clean stream.
 
 The deadline is absolute, stamped when the turn starts, and it covers the
-whole turn rather than the gaps between harness events. For
+whole turn rather than the gaps between harness events: that includes this
+crate's own work inside the turn, so a custom tool or hook that hangs ends
+the turn on time, with the `Timeout`'s `operation` naming it
+(`agent turn (custom tool 'x' was still running at the deadline)`).
+
+Each custom tool call runs on a tokio task of its own, and a call the
+deadline abandons is aborted: an async tool stops at its next `.await`. A
+tool body that **blocks its thread** (a synchronous `#[tool]` fn doing
+blocking I/O or `std::thread::sleep`) cannot be stopped; it runs to
+completion on its worker and its result is discarded. On a multi-thread
+runtime with two or more workers the deadline still fires on time, because
+a free worker drives the timer. Only workers drive it, though, so a body
+blocking the only worker stops the deadline until it returns. That happens
+on a current-thread runtime (`#[tokio::main(flavor = "current_thread")]`,
+and `#[tokio::test]`'s default), and on a multi-thread runtime with one
+worker: `#[tokio::main]` starts one worker per CPU, so a one-CPU host or a
+container limited to one CPU gets one. There the turn cannot end before the
+tool returns. Make such a tool `async` with non-blocking I/O, or move the
+blocking part into `tokio::task::spawn_blocking` inside it. Hooks need
+neither: each call always runs on a thread of its own.
+
+For
 `send_streaming` that includes time **your** code spends between polls of
 the stream — so a consumer that renders events interactively, or awaits a
 confirmation mid-turn, is spending the same budget the harness is. Raise it,
@@ -696,7 +781,7 @@ println!("restored {} steps", agent.initial_history().len());
 
 ### Diagnosing protocol drift
 
-Three signals exist specifically for the failure mode described under
+Four signals exist specifically for the failure mode described under
 [Version pinning](#version-pinning) — a harness that speaks a dialect this
 build only partly understands, which otherwise presents as "the agent just
 didn't do anything":
@@ -705,7 +790,8 @@ didn't do anything":
 |--------|-------------------|
 | `protocol::drift_report()` | Every unrecognized wire value seen, as `"EnumName=WIRE_VALUE" -> count`. Empty is healthy. Process-wide and cumulative; `clear_drift_report()` resets it. |
 | The `warn!` on `shutdown()` | The same aggregate, logged once at the natural end of a session, so it does not scroll past like the per-value warns do. |
-| `AntigravityError::Timeout` | When a turn times out having seen unrecognized *main-trajectory* states, or after the harness logged that it could not unmarshal something this session sent, the `operation` field names the cause and points at `SUPPORTED_HARNESS_VERSION` instead of reporting an undifferentiated stall. |
+| `AntigravityError::Timeout` | When a turn times out having seen unrecognized *main-trajectory* states, or after the harness logged that it could not unmarshal something this session sent, the `operation` field names the cause and points at `SUPPORTED_HARNESS_VERSION` instead of reporting an undifferentiated stall. It also names a known version mismatch, and a custom tool or hook of yours that was still running. |
+| `AntigravityAgent::harness_version()` and the spawn-time `warn!` | The installed wheel's version, when it differs from `SUPPORTED_HARNESS_VERSION`. |
 
 Programmatic check, for anything long-running:
 
@@ -728,6 +814,36 @@ a reshaped message from a silent hang into a red test.
 A turn that times out also names the harness-side cause when there is
 one: unrecognized main-trajectory states, or a line on the harness's
 stderr saying it failed to unmarshal a message this session sent.
+
+### Another model host, or a scripted one
+
+`with_gemini_base_url(url)` points the harness's model calls at another
+Gemini API host — a gateway or recording proxy — instead of
+`generativelanguage.googleapis.com`. The harness calls
+`{url}/v1beta/models/<model>:streamGenerateContent?alt=sse` with the key
+in `x-goog-api-key`. It needs a non-empty `with_api_key`: without a
+configured key, or with an empty one, the harness falls back to its own
+environment's `GEMINI_API_KEY` and sends that to the custom host (verified
+on 0.1.23, 2026-11-04), so `spawn()` refuses the combination. As a second
+guard, while a base URL is set the harness starts with `GEMINI_API_KEY` and
+`GOOGLE_API_KEY` removed from its environment, so there is no key to fall
+back on; commands the agent runs (`run_command`) inherit that environment
+and don't see them either.
+
+Pointed at a local server that answers with scripted `streamGenerateContent`
+events, the real harness runs real builtins, hooks, policies, containment,
+triggers and cancellation against a "model" that does exactly what a test
+says, with no API key. That is how `tests/antigravity_scripted.rs` works
+(see `docs/TESTING.md`):
+
+```rust,ignore
+let agent = AntigravityAgent::builder()
+    .with_api_key("placeholder")             // never a real key here
+    .with_gemini_base_url(fake.base_url())   // tests/common/fake_gemini.rs
+    .add_workspace(dir)
+    .spawn()
+    .await?;
+```
 
 ### Wire inspection
 
@@ -808,7 +924,17 @@ variants, never on message text. Key variants: `HarnessNotFound{searched}`,
   automatically (never deadlocks) unless an `on_questions` hook is set —
   see [Answering agent questions](#answering-agent-questions).
 - **Hooks are synchronous**: `on_pre_tool` / `on_post_tool` /
-  `on_questions` are sync closures; async hooks are a follow-up.
+  `on_questions` are sync closures (each call runs on a thread of its own
+  and is bounded by the turn deadline); async hooks are a follow-up.
+- **A blocking tool body can't be preempted on a current-thread or
+  single-worker runtime**: the turn deadline abandons a blocked synchronous
+  tool only on a multi-thread runtime with two or more workers (see the turn
+  deadline under [Streaming](#streaming)).
+- **Only the bespoke `localharness` protocol**: the harness's
+  Interactions-mode transport (`use_interactions_api`) is not used. On
+  0.1.23 it rejects every `interaction.create` that carries an agent config,
+  the Python SDK's own included (see the #494 decision in
+  `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`).
 - **Trigger-turn output is not surfaced**: turns started by
   `add_trigger` deliveries run unobserved and are halted/discarded by the
   next `chat`/`send_streaming` (see [Triggers](#triggers)); a background

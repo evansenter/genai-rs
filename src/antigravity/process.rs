@@ -10,9 +10,9 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 
-use super::AntigravityError;
 use super::handshake::{InputConfig, OutputConfig};
 use super::session::WireContext;
+use super::{AntigravityError, SUPPORTED_HARNESS_VERSION};
 use crate::wire::WireEvent;
 
 /// Environment variable naming the harness binary (same variable the
@@ -150,16 +150,22 @@ fn python_site_dirs() -> Vec<PathBuf> {
 /// Stdin must stay open for the harness's lifetime — EOF on stdin is the
 /// graceful shutdown signal.
 pub(crate) struct HarnessProcess {
-    child: Child,
+    /// `None` once the process has been reaped, so `Drop` knows there is
+    /// nothing left to kill.
+    child: Option<Child>,
     /// Held open; dropped first during shutdown to signal EOF.
     stdin: Option<ChildStdin>,
     stderr_lines: Arc<Mutex<VecDeque<String>>>,
+    /// The `google-antigravity` wheel version the binary came from, when
+    /// its install layout says (see [`harness_version`]).
+    version: Option<String>,
 }
 
 impl std::fmt::Debug for HarnessProcess {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HarnessProcess")
-            .field("pid", &self.child.id())
+            .field("pid", &self.child.as_ref().and_then(Child::id))
+            .field("version", &self.version)
             .finish_non_exhaustive()
     }
 }
@@ -236,21 +242,53 @@ where
     }
 }
 
+/// The environment variables the harness reads a Gemini API key from when
+/// its model config carries none (the Go genai SDK's two names; both appear
+/// in the 0.1.23 binary).
+const API_KEY_ENV_VARS: [&str; 2] = ["GEMINI_API_KEY", "GOOGLE_API_KEY"];
+
+/// The harness command line: piped stdio, its own process group on Unix,
+/// and, with `scrub_key_env`, none of [`API_KEY_ENV_VARS`] in its
+/// environment.
+fn harness_command(binary: &Path, scrub_key_env: bool) -> Command {
+    let mut command = Command::new(binary);
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    // A harness pointed at a custom Gemini host falls back to these when
+    // its configured key is missing or empty, and would send that key to
+    // the custom host (verified on 0.1.23, 2026-11-04). The builder
+    // refuses a blank key; this makes the fallback impossible as well.
+    if scrub_key_env {
+        for var in API_KEY_ENV_VARS {
+            command.env_remove(var);
+        }
+    }
+    // Its own process group, so a forced kill reaches what it started
+    // (see `process_tree`). This also keeps a terminal's Ctrl-C from
+    // killing the harness outright: the signal reaches this process,
+    // and when it exits the harness sees stdin EOF and shuts down
+    // gracefully, stopping its commands itself. No `kill_on_drop` on
+    // unix: `Drop` kills the whole tree instead.
+    #[cfg(unix)]
+    command.process_group(0);
+    #[cfg(not(unix))]
+    command.kill_on_drop(true);
+    command
+}
+
 impl HarnessProcess {
     /// Spawns the harness, performs the stdio handshake, and starts the
-    /// stderr drain task.
+    /// stderr drain task. With `scrub_key_env`, the harness starts without
+    /// [`API_KEY_ENV_VARS`] in its environment (see [`harness_command`]).
     pub(crate) async fn spawn(
         binary: &Path,
         input_config: &InputConfig,
+        scrub_key_env: bool,
         wire: &WireContext,
     ) -> Result<(Self, OutputConfig), AntigravityError> {
-        let mut child = Command::new(binary)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            // Last-resort zombie hygiene: if this struct is dropped without
-            // an explicit shutdown, the OS still reaps the harness.
-            .kill_on_drop(true)
+        let mut child = harness_command(binary, scrub_key_env)
             .spawn()
             .map_err(|e| AntigravityError::HandshakeFailed {
                 message: format!("failed to spawn harness at {}: {e}", binary.display()),
@@ -278,10 +316,13 @@ impl HarnessProcess {
             wire.clone(),
         ));
 
+        let version = harness_version(binary);
+        check_version(binary, version.as_deref());
         let mut process = Self {
-            child,
+            child: Some(child),
             stdin: None,
             stderr_lines,
+            version,
         };
 
         // Handshake: write the length-prefixed InputConfig, read the
@@ -295,7 +336,7 @@ impl HarnessProcess {
             Ok(Ok(payload)) => payload,
             Ok(Err(e)) => {
                 let stderr = process.stderr_tail().await;
-                let _ = process.child.start_kill();
+                process.kill().await;
                 return Err(AntigravityError::HandshakeFailed {
                     message: format!("stdio handshake I/O failed: {e}"),
                     stderr,
@@ -303,7 +344,7 @@ impl HarnessProcess {
             }
             Err(_) => {
                 let stderr = process.stderr_tail().await;
-                let _ = process.child.start_kill();
+                process.kill().await;
                 return Err(AntigravityError::HandshakeFailed {
                     message: format!("no handshake reply within {HANDSHAKE_TIMEOUT:?}"),
                     stderr,
@@ -314,7 +355,7 @@ impl HarnessProcess {
             Ok(config) => config,
             Err(e) => {
                 let stderr = process.stderr_tail().await;
-                let _ = process.child.start_kill();
+                process.kill().await;
                 return Err(AntigravityError::HandshakeFailed {
                     message: format!("invalid OutputConfig: {e}"),
                     stderr,
@@ -338,227 +379,208 @@ impl HarnessProcess {
         ring.iter().cloned().collect::<Vec<_>>().join("\n")
     }
 
-    /// Kills the harness immediately (init-failure path).
+    /// The `google-antigravity` version the binary was installed from, when
+    /// known (see [`harness_version`]).
+    pub(crate) fn version(&self) -> Option<&str> {
+        self.version.as_deref()
+    }
+
+    /// Kills the harness and every process it started, then reaps it
+    /// (init-failure path).
     pub(crate) async fn kill(&mut self) {
-        let _ = self.child.start_kill();
-        let _ = self.child.wait().await;
+        self.signal(Signal::Kill);
+        self.wait_for_exit(KILL_GRACE).await;
     }
 
     /// Graceful, escalating shutdown:
     ///
     /// 1. Close stdin — the harness's main loop sees EOF, cleans up
-    ///    (serializes trajectories) and exits on its own.
-    /// 2. After [`SHUTDOWN_GRACE`], escalate to SIGTERM.
+    ///    (serializes trajectories, stops the commands it started) and
+    ///    exits on its own.
+    /// 2. After [`SHUTDOWN_GRACE`], escalate to SIGTERM for the harness and
+    ///    everything it started (`process_tree`). The harness takes
+    ///    SIGTERM's default action (0.1.23), so this step no longer gives it
+    ///    a chance to clean up; it is for the processes it started.
     /// 3. After [`KILL_GRACE`], escalate to SIGKILL.
     pub(crate) async fn shutdown(mut self) -> Result<(), AntigravityError> {
         drop(self.stdin.take());
-
-        if tokio::time::timeout(SHUTDOWN_GRACE, self.child.wait())
-            .await
-            .is_ok()
-        {
+        if self.wait_for_exit(SHUTDOWN_GRACE).await {
             return Ok(());
         }
 
         tracing::warn!("Harness did not exit after stdin EOF; sending SIGTERM.");
-        self.terminate();
-        if tokio::time::timeout(KILL_GRACE, self.child.wait())
-            .await
-            .is_ok()
-        {
+        self.signal(Signal::Term);
+        if self.wait_for_exit(KILL_GRACE).await {
             return Ok(());
         }
 
         tracing::warn!("Harness ignored SIGTERM; sending SIGKILL.");
-        let _ = self.child.start_kill();
-        let _ = tokio::time::timeout(KILL_GRACE, self.child.wait()).await;
+        self.signal(Signal::Kill);
+        self.wait_for_exit(KILL_GRACE).await;
         Ok(())
     }
 
-    #[cfg(unix)]
-    #[allow(unsafe_code)] // libc::kill; see the SAFETY comment
-    fn terminate(&self) {
-        if let Some(pid) = self.child.id() {
-            // SAFETY: plain signal dispatch to a pid we own; no memory is
-            // shared with the callee.
-            unsafe {
-                libc::kill(pid as libc::pid_t, libc::SIGTERM);
-            }
+    /// Waits up to `grace` for the harness to exit, reaping it if it does.
+    /// The child stays in `self` while waiting, so a cancelled shutdown
+    /// still leaves `Drop` something to kill.
+    async fn wait_for_exit(&mut self, grace: Duration) -> bool {
+        let Some(child) = self.child.as_mut() else {
+            return true;
+        };
+        if tokio::time::timeout(grace, child.wait()).await.is_ok() {
+            self.child = None;
+            true
+        } else {
+            false
         }
     }
 
-    #[cfg(not(unix))]
-    fn terminate(&self) {
-        // No SIGTERM equivalent: go straight to the kill escalation.
+    /// Signals the harness's process tree. Nothing is sent once the child
+    /// has been reaped: its group id may no longer be ours.
+    fn signal(&mut self, signal: Signal) {
+        let Some(child) = self.child.as_mut() else {
+            return;
+        };
+        #[cfg(unix)]
+        if let Some(pid) = child.id() {
+            let signal = match signal {
+                Signal::Term => libc::SIGTERM,
+                Signal::Kill => libc::SIGKILL,
+            };
+            super::process_tree::signal_tree(pid, signal);
+        }
+        // No process groups or SIGTERM equivalent: kill the harness itself.
+        #[cfg(not(unix))]
+        {
+            let _ = signal;
+            let _ = child.start_kill();
+        }
     }
+}
+
+/// Dropping a harness that was never shut down kills it and every process
+/// it started (stdio MCP servers, `run_command` commands), without the
+/// graceful exit's trajectory persistence. Signal only: `Drop` cannot wait,
+/// so the reap is left to tokio's orphan reaper.
+impl Drop for HarnessProcess {
+    fn drop(&mut self) {
+        self.signal(Signal::Kill);
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Signal {
+    Term,
+    Kill,
+}
+
+// =============================================================================
+// Harness version
+// =============================================================================
+
+/// Reads the `google-antigravity` version a harness binary was installed
+/// from.
+///
+/// The binary carries no version of its own (`localharness --version` just
+/// reads stdin for a handshake, 0.1.23), and the handshake reply carries
+/// none either. A wheel install lays the binary out as
+/// `<site-packages>/google/antigravity/bin/localharness` beside
+/// `<site-packages>/google_antigravity-<version>.dist-info/METADATA`, so
+/// the version is read from there. Symlinks (a pipx or `uv tool` shim on
+/// `PATH`) are resolved first.
+///
+/// `None` when the binary is not inside a wheel install (a hand-placed
+/// copy), or the metadata is missing or names more than one version.
+pub(crate) fn harness_version(binary: &Path) -> Option<String> {
+    let binary = binary
+        .canonicalize()
+        .unwrap_or_else(|_| binary.to_path_buf());
+    let site_packages = binary.ancestors().nth(4)?;
+    if !site_packages.join(SITE_PACKAGES_SUFFIX).is_file() {
+        return None;
+    }
+    let mut versions: Vec<String> = std::fs::read_dir(site_packages)
+        .ok()?
+        .flatten()
+        .filter(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with("google_antigravity-") && name.ends_with(".dist-info")
+        })
+        .filter_map(|entry| std::fs::read_to_string(entry.path().join("METADATA")).ok())
+        .filter_map(|metadata| metadata_version(&metadata))
+        .collect();
+    versions.sort();
+    versions.dedup();
+    match versions.as_slice() {
+        [version] => Some(version.clone()),
+        _ => None,
+    }
+}
+
+/// Warns when the harness is not the version this build was written
+/// against.
+///
+/// A warning, not an error. The failures a mismatch causes are already
+/// loud: the harness rejects a config field it does not know at init (with
+/// its reason on stderr), and a turn that never ends names the version in
+/// its timeout error ([`version_mismatch`]). An error would also block
+/// running a newer wheel deliberately, which is how a harness bump is
+/// tested. Callers who want to refuse a mismatch can compare
+/// [`AntigravityAgent::harness_version`](super::AntigravityAgent::harness_version)
+/// with [`SUPPORTED_HARNESS_VERSION`] themselves.
+fn check_version(binary: &Path, version: Option<&str>) {
+    match version {
+        Some(version) if version == SUPPORTED_HARNESS_VERSION => {
+            tracing::debug!("localharness {version} at {}", binary.display());
+        }
+        Some(version) => tracing::warn!(
+            "localharness at {} is google-antigravity {version}, but this build of genai-rs \
+             supports {SUPPORTED_HARNESS_VERSION}; protocol changes may fail turns or go \
+             unnoticed. Install the supported version with \
+             `pip install google-antigravity=={SUPPORTED_HARNESS_VERSION}`.",
+            binary.display()
+        ),
+        None => tracing::debug!(
+            "localharness at {} is not inside a google-antigravity wheel install; its version \
+             is unknown",
+            binary.display()
+        ),
+    }
+}
+
+/// Describes a known version mismatch for an error message: `Some` only
+/// when the harness version is known and differs from
+/// [`SUPPORTED_HARNESS_VERSION`].
+pub(crate) fn version_mismatch(version: Option<&str>) -> Option<String> {
+    version
+        .filter(|version| *version != SUPPORTED_HARNESS_VERSION)
+        .map(|version| {
+            format!(
+                "the harness is google-antigravity {version}; this build supports \
+                 {SUPPORTED_HARNESS_VERSION}"
+            )
+        })
+}
+
+/// The `Version:` header of a wheel's `METADATA`, if its `Name:` is
+/// `google-antigravity`.
+fn metadata_version(metadata: &str) -> Option<String> {
+    let mut name = None;
+    let mut version = None;
+    // The headers end at the first blank line; the description follows.
+    for line in metadata.lines().take_while(|line| !line.trim().is_empty()) {
+        if let Some(value) = line.strip_prefix("Name:") {
+            name = Some(value.trim().to_ascii_lowercase().replace('_', "-"));
+        } else if let Some(value) = line.strip_prefix("Version:") {
+            version = Some(value.trim().to_string());
+        }
+    }
+    (name.as_deref() == Some("google-antigravity"))
+        .then_some(version)
+        .flatten()
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn touch_executable(path: &Path) {
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, b"#!/bin/sh\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-    }
-
-    #[test]
-    fn test_discovery_prefers_explicit_path() {
-        let dir = tempfile::tempdir().unwrap();
-        let explicit = dir.path().join("explicit/localharness");
-        let env = dir.path().join("env/localharness");
-        touch_executable(&explicit);
-        touch_executable(&env);
-        let found = discover_in(Some(&explicit), Some(&env), &[], None).unwrap();
-        assert_eq!(found, explicit);
-    }
-
-    #[test]
-    fn test_discovery_env_var_beats_site_packages() {
-        let dir = tempfile::tempdir().unwrap();
-        let env = dir.path().join("env/localharness");
-        let site = dir.path().join("site");
-        touch_executable(&env);
-        touch_executable(&site.join(SITE_PACKAGES_SUFFIX));
-        let found = discover_in(None, Some(&env), std::slice::from_ref(&site), None).unwrap();
-        assert_eq!(found, env);
-    }
-
-    #[test]
-    fn test_discovery_site_packages_beats_path() {
-        let dir = tempfile::tempdir().unwrap();
-        let site = dir.path().join("site");
-        let path_dir = dir.path().join("bin");
-        touch_executable(&site.join(SITE_PACKAGES_SUFFIX));
-        touch_executable(&path_dir.join("localharness"));
-        let found = discover_in(
-            None,
-            None,
-            std::slice::from_ref(&site),
-            Some(path_dir.as_os_str()),
-        )
-        .unwrap();
-        assert_eq!(found, site.join(SITE_PACKAGES_SUFFIX));
-    }
-
-    #[test]
-    fn test_discovery_falls_back_to_path() {
-        let dir = tempfile::tempdir().unwrap();
-        let path_dir = dir.path().join("bin");
-        touch_executable(&path_dir.join("localharness"));
-        let found = discover_in(None, None, &[], Some(path_dir.as_os_str())).unwrap();
-        assert_eq!(found, path_dir.join("localharness"));
-    }
-
-    #[test]
-    fn test_discovery_missing_explicit_falls_through() {
-        let dir = tempfile::tempdir().unwrap();
-        let missing = dir.path().join("nope/localharness");
-        let path_dir = dir.path().join("bin");
-        touch_executable(&path_dir.join("localharness"));
-        let found = discover_in(Some(&missing), None, &[], Some(path_dir.as_os_str())).unwrap();
-        assert_eq!(found, path_dir.join("localharness"));
-    }
-
-    #[tokio::test]
-    async fn test_handshake_frame_rejects_oversized_length_before_allocating() {
-        // Length prefix declares ~4 GiB; the payload never follows. The cap
-        // must reject it from the prefix alone (no allocation, no read).
-        let data = u32::MAX.to_le_bytes();
-        let err = read_handshake_frame(&mut &data[..]).await.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
-        assert!(err.to_string().contains("exceeding"), "got: {err}");
-    }
-
-    #[tokio::test]
-    async fn test_handshake_frame_rejects_just_over_cap() {
-        let data = ((MAX_HANDSHAKE_FRAME_LEN as u32) + 1).to_le_bytes();
-        let err = read_handshake_frame(&mut &data[..]).await.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
-    }
-
-    #[tokio::test]
-    async fn test_handshake_frame_reads_valid_frame() {
-        let mut data = 5u32.to_le_bytes().to_vec();
-        data.extend_from_slice(b"hello");
-        let payload = read_handshake_frame(&mut &data[..]).await.unwrap();
-        assert_eq!(payload, b"hello");
-    }
-
-    #[tokio::test]
-    async fn test_handshake_frame_truncated_payload_is_io_error() {
-        // Declared length exceeds the available bytes (but is under the cap).
-        let mut data = 10u32.to_le_bytes().to_vec();
-        data.extend_from_slice(b"short");
-        let err = read_handshake_frame(&mut &data[..]).await.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
-    }
-
-    #[tokio::test]
-    async fn test_stderr_drain_survives_invalid_utf8() {
-        // The drain sits at the wrong-binary trust boundary: a non-UTF-8
-        // line must be replaced lossily, not end the drain (a stopped
-        // drain lets the pipe fill and deadlocks the child).
-        let data: &[u8] = b"first line\n\xff\xfe broken\nafter\r\nlast without newline";
-        let ring = Arc::new(Mutex::new(VecDeque::new()));
-        drain_stderr(data, Arc::clone(&ring), WireContext::new(Vec::new())).await;
-
-        let lines: Vec<String> = ring.lock().unwrap().iter().cloned().collect();
-        assert_eq!(lines.len(), 4, "got: {lines:?}");
-        assert_eq!(lines[0], "first line");
-        assert!(
-            lines[1].contains('\u{FFFD}') && lines[1].ends_with(" broken"),
-            "invalid bytes must be replaced lossily, got: {:?}",
-            lines[1]
-        );
-        assert_eq!(lines[2], "after", "CRLF must be stripped");
-        assert_eq!(lines[3], "last without newline");
-    }
-
-    #[tokio::test]
-    async fn test_stderr_drain_ring_is_bounded() {
-        let mut data = Vec::new();
-        for i in 0..(STDERR_RING_CAPACITY + 10) {
-            data.extend_from_slice(format!("line {i}\n").as_bytes());
-        }
-        let ring = Arc::new(Mutex::new(VecDeque::new()));
-        drain_stderr(&data[..], Arc::clone(&ring), WireContext::new(Vec::new())).await;
-
-        let ring = ring.lock().unwrap();
-        assert_eq!(ring.len(), STDERR_RING_CAPACITY);
-        assert_eq!(
-            ring.back().unwrap(),
-            &format!("line {}", STDERR_RING_CAPACITY + 9)
-        );
-    }
-
-    #[test]
-    fn test_discovery_error_lists_searched_locations() {
-        let dir = tempfile::tempdir().unwrap();
-        let missing = dir.path().join("nope/localharness");
-        let site = dir.path().join("site");
-        std::fs::create_dir_all(&site).unwrap();
-        let err = discover_in(
-            Some(&missing),
-            None,
-            std::slice::from_ref(&site),
-            Some(std::ffi::OsStr::new("/definitely/not/a/dir")),
-        )
-        .unwrap_err();
-        let AntigravityError::HarnessNotFound { searched } = &err else {
-            panic!("expected HarnessNotFound, got {err:?}");
-        };
-        assert!(searched.iter().any(|s| s.contains("explicit path")));
-        assert!(searched.iter().any(|s| s.contains(SITE_PACKAGES_SUFFIX)));
-        assert!(searched.iter().any(|s| s.contains("PATH")));
-        // The rendered error must point users at the fix.
-        let message = err.to_string();
-        assert!(message.contains("pip install google-antigravity"));
-        assert!(message.contains(HARNESS_PATH_ENV));
-    }
-}
+#[path = "process_tests.rs"]
+mod tests;
