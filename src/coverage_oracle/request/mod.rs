@@ -414,6 +414,50 @@ fn wrong_request_keys_are_reported() {
     }
 }
 
+/// `InteractionRequest::extra` is caller-supplied passthrough: its keys are
+/// the caller's to choose and the server's to validate (`400 Unknown
+/// parameter`, live 2026-11-04), not keys the crate emits. So every case
+/// leaves it empty, as with every other request type's `extra`, and this
+/// pins why that must hold. A populated `extra` is sent flat, beside the
+/// modeled keys, so the checks read its keys as the class's own: an unknown
+/// one is reported like a key the crate sent by mistake, and one that names
+/// a binding field counts as sent in the reverse check without the crate
+/// modeling it (here `cached_content`, which [`NOT_SENT`] lists).
+#[test]
+fn a_populated_extra_is_sent_flat_and_not_vouched_for() {
+    for request in model_requests().iter().chain(&agent_requests()) {
+        assert!(request.extra.is_empty(), "{:?}", request.extra);
+    }
+    let surface = Surface::bindings();
+    let ty = surface.ty("interactions.CreateModelInteraction");
+    let mut request = model_requests().remove(0);
+    request
+        .extra
+        .insert("brand_new_field".into(), json!({"on": true}));
+    request
+        .extra
+        .insert("cached_content".into(), json!("cachedContents/c"));
+    let body = to_value(&request);
+    assert_eq!(body["brand_new_field"], json!({"on": true}), "sent flat");
+    assert!(body.get("extra").is_none(), "{body}");
+
+    let reported: BTreeSet<String> = surface
+        .check(&ty, &body)
+        .into_iter()
+        .map(|f| f.site)
+        .collect();
+    assert_eq!(
+        reported,
+        BTreeSet::from(["interactions.CreateModelInteraction.brand_new_field".to_string()])
+    );
+    let site = "interactions.CreateModelInteraction.cached_content";
+    assert!(NOT_SENT.iter().any(|(entry, _)| *entry == site));
+    assert!(
+        surface.sites(&ty, &body).values().any(|sent| sent == site),
+        "an extra key naming a binding field reads as sent"
+    );
+}
+
 /// The other direction: every field of every class a request reaches is
 /// sent by some value above, or listed in [`NOT_SENT`] with its reason.
 #[test]

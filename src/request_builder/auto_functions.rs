@@ -28,6 +28,13 @@ use super::InteractionBuilder;
 /// Default maximum iterations for auto function calling.
 pub(crate) const DEFAULT_MAX_FUNCTION_CALL_LOOPS: usize = 5;
 
+/// Reads a round's stream to its end after its `Completed` event. The HTTP
+/// layer then only reads the body's tail, bounded and with errors
+/// swallowed, so nothing more is yielded.
+async fn read_to_end<S: futures_util::Stream + Unpin>(stream: &mut S) {
+    while stream.next().await.is_some() {}
+}
+
 /// Builds a map of callable functions from a ToolService for efficient lookup.
 fn build_service_function_map(
     tool_service: &Option<Arc<dyn ToolService>>,
@@ -571,6 +578,13 @@ impl<'a> InteractionBuilder<'a> {
     ///   side via the interaction chain, but the stream yields an error rather than
     ///   a partial result. Use `previous_interaction_id` to continue.
     /// - The server sends an error event mid-stream ([`GenaiError::Stream`])
+    /// - A round's stream is cut off before its `Completed` event
+    ///   ([`GenaiError::StreamInterrupted`]). After a round's `Completed`,
+    ///   the rest of its body is read and discarded, errors included and
+    ///   outside the per-chunk timeout, so a late error can't fail a
+    ///   finished round. That read ends before the next round's request is
+    ///   sent, and before this stream ends, since the server stores an
+    ///   interaction only once its stream is done.
     /// - `max_function_call_loops` is set to 0 (invalid configuration)
     pub fn create_stream_with_auto_functions(
         self,
@@ -637,7 +651,11 @@ impl<'a> InteractionBuilder<'a> {
                             // The HTTP layer accumulates step.start/delta/stop
                             // events into the Completed response's steps, so
                             // response.function_calls() is fully populated here.
+                            // The stream's tail is read below, outside the
+                            // per-chunk timeout, which must not fail a
+                            // finished round.
                             complete_response = Some(response);
+                            break;
                         }
                         StreamChunk::Error { message, code } => {
                             Err(GenaiError::Stream { message, code })?;
@@ -697,6 +715,10 @@ impl<'a> InteractionBuilder<'a> {
                         AutoFunctionStreamChunk::Complete(final_response),
                         last_event_id.clone(),
                     );
+                    // Read the round's stream to its end before this one
+                    // ends, so a caller that gets the interaction or chains
+                    // on it then finds it stored.
+                    read_to_end(&mut stream).await;
                     return;
                 }
 
@@ -764,6 +786,11 @@ impl<'a> InteractionBuilder<'a> {
                 // Save this response before moving to next iteration
                 // (in case we hit max loops, we want to return the last response)
                 last_response = Some(response.clone());
+
+                // Read the round's stream to its end before chaining on its
+                // id: the server stores the interaction only once the stream
+                // is done. Its tail usually arrived while the functions ran.
+                read_to_end(&mut stream).await;
 
                 // Create new request with function results
                 request.previous_interaction_id = response.id;

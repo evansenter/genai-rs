@@ -394,6 +394,17 @@ logged under `genai_rs::antigravity::protocol` now logs under
 `genai_rs::antigravity::protocol::enums`); `EnvFilter` directives match by
 prefix, so existing filters still select them.
 
+**Later moves under this rule (2026-11-04, #500).** The reliability work
+pushed two modules past the bar, so their changed code moved out, again as
+pure moves with public paths unchanged:
+
+| From | To |
+|------|----|
+| `src/wire_streaming.rs` | `src/wire_streaming/`: `mod.rs` (the types), `serde_impls.rs` (the `StreamChunk` and `StreamEvent` wire format) |
+| `PollOptions`, `PollStep` and the wait in `src/files.rs`, with their tests from `src/files_tests.rs` | `src/poll.rs`, `src/poll_tests.rs` (`genai_rs::files::PollOptions` is a re-export) |
+
+`files.rs` drops to about 750 lines and leaves WP8's split list (#504).
+
 ---
 
 ## D-015 — Derive `Serialize`; keep `Deserialize` hand-written (2026-09-26)

@@ -9,7 +9,7 @@ follow.
 |------|-------|-------------|----------|
 | Unit | `#[cfg(test)]` modules and `src/*_tests.rs` | No | `make test` |
 | Property (proptest) | `src/proptest_tests.rs` | No | `make test` (or `cargo test proptest`) |
-| Offline HTTP | `tests/http_mock_tests.rs`, `tests/http_mock_resources.rs` | No | `make test` |
+| Offline HTTP | `tests/http_mock_tests.rs`, `tests/http_mock_resources.rs`, `tests/reliability_tests.rs` | No | `make test` |
 | Coverage oracle | `src/coverage_oracle/`, `tests/request_wire_oracle.rs` (see [Coverage oracle](#coverage-oracle)) | No | `make test` |
 | Guards | `tests/ci_coverage.rs` (with `tests/live_verbs/`), `tests/model_literals.rs`, `tests/non_exhaustive_responses.rs` | No | `make test` |
 | Compile-time (trybuild) | `tests/ui/` via `tests/ui_tests.rs` | No | `cargo test --test ui_tests` |
@@ -17,6 +17,7 @@ follow.
 | Doctests | Rustdoc examples and the markdown guides (`doc_comment!` in `src/lib.rs`) | No | `cargo test --workspace --doc --all-features` (CI only; `make` skips them) |
 | Scripted harness | `tests/antigravity_scripted.rs`; each test is `#[ignore = "Requires localharness binary"]` | No, only `localharness` | See [Scripted harness tests](#scripted-harness-tests) |
 | Harness | `tests/antigravity_harness.rs` | Yes, plus `localharness` | See [ANTIGRAVITY.md](ANTIGRAVITY.md) |
+| Fuzz | `fuzz/` (cargo-fuzz targets over `src/fuzzing.rs`; failing inputs replayed by `src/fuzzing_tests.rs`) | No | `cargo +nightly fuzz run <target>` in `fuzz/`; see [fuzz/README.md](../fuzz/README.md) |
 
 ```bash
 make test                                             # everything offline
@@ -47,6 +48,9 @@ canned `Reply`s: JSON, text, SSE chunks, extra headers, or a delay.
 - **`http_mock_tests.rs`** covers client behavior that only shows on the
   wire: request shapes, error mapping, SSE framing, and the auto-function
   loop.
+- **`reliability_tests.rs`** covers the default timeouts, how a cut-off
+  stream is classified, the read of a stream's tail after its terminal
+  event, and `Retry-After` in a poll.
 - **`http_mock_resources.rs`** pins every resource endpoint on method, path
   (percent-encoding included), query and JSON body. It parses a realistic
   response, preserving `Unknown` and `extra`, and covers the wait helpers'
@@ -59,6 +63,21 @@ canned `Reply`s: JSON, text, SSE chunks, extra headers, or a delay.
 
 Prefer an offline test for anything that doesn't depend on model behavior;
 it's fast and runs on every PR.
+
+### Paused-clock tests against the stub
+
+Tokio advances a paused clock to the next timer whenever the runtime is
+idle, even with localhost I/O in flight, so any timer armed during a request
+fires early: the client's default 30 s connect timeout fails most
+paused-clock requests to the stub. This applies to your own tests of code
+built on `genai-rs` too. Either build the test client with
+`with_connect_timeout(Duration::MAX)`, which arms no connect timer, and set
+no other timeout; or hold the clock with a running `spawn_blocking` task
+until the stub has the request, as `reliability_tests.rs`'s `hold_clock`
+does when a test needs the real defaults. For a test that sends several
+requests (a poll), `Stub::paused_clock_client()` holds the clock for each
+request until its response is read, with every default in place. See
+[Reliability](RELIABILITY.md#tests-on-a-paused-clock).
 
 ## Scripted harness tests
 
@@ -296,7 +315,10 @@ checks on it:
   body) is built fully populated as struct literals with no
   `..Default::default()`, so a new field does not compile until it is
   populated (the agent configs, whose fields are private, through every
-  builder), plus proptest samples for the union arms and enum values. Every
+  builder), plus proptest samples for the union arms and enum values. An
+  `extra` map (`InteractionRequest::extra` included) stays empty: its keys
+  are the caller's, not the crate's, and would count as sent in the reverse
+  test (`a_populated_extra_is_sent_flat_and_not_vouched_for`). Every
   key it serializes to, at every depth, must exist on the binding class it
   is sent as, and every required key must be sent. A value carrying a
   union arm's tag is held to that arm, so a free-form arm (`ResponseFormat`'s

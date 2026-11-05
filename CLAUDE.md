@@ -77,14 +77,15 @@ installs a `tracing` subscriber.
 | `src/client.rs`, `src/request_builder/` | `Client`, `ClientBuilder`, `interaction()`, `execute`/`execute_stream`, `InteractionBuilder` (one file per concern: `input`, `tools`, `output`, `generation`; `ConversationBuilder` in `conversation.rs`), the auto-function loop (`auto_functions.rs`) |
 | `src/request/`, `src/content/`, `src/tools/` | Request types (`generation_config.rs`, `agent_config.rs`), `Content` (annotations, result items, video processing alongside), tool configs (`function`, `choice`, `retrieval`, `builtin`) |
 | `src/steps/`, `src/response/` | The steps response model (`Step`, `StepDelta`, the stream `accumulator`), `InteractionResponse` and its accessors (usage, view types and `StepSummary` alongside) |
-| `src/wire_streaming.rs`, `src/streaming.rs` | Stream chunk/event types; auto-function stream types |
+| `src/wire_streaming/`, `src/streaming.rs` | Stream chunk/event types (their wire format in `wire_streaming/serde_impls.rs`); auto-function stream types |
 | `src/webhooks.rs`, `triggers.rs`, `agents.rs`, `environments/`, `files.rs`, `file_search_stores.rs`, `credentials.rs`, `voices.rs` | Resource types (`/v1beta/...`) and each resource's accessor, handle and list builders (D-016; the old-to-new map is `docs/RESOURCES.md`) |
 | `src/interactions.rs` | The `Interactions` handle: get, stream, resume, cancel and delete a stored interaction by id (D-017) |
-| `src/paging.rs` | `pub(crate)` paging engine behind every list builder's `.pages()` / `.items()` |
+| `src/paging.rs`, `src/poll.rs` | `pub(crate)` paging engine behind every list builder's `.pages()` / `.items()`; `PollOptions` and the wait behind every `wait_until_active` |
 | `src/http/` | `pub(crate)` HTTP layer: one request path (`common.rs`), SSE parser, error mapping |
 | `src/wire/` | `WireInspector`, `LOUD_WIRE` printer and `WireFilter` (`printer.rs`), `TracingForwarder` |
 | `src/function_calling.rs`, `genai-rs-macros/` | Function registry, `#[tool]` macro (`inventory` registration) |
 | `src/antigravity/` | Harness client (feature-gated); see `docs/ANTIGRAVITY.md` |
+| `fuzz/`, `src/fuzzing.rs` | cargo-fuzz targets (own workspace and lockfile, nightly; `fuzz/README.md`) and their entry points, the `#[doc(hidden)] __fuzz` module, compiled only under `cfg(fuzzing)` and in tests (`fuzzing_tests.rs` replays past crashes) |
 
 Submodules are private; a directory's `mod.rs` re-exports its public items
 explicitly, so public paths do not depend on file layout. Keep implementation
@@ -176,8 +177,14 @@ reaches the wire must use a real id.
 - Unit tests for a new module go in a sibling file, declared at the bottom of
   the module as `#[cfg(test)] #[path = "<module>_tests.rs"] mod tests;`
   (existing inline test modules stay until their code moves). Offline HTTP
-  behavior is tested against a local stub in `tests/http_mock_tests.rs` via
-  `ClientBuilder::with_base_url`.
+  behavior is tested against a local stub (`tests/common/http_stub.rs`) via
+  `ClientBuilder::with_base_url`: client behavior in
+  `tests/http_mock_tests.rs`, resource endpoints in
+  `tests/http_mock_resources.rs`, and timeouts, cut-off streams and poll
+  retries in `tests/reliability_tests.rs` (paused clock; see
+  `docs/TESTING.md`).
+- A crash a fuzz target finds becomes a regression test in
+  `src/fuzzing_tests.rs` (`fuzz/README.md`).
 - Live tests are `#[ignore = "Requires API key"]` (exact string) and must
   **fail**, not skip, when the request fails. Every live test file belongs to
   a `test-integration` matrix group in `.github/workflows/rust.yml`.
@@ -253,7 +260,9 @@ upgrade table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`, and run
   `ci-flakiness-report.yml`, `release.yml`, `release-drafter.yml`,
   `claude.yml`, `claude-code-review.yml`, `antigravity-release-watch.yml`
   (daily; an `antigravity-release` issue when PyPI's `google-antigravity`
-  differs from `SUPPORTED_HARNESS_VERSION`).
+  differs from `SUPPORTED_HARNESS_VERSION`), and `fuzz.yml` (the `fuzz/`
+  cargo-fuzz targets, a minute each on nightly: weekly, and on PRs touching
+  what the targets build; `fuzz/README.md`).
 - **Example size gate:** `build-metrics` fails when an example binary grows
   more than 15% against the last main build. For intended growth, add the
   `size-growth-ok` label **and push a commit** (a re-run replays the old event

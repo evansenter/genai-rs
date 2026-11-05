@@ -168,6 +168,7 @@ fn interaction(agent: bool) -> InteractionRequest {
         )]),
         labels: Some([("team".to_string(), "x".to_string())].into()),
         continuation_token: None,
+        extra: serde_json::Map::new(),
     }
 }
 

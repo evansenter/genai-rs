@@ -468,27 +468,6 @@ fn file_upload_debug_shows_the_length_not_the_bytes() {
 }
 
 #[test]
-fn poll_options_fall_back_to_the_given_defaults() {
-    let (timeout, interval) = (Duration::from_secs(120), Duration::from_secs(2));
-    let unset = PollOptions::new();
-    assert_eq!(unset, PollOptions::default());
-    assert_eq!(unset.timeout_or(timeout), timeout);
-    assert_eq!(unset.poll_interval_or(interval), interval);
-
-    let set = PollOptions::new()
-        .with_timeout(Duration::from_secs(5))
-        .with_poll_interval(Duration::from_millis(250))
-        // `with_*` replaces.
-        .with_timeout(Duration::from_secs(9));
-    assert_eq!(set.timeout_or(timeout), Duration::from_secs(9));
-    assert_eq!(set.poll_interval_or(interval), Duration::from_millis(250));
-
-    // Each value falls back on its own.
-    let only_interval = PollOptions::new().with_poll_interval(Duration::from_secs(1));
-    assert_eq!(only_interval.timeout_or(timeout), timeout);
-}
-
-#[test]
 fn file_wait_defaults_are_120_s_and_2_s() {
     assert_eq!(FILE_WAIT_TIMEOUT, Duration::from_secs(120));
     assert_eq!(FILE_POLL_INTERVAL, Duration::from_secs(2));

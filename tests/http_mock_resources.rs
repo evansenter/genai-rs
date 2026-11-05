@@ -2522,7 +2522,9 @@ async fn document_wait_until_active_failed_state_is_terminal() {
     assert_eq!(targets.len(), 1, "no polling past a terminal state");
 }
 
-#[tokio::test]
+/// On the paused clock, with each request holding it while in flight: polls
+/// at 0, 10, ..., 50 ms, and the one at 60 would start at the deadline.
+#[tokio::test(start_paused = true)]
 async fn document_wait_until_active_times_out_with_the_last_state() {
     let stub = Stub::start(|_, _| document(Some("STATE_PENDING"))).await;
     let poll = PollOptions::new()
@@ -2530,7 +2532,7 @@ async fn document_wait_until_active_times_out_with_the_last_state() {
         .with_poll_interval(Duration::from_millis(10));
 
     let err = stub
-        .client()
+        .paused_clock_client()
         .file_search_stores()
         .documents()
         .wait_until_active(DOC, poll)
@@ -2540,12 +2542,9 @@ async fn document_wait_until_active_times_out_with_the_last_state() {
     assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
     let message = err.to_string();
     assert!(message.contains("Timeout"), "{message}");
+    assert!(message.contains("waited 50ms"), "{message}");
     assert!(message.contains("STATE_PENDING"), "{message}");
-    assert!(
-        stub.requests().len() >= 2,
-        "it polled before giving up: {}",
-        stub.requests().len()
-    );
+    assert_eq!(stub.requests().len(), 6, "{message}");
 }
 
 #[cfg(not(feature = "strict-unknown"))]
@@ -3581,19 +3580,28 @@ async fn wait_for_file(stub: &Stub, timeout: Duration) -> Result<FileMetadata, G
         .await
 }
 
-#[tokio::test]
+/// On the paused clock, with each request holding it while in flight: polls
+/// at 0, 10, ..., 50 ms, and the one at 60 would start at the deadline.
+#[tokio::test(start_paused = true)]
 async fn wait_until_active_times_out_with_the_last_state() {
     let stub = Stub::start(|_, _| Reply::json(200, file("PROCESSING"))).await;
+    let poll = PollOptions::new()
+        .with_poll_interval(Duration::from_millis(10))
+        .with_timeout(Duration::from_millis(60));
 
-    let err = wait_for_file(&stub, Duration::from_millis(60))
+    let err = stub
+        .paused_clock_client()
+        .files()
+        .wait_until_active("files/abc", poll)
         .await
         .unwrap_err();
 
     assert!(matches!(err, GenaiError::Internal(_)), "{err:?}");
     let message = err.to_string();
     assert!(message.contains("Timeout"), "{message}");
+    assert!(message.contains("waited 50ms"), "{message}");
     assert!(message.contains("Processing"), "{message}");
-    assert!(stub.requests().len() >= 2, "it polled before giving up");
+    assert_eq!(stub.requests().len(), 6, "{message}");
 }
 
 /// A retryable error mid-poll (here a 503) is polled through: one bad

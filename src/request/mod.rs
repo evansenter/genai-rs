@@ -495,6 +495,34 @@ pub struct InteractionRequest {
     /// continuation so far.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub continuation_token: Option<String>,
+
+    /// Fields this crate does not model, sent flat alongside the modeled
+    /// ones: the escape hatch for a new request field before a release
+    /// models it. Set with
+    /// [`InteractionBuilder::add_extra`](crate::InteractionBuilder::add_extra).
+    ///
+    /// Deserializing keeps unrecognized keys here too, so a stored
+    /// [`Trigger::interaction`](crate::Trigger) round-trips the fields this
+    /// crate doesn't model. The echo's output-only `object: "interaction"`
+    /// lands here; the API accepts it back on create (live 2026-11-04).
+    ///
+    /// The server checks these like any other key: a name it doesn't know is
+    /// `400 Unknown parameter '<name>'` (live 2026-11-04). The entries are
+    /// written after the modeled fields, and for a key sent twice the API
+    /// keeps the last (live 2026-11-04), so a key that collides with a
+    /// modeled field overrides it: a way to send a modeled field in a shape
+    /// the crate gets wrong. The exception is `stream`, which belongs to
+    /// the transport: [`Client::execute`](crate::Client::execute) and
+    /// [`Client::execute_stream`](crate::Client::execute_stream) drop a
+    /// `stream` key from here before sending, with a `warn!`, since a copy
+    /// here would override the [`stream`](Self::stream) they set (an SSE
+    /// answer to a non-streaming call). The same typo cost as
+    /// [`TriggerCreateParams::extra`](crate::TriggerCreateParams::extra)
+    /// applies to a deserialized request: a misspelled key lands here and is
+    /// sent as is. Clear this map before sending to drop every such key, as
+    /// 0.13.0 did.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 wire_enum! {

@@ -30,7 +30,9 @@ changing it changes nothing.
 | `Api { status_code: 400, .. }` | The `message` usually names the field. Some fields are Vertex-only and rejected by the Gemini API (see [docs/INTERACTIONS_API_GAP.md](docs/INTERACTIONS_API_GAP.md)) |
 | A 400 that passes on re-run | See [Known transient errors](docs/ERROR_HANDLING.md#known-transient-errors) |
 | `GenaiError::Timeout(_)` | The request-level `with_timeout()` elapsed |
-| `GenaiError::Http(e)` with `e.is_timeout()` | A **client-level** timeout elapsed: `ClientBuilder::with_timeout()` (caps every request, including streams; a request-level timeout cannot extend it) or `with_read_timeout()` (no headers or chunk arrived in time); see [Timeouts](docs/RELIABILITY.md#timeouts) |
+| `GenaiError::Http(e)` with `e.is_timeout()` | A **client-level** timeout elapsed before the response headers: the 30 s default connect timeout (`e.is_connect()` too; change it with `with_connect_timeout()`), `ClientBuilder::with_timeout()` (caps every request; a request-level timeout cannot extend it) or `with_read_timeout()`; see [Timeouts](docs/RELIABILITY.md#timeouts) |
+| A connect timeout "after 30 s" in a `start_paused = true` test against a local server | Tokio's paused clock auto-advanced to the connect timer while the connect was in flight. Build the test client with `with_connect_timeout(Duration::MAX)`; see [Tests on a paused clock](docs/RELIABILITY.md#tests-on-a-paused-clock) |
+| `GenaiError::StreamInterrupted { .. }` | A stream was cut off before its terminal event: the server closed early, or the transport failed mid-body (a reset, or a client-level timeout between chunks, kept as `source`). Retryable; see [Cut-off streams](docs/RELIABILITY.md#cut-off-streams) |
 | `GenaiError::InvalidInput(_)` before any request is sent | The builder rejected the combination (for example, no input, both model and agent, or `with_store_disabled()` with chaining or background) |
 | `Thinking level THINKING_LEVEL_MINIMAL is not supported for this model` | `DEFAULT_MODEL` rejects `ThinkingLevel::Minimal`; use `Low`, or pass a model that accepts it to `with_model()` |
 | TLS errors in minimal containers | The crate verifies against the OS trust store; install a CA bundle |
@@ -71,7 +73,8 @@ Stateless conversations need the manual loop; see
 ## Streaming
 
 **The stream ends early.**
-- `Err(GenaiError)` items are transport, parse or timeout errors.
+- `Err(GenaiError)` items are transport, parse or timeout errors. A
+  cut-off body is `GenaiError::StreamInterrupted`.
 - A `StreamChunk::Error { message, code }` event is a server-side error; it
   is terminal.
 - A client-level total timeout (`ClientBuilder::with_timeout`) cuts off long

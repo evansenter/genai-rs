@@ -35,6 +35,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so parsing a real legacy file is unverified). `detect_mime_type()`, and so
   `FileUpload::from_path()`, now recognizes the nine Office/OpenDocument
   extensions (#516).
+- `InteractionRequest::extra` and `InteractionBuilder::add_extra(key, value)`
+  send a request field the crate doesn't model yet, flat beside the modeled
+  ones, as `TriggerCreateParams::extra` already allowed. A repeated key
+  replaces its value, as with `add_label`. The server validates the field
+  like any other: an unknown name is `400 Unknown parameter '<name>'`. A key
+  that names a modeled field overrides it, since the API keeps the last of a
+  repeated key (both verified live 2026-11-04). The exception is `stream`,
+  which belongs to the transport: `execute()` and `execute_stream()` drop it
+  from `extra`, with a `warn!`, so it can't turn a non-streaming call into
+  an SSE answer. A stored
+  `Trigger::interaction` now keeps the interaction fields the crate doesn't
+  model, such as `object: "interaction"`, which the API accepts back on
+  create (verified live 2026-11-04).
+- `DEFAULT_CONNECT_TIMEOUT` (30 s), the connect timeout every client now
+  gets; see Changed. `with_connect_timeout(Duration::MAX)` turns it off,
+  with no timer at all, for tests on a paused tokio clock. A `Client`'s
+  `Debug` output shows its connect timeout, which reqwest's does not.
 
 ### Changed
 
@@ -81,6 +98,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   field and the harness fell back to its environment's `GEMINI_API_KEY`.
   Code like `.with_api_key(env::var("X").unwrap_or_default())` hits this.
   Pass a real key, or leave out `with_api_key`.
+- **Breaking: a cut-off stream ends with the new
+  `GenaiError::StreamInterrupted`, which is retryable.** It covers every way
+  the connection can end a stream body before `interaction.completed` or an
+  error event. A close between events was `MalformedResponse` in 0.13.0. A
+  close in the middle of an event was a non-retryable `Parse` or `Utf8`. A
+  transport failure mid-body (a reset, the client's read or total timeout
+  between chunks, a decode error) was `Http`; that `reqwest::Error` is now
+  its `source`. One event used to be classified two ways depending on how
+  the peer closed; `is_retryable()` explains the choice. A failure before
+  the response headers is still `Http`, and a stream stopped by the
+  request-level `InteractionBuilder::with_timeout` is still `Timeout`.
+  Migration: match `GenaiError::StreamInterrupted { .. }` where you matched
+  `MalformedResponse` for a cut-off stream. Match
+  `StreamInterrupted { source: Some(e), .. } if e.is_timeout()` where you
+  matched `Http(e) if e.is_timeout()` for a stream stalled by
+  `ClientBuilder::with_read_timeout` or `ClientBuilder::with_timeout`. A
+  retry loop built on `is_retryable()` now also retries a clean early close.
+  Discard the partial output first, because a foreground retry is a new
+  generation.
+- **Breaking: `Client::new` and `ClientBuilder::build` set a 30 s connect
+  timeout.** `DEFAULT_CONNECT_TIMEOUT` covers DNS, TCP and TLS. Before,
+  there was none, so a black-holed route waited for the OS's timeout (about
+  75 s on macOS, 127 s on Linux). There is still no default read or total
+  timeout: a non-streaming response's headers arrive only after generation
+  finishes, so any such default would cut off long legitimate requests
+  (reasoning in `docs/RELIABILITY.md`). Migration: call
+  `with_connect_timeout(..)` for a different value. Tests on a paused tokio
+  clock (`#[tokio::test(start_paused = true)]`) that send a real request to
+  a local mock server now usually fail with this timeout "after 30 s",
+  because tokio auto-advances to it while the connect is in flight. Build
+  that test's client with `with_connect_timeout(Duration::MAX)`, which arms
+  no timer (see "Tests on a paused clock" in `docs/RELIABILITY.md`).
+- **Breaking: `InteractionRequest` has a new public field, `extra`.**
+  Migration: a struct literal needs `extra: Default::default()`, or
+  `..Default::default()`; `client.interaction()...build()` is unaffected.
+- **Breaking: a deserialized `InteractionRequest` keeps the keys it doesn't
+  model, in `extra`, and sends them.** 0.13.0 dropped them silently. This
+  covers a request loaded from JSON or a config file, and the nested
+  `interaction` of a deserialized `TriggerCreateParams`. A stale, misplaced
+  or misspelled key, such as a top-level `temperature` that belongs in
+  `generation_config`, now reaches the server, which rejects a name it
+  doesn't know with `400 Unknown parameter '<name>'`. Migration: remove the
+  key from the JSON, or call `request.extra.clear()` before sending to send
+  what 0.13.0 sent.
+- **Breaking: a `wait_until_active` timeout shorter than one status
+  request's round trip now always fails.** Each status request used to get
+  at least a second, so a zero timeout read the state once. Now the first
+  request is cut off at the deadline like any other, and the error says the
+  wait's deadline cut it off rather than that it failed. Migration: to read
+  the state once, call `files().get(name)` or
+  `file_search_stores().documents().get(name)` instead.
+- **Breaking: a successful streaming response whose `Content-Type` is not
+  `text/event-stream` fails at once with `MalformedResponse`** and a preview
+  of the body. In 0.13.0 a captive portal's page or a plain JSON interaction
+  was parsed as SSE and failed only at its end, as a cut-off stream. The API
+  answers `text/event-stream` (verified live 2026-11-04). The check ignores
+  letter case and parameters (`text/event-stream; charset=utf-8` passes),
+  and a response with no `Content-Type` is still read as a stream. A proxy
+  or gateway (`ClientBuilder::with_base_url`) that rewrites the type of a
+  working stream, for example to `text/plain` or `application/octet-stream`,
+  now fails where 0.13.0 streamed. The check covers every streaming call:
+  `create_stream()`, `create_stream_with_auto_functions()`, and
+  `interactions().stream()` / `resume_stream()`. Migration: have the proxy
+  pass the API's `Content-Type` through, or send none. Behind a proxy you
+  can't change, use the non-streaming call instead: `create()`,
+  `create_with_auto_functions()`, or `interactions().get(id)` for a stored
+  interaction.
 - The Antigravity harness runs in its own process group on Unix. A
   terminal's Ctrl-C now reaches only your process; when it exits, the
   harness sees stdin close and shuts down gracefully. To stop the harness on
@@ -97,6 +181,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `response_format`, `response_modalities` and `safety_settings` too;
   `InteractionResponse` does not model them yet, so they arrive in `extra`
   (verified live 2026-11-04).
+- `wait_until_active` (files and file-search documents):
+  - It honors the `Retry-After` of a 429 it polls through, and gives up at
+    once when that falls past the deadline.
+  - It never runs past its deadline: a status request is cut off at the
+    deadline, and a poll that would start past it is not made.
+  - It runs on tokio time instead of `std::time`. Against a real server on a
+    paused test clock, its deadline is a timer that auto-advance fires while
+    a status request is in flight, so hold the clock for each request (see
+    "Tests on a paused clock" in `docs/RELIABILITY.md`).
+  - The first status request is always made, so an invalid name is reported
+    even with a zero timeout.
+- A stream yields its first terminal event (`Completed` or `Error`) as soon
+  as it arrives, and the next poll reads the rest of the body to its end,
+  discarding every frame and swallowing every error, before the stream
+  ends. A late error, such as a reset while the server closes, no longer
+  follows a finished interaction or fails a finished auto-function round.
+  The read matters: after `interaction.completed` the API sends
+  `event: done` / `data: [DONE]` and closes about a second later, and the
+  stored interaction is readable only then, so a `get` or a chained request
+  sent before the stream has ended can fail with
+  `500 Internal error encountered` (verified live 2026-11-05). To get or
+  chain on a streamed interaction right away, read the stream to its end;
+  `create_stream_with_auto_functions()` reads each round to its end before
+  sending the next. The read gives up after 5 s with a `warn!`, so a
+  connection left open after the terminal event can't hang the last poll,
+  and `with_timeout()`'s per-chunk limit doesn't apply to it.
+- One SSE event may hold up to 64 MiB. Past that, the stream fails with
+  `GenaiError::Parse`; before, a body that never sent a newline was buffered
+  without bound. The largest real events, measured live 2026-11-04 on
+  `DEFAULT_IMAGE_MODEL` at `image_size: "4K"`, are a 16.0 MB `image` delta
+  and a 15.7 MB `thought_signature` delta; TTS audio deltas are under 8 KB.
 
 ### Fixed
 
@@ -120,6 +235,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whenever they were set, as on a webhook read back from the API. The
   create body is now what google-genai's `WebhookInput` defines: `uri`,
   `subscribed_events` and `name`, plus anything in `extra`.
+- An unknown `StreamChunk` whose type was spelled like a known `chunk_type`
+  (`created`, `step_delta`, ...) read back as that known chunk after
+  serializing. It now carries `"unknown": true` and stays unknown; chunks
+  serialized by 0.13.0 read back as before (`docs/ENUM_WIRE_FORMATS.md`).
+  Found by the new fuzz targets.
+- The `TriggerCreateParams::extra` docs said a colliding key wins because
+  the request path uses `serde_json::to_value`. In fact the body carries
+  both keys, with the `extra` one last, and it wins because the API keeps
+  the last of a repeated key (verified live 2026-11-04).
 
 ## [0.13.0] - 2026-11-03
 

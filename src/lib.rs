@@ -66,6 +66,7 @@
 // =============================================================================
 pub(crate) mod http;
 pub(crate) mod paging;
+pub(crate) mod poll;
 pub(crate) mod serde_util;
 #[cfg(test)]
 pub(crate) mod test_subscriber;
@@ -255,7 +256,7 @@ pub use files::{
 // =============================================================================
 
 pub mod client;
-pub use client::{Client, ClientBuilder};
+pub use client::{Client, ClientBuilder, DEFAULT_CONNECT_TIMEOUT};
 
 mod interactions;
 pub use interactions::Interactions;
@@ -284,6 +285,14 @@ pub mod __private {
     pub use async_trait;
     pub use serde_json;
 }
+
+/// Entry points for the `cargo fuzz` targets in `fuzz/`. **Not a public
+/// API**: it exists only under `cfg(fuzzing)` (set by `cargo fuzz`) and in
+/// this crate's tests.
+#[cfg(any(fuzzing, test))]
+#[doc(hidden)]
+#[path = "fuzzing.rs"]
+pub mod __fuzz;
 
 // =============================================================================
 // Streaming Types for Auto Function Calling

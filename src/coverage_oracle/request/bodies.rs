@@ -218,6 +218,12 @@ pub(super) fn inputs() -> Vec<InteractionInput> {
 }
 
 /// The model form: everything but the agent fields.
+///
+/// `extra` stays empty here, as on every other request type: it holds
+/// caller-chosen keys, which the server validates (`400 Unknown parameter`)
+/// and the crate never emits on its own. A key in it would also count as
+/// sent in the reverse check without the crate modeling it.
+/// `a_populated_extra_is_sent_flat_and_not_vouched_for` pins both.
 pub(super) fn model_requests() -> Vec<InteractionRequest> {
     let mut out = Vec::new();
     for (i, input) in inputs().into_iter().enumerate() {
@@ -245,6 +251,7 @@ pub(super) fn model_requests() -> Vec<InteractionRequest> {
                 safety_settings: Some(safety_settings()),
                 labels: Some([("team".to_string(), "x".to_string())].into()),
                 continuation_token: Some("token".into()),
+                extra: serde_json::Map::new(),
             });
         }
     }
@@ -276,6 +283,7 @@ pub(super) fn agent_requests() -> Vec<InteractionRequest> {
             safety_settings: Some(safety_settings()),
             labels: Some([("team".to_string(), "x".to_string())].into()),
             continuation_token: Some("token".into()),
+            extra: serde_json::Map::new(),
         })
         .collect()
 }

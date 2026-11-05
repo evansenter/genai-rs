@@ -1,0 +1,30 @@
+event: interaction.created
+data: {"interaction":{"id":"v1_ChdhTmpxYXByTEVZVHJrZFVQby1IVXdRZxIXYU5qcWFwckxFWVRya2RVUG8tSFV3UWc","object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.created"}
+
+event: interaction.status_update
+data: {"interaction_id":"v1_ChdhTmpxYXByTEVZVHJrZFVQby1IVXdRZxIXYU5qcWFwckxFWVRya2RVUG8tSFV3UWc","status":"in_progress","event_type":"interaction.status_update"}
+
+event: step.start
+data: {"index":0,"step":{"type":"thought"},"event_type":"step.start"}
+
+event: step.delta
+data: {"index":0,"delta":{"signature":"EuUICuIIAWkUfRP83rU6dq1uhdcgiXPFyOS0Yp663DuKocBusGC+ksdQ7xWhVXs/BFkFskk0YKtyMNCIxomCOMOG35jmMvhaQQOL+VpvSbSZQSrMIKvE9BbFTERvTbyV2e/vvlKdUt7Q292gXcEApIwyGMtaG/iY5uHvEfUeuHY+otxHyh4GXVsUIbrSusNJwXM5LHm8IweQ0548zh2gpNIH8lespaFE3m5dCmwmpzEJYoLWBw2bi99kwUGDZ2iMoBnk7nz+xAbaahZX54kkazadQPXLQSqbHHDUqv8tma+W0xbIFuxMd9lgdLjpMYVmuIU8/yLVdJol0yIKyzF7eCdafi6J2zYZyKfRIvfBRsCq2/Etm9XqCXv3zLVcE23Q5k4KhdN37KXRzyvRLnEhMuxpxvgo6Ux7dYzrSioZXk/VVgf7/x3fzqMlfYC+Cpk1uCROIFqb/4KT2exEdMs+t32R3MUk4GqMEIwgt9te+t6rSkHYFXlRFKuKcoE5UX+0m1VyMn1/Wo2rcH0K8DWuObxhu+YfWwlmL2P9D+eXc7XR3YtgCBet17cB5xbefsFX8RPazodUFgvI2PZMq6KDk9ZEroIL1vyDXQcNCUkcToSoeeksB+c8GjJqh/qGEP5Oi08QwdncjquQsD1cnb2sLGNtXvw9ayPQ0M8d4N52Rq9XkYkCKThVjL1+z+YxlF1hkx9Q3QkL1P1xBKvxBAJsuIVBH8fNX/XcdAl/lch5eXk0JzrdrN6Dadv1KxH6CAGwESMLlXQ9QA9OaiGHPYSbMXVEcCn9QBVeTOqXC8HUnLR32kaBR4ehYLDgvZXtSBAbJhwkeGzTQS7XI7pou5JPJOq4UUzkwySGtsDpIh68cy0ORCsuAbDkanYDzkJOqDL01GsAm30lXewN2hc1hOfzJQH/DUkM0deGfx6p7ol4ceRbX1hc0tmx8idVagzld0REFoOiDvZh5ghc7yCt4vCcVpMIpmUI3MgGUW0az0h91WLET5KZ5fd0+oGa8AHXc2NEc9HQ6YfnFUmNo8G5qHbZ0iPWWX0GW053hKf7znlR1a03Vo05/VFKqjSvOtmKBWQYLlVTR1b2w45TymWo3wGeDoBaCwZyl6849z4uUJTpWmWb5quofp2M3DX6PC/X8gfKwGufz1/Mm6HEXN/rIYVwhxKAM9UcDhRC6NjKvA5DGxASmzKEJIbU4vr/7MRFBPurohNeCinbyp7vuUeJIje6B5rHNxViHwe6yaBHQ5/AEUMmzH84ky+6bvkWprMEbKsV1DIhcP3rjiQ6sbJI8LPv25Kf4tRh0Yz88aKlmFiVzwC6vqljo3YV5LahckLM8jeOAKRDaV7pbjqQxTHcBKSH+Ph1QhdN/jsqMkym6bgsyAr9tT2DFlrYMXsMzdrLI5qvGcPgGT0562PTZOm6v79Cu4az/7w4NbD51dYx2bMvpHPEYoh+YUVylsFVqvuMVC66zXD6H4uU7P6bydNyEn10zJBFEco7wGiv","type":"thought_signature"},"event_type":"step.delta"}
+
+event: step.stop
+data: {"index":0,"event_type":"step.stop"}
+
+event: step.start
+data: {"index":1,"step":{"type":"model_output"},"event_type":"step.start"}
+
+event: step.delta
+data: {"index":1,"delta":{"text":"Hi there, friend!","type":"text"},"event_type":"step.delta"}
+
+event: step.stop
+data: {"index":1,"event_type":"step.stop"}
+
+event: interaction.completed
+data: {"interaction":{"id":"v1_ChdhTmpxYXByTEVZVHJrZFVQby1IVXdRZxIXYU5qcWFwckxFWVRya2RVUG8tSFV3UWc","status":"completed","usage":{"total_tokens":291,"total_input_tokens":7,"input_tokens_by_modality":[{"modality":"text","tokens":7}],"total_cached_tokens":0,"total_output_tokens":5,"total_tool_use_tokens":0,"total_thought_tokens":279,"initial_input_tokens":6},"created":"2026-11-04T07:02:05Z","updated":"2026-11-04T07:02:05Z","service_tier":"standard","object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.completed"}
+
+event: done
+data: [DONE]
+

@@ -250,6 +250,30 @@ SSE event types in this revision: `interaction.created`,
 `interaction.complete` are gone. Unknown event types become
 `StreamChunk::Unknown { chunk_type, data }`.
 
+### StreamChunk
+
+`StreamChunk` is what a stream yields, parsed from the SSE events above. It
+is not sent by the API: this crate serializes it, for logging and replay, as
+a `{"chunk_type": ..., "data": ...}` map and reads that map back.
+`StreamEvent` writes the same map plus `event_id` when it has one.
+
+| `chunk_type` | Variant | `data` |
+|--------------|---------|--------|
+| `created` | `Created` | The `InteractionResponse` |
+| `status_update` | `StatusUpdate` | `status`, plus `interaction_id`, `usage` and `continuation_token` when set |
+| `step_start` | `StepStart` | `index`, `step` |
+| `step_delta` | `StepDelta` | `index`, `delta` |
+| `step_stop` | `StepStop` | `index`, plus `usage` and `step_usage` when set |
+| `completed` | `Completed` | The `InteractionResponse` |
+| `error` | `Error` | `message`, `code` |
+| anything else | `Unknown { chunk_type, data }` | The event's data as received; left out when null |
+
+An `Unknown` whose `chunk_type` is spelled like a known one (a future event
+the parser names `created`, say) also writes `"unknown": true`, and a map
+with that marker reads back as `Unknown`, so the chunk can't turn into the
+known one on a round trip. The marker is written only on such a collision;
+maps written by 0.13.0 and earlier have none and read back as before.
+
 ### Annotation
 
 A union tagged by `"type"` (previously a single struct):

@@ -1,0 +1,10 @@
+data: {"event_type":"step.start","index":0,"step":{"type":"function_call","id":"c1","name":"get_weather","arguments":{}}}
+
+data: {"event_type":"step.delta","index":0,"delta":{"type":"arguments_delta","arguments":"{\"city\":"}}
+
+data: {"event_type":"step.delta","index":0,"delta":{"type":"arguments_delta","arguments":"\"Tokyo\"}"}}
+
+data: {"event_type":"step.stop","index":0}
+
+data: {"event_type":"interaction.completed","interaction":{"id":"i1","status":"requires_action"}}
+
