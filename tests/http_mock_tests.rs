@@ -159,6 +159,59 @@ async fn execute_stream_sends_stream_true() {
     assert_eq!(request.json()["stream"], json!(true));
 }
 
+/// `stream` belongs to the transport. `extra` is written after the modeled
+/// fields and the API keeps the last of a repeated key, so a copy there
+/// would win: an SSE answer to `create()`. Both send paths drop it.
+#[tokio::test]
+async fn a_stream_key_in_extra_is_dropped_on_both_send_paths() {
+    let stub = Stub::replying(vec![
+        Reply::json(200, text_response("int-1", "hi")),
+        Reply::sse(&[
+            "data: {\"event_type\":\"interaction.completed\",\"interaction\":{\"id\":\"int-2\",\"status\":\"completed\"}}\n\n",
+        ]),
+    ])
+    .await;
+    let client = stub.client();
+
+    let response = client
+        .interaction()
+        .with_model("test-model")
+        .with_text("Hello")
+        .add_extra("stream", json!(true))
+        .create()
+        .await
+        .unwrap();
+    assert_eq!(response.as_text(), Some("hi"));
+
+    let events: Vec<_> = client
+        .interaction()
+        .with_model("test-model")
+        .with_text("Hello")
+        .add_extra("stream", json!(false))
+        .add_extra("brand_new_field", json!(1))
+        .create_stream()
+        .collect()
+        .await;
+    assert!(
+        matches!(events.as_slice(), [Ok(event)] if event.is_complete()),
+        "{events:?}"
+    );
+
+    let [plain, streamed] = stub.requests().try_into().unwrap();
+    // The raw bodies: a parsed one keeps only the last of a repeated key.
+    let raw = |request: &Recorded| String::from_utf8(request.body.clone()).unwrap();
+    assert!(!raw(&plain).contains(r#""stream""#), "{}", raw(&plain));
+    assert_eq!(
+        raw(&streamed).matches(r#""stream""#).count(),
+        1,
+        "{}",
+        raw(&streamed)
+    );
+    assert_eq!(streamed.json()["stream"], json!(true));
+    // Other extra keys are still sent.
+    assert_eq!(streamed.json()["brand_new_field"], json!(1));
+}
+
 #[tokio::test]
 async fn interactions_resume_stream_asks_for_sse_and_resumes() {
     let stub = Stub::replying(vec![Reply::sse(&[

@@ -382,7 +382,10 @@ impl<'a> InteractionBuilder<'a> {
     ///
     /// The server validates it like any other field: an unknown name is a
     /// `400 Unknown parameter`. A key that names a modeled field overrides
-    /// it on the wire, since the API keeps the last of a repeated key.
+    /// it on the wire, since the API keeps the last of a repeated key,
+    /// except `stream`: whether a request streams is decided by the method
+    /// that sends it (`create()` or `create_stream()`), so a `stream` key
+    /// added here is dropped before sending, with a `warn!`.
     ///
     /// ```
     /// # use genai_rs::Client;
