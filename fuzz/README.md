@@ -39,4 +39,7 @@ directory so new finds land in `corpus/`, which is gitignored with
 demand (with a chosen duration), and on pull requests that touch anything
 the targets build (`src/` outside `antigravity/`, `genai-rs-macros/`, the root
 `Cargo.toml` or `fuzz/`). A failed scheduled run opens a `ci-health-escalation` issue and uploads
-the failing input as the `fuzz-<target>-crash` artifact.
+the failing input as the `fuzz-<target>-crash` artifact. Each run starts
+from the corpus the last green scheduled or manual run grew (an Actions
+cache per target, `fuzz-corpus-<target>-*`), so the weekly runs go deeper
+over time; a pull request's run reads that corpus but does not save its own.
