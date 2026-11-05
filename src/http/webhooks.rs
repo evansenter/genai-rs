@@ -9,7 +9,8 @@ use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
 use crate::errors::GenaiError;
 use crate::webhooks::{
-    RevocationBehavior, RotateSigningSecretResponse, Webhook, WebhookListResponse, WebhookUpdate,
+    RevocationBehavior, RotateSigningSecretResponse, Webhook, WebhookEvent, WebhookListResponse,
+    WebhookUpdate,
 };
 
 fn webhooks_url(ctx: &HttpContext) -> String {
@@ -18,6 +19,45 @@ fn webhooks_url(ctx: &HttpContext) -> String {
 
 fn webhook_url(ctx: &HttpContext, id: &str) -> String {
     ctx.api_url(&format!("webhooks/{}", path_segment(id)))
+}
+
+/// The body of a create (the bindings' `WebhookInput`): the fields a caller
+/// sets, and `extra`. A [`Webhook`] also carries the output-only fields the
+/// API fills in (`id`, `state`, `signing_secrets`, `new_signing_secret`,
+/// `create_time`, `update_time`), which the request does not take, so one
+/// read back from the API is not sent whole.
+#[derive(serde::Serialize)]
+pub(crate) struct WebhookInput<'a> {
+    uri: &'a str,
+    subscribed_events: &'a [WebhookEvent],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<&'a str>,
+    #[serde(flatten)]
+    extra: &'a serde_json::Map<String, serde_json::Value>,
+}
+
+impl<'a> From<&'a Webhook> for WebhookInput<'a> {
+    fn from(webhook: &'a Webhook) -> Self {
+        let Webhook {
+            uri,
+            subscribed_events,
+            name,
+            // Output only: not part of a create.
+            id: _,
+            state: _,
+            signing_secrets: _,
+            new_signing_secret: _,
+            create_time: _,
+            update_time: _,
+            extra,
+        } = webhook;
+        Self {
+            uri,
+            subscribed_events,
+            name: name.as_deref(),
+            extra,
+        }
+    }
 }
 
 /// Registers a new webhook (`POST /v1beta/webhooks`).
@@ -29,7 +69,7 @@ pub async fn create_webhook(ctx: &HttpContext, webhook: &Webhook) -> Result<Webh
         ctx,
         reqwest::Method::POST,
         &webhooks_url(ctx),
-        Some(webhook),
+        Some(&WebhookInput::from(webhook)),
     )
     .await?;
     deserialize_with_context(&text, "Webhook from create")

@@ -243,6 +243,16 @@ async fn test_document_upload_and_indexing() {
             let active = wait_active(client, &document).await;
             assert_eq!(active.state, Some(DocumentState::Active));
 
+            let fetched = client
+                .file_search_stores()
+                .documents()
+                .get(&document.name)
+                .await
+                .expect("get document failed");
+            assert_eq!(fetched.name, document.name);
+            assert_eq!(fetched.display_name.as_deref(), Some("budget-memo"));
+            assert_eq!(fetched.state, Some(DocumentState::Active));
+
             let listed = client
                 .file_search_stores()
                 .documents()

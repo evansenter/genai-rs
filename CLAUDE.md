@@ -14,19 +14,34 @@ Prose docs lag the API; absence from them is not evidence of absence. In
 order (D-004):
 
 1. **Generated bindings** — `google-genai`'s `_gaos/types/` (diff two
-   releases to find new surface). The published
-   [OpenAPI spec](https://ai.google.dev/static/api/interactions.openapi.json)
-   is the same surface in machine-readable form (404 as of 2026-11-04).
-   `.github/bindings-schema.txt` is the committed dump for the swept
-   baseline; regenerate it with `.github/scripts/regen_bindings_snapshot.sh`
-   whenever `.github/last-swept-sdk-version` moves.
+   releases to find new surface). The OpenAPI spec is the same surface in
+   machine-readable form. Its URL (`ai.google.dev/static/api/interactions.openapi.json`)
+   moved: by 2026-11-03 it redirected to an aistudio.google.com path that
+   returns 404, and no new public URL was found (2026-11-04). The
+   2026-11-01 copy is the latest.
 2. **Live probe** against `generativelanguage.googleapis.com` — what the
    Gemini endpoint actually accepts, often narrower than the bindings.
    Probe with `LOUD_WIRE=1` or curl before modeling anything.
-3. **Prose** — [Interactions API reference](https://ai.google.dev/static/api/interactions.md.txt),
-   [guide](https://ai.google.dev/static/api/interactions-api.md.txt),
+3. **Prose** — [Interactions API reference](https://aistudio.google.com/api-reference/interactions-api.md),
+   [guide](https://aistudio.google.com/docs/interactions-overview.md)
+   (the old ai.google.dev URLs redirect there),
    and `docs/INTERACTIONS_API_GAP.md` (a dated snapshot; the
    `api-surface-sweep` workflow opens an issue when the SDK moves).
+
+`tests/fixtures/api_surface/` holds the bindings (for the version in
+`.github/last-swept-sdk-version`) and the spec as a snapshot, and the
+coverage oracle (`src/coverage_oracle/`, `tests/request_wire_oracle.rs`)
+checks the crate against it offline: request keys against the binding
+classes, every response field for an empty `extra`, and every class
+reached or listed with a reason. `tests/ci_coverage.rs` maps every endpoint
+to the handle verbs that call it and requires a live test of each verb on
+its handle. `tests/fixtures/api_surface/bindings.json` is the one
+committed dump of the bindings, and only
+`.github/scripts/refresh_api_snapshot.sh` writes it: bump the baseline with
+`refresh_api_snapshot.sh --version X.Y.Z`, which regenerates the snapshot
+too. `refresh_api_snapshot.sh --check` fails on a
+stale, empty or hand-edited snapshot (`make test-scripts` runs its offline
+half); see `docs/TESTING.md`.
 
 A field that serializes correctly is not a working feature (D-010): verify
 against the live API.

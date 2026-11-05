@@ -373,6 +373,29 @@ jobs:
       - name: Gap tracker matches the CI sweep baseline
         if: ${{ !cancelled() && steps.checkout.conclusion == 'success' }}
         run: .github/scripts/check_gap_tracker_baseline.sh
+      # The coverage oracle's bindings.json is the dump script's output for
+      # the baseline release. A PR that changes the script, the baseline or
+      # the snapshot without regenerating would merge green and then fail
+      # the daily api-surface-sweep. Needs PyPI, so only on PRs that touch
+      # one of them.
+      - name: API snapshot matches the dump of the baseline release
+        if: ${{ !cancelled() && steps.checkout.conclusion == 'success' && github.event_name == 'pull_request' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --quiet --depth=1 origin "$BASE_SHA"
+          changed=$(git diff --name-only "$BASE_SHA" HEAD -- \
+            .github/scripts/dump_bindings_schema.py \
+            .github/scripts/refresh_api_snapshot.sh \
+            .github/last-swept-sdk-version \
+            tests/fixtures/api_surface/bindings.json)
+          if [ -z "$changed" ]; then
+            echo "No snapshot input changed; nothing to check."
+            exit 0
+          fi
+          echo "Changed: $changed"
+          .github/scripts/refresh_api_snapshot.sh --check
 
   clippy:
     name: Clippy
@@ -386,6 +409,10 @@ jobs:
       - uses: ./.github/actions/setup-mold
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      # --all-features turns on strict-unknown, which compiles code out (the
+      # coverage oracle's response side), so lint the default set too.
+      - name: Run clippy (without strict-unknown)
+        run: cargo clippy --workspace --all-targets --features antigravity -- -D warnings
 
   doc:
     name: Documentation
