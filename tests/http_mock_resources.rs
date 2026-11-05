@@ -1660,6 +1660,82 @@ async fn environment_file_list_parses_uppercase_types_and_preserves_unknowns() {
     assert_eq!(list.next_page_token.as_deref(), Some("p2"));
 }
 
+/// A download is `GET` on the listing's URL with `alt=media`, and hands
+/// back the body's bytes as served, with its content type.
+#[tokio::test]
+async fn environment_file_download_reads_the_raw_body() {
+    let bytes: &[u8] = b"a,b\n1,2\n\xff";
+    let file = Reply {
+        status: 200,
+        headers: vec![("content-type".into(), "text/csv; charset=utf-8".into())],
+        delay: Duration::ZERO,
+        parts: vec![(Duration::ZERO, bytes.to_vec())],
+        content_length: true,
+    };
+    let archive = Reply {
+        status: 200,
+        headers: vec![("content-type".into(), "application/x-tar".into())],
+        delay: Duration::ZERO,
+        parts: vec![(Duration::ZERO, vec![0; 1024])],
+        content_length: true,
+    };
+    let stub = Stub::replying(vec![file, archive, not_found()]).await;
+    let client = stub.client();
+    let files = client.environments().files();
+
+    let downloaded = files.download("env/1", "data/in 1.csv").await.unwrap();
+    assert_eq!(downloaded.data, bytes);
+    assert_eq!(
+        downloaded.mime_type.as_deref(),
+        Some("text/csv; charset=utf-8")
+    );
+    assert!(!downloaded.is_tar_archive());
+    assert!(
+        format!("{downloaded:?}").contains("data_len: 9"),
+        "{downloaded:?}"
+    );
+
+    let directory = files.download("env/1", "data").await.unwrap();
+    assert!(directory.is_tar_archive());
+    assert_eq!(directory.data.len(), 1024);
+
+    let missing = files.download("env/1", "nope").await.unwrap_err();
+    assert!(
+        matches!(
+            missing,
+            GenaiError::Api {
+                status_code: 404,
+                ..
+            }
+        ),
+        "{missing:?}"
+    );
+
+    let requests = stub.requests();
+    assert_eq!(
+        requests
+            .iter()
+            .map(|r| r.target.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "/v1beta/environments/env%2F1/files/data/in%201.csv?alt=media",
+            "/v1beta/environments/env%2F1/files/data?alt=media",
+            "/v1beta/environments/env%2F1/files/nope?alt=media",
+        ]
+    );
+    for request in &requests {
+        assert_eq!(request.method, "GET");
+        assert_eq!(request.header("x-goog-api-key"), Some("test-key"));
+        assert_eq!(request.header("api-revision"), Some(API_REVISION));
+        assert!(request.body.is_empty());
+    }
+
+    // A dot segment never leaves the client.
+    let err = files.download("env/1", "../etc").await.unwrap_err();
+    assert!(matches!(err, GenaiError::InvalidInput(_)), "{err:?}");
+    assert_eq!(stub.requests().len(), 3);
+}
+
 #[tokio::test]
 async fn environment_file_upload_starts_a_session_then_finalizes() {
     let stub = Stub::replying(vec![

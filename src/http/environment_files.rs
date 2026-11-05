@@ -1,5 +1,6 @@
 //! HTTP endpoints for files inside an environment:
-//! `GET /v1beta/environments/{id}/files/{path}` and the resumable
+//! `GET /v1beta/environments/{id}/files/{path}` (a listing, or with
+//! `alt=media` the file itself) and the resumable
 //! `PUT /upload/v1beta/environments/{id}/files/{path}`.
 
 use super::common::{
@@ -8,7 +9,7 @@ use super::common::{
 };
 use super::context::HttpContext;
 use super::error_helpers::deserialize_with_context;
-use crate::environments::{EnvironmentFileList, EnvironmentFileUpload};
+use crate::environments::{EnvironmentFileDownload, EnvironmentFileList, EnvironmentFileUpload};
 use crate::errors::GenaiError;
 
 /// Percent-encodes each segment of a relative file path, keeping the `/`
@@ -85,6 +86,37 @@ pub async fn list_files(
     let url = list_url(ctx, environment_id, path, recursive, page_size, page_token)?;
     let text = send_and_read(ctx, reqwest::Method::GET, &url, NO_BODY).await?;
     deserialize_with_context(&text, "EnvironmentFileList")
+}
+
+/// Downloads a file, or a directory as a tar archive
+/// (`GET /v1beta/environments/{id}/files/{path}?alt=media`, live
+/// 2026-11-05). The body is not JSON, so wire inspectors see the request and
+/// its status but no body.
+pub async fn download_file(
+    ctx: &HttpContext,
+    environment_id: &str,
+    path: &str,
+) -> Result<EnvironmentFileDownload, GenaiError> {
+    let url = with_query(
+        ctx.api_url(&files_path(environment_id, path)?),
+        &[("alt", Some("media"))],
+    );
+    tracing::debug!("Downloading environment file: env={environment_id}, path={path:?}");
+    let request_id = ctx.next_request_id();
+    ctx.emit_request(request_id, "GET", &url, None);
+    let response = send_checked(
+        ctx,
+        request_id,
+        api_request(ctx, reqwest::Method::GET, &url),
+    )
+    .await?;
+    let mime_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let data = response.bytes().await?.to_vec();
+    Ok(EnvironmentFileDownload { data, mime_type })
 }
 
 /// Uploads one file: starts a resumable session, then sends the bytes and

@@ -161,8 +161,44 @@ impl fmt::Debug for EnvironmentFileUpload {
     }
 }
 
+/// A file or directory read out of an environment with
+/// [`EnvironmentFiles::download`].
+///
+/// `Debug` prints the data's length, not its bytes.
+#[derive(Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct EnvironmentFileDownload {
+    /// The file's bytes, or for a directory, a tar archive of everything
+    /// below it.
+    pub data: Vec<u8>,
+    /// The `Content-Type` the API served: the file's own (`text/csv;
+    /// charset=utf-8` for a file uploaded as `text/csv`,
+    /// `application/octet-stream` for a source file), or
+    /// `application/x-tar` for a directory (live 2026-11-05).
+    pub mime_type: Option<String>,
+}
+
+impl EnvironmentFileDownload {
+    /// Whether the API served a tar archive, as it does for a directory.
+    #[must_use]
+    pub fn is_tar_archive(&self) -> bool {
+        self.mime_type
+            .as_deref()
+            .is_some_and(|m| m.split(';').next().map(str::trim) == Some("application/x-tar"))
+    }
+}
+
+impl fmt::Debug for EnvironmentFileDownload {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EnvironmentFileDownload")
+            .field("data_len", &self.data.len())
+            .field("mime_type", &self.mime_type)
+            .finish()
+    }
+}
+
 impl<'a> Environments<'a> {
-    /// The files inside environments: list them and upload into them.
+    /// The files inside environments: list, download and upload them.
     ///
     /// Like [`Environments`], the handle binds no environment: each method
     /// takes the environment ID (see [IDs](crate::environments#ids)).
@@ -213,6 +249,39 @@ impl<'a> EnvironmentFiles<'a> {
             page_size: None,
             page_token: None,
         }
+    }
+
+    /// Downloads the file at `path` in an environment: its bytes, or for a
+    /// directory, a tar archive of everything below it
+    /// ([`is_tar_archive`](EnvironmentFileDownload::is_tar_archive)).
+    ///
+    /// This is `GET` on the listing's URL with `alt=media`. The whole body is
+    /// read into memory.
+    ///
+    /// ```no_run
+    /// # async fn run(client: genai_rs::Client, env_id: &str) -> Result<(), genai_rs::GenaiError> {
+    /// let report = client
+    ///     .environments()
+    ///     .files()
+    ///     .download(env_id, "out/report.md")
+    ///     .await?;
+    /// println!("{}", String::from_utf8_lossy(&report.data));
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenaiError::InvalidInput`] for an invalid environment ID or
+    /// a `.`/`..` path segment, before any request, and an API error when
+    /// nothing is at `path`: a `404 Directory not found or is empty`, which
+    /// the root (`""`) gets too (live 2026-11-05).
+    pub async fn download(
+        self,
+        environment_id: &str,
+        path: &str,
+    ) -> Result<EnvironmentFileDownload, GenaiError> {
+        crate::http::environment_files::download_file(&self.client.http, environment_id, path).await
     }
 
     /// Uploads a file to `path` in an environment, returning the entry

@@ -172,9 +172,10 @@ pub use triggers::{
 pub mod environments;
 pub use environments::{
     AllowlistEntry, CreateEnvironmentRequest, EnvVar, Environment, EnvironmentFile,
-    EnvironmentFileList, EnvironmentFileType, EnvironmentFileUpload, EnvironmentFiles,
-    EnvironmentListResponse, EnvironmentSource, EnvironmentSpec, EnvironmentStatus, Environments,
-    ListEnvironmentFiles, ListEnvironments, NetworkConfig, RemoteEnvironment, SourceType,
+    EnvironmentFileDownload, EnvironmentFileList, EnvironmentFileType, EnvironmentFileUpload,
+    EnvironmentFiles, EnvironmentListResponse, EnvironmentSource, EnvironmentSpec,
+    EnvironmentStatus, Environments, ListEnvironmentFiles, ListEnvironments, NetworkConfig,
+    RemoteEnvironment, SourceType,
 };
 
 // File Search Stores resource (/v1beta/fileSearchStores) — the documents
