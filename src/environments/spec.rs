@@ -220,13 +220,16 @@ impl EnvVar {
 #[non_exhaustive]
 pub enum NetworkConfig {
     /// Turns all network access off (wire: `"disabled"`).
-    ///
-    /// Also what `{"allowlist": "disabled"}` reads as, and its echo
-    /// `{"allowlist": [{"mode": "disabled"}]}`: the API accepts that form
-    /// too, and it blocks egress the same way (live 2026-11-05: an agent's
-    /// `curl` in either sandbox got the egress proxy's 403, and 200 in one
-    /// with no network config). It is sent as `"disabled"` (#489).
     Disabled,
+    /// Turns all network access off through the allowlist (wire:
+    /// `{"allowlist": "disabled"}`, the bindings' `Disabled` arm of the
+    /// allowlist). A GET echoes it as `{"allowlist": [{"mode":
+    /// "disabled"}]}`, which reads as this variant too. It blocks egress
+    /// exactly as [`Disabled`](Self::Disabled) does (live 2026-11-05: an
+    /// agent's `curl` in either sandbox got the egress proxy's 403, and 200
+    /// in one with no network config), so prefer that; check either with
+    /// [`is_disabled`](Self::is_disabled) (#489).
+    AllowlistDisabled,
     /// Restricts outbound traffic to the listed domains
     /// (wire: `{"allowlist": [{domain, transform}]}`).
     ///
@@ -256,6 +259,14 @@ impl NetworkConfig {
             entries,
             extra: serde_json::Map::new(),
         }
+    }
+
+    /// Returns true if this config turns all network access off, in either
+    /// form ([`Disabled`](Self::Disabled) or
+    /// [`AllowlistDisabled`](Self::AllowlistDisabled)).
+    #[must_use]
+    pub const fn is_disabled(&self) -> bool {
+        matches!(self, Self::Disabled | Self::AllowlistDisabled)
     }
 
     /// Returns true if this is an unknown network config.
@@ -291,6 +302,11 @@ impl Serialize for NetworkConfig {
         use serde::ser::SerializeMap;
         match self {
             Self::Disabled => serializer.serialize_str("disabled"),
+            Self::AllowlistDisabled => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("allowlist", "disabled")?;
+                map.end()
+            }
             Self::Allowlist { entries, extra } => {
                 let mut map = serializer.serialize_map(Some(1 + extra.len()))?;
                 map.serialize_entry("allowlist", entries)?;
@@ -312,7 +328,9 @@ impl<'de> Deserialize<'de> for NetworkConfig {
         let value = serde_json::Value::deserialize(deserializer)?;
         match &value {
             serde_json::Value::String(s) if s == "disabled" => Ok(Self::Disabled),
-            serde_json::Value::Object(obj) if is_disabled_allowlist(obj) => Ok(Self::Disabled),
+            serde_json::Value::Object(obj) if is_disabled_allowlist(obj) => {
+                Ok(Self::AllowlistDisabled)
+            }
             serde_json::Value::Object(obj) if obj.contains_key("allowlist") => {
                 match serde_json::from_value::<Vec<AllowlistEntry>>(obj["allowlist"].clone()) {
                     Ok(entries) => Ok(Self::Allowlist {
@@ -689,7 +707,7 @@ mod tests {
     }
 
     #[test]
-    fn test_network_config_disabled_allowlist_reads_as_disabled() {
+    fn test_network_config_allowlist_disabled_forms() {
         // Sent as `{"allowlist": "disabled"}`, echoed by a GET as a one-entry
         // list (live 2026-11-05); both block egress like `"disabled"`.
         for wire in [
@@ -697,9 +715,15 @@ mod tests {
             json!({"allowlist": [{"mode": "disabled"}]}),
         ] {
             let parsed: NetworkConfig = serde_json::from_value(wire.clone()).unwrap();
-            assert_eq!(parsed, NetworkConfig::Disabled, "{wire}");
-            assert_eq!(serde_json::to_value(&parsed).unwrap(), "disabled");
+            assert_eq!(parsed, NetworkConfig::AllowlistDisabled, "{wire}");
+            assert!(parsed.is_disabled());
+            assert_eq!(
+                serde_json::to_value(&parsed).unwrap(),
+                json!({"allowlist": "disabled"})
+            );
         }
+        assert!(NetworkConfig::Disabled.is_disabled());
+        assert!(!NetworkConfig::allowlist(vec![]).is_disabled());
         // Anything beside it, or another entry, keeps the general reading.
         let mixed: NetworkConfig = serde_json::from_value(json!({
             "allowlist": [{"mode": "disabled"}, {"domain": "example.com"}]
