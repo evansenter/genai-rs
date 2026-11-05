@@ -1,0 +1,41 @@
+{
+  "webhooks": [
+    {
+      "id": "wh-test-endpoint",
+      "name": "genai-rs-integration-test",
+      "uri": "https://example.com/genai-rs-test-hook",
+      "subscribed_events": ["interaction.completed", "interaction.failed"],
+      "state": "enabled",
+      "signing_secrets": [{"truncated_secret": "whsec_...ab", "expire_time": "2026-11-02T01:00:00Z"}],
+      "create_time": "2026-11-01T01:00:00Z",
+      "update_time": "2026-11-01T01:00:00Z"
+    },
+    {
+      "id": "wh-test-name",
+      "name": "genai-rs-test-paging-1793600000-2",
+      "uri": "https://hooks.example.org/other",
+      "subscribed_events": ["interaction.completed"],
+      "state": "enabled",
+      "create_time": "2026-11-02T01:00:00Z",
+      "update_time": "2026-11-02T01:00:00Z"
+    },
+    {
+      "id": "wh-young-test",
+      "name": "genai-rs-test-crud-1793872800-7",
+      "uri": "https://example.com/genai-rs-test-hook",
+      "subscribed_events": ["interaction.completed"],
+      "state": "enabled",
+      "create_time": "2026-11-05T11:00:00Z",
+      "update_time": "2026-11-05T11:00:00Z"
+    },
+    {
+      "id": "wh-production",
+      "name": "deploys",
+      "uri": "https://hooks.example.org/deploys",
+      "subscribed_events": ["interaction.completed"],
+      "state": "enabled",
+      "create_time": "2026-07-01T00:00:00Z",
+      "update_time": "2026-07-01T00:00:00Z"
+    }
+  ]
+}

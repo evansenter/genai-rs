@@ -1,0 +1,22 @@
+{
+  "environments": [
+    {
+      "id": "0b1d0e5c0de0c0ffee00000000prefix",
+      "sources": [{"type": "inline", "target": "/etc/motd", "content": "genai-rs-test environment CRUD"}],
+      "created": "2026-11-04T23:59:59+00:00",
+      "status": "active"
+    },
+    {
+      "id": "0b1d0e5c0de0c0ffee000000000young",
+      "sources": [{"type": "inline", "target": "/etc/motd", "content": "genai-rs-test environment CRUD"}],
+      "created": "2026-11-05T06:00:01+00:00",
+      "status": "active"
+    },
+    {
+      "id": "0b1d0e5c0de0c0ffee0000000gitrepo",
+      "sources": [{"type": "repository", "uri": "https://github.com/example/app"}],
+      "created": "2026-07-01T00:00:00+00:00",
+      "status": "active"
+    }
+  ]
+}

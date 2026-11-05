@@ -1,0 +1,396 @@
+#!/usr/bin/env python3
+"""Delete the resources genai-rs's live tests leaked on the shared test key.
+
+A live test deletes what it creates, but a test that dies first (a timeout,
+a panic before its guard, a cancelled job) leaves it behind, and nothing
+expires on its own: on 2026-11-03 the key held 99 environments, all
+test-created, some from July (#492). This runs on a schedule
+(`test-resource-janitor.yml`) and deletes only resources that carry a live
+test's marker, and only once they are older than `--min-age-hours`, so a
+run never pulls a resource out from under a test still using it.
+
+The markers, by kind (`tests/common/mod.rs`, `test_resource_name`):
+
+- credentials, agents: an `id` starting `genai-rs-test`.
+- webhooks: the test endpoint `https://example.com/genai-rs-test...` as
+  `uri`, or a `name` starting `genai-rs-test`.
+- triggers, file search stores, prompted voices: a display name starting
+  `genai-rs-test`.
+- environments: no `sources` (an Antigravity interaction's own environment,
+  and a fork, which lists none: both verified 2026-11-05), or every source
+  inline and a fixture: content starting `genai-rs-test`, a target under
+  `genai_rs_test/`, or one of the /etc/motd strings the tests used before
+  they carried the prefix (`LEGACY_ENV_SOURCES`).
+
+Age comes from the resource's create time. Agents have none, and prompted
+voices only an `expire_time` (a year after creation, 2026-11-05), so for
+them it is read from the Unix timestamp `test_resource_name` embeds
+(`genai-rs-test-<label>-<unix seconds>-<nanos>`), else from the voice's
+`expire_time`. A marked resource whose age cannot be told is kept and
+reported.
+
+Not covered: Files expire 48 hours after upload (`expirationTime`,
+2026-11-05), and stored interactions have no list endpoint; a test that
+starts a background interaction cancels and deletes it itself.
+
+Usage:
+  cleanup_test_resources.py --dry-run | --delete
+                            [--min-age-hours N] [--kinds a,b] [--base-url URL]
+
+`--dry-run` lists what would be deleted and deletes nothing. Needs
+GEMINI_API_KEY. Exits 1 when a list or a delete failed, 2 on a usage error.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import re
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com"
+API_REVISION = "2026-05-20"
+PREFIX = "genai-rs-test"
+TEST_WEBHOOK_URI_PREFIX = "https://example.com/genai-rs-test"
+# Legacy trigger display names, from before the tests used the prefix.
+LEGACY_TRIGGER_PREFIXES = ("genai-rs trigger test",)
+# Inline sources the live tests used before 2026-11-05, when every fixture
+# string took the prefix. "hello from genai-rs" and "probe" are on the 77
+# environments leaked July to October; the rest were current until then.
+LEGACY_ENV_SOURCES = {
+    ("/etc/motd", "hello from genai-rs"),
+    ("/etc/motd", "probe"),
+    ("/etc/motd", "config probe"),
+    ("/etc/motd", "hello"),
+    ("/etc/motd", "hello from genai-rs environments CRUD"),
+    ("/paging/a.txt", "a"),
+    ("/paging/b.txt", "b"),
+    ("/paging/c.txt", "c"),
+}
+# `test_resource_name`'s embedded creation time.
+EMBEDDED_TIME = re.compile(r"-(\d{10})-\d+$")
+# A prompted voice's expire_time is its creation plus a year (2026-11-05).
+VOICE_LIFETIME = dt.timedelta(days=365)
+MAX_ATTEMPTS = 4
+
+
+class ApiError(Exception):
+    pass
+
+
+class Api:
+    def __init__(self, base_url: str, key: str):
+        self.base = base_url.rstrip("/")
+        self.headers = {"x-goog-api-key": key, "Api-Revision": API_REVISION}
+
+    def call(self, method: str, path: str, query: dict | None = None) -> dict:
+        url = f"{self.base}{path}"
+        if query:
+            url += "?" + urllib.parse.urlencode(query)
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            request = urllib.request.Request(url, method=method, headers=self.headers)
+            try:
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    body = response.read()
+                return json.loads(body) if body.strip() else {}
+            except urllib.error.HTTPError as e:
+                detail = e.read()[:300].decode("utf-8", "replace")
+                retryable = e.code == 429 or e.code >= 500
+                if retryable and attempt < MAX_ATTEMPTS:
+                    time.sleep(retry_delay(e.headers.get("Retry-After"), attempt))
+                    continue
+                raise ApiError(f"{method} {path}: HTTP {e.code}: {detail}") from None
+            except (urllib.error.URLError, TimeoutError) as e:
+                if attempt < MAX_ATTEMPTS:
+                    time.sleep(retry_delay(None, attempt))
+                    continue
+                raise ApiError(f"{method} {path}: {e}") from None
+        raise AssertionError("unreachable")
+
+
+def retry_delay(retry_after: str | None, attempt: int) -> float:
+    if retry_after and retry_after.strip().isdigit():
+        return min(float(retry_after), 60.0)
+    return float(min(2**attempt, 30)) * float(os.environ.get("JANITOR_BACKOFF_SCALE", "1"))
+
+
+def parse_time(value) -> dt.datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    text = value.strip().replace("Z", "+00:00")
+    # Python before 3.11 takes at most six fractional digits; the API sends
+    # nine.
+    text = re.sub(r"(\.\d{6})\d+", r"\1", text)
+    try:
+        parsed = dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
+
+
+def create_time(resource: dict) -> dt.datetime | None:
+    """The create time, in any of the spellings the resources use: triggers
+    send `create_time` (2026-11-01) where environments send `created`, and
+    the camelCase resources `createTime`."""
+    for field in ("create_time", "created", "createTime"):
+        parsed = parse_time(resource.get(field))
+        if parsed:
+            return parsed
+    return None
+
+
+def embedded_time(name) -> dt.datetime | None:
+    match = EMBEDDED_TIME.search(name or "")
+    if not match:
+        return None
+    return dt.datetime.fromtimestamp(int(match.group(1)), tz=dt.timezone.utc)
+
+
+def is_marked(text) -> bool:
+    return isinstance(text, str) and text.startswith(PREFIX)
+
+
+def is_fixture_source(source: dict) -> bool:
+    if source.get("type") != "inline":
+        return False
+    target = source.get("target") or ""
+    content = source.get("content") or ""
+    return (
+        content.startswith(PREFIX)
+        or target.startswith("genai_rs_test/")
+        or "/genai_rs_test/" in target
+        or (target, content) in LEGACY_ENV_SOURCES
+    )
+
+
+# Each kind: how to list it, how to name one, why it is a test's, when it
+# was created, and how to delete it. `marker` returns a reason, or None for
+# a resource that is not a test's.
+def environment_marker(env: dict):
+    sources = env.get("sources") or []
+    if not sources:
+        return "no sources (an agent interaction's or a fork)"
+    if all(is_fixture_source(s) for s in sources):
+        return "only test fixture sources"
+    return None
+
+
+def webhook_marker(hook: dict):
+    if str(hook.get("uri") or "").startswith(TEST_WEBHOOK_URI_PREFIX):
+        return "the test webhook endpoint"
+    if is_marked(hook.get("name")):
+        return "a genai-rs-test name"
+    return None
+
+
+def trigger_marker(trigger: dict):
+    name = trigger.get("display_name") or ""
+    if is_marked(name):
+        return "a genai-rs-test display name"
+    if name.startswith(LEGACY_TRIGGER_PREFIXES):
+        return "a legacy test display name"
+    return None
+
+
+def voice_created(voice: dict):
+    created = embedded_time(voice.get("display_name"))
+    if created:
+        return created
+    expires = parse_time(voice.get("expire_time"))
+    return expires - VOICE_LIFETIME if expires else None
+
+
+KINDS = {
+    "environments": {
+        "list": [("/v1beta/environments", {})],
+        "items": "environments",
+        "page_size": ("page_size", 100),
+        "token": ("page_token", "next_page_token"),
+        "id": lambda r: r.get("id"),
+        "marker": environment_marker,
+        "created": create_time,
+        "delete": lambda r: (f"/v1beta/environments/{r['id']}", {}),
+    },
+    "credentials": {
+        "list": [("/v1beta/credentials", {})],
+        "items": "credentials",
+        "page_size": ("page_size", 100),
+        "token": ("page_token", "next_page_token"),
+        "id": lambda r: r.get("id"),
+        "marker": lambda r: "a genai-rs-test id" if is_marked(r.get("id")) else None,
+        "created": create_time,
+        "delete": lambda r: (f"/v1beta/credentials/{r['id']}", {}),
+    },
+    "webhooks": {
+        "list": [("/v1beta/webhooks", {})],
+        "items": "webhooks",
+        "page_size": ("page_size", 100),
+        "token": ("page_token", "next_page_token"),
+        "id": lambda r: r.get("id"),
+        "marker": webhook_marker,
+        "created": create_time,
+        "delete": lambda r: (f"/v1beta/webhooks/{r['id']}", {}),
+    },
+    "agents": {
+        "list": [("/v1beta/agents", {})],
+        "items": "agents",
+        "page_size": ("page_size", 100),
+        "token": ("page_token", "next_page_token"),
+        "id": lambda r: r.get("id"),
+        "marker": lambda r: "a genai-rs-test id" if is_marked(r.get("id")) else None,
+        "created": lambda r: embedded_time(r.get("id")),
+        "delete": lambda r: (f"/v1beta/agents/{r['id']}", {}),
+    },
+    "triggers": {
+        "list": [("/v1beta/triggers", {})],
+        "items": "triggers",
+        "page_size": ("page_size", 100),
+        "token": ("page_token", "next_page_token"),
+        "id": lambda r: r.get("id"),
+        "marker": trigger_marker,
+        "created": create_time,
+        "delete": lambda r: (f"/v1beta/triggers/{r['id']}", {}),
+    },
+    # camelCase, and at most 20 a page (2026-11-05).
+    "fileSearchStores": {
+        "list": [("/v1beta/fileSearchStores", {})],
+        "items": "fileSearchStores",
+        "page_size": ("pageSize", 20),
+        "token": ("pageToken", "nextPageToken"),
+        "id": lambda r: r.get("name"),
+        "marker": lambda r: "a genai-rs-test display name" if is_marked(r.get("displayName")) else None,
+        "created": create_time,
+        # A store that still holds documents needs force.
+        "delete": lambda r: (f"/v1beta/{r['name']}", {"force": "true"}),
+    },
+    # The default listing is the prebuilt catalog; custom voices are listed
+    # by type.
+    "voices": {
+        "list": [("/v1beta/voices", {"type": "prompted"}), ("/v1beta/voices", {"type": "replicated"})],
+        "items": "voices",
+        "page_size": ("page_size", 50),
+        "token": ("page_token", "next_page_token"),
+        "id": lambda r: r.get("id"),
+        "marker": lambda r: "a genai-rs-test display name" if is_marked(r.get("display_name")) else None,
+        "created": voice_created,
+        "delete": lambda r: (f"/v1beta/voices/{r['id']}", {}),
+    },
+}
+
+
+def list_all(api: Api, kind: dict) -> list[dict]:
+    size_param, size = kind["page_size"]
+    token_param, token_field = kind["token"]
+    found = []
+    for path, base_query in kind["list"]:
+        token = None
+        for _ in range(1000):
+            query = dict(base_query)
+            query[size_param] = size
+            if token:
+                query[token_param] = token
+            page = api.call("GET", path, query)
+            found.extend(page.get(kind["items"]) or [])
+            token = page.get(token_field)
+            if not token:
+                break
+        else:
+            raise ApiError(f"GET {path}: more than 1000 pages; is the page token ignored?")
+    return found
+
+
+def run(args) -> int:
+    key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not key:
+        print("::error::GEMINI_API_KEY is empty or unset", file=sys.stderr)
+        return 2
+    api = Api(args.base_url, key)
+    now = parse_time(args.now) if args.now else dt.datetime.now(dt.timezone.utc)
+    if now is None:
+        print(f"::error::--now is not a timestamp: {args.now}", file=sys.stderr)
+        return 2
+    cutoff = now - dt.timedelta(hours=args.min_age_hours)
+    verb = "would delete" if args.dry_run else "deleted"
+    failed = 0
+    totals = []
+
+    for name in args.kinds:
+        kind = KINDS[name]
+        try:
+            resources = list_all(api, kind)
+        except ApiError as e:
+            print(f"::error::{name}: listing failed: {e}")
+            failed += 1
+            totals.append((name, "list failed", 0, 0, 0, 0))
+            continue
+
+        marked = removed = too_new = unknown_age = 0
+        for resource in resources:
+            ident = kind["id"](resource)
+            reason = kind["marker"](resource)
+            if not reason or not ident:
+                continue
+            marked += 1
+            created = kind["created"](resource)
+            when = created.isoformat(timespec="seconds") if created else "unknown"
+            if created is None:
+                unknown_age += 1
+                print(f"kept     {name}/{ident}: {reason}, but its age is unknown; delete it by hand")
+                continue
+            if created > cutoff:
+                too_new += 1
+                print(f"kept     {name}/{ident}: {reason}, created {when}, under {args.min_age_hours:g}h old")
+                continue
+            if not args.dry_run:
+                path, query = kind["delete"](resource)
+                try:
+                    api.call("DELETE", path, query)
+                except ApiError as e:
+                    print(f"::error::{name}/{ident}: delete failed: {e}")
+                    failed += 1
+                    continue
+            removed += 1
+            print(f"{verb:<8} {name}/{ident}: {reason}, created {when}")
+        totals.append((name, len(resources), marked, removed, too_new, unknown_age))
+
+    print()
+    print(f"| Kind | Listed | Test-created | {verb.capitalize()} | Too new | Age unknown |")
+    print("|------|--------|--------------|--------------|---------|-------------|")
+    for row in totals:
+        print("| " + " | ".join(str(c) for c in row) + " |")
+    print()
+    mode = "Dry run: nothing was deleted" if args.dry_run else "Deleted"
+    print(f"{mode}. Kept anything without a test marker, and test resources under {args.min_age_hours:g}h old.")
+    return 1 if failed else 0
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--dry-run", action="store_true", help="list what would be deleted; delete nothing")
+    mode.add_argument("--delete", action="store_true", help="delete the test-created resources")
+    parser.add_argument("--min-age-hours", type=float, default=6.0,
+                        help="only delete resources at least this old (default 6)")
+    parser.add_argument("--kinds", default=",".join(KINDS),
+                        help=f"comma-separated subset of {','.join(KINDS)}")
+    parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help=argparse.SUPPRESS)
+    # For the harness: a fixed "now", so ages in recorded responses hold.
+    parser.add_argument("--now", default=None, help=argparse.SUPPRESS)
+    args = parser.parse_args(argv)
+    args.kinds = [k.strip() for k in args.kinds.split(",") if k.strip()]
+    unknown = [k for k in args.kinds if k not in KINDS]
+    if unknown or not args.kinds:
+        parser.error(f"unknown kind(s) {unknown}; choose from {','.join(KINDS)}")
+    if args.min_age_hours < 1:
+        parser.error("--min-age-hours must be at least 1, so a running test's resources are never deleted")
+    return run(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

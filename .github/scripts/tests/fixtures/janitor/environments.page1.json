@@ -1,0 +1,67 @@
+{
+  "environments": [
+    {
+      "id": "52ab487220d5f6d72523f3c8f87a86e1",
+      "created": "2026-07-19T23:20:03.722512+00:00"
+    },
+    {
+      "id": "fd4100e45dcbb2c909905f47ef297734",
+      "sources": [{"type": "inline", "target": "/etc/motd", "content": "hello from genai-rs"}],
+      "created": "2026-08-09T01:31:58.444695+00:00",
+      "updated": "2026-08-09T01:31:58.444695+00:00",
+      "status": "active",
+      "file_count": "2",
+      "size_bytes": "19"
+    },
+    {
+      "id": "8587694d6bd36adc7f96164dcc5caffe",
+      "sources": [{"type": "inline", "target": "/etc/motd", "content": "probe"}],
+      "created": "2026-08-09T02:51:26.812491+00:00",
+      "updated": "2026-08-09T02:51:26.812491+00:00",
+      "last_accessed": "2026-08-09T02:51:31.19626+00:00",
+      "status": "active",
+      "file_count": "2",
+      "size_bytes": "5"
+    },
+    {
+      "id": "a125d5817cbfd69717b372f6d0676db7",
+      "created": "2026-11-05T08:51:00.811474+00:00",
+      "updated": "2026-11-05T08:51:00.811474+00:00",
+      "last_accessed": "2026-11-05T08:51:00.811474+00:00",
+      "status": "active",
+      "file_count": "0",
+      "size_bytes": "0",
+      "network": "disabled"
+    },
+    {
+      "id": "d05d5a0c69999a77911f9f4b641f2668",
+      "sources": [
+        {"type": "inline", "target": "genai_rs_test/fixture.txt", "content": "genai-rs-test-file-755353413"},
+        {"type": "inline", "target": "genai_rs_test/check.sh", "content": "# genai-rs integration test: checks this environment's variables and its\n# credential injection. Every value is a throwa..."}
+      ],
+      "created": "2026-11-01T08:50:55.357863+00:00",
+      "updated": "2026-11-01T08:50:55.357863+00:00",
+      "last_accessed": "2026-11-01T08:50:55.357863+00:00",
+      "status": "active",
+      "file_count": "5",
+      "size_bytes": "1297",
+      "network": {"allowlist": [{"domain": "httpbin.org", "credential": "dd1c31b1-7732-4200-bafc-7b6de01bac8c"}]}
+    },
+    {
+      "id": "0b1d0e5c0de0c0ffee0000000000user",
+      "sources": [{"type": "inline", "target": "/etc/motd", "content": "team config"}],
+      "created": "2026-07-01T00:00:00+00:00",
+      "status": "active"
+    },
+    {
+      "id": "0b1d0e5c0de0c0ffee000000000mixed",
+      "sources": [
+        {"type": "inline", "target": "/etc/motd", "content": "genai-rs-test hello"},
+        {"type": "inline", "target": "/srv/app.conf", "content": "port = 8080"}
+      ],
+      "created": "2026-07-01T00:00:00+00:00",
+      "status": "active"
+    }
+  ],
+  "next_page_token": "p2"
+}

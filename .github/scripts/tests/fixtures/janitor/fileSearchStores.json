@@ -1,0 +1,22 @@
+{
+  "fileSearchStores": [
+    {
+      "name": "fileSearchStores/genairswp2bprobe-2295uacesjnm",
+      "displayName": "genai-rs-wp2b-probe",
+      "createTime": "2026-11-05T08:51:35.455005Z",
+      "updateTime": "2026-11-05T08:51:35.455005Z",
+      "activeDocumentsCount": "4",
+      "sizeBytes": "216",
+      "embeddingModel": "models/gemini-embedding-001"
+    },
+    {
+      "name": "fileSearchStores/genairstestbasics-a1b2c3d4e5f6",
+      "displayName": "genai-rs-test-basics-1793700000-42",
+      "createTime": "2026-11-03T10:00:00.000000Z",
+      "updateTime": "2026-11-03T10:00:00.000000Z",
+      "activeDocumentsCount": "1",
+      "sizeBytes": "54",
+      "embeddingModel": "models/gemini-embedding-001"
+    }
+  ]
+}
