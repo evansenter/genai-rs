@@ -263,7 +263,8 @@ pub struct Trigger {
 /// error up through `Trigger` and fail the whole list response — the same
 /// wholesale failure the lenient int64 and timestamp helpers exist to
 /// avoid. Scoped here (not on `InteractionRequest` itself) so a request
-/// loaded from a config file still fails on a malformed input.
+/// loaded from a config file still fails on a malformed input, and
+/// [`TriggerCreateParams`] also fails on a missing one.
 fn deserialize_lenient_interaction<'de, D>(
     deserializer: D,
 ) -> Result<Option<InteractionRequest>, D::Error>
@@ -437,6 +438,12 @@ pub(crate) fn warn_on_interaction_footguns(interaction: &InteractionRequest) {
 
 /// Derived [`InteractionRequest`] deserialization plus the pre-flight
 /// warns, so a config-file load gets the same signals as `new()`.
+///
+/// A missing `input` is an error here, as it was before `input` became
+/// optional for decoding continuations (#489): a trigger fires a fresh
+/// interaction, never a continuation, so an absent or misspelled
+/// (`"inputs"`) input in a config file fails the load instead of
+/// scheduling an empty prompt.
 fn deserialize_interaction_with_warns<'de, D>(
     deserializer: D,
 ) -> Result<InteractionRequest, D::Error>
@@ -444,6 +451,9 @@ where
     D: Deserializer<'de>,
 {
     let interaction = InteractionRequest::deserialize(deserializer)?;
+    if interaction.input.is_none() {
+        return Err(serde::de::Error::missing_field("input"));
+    }
     warn_on_interaction_footguns(&interaction);
     Ok(interaction)
 }

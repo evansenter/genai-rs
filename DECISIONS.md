@@ -686,9 +686,10 @@ design call. Probed live on 2026-11-05:
   without a crate release.
 
 **Consequences.** A deserialized request without `input` reads as `None`
-instead of failing, so a misspelled `inputs` in a trigger config file
-lands in `extra` and the trigger's empty-prompt warning, not a parse
-error, catches it. Code that matches `NetworkConfig::Disabled` misses the
+instead of failing. `TriggerCreateParams` keeps the old strictness on its
+own deserialize path: a trigger fires a fresh interaction, never a
+continuation, so a missing or misspelled (`inputs`) input in a trigger
+config file is still a parse error. Code that matches `NetworkConfig::Disabled` misses the
 allowlist form; `is_disabled()` covers both.
 
 ---

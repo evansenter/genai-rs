@@ -684,23 +684,23 @@ fn sparse_trigger_projection_degrades_per_field() {
         "interaction": {"agent": "my-agent", "input": 0}
     }));
     assert!(result.is_err(), "send-side input must stay strict");
-    // `input` is optional (a decoding continuation goes without one), so
-    // an absent or typo'd one ("inputs") parses: the typo lands in
-    // `extra`, and the empty-prompt warn names the missing input.
-    let messages = crate::test_subscriber::capture_messages(|| {
-        let params: TriggerCreateParams = serde_json::from_value(serde_json::json!({
+    // Absent (or typo'd, e.g. "inputs") is equally a clean parse error on
+    // the send side. `InteractionRequest::input` is optional for decoding
+    // continuations (#489), but a trigger never fires one, so a config
+    // mistake cannot silently schedule an empty prompt.
+    for interaction in [
+        serde_json::json!({"agent": "my-agent", "inputs": "typo"}),
+        serde_json::json!({"agent": "my-agent"}),
+        serde_json::json!({"agent": "my-agent", "input": null}),
+    ] {
+        let result: Result<TriggerCreateParams, _> = serde_json::from_value(serde_json::json!({
             "schedule": "0 9 * * *",
             "time_zone": "UTC",
-            "interaction": {"agent": "my-agent", "inputs": "typo"}
-        }))
-        .unwrap();
-        assert_eq!(params.interaction.input, None);
-        assert_eq!(params.interaction.extra["inputs"], "typo");
-    });
-    assert!(
-        messages.iter().any(|m| m.contains("input is missing")),
-        "{messages:?}"
-    );
+            "interaction": interaction
+        }));
+        let err = result.expect_err("send-side absent input must stay strict");
+        assert!(err.to_string().contains("input"), "{err}");
+    }
 }
 
 #[test]

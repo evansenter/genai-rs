@@ -354,13 +354,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking: `InteractionRequest::input` is an `Option<InteractionInput>`,
   and `InteractionInput` no longer implements `Default`.** The bindings make
   `input` optional, and a decoding continuation of a stored interaction
-  sends none (#489). `None` is left out of the body. A deserialized request
-  without `input` (a `TriggerCreateParams` config file, say) now reads as
-  `None` instead of failing, so a misspelled `inputs` lands in `extra` and
-  the trigger's empty-prompt warning names the missing input; a malformed
-  `input` value is still a parse error. A stored trigger's interaction
-  without an input, or with one that does not parse, reads as `None`
-  where it read as empty text. `build()` still requires input, except for
+  sends none (#489). `None` is left out of the body. A deserialized
+  `InteractionRequest` without `input` now reads as `None` instead of
+  failing; a `TriggerCreateParams` config file still fails on a missing (or
+  misspelled `inputs`) input, since a trigger never fires a continuation,
+  and a malformed `input` value is still a parse error. A stored trigger's
+  interaction without an input, or with one that does not parse, reads as
+  `None` where it read as empty text. `build()` still requires input, except for
   a continuation. Migration: write `input: Some(InteractionInput::Text(..))`
   in a struct literal, match `Some(InteractionInput::Steps(..))` where you
   read it, and replace `InteractionInput::default()` with the input you
