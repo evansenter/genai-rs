@@ -1,5 +1,7 @@
-use super::hooks::PolicyEngine;
+use super::hooks::LifecycleHooks;
+use super::policies::PolicyEngine;
 use super::process::HarnessProcess;
+use super::prompt::{Prompt, user_input};
 use super::protocol::{self, InputEvent, OutputPayload, StepUpdate};
 use super::session::{Session, SinkHandle};
 use super::tools::ToolDispatcher;
@@ -11,8 +13,12 @@ use super::{
 use std::sync::Arc;
 use std::time::Duration;
 
-/// How long to wait for the `initializeConversationResponse`.
+/// How long to wait for the `initializeConversationResponse` (and for the
+/// session-start hook's request after it).
 const INIT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long `shutdown()` waits for the session-end hooks to run.
+const SESSION_END_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Overall budget for halting-and-draining an orphaned harness turn (one
 /// that timed out, or one started by a trigger) before giving up.
@@ -44,8 +50,12 @@ pub struct AntigravityAgent {
     pub(super) pre_tool: Option<PreToolHook>,
     pub(super) questions: Option<QuestionHook>,
     pub(super) post_tool: Option<PostToolHook>,
+    /// Session, turn, tool-error, compaction and stop hooks.
+    pub(super) lifecycle: LifecycleHooks,
     pub(super) conversation_id: Option<String>,
     pub(super) initial_history: Vec<StepUpdate>,
+    /// The OS command sandbox status the harness reported at init.
+    pub(super) sandbox_status: Option<protocol::SandboxStatus>,
     pub(super) turn_timeout: Option<Duration>,
     /// `true` while no turn is being driven; trigger tasks watch this to
     /// defer deliveries (see [`triggers`]).
@@ -127,6 +137,16 @@ impl AntigravityAgent {
         &self.initial_history
     }
 
+    /// Whether the harness can run `run_command` inside the OS sandbox, as
+    /// it reported at start-up. With
+    /// [`RunCommandOptions::with_sandbox`](super::RunCommandOptions::with_sandbox)
+    /// on and `available` false, commands run unsandboxed (`spawn()` also
+    /// logs a `warn!`). `None` when the harness reported nothing.
+    #[must_use]
+    pub fn sandbox_status(&self) -> Option<&protocol::SandboxStatus> {
+        self.sandbox_status.as_ref()
+    }
+
     /// The `google-antigravity` version of the running harness, read from
     /// the wheel install the binary sits in. `None` when the binary is not
     /// inside one (a hand-placed copy).
@@ -164,16 +184,22 @@ impl AntigravityAgent {
 
     /// Sends a message and drives the turn to completion.
     ///
+    /// The message is a string, or a [`Prompt`] of text, [`Media`] and
+    /// [`SlashCommand`](super::SlashCommand)s.
+    ///
     /// If a [trigger](AgentBuilder::add_trigger) started a harness-side turn
     /// since the last call, that turn is halted and its events are discarded
     /// before this message is sent (see [`triggers`]).
+    ///
+    /// [`Media`]: super::Media
     pub async fn chat(
         &mut self,
-        prompt: impl Into<String>,
+        prompt: impl Into<Prompt>,
     ) -> Result<ChatResponse, AntigravityError> {
+        let input = user_input(prompt)?;
         // Mark busy before sending so a trigger cannot slip in between.
         let guard = self.begin_turn().await;
-        self.session.send(&InputEvent::user_text(prompt)).await?;
+        self.session.send(&input).await?;
         let mut turn = TurnState::new(self.turn_timeout, Some(guard));
         loop {
             match self.next_turn_event(&mut turn).await? {
@@ -189,20 +215,22 @@ impl AntigravityAgent {
     }
 
     /// Sends a message and returns a stream of [`AgentEvent`]s for the
-    /// turn. The stream ends after [`AgentEvent::Finished`].
+    /// turn. The stream ends after [`AgentEvent::Finished`]. The message is
+    /// a string or a [`Prompt`], as for [`chat`](Self::chat).
     ///
     /// If a [trigger](AgentBuilder::add_trigger) started a harness-side turn
     /// since the last call, that turn is halted and its events are discarded
     /// before this message is sent (see [`triggers`]).
     pub async fn send_streaming(
         &mut self,
-        prompt: impl Into<String>,
+        prompt: impl Into<Prompt>,
     ) -> Result<AgentEventStream<'_>, AntigravityError> {
+        let input = user_input(prompt)?;
         // Mark busy before sending so a trigger cannot slip in between.
         // The guard moves into the stream's turn state: dropping the
         // stream mid-turn marks the agent idle again.
         let guard = self.begin_turn().await;
-        self.session.send(&InputEvent::user_text(prompt)).await?;
+        self.session.send(&input).await?;
         let timeout = self.turn_timeout;
         let stream = async_stream::try_stream! {
             let mut turn = TurnState::new(timeout, Some(guard));
@@ -238,8 +266,176 @@ impl AntigravityAgent {
         }
         // Stop trigger timers first so nothing writes to the closing socket.
         self.trigger_tasks.abort_all();
+        if self.lifecycle.session_end.is_some() {
+            self.end_session().await;
+        }
         self.session.close().await;
         self.harness.shutdown().await
+    }
+
+    /// Waits for the next turn the agent starts on its own — a
+    /// [trigger](AgentBuilder::add_trigger) delivery — for up to `wait`,
+    /// drives it to completion and returns its response: the consumer for
+    /// trigger-turn output. `Ok(None)` when no turn started in time.
+    ///
+    /// Triggers keep delivering while this waits (the agent counts as
+    /// idle). Once the turn's first event arrives the agent is busy, so
+    /// further deliveries wait for it to finish; the turn timeout applies
+    /// from then. A turn that is already running or finished when this is
+    /// called is consumed from where it stands.
+    ///
+    /// The next `chat`/`send_streaming` still makes sure no other trigger
+    /// turn is running before it sends (a halt, which does nothing when no
+    /// turn runs, and up to half a second of draining).
+    ///
+    /// ```rust,ignore
+    /// // React to whatever the triggers start, between user turns.
+    /// while let Some(response) = agent.next_trigger_turn(Duration::from_secs(60)).await? {
+    ///     println!("trigger turn: {}", response.text());
+    /// }
+    /// ```
+    pub async fn next_trigger_turn(
+        &mut self,
+        wait: Duration,
+    ) -> Result<Option<ChatResponse>, AntigravityError> {
+        let first = match tokio::time::timeout(wait, self.session.next_event()).await {
+            Err(_) => return Ok(None),
+            Ok(Ok(Some(event))) => event,
+            Ok(Ok(None)) => {
+                let stderr = self.harness.stderr_tail().await;
+                return Err(AntigravityError::ConnectionClosed {
+                    message: "harness closed the WebSocket while waiting for a trigger turn"
+                        .to_string(),
+                    stderr,
+                });
+            }
+            Ok(Err(e)) => return Err(e),
+        };
+        // Busy from here: later deliveries wait for this turn. The flag is
+        // left set, so the next chat still checks for a turn a racing
+        // delivery may have started.
+        let guard = {
+            let _sync = self.turn_sync.lock().await;
+            TurnGuard::begin(&self.idle)
+        };
+        let mut turn = TurnState::new(self.turn_timeout, Some(guard));
+        self.process_event(first, &mut turn).await?;
+        loop {
+            match self.next_turn_event(&mut turn).await? {
+                Some(AgentEvent::Finished(response)) => return Ok(Some(*response)),
+                Some(_) => {}
+                None => {
+                    return Err(AntigravityError::Protocol(
+                        "trigger turn ended without a Finished event".to_string(),
+                    ));
+                }
+            }
+        }
+    }
+
+    /// The delivery function trigger tasks share: flag the agent, then send
+    /// the message through the out-of-band sink.
+    pub(super) fn trigger_delivery(&self) -> triggers::Deliver {
+        let sink = self.session.sink_handle();
+        let fired = Arc::clone(&self.trigger_fired);
+        Arc::new(move |message| {
+            let sink = sink.clone();
+            let fired = Arc::clone(&fired);
+            Box::pin(async move {
+                // Flag before sending so the next chat can never miss an
+                // in-flight delivery (a false positive on send failure only
+                // costs a no-op drain).
+                fired.store(true, std::sync::atomic::Ordering::SeqCst);
+                sink.send(&InputEvent::AutomatedTrigger(message)).await
+            })
+        })
+    }
+
+    /// Answers the session-start hook, which the harness calls right after
+    /// initialization when it is enabled. Bounded by [`INIT_TIMEOUT`].
+    pub(super) async fn start_session(&mut self) -> Result<(), AntigravityError> {
+        if self.lifecycle.session_start.is_none() {
+            return Ok(());
+        }
+        let deadline = tokio::time::Instant::now() + INIT_TIMEOUT;
+        let mut state = TurnState::new(None, None);
+        loop {
+            let event = match tokio::time::timeout_at(deadline, self.session.next_event()).await {
+                Ok(Ok(Some(event))) => event,
+                Ok(Ok(None)) => {
+                    return Err(AntigravityError::InitFailed {
+                        message: "harness closed the connection before the session-start hook"
+                            .to_string(),
+                        stderr: self.harness.stderr_tail().await,
+                    });
+                }
+                Ok(Err(e)) => return Err(e),
+                Err(_) => {
+                    return Err(AntigravityError::InitFailed {
+                        message: format!(
+                            "the harness did not call the session-start hook within \
+                             {INIT_TIMEOUT:?}"
+                        ),
+                        stderr: self.harness.stderr_tail().await,
+                    });
+                }
+            };
+            let is_start = matches!(
+                &event.payload,
+                Some(OutputPayload::CallHookRequest(request))
+                    if request.hook_type == Some(protocol::LifecycleHook::OnSessionStart)
+            );
+            tokio::time::timeout_at(deadline, self.process_event(event, &mut state))
+                .await
+                .map_err(|_| AntigravityError::Timeout {
+                    operation: "the session-start hook".to_string(),
+                    timeout: INIT_TIMEOUT,
+                })??;
+            if is_start {
+                return Ok(());
+            }
+        }
+    }
+
+    /// Runs the session-end hooks: asks the harness to end the session and
+    /// answers its hook calls until it confirms. Best-effort and bounded by
+    /// [`SESSION_END_TIMEOUT`]: shutdown proceeds either way.
+    async fn end_session(&mut self) {
+        if let Err(e) = self
+            .session
+            .send(&InputEvent::SessionEndRequest(true))
+            .await
+        {
+            tracing::warn!("Could not ask the harness to end the session: {e}");
+            return;
+        }
+        let deadline = tokio::time::Instant::now() + SESSION_END_TIMEOUT;
+        let mut state = TurnState::new(None, None);
+        loop {
+            let event = match tokio::time::timeout_at(deadline, self.session.next_event()).await {
+                Ok(Ok(Some(event))) => event,
+                Ok(Ok(None)) | Ok(Err(_)) => return,
+                Err(_) => {
+                    tracing::warn!(
+                        "The session-end hooks did not finish within {SESSION_END_TIMEOUT:?}."
+                    );
+                    return;
+                }
+            };
+            if matches!(event.payload, Some(OutputPayload::SessionEndResponse(_))) {
+                return;
+            }
+            match tokio::time::timeout_at(deadline, self.process_event(event, &mut state)).await {
+                Ok(Ok(())) => state.queue.clear(),
+                Ok(Err(e)) => tracing::debug!("Ignoring a late event during session end: {e}"),
+                Err(_) => {
+                    tracing::warn!(
+                        "The session-end hook did not finish within {SESSION_END_TIMEOUT:?}."
+                    );
+                    return;
+                }
+            }
+        }
     }
 
     // -------------------------------------------------------------------
@@ -282,6 +478,7 @@ impl AntigravityAgent {
                 Some(OutputPayload::InitializeConversationResponse(response)) => {
                     self.conversation_id = response.cascade_id.clone();
                     self.initial_history = response.history;
+                    self.sandbox_status = response.sandbox_status;
                     return Ok(());
                 }
                 Some(other) => {

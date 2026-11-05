@@ -65,9 +65,11 @@ LOUD_WIRE=1 cargo run --example workspace_explorer --features antigravity
 ## Production notes
 
 - Use policies **and** hooks: names for shape, content for judgement.
-- Hooks run inline on the event pump — keep them non-blocking, and never
-  await a human decision inside one.
+- Each hook call runs on a thread of its own, bounded by the turn
+  deadline — a slow hook spends the turn's budget.
 - `ToolAction` carries `trajectory_id`; with subagents running, that is what
   distinguishes the parent's actions from a subagent's.
-- Workspace announcement is on by default so the model knows the root path;
-  disable it only if you ground the model yourself.
+- The harness's prompt lists the workspace roots, so the model knows the
+  root path. Custom instructions (`SystemInstructions::custom`) replace that
+  prompt; the crate then adds a note naming the roots, unless
+  `with_workspace_announcement(false)`.

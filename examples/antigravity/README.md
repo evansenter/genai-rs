@@ -22,8 +22,11 @@ README explaining what it demonstrates and what to look for in the output.
 | [`session_resume/`](./session_resume/) | An agent that remembers across process restarts | Trajectory persistence, `conversation_id` round trip, `initial_history` |
 | [`workspace_explorer/`](./workspace_explorer/) | Watching an agent work, and gating it live | Workspaces, typed `ToolAction` stream, content-based `on_pre_tool` deny |
 | [`mcp_toolbelt/`](./mcp_toolbelt/) | Giving an agent tools it didn't ship with | `add_mcp_server` (stdio), `mcp_<server>_<tool>` policy targets |
-| [`proactive_agent/`](./proactive_agent/) | Work that starts without a user turn | `add_trigger`, observing deliveries via a wire inspector |
+| [`proactive_agent/`](./proactive_agent/) | Work that starts without a user turn | `add_trigger`, counting deliveries with a wire inspector |
 | [`cancellable_turn/`](./cancellable_turn/) | Stopping an agent mid-thought | `cancel_handle` from another task, partial output kept |
+| [`lifecycle_hooks/`](./lifecycle_hooks/) | A definition of done the agent cannot skip | `on_stop` / `StopDecision::continue_with`, session and turn hooks |
+| [`file_watcher/`](./file_watcher/) | An agent that reacts to files | `triggers::on_file_change`, `next_trigger_turn` |
+| [`command_guard/`](./command_guard/) | A shell that can read but not change anything | `Policy::when`, `with_reason`, policy precedence |
 
 Every one of these is smoke-run in CI on each push, so a change that
 breaks one is caught by the run rather than by the next person to try it.
@@ -45,6 +48,7 @@ the MCP calls. See [docs/ANTIGRAVITY.md](../../docs/ANTIGRAVITY.md#wire-inspecti
 ## Further reading
 
 - [docs/ANTIGRAVITY.md](../../docs/ANTIGRAVITY.md) — the guide: setup,
-  workspaces, policies, subagents, streaming, triggers, resume, debugging
+  workspaces, policies, hooks, subagents, streaming, triggers, resume,
+  debugging
 - [docs/ANTIGRAVITY_BRIDGE_DESIGN.md](../../docs/ANTIGRAVITY_BRIDGE_DESIGN.md)
   — why this is a native protocol client rather than a PyO3 binding

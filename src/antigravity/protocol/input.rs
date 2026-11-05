@@ -1,4 +1,4 @@
-use super::HookDecision;
+use super::{CallHookResponse, PolicyDecisionResponse};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -33,10 +33,12 @@ pub enum InputEvent {
     HaltRequest(bool),
     /// Message injected by a client-side trigger.
     AutomatedTrigger(String),
-    /// Reply to a `call_hook_request`.
-    CallHookResponse(CallHookResponse),
+    /// Reply to a `call_hook_request`. Boxed: the largest input message.
+    CallHookResponse(Box<CallHookResponse>),
     /// Ask the harness to run session-end hooks.
     SessionEndRequest(bool),
+    /// Reply to a `policy_decision_request`.
+    PolicyDecisionResponse(PolicyDecisionResponse),
     /// An event variant this crate does not recognize (Evergreen).
     Unknown {
         /// The unrecognized oneof field name.
@@ -87,6 +89,7 @@ impl InputEvent {
             Self::AutomatedTrigger(_) => "automatedTrigger",
             Self::CallHookResponse(_) => "callHookResponse",
             Self::SessionEndRequest(_) => "sessionEndRequest",
+            Self::PolicyDecisionResponse(_) => "policyDecisionResponse",
             Self::Unknown { event_type, .. } => event_type,
         }
     }
@@ -100,6 +103,7 @@ impl InputEvent {
             Self::QuestionResponse(v) => serde_json::to_value(v),
             Self::HaltRequest(b) | Self::SessionEndRequest(b) => Ok(Value::Bool(*b)),
             Self::CallHookResponse(v) => serde_json::to_value(v),
+            Self::PolicyDecisionResponse(v) => serde_json::to_value(v),
             Self::Unknown { data, .. } => Ok(data.clone()),
         }
     }
@@ -143,10 +147,13 @@ impl<'de> Deserialize<'de> for InputEvent {
                     .ok_or_else(|| D::Error::custom("automatedTrigger must be a string"))?
                     .to_string(),
             ),
-            "callHookResponse" => {
-                Self::CallHookResponse(serde_json::from_value(value).map_err(D::Error::custom)?)
-            }
+            "callHookResponse" => Self::CallHookResponse(Box::new(
+                serde_json::from_value(value).map_err(D::Error::custom)?,
+            )),
             "sessionEndRequest" => Self::SessionEndRequest(value.as_bool().unwrap_or_default()),
+            "policyDecisionResponse" => Self::PolicyDecisionResponse(
+                serde_json::from_value(value).map_err(D::Error::custom)?,
+            ),
             _ => Self::Unknown {
                 event_type: key,
                 data: value,
@@ -323,41 +330,3 @@ pub struct MultipleChoiceAnswer {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub freeform_response: Option<String>,
 }
-
-/// `CallHookResponse` — the client's reply to a hook callback.
-///
-/// The result fields form a oneof (`result`): set exactly one.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct CallHookResponse {
-    /// Correlates with [`CallHookRequest::request_id`](super::CallHookRequest::request_id).
-    pub request_id: String,
-    /// Verdict for a pre-turn hook.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pre_turn_result: Option<HookVerdict>,
-    /// Verdict for a pre-tool hook.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pre_tool_result: Option<HookVerdict>,
-    /// Acknowledgement for observe-only hooks.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub empty_result: Option<EmptyResult>,
-    /// Hook execution failed on the client.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error_message: Option<String>,
-}
-
-/// `PreToolResult` / `PreTurnResult` — an allow/deny verdict with a reason.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct HookVerdict {
-    /// The decision.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub decision: Option<HookDecision>,
-    /// Human-readable reason (surfaced to the model on deny).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
-/// `EmptyResult`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct EmptyResult {}

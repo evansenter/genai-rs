@@ -1,5 +1,6 @@
 use super::{
-    LifecycleHook, Modality, StepUpdate, StopReason, TrajectoryState, UserInput, flex_num,
+    CallHookRequest, Modality, PolicyDecisionRequest, StepUpdate, StopReason, TrajectoryState,
+    flex_num,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -38,9 +39,12 @@ pub enum OutputPayload {
     /// Reply to the initial `InitializeConversationEvent`.
     InitializeConversationResponse(InitializeConversationResponse),
     /// The harness is invoking a client-side lifecycle hook.
-    CallHookRequest(CallHookRequest),
+    CallHookRequest(Box<CallHookRequest>),
     /// Session-end hooks completed.
     SessionEndResponse(bool),
+    /// The harness asks this client to judge a tool call against a dynamic
+    /// policy rule or the auto policy.
+    PolicyDecisionRequest(PolicyDecisionRequest),
     /// An event variant this crate does not recognize (Evergreen).
     Unknown {
         /// The unrecognized oneof field name.
@@ -83,6 +87,7 @@ const OUTPUT_PAYLOAD_KEYS: &[&str] = &[
     "initializeConversationResponse",
     "callHookRequest",
     "sessionEndResponse",
+    "policyDecisionRequest",
 ];
 
 impl Serialize for OutputEvent {
@@ -123,6 +128,10 @@ impl Serialize for OutputEvent {
                     serde_json::to_value(v).map_err(S::Error::custom)?,
                 ),
                 OutputPayload::SessionEndResponse(b) => ("sessionEndResponse", Value::Bool(*b)),
+                OutputPayload::PolicyDecisionRequest(v) => (
+                    "policyDecisionRequest",
+                    serde_json::to_value(v).map_err(S::Error::custom)?,
+                ),
                 OutputPayload::Unknown { event_type, data } => (event_type.as_str(), data.clone()),
             };
             map.serialize_entry(key, &value)?;
@@ -203,12 +212,15 @@ impl<'de> Deserialize<'de> for OutputEvent {
                             serde_json::from_value(value).map_err(D::Error::custom)?,
                         )
                     }
-                    "callHookRequest" => OutputPayload::CallHookRequest(
+                    "callHookRequest" => OutputPayload::CallHookRequest(Box::new(
                         serde_json::from_value(value).map_err(D::Error::custom)?,
-                    ),
+                    )),
                     "sessionEndResponse" => {
                         OutputPayload::SessionEndResponse(value.as_bool().unwrap_or_default())
                     }
+                    "policyDecisionRequest" => OutputPayload::PolicyDecisionRequest(
+                        serde_json::from_value(value).map_err(D::Error::custom)?,
+                    ),
                     // A key added to OUTPUT_PAYLOAD_KEYS without an arm
                     // here: preserve it rather than panic on harness input.
                     other => OutputPayload::Unknown {
@@ -426,194 +438,4 @@ pub struct ToolCall {
     /// Unrecognized fields, preserved for roundtrip (Evergreen).
     #[serde(flatten)]
     pub extra: Map<String, Value>,
-}
-
-/// `CallHookRequest` — the harness invoking a client-side lifecycle hook.
-///
-/// The `*_args` fields form a oneof (`args`): at most one is set.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct CallHookRequest {
-    /// Correlation id; echo it in the [`CallHookResponse`](super::CallHookResponse).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub request_id: Option<String>,
-    /// Hook name.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    /// Which lifecycle point fired.
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    pub hook_type: Option<LifecycleHook>,
-    /// Pre-turn arguments.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pre_turn_args: Option<PreTurnArgs>,
-    /// Post-turn arguments.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub post_turn_args: Option<PostTurnArgs>,
-    /// Pre-tool arguments (the hook may deny the call).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pre_tool_args: Option<PreToolArgs>,
-    /// Post-tool arguments.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub post_tool_args: Option<PostToolArgs>,
-    /// Unrecognized fields, preserved for roundtrip (Evergreen).
-    #[serde(flatten)]
-    pub extra: Map<String, Value>,
-}
-
-/// `PreToolArgs`.
-///
-/// `tool_name` is the harness's *step field* name for a builtin (so the
-/// subagent builtin arrives as `invoke_subagent`, not `start_subagent`)
-/// and the bare tool name for an MCP tool, whose server is in
-/// `server_name`. The bridge maps both onto policy targets before
-/// evaluating policies (`mcp_<server>_<tool>`, `start_subagent`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct PreToolArgs {
-    /// The tool about to run.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_name: Option<String>,
-    /// Its arguments, serialized as a JSON string.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub arguments_json: Option<String>,
-    /// The MCP server providing the tool, for MCP tools.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub server_name: Option<String>,
-    /// The harness's correlation id for the call.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub call_id: Option<String>,
-    /// The trajectory making the call (new in harness 0.1.18).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub trajectory_id: Option<String>,
-    /// The step making the call (new in harness 0.1.18).
-    #[serde(
-        default,
-        deserialize_with = "flex_num::opt_u32",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub step_index: Option<u32>,
-    /// Unrecognized fields, preserved for roundtrip (Evergreen).
-    #[serde(flatten)]
-    pub extra: Map<String, Value>,
-}
-
-/// `PostToolArgs`. `tool_name` follows the same convention as
-/// [`PreToolArgs`].
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct PostToolArgs {
-    /// The tool that ran.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_name: Option<String>,
-    /// Its result.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<String>,
-    /// The error, if it failed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    /// The MCP server providing the tool, for MCP tools.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub server_name: Option<String>,
-    /// The harness's correlation id for the call.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub call_id: Option<String>,
-    /// The trajectory that made the call (new in harness 0.1.18).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub trajectory_id: Option<String>,
-    /// The step that made the call (new in harness 0.1.18).
-    #[serde(
-        default,
-        deserialize_with = "flex_num::opt_u32",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub step_index: Option<u32>,
-    /// Unrecognized fields, preserved for roundtrip (Evergreen).
-    #[serde(flatten)]
-    pub extra: Map<String, Value>,
-}
-
-/// Decodes the harness's `genai.Struct` encoding into plain JSON.
-///
-/// `ToolCall.arguments` (and `ToolResponse.response`) are not
-/// `google.protobuf.Struct` — whose proto-JSON form *is* plain JSON — but
-/// the harness's own `genai.Struct`, which proto-JSON renders
-/// structurally: `{"fields": [{"name": "city", "value": {"stringValue":
-/// "SF"}}]}`. Returns `None` when `value` is not that shape. A value kind
-/// with no JSON equivalent (`contentValue`, `functionValue`) is kept as its
-/// raw object rather than dropped.
-pub(crate) fn decode_genai_struct(value: &Value) -> Option<Value> {
-    fn decode_value(value: &Value) -> Option<Value> {
-        let Value::Object(kind) = value else {
-            return None;
-        };
-        // Proto3 omits a oneof arm set to its default, so an empty object
-        // is an unset value.
-        let Some((arm, inner)) = kind.iter().next() else {
-            return Some(Value::Null);
-        };
-        Some(match arm.as_str() {
-            "nullValue" => Value::Null,
-            "numberValue" | "stringValue" | "boolValue" => inner.clone(),
-            "structValue" => decode_genai_struct(inner)?,
-            "listValue" => Value::Array(
-                inner
-                    .get("values")
-                    .and_then(Value::as_array)
-                    .map(|values| values.iter().map(decode_value).collect::<Option<_>>())
-                    .unwrap_or(Some(Vec::new()))?,
-            ),
-            _ => value.clone(),
-        })
-    }
-
-    let Value::Object(object) = value else {
-        return None;
-    };
-    let mut decoded = Map::new();
-    let Some(fields) = object.get("fields") else {
-        // An empty struct omits its only field.
-        return object.is_empty().then_some(Value::Object(decoded));
-    };
-    for field in fields.as_array()? {
-        let name = field.get("name")?.as_str()?;
-        let inner = field.get("value").map_or(Some(Value::Null), decode_value)?;
-        decoded.insert(name.to_string(), inner);
-    }
-    Some(Value::Object(decoded))
-}
-
-/// Maps a hook callback's `(tool_name, server_name)` onto the name
-/// policies target: `mcp_<server>_<tool>` for MCP tools, and the builtin's
-/// public wire name for builtins.
-///
-/// The harness names a builtin in hook args by its `StepUpdate` field, and
-/// exactly one differs from the public name: `invoke_subagent` is the
-/// `start_subagent` builtin (the reference SDK maps it the same way). Left
-/// unmapped, `policy::deny("start_subagent")` would never fire on the hook
-/// path, and an MCP rule would never match its bare tool name.
-#[must_use]
-pub(crate) fn hook_tool_name(tool_name: &str, server_name: Option<&str>) -> String {
-    match server_name.filter(|s| !s.is_empty()) {
-        Some(server) => crate::antigravity::hooks::mcp_tool_name(server, tool_name),
-        None if tool_name == "invoke_subagent" => "start_subagent".to_string(),
-        None => tool_name.to_string(),
-    }
-}
-
-/// `PreTurnArgs`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct PreTurnArgs {
-    /// The user input starting the turn.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub user_input: Option<UserInput>,
-}
-
-/// `PostTurnArgs`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct PostTurnArgs {
-    /// The final response text of the turn.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub response_text: Option<String>,
 }

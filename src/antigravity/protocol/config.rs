@@ -1,4 +1,8 @@
-use super::{AgentBehavior, LifecycleHook, ModelType};
+use super::{
+    AgentBehavior, AutoPolicyConfig, BudgetConfig, CompactionConfig, LifecycleHook, ModelType,
+    PolicyRule, RetryConfig, RunCommandToolConfig, SessionContinuationMode, SkillsConfig,
+    SubagentSkillsConfig, SubagentsConfig, ToolOutputTruncation, WorkspaceContainment,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -70,19 +74,48 @@ pub struct HarnessConfig {
     /// 0.1.23).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub policy_config: Option<PolicyConfig>,
+    /// Cuts long tool output to a token budget.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_output_truncation: Option<ToolOutputTruncation>,
+    /// Whether `cascade_id` must exist, must not, or either.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_continuation_mode: Option<SessionContinuationMode>,
+    /// Model-call and model-output retries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_config: Option<RetryConfig>,
+    /// Session caps on model calls, tool calls and tokens.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget_config: Option<BudgetConfig>,
+    /// History compaction (`compaction_threshold` is its legacy spelling).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compaction_config: Option<CompactionConfig>,
+    /// Inline skills.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skills_config: Option<SkillsConfig>,
+    /// Size past which an MCP tool's output is written to a file instead of
+    /// the model context (`0` = the harness default, 4096 bytes).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mcp_max_output_bytes: Option<i32>,
 }
 
-/// `PolicyConfig`. This crate writes it empty, for workspace containment;
-/// tool policies run Rust-side through the pre-tool hook instead of as
-/// harness rules.
+/// `PolicyConfig` — the harness-side policy evaluator's configuration.
+///
+/// This crate sends it for workspace containment and for the auto policy;
+/// its own tool policies run client-side through the pre-tool hook (D-022).
+/// With `rules` present the evaluator fails closed on a call no rule
+/// matches (verified on 0.1.23).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PolicyConfig {
-    /// `WORKSPACE_CONTAINMENT_UNSPECIFIED` (contained, the default) or
-    /// `WORKSPACE_CONTAINMENT_DISABLED`. Never written by this crate;
-    /// modeled so a config roundtrips.
+    /// Harness-evaluated rules.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub rules: Vec<PolicyRule>,
+    /// Whether file tools are confined to the workspaces (unset: contained).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub workspace_containment: Option<String>,
+    pub workspace_containment: Option<WorkspaceContainment>,
+    /// The model-judged safety assessment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_config: Option<AutoPolicyConfig>,
 }
 
 /// `SystemInstructions` (oneof `type`): custom or appended instructions.
@@ -107,6 +140,7 @@ impl SystemInstructions {
             custom: Some(CustomSystemInstructions {
                 part: vec![SystemInstructionPart {
                     text: Some(text.into()),
+                    title: None,
                 }],
             }),
             appended: None,
@@ -131,6 +165,10 @@ pub struct SystemInstructionPart {
     /// Text content of this part.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// Prompt-section title: the harness renders the text under this tag
+    /// instead of `<System>`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 /// `AppendedSystemInstructions` — identity plus appended sections.
@@ -201,12 +239,13 @@ pub struct HarnessSideTools {
     /// `find_file` builtin.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub find: Option<ToolToggle>,
-    /// `run_command` builtin (shell access).
+    /// `run_command` builtin (shell access) and its settings.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub run_command: Option<ToolToggle>,
-    /// `start_subagent` builtin.
+    pub run_command: Option<RunCommandToolConfig>,
+    /// The subagent builtins (`invoke_subagent` and its companions) and
+    /// their settings.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub subagents: Option<ToolToggle>,
+    pub subagents: Option<SubagentsConfig>,
     /// `ask_question` builtin.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_questions: Option<ToolToggle>,
@@ -328,7 +367,7 @@ pub struct GeminiApiEndpoint {
     /// Gemini API key.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
-    /// Model options (thinking level).
+    /// Model options (thinking level, service tier, output cap).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<GeminiModelOptions>,
 }
@@ -358,9 +397,17 @@ pub struct VertexEndpoint {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GeminiModelOptions {
-    /// Thinking level (e.g. `"low"`, `"high"`).
+    /// Thinking level (e.g. `"low"`, `"high"`); the harness sends it as
+    /// `generationConfig.thinkingConfig.thinkingLevel`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_level: Option<String>,
+    /// Service tier (`"standard"`, `"priority"`, `"flex"`); the harness
+    /// sends it as the request's `serviceTier`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
+    /// Output cap per model call (harness default 65535).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<i32>,
 }
 
 /// `McpServerConfig` — one MCP server the harness connects to.
@@ -387,6 +434,10 @@ pub struct McpServerConfig {
     /// Per-call timeout in seconds (`0` = harness default).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout_seconds: Option<i32>,
+    /// Declares every tool to the model up front instead of behind the
+    /// lazy `call_mcp_tool` indirection.
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub force_all_tools_eager: bool,
 }
 
 /// `McpStdioTransport`.
@@ -439,4 +490,11 @@ pub struct CustomAgent {
     /// How the harness frames the subagent's task (new in harness 0.1.18).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_behavior: Option<AgentBehavior>,
+    /// The model the subagent runs on. Only `name` is read: a subagent
+    /// always uses the agent-level endpoint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelConfig>,
+    /// Which skills the subagent sees.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skills_config: Option<SubagentSkillsConfig>,
 }

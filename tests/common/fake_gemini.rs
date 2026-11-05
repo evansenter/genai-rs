@@ -105,6 +105,17 @@ impl FakeGemini {
         Self { stub }
     }
 
+    /// A model whose reply is chosen per request by `route` (handed the
+    /// request and its 0-based index), for tests where other model calls
+    /// interleave with the agent's own: the auto policy's assessor, a
+    /// subagent on its own model, the image model.
+    pub async fn routed(
+        route: impl Fn(&Recorded, usize) -> ModelTurn + Send + Sync + 'static,
+    ) -> Self {
+        let stub = Stub::start(move |request, n| route(request, n).reply()).await;
+        Self { stub }
+    }
+
     /// The URL to hand to `with_gemini_base_url`.
     pub fn base_url(&self) -> &str {
         &self.stub.base_url
@@ -132,6 +143,41 @@ impl FakeGemini {
             .flatten()
             .flat_map(|content| content["parts"].as_array().into_iter().flatten())
             .filter_map(|part| part.get("functionResponse").cloned())
+            .collect()
+    }
+
+    /// The system prompt the harness sent with request `n` (its text
+    /// parts, joined), or an empty string.
+    pub fn system_prompt(&self, n: usize) -> String {
+        self.request_json(n)
+            .and_then(|body| {
+                body["systemInstruction"]["parts"].as_array().map(|parts| {
+                    parts
+                        .iter()
+                        .filter_map(|part| part["text"].as_str())
+                        .collect::<String>()
+                })
+            })
+            .unwrap_or_default()
+    }
+
+    /// The names of the tools the harness declared to the model in request
+    /// `n`.
+    pub fn tool_names(&self, n: usize) -> Vec<String> {
+        let Some(body) = self.request_json(n) else {
+            return Vec::new();
+        };
+        body["tools"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|tool| {
+                tool["functionDeclarations"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+            })
+            .filter_map(|declaration| declaration["name"].as_str().map(str::to_string))
             .collect()
     }
 

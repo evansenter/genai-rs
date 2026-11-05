@@ -9,30 +9,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `InteractionResponse::mcp_calls()` returns the MCP tool calls the server
-  ran, as `McpCallInfo { id, server, tool, arguments, result, is_error }`.
-  It reads both shapes the API has used: since 2026-11-05 an
-  `mcp_server_tool_call` with `server_name` and a `<server>:<tool>` name
-  (the tool comes back without the prefix), and from 2026-10-01 to
-  2026-11-04 an answered `function_call` named `<server>:<tool>`, where
-  `<server>` is the name the request gave `McpServerConfig` (both verified
-  live on `gemini-3.8-flash`). A client function may also contain
-  a colon (the API accepted `weather:get` on 2026-11-04), so a call counts
-  only when its result is in the same response. `is_error` is `Some(true)`
-  when either the result step's `is_error` or the result object's own
-  `is_error` key is `true`: on failed calls the API leaves the step's flag
-  `false` (verified live 2026-11-04). The result object holds `result`,
-  `call_tool_result_json` (the raw MCP `CallToolResult` as a JSON string),
-  and `is_error: true` on failure or `structured_content` on success
-  (#459).
-- `extra()` and `extra_mut()` on `Step`, `StepDelta`, `Content` and
-  `Annotation`, and `arguments_extra()` / `arguments_extra_mut()` on `Step`
-  and `StepDelta`, expose the wire fields the crate does not model, for
-  reading or editing before replay (#491).
-- `GoogleSearchResultItem`, `GoogleMapsResultItem`, `UrlContextResultItem`,
-  `FileSearchResultItem`, `ReviewSnippet` and `StepError` have a public
-  `extra` map for unmodeled fields, like `Place`. As on the unions, an
-  entry named after a modeled field is never serialized.
+- Antigravity: the Python SDK's harness options (#493), each shown changing
+  what harness 0.1.23 does against a scripted model (2026-11-05).
+  `docs/ANTIGRAVITY_BRIDGE_DESIGN.md` lists every option the 0.1.23 SDK
+  exposes, modeled or with the reason it is not, and a CI test fails when a
+  new wheel adds one the table lacks.
+  - `SystemInstructions`: `custom` replaces the harness's prompt,
+    `harness_default().with_identity(..).add_section(..)` edits it, and a
+    string appends to it.
+  - Model options: `with_thinking_level`, `with_service_tier`,
+    `with_max_output_tokens`, `with_image_model`, `add_model_header`.
+  - Subagent controls: `with_max_subagent_depth`, `with_allowed_subagents`,
+    `with_define_subagent_tool`, and `Subagent::with_model`,
+    `with_allowed_subagents` and `with_skills(SubagentSkills)`.
+  - Harness config: `with_budget(Budget)`, `with_retry(RetryConfig)`,
+    `with_compaction_threshold`, `with_tool_output_truncation`,
+    `with_mcp_max_output_bytes`, `add_inline_skill(InlineSkill)`,
+    `with_session_continuation(SessionContinuation)`, `add_harness_env`,
+    `McpServer::with_force_all_tools_eager`,
+    `Capabilities::with_run_command(RunCommandOptions)` (timeout, daemons,
+    OS sandbox) and `AntigravityAgent::sandbox_status`.
+  - Lifecycle hooks: `on_session_start`, `on_session_end`, `on_pre_turn`,
+    `on_post_turn`, `on_tool_error` (its text replaces the error the model
+    sees), `on_compaction` and `on_stop` (`StopDecision::Continue` keeps
+    the turn going). A pre-tool hook can return `PreToolDecision::modify`
+    to run the call on other arguments; on a tool confirmation, which
+    cannot carry arguments, a modify denies the call.
+  - Policies: `Policy::when` conditions, `with_reason`, `with_name`,
+    `policy::ask_user` handlers, `mcp_<server>_*` and `mcp_*` targets, and
+    `policy::auto()`, the harness's model-judged assessment of risky calls,
+    whose flagged calls its handler approves or refuses (D-022). A
+    condition or handler that panics denies the call. Server-wide targets
+    match the call's MCP server exactly (`ToolInvocation::server`), so
+    `mcp_git_*` does not cover a server named `git_admin`; `spawn()` warns
+    when one server's name plus `_` starts another's, since a full
+    `mcp_<server>_<tool>` name can then be read two ways.
+  - Triggers: `add_custom_trigger` with a `TriggerContext`,
+    `triggers::on_file_change`, and `AntigravityAgent::next_trigger_turn`,
+    which drives a turn a trigger started and returns its response.
+  - Prompts with media and slash commands: `chat` and `send_streaming`
+    take a `Prompt` of text, `Media` (images, documents, audio, video, from
+    bytes or `Media::from_file`) and `SlashCommand::Plan`, as the Python
+    SDK's `chat` takes content primitives.
+  - `ToolInvocation::new` and `ToolInvocation::mcp`, for unit-testing
+    policy conditions and hooks.
+  - Examples `lifecycle_hooks` (a stop hook as a definition of done),
+    `file_watcher` (`on_file_change` with `next_trigger_turn`) and
+    `command_guard` (conditional policies), each run against harness
+    0.1.23 (2026-11-05).
 - `AgentBuilder::with_gemini_base_url(url)` points the Antigravity harness's
   model calls at another Gemini API host: a gateway, a recording proxy, or a
   scripted local server in tests. It needs a non-empty `with_api_key`.
@@ -76,42 +100,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gets; see Changed. `with_connect_timeout(Duration::MAX)` turns it off,
   with no timer at all, for tests on a paused tokio clock. A `Client`'s
   `Debug` output shows its connect timeout, which reqwest's does not.
+- `InteractionResponse::mcp_calls()` returns the MCP tool calls the server
+  ran, as `McpCallInfo { id, server, tool, arguments, result, is_error }`.
+  It reads both shapes the API has used: since 2026-11-05 an
+  `mcp_server_tool_call` with `server_name` and a `<server>:<tool>` name
+  (the tool comes back without the prefix), and from 2026-10-01 to
+  2026-11-04 an answered `function_call` named `<server>:<tool>`, where
+  `<server>` is the name the request gave `McpServerConfig` (both verified
+  live on `gemini-3.8-flash`). A client function may also contain
+  a colon (the API accepted `weather:get` on 2026-11-04), so a call counts
+  only when its result is in the same response. `is_error` is `Some(true)`
+  when either the result step's `is_error` or the result object's own
+  `is_error` key is `true`: on failed calls the API leaves the step's flag
+  `false` (verified live 2026-11-04). The result object holds `result`,
+  `call_tool_result_json` (the raw MCP `CallToolResult` as a JSON string),
+  and `is_error: true` on failure or `structured_content` on success
+  (#459).
+- `extra()` and `extra_mut()` on `Step`, `StepDelta`, `Content` and
+  `Annotation`, and `arguments_extra()` / `arguments_extra_mut()` on `Step`
+  and `StepDelta`, expose the wire fields the crate does not model, for
+  reading or editing before replay (#491).
+- `GoogleSearchResultItem`, `GoogleMapsResultItem`, `UrlContextResultItem`,
+  `FileSearchResultItem`, `ReviewSnippet` and `StepError` have a public
+  `extra` map for unmodeled fields, like `Place`. As on the unions, an
+  entry named after a modeled field is never serialized.
 
 ### Changed
 
-- **Breaking: every known variant of `Step`, `StepDelta`, `Content` and
-  `Annotation` has a new `extra` field.** It is a
-  `serde_json::Map<String, serde_json::Value>`. The call variants
-  `CodeExecutionCall`, `UrlContextCall`, `GoogleSearchCall`,
-  `GoogleMapsCall` and `RetrievalCall` (on both `Step` and `StepDelta`) also
-  have `arguments_extra`, and `VideoProcessing::StaticSegment` gains `extra`.
-  The enums are `#[non_exhaustive]` but their variants are not, so patterns
-  that list every field and struct literals stop compiling. Migration: add
-  `..` to such patterns (`StepDelta::Text { text, .. }`,
-  `Step::Thought { signature, summary, .. }`). In struct literals, add
-  `extra: Default::default()` (and `arguments_extra: Default::default()`),
-  or use the constructors (`Step::user_text`, `Step::function_call`,
-  `Content::text`, `Content::image_data`,
-  `VideoProcessing::segment()...build()`), which set them empty.
-- **Breaking: `Annotation::speech_metadata` is no longer a `const fn`.** Its
-  `extra` map cannot be built in a const context. Migration: call it at
-  runtime.
-- **Breaking: a known step, delta, content block or annotation whose
-  modeled field is malformed now deserializes as `Unknown`.** `Unknown`
-  keeps the whole object. Examples: a non-object `arguments`, a non-string
-  element in `urls` or `queries`. These used to be read leniently, dropping
-  the bad value. A static video `processing` object with a mistyped field
-  becomes `VideoProcessing::Unknown`. Under `strict-unknown`, a malformed
-  `Step` or `Content` is an error that names the field and why
-  (``field `arguments`: expected an object``) instead of calling the type
-  unknown; that includes an unrecognized `language` on
-  `code_execution_call`, which strict mode used to read as Python. A
-  streamed `StepDelta` holding such a value (that `language`, or an unknown
-  content type in a `thought_summary`) fails the same way; strict mode used
-  to read the delta's `language` as absent. Other malformed deltas are
-  still kept as `StepDelta::Unknown`. Well-formed API responses are
-  unaffected. Migration: none, unless you
-  relied on the lenient reading.
+- **Breaking: a string passed to Antigravity's `with_system_instructions`
+  is added to the harness's own prompt instead of replacing it**, as in the
+  Python SDK, so the harness's tool guidance, safety rules, workspace list,
+  skills list and built-in subagents stay (D-023). To replace the prompt as
+  before, pass `SystemInstructions::custom(text)`. The same holds for
+  `Subagent::with_system_instructions`, whose sections are now titled
+  `user_system_instructions` instead of `System`. The workspace note this
+  crate adds now goes only with custom instructions; the harness's prompt
+  lists the workspaces itself (verified on 0.1.23). Both setters take
+  `impl Into<SystemInstructions>`: a `&str`, `String`, `&String`,
+  `Cow<str>` or `Box<str>` compiles unchanged, while a value of a generic
+  `T: Into<String>` needs `.into()` to a `String` first.
+- **Breaking: Antigravity's `chat` and `send_streaming` take
+  `impl Into<Prompt>` instead of `impl Into<String>`.** A `&str`, `String`,
+  `&String`, `Cow<str>` or `Box<str>` argument compiles unchanged. A value
+  of a generic `T: Into<String>` does not: call `.into()` to make it a
+  `String` first.
+- **Breaking: `BuiltinTool::StartSubagent` is `BuiltinTool::InvokeSubagent`,
+  and the subagent tool is named `invoke_subagent` everywhere**: in
+  `ToolAction::tool_name()`, in the pre-tool hook's `ToolInvocation`, and as
+  a policy target. Rename the variant and any string match;
+  `policy::deny("start_subagent")` and the other constructors still target
+  it.
+- **Breaking: enabling the subagent builtin no longer offers the model
+  `define_subagent`**, with which it writes subagents of its own at runtime
+  (D-023). Call `with_define_subagent_tool(true)` to keep it.
+- **Breaking: Antigravity policy precedence follows the harness's
+  evaluator.** A named tool still beats `mcp_<server>_*`, which beats `"*"`;
+  within a tier, deny now beats confirm/ask, which beats allow, where the
+  first registered rule used to win. `[allow("t"), deny("t")]` now denies
+  `t`. Remove the rule you do not want, or narrow it with `when`. `Policy`
+  is no longer `PartialEq`/`Eq`, as it can hold closures.
+- **Breaking: a call the pre-tool hook or a policy denied surfaces as
+  `ToolAction::Denied { name, args }`**, named and with the arguments it was
+  judged on. It was a `ToolAction::Error` named `"error"`, as the harness's
+  error step carries no action. Match on `Denied` (the event's decision is
+  unchanged).
+- **Breaking: `AntigravityAgent::shutdown()` returns
+  `AntigravityError::HarnessExited`** with the exit code and stderr tail when
+  the harness exits with a failure status after stdin closes, as the Python
+  SDK raises. Escalated exits (SIGTERM, SIGKILL) still return `Ok`.
+- **Breaking: Antigravity protocol types changed with the new options.**
+  `HarnessSideTools.run_command` and `.subagents` are `RunCommandToolConfig`
+  and `SubagentsConfig` (`ToolToggle::new(on).into()` builds the old
+  shape); `InputEvent::CallHookResponse` and
+  `OutputPayload::CallHookRequest` hold a `Box`; `HookVerdict`,
+  `GeminiModelOptions`, `McpServerConfig`, `CustomAgent`,
+  `SystemInstructionPart`, `PolicyConfig` and `HarnessConfig` gained fields
+  (build them with `..Default::default()`).
 - **Breaking: Antigravity hooks run on a dedicated thread, not on the
   thread driving the turn.** A hook that blocks (`on_pre_tool`,
   `on_post_tool`, `on_questions`) therefore no longer stalls the runtime,
@@ -222,6 +286,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can't change, use the non-streaming call instead: `create()`,
   `create_with_auto_functions()`, or `interactions().get(id)` for a stored
   interaction.
+- **Breaking: every known variant of `Step`, `StepDelta`, `Content` and
+  `Annotation` has a new `extra` field.** It is a
+  `serde_json::Map<String, serde_json::Value>`. The call variants
+  `CodeExecutionCall`, `UrlContextCall`, `GoogleSearchCall`,
+  `GoogleMapsCall` and `RetrievalCall` (on both `Step` and `StepDelta`) also
+  have `arguments_extra`, and `VideoProcessing::StaticSegment` gains `extra`.
+  The enums are `#[non_exhaustive]` but their variants are not, so patterns
+  that list every field and struct literals stop compiling. Migration: add
+  `..` to such patterns (`StepDelta::Text { text, .. }`,
+  `Step::Thought { signature, summary, .. }`). In struct literals, add
+  `extra: Default::default()` (and `arguments_extra: Default::default()`),
+  or use the constructors (`Step::user_text`, `Step::function_call`,
+  `Content::text`, `Content::image_data`,
+  `VideoProcessing::segment()...build()`), which set them empty.
+- **Breaking: `Annotation::speech_metadata` is no longer a `const fn`.** Its
+  `extra` map cannot be built in a const context. Migration: call it at
+  runtime.
+- **Breaking: a known step, delta, content block or annotation whose
+  modeled field is malformed now deserializes as `Unknown`.** `Unknown`
+  keeps the whole object. Examples: a non-object `arguments`, a non-string
+  element in `urls` or `queries`. These used to be read leniently, dropping
+  the bad value. A static video `processing` object with a mistyped field
+  becomes `VideoProcessing::Unknown`. Under `strict-unknown`, a malformed
+  `Step` or `Content` is an error that names the field and why
+  (``field `arguments`: expected an object``) instead of calling the type
+  unknown; that includes an unrecognized `language` on
+  `code_execution_call`, which strict mode used to read as Python. A
+  streamed `StepDelta` holding such a value (that `language`, or an unknown
+  content type in a `thought_summary`) fails the same way; strict mode used
+  to read the delta's `language` as absent. Other malformed deltas are
+  still kept as `StepDelta::Unknown`. Well-formed API responses are
+  unaffected. Migration: none, unless you
+  relied on the lenient reading.
+- `spawn()` warns whenever Antigravity's `invoke_subagent` builtin is on:
+  harness 0.1.23 applies neither policies, the pre-tool hook nor workspace
+  containment to a subagent's own tool calls, so a read-only subagent can
+  read any file the process can (verified 2026-11-05, with deny-all rules,
+  a denying hook and containment all set). The docs said the pre-tool
+  callback gated subagent calls. Give subagents only the builtins they may
+  use ungated.
+- Antigravity's pre-tool hook runs once per custom tool call; it ran twice,
+  once when the harness asked and again on dispatch.
+- Harness discovery no longer starts `python3` when the explicit path or
+  `ANTIGRAVITY_HARNESS_PATH` names the binary.
 - The Antigravity harness runs in its own process group on Unix. A
   terminal's Ctrl-C now reaches only your process; when it exits, the
   harness sees stdin close and shuts down gracefully. To stop the harness on
@@ -272,34 +380,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Unknown fields on known `Step`, `StepDelta`, `Content` and `Annotation`
-  variants now survive a deserialize/re-serialize round trip, and so do
-  unknown fields on the result items, review snippets, step errors and
-  static video segments nested in them. Replayed stateless history keeps a
-  field the API adds before the crate models it. Previously a
-  `function_call` lost an unknown top-level field, and a `text` block lost
-  an unknown field. A `url_context_call` lost `arguments` keys other than
-  `urls`; `google_search_call`, `google_maps_call` and `retrieval_call` lost
-  keys other than `queries`; `code_execution_call` lost keys other than
-  `language` and `code` (#491).
-- `Place` no longer serializes an `extra` entry named after one of its
-  modeled fields. Only a hand-built map can hold one, and it overrode the
-  field under `serde_json::to_value` and wrote the key twice in a request
-  body.
-- Streaming: two images in one `model_output` step now stay two
-  `Content::Image` blocks. The accumulator appended each image delta to the
-  previous image block in the step. That would merge two images into one
-  corrupt base64 string whenever `interaction.completed` omits `steps`,
-  which it did on every stream observed 2026-11-04. Each streamed image
-  arrives whole in one delta that names its `mime_type` (verified live
-  2026-11-04, `gemini-3.1-flash-image`), so such a delta now starts a new
-  block. In three live streams that day each image came in its own step,
-  which was already handled; the same-step case is defensive (#491).
-- Streaming: the assembled `Completed` response keeps the unmodeled fields
-  that deltas carry, on the content block or step each delta builds,
-  including every chunk of a merged thought summary.
-- `StepDelta::CodeExecutionCall` no longer serializes an absent `language`
-  or `code` as `null`.
+- Antigravity's `generate_image` builtin failed every call ("model is
+  empty"): no image model was configured. With the builtin enabled the
+  bridge now sends one, `DEFAULT_IMAGE_MODEL` unless `with_image_model`
+  says otherwise (verified on 0.1.23, 2026-11-05).
+- An Antigravity step in an error state no longer streams its text as a
+  `TextDelta`. Harness 0.1.23 puts a denial's message in the delta of a
+  model-sourced error step, which read as the model's answer; it surfaces as
+  `AgentEvent::Error` only.
 - Dropping an Antigravity agent no longer leaves processes the harness
   started running; neither does a failed `spawn()` or a shutdown that had to
   escalate. The kill used to signal only the harness's pid, and harness
@@ -329,6 +417,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the request path uses `serde_json::to_value`. In fact the body carries
   both keys, with the `extra` one last, and it wins because the API keeps
   the last of a repeated key (verified live 2026-11-04).
+- Unknown fields on known `Step`, `StepDelta`, `Content` and `Annotation`
+  variants now survive a deserialize/re-serialize round trip, and so do
+  unknown fields on the result items, review snippets, step errors and
+  static video segments nested in them. Replayed stateless history keeps a
+  field the API adds before the crate models it. Previously a
+  `function_call` lost an unknown top-level field, and a `text` block lost
+  an unknown field. A `url_context_call` lost `arguments` keys other than
+  `urls`; `google_search_call`, `google_maps_call` and `retrieval_call` lost
+  keys other than `queries`; `code_execution_call` lost keys other than
+  `language` and `code` (#491).
+- `Place` no longer serializes an `extra` entry named after one of its
+  modeled fields. Only a hand-built map can hold one, and it overrode the
+  field under `serde_json::to_value` and wrote the key twice in a request
+  body.
+- Streaming: two images in one `model_output` step now stay two
+  `Content::Image` blocks. The accumulator appended each image delta to the
+  previous image block in the step. That would merge two images into one
+  corrupt base64 string whenever `interaction.completed` omits `steps`,
+  which it did on every stream observed 2026-11-04. Each streamed image
+  arrives whole in one delta that names its `mime_type` (verified live
+  2026-11-04, `gemini-3.1-flash-image`), so such a delta now starts a new
+  block. In three live streams that day each image came in its own step,
+  which was already handled; the same-step case is defensive (#491).
+- Streaming: the assembled `Completed` response keeps the unmodeled fields
+  that deltas carry, on the content block or step each delta builds,
+  including every chunk of a merged thought summary.
+- `StepDelta::CodeExecutionCall` no longer serializes an absent `language`
+  or `code` as `null`.
 
 ## [0.13.0] - 2026-11-03
 

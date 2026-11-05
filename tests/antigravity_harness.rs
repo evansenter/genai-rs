@@ -4,12 +4,12 @@
 //! (`pip install google-antigravity==0.1.23`) discoverable via the standard
 //! order (`ANTIGRAVITY_HARNESS_PATH`, python3 site-packages, `PATH`).
 //!
-//! Most tests do NOT need a Gemini API key: the harness completes its
-//! handshake and conversation init with a placeholder key (verified
-//! against harness 0.1.5, 0.1.10 and 0.1.18). Chat tests need a real
-//! `GEMINI_API_KEY` — CI supplies one, because these are the only tests
-//! that drive a real turn end to end and therefore the only guard
-//! against a harness protocol change breaking turn completion.
+//! The tests in the first section need no Gemini API key: the harness
+//! completes its handshake and conversation init with a placeholder key,
+//! and none of them runs a turn. Tests that run a turn without a real model
+//! live in `antigravity_scripted.rs`, against a scripted one. The chat
+//! tests here need a real `GEMINI_API_KEY` — CI supplies one, because they
+//! are what a real model's choices exercise end to end.
 //!
 //! Run with:
 //! ```bash
@@ -109,169 +109,6 @@ async fn test_antigravity_init_failure_surfaces_harness_stderr() {
     );
 }
 
-/// A wire inspector that records every WebSocket send.
-#[derive(Debug, Default)]
-struct WsSendCapture(std::sync::Mutex<Vec<serde_json::Value>>);
-
-impl genai_rs::wire::WireInspector for WsSendCapture {
-    fn on_event(&self, event: &genai_rs::wire::WireEvent) {
-        if let genai_rs::wire::WireEvent::WsSend { payload, .. } = event {
-            self.0.lock().unwrap().push(payload.clone());
-        }
-    }
-}
-
-#[tokio::test]
-#[ignore = "Requires localharness binary"]
-async fn test_antigravity_trigger_sends_automated_trigger_when_idle() {
-    use genai_rs::antigravity::TriggerConfig;
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    let inspector = Arc::new(WsSendCapture::default());
-    let agent = AntigravityAgent::builder()
-        .with_api_key("dummy-key-trigger-test")
-        .with_model(genai_rs::DEFAULT_MODEL)
-        .add_trigger(TriggerConfig::new("tick-xyzzy", Duration::from_secs(1)))
-        .add_wire_inspector(inspector.clone())
-        .spawn()
-        .await
-        .expect("spawn");
-
-    // The agent is idle after init, so the trigger must deliver after its
-    // first 1s interval. Poll generously (up to 15s) to stay non-flaky on
-    // slow machines; typical delivery is ~1s.
-    let deadline = std::time::Instant::now() + Duration::from_secs(15);
-    let mut delivered = false;
-    while std::time::Instant::now() < deadline {
-        delivered = inspector.0.lock().unwrap().iter().any(|payload| {
-            payload.get("automatedTrigger").and_then(|v| v.as_str()) == Some("tick-xyzzy")
-        });
-        if delivered {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert!(
-        delivered,
-        "expected an automatedTrigger send within 15s; sends observed: {:?}",
-        inspector.0.lock().unwrap()
-    );
-
-    agent.shutdown().await.expect("graceful shutdown");
-}
-
-#[tokio::test]
-#[ignore = "Requires localharness binary"]
-async fn test_antigravity_turn_timeout_halts_harness_turn() {
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    let inspector = Arc::new(WsSendCapture::default());
-    let mut agent = AntigravityAgent::builder()
-        .with_api_key("dummy-key-timeout-test")
-        .with_model(genai_rs::DEFAULT_MODEL)
-        // Far below any network round-trip: the timeout always fires before
-        // the turn can produce a terminal event.
-        .with_turn_timeout(Duration::from_millis(10))
-        .add_wire_inspector(inspector.clone())
-        .spawn()
-        .await
-        .expect("spawn");
-
-    let err = agent
-        .chat("this turn cannot finish in 10ms")
-        .await
-        .expect_err("a 10ms turn budget must time out");
-    assert!(
-        matches!(err, AntigravityError::Timeout { .. }),
-        "expected Timeout, got {err:?}"
-    );
-
-    // Timeout recovery must have halted the harness's still-running turn
-    // (and drained its events) so the next turn cannot consume stale
-    // output. Assert the wire discipline: userInput, then haltRequest.
-    let sends = inspector.0.lock().unwrap().clone();
-    let user_input = sends.iter().position(|p| p.get("userInput").is_some());
-    let halt = sends.iter().position(|p| p.get("haltRequest").is_some());
-    let user_input = user_input.expect("userInput was sent");
-    let halt = halt.expect("the timed-out turn must be halted");
-    assert!(
-        halt > user_input,
-        "halt must follow the timed-out turn's input; sends: {sends:?}"
-    );
-
-    agent.shutdown().await.expect("graceful shutdown");
-}
-
-#[tokio::test]
-#[ignore = "Requires localharness binary"]
-async fn test_antigravity_chat_after_trigger_discards_trigger_turn() {
-    use genai_rs::antigravity::TriggerConfig;
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    let inspector = Arc::new(WsSendCapture::default());
-    let mut agent = AntigravityAgent::builder()
-        .with_api_key("dummy-key-trigger-chat-test")
-        .with_model(genai_rs::DEFAULT_MODEL)
-        .with_turn_timeout(Duration::from_secs(15))
-        .add_trigger(TriggerConfig::new("tick-quux", Duration::from_secs(1)))
-        .add_wire_inspector(inspector.clone())
-        .spawn()
-        .await
-        .expect("spawn");
-
-    // Wait for the trigger to deliver (it starts a harness-side turn that
-    // nothing consumes).
-    let deadline = std::time::Instant::now() + Duration::from_secs(15);
-    while std::time::Instant::now() < deadline {
-        let delivered = inspector
-            .0
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|p| p.get("automatedTrigger").is_some());
-        if delivered {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-
-    // chat() must halt-and-drain the trigger's turn before sending its own
-    // input, and must never surface the stale turn's outcome. With a dummy
-    // key this turn ends in a model-backend error or a timeout — never in
-    // the halted trigger turn's cancellation, and never in a stale Ok.
-    let result = agent.chat("hello after the trigger").await;
-    if let Err(AntigravityError::Turn(message)) = &result {
-        assert!(
-            !message.to_lowercase().contains("cancel"),
-            "the halted trigger turn's cancellation leaked into chat(): {message}"
-        );
-    }
-
-    // Wire discipline: automatedTrigger, then haltRequest, then userInput.
-    let sends = inspector.0.lock().unwrap().clone();
-    let trigger = sends
-        .iter()
-        .position(|p| p.get("automatedTrigger").is_some())
-        .expect("trigger was delivered");
-    let halt = sends
-        .iter()
-        .position(|p| p.get("haltRequest").is_some())
-        .expect("chat() must halt the unconsumed trigger turn");
-    let user_input = sends
-        .iter()
-        .position(|p| p.get("userInput").is_some())
-        .expect("userInput was sent");
-    assert!(
-        trigger < halt && halt < user_input,
-        "expected automatedTrigger < haltRequest < userInput; sends: {sends:?}"
-    );
-
-    agent.shutdown().await.expect("graceful shutdown");
-}
-
 #[tokio::test]
 #[ignore = "Requires localharness binary"]
 async fn test_antigravity_subagent_config_accepted_at_init() {
@@ -289,7 +126,7 @@ async fn test_antigravity_subagent_config_accepted_at_init() {
                 .with_system_instructions("Always use the weather tool.")
                 .add_tool("antigravity_test_weather"),
         )
-        .with_capabilities(Capabilities::read_only().enable(BuiltinTool::StartSubagent))
+        .with_capabilities(Capabilities::read_only().enable(BuiltinTool::InvokeSubagent))
         .add_policy(policy::allow_all())
         .spawn()
         .await
@@ -1097,7 +934,7 @@ async fn test_antigravity_subagent_is_actually_invoked() {
         .with_model(genai_rs::DEFAULT_MODEL)
         .with_system_instructions(
             "You have a subagent named `haiku-writer`. For any request to write \
-             a haiku you MUST delegate to it with the start_subagent tool rather \
+             a haiku you MUST delegate to it with the invoke_subagent tool rather \
              than writing one yourself.",
         )
         .add_subagent(
@@ -1105,7 +942,7 @@ async fn test_antigravity_subagent_is_actually_invoked() {
                 .with_description("Writes a haiku on any topic.")
                 .with_system_instructions("Reply with a haiku and nothing else."),
         )
-        .with_capabilities(Capabilities::read_only().enable(BuiltinTool::StartSubagent))
+        .with_capabilities(Capabilities::read_only().enable(BuiltinTool::InvokeSubagent))
         .add_policy(policy::allow_all())
         .spawn()
         .await
@@ -1133,11 +970,11 @@ async fn test_antigravity_subagent_is_actually_invoked() {
 
     let invocations: Vec<&(String, Option<String>)> = actions
         .iter()
-        .filter(|(name, _)| name == "start_subagent")
+        .filter(|(name, _)| name == "invoke_subagent")
         .collect();
     assert!(
         !invocations.is_empty(),
-        "the model never delegated to the subagent — no start_subagent action \
+        "the model never delegated to the subagent — no invoke_subagent action \
          in the turn. Saw: {actions:?}"
     );
 
@@ -1824,8 +1661,9 @@ fn drift_detector_flags_a_missing_enum_and_ignores_retired_values() {
 #[ignore = "Requires localharness binary"]
 async fn test_antigravity_protocol_enums_have_not_drifted() {
     use genai_rs::antigravity::protocol::{
-        HookDecision, LifecycleHook, LineAction, Modality, ModelType, StepSource, StepState,
-        StepTarget, StopReason, TrajectoryState,
+        BudgetScope, HookDecision, LifecycleHook, LineAction, Modality, ModelType,
+        PolicyEvaluationOutcome, RuleDecision, SessionContinuationMode, StepSource, StepState,
+        StepTarget, StopDecision, StopReason, TrajectoryState, WorkspaceContainment,
     };
 
     let Some(harness) = harness_proto_enums() else {
@@ -1852,6 +1690,24 @@ async fn test_antigravity_protocol_enums_have_not_drifted() {
         ("Modality", Modality::all_wire_values()),
         ("LifecycleHook", LifecycleHook::all_wire_values()),
         ("PreToolResult.Decision", HookDecision::all_wire_values()),
+        // Values this crate writes (#493): a rename on the harness side is
+        // a value the crate would send and the harness would reject.
+        ("PreTurnResult.Decision", HookDecision::all_wire_values()),
+        ("StopResult.Decision", StopDecision::all_wire_values()),
+        (
+            "PolicyEvaluationOutcome",
+            PolicyEvaluationOutcome::all_wire_values(),
+        ),
+        ("PolicyDecision", RuleDecision::all_wire_values()),
+        (
+            "PolicyConfig.WorkspaceContainment",
+            WorkspaceContainment::all_wire_values(),
+        ),
+        ("BudgetConfig.BudgetScope", BudgetScope::all_wire_values()),
+        (
+            "HarnessConfig.SessionContinuationMode",
+            SessionContinuationMode::all_wire_values(),
+        ),
         (
             "ActionEditFile.DiffLine.LineAction",
             LineAction::all_wire_values(),
@@ -1885,6 +1741,7 @@ async fn test_antigravity_protocol_enums_have_not_drifted() {
                 "initializeConversationResponse",
                 "callHookRequest",
                 "sessionEndResponse",
+                "policyDecisionRequest",
             ],
         ),
         // Every InputEvent arm this crate can send. `config` is
@@ -1901,10 +1758,28 @@ async fn test_antigravity_protocol_enums_have_not_drifted() {
                 "automatedTrigger",
                 "callHookResponse",
                 "sessionEndRequest",
+                "policyDecisionResponse",
             ],
         ),
     ];
+    // The hook arguments the bridge dispatches on: a renamed arm would land
+    // in `extra`, and the hook would be answered with an empty result.
+    let hook_fields: Vec<(&str, &[&str])> = vec![(
+        "CallHookRequest",
+        &[
+            "requestId",
+            "type",
+            "preTurnArgs",
+            "postTurnArgs",
+            "preToolArgs",
+            "postToolArgs",
+            "onToolErrorArgs",
+            "onCompactionArgs",
+            "stopArgs",
+        ],
+    )];
     drift.extend(find_field_drift(&harness, &fields));
+    drift.extend(find_field_drift(&harness, &hook_fields));
 
     // Fields whose JSON *shape* the crate hand-encodes (the oneof arms in
     // `InputEvent`/`OutputEvent`'s manual serde, and the usage envelope
