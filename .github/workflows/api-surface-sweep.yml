@@ -199,6 +199,8 @@ jobs:
             echo "   \`cargo nextest run -E 'test(/coverage_oracle/) | binary(request_wire_oracle) | binary(ci_coverage)'\`:"
             echo "   every new field, class or endpoint fails there until it is"
             echo "   handled or listed with a reason."
+            echo "   Also run \`.github/scripts/regen_bindings_snapshot.sh\` in the same"
+            echo "   change (\`make test-scripts\` fails until that snapshot matches)."
             echo "   The bump is what closes this loop: the next run sees baseline"
             echo "   == latest and closes this issue itself, which is what clears"
             echo "   the staleness signal the tracker header points readers at."
@@ -465,3 +467,20 @@ jobs:
             echo "::error file=tests/fixtures/api_surface/bindings.json::The committed bindings snapshot does not match a fresh dump of the baseline release. Run .github/scripts/refresh_api_snapshot.sh and commit the result."
             exit 1
           fi
+
+      # The committed snapshot (.github/bindings-schema.txt) is what offline
+      # tests check wire keys against (#488). `make test-scripts` already
+      # fails when its header and the baseline disagree; this step also
+      # catches a hand-edited body, which needs the real wheel to compare
+      # against. Runs on every path, so a stale snapshot shows up as a red
+      # cron run within a day rather than at the next SDK release.
+      - name: Verify the committed bindings snapshot
+        if: always() && steps.diff.outcome == 'success'
+        run: |
+          set -euo pipefail
+          BASELINE=$(tr -d '[:space:]' < .github/last-swept-sdk-version)
+          pip download "google-genai==$BASELINE" --no-deps --only-binary=:all: -q -d snapshot-check
+          (cd snapshot-check && unzip -q ./*.whl -d x)
+          python3 .github/scripts/dump_bindings_schema.py snapshot-check/x/google/genai/_gaos > snapshot-check.schema
+          .github/scripts/check_bindings_snapshot.sh \
+            .github/bindings-schema.txt .github/last-swept-sdk-version snapshot-check.schema

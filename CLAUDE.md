@@ -19,6 +19,9 @@ order (D-004):
    moved: by 2026-11-03 it redirected to an aistudio.google.com path that
    returns 404, and no new public URL was found (2026-11-04). The
    2026-11-01 copy is the latest.
+   `.github/bindings-schema.txt` is the committed dump for the swept
+   baseline; regenerate it with `.github/scripts/regen_bindings_snapshot.sh`
+   whenever `.github/last-swept-sdk-version` moves.
 2. **Live probe** against `generativelanguage.googleapis.com` — what the
    Gemini endpoint actually accepts, often narrower than the bindings.
    Probe with `LOUD_WIRE=1` or curl before modeling anything.
