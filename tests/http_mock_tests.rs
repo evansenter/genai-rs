@@ -117,6 +117,34 @@ async fn base_url_prefix_and_standard_headers_are_used() {
     assert!(request.json().get("stream").is_none());
 }
 
+/// `with_api_version` replaces the `v1beta` segment of every URL, the
+/// upload one included.
+#[tokio::test]
+async fn api_version_replaces_the_path_segment() {
+    let stub = Stub::replying(vec![
+        Reply::json(200, text_response("int-1", "hi")),
+        Reply::json(200, text_response("int-1", "hi")),
+    ])
+    .await;
+    let client = Client::builder("test-key".to_string())
+        .with_base_url(&stub.base_url)
+        .with_api_version("v1")
+        .build()
+        .unwrap();
+
+    client
+        .interaction()
+        .with_model("test-model")
+        .with_text("Hello")
+        .create()
+        .await
+        .unwrap();
+    client.interactions().get("int-1").await.unwrap();
+
+    let targets: Vec<String> = stub.requests().into_iter().map(|r| r.target).collect();
+    assert_eq!(targets, ["/v1/interactions", "/v1/interactions/int-1"]);
+}
+
 #[tokio::test]
 async fn execute_clears_a_stream_flag_set_by_hand() {
     let stub = Stub::replying(vec![Reply::json(200, text_response("int-1", "hi"))]).await;

@@ -90,6 +90,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   2026-11-05 on `CONTINUATION_MODEL`). `build()` names the problem when the
   response has no token, or no id (a `store: false` interaction, whose
   continuation must resend its input with `with_continuation_token`) (#489).
+- `ClientBuilder::with_api_version(version)` replaces the `v1beta` path
+  segment of every URL; `"v1"` selects the stable endpoint (#489). Measured
+  live 2026-11-05: `/v1` serves interactions with the same protocol as
+  `/v1beta` (create, get, delete, cancel, streaming, and decoding
+  continuation, which the v1 spec leaves out) and the Files and File Search
+  Store APIs, and answers 404 for agents, environments, webhooks,
+  credentials, voices and triggers. An interaction created on one version
+  reads on the other. `v1beta` stays the default, since only it has every
+  resource.
 
 ### Changed
 

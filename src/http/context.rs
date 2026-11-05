@@ -15,6 +15,7 @@ pub struct HttpContext {
     pub api_key: String,
     pub inspectors: Arc<[Arc<dyn WireInspector>]>,
     base_url: String,
+    api_version: String,
     request_counter: Arc<AtomicU64>,
 }
 
@@ -25,6 +26,7 @@ impl std::fmt::Debug for HttpContext {
             .field("http_client", &self.http_client)
             .field("api_key", &"[REDACTED]")
             .field("base_url", &self.base_url)
+            .field("api_version", &self.api_version)
             .field("inspectors", &self.inspectors.len())
             .finish_non_exhaustive()
     }
@@ -43,6 +45,7 @@ impl HttpContext {
             api_key,
             inspectors: inspectors.into(),
             base_url: DEFAULT_BASE_URL.to_string(),
+            api_version: API_VERSION.to_string(),
             request_counter: Arc::new(AtomicU64::new(1)),
         }
     }
@@ -59,16 +62,24 @@ impl HttpContext {
         self
     }
 
-    /// `{base}/v1beta/{path}` — the URL of an API resource.
+    /// Replaces the version path segment (`v1beta`) every URL is built
+    /// with. Surrounding slashes are ignored.
     #[must_use]
-    pub fn api_url(&self, path: &str) -> String {
-        format!("{}/{API_VERSION}/{path}", self.base_url)
+    pub fn with_api_version(mut self, api_version: impl Into<String>) -> Self {
+        self.api_version = api_version.into().trim_matches('/').to_string();
+        self
     }
 
-    /// `{base}/upload/v1beta/{path}` — the URL of a media-upload endpoint.
+    /// `{base}/{version}/{path}` — the URL of an API resource.
+    #[must_use]
+    pub fn api_url(&self, path: &str) -> String {
+        format!("{}/{}/{path}", self.base_url, self.api_version)
+    }
+
+    /// `{base}/upload/{version}/{path}` — the URL of a media-upload endpoint.
     #[must_use]
     pub fn upload_url(&self, path: &str) -> String {
-        format!("{}/upload/{API_VERSION}/{path}", self.base_url)
+        format!("{}/upload/{}/{path}", self.base_url, self.api_version)
     }
 
     /// Returns true if any wire inspectors are installed.

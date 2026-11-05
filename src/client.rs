@@ -116,6 +116,7 @@ pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct ClientBuilder {
     api_key: String,
     base_url: Option<String>,
+    api_version: Option<String>,
     timeout: Option<Duration>,
     connect_timeout: Option<Duration>,
     read_timeout: Option<Duration>,
@@ -128,6 +129,7 @@ impl std::fmt::Debug for ClientBuilder {
         f.debug_struct("ClientBuilder")
             .field("api_key", &"[REDACTED]")
             .field("base_url", &self.base_url)
+            .field("api_version", &self.api_version)
             .field("timeout", &self.timeout)
             .field("connect_timeout", &self.connect_timeout)
             .field("read_timeout", &self.read_timeout)
@@ -239,7 +241,8 @@ impl ClientBuilder {
     /// Takes a scheme and host, optionally with a path prefix; the
     /// `/v1beta/...` and `/upload/v1beta/...` paths are appended to it, so a
     /// proxy or a local mock server sees the same paths the real API does.
-    /// A trailing slash is ignored.
+    /// A trailing slash is ignored. [`with_api_version`](Self::with_api_version)
+    /// changes the `v1beta` segment.
     ///
     /// # Example
     ///
@@ -254,6 +257,35 @@ impl ClientBuilder {
     #[must_use]
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = Some(base_url.into());
+        self
+    }
+
+    /// Sends every request under API version `version` (the path segment
+    /// after the host) instead of `v1beta`; `"v1"` selects the stable
+    /// endpoint.
+    ///
+    /// Measured live 2026-11-05: `/v1` serves interactions in full, the
+    /// same protocol as `/v1beta` (create, get, delete, cancel, streaming,
+    /// and decoding continuation, which the v1 spec leaves out), plus the
+    /// Files and File Search Store APIs. It answers `404` for agents,
+    /// environments, webhooks, credentials, voices and triggers, so their
+    /// handles fail on such a client. An interaction created on one version
+    /// can be read on the other. `v1beta` stays the default because it has
+    /// every resource.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use genai_rs::Client;
+    ///
+    /// let client = Client::builder("api_key".to_string())
+    ///     .with_api_version("v1")
+    ///     .build()?;
+    /// # Ok::<(), genai_rs::GenaiError>(())
+    /// ```
+    #[must_use]
+    pub fn with_api_version(mut self, version: impl Into<String>) -> Self {
+        self.api_version = Some(version.into());
         self
     }
 
@@ -334,6 +366,9 @@ impl ClientBuilder {
         if let Some(base_url) = self.base_url {
             http = http.with_base_url(base_url);
         }
+        if let Some(api_version) = self.api_version {
+            http = http.with_api_version(api_version);
+        }
         Client {
             http,
             connect_timeout,
@@ -352,6 +387,7 @@ impl Client {
         ClientBuilder {
             api_key,
             base_url: None,
+            api_version: None,
             timeout: None,
             connect_timeout: None,
             read_timeout: None,

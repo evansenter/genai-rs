@@ -225,6 +225,59 @@ mod basic {
         println!("include_input stop_sequences: {repeated:?}");
     }
 
+    /// The stable `/v1` endpoint serves interactions as `/v1beta` does
+    /// (create, get, delete; live 2026-11-05), and answers 404 for the
+    /// resources it lacks, such as webhooks (#489).
+    #[tokio::test]
+    #[ignore = "Requires API key"]
+    async fn test_v1_endpoint_serves_interactions() {
+        let Some(client) = get_client() else {
+            println!("Skipping: GEMINI_API_KEY not set");
+            return;
+        };
+        let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY");
+        let v1 = genai_rs::Client::builder(api_key)
+            .with_api_version("v1")
+            .build()
+            .expect("v1 client");
+
+        let response = retry_request!([v1] => {
+            v1.interaction()
+                .with_model(genai_rs::DEFAULT_MODEL)
+                .with_text("Say hi in two words.")
+                .create()
+                .await
+        })
+        .expect("create on /v1");
+        let id = response.id.clone().expect("a stored interaction has an id");
+        let fetched = v1.interactions().get(&id).await;
+        // Created on /v1, readable on /v1beta.
+        let fetched_beta = client.interactions().get(&id).await;
+        let deleted = v1.interactions().delete(&id).await;
+        assert_eq!(response.status, InteractionStatus::Completed);
+        assert_eq!(
+            fetched.expect("get on /v1").id.as_deref(),
+            Some(id.as_str())
+        );
+        assert_eq!(
+            fetched_beta.expect("get on /v1beta").id.as_deref(),
+            Some(id.as_str())
+        );
+        deleted.expect("delete on /v1");
+
+        let webhooks = v1.webhooks().list().send().await;
+        assert!(
+            matches!(
+                webhooks,
+                Err(GenaiError::Api {
+                    status_code: 404,
+                    ..
+                })
+            ),
+            "/v1 has no webhooks, got {webhooks:?}"
+        );
+    }
+
     #[tokio::test]
     #[ignore = "Requires API key"]
     async fn test_interactions_delete() {
