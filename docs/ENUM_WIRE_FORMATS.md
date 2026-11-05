@@ -174,7 +174,7 @@ before the crate models it, which is how `signature` once broke replay.
 | `WebhookState` | snake_case | `"enabled"`, `"disabled"`, `"disabled_due_to_failed_deliveries"` | Output only. `enabled`/`disabled` observed live 2026-07 |
 | `RevocationBehavior` | snake_case | `"revoke_previous_secrets_after_h24"`, `"revoke_previous_secrets_immediately"` | Request only. Verified live 2026-07 (the validation error lists exactly these) |
 | `SourceType` | snake_case | `"gcs"`, `"inline"`, `"repository"`, `"skill_registry"` | `inline` verified live 2026-07 |
-| `NetworkConfig` | string or object | `"disabled"` / `{"allowlist": [{"domain": "*.googleapis.com"}]}` | Omit to allow all traffic. Both forms verified live 2026-07 |
+| `NetworkConfig` | string or object | `"disabled"` / `{"allowlist": [{"domain": "*.googleapis.com"}]}` | Omit to allow all traffic. Both forms verified live 2026-07. `{"allowlist": "disabled"}` is accepted too, echoed by a GET as `{"allowlist": [{"mode": "disabled"}]}`, and blocks egress like `"disabled"` (an agent's `curl` got the egress proxy's 403 under both, 200 with no network config; live 2026-11-05): both read as `Disabled`, sent as `"disabled"` |
 | `EnvironmentSpec` | string or object | `"env-123"` / `{"type": "remote", "sources": [...]}` | Both forms verified live 2026-07 on requests |
 | `ResponseFormat` | tagged by `"type"`, or a raw schema dict | `{"type": "text", "mime_type": "application/json", "schema": {...}}` | Single object or list. Verified live 2026-07; see [ResponseFormat](#responseformat) |
 | `ResponseDelivery` | lowercase | `"inline"`, `"uri"` | The validation error lists exactly these (2026-07), but `delivery` is rejected for audio and image |

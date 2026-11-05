@@ -429,6 +429,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as the other response types do; it used to drop them. The bindings type
   it `dict[str, Any]`, and the API serves `videoDuration` (live
   2026-11-05).
+- An environment's network read back as `{"allowlist": [{"mode":
+  "disabled"}]}`, the echo of `{"allowlist": "disabled"}`, parsed as an
+  allowlist entry with an empty domain. Both forms now read as
+  `NetworkConfig::Disabled`: the API accepts `{"allowlist": "disabled"}`,
+  and it blocks egress exactly as `"disabled"` does (live 2026-11-05: an
+  agent's `curl` in either sandbox got the egress proxy's 403, and 200 in
+  one with no network config). `Disabled` is still sent as `"disabled"`
+  (#489).
 
 ## [0.13.0] - 2026-11-03
 

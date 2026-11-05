@@ -1284,3 +1284,38 @@ async fn test_trigger_list_streams_end_on_the_last_page() {
         "a missing trigger has no executions: {executions:?}"
     );
 }
+
+/// `{"allowlist": "disabled"}` is accepted on create and read back from its
+/// echo `{"allowlist": [{"mode": "disabled"}]}` as `NetworkConfig::Disabled`
+/// (live 2026-11-05, #489; both forms block egress the same way). The crate
+/// sends `Disabled` as `"disabled"`, so the other form goes out as a
+/// hand-built `Unknown`, which is written verbatim.
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_allowlist_disabled_reads_back_as_disabled() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    use genai_rs::{CreateEnvironmentRequest, NetworkConfig};
+
+    let request = CreateEnvironmentRequest::new().with_network(NetworkConfig::Unknown {
+        network_type: "allowlist".to_string(),
+        data: serde_json::json!({"allowlist": "disabled"}),
+    });
+    let created = client
+        .environments()
+        .create(&request)
+        .await
+        .expect("an allowlist of \"disabled\" was rejected");
+    let id = created.id.clone().expect("environment id");
+    let fetched = client.environments().get(&id).await;
+    let _ = client.environments().delete(&id).await;
+    let fetched = fetched.expect("environments.get");
+    assert_eq!(
+        fetched.network,
+        Some(NetworkConfig::Disabled),
+        "{fetched:?}"
+    );
+}

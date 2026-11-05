@@ -220,6 +220,12 @@ impl EnvVar {
 #[non_exhaustive]
 pub enum NetworkConfig {
     /// Turns all network access off (wire: `"disabled"`).
+    ///
+    /// Also what `{"allowlist": "disabled"}` reads as, and its echo
+    /// `{"allowlist": [{"mode": "disabled"}]}`: the API accepts that form
+    /// too, and it blocks egress the same way (live 2026-11-05: an agent's
+    /// `curl` in either sandbox got the egress proxy's 403, and 200 in one
+    /// with no network config). It is sent as `"disabled"` (#489).
     Disabled,
     /// Restricts outbound traffic to the listed domains
     /// (wire: `{"allowlist": [{domain, transform}]}`).
@@ -306,6 +312,7 @@ impl<'de> Deserialize<'de> for NetworkConfig {
         let value = serde_json::Value::deserialize(deserializer)?;
         match &value {
             serde_json::Value::String(s) if s == "disabled" => Ok(Self::Disabled),
+            serde_json::Value::Object(obj) if is_disabled_allowlist(obj) => Ok(Self::Disabled),
             serde_json::Value::Object(obj) if obj.contains_key("allowlist") => {
                 match serde_json::from_value::<Vec<AllowlistEntry>>(obj["allowlist"].clone()) {
                     Ok(entries) => Ok(Self::Allowlist {
@@ -345,6 +352,15 @@ impl<'de> Deserialize<'de> for NetworkConfig {
             }
         }
     }
+}
+
+/// `{"allowlist": "disabled"}`, or the `{"allowlist": [{"mode": "disabled"}]}`
+/// a GET echoes it as (live 2026-11-05), with nothing beside it.
+fn is_disabled_allowlist(obj: &serde_json::Map<String, serde_json::Value>) -> bool {
+    obj.len() == 1
+        && obj.get("allowlist").is_some_and(|allowlist| {
+            allowlist == "disabled" || *allowlist == serde_json::json!([{"mode": "disabled"}])
+        })
 }
 
 /// A typed remote environment definition (wire: `{"type": "remote", ...}`).
@@ -670,6 +686,29 @@ mod tests {
         let skill = EnvironmentSource::skill_registry("skills/my-skill");
         assert_eq!(skill.source_type, Some(SourceType::SkillRegistry));
         assert_eq!(skill.target, None);
+    }
+
+    #[test]
+    fn test_network_config_disabled_allowlist_reads_as_disabled() {
+        // Sent as `{"allowlist": "disabled"}`, echoed by a GET as a one-entry
+        // list (live 2026-11-05); both block egress like `"disabled"`.
+        for wire in [
+            json!({"allowlist": "disabled"}),
+            json!({"allowlist": [{"mode": "disabled"}]}),
+        ] {
+            let parsed: NetworkConfig = serde_json::from_value(wire.clone()).unwrap();
+            assert_eq!(parsed, NetworkConfig::Disabled, "{wire}");
+            assert_eq!(serde_json::to_value(&parsed).unwrap(), "disabled");
+        }
+        // Anything beside it, or another entry, keeps the general reading.
+        let mixed: NetworkConfig = serde_json::from_value(json!({
+            "allowlist": [{"mode": "disabled"}, {"domain": "example.com"}]
+        }))
+        .unwrap();
+        assert!(
+            matches!(mixed, NetworkConfig::Allowlist { .. }),
+            "{mixed:?}"
+        );
     }
 
     #[test]
