@@ -64,7 +64,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaces its value, as with `add_label`. The server validates the field
   like any other: an unknown name is `400 Unknown parameter '<name>'`. A key
   that names a modeled field overrides it, since the API keeps the last of a
-  repeated key (both verified live 2026-11-04). A stored
+  repeated key (both verified live 2026-11-04). The exception is `stream`,
+  which belongs to the transport: `execute()` and `execute_stream()` drop it
+  from `extra`, with a `warn!`, so it can't turn a non-streaming call into
+  an SSE answer. A stored
   `Trigger::interaction` now keeps the interaction fields the crate doesn't
   model, such as `object: "interaction"`, which the API accepts back on
   create (verified live 2026-11-04).
@@ -245,11 +248,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     "Tests on a paused clock" in `docs/RELIABILITY.md`).
   - The first status request is always made, so an invalid name is reported
     even with a zero timeout.
-- A stream ends at its first terminal event (`Completed` or `Error`) and
-  reads nothing after it. A late error, such as a reset while the server
-  closes, no longer follows a finished interaction or fails a finished
-  auto-function round. The API sends only `event: done` / `data: [DONE]`
-  after `interaction.completed` (verified live 2026-11-04).
+- A stream yields its first terminal event (`Completed` or `Error`) as soon
+  as it arrives, and the next poll reads the rest of the body to its end,
+  discarding every frame and swallowing every error, before the stream
+  ends. A late error, such as a reset while the server closes, no longer
+  follows a finished interaction or fails a finished auto-function round.
+  The read matters: after `interaction.completed` the API sends
+  `event: done` / `data: [DONE]` and closes about a second later, and the
+  stored interaction is readable only then, so a `get` or a chained request
+  sent before the stream has ended can fail with
+  `500 Internal error encountered` (verified live 2026-11-05). To get or
+  chain on a streamed interaction right away, read the stream to its end;
+  `create_stream_with_auto_functions()` reads each round to its end before
+  sending the next. The read gives up after 5 s with a `warn!`, so a
+  connection left open after the terminal event can't hang the last poll,
+  and `with_timeout()`'s per-chunk limit doesn't apply to it.
 - One SSE event may hold up to 64 MiB. Past that, the stream fails with
   `GenaiError::Parse`; before, a body that never sent a newline was buffered
   without bound. The largest real events, measured live 2026-11-04 on

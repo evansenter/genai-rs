@@ -139,10 +139,32 @@ letter case don't matter, and a response with no `Content-Type` is read as
 a stream, so a proxy that strips the header still works; one that rewrites
 it to another type does not.
 
-The stream ends at its first terminal event and reads nothing after it, so
-a late error, such as a reset while the server closes, can't follow a
-finished interaction. That matters most for the auto-function loop: a late
-error used to fail a round whose `Completed` had already arrived.
+A stream yields its terminal event as soon as it arrives, and the next
+poll reads the rest of the body to its end, discarding every frame and
+swallowing every error, so a late error, such as a reset while the server
+closes, can't follow a finished interaction. That matters most for the
+auto-function loop: a late error used to fail a round whose `Completed` had
+already arrived.
+
+### Read a stream to its end
+
+The stored interaction is readable once the stream has ended. After
+`interaction.completed` the API sends `event: done` / `data: [DONE]` and
+closes the connection about a second later, and finishes storing the
+interaction during that tail (verified live 2026-11-05): a `GET` sent right
+after closing the connection at `interaction.completed` answered
+`500 Internal error encountered`, the same `GET` ten seconds later `200`,
+and one sent after reading to the end `200` at once. So to `get` a streamed
+interaction or chain on it with `previous_interaction_id` right away, read
+the stream until `next()` returns `None`; dropping it at `Completed` races
+the server. `create_stream_with_auto_functions()` reads each round to its
+end before sending the next.
+
+The read is bounded at 5 s, since the default client has no read timeout: a
+connection left half-open after the terminal event is closed then, with a
+`warn!`, and the stream ends cleanly. The request-level per-chunk timeout
+(`with_timeout()`) doesn't apply to it; a client-level read or total
+timeout does, and is swallowed like any other error there.
 
 ## Timeouts
 
