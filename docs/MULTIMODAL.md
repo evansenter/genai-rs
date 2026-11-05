@@ -150,15 +150,36 @@ let video = Content::video_uri("files/abc123", "video/mp4").with_processing(clip
 use genai_rs::{Content, document_from_file};
 
 let pdf = document_from_file("report.pdf").await?;
-let notes = document_from_file("notes.md").await?; // text/markdown
+let sheet = document_from_file("inventory.csv").await?; // text/csv document
+let notes = document_from_file("notes.md").await?; // sent as Content::text
 let inline_pdf = Content::document_data(base64_pdf, "application/pdf");
-let plain = Content::document_data(base64_text, "text/plain");
 ```
 
-The API accepts `application/pdf`, `text/plain` and `text/markdown` document
-content, and `document_from_file` sends those three (`.pdf`, `.txt`, `.md`).
-It rejects other text formats (CSV, JSON, HTML, XML) with a pointer to
-`Content::text()`; `document_from_file_with_mime` sends any MIME type as-is.
+`document_from_file` sends `.pdf` files as `application/pdf` document
+content, and `.txt` / `.md` files as text content with the file's UTF-8
+contents. Since 2026-11-04 the API rejects `text/plain` and `text/markdown`
+document content with a 400 ("Only application/pdf, text/csv, and supported
+Office/OpenDocument MIME types are supported", #514).
+
+It also sends CSV (`.csv`) and Office/OpenDocument files (`.docx`, `.xlsx`,
+`.pptx`, `.odt`, `.ods`, `.odp`, and the legacy `.doc`, `.xls`, `.ppt`) as
+document content: with PDF, these are the types the API accepts inline
+(verified live 2026-11-05 by reading back a real file of each; the legacy
+`.doc`, `.xls` and `.ppt` only passed the API's MIME check with plain-text
+bytes, so parsing a real legacy file is unverified). Their MIME types are in
+the [table below](#mime-types-the-file-helpers-detect).
+
+The API rejects every other inline document type with the same 400
+(`Unsupported mime_type '...' in document content`): `text/html`,
+`application/json`, `application/xml` and `application/rtf` included
+(verified live 2026-11-05). `document_from_file` rejects `.json`, `.html` and
+`.xml` locally with a pointer to `Content::text()`;
+`document_from_file_with_mime` sends any MIME type as-is.
+
+The restriction is on inline document content only: a `.txt` or `.md` file
+uploaded to the [Files API](#files-api) still works as a `text/plain` or
+`text/markdown` document by URI (`Content::from_file`, verified live
+2026-11-05).
 
 `examples/pdf_input.rs` is a runnable demo.
 
@@ -259,11 +280,16 @@ The constructors leave them unset; the API fills them in on audio it returns.
 | Image | `jpg`/`jpeg` → `image/jpeg`, `png`, `gif`, `webp`, `heic`, `heif` |
 | Audio | `mp3` → `audio/mp3`, `wav`, `ogg`, `flac`, `aac`, `m4a` |
 | Video | `mp4`, `webm`, `mov` → `video/quicktime`, `avi` → `video/x-msvideo`, `mkv` → `video/x-matroska` |
-| Document | `pdf` → `application/pdf`, `txt` → `text/plain`, `md` → `text/markdown`, `json`, `csv`, `html`, `xml` |
+| Document | `pdf` → `application/pdf`, `csv` → `text/csv`, `doc` → `application/msword`, `docx` → `application/vnd.openxmlformats-officedocument.wordprocessingml.document`, `xls` → `application/vnd.ms-excel`, `xlsx` → `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`, `ppt` → `application/vnd.ms-powerpoint`, `pptx` → `application/vnd.openxmlformats-officedocument.presentationml.presentation`, `odt` / `ods` / `odp` → `application/vnd.oasis.opendocument.text` / `.spreadsheet` / `.presentation` |
+| Text | `txt` → `text/plain`, `md` → `text/markdown`, `json`, `html`, `xml` |
 
-Detection doesn't guarantee the model accepts a format: `document_from_file`
-only sends the PDF, plain-text and Markdown document types (above). Always pass
-full MIME types (`"image/png"`, not `"png"`).
+Detection doesn't guarantee the API accepts a format inline:
+`document_from_file` sends the Document row as document content (verified
+live 2026-11-05; for `doc`, `xls` and `ppt` only the MIME type was checked,
+not parsing of a real legacy file), sends `.txt` / `.md` files as text
+(above), and rejects `json`, `html` and `xml`. `FileUpload::from_path` uses
+the same detection for every row. Always pass full MIME types (`"image/png"`,
+not `"png"`).
 
 ## Examples
 
