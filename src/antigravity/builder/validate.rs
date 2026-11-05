@@ -244,6 +244,15 @@ impl AgentBuilder {
         if self.policies.iter().filter(|p| p.is_auto()).count() > 1 {
             return Err(config("at most one policy::auto() rule may be added"));
         }
+        for (short, long) in overlapping_mcp_servers(self.mcp_servers.iter().map(|s| s.name())) {
+            tracing::warn!(
+                "MCP servers '{short}' and '{long}': a rule naming a tool as \
+                 mcp_{short}_<tool> can also match a tool of '{long}' (tool \
+                 names are read the same both ways). Server-wide rules \
+                 (mcp_{short}_*) match on the server and are not affected; \
+                 rename a server to rule this out."
+            );
+        }
         if options.session_continuation == Some(SessionContinuation::Resume)
             && self.conversation_id.is_none()
         {
@@ -253,4 +262,23 @@ impl AgentBuilder {
         }
         Ok(())
     }
+}
+
+/// Pairs of MCP server names where the first, followed by `_`, starts the
+/// second (`git`, `git_admin`): their `mcp_<server>_<tool>` names overlap.
+pub(super) fn overlapping_mcp_servers<'a>(
+    names: impl Iterator<Item = &'a str> + Clone,
+) -> Vec<(&'a str, &'a str)> {
+    names
+        .clone()
+        .flat_map(|short| {
+            names
+                .clone()
+                .filter(move |long| {
+                    long.strip_prefix(short)
+                        .is_some_and(|rest| rest.starts_with('_'))
+                })
+                .map(move |long| (short, long))
+        })
+        .collect()
 }

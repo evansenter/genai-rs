@@ -14,6 +14,10 @@ pub struct ToolInvocation {
     pub args: Value,
     /// The harness's correlation id for custom tool calls, when available.
     pub id: Option<String>,
+    /// The MCP server the tool belongs to, for an MCP tool. Server-wide
+    /// policy rules (`mcp_<server>_*`, `mcp_*`) match on it, not on the
+    /// name, so a rule for server `git` never matches server `git_admin`.
+    pub server: Option<String>,
 }
 
 impl ToolInvocation {
@@ -32,6 +36,28 @@ impl ToolInvocation {
             name: name.into(),
             args,
             id: None,
+            server: None,
+        }
+    }
+
+    /// A call to `tool` on MCP server `server`, named as policies name it
+    /// (`mcp_<server>_<tool>`).
+    ///
+    /// ```
+    /// use genai_rs::antigravity::ToolInvocation;
+    ///
+    /// let call = ToolInvocation::mcp("git", "status", serde_json::json!({}));
+    /// assert_eq!(call.name, "mcp_git_status");
+    /// assert_eq!(call.server.as_deref(), Some("git"));
+    /// ```
+    #[must_use]
+    pub fn mcp(server: impl Into<String>, tool: &str, args: Value) -> Self {
+        let server = server.into();
+        Self {
+            name: crate::antigravity::policies::mcp_tool_name(&server, tool),
+            args,
+            id: None,
+            server: Some(server),
         }
     }
 }

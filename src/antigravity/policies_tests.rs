@@ -10,70 +10,83 @@ fn engine(policies: Vec<Policy>) -> PolicyEngine {
     PolicyEngine::new(policies)
 }
 
+/// A call to MCP tool `tool` on `server`, as the harness reports it.
+fn mcp(server: &str, tool: &str) -> ToolInvocation {
+    ToolInvocation::mcp(server, tool, json!({}))
+}
+
 #[test]
 fn test_policy_decision_table() {
     use PolicyDecision::{Allow, Confirm, Deny};
     // (policies, tool, expected)
-    let cases: Vec<(Vec<Policy>, &str, Option<PolicyDecision>)> = vec![
+    let cases: Vec<(Vec<Policy>, ToolInvocation, Option<PolicyDecision>)> = vec![
         // Empty set: no decision (default open).
-        (vec![], "anything", None),
+        (vec![], invocation("anything"), None),
         // Simple exact matches.
-        (vec![policy::allow("a")], "a", Some(Allow)),
-        (vec![policy::deny("a")], "a", Some(Deny)),
-        (vec![policy::confirm("a")], "a", Some(Confirm)),
-        (vec![policy::allow("a")], "b", None),
+        (vec![policy::allow("a")], invocation("a"), Some(Allow)),
+        (vec![policy::deny("a")], invocation("a"), Some(Deny)),
+        (vec![policy::confirm("a")], invocation("a"), Some(Confirm)),
+        (vec![policy::allow("a")], invocation("b"), None),
         // Wildcards.
-        (vec![policy::allow_all()], "x", Some(Allow)),
-        (vec![policy::deny_all()], "x", Some(Deny)),
+        (vec![policy::allow_all()], invocation("x"), Some(Allow)),
+        (vec![policy::deny_all()], invocation("x"), Some(Deny)),
         // Specific beats wildcard, regardless of registration order.
         (
             vec![policy::deny_all(), policy::allow("get_weather")],
-            "get_weather",
+            invocation("get_weather"),
             Some(Allow),
         ),
         (
             vec![policy::deny_all(), policy::allow("get_weather")],
-            "run_command",
+            invocation("run_command"),
             Some(Deny),
         ),
         (
             vec![policy::allow_all(), policy::deny("run_command")],
-            "run_command",
+            invocation("run_command"),
             Some(Deny),
         ),
         (
             vec![policy::allow_all(), policy::deny("run_command")],
-            "view_file",
+            invocation("view_file"),
             Some(Allow),
         ),
         // Within a tier deny beats ask beats allow, whatever the order
         // (the harness evaluator's order, verified on 0.1.23).
-        (vec![policy::deny("t"), policy::allow("t")], "t", Some(Deny)),
-        (vec![policy::allow("t"), policy::deny("t")], "t", Some(Deny)),
+        (
+            vec![policy::deny("t"), policy::allow("t")],
+            invocation("t"),
+            Some(Deny),
+        ),
+        (
+            vec![policy::allow("t"), policy::deny("t")],
+            invocation("t"),
+            Some(Deny),
+        ),
         (
             vec![policy::allow("t"), policy::confirm("t")],
-            "t",
+            invocation("t"),
             Some(Confirm),
         ),
         (
             vec![policy::allow_all(), policy::deny_all()],
-            "t",
+            invocation("t"),
             Some(Deny),
         ),
         (
             vec![policy::deny_all(), policy::allow_all()],
-            "t",
+            invocation("t"),
             Some(Deny),
         ),
         // Confirm on specific, allow-all fallback.
         (
             vec![policy::confirm("run_command"), policy::allow_all()],
-            "run_command",
+            invocation("run_command"),
             Some(Confirm),
         ),
         (
             vec![policy::confirm("run_command"), policy::allow_all()],
-            "edit_file",
+            invocation("edit_file"),
             Some(Allow),
         ),
         // MCP tool naming.
@@ -82,7 +95,7 @@ fn test_policy_decision_table() {
                 policy::deny_all(),
                 policy::allow(mcp_tool_name("git", "status")),
             ],
-            "mcp_git_status",
+            mcp("git", "status"),
             Some(Allow),
         ),
         (
@@ -90,7 +103,7 @@ fn test_policy_decision_table() {
                 policy::deny_all(),
                 policy::allow(mcp_tool_name("git", "status")),
             ],
-            "mcp_git_push",
+            mcp("git", "push"),
             Some(Deny),
         ),
     ];
@@ -98,7 +111,7 @@ fn test_policy_decision_table() {
     for (policies, tool, expected) in cases {
         let engine = engine(policies.clone());
         assert_eq!(
-            engine.evaluate(tool),
+            engine.evaluate(&tool),
             expected,
             "policies {policies:?} evaluating {tool:?}"
         );
@@ -180,6 +193,7 @@ fn test_decide_hook_receives_invocation_details() {
         name: "run_command".to_string(),
         args: json!({"commandLine": "ls"}),
         id: Some("call-7".to_string()),
+        server: None,
     };
     assert_eq!(decide(&engine, Some(&hook), &inv), PreToolDecision::Allow);
 }
@@ -344,19 +358,46 @@ fn test_server_wide_mcp_rules_sit_between_named_and_wildcard() {
             policy::allow(mcp_tool_name("git", "status")),
         ]
     };
-    assert_eq!(engine(rules()).evaluate("mcp_git_status"), Some(Allow));
-    assert_eq!(engine(rules()).evaluate("mcp_git_push"), Some(Deny));
-    assert_eq!(engine(rules()).evaluate("mcp_github_push"), Some(Allow));
-    assert_eq!(engine(rules()).evaluate("view_file"), Some(Allow));
-    // `mcp_*` covers every MCP tool, at the server-rule tier.
+    assert_eq!(engine(rules()).evaluate(&mcp("git", "status")), Some(Allow));
+    assert_eq!(engine(rules()).evaluate(&mcp("git", "push")), Some(Deny));
+    assert_eq!(
+        engine(rules()).evaluate(&mcp("github", "push")),
+        Some(Allow)
+    );
+    assert_eq!(
+        engine(rules()).evaluate(&invocation("view_file")),
+        Some(Allow)
+    );
+    // `mcp_*` covers every MCP tool, at the server-rule tier, and no other.
     let all_mcp = || vec![policy::allow_all(), policy::deny("mcp_*")];
-    assert_eq!(engine(all_mcp()).evaluate("mcp_git_x"), Some(Deny));
-    assert_eq!(engine(all_mcp()).evaluate("view_file"), Some(Allow));
+    assert_eq!(engine(all_mcp()).evaluate(&mcp("git", "x")), Some(Deny));
+    assert_eq!(
+        engine(all_mcp()).evaluate(&invocation("view_file")),
+        Some(Allow)
+    );
+    assert_eq!(
+        engine(all_mcp()).evaluate(&invocation("mcp_lookalike_custom_tool")),
+        Some(Allow),
+        "a custom tool whose name starts with mcp_ is not an MCP tool"
+    );
     // Any other `*` suffix is a literal name.
     assert_eq!(
-        engine(vec![policy::deny("view_*")]).evaluate("view_file"),
+        engine(vec![policy::deny("view_*")]).evaluate(&invocation("view_file")),
         None
     );
+}
+
+#[test]
+fn test_server_wide_mcp_rule_does_not_reach_a_server_whose_name_extends_it() {
+    use PolicyDecision::{Allow, Deny};
+    // Server `git_admin`'s tools are named `mcp_git_admin_<tool>`, which
+    // starts with `mcp_git_`; the rule for server `git` must not cover them.
+    let rules = engine(vec![policy::deny_all(), policy::allow("mcp_git_*")]);
+    assert_eq!(rules.evaluate(&mcp("git", "status")), Some(Allow));
+    assert_eq!(rules.evaluate(&mcp("git_admin", "delete_repo")), Some(Deny));
+    let rules = engine(vec![policy::allow_all(), policy::deny("mcp_git_admin_*")]);
+    assert_eq!(rules.evaluate(&mcp("git", "admin_x")), Some(Allow));
+    assert_eq!(rules.evaluate(&mcp("git_admin", "x")), Some(Deny));
 }
 
 #[test]
@@ -364,7 +405,7 @@ fn test_start_subagent_targets_invoke_subagent() {
     let rule = policy::deny("start_subagent");
     assert_eq!(rule.target(), "invoke_subagent");
     assert_eq!(
-        engine(vec![rule]).evaluate("invoke_subagent"),
+        engine(vec![rule]).evaluate(&invocation("invoke_subagent")),
         Some(PolicyDecision::Deny)
     );
 }
@@ -373,7 +414,11 @@ fn test_start_subagent_targets_invoke_subagent() {
 fn test_auto_policy_is_kept_out_of_client_evaluation() {
     let engine = engine(vec![policy::auto(), policy::allow("view_file")]);
     assert!(engine.auto().is_some_and(Policy::is_auto));
-    assert_eq!(engine.evaluate("run_command"), None, "auto is harness-side");
+    assert_eq!(
+        engine.evaluate(&invocation("run_command")),
+        None,
+        "auto is harness-side"
+    );
     // A flagged call is denied with the assessment unless a handler approves.
     let flagged = call("run_command", json!({"CommandLine": "rm -rf build"}));
     let PreToolDecision::Deny { reason } =
@@ -395,4 +440,25 @@ fn test_auto_policy_is_kept_out_of_client_evaluation() {
 fn test_policy_debug_omits_closures() {
     let rendered = format!("{:?}", policy::deny("t").when(|_| true));
     assert!(rendered.contains("when: true"), "{rendered}");
+}
+
+#[test]
+fn test_a_panicking_ask_user_handler_denies_the_call() {
+    // Fail closed, as the Python SDK does on a handler's exception, and
+    // the panic stays out of the turn.
+    let rules = engine(vec![policy::ask_user("t", |_, _| panic!("handler bug"))]);
+    let PreToolDecision::Deny { reason } = decide(&rules, None, &invocation("t")) else {
+        panic!("a panicking handler must deny");
+    };
+    assert!(reason.contains("panicked"), "{reason}");
+
+    let auto = engine(vec![
+        policy::auto().with_handler(|_, _| panic!("handler bug")),
+    ]);
+    let PreToolDecision::Deny { reason } =
+        decide_flagged(&auto, &invocation("run_command"), Some("risky"))
+    else {
+        panic!("a panicking auto handler must deny");
+    };
+    assert!(reason.contains("panicked"), "{reason}");
 }

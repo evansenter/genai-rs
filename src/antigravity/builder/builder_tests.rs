@@ -492,3 +492,18 @@ async fn test_spawn_rejects_containment_without_a_workspace() {
         "{err:?}"
     );
 }
+
+#[test]
+fn test_overlapping_mcp_server_names_are_found() {
+    let names = ["git", "git_admin", "github", "gi", "git_admin_x"];
+    let pairs = super::validate::overlapping_mcp_servers(names.into_iter());
+    assert_eq!(
+        pairs,
+        [
+            ("git", "git_admin"),
+            ("git", "git_admin_x"),
+            ("git_admin", "git_admin_x"),
+        ]
+    );
+    assert!(super::validate::overlapping_mcp_servers(["git", "github"].into_iter()).is_empty());
+}

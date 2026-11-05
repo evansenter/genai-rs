@@ -321,7 +321,8 @@ Rules:
   subject to the `on_pre_tool` hook.
 - `confirm(name)` defers to `on_pre_tool`; with no hook configured the call
   is **denied** (fail closed). `ask_user(name, handler)` asks the handler
-  instead, handing it the call and the rule's reason.
+  instead, handing it the call and the rule's reason. A handler that panics
+  denies the call.
 - `.when(condition)` applies a rule only to calls the condition accepts;
   others fall through to the next rule. A condition that panics denies.
   `.with_reason(text)` sets the message the model sees on a denial, and
@@ -331,8 +332,12 @@ Rules:
   `mcp_<server>_<tool>`, a server's tools as `mcp_<server>_*`, and every MCP
   tool as `mcp_*`. The harness names an MCP tool by its bare name beside a
   separate server field in its hook callbacks, and the bridge maps it onto
-  these targets. `start_subagent`, the subagent builtin's pre-0.1.18 name,
-  still targets `invoke_subagent`.
+  these targets. The server-wide forms match that server field exactly
+  (`ToolInvocation::server`), so `mcp_git_*` does not cover a server named
+  `git_admin`. A full `mcp_<server>_<tool>` name can still be read two ways
+  when one server's name plus `_` starts another's (`git`, `git_admin`);
+  `spawn()` warns about such pairs. `start_subagent`, the subagent
+  builtin's pre-0.1.18 name, still targets `invoke_subagent`.
 
 ```rust,ignore
 // Deny only the destructive commands; allow the rest.

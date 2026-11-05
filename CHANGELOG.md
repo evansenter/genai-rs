@@ -33,15 +33,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `on_post_turn`, `on_tool_error` (its text replaces the error the model
     sees), `on_compaction` and `on_stop` (`StopDecision::Continue` keeps
     the turn going). A pre-tool hook can return `PreToolDecision::modify`
-    to run the call on other arguments.
+    to run the call on other arguments; on a tool confirmation, which
+    cannot carry arguments, a modify denies the call.
   - Policies: `Policy::when` conditions, `with_reason`, `with_name`,
     `policy::ask_user` handlers, `mcp_<server>_*` and `mcp_*` targets, and
     `policy::auto()`, the harness's model-judged assessment of risky calls,
-    whose flagged calls its handler approves or refuses (D-022).
+    whose flagged calls its handler approves or refuses (D-022). A
+    condition or handler that panics denies the call. Server-wide targets
+    match the call's MCP server exactly (`ToolInvocation::server`), so
+    `mcp_git_*` does not cover a server named `git_admin`; `spawn()` warns
+    when one server's name plus `_` starts another's, since a full
+    `mcp_<server>_<tool>` name can then be read two ways.
   - Triggers: `add_custom_trigger` with a `TriggerContext`,
     `triggers::on_file_change`, and `AntigravityAgent::next_trigger_turn`,
     which drives a turn a trigger started and returns its response.
-  - `ToolInvocation::new`, for unit-testing policy conditions and hooks.
+  - `ToolInvocation::new` and `ToolInvocation::mcp`, for unit-testing
+    policy conditions and hooks.
   - Examples `lifecycle_hooks` (a stop hook as a definition of done),
     `file_watcher` (`on_file_change` with `next_trigger_turn`) and
     `command_guard` (conditional policies), each run against harness

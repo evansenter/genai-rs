@@ -253,3 +253,59 @@ async fn test_scripted_policy_precedence_matches_the_harness() {
     ));
     agent.shutdown().await.expect("shutdown");
 }
+
+#[tokio::test]
+#[ignore = "Requires localharness binary"]
+async fn test_scripted_server_wide_rule_covers_its_server_only() {
+    // Server `widgets_admin`'s tools are named `mcp_widgets_admin_…`, which
+    // starts with `mcp_widgets_`: `allow("mcp_widgets_*")` must still not
+    // reach them.
+    let fixture =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mcp_echo_server.py");
+    let server = |name: &str| {
+        genai_rs::antigravity::McpServer::stdio("python3", [fixture.to_string_lossy().to_string()])
+            .with_name(name)
+            .with_force_all_tools_eager(true)
+    };
+    let call = |tool: &str| ModelTurn::call(tool, json!({"widget": "flange"}));
+    let fake = FakeGemini::start(vec![
+        call("mcp_widgets_admin_lookup_widget_code"),
+        call("mcp_widgets_lookup_widget_code"),
+        ModelTurn::text("done"),
+    ])
+    .await;
+    let mut agent = scripted_agent(&fake)
+        .add_mcp_server(server("widgets"))
+        .add_mcp_server(server("widgets_admin"))
+        .add_policy(policy::deny_all())
+        .add_policy(policy::allow("mcp_widgets_*"))
+        .spawn()
+        .await
+        .expect("spawn");
+    let (actions, _) = turn_actions(&mut agent, "look it up twice").await;
+    let decisions: Vec<_> = actions
+        .iter()
+        .map(|(name, _, decision)| {
+            (
+                name.as_str(),
+                matches!(decision, ToolDecision::Denied { .. }),
+            )
+        })
+        .collect();
+    assert!(
+        decisions.contains(&("mcp_widgets_admin_lookup_widget_code", true)),
+        "{decisions:?}"
+    );
+    assert!(
+        !function_response_text(&fake, 1).contains("wibble-3317-quux"),
+        "the other server's tool ran: {}",
+        function_response_text(&fake, 1)
+    );
+    // The rule's own server still runs.
+    assert!(
+        function_response_text(&fake, 2).contains("wibble-3317-quux"),
+        "{}",
+        function_response_text(&fake, 2)
+    );
+    agent.shutdown().await.expect("shutdown");
+}

@@ -45,7 +45,9 @@ impl AntigravityAgent {
                 decision
             }
         };
-        let accepted = matches!(decision, PreToolDecision::Allow);
+        // `confirmation_decision` never returns `Modify`: a confirmation
+        // cannot carry arguments, so it turns one into a denial.
+        let accepted = decision.allows();
         if let PreToolDecision::Deny { reason } = &decision
             && let Some(action) = streaming::ToolAction::from_step(step)
         {
@@ -330,7 +332,7 @@ impl AntigravityAgent {
         turn: &mut TurnState,
     ) -> Result<PreToolDecision, AntigravityError> {
         let plain_deny = !self.policy_engine.has_callbacks()
-            && self.policy_engine.evaluate(&invocation.name) == Some(PolicyDecision::Deny);
+            && self.policy_engine.evaluate(&invocation) == Some(PolicyDecision::Deny);
         if plain_deny || (self.pre_tool.is_none() && !self.policy_engine.has_callbacks()) {
             return Ok(policies::decide(
                 &self.policy_engine,

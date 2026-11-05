@@ -141,7 +141,7 @@ impl Policy {
 
     /// Sets the handler that answers an ask rule (or the auto policy's
     /// flagged calls) instead of the pre-tool hook. Ignored on allow and
-    /// deny rules.
+    /// deny rules. A handler that panics denies the call (fail closed).
     #[must_use]
     pub fn with_handler(
         mut self,
@@ -156,34 +156,45 @@ impl Policy {
     fn tier(&self) -> u8 {
         if self.target == WILDCARD {
             2
-        } else if self.server_prefix().is_some() {
+        } else if self.server_scope().is_some() {
             1
         } else {
             0
         }
     }
 
-    /// `mcp_<server>_` for a server-wide `mcp_<server>_*` target.
-    fn server_prefix(&self) -> Option<&str> {
-        self.target
-            .strip_suffix('*')
-            .filter(|prefix| prefix.starts_with("mcp_") && prefix.ends_with('_'))
+    /// For a server-wide target, the servers it covers: `Some(Some(server))`
+    /// for `mcp_<server>_*`, `Some(None)` for `mcp_*` (every server).
+    fn server_scope(&self) -> Option<Option<&str>> {
+        let rest = self.target.strip_prefix("mcp_")?.strip_suffix('*')?;
+        if rest.is_empty() {
+            return Some(None);
+        }
+        rest.strip_suffix('_')
+            .filter(|server| !server.is_empty())
+            .map(Some)
     }
 
-    fn matches_target(&self, tool_name: &str) -> bool {
+    /// Server-wide rules match on the call's MCP server, exactly (as the
+    /// Python SDK matches `server/*`): matching the `mcp_<server>_` name
+    /// prefix would let a rule for server `git` match server `git_admin`'s
+    /// tools.
+    fn matches_target(&self, invocation: &ToolInvocation) -> bool {
         match self.tier() {
             2 => true,
-            1 => self
-                .server_prefix()
-                .is_some_and(|prefix| tool_name.starts_with(prefix)),
-            _ => self.target == tool_name,
+            1 => match (self.server_scope().flatten(), invocation.server.as_deref()) {
+                (_, None) => false,
+                (None, Some(_)) => true,
+                (Some(server), Some(called)) => server == called,
+            },
+            _ => self.target == invocation.name,
         }
     }
 
     /// Whether the rule applies to `invocation`: the target matches and the
     /// condition, if any, accepts it. `Err` when the condition panicked.
     fn applies_to(&self, invocation: &ToolInvocation) -> Result<bool, String> {
-        if !self.matches_target(&invocation.name) {
+        if !self.matches_target(invocation) {
             return Ok(false);
         }
         let Some(condition) = &self.condition else {
@@ -260,7 +271,11 @@ const WILDCARD: &str = "*";
 ///   `ask_question`, `finish`). `start_subagent`, the subagent builtin's
 ///   name before harness 0.1.18, still targets `invoke_subagent`.
 /// - MCP tools are matched as `mcp_<server>_<tool>`, every tool of a
-///   server as `mcp_<server>_*`, and every MCP tool as `mcp_*`.
+///   server as `mcp_<server>_*`, and every MCP tool as `mcp_*`. The
+///   server-wide forms match on the server the call names, exactly:
+///   `mcp_git_*` covers server `git`, not server `git_admin`. (A full
+///   name can still be read two ways when one server's name followed by
+///   `_` starts another's; `spawn()` warns about such pairs.)
 /// - `"*"` matches everything.
 ///
 /// `ask_question` is policy-gated like the rest on harness 0.1.18 and later:
@@ -403,13 +418,9 @@ impl PolicyEngine {
         None
     }
 
-    /// The decision of the first rule that applies, by tool name only (no
-    /// arguments, so conditions see an empty object).
-    pub(crate) fn evaluate(&self, tool_name: &str) -> Option<PolicyDecision> {
-        match self.verdict(&ToolInvocation::new(
-            tool_name,
-            serde_json::Value::Object(Default::default()),
-        ))? {
+    /// The decision of the first rule that applies to `invocation`.
+    pub(crate) fn evaluate(&self, invocation: &ToolInvocation) -> Option<PolicyDecision> {
+        match self.verdict(invocation)? {
             Verdict::Rule(rule) => Some(rule.decision),
             Verdict::Broken(_) => Some(PolicyDecision::Deny),
         }
@@ -453,20 +464,22 @@ pub(crate) fn decide_with_default(
     match rule.decision {
         PolicyDecision::Deny => PreToolDecision::deny(rule.deny_message(&invocation.name)),
         PolicyDecision::Confirm => match (&rule.handler, pre_tool) {
-            (Some(handler), _) => {
-                if handler(invocation, rule.reason.as_deref()) {
-                    // Approved; the hook still gets a say, as on allow.
-                    hook_or(PreToolDecision::Allow)
-                } else {
-                    PreToolDecision::deny(rule.reason.clone().unwrap_or_else(|| {
-                        format!(
-                            "Tool '{}' was not approved (policy '{}').",
-                            invocation.name,
-                            rule.label()
-                        )
-                    }))
-                }
-            }
+            (Some(handler), _) => match ask(handler, invocation, rule.reason.as_deref()) {
+                // Approved; the hook still gets a say, as on allow.
+                Some(true) => hook_or(PreToolDecision::Allow),
+                Some(false) => PreToolDecision::deny(rule.reason.clone().unwrap_or_else(|| {
+                    format!(
+                        "Tool '{}' was not approved (policy '{}').",
+                        invocation.name,
+                        rule.label()
+                    )
+                })),
+                None => PreToolDecision::deny(format!(
+                    "Tool '{}' denied: the handler of policy '{}' panicked (failing closed).",
+                    invocation.name,
+                    rule.label()
+                )),
+            },
             (None, Some(hook)) => hook(invocation),
             (None, None) => PreToolDecision::deny(format!(
                 "Tool '{}' requires confirmation but no pre-tool hook is configured \
@@ -498,10 +511,35 @@ pub(crate) fn decide_flagged(
             },
         ))
     };
-    match engine.auto().and_then(|auto| auto.handler.as_ref()) {
-        Some(handler) if handler(invocation, assessment) => PreToolDecision::Allow,
-        _ => deny(),
+    let Some(handler) = engine.auto().and_then(|auto| auto.handler.as_ref()) else {
+        return deny();
+    };
+    match ask(handler, invocation, assessment) {
+        Some(true) => PreToolDecision::Allow,
+        Some(false) => deny(),
+        None => PreToolDecision::deny(format!(
+            "Tool '{}' denied: the auto policy's handler panicked (failing closed).",
+            invocation.name
+        )),
     }
+}
+
+/// Asks an ask-user handler about `invocation`: `None` when it panicked,
+/// which callers treat as a denial (failing closed, as the Python SDK does
+/// on a handler's exception) rather than unwinding into the turn.
+fn ask(
+    handler: &AskUserHandler,
+    invocation: &ToolInvocation,
+    reason: Option<&str>,
+) -> Option<bool> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler(invocation, reason)))
+        .map_err(|_| {
+            tracing::warn!(
+                "A policy handler panicked while judging '{}'; denying the call.",
+                invocation.name
+            );
+        })
+        .ok()
 }
 
 /// Builds the harness-facing tool name for an MCP tool
