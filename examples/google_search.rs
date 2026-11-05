@@ -4,8 +4,7 @@
 //! issued (`google_search_calls()`) and annotations tying spans of the
 //! answer to their sources. The `google_search_result` steps currently carry
 //! only `search_suggestions`, an HTML widget Google asks you to display
-//! alongside grounded answers; their `title`/`url` fields are empty, so the
-//! citations are where the sources are.
+//! alongside grounded answers, so the citations are where the sources are.
 //!
 //! Run with: `cargo run --example google_search`
 

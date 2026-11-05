@@ -182,7 +182,7 @@ impl StepAccumulator {
                         }),
                         Some(new_data),
                     ) if fragment => {
-                        existing.push_str(new_data);
+                        append_base64(existing, new_data);
                         absorb(block_extra, extra);
                     }
                     _ => content.push(Content::Image {
@@ -194,9 +194,13 @@ impl StepAccumulator {
                     }),
                 }
             }
-            // Audio, video and documents have no observed chunking (no live
-            // capture of a streamed one), so consecutive data deltas still
-            // concatenate into the last block of the same kind.
+            // Audio streams in pieces of one recording: a streamed TTS
+            // answer is hundreds of deltas in one step, each naming the same
+            // mime_type, sample_rate and channels (live 2026-11-05,
+            // `gemini-3.8-flash-tts`: 243 deltas of `audio/l16` at 24000 Hz,
+            // mono). So a delta continues the last audio block unless it
+            // names a uri or a format that differs from the block's; then it
+            // starts a new one.
             StepDelta::Audio {
                 data,
                 uri,
@@ -209,12 +213,19 @@ impl StepAccumulator {
                 (
                     Some(Content::Audio {
                         data: Some(existing),
+                        uri: None,
+                        mime_type: block_mime,
+                        sample_rate: block_rate,
+                        channels: block_channels,
                         extra: block_extra,
-                        ..
                     }),
                     Some(new_data),
-                ) => {
-                    existing.push_str(new_data);
+                ) if uri.is_none()
+                    && same_or_unnamed(mime_type.as_ref(), block_mime.as_ref())
+                    && same_or_unnamed(sample_rate.or(*rate).as_ref(), block_rate.as_ref())
+                    && same_or_unnamed(channels.as_ref(), block_channels.as_ref()) =>
+                {
+                    append_base64(existing, new_data);
                     absorb(block_extra, extra);
                 }
                 _ => content.push(Content::Audio {
@@ -226,6 +237,12 @@ impl StepAccumulator {
                     extra: extra.clone(),
                 }),
             },
+            // No model streams video or documents to observe (2026-11-05),
+            // so they follow the image rule: a delta that names a mime_type
+            // or uri starts a block, and only a bare data fragment continues
+            // the last one. Splitting a chunked file into blocks loses
+            // nothing (their data concatenates back), where merging two
+            // whole files would corrupt both.
             StepDelta::Video {
                 data,
                 uri,
@@ -240,8 +257,8 @@ impl StepAccumulator {
                         ..
                     }),
                     Some(new_data),
-                ) => {
-                    existing.push_str(new_data);
+                ) if mime_type.is_none() && uri.is_none() => {
+                    append_base64(existing, new_data);
                     absorb(block_extra, extra);
                 }
                 _ => content.push(Content::Video {
@@ -267,8 +284,8 @@ impl StepAccumulator {
                         ..
                     }),
                     Some(new_data),
-                ) => {
-                    existing.push_str(new_data);
+                ) if mime_type.is_none() && uri.is_none() => {
+                    append_base64(existing, new_data);
                     absorb(block_extra, extra);
                 }
                 _ => content.push(Content::Document {
@@ -529,12 +546,19 @@ impl StepAccumulator {
                     result, signature, ..
                 },
                 Step::FileSearchResult {
-                    result: existing,
                     signature: sig,
+                    extra,
                     ..
                 },
             ) => {
-                existing.extend(result.iter().cloned());
+                // The step has no `result` field; keep what the stream sent.
+                if !result.is_empty()
+                    && let serde_json::Value::Array(existing) = extra
+                        .entry("result")
+                        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+                {
+                    existing.extend(result.iter().cloned());
+                }
                 replace_signature(sig, signature.as_deref());
             }
             (
@@ -676,6 +700,34 @@ impl StepAccumulator {
             Self::finalize_entry(entry);
         }
         self.steps.into_values().map(|e| e.step).collect()
+    }
+}
+
+/// Whether a delta's format field matches its block's: equal, or not named
+/// by the delta.
+fn same_or_unnamed<T: PartialEq>(delta: Option<&T>, block: Option<&T>) -> bool {
+    delta.is_none_or(|d| block == Some(d))
+}
+
+/// Appends one base64 chunk to another. Text concatenation is exact when the
+/// first chunk carries no padding, which every streamed chunk so far has
+/// met (live 2026-11-05: 243 TTS chunks, each a multiple of 4 characters
+/// with no `=`). A padded first chunk is decoded, joined as bytes and
+/// encoded again, so the result stays valid base64; data that does not
+/// decode is concatenated as text, as before.
+fn append_base64(existing: &mut String, chunk: &str) {
+    use base64::Engine;
+    if !existing.ends_with('=') {
+        existing.push_str(chunk);
+        return;
+    }
+    let engine = base64::engine::general_purpose::STANDARD;
+    match (engine.decode(existing.as_bytes()), engine.decode(chunk)) {
+        (Ok(mut bytes), Ok(more)) => {
+            bytes.extend_from_slice(&more);
+            *existing = engine.encode(bytes);
+        }
+        _ => existing.push_str(chunk),
     }
 }
 

@@ -234,6 +234,9 @@ impl std::fmt::Display for FileError {
 }
 
 /// Metadata for video files.
+///
+/// The bindings type it `dict[str, Any]`; the API serves `videoDuration`
+/// (live 2026-11-05: `{"videoDuration": "1s"}` for a one-second clip).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]

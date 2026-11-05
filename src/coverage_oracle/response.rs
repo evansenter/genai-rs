@@ -25,16 +25,15 @@
 //! one this measures.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Debug;
 
 use serde::Serialize;
-use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use super::api_surface::{
     Finding, Surface, SynthOptions, Ty, debug_extra_keys, debug_unknown_values, key_paths,
     remove_path, string_values,
 };
+use super::response_targets::{Probe, Target, probe, probe_stream_event, targets};
 use super::{Allowed, assert_clean};
 
 /// Fields and values the crate does not model on purpose.
@@ -70,7 +69,49 @@ const ALLOWED: &[Allowed] = &[
     ("CreateAgentInteractionParams.id", TRIGGER_OUTPUT_ONLY),
     ("CreateAgentInteractionParams.status", TRIGGER_OUTPUT_ONLY),
     ("CreateAgentInteractionParams.updated", TRIGGER_OUTPUT_ONLY),
+    (
+        "interactions.Interaction.continuation_ids",
+        "Never served: not on the stored reads, plain or include_input, of a \
+         decode continued twice on CONTINUATION_MODEL (live 2026-11-05), and \
+         rejected as a request field (`400 Unknown parameter`, 2026-11-01). \
+         It lands in `extra` if it ever comes.",
+    ),
+    ("interactions.Interaction.output_audio", OUTPUT_CONVENIENCE),
+    ("interactions.Interaction.output_image", OUTPUT_CONVENIENCE),
+    ("interactions.Interaction.output_video", OUTPUT_CONVENIENCE),
+    (
+        "interactions.SpeakerConfig.speakers",
+        "`speech_config` reads both arms of its union, the list and the \
+         `{speakers: [...]}` object a stored read serves (live 2026-11-05), \
+         into one list, and serializes it back as the list, which every TTS \
+         model accepts (live 2026-09-24): the object arm's key is not kept.",
+    ),
+    (
+        "interactions.TranscriptionConfig.language_hints",
+        "Deprecated, and rejected on create with 400 Unknown parameter (2.25.0 \
+         sweep, D-005), so a stored interaction never carries it.",
+    ),
+    (
+        "interactions.VideoConfig.task=upscale",
+        "Rejected on create: `400 ... Supported values: text_to_video, \
+         image_to_video, reference_to_video, edit, extend` (2.34.0 sweep, \
+         2026-11-01), so a stored interaction never carries it.",
+    ),
+    (
+        "Interaction.max_total_tokens",
+        "Spec only, and rejected on create with `400 Unknown parameter \
+         'max_total_tokens'` on model and agent interactions alike (live \
+         2026-11-05), so never served (D-005). The agent budget it names is \
+         `agent_config.max_total_tokens` (`AntigravityConfig`).",
+    ),
 ];
+
+const OUTPUT_CONVENIENCE: &str = "A convenience copy of the output in the \
+     bindings, never served: not on a create response or stored read of a TTS \
+     or image interaction, nor on a stream's completed event (live \
+     2026-11-05; `output_text` is not served either). The output is in \
+     `steps`, read by `images()` and `audios()`; no model outputs video. \
+     It lands in `extra` if it ever comes.";
 
 const DEPRECATED: &str = "Deprecated, superseded by response_format (or rejected live, \
      D-005), and not served: a stored interaction read back carries neither \
@@ -83,55 +124,6 @@ const TRIGGER_OUTPUT_ONLY: &str = "readOnly on the params schema the spec shares
 
 /// Fields and values the crate does not model yet.
 const GAPS: &[Allowed] = &[
-    // Served on a stored interaction read back (live 2026-11-04), landing in
-    // `extra`.
-    ("interactions.Interaction.generation_config", SERVED),
-    ("interactions.Interaction.response_format", SERVED),
-    ("interactions.Interaction.response_modalities", SERVED),
-    ("interactions.Interaction.safety_settings", SERVED),
-    ("Interaction.response_format", SERVED),
-    ("Interaction.response_modalities", SERVED),
-    ("Interaction.safety_settings", SERVED),
-    // In the snapshot; not seen live on a model interaction (2026-11-04).
-    ("interactions.Interaction.agent_config", UNSEEN),
-    ("interactions.Interaction.continuation_ids", UNSEEN),
-    ("interactions.Interaction.environment", UNSEEN),
-    ("interactions.Interaction.output_audio", UNSEEN),
-    ("interactions.Interaction.output_image", UNSEEN),
-    ("interactions.Interaction.output_video", UNSEEN),
-    ("Interaction.agent_config", UNSEEN),
-    ("Interaction.environment", UNSEEN),
-    ("Interaction.max_total_tokens", UNSEEN),
-    (
-        "interactions.Interaction.status=queued",
-        "Not an InteractionStatus variant yet (#501); WP2.",
-    ),
-    (
-        "interactions.InteractionSseEventInteraction.status=queued",
-        "Not an InteractionStatus variant yet (#501); WP2.",
-    ),
-    (
-        "interactions.InteractionStatusUpdate.status=queued",
-        "Not an InteractionStatus variant yet (#501); WP2.",
-    ),
-    (
-        "interactions.StepDelta.metadata",
-        "`StreamChunk::StepDelta` drops the event's `metadata.total_usage` (only \
-         `interaction.completed` reads it); WP2.",
-    ),
-    (
-        "StepDelta.metadata",
-        "`StreamChunk::StepDelta` drops the event's `metadata.total_usage` (only \
-         `interaction.completed` reads it); WP2.",
-    ),
-    (
-        "FileSearchResultDelta.result",
-        "Opaque objects in the spec (`FileSearchResult` has no properties; the \
-         bindings class has no fields). The crate reads each as \
-         `FileSearchResultItem` (`title`, `text`, `file_search_store`) and \
-         keeps any other key in its `extra` (#491; before, it was dropped). \
-         Not seen filled live (src/content/results.rs, #429); WP2.",
-    ),
     // Files.
     (
         "legacy.File.downloadUri",
@@ -142,17 +134,14 @@ const GAPS: &[Allowed] = &[
     ),
 ];
 
-const SERVED: &str = "Served on a stored interaction read back (live 2026-11-04) \
-     and kept only in `extra`; WP2.";
-const UNSEEN: &str = "In the snapshot, not modeled, and not seen live yet \
-     (2026-11-04); probe before modeling (D-010); WP2.";
-
 /// Values for sites whose snapshot type is looser than what the API sends,
 /// so a synthesized value would test the synthesizer rather than the crate.
-fn values() -> BTreeMap<&'static str, Value> {
+pub(super) fn values() -> BTreeMap<&'static str, Value> {
     BTreeMap::from([
-        // Typed `Any`. The crate reads a JSON Schema object, which every
-        // served function tool carries.
+        // Typed `Any`; what is served is the JSON Schema the caller sent.
+        // `FunctionParameters` keeps keywords beyond `type`, `properties`
+        // and `required` in a private `extra`, which a synthesized key
+        // would land in.
         (
             "interactions.Function.parameters",
             json!({"type": "object", "properties": {"city": {"type": "string"}}}),
@@ -172,9 +161,9 @@ fn values() -> BTreeMap<&'static str, Value> {
             "EnvironmentConfig.env",
             json!({"PLAIN": {"value": "v"}, "SECRET": {"credential": "credentials/c"}}),
         ),
-        // `dict[str, Any]` in the bindings; the API serves `videoDuration`,
-        // the one key `VideoMetadata` models (any other lands in its
-        // `extra`).
+        // `dict[str, Any]` in the bindings; the API serves `videoDuration`
+        // (live 2026-11-05), the one key `VideoMetadata` models. It keeps
+        // any other in its `extra`, where a synthesized key would land.
         ("legacy.File.videoMetadata", json!({"videoDuration": "12s"})),
         // The spec types these as plain strings; the bindings enumerate
         // them, and each enumerated value is checked from there.
@@ -187,240 +176,6 @@ fn values() -> BTreeMap<&'static str, Value> {
             json!(["interaction.completed"]),
         ),
     ])
-}
-
-type Probe = fn(Value) -> Result<(String, Value), String>;
-
-/// Deserializes, then returns the `{:?}` rendering and the value serialized
-/// again.
-fn probe<T: DeserializeOwned + Serialize + Debug>(value: Value) -> Result<(String, Value), String> {
-    let parsed: T = serde_json::from_value(value).map_err(|e| e.to_string())?;
-    let back = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
-    Ok((format!("{parsed:?}"), back))
-}
-
-/// A stream event the way the streaming path reads it: parsed as the wire
-/// event, then dispatched to the public [`StreamEvent`]. Serialized again,
-/// a `StreamEvent` uses the crate's own `{chunk_type, data}` envelope, which
-/// is mapped back to the wire shape for the comparison.
-fn probe_stream_event(value: Value) -> Result<(String, Value), String> {
-    use crate::http::interactions::dispatch_stream_event;
-    use crate::steps::StepAccumulator;
-    use crate::wire_streaming::{InteractionStreamEvent, StreamEvent};
-
-    let event: InteractionStreamEvent = serde_json::from_value(value).map_err(|e| e.to_string())?;
-    let event_id = event.event_id.clone();
-    let chunk =
-        dispatch_stream_event(event, &mut StepAccumulator::new()).ok_or("the event was dropped")?;
-    let public = StreamEvent::new(chunk, event_id);
-    let envelope = serde_json::to_value(&public).map_err(|e| e.to_string())?;
-    let mut data = envelope.get("data").cloned().unwrap_or(Value::Null);
-    let (event_type, wrap) = match envelope["chunk_type"].as_str().unwrap_or_default() {
-        "created" => ("interaction.created", Some("interaction")),
-        "completed" => ("interaction.completed", Some("interaction")),
-        "status_update" => ("interaction.status_update", None),
-        "step_start" => ("step.start", None),
-        "step_delta" => ("step.delta", None),
-        "step_stop" => ("step.stop", None),
-        "error" => ("error", Some("error")),
-        other => return Err(format!("unexpected chunk type {other:?}")),
-    };
-    if let Some(key) = wrap {
-        data = json!({ key: data });
-    }
-    let mut wire = data.as_object().cloned().unwrap_or_default();
-    wire.insert("event_type".into(), json!(event_type));
-    if let Some(id) = envelope.get("event_id") {
-        wire.insert("event_id".into(), id.clone());
-    }
-    Ok((format!("{public:?}"), Value::Object(wire)))
-}
-
-/// A response type and the class it is read from, in the bindings and the
-/// spec.
-struct Target {
-    name: &'static str,
-    binding: Option<&'static str>,
-    spec: Option<&'static str>,
-    probe: Probe,
-}
-
-fn targets() -> Vec<Target> {
-    use crate::agents::{Agent, AgentListResponse};
-    use crate::credentials::{Credential, CredentialListResponse};
-    use crate::environments::{
-        Environment, EnvironmentFile, EnvironmentFileList, EnvironmentListResponse,
-    };
-    use crate::file_search_stores::{
-        DocumentListResponse, FileSearchDocument, FileSearchStore, FileSearchStoreListResponse,
-    };
-    use crate::files::{FileMetadata, ListFilesResponse};
-    use crate::response::InteractionResponse;
-    use crate::triggers::{
-        Trigger, TriggerExecution, TriggerExecutionListResponse, TriggerListResponse,
-    };
-    use crate::voices::{Voice, VoiceListResponse};
-    use crate::webhooks::{RotateSigningSecretResponse, Webhook, WebhookListResponse};
-
-    let t = |name, binding, spec, probe| Target {
-        name,
-        binding,
-        spec,
-        probe,
-    };
-    vec![
-        t(
-            "InteractionResponse",
-            Some("interactions.Interaction"),
-            Some("Interaction"),
-            probe::<InteractionResponse>,
-        ),
-        t(
-            "StreamEvent",
-            Some("interactions.InteractionSSEEvent"),
-            Some("InteractionSseEvent"),
-            probe_stream_event,
-        ),
-        t(
-            "Webhook",
-            Some("webhooks.Webhook"),
-            Some("Webhook"),
-            probe::<Webhook>,
-        ),
-        t(
-            "WebhookListResponse",
-            Some("webhooks.WebhookListResponse"),
-            Some("ListWebhooksResponse"),
-            probe::<WebhookListResponse>,
-        ),
-        t(
-            "RotateSigningSecretResponse",
-            Some("webhooks.WebhookRotateSigningSecretResponse"),
-            Some("RotateSigningSecretResponse"),
-            probe::<RotateSigningSecretResponse>,
-        ),
-        t(
-            "Trigger",
-            Some("triggers.Trigger"),
-            Some("Trigger"),
-            probe::<Trigger>,
-        ),
-        t(
-            "TriggerListResponse",
-            Some("triggers.ListTriggersResponse"),
-            Some("ListTriggersResponse"),
-            probe::<TriggerListResponse>,
-        ),
-        t(
-            "TriggerExecution",
-            Some("triggers.TriggerExecution"),
-            Some("TriggerExecution"),
-            probe::<TriggerExecution>,
-        ),
-        t(
-            "TriggerExecutionListResponse",
-            Some("triggers.ListTriggerExecutionsResponse"),
-            Some("ListTriggerExecutionsResponse"),
-            probe::<TriggerExecutionListResponse>,
-        ),
-        t("Agent", Some("agents.Agent"), Some("Agent"), probe::<Agent>),
-        t(
-            "AgentListResponse",
-            Some("agents.AgentListResponse"),
-            Some("ListAgentsResponse"),
-            probe::<AgentListResponse>,
-        ),
-        t(
-            "Environment",
-            Some("environments.Environment"),
-            Some("Environment"),
-            probe::<Environment>,
-        ),
-        t(
-            "EnvironmentListResponse",
-            Some("environments.ListEnvironmentsResponse"),
-            Some("ListEnvironmentsResponse"),
-            probe::<EnvironmentListResponse>,
-        ),
-        t(
-            "EnvironmentFile",
-            Some("environments.EnvironmentFile"),
-            Some("EnvironmentFile"),
-            probe::<EnvironmentFile>,
-        ),
-        t(
-            "EnvironmentFileList",
-            Some("environments.GetEnvironmentFilesResponse"),
-            Some("GetEnvironmentFilesResponse"),
-            probe::<EnvironmentFileList>,
-        ),
-        t(
-            "Credential",
-            Some("credentials.Credential"),
-            Some("Credential"),
-            probe::<Credential>,
-        ),
-        t(
-            "CredentialListResponse",
-            Some("credentials.CredentialListResponse"),
-            Some("ListCredentialsResponse"),
-            probe::<CredentialListResponse>,
-        ),
-        t(
-            "Voice",
-            Some("voices.VoiceOutput"),
-            Some("Voice"),
-            probe::<Voice>,
-        ),
-        t(
-            "VoiceListResponse",
-            Some("voices.ListVoicesResponse"),
-            Some("ListVoicesResponse"),
-            probe::<VoiceListResponse>,
-        ),
-        t(
-            "FileMetadata",
-            Some("legacy.File"),
-            None,
-            probe::<FileMetadata>,
-        ),
-        t(
-            "ListFilesResponse",
-            Some("legacy.ListFilesResponse"),
-            None,
-            probe::<ListFilesResponse>,
-        ),
-        t(
-            "FileSearchStore",
-            Some("legacy.FileSearchStore"),
-            None,
-            probe::<FileSearchStore>,
-        ),
-        t(
-            "FileSearchStoreListResponse",
-            Some("legacy.ListFileSearchStoresResponse"),
-            None,
-            probe::<FileSearchStoreListResponse>,
-        ),
-        t(
-            "FileSearchDocument",
-            Some("legacy.Document"),
-            None,
-            probe::<FileSearchDocument>,
-        ),
-        t(
-            "DocumentListResponse",
-            Some("legacy.ListDocumentsResponse"),
-            None,
-            probe::<DocumentListResponse>,
-        ),
-    ]
-}
-
-/// The binding class of every target, for the completeness check in
-/// [`super`].
-pub(super) fn target_classes() -> Vec<&'static str> {
-    targets().iter().filter_map(|t| t.binding).collect()
 }
 
 /// The `Class.field` site of a JSON path: the path's own, or its nearest
@@ -482,7 +237,7 @@ fn count(items: &[String], item: &str) -> usize {
 /// Everything wrong with one body. `traced` holds the sites already traced
 /// to an `extra` key or an `Unknown` value in an earlier body, whose
 /// candidates need no second round of removals.
-fn analyze(
+pub(super) fn analyze(
     surface: &Surface,
     ty: &Ty,
     body: &Value,
@@ -639,8 +394,10 @@ fn findings(
 /// Classes reached from a step or a delta whose fields the crate reads as
 /// free-form JSON, so a key the snapshot adds there is the tool's own data,
 /// kept verbatim, not a field to model: a function or MCP tool's `result`
-/// object (`FunctionResultPayload::Json`).
+/// object (`FunctionResultPayload::Json`), and a file search delta's result
+/// items, which the spec and the bindings type as objects with no fields.
 const FREE_FORM: &[&str] = &[
+    "interactions.FileSearchResult",
     "interactions.FunctionResultDeltaResult",
     "interactions.FunctionResultStepResult",
     "interactions.MCPServerToolResultDeltaResult",

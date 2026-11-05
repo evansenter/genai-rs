@@ -58,15 +58,21 @@ impl StreamChunk {
                     }),
                 )?;
             }
-            Self::StepDelta { index, delta } => {
+            Self::StepDelta {
+                index,
+                delta,
+                total_usage,
+            } => {
                 map.serialize_entry("chunk_type", "step_delta")?;
-                map.serialize_entry(
-                    "data",
-                    &serde_json::json!({
-                        "index": index,
-                        "delta": delta,
-                    }),
-                )?;
+                let mut data = serde_json::json!({
+                    "index": index,
+                    "delta": delta,
+                });
+                if let Some(usage) = total_usage {
+                    data["total_usage"] =
+                        serde_json::to_value(usage).map_err(serde::ser::Error::custom)?;
+                }
+                map.serialize_entry("data", &data)?;
             }
             Self::StepStop {
                 index,
@@ -273,7 +279,17 @@ impl<'de> Deserialize<'de> for StreamChunk {
                         e
                     ))
                 })?;
-                Ok(Self::StepDelta { index, delta })
+                let total_usage = data
+                    .get("total_usage")
+                    .cloned()
+                    .map(serde_json::from_value)
+                    .transpose()
+                    .map_err(serde::de::Error::custom)?;
+                Ok(Self::StepDelta {
+                    index,
+                    delta,
+                    total_usage,
+                })
             }
             "step_stop" => {
                 let data = data_of(&value);

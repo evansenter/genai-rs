@@ -215,3 +215,20 @@ fn test_usage_metadata_accumulate_keeps_the_first_initial_input_tokens() {
     assert_eq!(total.initial_input_tokens, Some(43));
     assert!(total.has_data());
 }
+
+#[test]
+fn a_modality_entry_without_a_count_reads_as_zero() {
+    // Both fields are optional in the bindings; protobuf JSON omits a zero.
+    let usage: UsageMetadata = serde_json::from_value(serde_json::json!({
+        "output_tokens_by_modality": [{"modality": "image"}, {"tokens": 3}]
+    }))
+    .unwrap();
+    let entries = usage.output_tokens_by_modality.unwrap();
+    assert_eq!(entries[0], ModalityTokens::new("image", 0));
+    assert_eq!(entries[1].modality, "");
+    assert_eq!(entries[1].tokens, 3);
+    assert_eq!(
+        serde_json::to_value(&entries[1]).unwrap(),
+        serde_json::json!({"tokens": 3})
+    );
+}

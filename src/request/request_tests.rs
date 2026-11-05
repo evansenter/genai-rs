@@ -9,7 +9,7 @@ fn test_serialize_create_interaction_request_with_model() {
         model: Some("test-model".to_string()),
         agent: None,
         agent_config: None,
-        input: InteractionInput::Text("Hello, world!".to_string()),
+        input: Some(InteractionInput::Text("Hello, world!".to_string())),
         previous_interaction_id: None,
         tools: None,
         response_modalities: None,
@@ -51,6 +51,7 @@ fn test_generation_config_serialization() {
         image_config: None,
         video_config: None,
         transcription_config: None,
+        extra: Default::default(),
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -76,6 +77,7 @@ fn test_generation_config_new_fields_serialization() {
         image_config: None,
         video_config: None,
         transcription_config: None,
+        extra: Default::default(),
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -103,6 +105,7 @@ fn test_generation_config_roundtrip() {
         image_config: None,
         video_config: None,
         transcription_config: None,
+        extra: Default::default(),
     };
 
     let json = serde_json::to_string(&config).expect("Serialization failed");
@@ -543,7 +546,7 @@ fn test_create_interaction_request_with_agent_config() {
         model: None,
         agent: Some(crate::DEFAULT_DEEP_RESEARCH_AGENT.to_string()),
         agent_config: Some(config),
-        input: InteractionInput::Text("Research question".to_string()),
+        input: Some(InteractionInput::Text("Research question".to_string())),
         previous_interaction_id: None,
         tools: None,
         response_modalities: None,
@@ -623,7 +626,7 @@ fn test_interaction_request_roundtrip() {
         model: Some("test-model".to_string()),
         agent: None,
         agent_config: None,
-        input: InteractionInput::Text("Hello, world!".to_string()),
+        input: Some(InteractionInput::Text("Hello, world!".to_string())),
         previous_interaction_id: Some("interaction-123".to_string()),
         tools: None,
         response_modalities: None,
@@ -687,7 +690,7 @@ fn test_response_format_serializes_as_snake_case() {
         model: Some("test-model".to_string()),
         agent: None,
         agent_config: None,
-        input: InteractionInput::Text("test".to_string()),
+        input: Some(InteractionInput::Text("test".to_string())),
         previous_interaction_id: None,
         tools: None,
         response_modalities: None,
@@ -908,7 +911,7 @@ fn test_request_with_webhook_config_and_environment_wire_shape() {
         model: Some("test-model".to_string()),
         agent: None,
         agent_config: None,
-        input: InteractionInput::Text("Hello".to_string()),
+        input: Some(InteractionInput::Text("Hello".to_string())),
         previous_interaction_id: None,
         tools: None,
         response_modalities: None,
@@ -1033,7 +1036,7 @@ fn speech_config_empty_speakers_object_yields_empty_list_not_a_null_config() {
 fn text_request(model: &str) -> InteractionRequest {
     InteractionRequest {
         model: Some(model.to_string()),
-        input: InteractionInput::Text("Hello".to_string()),
+        input: Some(InteractionInput::Text("Hello".to_string())),
         ..Default::default()
     }
 }

@@ -75,6 +75,11 @@ pub enum StreamChunk {
         /// The delta payload (text fragment, arguments_delta, thought
         /// signature, tool call/result, ...)
         delta: StepDelta,
+        /// Cumulative interaction usage so far, from the event's
+        /// `metadata.total_usage` (google-genai 2.34.0 and the spec). Not
+        /// observed live: text, TTS and agent streams sent no `metadata` on
+        /// a `step.delta` (2026-11-05), so expect `None`.
+        total_usage: Option<UsageMetadata>,
     },
 
     /// The step at the given index finished.
@@ -459,6 +464,7 @@ mod tests {
                 text: "Hello, world!".to_string(),
                 extra: Default::default(),
             },
+            total_usage: None,
         };
 
         let json = serde_json::to_string(&chunk).expect("Serialization should succeed");
@@ -473,7 +479,7 @@ mod tests {
             serde_json::from_str(&json).expect("Deserialization should succeed");
 
         match deserialized {
-            StreamChunk::StepDelta { index, delta } => {
+            StreamChunk::StepDelta { index, delta, .. } => {
                 assert_eq!(index, 0);
                 assert_eq!(delta.as_text(), Some("Hello, world!"));
             }
@@ -577,6 +583,7 @@ mod tests {
                     text: String::new(),
                     extra: Default::default(),
                 },
+                total_usage: None,
             },
             StreamChunk::StepStop {
                 index: 0,
@@ -805,6 +812,7 @@ mod tests {
                 text: "test".to_string(),
                 extra: Default::default(),
             },
+            total_usage: None,
         };
         assert_eq!(delta_chunk.interaction_id(), None);
         assert_eq!(delta_chunk.delta_text(), Some("test"));
@@ -836,6 +844,7 @@ mod tests {
                     text: "Hello".to_string(),
                     extra: Default::default(),
                 },
+                total_usage: None,
             },
             Some("evt_abc123".to_string()),
         );
@@ -874,6 +883,30 @@ mod tests {
             Some("Hello")
         );
         assert_eq!(event.raw["event_type"], "step.delta");
+    }
+
+    #[test]
+    fn test_step_delta_total_usage_round_trips() {
+        let chunk = StreamChunk::StepDelta {
+            index: 2,
+            delta: StepDelta::Text {
+                text: "hi".to_string(),
+                extra: Default::default(),
+            },
+            total_usage: Some(UsageMetadata {
+                total_tokens: Some(40),
+                ..Default::default()
+            }),
+        };
+        let value = serde_json::to_value(&chunk).unwrap();
+        assert_eq!(value["data"]["total_usage"]["total_tokens"], 40);
+        let back: StreamChunk = serde_json::from_value(value).unwrap();
+        match back {
+            StreamChunk::StepDelta { total_usage, .. } => {
+                assert_eq!(total_usage.and_then(|u| u.total_tokens), Some(40));
+            }
+            other => panic!("Expected StepDelta, got {other:?}"),
+        }
     }
 
     #[test]

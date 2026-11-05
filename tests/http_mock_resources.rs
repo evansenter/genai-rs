@@ -380,7 +380,9 @@ fn trigger_params() -> TriggerCreateParams {
 fn nightly_interaction() -> InteractionRequest {
     InteractionRequest {
         agent: Some("agents/nightly".to_string()),
-        input: InteractionInput::Text("Summarize overnight alerts".to_string()),
+        input: Some(InteractionInput::Text(
+            "Summarize overnight alerts".to_string(),
+        )),
         ..Default::default()
     }
 }
@@ -812,7 +814,7 @@ async fn trigger_response_parses_string_counts_timestamp_aliases_and_sparse_inte
     assert!(trigger.next_run_time.is_some());
     let interaction = trigger.interaction.as_ref().unwrap();
     assert_eq!(interaction.agent.as_deref(), Some("agents/nightly"));
-    assert!(matches!(&interaction.input, InteractionInput::Text(t) if t.is_empty()));
+    assert!(interaction.input.is_none(), "{:?}", interaction.input);
     assert_eq!(trigger.extra["owner"], "users/42");
     // Counts go back out as plain numbers, the trigger API's own wire form
     // (live 2026-11-01), whichever form came in.

@@ -24,7 +24,8 @@ use crate::file_search_stores::{
 use crate::http::file_search_stores::{ImportFileBody, UploadDocumentBody};
 use crate::http::webhooks::WebhookInput;
 use crate::request::{
-    AgentConfig, AntigravityConfig, DeepResearchConfig, DynamicConfig, GenerationConfig,
+    AgentConfig, AntigravityConfig, CodeMenderConfig, CodeMenderFile, CodeMenderFindRequest,
+    CodeMenderFixRequest, CodeMenderMode, DeepResearchConfig, DynamicConfig, GenerationConfig,
     ImageAspectRatio, ImageConfig, ImageSize, InteractionInput, InteractionRequest, ServiceTier,
     SpeechConfig, ThinkingLevel, ThinkingSummaries, TranscriptionConfig, TranscriptionMode,
     VideoConfig, VideoTask, Visualization,
@@ -61,6 +62,8 @@ pub(super) fn generation_configs() -> Vec<GenerationConfig> {
             language: Some("en-US".into()),
             speaker: Some("Joe".into()),
         }]),
+        // The caller's keys, not the crate's (see `cases`).
+        extra: serde_json::Map::new(),
         image_config: Some(ImageConfig {
             aspect_ratio: Some(ImageAspectRatio::Square),
             image_size: Some(ImageSize::Hd1k),
@@ -110,6 +113,24 @@ pub(super) fn agent_configs() -> Vec<AgentConfig> {
             .with_max_total_tokens(1000)
             .into(),
         DynamicConfig::new().into(),
+        CodeMenderConfig::new()
+            .with_model("m")
+            .with_session_id("s")
+            .with_max_rounds(3)
+            .with_find_request(
+                CodeMenderFindRequest::new()
+                    .with_description("d")
+                    .with_finding_id("f")
+                    .with_mode(CodeMenderMode::Verify)
+                    .add_source_file(CodeMenderFile::new("src/main.rs", "fn main() {}")),
+            )
+            .with_fix_request(
+                CodeMenderFixRequest::new()
+                    .with_description("d")
+                    .with_finding_id("f")
+                    .add_source_file(CodeMenderFile::new("src/main.rs", "fn main() {}")),
+            )
+            .into(),
     ]
 }
 
@@ -204,6 +225,11 @@ pub(super) fn environment_specs() -> Vec<EnvironmentSpec> {
     vec![
         EnvironmentSpec::Id("environments/e".into()),
         EnvironmentSpec::Remote(remote_environment()),
+        // The allowlist's `Disabled` arm (#489).
+        EnvironmentSpec::Remote(RemoteEnvironment {
+            network: Some(NetworkConfig::AllowlistDisabled),
+            ..remote_environment()
+        }),
     ]
 }
 
@@ -240,7 +266,7 @@ pub(super) fn model_requests() -> Vec<InteractionRequest> {
                 model: Some("test-model".into()),
                 agent: None,
                 agent_config: None,
-                input: input.clone(),
+                input: Some(input.clone()),
                 previous_interaction_id: Some("prev".into()),
                 tools: Some(tools()),
                 response_modalities: Some(vec!["text".into(), "image".into()]),
@@ -272,7 +298,7 @@ pub(super) fn agent_requests() -> Vec<InteractionRequest> {
             model: None,
             agent: Some("test-agent".into()),
             agent_config: Some(config),
-            input: inputs().remove(i % 3),
+            input: Some(inputs().remove(i % 3)),
             previous_interaction_id: Some("prev".into()),
             tools: Some(tools()),
             response_modalities: Some(vec!["text".into()]),
@@ -392,6 +418,12 @@ pub(super) fn environment_requests() -> Vec<Value> {
             from_environment: None,
             sources: None,
             network: Some(NetworkConfig::Disabled),
+            extra: serde_json::Map::new(),
+        }),
+        to_value(&CreateEnvironmentRequest {
+            from_environment: None,
+            sources: None,
+            network: Some(NetworkConfig::AllowlistDisabled),
             extra: serde_json::Map::new(),
         }),
     ]

@@ -44,48 +44,10 @@ const ALLOWED: &[Allowed] = &[
     ),
     (
         "interactions.FunctionResultStep.signature",
-        "Kept so a server-sent function_result (server-run MCP calls arrive as \
-         function_call/function_result pairs since 2026-10-01) replays unchanged; \
-         not in the bindings, and not seen set live. Follow-up for WP2.",
+        "Served on the function_result of a server-run MCP call (live \
+         2026-11-05, a deepwiki call on gemini-3.8-flash), so a replayed \
+         history step sends it back; not in the bindings.",
     ),
-    (
-        "interactions.FileSearchResultStep.result",
-        "Modeled from an older spec; the bindings dropped it and the API never \
-         fills it (live 2026-08-16, src/content/results.rs), so it is sent only \
-         when a caller fills it. Removal is a follow-up for WP2.",
-    ),
-    (
-        "interactions.GoogleMapsResultPlaces.formatted_address",
-        NOT_SERVED_PLACE,
-    ),
-    ("interactions.GoogleMapsResultPlaces.lat", NOT_SERVED_PLACE),
-    ("interactions.GoogleMapsResultPlaces.lng", NOT_SERVED_PLACE),
-    (
-        "interactions.GoogleMapsResultPlaces.phone_number",
-        NOT_SERVED_PLACE,
-    ),
-    (
-        "interactions.GoogleMapsResultPlaces.rating",
-        NOT_SERVED_PLACE,
-    ),
-    (
-        "interactions.GoogleMapsResultPlaces.types",
-        NOT_SERVED_PLACE,
-    ),
-    (
-        "interactions.GoogleMapsResultPlaces.user_ratings_total",
-        NOT_SERVED_PLACE,
-    ),
-    (
-        "interactions.GoogleMapsResultPlaces.website",
-        NOT_SERVED_PLACE,
-    ),
-    (
-        "interactions.GoogleSearchResult.rendered_content",
-        NOT_SERVED_SEARCH,
-    ),
-    ("interactions.GoogleSearchResult.title", NOT_SERVED_SEARCH),
-    ("interactions.GoogleSearchResult.url", NOT_SERVED_SEARCH),
     (
         "legacy.ImportFileConfig.fileName",
         "google-genai's `import_file` takes `file_name` as its own argument and \
@@ -93,16 +55,6 @@ const ALLOWED: &[Allowed] = &[
          there (live 2026-11-05).",
     ),
 ];
-
-/// `Place` fields beyond the bindings', echoed back only if served.
-const NOT_SERVED_PLACE: &str = "On `Place` for a richer places shape; not in the \
-     bindings or the spec, and not served (live 2026-11-04: places carry place_id, \
-     name and url), so sent only when a caller fills it. Removal is a follow-up for WP2.";
-
-/// `GoogleSearchResultItem` fields beyond the bindings'.
-const NOT_SERVED_SEARCH: &str = "On `GoogleSearchResultItem`; not in the bindings, \
-     and items carry only search_suggestions (live 2026-07, src/content/results.rs), \
-     so sent only when a caller fills it. Removal is a follow-up for WP2.";
 
 /// Request fields the crate never sends.
 const NOT_SENT: &[Allowed] = &[
@@ -135,15 +87,7 @@ const NOT_SENT: &[Allowed] = &[
         "Output only: a sample sent on create is ignored, and the response carries \
          one the API generated (live 2026-11-05). Read on `Voice::sample_audio`.",
     ),
-    // Not modeled yet: WP2 (#504).
-    ("interactions.CodeMenderAgentConfig.*", GAP_CODEMENDER),
-    ("interactions.FindRequest.*", GAP_CODEMENDER),
-    ("interactions.FixRequest.*", GAP_CODEMENDER),
-    ("interactions.FileContent.*", GAP_CODEMENDER),
-    ("interactions.SessionConfig.*", GAP_CODEMENDER),
 ];
-
-const GAP_CODEMENDER: &str = "The CodeMender agent config is not modeled (#501); WP2.";
 
 // =============================================================================
 // The table

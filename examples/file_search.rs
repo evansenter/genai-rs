@@ -173,21 +173,14 @@ async fn run_example(
         .collect();
     println!("Steps: {step_types:?}");
 
-    // Note: as of 2026-08-16 the API returns `file_search_result` steps
-    // carrying only `call_id` and `signature` — the retrieved chunks
-    // themselves are not included. So `has_file_search_results()` is true
-    // while `file_search_results()` is empty, and the grounded content is
-    // visible only through the model's answer above.
-    if response.has_file_search_results() {
-        let results = response.file_search_results();
-        println!("Retrieved chunks exposed by the API: {}", results.len());
-        for (i, item) in results.iter().enumerate() {
-            println!("{}. {} (store: {})", i + 1, item.title, item.store);
-            let preview: String = item.text.chars().take(100).collect();
-            println!("   Preview: {preview}...");
-        }
-    } else {
-        println!("No file search result steps in response");
+    // The `file_search_result` step carries only `call_id` and `signature`
+    // (live 2026-11-05): the retrieved chunks are folded into the answer,
+    // which cites what it used with `file_citation` annotations.
+    if !response.has_file_search_results() {
+        return Err("no file_search_result step: the search did not run".into());
+    }
+    for annotation in response.all_annotations() {
+        println!("Cited: {}", annotation.source().unwrap_or("<no source>"));
     }
 
     // 6. Narrow the retrieval with top_k.

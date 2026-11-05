@@ -31,6 +31,11 @@ Creating an interaction is not a handle method: `client.interaction()` (the
 builder), `client.execute(request)` and `client.execute_stream(request)`
 stay on `Client`.
 
+A client built with `with_api_version("v1")` reaches interactions, the
+Files API and file search stores; agents, environments, webhooks,
+credentials, voices and triggers answer 404 there (live 2026-11-05,
+[Client configuration](CONFIGURATION.md#client-configuration)).
+
 ```rust,no_run
 use futures_util::TryStreamExt;
 use genai_rs::Agent;

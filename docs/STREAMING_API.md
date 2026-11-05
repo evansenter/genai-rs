@@ -51,7 +51,7 @@ Under API revision 2026-05-20 the server emits this lifecycle:
 | `interaction.created` | `Created { interaction }` | First event; carries the interaction id |
 | `interaction.status_update` | `StatusUpdate { interaction_id, status, usage, .. }` | Background/agent progress. `interaction_id` is `None` on a `store: false` stream; background streams carry `usage` mid-run |
 | `step.start` | `StepStart { index, step }` | A step begins; it may be partial (a `FunctionCall` with empty arguments) |
-| `step.delta` | `StepDelta { index, delta }` | Incremental payload for that step |
+| `step.delta` | `StepDelta { index, delta, total_usage }` | Incremental payload for that step. `total_usage` is the event's cumulative `metadata.total_usage`; in the bindings and the spec, but no text, TTS or agent stream sent it (live 2026-11-05) |
 | `step.stop` | `StepStop { index, usage, step_usage }` | `usage` is cumulative; `step_usage` is this step's alone |
 | `interaction.completed` | `Completed(response)` | Terminal: the full response |
 | `error` | `Error { message, code }` | Terminal |
@@ -118,7 +118,8 @@ audio deltas are under 8 KB. The limit leaves four times the largest.
 steps, it fills them in, including parsing streamed `arguments_delta`
 fragments into `Step::FunctionCall.arguments`. If the payload omits usage, it
 falls back to the event's `metadata.total_usage`, then to the last cumulative
-`step.stop` usage. So `response.as_text()`, `response.function_calls()` and
+usage seen earlier in the stream, from a `step.stop` or a `step.delta`'s
+`metadata.total_usage`. So `response.as_text()`, `response.function_calls()` and
 `response.usage` work on `Completed` exactly as they do after `create()`.
 Accumulate deltas yourself only for live display.
 
@@ -128,8 +129,14 @@ Each streamed image arrives whole in one `image` delta that names its
 `gemini-3.1-flash-image`, three streams, one with four images). An image
 delta that names a `mime_type` or `uri` starts a new `Content::Image` block,
 so two images in one step would also stay two blocks; that shape has not
-been observed. Audio, video and document data deltas concatenate into the
-last block of their kind. Fields a delta carries that the crate does not
+been observed. Streamed TTS is the opposite case: one recording arrives as
+many raw PCM `audio` deltas in one step, each naming the same `mime_type`,
+`sample_rate` and `channels` (verified 2026-11-05, `DEFAULT_TTS_MODEL`:
+`audio/l16`, 24000 Hz, mono, about 240 deltas for a sentence; the
+non-streamed answer is `audio/wav`). An audio delta continues the last
+audio block unless it names a `uri` or a different format, so the
+`Completed` response holds the one recording. Video and document deltas,
+which no model streams yet, follow the image rule. Fields a delta carries that the crate does not
 model land in the `extra` map of the block or step it builds, so the
 assembled steps replay as history exactly as a non-streamed response's
 would.

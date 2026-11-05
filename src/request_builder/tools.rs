@@ -202,8 +202,9 @@ impl<'a> InteractionBuilder<'a> {
     /// for query in response.google_search_calls() {
     ///     println!("Search query: {}", query);
     /// }
-    /// for result in response.google_search_results() {
-    ///     println!("Source: {} - {}", result.title, result.url);
+    /// // Sources arrive as citations on the answer.
+    /// for annotation in response.all_annotations() {
+    ///     println!("Source: {}", annotation.source().unwrap_or("<none>"));
     /// }
     /// # Ok(())
     /// # }

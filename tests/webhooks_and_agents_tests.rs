@@ -638,17 +638,8 @@ async fn test_safety_settings_accepted_and_stored() {
     let _ = client.interactions().delete(&id).await;
     assert_eq!(response.status, genai_rs::InteractionStatus::Completed);
     let stored = stored.expect("get_interaction");
-    // Parsing the echo, rather than comparing raw JSON, also exercises the
-    // `type` key on the deserialize side.
-    let echoed: Vec<SafetySetting> = serde_json::from_value(
-        stored
-            .extra
-            .get("safety_settings")
-            .cloned()
-            .expect("safety_settings were not stored"),
-    )
-    .expect("stored safety_settings parse as SafetySetting");
-    assert_eq!(echoed, vec![setting]);
+    // The modeled field, read through the `type` key on the deserialize side.
+    assert_eq!(stored.safety_settings, Some(vec![setting]));
 }
 
 /// `civic_integrity`, the `image_*` categories and `block_none` are
@@ -1148,7 +1139,7 @@ async fn test_trigger_lifecycle() {
 
     let interaction = || InteractionRequest {
         agent: Some(agent_id.clone()),
-        input: InteractionInput::Text("Say OK.".to_string()),
+        input: Some(InteractionInput::Text("Say OK.".to_string())),
         ..Default::default()
     };
     // Once a year, so the schedule never fires during a run.
@@ -1423,5 +1414,36 @@ async fn test_trigger_list_streams_end_on_the_last_page() {
     assert!(
         executions.is_empty(),
         "a missing trigger has no executions: {executions:?}"
+    );
+}
+
+/// `{"allowlist": "disabled"}` is accepted on create and read back from its
+/// echo `{"allowlist": [{"mode": "disabled"}]}` as
+/// `NetworkConfig::AllowlistDisabled` (live 2026-11-05, #489; it blocks
+/// egress like `Disabled`).
+#[tokio::test]
+#[ignore = "Requires API key"]
+async fn test_allowlist_disabled_reads_back_as_disabled() {
+    let Some(client) = get_client() else {
+        println!("Skipping: GEMINI_API_KEY not set");
+        return;
+    };
+
+    use genai_rs::{CreateEnvironmentRequest, NetworkConfig};
+
+    let request = CreateEnvironmentRequest::new().with_network(NetworkConfig::AllowlistDisabled);
+    let created = client
+        .environments()
+        .create(&request)
+        .await
+        .expect("an allowlist of \"disabled\" was rejected");
+    let id = created.id.clone().expect("environment id");
+    let fetched = client.environments().get(&id).await;
+    let _ = client.environments().delete(&id).await;
+    let fetched = fetched.expect("environments.get");
+    assert_eq!(
+        fetched.network,
+        Some(NetworkConfig::AllowlistDisabled),
+        "{fetched:?}"
     );
 }

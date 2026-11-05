@@ -77,12 +77,16 @@ pub struct ModalityTokens {
     /// The modality type (e.g., "text", "image", "audio").
     ///
     /// Uses string for forward compatibility with new modalities per Evergreen principles.
+    /// Empty when the entry names none (both fields are optional in the
+    /// google-genai 2.34.0 bindings), and then not written.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub modality: String,
     /// Token count for this modality.
     ///
     /// Uses `u32` since token counts are never negative. If the API returns a negative
-    /// value (which would be a bug), it's clamped to 0 with a warning log.
-    #[serde(deserialize_with = "deserialize_token_count")]
+    /// value (which would be a bug), it's clamped to 0 with a warning log. An
+    /// entry without a count reads as 0, the value protobuf JSON leaves out.
+    #[serde(default, deserialize_with = "deserialize_token_count")]
     pub tokens: u32,
 }
 

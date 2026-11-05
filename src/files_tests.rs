@@ -600,7 +600,8 @@ mod proptest_tests {
             prop_assert_eq!(error, parsed);
         }
 
-        /// Verify VideoMetadata roundtrips through JSON serialization.
+        /// Verify VideoMetadata roundtrips through JSON serialization, unknown
+        /// keys included.
         #[test]
         fn video_metadata_roundtrip(metadata in arb_video_metadata()) {
             let json = serde_json::to_string(&metadata).expect("serialize");
