@@ -690,3 +690,24 @@ instead of failing, so a misspelled `inputs` in a trigger config file
 lands in `extra` and the trigger's empty-prompt warning, not a parse
 error, catches it. Code that matches `NetworkConfig::Disabled` misses the
 allowlist form; `is_disabled()` covers both.
+
+---
+
+## D-022 — The response oracle's targets move to `response_targets.rs` (2026-11-05)
+
+**Context.** The sparse-body pass and the new `InteractionResponse` fields
+pushed `src/coverage_oracle/response.rs` past the roughly 800-line limit
+(D-014).
+
+**Decision.** Moved, per D-011, with no behavior change:
+
+| From | To |
+|------|----|
+| `Probe`, `probe`, `probe_stream_event`, `Target`, `targets` and `target_classes` in `src/coverage_oracle/response.rs` | `src/coverage_oracle/response_targets.rs` |
+
+`response.rs` keeps the lists, the value overrides and the analysis. New in
+the same work: `src/coverage_oracle/response_minimal.rs`, the sparse-body
+pass, which shares both.
+
+**Consequences.** Links to `src/coverage_oracle/response.rs:<line>` for the
+target table, written before 2026-11-05, point at the old layout.

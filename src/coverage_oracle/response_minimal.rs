@@ -16,7 +16,8 @@ use std::collections::BTreeSet;
 use serde_json::Value;
 
 use super::api_surface::{Finding, Surface, SynthOptions, Ty};
-use super::response::{Target, analyze, targets, values};
+use super::response::{analyze, values};
+use super::response_targets::{Target, targets};
 use super::{Allowed, assert_clean};
 
 /// Optional fields the crate cannot read a class without.
@@ -179,7 +180,7 @@ fn a_required_optional_field_is_reported() {
         name: "Holder",
         binding: Some("t.Holder"),
         spec: None,
-        probe: super::response::probe::<Holder>,
+        probe: super::response_targets::probe::<Holder>,
     };
     let reported: Vec<(String, String)> = findings(&surface, vec![holder], |t| t.binding)
         .into_iter()

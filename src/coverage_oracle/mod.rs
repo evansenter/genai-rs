@@ -25,6 +25,8 @@ mod request;
 mod response;
 #[cfg(not(feature = "strict-unknown"))]
 mod response_minimal;
+#[cfg(not(feature = "strict-unknown"))]
+mod response_targets;
 
 use api_surface::{Finding, Surface};
 use serde_json::json;
@@ -181,7 +183,7 @@ fn every_binding_class_is_mapped() {
     let mut reached = BTreeSet::new();
     for class in request::case_classes()
         .into_iter()
-        .chain(response::target_classes())
+        .chain(response_targets::target_classes())
     {
         reached.extend(surface.reachable_classes(&surface.ty(class)));
     }
