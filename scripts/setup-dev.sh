@@ -14,8 +14,13 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-EXAMPLE=".cargo/config.toml.example"
-CONFIG=".cargo/config.toml"
+# `SETUP_DEV_CARGO_DIR` points the script at another directory holding the
+# example, so its harness can run against a temp tree instead of rewriting
+# the checkout's gitignored config (#455). Relative paths resolve from the
+# repo root, where the `cd` above leaves us.
+CARGO_DIR="${SETUP_DEV_CARGO_DIR:-.cargo}"
+EXAMPLE="$CARGO_DIR/config.toml.example"
+CONFIG="$CARGO_DIR/config.toml"
 
 if [ ! -f "$EXAMPLE" ]; then
   echo "error: $EXAMPLE not found — run this from a clone of the repo." >&2
