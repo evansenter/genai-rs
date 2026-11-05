@@ -63,11 +63,12 @@ and `status()` for the common checks.
 
 ### How a stream ends
 
-- **At its terminal event.** The stream yields `Completed` or `Error` and
-  ends there: nothing after it is read, and the connection is dropped. (The
-  API follows `interaction.completed` with only `event: done` /
-  `data: [DONE]`, verified live 2026-11-04.) So no late error, such as a
-  reset while the server closes, can follow a finished interaction.
+- **At its terminal event.** The stream yields `Completed` or `Error` as
+  soon as it arrives. The next poll reads the rest of the body to its end,
+  discarding every frame and swallowing every error, and the stream ends.
+  So no late error, such as a reset while the server closes, can follow a
+  finished interaction. See [Read to the end](#read-to-the-end) for why the
+  rest is read rather than dropped.
 - **Cut off.** A body that ends before a terminal event yields
   `Err(GenaiError::StreamInterrupted)` last, whether the server closed the
   connection (between events or partway through one) or the transport
@@ -76,6 +77,25 @@ and `status()` for the common checks.
 - **On an unknown event.** A body that ends right after an event this crate
   doesn't recognize ends cleanly, with a `warn!`: it may be a new terminal
   event (Evergreen).
+
+### Read to the end
+
+The stored interaction is readable once the stream has ended, not when
+`Completed` arrives. After `interaction.completed` the API sends
+`event: done` / `data: [DONE]` and closes the connection about a second
+later, and finishes storing the interaction during that tail: a `GET` sent
+right after closing the connection at `interaction.completed` answered
+`500 Internal error encountered`, and the same `GET` ten seconds later
+`200`; after reading to the end, `200` at once (verified live 2026-11-05).
+Nothing is lost, it is late.
+
+So to `get` the interaction or chain on it with `previous_interaction_id`
+right away, read the stream until `next()` returns `None`, as the loops on
+this page do, rather than `break` at `Completed`.
+`create_stream_with_auto_functions()` reads each round to its end before
+sending the next, and before it ends. The read is bounded: a body still
+open 5 s after the terminal event is closed with a `warn!`, and the stream
+ends cleanly. `with_timeout()`'s per-chunk limit doesn't apply to it.
 
 A successful response that is not `text/event-stream` (a captive portal's
 page) is `GenaiError::MalformedResponse`, not a cut-off: no stream started.

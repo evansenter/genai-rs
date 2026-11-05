@@ -49,8 +49,8 @@ canned `Reply`s: JSON, text, SSE chunks, extra headers, or a delay.
   wire: request shapes, error mapping, SSE framing, and the auto-function
   loop.
 - **`reliability_tests.rs`** covers the default timeouts, how a cut-off
-  stream is classified, the stop at a stream's terminal event, and
-  `Retry-After` in a poll.
+  stream is classified, the read of a stream's tail after its terminal
+  event, and `Retry-After` in a poll.
 - **`http_mock_resources.rs`** pins every resource endpoint on method, path
   (percent-encoding included), query and JSON body. It parses a realistic
   response, preserving `Unknown` and `extra`, and covers the wait helpers'

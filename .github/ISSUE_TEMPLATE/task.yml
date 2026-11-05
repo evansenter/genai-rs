@@ -1,0 +1,29 @@
+name: Task
+description: A unit of work an agent or person can pull. "Done when" makes it ready.
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What
+      description: The change and why it matters.
+    validations:
+      required: true
+  - type: textarea
+    id: done-when
+    attributes:
+      label: Done when
+      description: >-
+        The exact command(s) whose success proves this is done, plus the repo's
+        baseline gate (`make check`). Mark tests or scripts that don't exist yet
+        as NEW. If you can't write one yet, say what has to be decided first.
+      render: sh
+      placeholder: |
+        cargo nextest run -E 'test(name)'   # NEW test in path: what it asserts
+        make check
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Relevant code locations, constraints, links.

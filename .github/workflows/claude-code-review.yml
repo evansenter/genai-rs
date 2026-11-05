@@ -5,8 +5,10 @@ on:
     types: [opened, synchronize]
 
 env:
-  # Centralized prompt - edit in dotfiles repo, all repos pick up changes
-  PROMPT_URL: https://raw.githubusercontent.com/evansenter/dotfiles/main/home/.claude/contrib/prompts/claude-review.md
+  # Centralized prompt, pinned to a dotfiles commit so a prompt change can't
+  # alter this repo's reviews until it is bumped here deliberately. To bump:
+  # git -C <dotfiles> log -1 --format=%H origin/main -- home/.claude/contrib/prompts/claude-review.md
+  PROMPT_URL: https://raw.githubusercontent.com/evansenter/dotfiles/1cd05593451dbeafc9e691240d39bd69c5cbcba3/home/.claude/contrib/prompts/claude-review.md
 
 jobs:
   claude-review:
