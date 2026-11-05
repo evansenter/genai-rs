@@ -110,6 +110,8 @@ fn function_response_text(fake: &FakeGemini, n: usize) -> String {
 mod hooks;
 #[path = "antigravity_scripted/options.rs"]
 mod options;
+#[path = "antigravity_scripted/parity.rs"]
+mod parity;
 #[path = "antigravity_scripted/policies.rs"]
 mod policies;
 #[path = "antigravity_scripted/triggers.rs"]

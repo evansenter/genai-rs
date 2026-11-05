@@ -104,6 +104,24 @@ async fn test_scripted_model_options_reach_the_model_request() {
         Some("header-value-7")
     );
     agent.shutdown().await.expect("shutdown");
+
+    // The harness's fifth level, which the Interactions API's ThinkingLevel
+    // does not name, passes through as an unknown value.
+    let fake = FakeGemini::start(vec![ModelTurn::text("ok")]).await;
+    let mut agent = scripted_agent(&fake)
+        .with_thinking_level(genai_rs::ThinkingLevel::Unknown {
+            level_type: "extra_high".to_string(),
+            data: json!("extra_high"),
+        })
+        .spawn()
+        .await
+        .expect("spawn");
+    agent.chat("hi").await.expect("turn");
+    assert_eq!(
+        fake.request_json(0).unwrap()["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+        "extra_high"
+    );
+    agent.shutdown().await.expect("shutdown");
 }
 
 #[tokio::test]
