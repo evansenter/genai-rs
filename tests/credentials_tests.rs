@@ -7,7 +7,7 @@
 
 mod common;
 
-use common::{get_client, poll_until_done};
+use common::{get_client, poll_until_done, test_resource_name};
 use futures_util::{FutureExt, StreamExt, TryStreamExt};
 use genai_rs::{
     AllowlistEntry, Client, CreateCredentialRequest, CredentialConfig, CredentialStatus,
@@ -17,12 +17,9 @@ use genai_rs::{
 use std::panic::AssertUnwindSafe;
 use std::time::Duration;
 
+/// A unique value, and an id the leaked-resource janitor recognizes.
 fn unique_id(label: &str) -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system clock before epoch")
-        .subsec_nanos();
-    format!("genai-rs-test-{label}-{nanos}")
+    test_resource_name(label)
 }
 
 /// Creates the credential, runs `body` with its ID, and deletes it
@@ -324,12 +321,15 @@ async fn test_credentials_reach_sandbox_and_egress() {
     let secret = unique_id("secret");
     let token = unique_id("token");
 
-    let bearer = CreateCredentialRequest::bearer_token(&token);
+    // Named, not left to the API's UUIDs: the janitor deletes only
+    // credentials whose id carries the test prefix.
+    let bearer = CreateCredentialRequest::bearer_token(&token).with_id(unique_id("egress-bearer"));
     let secret_request = CreateCredentialRequest::new(CredentialConfig::EnvironmentVariable {
         value: secret.clone(),
         injection_location: vec![InjectionLocation::Header, InjectionLocation::Query],
         trusted_domains: vec!["httpbin.org".into()],
-    });
+    })
+    .with_id(unique_id("egress-secret"));
 
     with_credential(&client, bearer, |bearer_id| {
         let client = client.clone();

@@ -160,6 +160,42 @@ pub fn get_client() -> Option<Client> {
 }
 
 // =============================================================================
+// Names for the resources live tests create
+// =============================================================================
+
+/// The marker on every resource a live test creates: an id, display name or
+/// fixture content starting with it. The daily janitor
+/// (`.github/scripts/cleanup_test_resources.py`) deletes only resources
+/// that carry it, so a test that creates a resource without it leaks that
+/// resource for good when its own cleanup does not run (#492).
+#[allow(dead_code)]
+pub const TEST_RESOURCE_PREFIX: &str = "genai-rs-test";
+
+/// `genai-rs-test-{label}-{unix seconds}-{nanos}`: unique per call, marked
+/// for the janitor, and carrying its creation time. Agents come back with
+/// no timestamp at all (verified 2026-11-05), so the janitor reads their age
+/// from this name rather than deleting one a running test still uses. Use
+/// it for every id or display name a live test chooses.
+#[allow(dead_code)]
+pub fn test_resource_name(label: &str) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock before epoch");
+    format!(
+        "{TEST_RESOURCE_PREFIX}-{label}-{}-{}",
+        now.as_secs(),
+        now.subsec_nanos()
+    )
+}
+
+/// Content for an inline environment source, marked for the janitor: an
+/// environment whose inline sources all start with the prefix is a test's.
+#[allow(dead_code)]
+pub fn test_source_content(text: &str) -> String {
+    format!("{TEST_RESOURCE_PREFIX} {text}")
+}
+
+// =============================================================================
 // Timeout Utilities
 // =============================================================================
 
@@ -235,6 +271,79 @@ pub async fn poll_until_done(
         sleep(delay).await;
         delay = (delay * 2).min(MAX_DELAY);
     }
+}
+
+// =============================================================================
+// Stored read-backs
+// =============================================================================
+
+/// Reads a stored interaction back and returns the value at `pointer`, a
+/// JSON pointer into the interaction as the API stored it
+/// (`/generation_config/transcription_config`), or `None` when nothing is
+/// there. Panics when the read fails.
+///
+/// A 200 on create shows a field was accepted, not that it was applied:
+/// create responses drop fields the stored record keeps (#476), so a live
+/// test of a request field compares this with what it sent (#492). A
+/// pointer under `/input` reads with `include_input=true`, which returns
+/// the input as a list of steps (a single `user_input` step for one turn,
+/// live 2026-11-04). The record is the typed response serialized again,
+/// which keeps every field the crate does not model as it arrived (D-001).
+#[allow(dead_code)]
+pub async fn stored_echo(
+    client: &Client,
+    interaction_id: &str,
+    pointer: &str,
+) -> Option<serde_json::Value> {
+    let interactions = client.interactions();
+    let stored = if pointer.starts_with("/input") {
+        interactions.get_with_input(interaction_id).await
+    } else {
+        interactions.get(interaction_id).await
+    }
+    .unwrap_or_else(|e| panic!("reading back {interaction_id} failed: {e:?}"));
+    let record = serde_json::to_value(&stored).expect("an interaction serializes");
+    record.pointer(pointer).cloned()
+}
+
+/// Asserts that a stored read-back holds everything that was sent: every
+/// key of `sent`, at every depth, with an equal value. The stored record may
+/// hold more (defaults the server fills in), which is not a mismatch. An
+/// integer comes back as its decimal string where the API stores an int64
+/// (protobuf JSON: `max_total_tokens: "200000"`, 2026-11-05), which counts
+/// as equal.
+#[allow(dead_code)]
+#[track_caller]
+pub fn assert_stored(what: &str, sent: &serde_json::Value, stored: Option<&serde_json::Value>) {
+    fn missing(
+        sent: &serde_json::Value,
+        stored: &serde_json::Value,
+        at: &str,
+        out: &mut Vec<String>,
+    ) {
+        match (sent, stored) {
+            (serde_json::Value::Object(sent), serde_json::Value::Object(stored)) => {
+                for (key, value) in sent {
+                    match stored.get(key) {
+                        Some(found) => missing(value, found, &format!("{at}/{key}"), out),
+                        None => out.push(format!("{at}/{key}: not stored")),
+                    }
+                }
+            }
+            (serde_json::Value::Number(n), serde_json::Value::String(s))
+                if (n.is_i64() || n.is_u64()) && *s == n.to_string() => {}
+            _ if sent == stored => {}
+            _ => out.push(format!("{at}: sent {sent}, stored {stored}")),
+        }
+    }
+    let stored = stored.unwrap_or_else(|| panic!("{what}: nothing stored; sent {sent}"));
+    let mut problems = Vec::new();
+    missing(sent, stored, "", &mut problems);
+    assert!(
+        problems.is_empty(),
+        "{what}: the stored record differs from what was sent:\n  {}\nstored: {stored}",
+        problems.join("\n  ")
+    );
 }
 
 // =============================================================================

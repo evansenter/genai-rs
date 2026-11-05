@@ -93,7 +93,10 @@ fn every_scheduled_workflow_escalates_failures() {
             continue;
         }
         scheduled += 1;
-        for script in ["report_scheduled_failure.sh", "resolve_scheduled_failure.sh"] {
+        for script in [
+            "report_scheduled_failure.sh",
+            "resolve_scheduled_failure.sh",
+        ] {
             let calls = command_lines(&text).any(|line| line.contains(script));
             if !calls {
                 missing.push(format!("{name}: never calls {script}"));
@@ -149,11 +152,12 @@ fn nextest_runs_do_not_fail_fast() {
         for line in command_lines(&text).filter(|line| line.contains("cargo nextest run")) {
             runs += 1;
             let words: Vec<&str> = line.split_whitespace().collect();
-            let other_profile = words.windows(2).any(|w| {
-                (w[0] == "--profile" || w[0] == "-P") && w[1] != "default"
-            }) || words
-                .iter()
-                .any(|w| w.starts_with("--profile=") && *w != "--profile=default");
+            let other_profile = words
+                .windows(2)
+                .any(|w| (w[0] == "--profile" || w[0] == "-P") && w[1] != "default")
+                || words
+                    .iter()
+                    .any(|w| w.starts_with("--profile=") && *w != "--profile=default");
             if words.contains(&"--fail-fast") || other_profile {
                 problems.push(format!("{name}: {line}"));
             }

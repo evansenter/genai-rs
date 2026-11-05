@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::get_client;
+use common::{get_client, test_source_content};
 use futures_util::{FutureExt, StreamExt, TryStreamExt};
 use genai_rs::{
     Client, CreateEnvironmentRequest, EnvironmentFileType, EnvironmentFileUpload,
@@ -49,11 +49,14 @@ async fn test_upload_list_and_fork() {
     with_environments(&client, |ids| {
         let client = client.clone();
         async move {
+            // Marked, so the leaked-resource janitor can delete the
+            // environment (and its fork) if the cleanup above never runs.
+            let motd = test_source_content("hello");
             let env = client
                 .environments()
                 .create(
                     &CreateEnvironmentRequest::new()
-                        .add_source(EnvironmentSource::inline("/etc/motd", "hello")),
+                        .add_source(EnvironmentSource::inline("/etc/motd", &motd)),
                 )
                 .await
                 .expect("environments.create failed");
@@ -116,12 +119,12 @@ async fn test_upload_list_and_fork() {
                 "directory missing from {:?}",
                 root.files
             );
-            let motd = root
+            let listed_motd = root
                 .files
                 .iter()
                 .find(|f| f.path.as_deref() == Some("etc/motd"))
                 .unwrap_or_else(|| panic!("source file missing from {:?}", root.files));
-            assert_eq!(motd.size_bytes, Some("hello".len() as i64));
+            assert_eq!(listed_motd.size_bytes, Some(motd.len() as i64));
 
             let single = client
                 .environments()
@@ -180,13 +183,13 @@ async fn test_file_list_streams_follow_every_page() {
         let client = client.clone();
         async move {
             // A directory and three files: four entries under a recursive
-            // root listing.
+            // root listing. Marked content, for the leaked-resource janitor.
             let request = ["a", "b", "c"].into_iter().fold(
                 CreateEnvironmentRequest::new(),
                 |request, name| {
                     request.add_source(EnvironmentSource::inline(
                         format!("/paging/{name}.txt"),
-                        name,
+                        test_source_content(name),
                     ))
                 },
             );

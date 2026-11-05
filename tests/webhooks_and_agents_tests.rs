@@ -11,7 +11,10 @@
 
 mod common;
 
-use common::{TINY_WAV_BASE64, get_client};
+use common::{
+    TINY_WAV_BASE64, assert_stored, get_client, stored_echo, test_resource_name,
+    test_source_content,
+};
 use futures_util::{StreamExt, TryStreamExt};
 use genai_rs::{
     Agent, Content, DeepResearchConfig, InteractionInput, ResponseFormat, RetrievalConfig,
@@ -292,12 +295,9 @@ async fn test_agent_crud_lifecycle() {
 
     // Unique per run: an existing id is a 409 (verified 2026-10-30), so a
     // fixed id would fail after a run that died before cleanup, or alongside
-    // a concurrent CI run on the same key.
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system clock before epoch")
-        .subsec_nanos();
-    let agent_id = format!("genai-rs-test-agent-{nanos}");
+    // a concurrent CI run on the same key. The name also dates the agent
+    // for the leaked-resource janitor: agents carry no timestamp.
+    let agent_id = test_resource_name("agent");
     let instruction = "You are a test agent that answers briefly.";
     let description = "Integration-test agent created by genai-rs";
     // Verified live 2026-10-30: `base_agent` is required and only the
@@ -564,7 +564,11 @@ async fn test_transcription_config_accepted() {
     // A server-side rename, field rejection, *or* a Vertex-gating of the
     // parameter all fail this outright instead of shipping silently;
     // transients are absorbed by the retry.
-    let response = crate::retry_request!([client] => {
+    let config = TranscriptionConfig::new()
+        .with_language_codes(["en-US"])
+        .with_diarization_mode("speaker")
+        .with_timestamp_granularities(["word"]);
+    let response = crate::retry_request!([client, config] => {
         client
             .interaction()
             .with_model(genai_rs::DEFAULT_MODEL)
@@ -574,19 +578,21 @@ async fn test_transcription_config_accepted() {
                 ),
                 genai_rs::Content::audio_data(TINY_WAV_BASE64, "audio/wav"),
             ])
-            .with_transcription_config(
-                TranscriptionConfig::new()
-                    .with_language_codes(["en-US"])
-                    .with_diarization_mode("speaker")
-                    .with_timestamp_granularities(["word"]),
-            )
+            .with_transcription_config(config)
             .create()
             .await
     })
     .expect("transcription_config should be accepted (verified live 2026-08-08)");
-    println!(
-        "transcription_config accepted: status={:?}",
-        response.status
+
+    // Accepted is not applied: the stored record must hold what was sent
+    // (#492).
+    let id = response.id.expect("stored interaction id");
+    let stored = stored_echo(&client, &id, "/generation_config/transcription_config").await;
+    let _ = client.interactions().delete(&id).await;
+    assert_stored(
+        "transcription_config",
+        &serde_json::to_value(&config).unwrap(),
+        stored.as_ref(),
     );
 }
 
@@ -742,27 +748,32 @@ async fn test_antigravity_config_accepted() {
     // trigger probe, whose orphan would fire on a schedule forever, so it
     // declines the retry. (The orphaned environment does not expire on its
     // own: environments from 2026-07 were still active on 2026-11-01.)
-    let response = crate::retry_request!([client] => {
-        client
-            .interaction()
-            .with_agent(genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
-            .with_text("Print the contents of /etc/motd")
-            .with_background(true)
-            .with_store_enabled()
-            .with_environment(
-                RemoteEnvironment::new()
-                    .add_source(EnvironmentSource::inline("/etc/motd", "config probe")),
-            )
-            .with_agent_config(
-                AntigravityConfig::new()
-                    .with_model(genai_rs::DEFAULT_MODEL)
-                    .with_max_total_tokens(200_000),
-            )
-            .create()
-            .await
+    let request = client
+        .interaction()
+        .with_agent(genai_rs::DEFAULT_ANTIGRAVITY_AGENT)
+        .with_text("Print the contents of /etc/motd")
+        .with_background(true)
+        .with_store_enabled()
+        .with_environment(
+            RemoteEnvironment::new().add_source(EnvironmentSource::inline(
+                "/etc/motd",
+                test_source_content("config probe"),
+            )),
+        )
+        .with_agent_config(
+            AntigravityConfig::new()
+                .with_model(genai_rs::DEFAULT_MODEL)
+                .with_max_total_tokens(200_000),
+        )
+        .build()
+        .expect("a valid request");
+    let sent = serde_json::to_value(&request).unwrap()["agent_config"].clone();
+    let response = crate::retry_request!([client, request] => {
+        client.execute(request).await
     })
     .expect("AntigravityConfig should be accepted (verified live 2026-10-01)");
     println!("AntigravityConfig accepted: status={:?}", response.status);
+    let mut stored = None;
     if let Some(id) = &response.id {
         // Print both arms: a failed cancel leaves a background agent
         // running against the account's budget — the larger of this
@@ -771,6 +782,10 @@ async fn test_antigravity_config_accepted() {
             Ok(_) => println!("Cancelled interaction {id}"),
             Err(e) => println!("interactions().cancel({id}) failed (tolerated): {e}"),
         }
+        // Accepted is not applied: read the stored agent_config back
+        // (#492). After the cancel: while the run starts, a read returns a
+        // sparse record without agent_config (2026-11-05).
+        stored = stored_echo(&client, id, "/agent_config").await;
     }
     if let Some(env_id) = &response.environment_id {
         let bare_id = env_id.strip_prefix("environments/").unwrap_or(env_id);
@@ -782,6 +797,7 @@ async fn test_antigravity_config_accepted() {
             Err(e) => println!("environments.delete({bare_id}) failed (tolerated): {e}"),
         }
     }
+    assert_stored("AntigravityConfig", &sent, stored.as_ref());
 }
 
 // =============================================================================
@@ -807,35 +823,36 @@ async fn test_deep_research_config_knobs_accepted() {
     // Retry-wrapped like the antigravity probe next door: a retried create
     // can at worst orphan a bounded background interaction (cancel-on-success
     // covers the common case), unlike the trigger probe's scheduled resource.
-    let result = crate::retry_request!([client] => {
-        client
-            .interaction()
-            .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
-            .with_text("One-paragraph overview of Rust async runtimes")
-            .with_background(true)
-            .with_store_enabled()
-            .with_agent_config(
-                DeepResearchConfig::new()
-                    .with_thinking_summaries(genai_rs::ThinkingSummaries::Auto)
-                    .with_visualization(Visualization::Auto)
-                    .with_collaborative_planning(true),
-            )
-            .create()
-            .await
-    });
-
-    match result {
-        Ok(response) => {
-            println!(
-                "Deep Research config accepted: status={:?}",
-                response.status
-            );
-            if let Some(id) = &response.id {
-                let _ = client.interactions().cancel(id).await;
-            }
-        }
-        Err(e) => panic!("Deep Research config knobs rejected: {e}"),
-    }
+    let request = client
+        .interaction()
+        .with_agent(genai_rs::DEFAULT_DEEP_RESEARCH_AGENT)
+        .with_text("One-paragraph overview of Rust async runtimes")
+        .with_background(true)
+        .with_store_enabled()
+        .with_agent_config(
+            DeepResearchConfig::new()
+                .with_thinking_summaries(genai_rs::ThinkingSummaries::Auto)
+                .with_visualization(Visualization::Auto)
+                .with_collaborative_planning(true),
+        )
+        .build()
+        .expect("a valid request");
+    let sent = serde_json::to_value(&request).unwrap()["agent_config"].clone();
+    let response = crate::retry_request!([client, request] => {
+        client.execute(request).await
+    })
+    .unwrap_or_else(|e| panic!("Deep Research config knobs rejected: {e}"));
+    println!(
+        "Deep Research config accepted: status={:?}",
+        response.status
+    );
+    let id = response.id.expect("stored interaction id");
+    // Accepted is not applied: read the stored agent_config back (#492),
+    // then cancel and delete the run.
+    let stored = stored_echo(&client, &id, "/agent_config").await;
+    let _ = client.interactions().cancel(&id).await;
+    let _ = client.interactions().delete(&id).await;
+    assert_stored("DeepResearchConfig", &sent, stored.as_ref());
 }
 
 // =============================================================================
@@ -855,14 +872,14 @@ async fn test_environment_crud_lifecycle() {
     // Create: one inline file source.
     let request = CreateEnvironmentRequest::new().add_source(EnvironmentSource::inline(
         "/etc/motd",
-        "hello from genai-rs environments CRUD",
+        test_source_content("environments CRUD"),
     ));
     // Create is a non-idempotent POST, so a retry after a lost response can
     // orphan a first container — tolerated here (unlike the trigger test's
     // un-retried create): a rare orphan is the better trade than flaking
     // the whole lifecycle. Environments do not expire on their own (2026-07
-    // ones were still active on 2026-11-01), so orphans accumulate until a
-    // cleanup sweep removes them (#492).
+    // ones were still active on 2026-11-01); the marked source content is
+    // what lets the daily test-resource janitor delete an orphan (#492).
     let created = crate::retry_request!([client, request] => {
         client.environments().create(&request).await
     })
@@ -1001,12 +1018,10 @@ async fn test_trigger_lifecycle() {
         TriggerUpdate,
     };
 
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system clock before epoch")
-        .subsec_nanos();
-    let agent_id = format!("genai-rs-test-trigger-agent-{nanos}");
-    let display_name = format!("genai-rs trigger test {nanos}");
+    // Marked and dated for the leaked-resource janitor (agents carry no
+    // timestamp of their own).
+    let agent_id = test_resource_name("trigger-agent");
+    let display_name = test_resource_name("trigger");
     // Not retried: a retry after a lost response would 409 on the id.
     client
         .agents()
