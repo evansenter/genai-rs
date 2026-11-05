@@ -26,9 +26,8 @@ test-all:
 # shellcheck when installed (at -S warning, so an unpinned shellcheck bump on
 # the runner can't redden unrelated PRs). jq and python3 are preflighted so a
 # missing interpreter is named rather than reported as a failing assertion.
-# Note: test_setup_dev.sh temporarily rewrites the gitignored
-# .cargo/config.toml and restores it on exit (#455). An empty harness glob is
-# an error, not a pass.
+# An empty glob, for the harnesses or for any directory shellcheck lints, is
+# an error that names it, not a pass or shellcheck's "No such file" (#456).
 test-scripts:
 	@for tool in jq python3; do \
 		command -v "$$tool" >/dev/null 2>&1 || { \
@@ -39,7 +38,20 @@ test-scripts:
 	rc=0; \
 	if command -v shellcheck >/dev/null 2>&1; then \
 		echo "==> shellcheck"; \
-		shellcheck -S warning .github/scripts/*.sh .github/scripts/tests/*.sh scripts/*.sh || rc=1; \
+		scripts=""; \
+		for glob in '.github/scripts/*.sh' '.github/scripts/tests/*.sh' 'scripts/*.sh'; do \
+			matched=0; \
+			for f in $$glob; do \
+				[ -e "$$f" ] || continue; \
+				matched=1; \
+				scripts="$$scripts $$f"; \
+			done; \
+			if [ "$$matched" -eq 0 ]; then \
+				echo "no scripts matched $$glob for shellcheck — expected at least one" >&2; \
+				rc=1; \
+			fi; \
+		done; \
+		[ -z "$$scripts" ] || shellcheck -S warning $$scripts || rc=1; \
 	else \
 		echo "==> shellcheck not installed, skipping lint"; \
 	fi; \

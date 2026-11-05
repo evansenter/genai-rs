@@ -7,13 +7,19 @@
 #   check_example_sizes.sh measure <dir> <out.json>
 #   check_example_sizes.sh compare <baseline.json> <current.json> [max_growth_pct]
 #   check_example_sizes.sh render <sizes.json>
+#   check_example_sizes.sh ceiling <sizes.json> [max_bytes]
 
 set -euo pipefail
+
+# The absolute backstop for one example binary, in bytes (64 MiB). One
+# definition: `ceiling`'s message derives its "64MB" from it.
+DEFAULT_CEILING_BYTES=67108864
 
 usage() {
     echo "usage: $0 measure <dir> <out.json>" >&2
     echo "       $0 compare <baseline.json> <current.json> [max_growth_pct]" >&2
     echo "       $0 render <sizes.json>" >&2
+    echo "       $0 ceiling <sizes.json> [max_bytes]" >&2
     exit 2
 }
 
@@ -25,7 +31,10 @@ is_example_binary() {
     local f="$1" name suffix
     [ -f "$f" ] || return 1
     [ -x "$f" ] || return 1
-    name=$(basename "$f")
+    # `${f##*/}`, not `basename`: no fork per file, and the same result for
+    # these paths (no trailing slash). Kept a pure predicate: echoing the
+    # name for the callers would fork a subshell per call instead (#456).
+    name=${f##*/}
     case "$name" in
         *.d) return 1 ;;
     esac
@@ -66,7 +75,7 @@ measure() {
     local f name
     for f in "$dir"/*; do
         is_example_binary "$f" || continue
-        name=$(basename "$f")
+        name=${f##*/}
         case "$name" in
             *$'\t'*)
                 echo "::error::Example name contains a tab, which the size report cannot carry: $name" >&2
@@ -82,7 +91,7 @@ measure() {
     {
         for f in "$dir"/*; do
             is_example_binary "$f" || continue
-            name=$(basename "$f")
+            name=${f##*/}
 
             local size
             # `wc -c`, not GNU-only `stat -c%s`, so this runs on macOS.
@@ -267,10 +276,51 @@ render() {
             | (if (contains(".") | not) then . + ".0" else . end) end) MB |"' "$sizes"
 }
 
+# Fails when any binary in a size map is over the absolute ceiling: the
+# backstop for a build with no baseline, where `compare` checks nothing.
+ceiling() {
+    local sizes="$1" max_bytes="${2:-$DEFAULT_CEILING_BYTES}"
+
+    case "$max_bytes" in
+        '' | *[!0-9]*)
+            echo "::error::max_bytes must be a positive integer, got: $max_bytes" >&2
+            return 2
+            ;;
+    esac
+    if [ "$max_bytes" -eq 0 ]; then
+        echo "::error::max_bytes must be a positive integer, got: 0" >&2
+        return 2
+    fi
+    # The same shape check as `compare`'s: a malformed file must not pass.
+    if [ ! -s "$sizes" ] || ! jq -e 'type == "object" and all(.[]; type == "number")' "$sizes" >/dev/null 2>&1; then
+        echo "::error::Sizes file is missing, empty or not a JSON object of sizes: $sizes"
+        return 1
+    fi
+
+    # Whole MiB when it divides evenly, so the default reads "64MB".
+    local label
+    if [ $((max_bytes % 1048576)) -eq 0 ]; then
+        label="$((max_bytes / 1048576))MB"
+    else
+        label="${max_bytes}-byte"
+    fi
+
+    local over
+    over=$(jq -r --argjson max "$max_bytes" --arg label "$label" '
+        to_entries[] | select(.value > $max)
+        | "::error::Binary \(.key) exceeds the \($label) sanity ceiling: \(.value) bytes"' "$sizes")
+    if [ -n "$over" ]; then
+        echo "$over"
+        return 1
+    fi
+    echo "Every binary is under the $label sanity ceiling."
+}
+
 case "${1:-}" in
     measure) shift; [ $# -eq 2 ] || usage; measure "$@" ;;
     # Two or three: `-ge 2` would swallow a stray fourth argument.
     compare) shift; { [ $# -eq 2 ] || [ $# -eq 3 ]; } || usage; compare "$@" ;;
     render)  shift; [ $# -eq 1 ] || usage; render "$@" ;;
+    ceiling) shift; { [ $# -eq 1 ] || [ $# -eq 2 ]; } || usage; ceiling "$@" ;;
     *) usage ;;
 esac

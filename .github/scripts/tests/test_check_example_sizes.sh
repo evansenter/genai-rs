@@ -455,6 +455,38 @@ else
   failures=$((failures + 1))
 fi
 
+# --- The sanity ceiling (#456). It was the last size logic inline in the
+#     workflow, with its byte literal and its "64MB" wording as two separate
+#     definitions a later edit could desync.
+run_ceiling() {
+  rc=0
+  out=$(bash "$SCRIPT" ceiling "$@" 2>&1) || rc=$?
+}
+echo '{"small": 1000, "edge": 67108864}' > "$WORK/ceiling-under.json"
+run_ceiling "$WORK/ceiling-under.json"
+expect_rc     "ceiling: at or under 64 MiB passes" 0
+expect_output "ceiling: names the default as 64MB" "under the 64MB sanity ceiling"
+echo '{"small": 1000, "huge": 67108865}' > "$WORK/ceiling-over.json"
+run_ceiling "$WORK/ceiling-over.json"
+expect_rc     "ceiling: one byte over 64 MiB fails" 1
+expect_output "ceiling: names the binary and the default ceiling" \
+  "::error::Binary huge exceeds the 64MB sanity ceiling: 67108865 bytes"
+refute_output "ceiling: does not flag the binary under it" "Binary small"
+run_ceiling "$WORK/ceiling-under.json" 2097152
+expect_rc     "ceiling: a custom max_bytes is honoured" 1
+expect_output "ceiling: the custom ceiling is named in MB" "exceeds the 2MB sanity ceiling"
+run_ceiling "$WORK/ceiling-under.json" 1500
+expect_output "ceiling: an uneven ceiling is named in bytes" "exceeds the 1500-byte sanity ceiling"
+run_ceiling "$WORK/ceiling-under.json" 64MB
+expect_rc     "ceiling: a non-numeric max_bytes is a usage error" 2
+run_ceiling
+expect_rc     "ceiling: no sizes file is a usage error" 2
+run_ceiling "$WORK/ceiling-under.json" 1 2
+expect_rc     "ceiling: a third argument is a usage error" 2
+echo '[]' > "$WORK/ceiling-bad.json"
+run_ceiling "$WORK/ceiling-bad.json"
+expect_rc     "ceiling: a malformed sizes file fails rather than passing" 1
+
 echo
 if [ "$failures" -gt 0 ]; then
   echo "$failures check(s) failed."
