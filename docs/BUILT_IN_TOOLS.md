@@ -395,10 +395,12 @@ For a restriction with a mode, pass `AllowedTools` entries to
 `with_allowed_tools_config()`:
 `AllowedTools::new(vec!["read_file".into()]).with_mode(FunctionCallingMode::Auto)`.
 
-**MCP calls arrive as answered `function_call` / `function_result` steps.**
-Since 2026-10-01 (re-verified 2026-11-04, streamed and not) the API runs each
-MCP call server-side and returns both steps in the same response, with the
-call named `<server>:<tool>`, where `<server>` is the name you gave
+**MCP calls arrive with their result in the same response.** The API runs
+each MCP call server-side. Since 2026-11-05 it returns an
+`mcp_server_tool_call` step (with `server_name`) and its
+`mcp_server_tool_result`; from 2026-10-01 to 2026-11-04 it returned an
+answered `function_call` / `function_result` pair. Either way the call is
+named `<server>:<tool>`, where `<server>` is the name you gave
 `McpServerConfig` (for example `deepwiki:read_wiki_structure`).
 `response.mcp_calls()` reads them back with the server, tool, arguments and
 result separated:

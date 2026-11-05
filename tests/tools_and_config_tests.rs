@@ -555,27 +555,36 @@ mod mcp_server {
             response.status
         );
 
-        // Since 2026-10-01 each MCP call is an answered `function_call` named
-        // `deepwiki:<tool>`, and `mcp_calls()` recovers the server and tool
-        // from it (#459, re-verified 2026-11-04). Every such call must come
-        // back as one, naming the server this request declared.
+        // Each MCP call is an `mcp_server_tool_call` (live since 2026-11-05)
+        // or, before that, an answered `function_call` named `deepwiki:<tool>`
+        // (2026-10-01 to 2026-11-04). `mcp_calls()` reads both (#459): every
+        // such call must come back as one, naming the server this request
+        // declared and the bare tool.
         let mcp_calls = response.mcp_calls();
         for call in &mcp_calls {
             assert_eq!(
                 call.server, "deepwiki",
                 "MCP call names its server: {call:?}"
             );
-            assert!(!call.tool.is_empty(), "MCP call names its tool: {call:?}");
+            assert!(
+                !call.tool.is_empty() && !call.tool.starts_with("deepwiki:"),
+                "MCP call names its bare tool: {call:?}"
+            );
         }
         let prefixed = response
             .function_calls()
             .iter()
             .filter(|call| call.name.starts_with("deepwiki:"))
             .count();
+        let spec_steps = response
+            .steps
+            .iter()
+            .filter(|step| matches!(step, genai_rs::Step::McpServerToolCall { .. }))
+            .count();
         assert_eq!(
             mcp_calls.len(),
-            prefixed,
-            "every `deepwiki:` call should read back as an MCP call; steps {step_types:?}"
+            prefixed + spec_steps,
+            "every MCP call should read back through mcp_calls(); steps {step_types:?}"
         );
 
         // Any sign the server ran a call means that call must be

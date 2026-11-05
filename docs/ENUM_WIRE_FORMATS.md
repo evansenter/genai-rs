@@ -240,8 +240,8 @@ fields, and the `function_call` `signature`) were verified live 2026-07.
 | `google_search_call` | `GoogleSearchCall` | `{"id", "arguments": {"queries": [...]}, "search_type"?, "signature"?}` |
 | `google_search_result` | `GoogleSearchResult` | `{"call_id", "result": [GoogleSearchResultItem], "is_error"?, "signature"?}` |
 | `tool_call` | `ToolCall` | `{"id", "signature"?}`. What MCP calls arrived as on 2026-08-16; since 2026-10-01 they arrive as answered `function_call` pairs |
-| `mcp_server_tool_call` | `McpServerToolCall` | `{"id", "name", "server_name", "arguments"}`, as in the google-genai 2.34.0 bindings. Spec-only, never observed (last checked 2026-11-04) |
-| `mcp_server_tool_result` | `McpServerToolResult` | `{"call_id", "name"?, "server_name"?, "result"}`, as in the 2.34.0 bindings. Spec-only, never observed (last checked 2026-11-04) |
+| `mcp_server_tool_call` | `McpServerToolCall` | `{"id", "name", "server_name", "arguments"}`, as in the google-genai 2.34.0 bindings. Live since 2026-11-05: `name` is `<server>:<tool>`, and a `signature` (kept in `extra`) comes with it |
+| `mcp_server_tool_result` | `McpServerToolResult` | `{"call_id", "name"?, "server_name"?, "result"}`, as in the 2.34.0 bindings. Live since 2026-11-05, with `name` and `server_name` set and the same `result` object as the earlier `function_result` shape |
 | `file_search_call` | `FileSearchCall` | `{"id", "signature"?}` |
 | `file_search_result` | `FileSearchResult` | `{"call_id", "result": [FileSearchResultItem], "signature"?}`. `result` (items with `title`, `text`, `file_search_store`) is spec-only and never populated (see [File Search](#file-search)) |
 | `google_maps_call` | `GoogleMapsCall` | `{"id", "arguments": {"queries": [...]}, "signature"?}` |
@@ -258,7 +258,11 @@ them into `urls`, `queries`, `language` and `code`; any other key of
 `arguments` is kept in `arguments_extra` (see
 [Unknown fields on known variants](#unknown-fields-on-known-variants)).
 
-**MCP identity (#459).** Since 2026-10-01 MCP calls arrive as answered
+**MCP identity (#459).** Since 2026-11-05 (`gemini-3.8-flash`, live) an MCP
+call arrives as an `mcp_server_tool_call` step with `server_name` and a
+`name` of `<server>:<tool>`, answered by an `mcp_server_tool_result` with
+the same `result` object described below; `McpCallInfo::tool` strips the
+`<server>:` prefix. From 2026-10-01 to 2026-11-04 MCP calls arrived as answered
 `function_call` / `function_result` steps named `<server>:<tool>` (see
 `docs/INTERACTIONS_API_GAP.md`). Re-verified live 2026-11-04 on
 `gemini-3.8-flash`, streamed and not: with the tool declared as

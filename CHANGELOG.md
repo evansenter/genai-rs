@@ -11,19 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `InteractionResponse::mcp_calls()` returns the MCP tool calls the server
   ran, as `McpCallInfo { id, server, tool, arguments, result, is_error }`.
-  Since 2026-10-01 the API returns each MCP call as an answered
-  `function_call` named `<server>:<tool>`, where `<server>` is the name the
-  request gave `McpServerConfig` (verified live 2026-11-04 on
-  `gemini-3.8-flash`, streamed and not). A client function may also contain
+  It reads both shapes the API has used: since 2026-11-05 an
+  `mcp_server_tool_call` with `server_name` and a `<server>:<tool>` name
+  (the tool comes back without the prefix), and from 2026-10-01 to
+  2026-11-04 an answered `function_call` named `<server>:<tool>`, where
+  `<server>` is the name the request gave `McpServerConfig` (both verified
+  live on `gemini-3.8-flash`). A client function may also contain
   a colon (the API accepted `weather:get` on 2026-11-04), so a call counts
   only when its result is in the same response. `is_error` is `Some(true)`
   when either the result step's `is_error` or the result object's own
   `is_error` key is `true`: on failed calls the API leaves the step's flag
   `false` (verified live 2026-11-04). The result object holds `result`,
   `call_tool_result_json` (the raw MCP `CallToolResult` as a JSON string),
-  and `is_error: true` on failure or `structured_content` on success. The
-  spec-only `mcp_server_tool_call` / `mcp_server_tool_result` pair is read
-  too (#459).
+  and `is_error: true` on failure or `structured_content` on success
+  (#459).
 - `extra()` and `extra_mut()` on `Step`, `StepDelta`, `Content` and
   `Annotation`, and `arguments_extra()` / `arguments_extra_mut()` on `Step`
   and `StepDelta`, expose the wire fields the crate does not model, for
