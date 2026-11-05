@@ -251,6 +251,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without bound. The largest real events, measured live 2026-11-04 on
   `DEFAULT_IMAGE_MODEL` at `image_size: "4K"`, are a 16.0 MB `image` delta
   and a 15.7 MB `thought_signature` delta; TTS audio deltas are under 8 KB.
+- **Breaking: `Tool::Function`'s `description` is an `Option<String>` and
+  its `parameters` an `Option<FunctionParameters>`.** The bindings make
+  both optional, the API accepts a function tool with only a `name`, and a
+  stored interaction read back serves it that way (verified live
+  2026-11-05). Migration: wrap the values in `Some(..)` where you build a
+  `Tool::Function` by hand, and match `description: Some(d)` /
+  `parameters: Some(p)` where you read one. `FunctionDeclaration::into_tool`
+  sets both, so the builder path sends what it sent before.
+- A `file_search` tool with no store names no longer writes
+  `"file_search_store_names": []`; the key is left out, as for the other
+  optional lists.
 
 ### Fixed
 
@@ -311,6 +322,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   crate's string-enum pattern, such as `InteractionStatus`, `ServiceTier`
   and `HarmCategory`. A hand-built `Unknown` still serializes its type
   string.
+- A tool that leaves out a field the bindings make optional reads as that
+  tool instead of `Tool::Unknown`: a `function` with no `description` or
+  `parameters` (a stored interaction serves one sent with only a `name`
+  that way, live 2026-11-05), a `computer_use` with no `environment`, an
+  `mcp_server` with no `name` or `url`, and a `file_search` with no store
+  names. Each serializes back without the missing key.
+- `FunctionParameters` keeps every JSON Schema keyword it does not model
+  (`additionalProperties`, `$defs`, ...) and writes it back; it used to
+  drop them. It also reads a schema with no `type` or `properties`
+  (`{"type": "object"}` for a function without arguments), which made the
+  whole tool `Unknown`. `FunctionParameters::extra()` returns the kept
+  keywords.
+- A per-modality usage entry (`ModalityTokens`) without a `tokens` count
+  reads as 0 (protobuf JSON leaves out a zero), and one without a
+  `modality` as an empty one. Either used to fail the whole response.
 
 ## [0.13.0] - 2026-11-03
 

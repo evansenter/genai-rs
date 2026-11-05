@@ -1683,13 +1683,16 @@ fn arb_function_parameters() -> impl Strategy<Value = FunctionParameters> {
 fn arb_tool() -> impl Strategy<Value = Tool> {
     prop_oneof![
         // Function tool
-        (arb_identifier(), arb_text(), arb_function_parameters()).prop_map(
-            |(name, description, parameters)| Tool::Function {
+        (
+            arb_identifier(),
+            proptest::option::of(arb_text()),
+            proptest::option::of(arb_function_parameters()),
+        )
+            .prop_map(|(name, description, parameters)| Tool::Function {
                 name,
                 description,
                 parameters
-            }
-        ),
+            }),
         // Google Search (non-empty search_types when present)
         proptest::option::of(proptest::collection::vec(arb_search_type(), 1..3))
             .prop_map(|search_types| Tool::GoogleSearch { search_types }),
