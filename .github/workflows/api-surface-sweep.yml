@@ -305,6 +305,8 @@ jobs:
           # nothing and file a fresh one with the same title every morning
           # until the baseline moves — the duplicate accumulation the fixed
           # title exists to prevent, just gated on a close instead of a date.
+          # `$ENV` is jq's own variable: single quotes on purpose.
+          # shellcheck disable=SC2016
           EXISTING=$(gh issue list \
             --label "api-sweep" \
             --state all \
@@ -414,6 +416,8 @@ jobs:
           # so the next clean run is the right place to act on it. This also
           # covers the other clean path: SDK moved, Interactions bindings
           # unchanged. Nothing to report there either.
+          # `$ENV` is jq's own variable: single quotes on purpose.
+          # shellcheck disable=SC2016
           EXISTING=$(gh issue list \
             --label "api-sweep" \
             --state open \

@@ -298,6 +298,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         id: checkout
+      # Before the harnesses: test_check_workflow_shell.sh runs the parse
+      # check, which imports `yaml`, and under CI a missing PyYAML fails it
+      # rather than skipping.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet pyyaml
       # Same make target as `make check`, so CI and local runs cover the same
       # things. No toolchain needed, so shell failures report in seconds.
       - name: Run the shell harnesses and shellcheck
@@ -358,17 +365,29 @@ jobs:
           echo "CHANGELOG.md structure OK ([Unreleased] and [$VERSION] checked)"
 
       # Guarded like the step above, so a red harness can't silently skip these.
-      # The setup steps too, or the check would fail on a missing `yaml` import
-      # instead.
-      - uses: actions/setup-python@v5
-        if: ${{ !cancelled() && steps.checkout.conclusion == 'success' }}
-        with:
-          python-version: '3.12'
-      - run: pip install --quiet pyyaml
-        if: ${{ !cancelled() && steps.checkout.conclusion == 'success' }}
       - name: 'Parse-check workflow run: blocks'
         if: ${{ !cancelled() && steps.checkout.conclusion == 'success' }}
         run: python3 .github/scripts/check_workflow_shell.py
+      # actionlint (#453) reads what the parse check cannot: `${{ }}`
+      # expressions, job and step wiring, and, through the runner's
+      # shellcheck, every workflow's run: blocks. Every file in
+      # .github/workflows/ is linted. A pinned release, checked against its
+      # published checksums.
+      - name: Lint the workflows (actionlint)
+        if: ${{ !cancelled() && steps.checkout.conclusion == 'success' }}
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+        run: |
+          set -euo pipefail
+          base="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}"
+          tarball="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          dir=$(mktemp -d)
+          curl -fsSL --retry 3 -o "$dir/$tarball" "$base/$tarball"
+          curl -fsSL --retry 3 -o "$dir/checksums.txt" "$base/actionlint_${ACTIONLINT_VERSION}_checksums.txt"
+          (cd "$dir" && grep -F "  $tarball" checksums.txt | sha256sum -c -)
+          tar -xzf "$dir/$tarball" -C "$dir" actionlint
+          "$dir/actionlint" -version
+          "$dir/actionlint" -color
       # Not a harness under `.github/scripts/tests/`, so run explicitly.
       - name: Gap tracker matches the CI sweep baseline
         if: ${{ !cancelled() && steps.checkout.conclusion == 'success' }}
@@ -521,16 +540,18 @@ jobs:
         # Same feature set as the examples build, so the lib compiles once and
         # this number describes the build the sizes come from.
         run: |
-          echo "## Build Metrics" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
           cargo clean
           start=$(date +%s)
           cargo build --release --features antigravity
           end=$(date +%s)
           duration=$((end - start))
-          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Clean release build | ${duration}s |" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Build Metrics"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|--------|-------|"
+            echo "| Clean release build | ${duration}s |"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Build examples
         # --features antigravity: those examples have required-features and
         # would be skipped silently. Changing the feature set shifts every
@@ -540,7 +561,7 @@ jobs:
           cargo build --release --examples --features antigravity
           end=$(date +%s)
           duration=$((end - start))
-          echo "| Examples build | ${duration}s |" >> $GITHUB_STEP_SUMMARY
+          echo "| Examples build | ${duration}s |" >> "$GITHUB_STEP_SUMMARY"
       - name: Measure example sizes
         run: |
           .github/scripts/check_example_sizes.sh measure \
@@ -551,7 +572,7 @@ jobs:
       - name: Binary sizes
         run: |
           .github/scripts/check_example_sizes.sh render current-sizes.json \
-            >> $GITHUB_STEP_SUMMARY
+            >> "$GITHUB_STEP_SUMMARY"
       # Per-example delta against the last main build. The baseline is an
       # artifact, not a committed file, because sizes depend on the toolchain
       # and linker.
@@ -601,26 +622,19 @@ jobs:
             echo '### Example size deltas vs main'
             echo ''
             echo '```'
-          } >> $GITHUB_STEP_SUMMARY
+          } >> "$GITHUB_STEP_SUMMARY"
           rc=0
           .github/scripts/check_example_sizes.sh compare \
             baseline-sizes.json current-sizes.json 15 \
-            | tee -a $GITHUB_STEP_SUMMARY || rc=$?
+            | tee -a "$GITHUB_STEP_SUMMARY" || rc=$?
           # Fenced to keep the column alignment; closed unconditionally.
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
 
       # Backstop for the no-baseline case; the delta check is the real gate.
       - name: Sanity ceiling
-        run: |
-          # Reads current-sizes.json rather than GNU-only `stat -c%s`.
-          over=$(jq -r 'to_entries[] | select(.value > 67108864)
-            | "::error::Binary \(.key) exceeds the 64MB sanity ceiling: \(.value) bytes"' \
-            current-sizes.json)
-          if [ -n "$over" ]; then
-            echo "$over"
-            exit 1
-          fi
+        # The 64 MiB default and its message live in the script (#456).
+        run: .github/scripts/check_example_sizes.sh ceiling current-sizes.json
 
       # After the sanity ceiling, so a rejected build never becomes the
       # baseline.
