@@ -647,3 +647,46 @@ runner's tests are in `turn_requests_tests.rs`.
 **Consequences.** Links to `src/antigravity/turn.rs:<line>` for the request
 handlers, or to `src/antigravity/process.rs:<line>` for its tests, written
 before 2026-11-04 point at the old layout.
+
+---
+
+## D-021 — Continuation without input, the allowlist-disabled form, and `/v1` (2026-11-05)
+
+**Context.** #489 left three API questions open, each awaiting a probe or a
+design call. Probed live on 2026-11-05:
+
+- A stored decode continues from `previous_interaction_id` and
+  `continuation_token` alone, with no `input`; the crate always sent one.
+  Without input and without a token, the API answers a misleading `404
+  Model ... not found`.
+- `{"allowlist": "disabled"}` is accepted, echoed as `{"allowlist":
+  [{"mode": "disabled"}]}`, and blocks egress exactly as `network:
+  "disabled"` does (an agent's `curl` gets the egress proxy's 403 under
+  both, 200 with no network config). The bindings model it as the
+  allowlist's `Disabled` arm.
+- `/v1` serves interactions with the `/v1beta` protocol, continuation
+  included, plus files and file search stores, and 404s every other
+  resource.
+
+**Decision.**
+
+- `InteractionRequest::input` becomes `Option<InteractionInput>`, as the
+  bindings have it, rather than staying required with an omit-when-token
+  rule hidden in serialization. `InteractionBuilder::continue_decode(&response)`
+  builds the input-free continuation from a response, and `build()` keeps
+  requiring input outside a continuation, because the API's own error for
+  a missing input is misleading.
+- `NetworkConfig::AllowlistDisabled` keeps the second disabled form as its
+  own variant, so a read round-trips in the bindings' shape, and
+  `is_disabled()` answers the question callers ask of either form. Mapping
+  it onto `Disabled` would have dropped the `allowlist` key on the way back.
+- `ClientBuilder::with_api_version` overrides the version path segment;
+  `v1beta` stays the default. No per-resource refusal on a `v1` client: the
+  API's 404 is clear, and the set of resources `/v1` serves can grow
+  without a crate release.
+
+**Consequences.** A deserialized request without `input` reads as `None`
+instead of failing, so a misspelled `inputs` in a trigger config file
+lands in `extra` and the trigger's empty-prompt warning, not a parse
+error, catches it. Code that matches `NetworkConfig::Disabled` misses the
+allowlist form; `is_disabled()` covers both.

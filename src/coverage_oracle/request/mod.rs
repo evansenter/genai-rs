@@ -77,7 +77,12 @@ const NOT_SENT: &[Allowed] = &[
     ),
     // Not modeled yet: WP2 (#504).
     ("agents.Agent.agent_config", GAP),
-    ("interactions.Environment.environment_id", GAP),
+    (
+        "interactions.Environment.environment_id",
+        "Accepted and checked on create (an unknown id is `404 Requested entity \
+         was not found`, live 2026-11-05) but not on `RemoteEnvironment`, in \
+         src/environments/, which WP2b (#504) owns.",
+    ),
     ("legacy.CreateFileSearchStoreConfig.embeddingModel", GAP),
     ("voices.VoiceInput.accent", GAP_VOICE),
     ("voices.VoiceInput.context", GAP_VOICE),

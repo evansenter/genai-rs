@@ -123,8 +123,8 @@ const TRIGGER_OUTPUT_ONLY: &str = "readOnly on the params schema the spec shares
 const GAPS: &[Allowed] = &[
     ("agents.Agent.agent_config", UNSEEN),
     ("Agent.agent_config", UNSEEN),
-    ("interactions.Environment.environment_id", UNSEEN),
-    ("EnvironmentConfig.environment_id", UNSEEN),
+    ("interactions.Environment.environment_id", INLINE_ENVIRONMENT_ID),
+    ("EnvironmentConfig.environment_id", INLINE_ENVIRONMENT_ID),
     // Files and File Search Stores.
     (
         "legacy.FileSearchStore.activeDocumentsCount",
@@ -152,6 +152,11 @@ const GAPS: &[Allowed] = &[
     ),
 ];
 
+const INLINE_ENVIRONMENT_ID: &str = "Not served: a stored interaction's \
+     inline environment comes back without it (live 2026-11-05). On create it \
+     is accepted and checked (an unknown id is `404 Requested entity was not \
+     found`, live 2026-11-05), so it is a field to add to `RemoteEnvironment`, \
+     in src/environments/, which WP2b (#504) owns.";
 const UNSEEN: &str = "In the snapshot, not modeled, and not seen live yet \
      (2026-11-04); probe before modeling (D-010); WP2.";
 
