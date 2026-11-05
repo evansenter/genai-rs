@@ -554,8 +554,12 @@ mod proptest_tests {
 
     /// Strategy for generating VideoMetadata.
     fn arb_video_metadata() -> impl Strategy<Value = VideoMetadata> {
-        prop::option::of("[0-9]+s".prop_map(String::from))
-            .prop_map(|video_duration| VideoMetadata { video_duration })
+        prop::option::of("[0-9]+s".prop_map(String::from)).prop_map(|video_duration| {
+            VideoMetadata {
+                video_duration,
+                extra: serde_json::Map::new(),
+            }
+        })
     }
 
     /// Strategy for generating FileMetadata.
@@ -631,7 +635,8 @@ mod proptest_tests {
             prop_assert_eq!(error.message, parsed.message);
         }
 
-        /// Verify VideoMetadata roundtrips through JSON serialization.
+        /// Verify VideoMetadata roundtrips through JSON serialization, unknown
+        /// keys included.
         #[test]
         fn video_metadata_roundtrip(metadata in arb_video_metadata()) {
             let json = serde_json::to_string(&metadata).expect("serialize");
@@ -653,4 +658,14 @@ mod proptest_tests {
             // Note: state comparison is relaxed for Unknown variants
         }
     }
+}
+
+#[test]
+fn video_metadata_keeps_unknown_keys() {
+    // `dict[str, Any]` in the bindings: a key the API adds must survive.
+    let wire = serde_json::json!({"videoDuration": "1s", "frameRate": 30});
+    let metadata: VideoMetadata = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(metadata.video_duration.as_deref(), Some("1s"));
+    assert_eq!(metadata.extra["frameRate"], 30);
+    assert_eq!(serde_json::to_value(&metadata).unwrap(), wire);
 }

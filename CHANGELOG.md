@@ -403,6 +403,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   string (no model streams either to observe, 2026-11-05). A base64 chunk
   that ends in padding is joined to the next as bytes, so the result stays
   valid base64; no live chunk has carried padding.
+- `VideoMetadata` keeps the keys it does not model in a new `extra` map,
+  as the other response types do; it used to drop them. The bindings type
+  it `dict[str, Any]`, and the API serves `videoDuration` (live
+  2026-11-05).
 
 ## [0.13.0] - 2026-11-03
 

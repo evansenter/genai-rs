@@ -185,8 +185,9 @@ pub(super) fn values() -> BTreeMap<&'static str, Value> {
         // A protobuf int64: the Files API sends it as a JSON string. The
         // bindings type it `int` because google-genai converts it.
         ("legacy.File.sizeBytes", json!("7")),
-        // `dict[str, Any]` in the bindings; the API serves `videoDuration`,
-        // the one key `VideoMetadata` models (it keeps no others).
+        // `dict[str, Any]` in the bindings; the API serves `videoDuration`
+        // (live 2026-11-05), the one key `VideoMetadata` models. It keeps
+        // any other in its `extra`, where a synthesized key would land.
         ("legacy.File.videoMetadata", json!({"videoDuration": "12s"})),
         // The spec types these as plain strings; the bindings enumerate
         // them, and each enumerated value is checked from there.
