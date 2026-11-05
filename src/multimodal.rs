@@ -205,6 +205,22 @@ async fn load_and_encode_file(path: impl AsRef<Path>) -> Result<String, GenaiErr
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
+/// Reads a plain-text file as UTF-8, with the same read-error guidance as the
+/// binary loaders.
+async fn read_text_file(path: &Path) -> Result<String, GenaiError> {
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|e| file_read_error(path, &e))?;
+    String::from_utf8(bytes).map_err(|_| {
+        GenaiError::InvalidInput(format!(
+            "File '{}' is not valid UTF-8. document_from_file() sends .txt and .md files \
+             as text content; convert the file to UTF-8, or send it with \
+             document_from_file_with_mime() if it is really another format.",
+            path.display()
+        ))
+    })
+}
+
 /// Maps a file read failure to `InvalidInput`, with a hint for the common causes.
 fn file_read_error(path: &Path, e: &std::io::Error) -> GenaiError {
     let suggestion = match e.kind() {
@@ -631,22 +647,6 @@ pub async fn document_from_file(path: impl AsRef<Path>) -> Result<Content, Genai
 /// # Ok(())
 /// # }
 /// ```
-/// Reads a plain-text file as UTF-8, with the same read-error guidance as the
-/// binary loaders.
-async fn read_text_file(path: &Path) -> Result<String, GenaiError> {
-    let bytes = tokio::fs::read(path)
-        .await
-        .map_err(|e| file_read_error(path, &e))?;
-    String::from_utf8(bytes).map_err(|_| {
-        GenaiError::InvalidInput(format!(
-            "File '{}' is not valid UTF-8. document_from_file() sends .txt and .md files \
-             as text content; convert the file to UTF-8, or send it with \
-             document_from_file_with_mime() if it is really another format.",
-            path.display()
-        ))
-    })
-}
-
 pub async fn document_from_file_with_mime(
     path: impl AsRef<Path>,
     mime_type: impl Into<String>,
