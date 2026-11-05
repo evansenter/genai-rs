@@ -270,7 +270,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them.
 - The published crate holds the library, its examples and the guides its
   doctests include, and no longer the integration tests, their fixtures, CI
-  files, scripts or the library's unit-test sources: 182 files and about
+  files, scripts or the library's unit-test sources: 180 files and about
   2.5 MB unpacked, down from 337 files and 5.0 MB.
 
 ### Fixed

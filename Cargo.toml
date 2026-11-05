@@ -64,6 +64,10 @@ include = [
     "/SECURITY.md",
     "/TROUBLESHOOTING.md",
     "/docs/*.md",
+    # Maintainer notes the doctests do not include; README links to the gap
+    # tracker resolve to the repository on crates.io.
+    "!/docs/ANTIGRAVITY_BRIDGE_DESIGN.md",
+    "!/docs/INTERACTIONS_API_GAP.md",
     "/examples/**",
     "!/examples/CLAUDE.md",
     "/src/**/*.rs",
