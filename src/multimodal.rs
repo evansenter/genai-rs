@@ -199,20 +199,41 @@ async fn load_and_encode_file(path: impl AsRef<Path>) -> Result<String, GenaiErr
         );
     }
 
-    let bytes = tokio::fs::read(path).await.map_err(|e| {
-        let suggestion = match e.kind() {
-            std::io::ErrorKind::NotFound => " Check that the file path is correct.",
-            std::io::ErrorKind::PermissionDenied => " Check file permissions.",
-            _ => "",
-        };
-        GenaiError::InvalidInput(format!(
-            "Failed to read file '{}': {}.{}",
-            path.display(),
-            e,
-            suggestion
-        ))
-    })?;
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|e| file_read_error(path, &e))?;
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
+/// Reads a plain-text file as UTF-8, with the same read-error guidance as the
+/// binary loaders.
+async fn read_text_file(path: &Path) -> Result<String, GenaiError> {
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|e| file_read_error(path, &e))?;
+    String::from_utf8(bytes).map_err(|_| {
+        GenaiError::InvalidInput(format!(
+            "File '{}' is not valid UTF-8. document_from_file() sends .txt and .md files \
+             as text content; convert the file to UTF-8, or send it with \
+             document_from_file_with_mime() if it is really another format.",
+            path.display()
+        ))
+    })
+}
+
+/// Maps a file read failure to `InvalidInput`, with a hint for the common causes.
+fn file_read_error(path: &Path, e: &std::io::Error) -> GenaiError {
+    let suggestion = match e.kind() {
+        std::io::ErrorKind::NotFound => " Check that the file path is correct.",
+        std::io::ErrorKind::PermissionDenied => " Check file permissions.",
+        _ => "",
+    };
+    GenaiError::InvalidInput(format!(
+        "Failed to read file '{}': {}.{}",
+        path.display(),
+        e,
+        suggestion
+    ))
 }
 
 /// Helper to get extension-specific error information
@@ -518,23 +539,27 @@ pub async fn video_from_file_with_mime(
     Ok(Content::video_data(data, mime_type))
 }
 
-/// MIME types [`document_from_file`] sends as document content (verified live
-/// 2026-09-24 for the text types).
-const DOCUMENT_MIME_TYPES: &[&str] = &["application/pdf", "text/plain", "text/markdown"];
+/// MIME types [`document_from_file`] sends as document content.
+const DOCUMENT_MIME_TYPES: &[&str] = &["application/pdf"];
+
+/// MIME types [`document_from_file`] reads as UTF-8 and sends as text content.
+/// The API accepted these as documents until 2026-11-04, when it started
+/// rejecting them with a 400 ("Unsupported mime_type ... in document content"),
+/// see #514.
+const TEXT_FILE_MIME_TYPES: &[&str] = &["text/plain", "text/markdown"];
 
 /// Loads a document file with automatic MIME type detection.
 ///
-/// Reads the file, encodes it as base64, and validates the MIME type.
-///
 /// # Supported Formats
 ///
-/// The formats the Interactions API accepts as document content:
+/// | Extension | Sent as |
+/// |-----------|---------|
+/// | `.pdf` | Document content (`application/pdf`), base64-encoded |
+/// | `.txt`, `.md` | Text content ([`Content::text()`]) with the file's UTF-8 contents |
 ///
-/// | Extension | MIME Type |
-/// |-----------|-----------|
-/// | `.pdf` | `application/pdf` |
-/// | `.txt` | `text/plain` |
-/// | `.md` | `text/markdown` |
+/// The Interactions API rejects `text/plain` and `text/markdown` as document
+/// content, so plain-text files are sent as text instead; the model reads them
+/// the same way.
 ///
 /// For other text formats (CSV, JSON, HTML, ...), read the file and send it as
 /// [`Content::text()`], or use [`document_from_file_with_mime`] to try one.
@@ -545,6 +570,7 @@ const DOCUMENT_MIME_TYPES: &[&str] = &["application/pdf", "text/plain", "text/ma
 /// - The file cannot be read (with a suggestion based on the error type)
 /// - The file has no extension
 /// - The file is not one of the formats above
+/// - A `.txt` or `.md` file is not valid UTF-8
 ///
 /// # Example
 ///
@@ -572,6 +598,11 @@ pub async fn document_from_file(path: impl AsRef<Path>) -> Result<Content, Genai
         ))
     })?;
 
+    if TEXT_FILE_MIME_TYPES.contains(&mime_type) {
+        let text = read_text_file(path).await?;
+        return Ok(Content::text(text));
+    }
+
     if !DOCUMENT_MIME_TYPES.contains(&mime_type) {
         let suggestion = if mime_type.starts_with("image/") {
             "image_from_file()"
@@ -589,8 +620,8 @@ pub async fn document_from_file(path: impl AsRef<Path>) -> Result<Content, Genai
 
         return Err(GenaiError::InvalidInput(format!(
             "File '{}' has MIME type '{}' which is not supported for document content. \
-             The Gemini API accepts 'application/pdf', 'text/plain' and 'text/markdown' \
-             documents. For this file, use {}.",
+             The Gemini API accepts 'application/pdf' documents (document_from_file() \
+             sends .txt and .md files as text). For this file, use {}.",
             path.display(),
             mime_type,
             suggestion
@@ -603,7 +634,9 @@ pub async fn document_from_file(path: impl AsRef<Path>) -> Result<Content, Genai
 /// Loads a document file with an explicit MIME type.
 ///
 /// Use this when you need to override the auto-detected MIME type,
-/// such as for text-based documents or files with non-standard extensions.
+/// such as for files with non-standard extensions. The MIME type is sent
+/// as-is: the API rejects `text/plain` and `text/markdown` document content,
+/// so send text files with [`document_from_file`] or [`Content::text()`].
 ///
 /// # Example
 ///
@@ -611,8 +644,8 @@ pub async fn document_from_file(path: impl AsRef<Path>) -> Result<Content, Genai
 /// use genai_rs::document_from_file_with_mime;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// // Load a text file as a document
-/// let doc = document_from_file_with_mime("notes.txt", "text/plain").await?;
+/// // A PDF saved without its extension
+/// let doc = document_from_file_with_mime("report.bin", "application/pdf").await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -810,26 +843,56 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_document_from_file_accepts_pdf_text_and_markdown() {
+    async fn test_document_from_file_sends_pdf_as_document() {
         let dir = tempfile::tempdir().unwrap();
-        for (name, mime) in [
-            ("doc.pdf", "application/pdf"),
-            ("notes.txt", "text/plain"),
-            ("README.md", "text/markdown"),
-            ("SHOUT.TXT", "text/plain"),
-        ] {
+        let path = dir.path().join("doc.pdf");
+        std::fs::write(&path, b"hello").unwrap();
+        match document_from_file(&path).await.unwrap() {
+            Content::Document {
+                mime_type, data, ..
+            } => {
+                assert_eq!(mime_type.as_deref(), Some("application/pdf"));
+                assert_eq!(data.as_deref(), Some("aGVsbG8="));
+            }
+            other => panic!("expected a document, got {other:?}"),
+        }
+    }
+
+    /// The API rejects text/plain and text/markdown document content since
+    /// 2026-11-04 (#514), so these go out as text.
+    #[tokio::test]
+    async fn test_document_from_file_sends_txt_and_markdown_as_text() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["notes.txt", "README.md", "SHOUT.TXT"] {
             let path = dir.path().join(name);
-            std::fs::write(&path, b"hello").unwrap();
+            std::fs::write(&path, "# héllo\nworld\n").unwrap();
             match document_from_file(&path).await.unwrap() {
-                Content::Document {
-                    mime_type, data, ..
-                } => {
-                    assert_eq!(mime_type.as_deref(), Some(mime), "{name}");
-                    assert_eq!(data.as_deref(), Some("aGVsbG8="), "{name}");
+                Content::Text { text, .. } => {
+                    assert_eq!(text.as_deref(), Some("# héllo\nworld\n"), "{name}");
                 }
-                other => panic!("{name}: expected a document, got {other:?}"),
+                other => panic!("{name}: expected text content, got {other:?}"),
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_document_from_file_rejects_non_utf8_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("latin1.txt");
+        std::fs::write(&path, [0x63, 0x61, 0x66, 0xE9]).unwrap();
+        let err = document_from_file(&path).await.unwrap_err().to_string();
+        assert!(err.contains("not valid UTF-8"), "{err}");
+        assert!(err.contains("latin1.txt"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn test_document_from_file_missing_text_file_has_read_hint() {
+        let err = document_from_file("/nonexistent/path/notes.md")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Failed to read file"), "{err}");
+        assert!(err.contains("Check that the file path is correct"), "{err}");
     }
 
     #[tokio::test]

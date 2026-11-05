@@ -99,6 +99,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   2026-11-04). The forced paths now signal the harness's process group and
   the group of each of its children. A command that detaches itself
   (`setsid`) is still out of reach.
+- `document_from_file()` sends `.txt` and `.md` files as text content
+  (`Content::Text` with the file's UTF-8 contents) instead of `text/plain` /
+  `text/markdown` document content, which the API rejects with a 400 since
+  2026-11-04. A file that isn't valid UTF-8 returns `GenaiError::InvalidInput`.
+  If you match on the returned `Content`, expect `Content::Text` for these
+  extensions. `document_from_file_with_mime()` is unchanged and still sends
+  any MIME type as a document (#514).
 - `Webhooks::create` sent a `Webhook`'s output-only fields (`id`, `state`,
   `signing_secrets`, `new_signing_secret`, `create_time`, `update_time`)
   whenever they were set, as on a webhook read back from the API. The
