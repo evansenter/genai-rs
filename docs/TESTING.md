@@ -9,12 +9,15 @@ follow.
 |------|-------|-------------|----------|
 | Unit | `#[cfg(test)]` modules and `src/*_tests.rs` | No | `make test` |
 | Property (proptest) | `src/proptest_tests.rs` | No | `make test` (or `cargo test proptest`) |
-| Offline HTTP | `tests/http_mock_tests.rs`, `tests/http_mock_resources.rs` | No | `make test` |
-| Guards | `tests/ci_coverage.rs`, `tests/model_literals.rs`, `tests/non_exhaustive_responses.rs` | No | `make test` |
+| Offline HTTP | `tests/http_mock_tests.rs`, `tests/http_mock_resources.rs`, `tests/reliability_tests.rs` | No | `make test` |
+| Coverage oracle | `src/coverage_oracle/`, `tests/request_wire_oracle.rs` (see [Coverage oracle](#coverage-oracle)) | No | `make test` |
+| Guards | `tests/ci_coverage.rs` (with `tests/live_verbs/`), `tests/model_literals.rs`, `tests/non_exhaustive_responses.rs` | No | `make test` |
 | Compile-time (trybuild) | `tests/ui/` via `tests/ui_tests.rs` | No | `cargo test --test ui_tests` |
 | Live integration | The other `tests/*.rs` files; each test is `#[ignore = "Requires API key"]` | Yes | `make test-all` |
 | Doctests | Rustdoc examples and the markdown guides (`doc_comment!` in `src/lib.rs`) | No | `cargo test --workspace --doc --all-features` (CI only; `make` skips them) |
+| Scripted harness | `tests/antigravity_scripted.rs`; each test is `#[ignore = "Requires localharness binary"]` | No, only `localharness` | See [Scripted harness tests](#scripted-harness-tests) |
 | Harness | `tests/antigravity_harness.rs` | Yes, plus `localharness` | See [ANTIGRAVITY.md](ANTIGRAVITY.md) |
+| Fuzz | `fuzz/` (cargo-fuzz targets over `src/fuzzing.rs`; failing inputs replayed by `src/fuzzing_tests.rs`) | No | `cargo +nightly fuzz run <target>` in `fuzz/`; see [fuzz/README.md](../fuzz/README.md) |
 
 ```bash
 make test                                             # everything offline
@@ -45,6 +48,9 @@ canned `Reply`s: JSON, text, SSE chunks, extra headers, or a delay.
 - **`http_mock_tests.rs`** covers client behavior that only shows on the
   wire: request shapes, error mapping, SSE framing, and the auto-function
   loop.
+- **`reliability_tests.rs`** covers the default timeouts, how a cut-off
+  stream is classified, the stop at a stream's terminal event, and
+  `Retry-After` in a poll.
 - **`http_mock_resources.rs`** pins every resource endpoint on method, path
   (percent-encoding included), query and JSON body. It parses a realistic
   response, preserving `Unknown` and `extra`, and covers the wait helpers'
@@ -57,6 +63,82 @@ canned `Reply`s: JSON, text, SSE chunks, extra headers, or a delay.
 
 Prefer an offline test for anything that doesn't depend on model behavior;
 it's fast and runs on every PR.
+
+### Paused-clock tests against the stub
+
+Tokio advances a paused clock to the next timer whenever the runtime is
+idle, even with localhost I/O in flight, so any timer armed during a request
+fires early: the client's default 30 s connect timeout fails most
+paused-clock requests to the stub. This applies to your own tests of code
+built on `genai-rs` too. Either build the test client with
+`with_connect_timeout(Duration::MAX)`, which arms no connect timer, and set
+no other timeout; or hold the clock with a running `spawn_blocking` task
+until the stub has the request, as `reliability_tests.rs`'s `hold_clock`
+does when a test needs the real defaults. For a test that sends several
+requests (a poll), `Stub::paused_clock_client()` holds the clock for each
+request until its response is read, with every default in place. See
+[Reliability](RELIABILITY.md#tests-on-a-paused-clock).
+
+## Scripted harness tests
+
+`tests/antigravity_scripted.rs` runs the real `localharness` binary against
+a scripted model instead of Gemini. `AgentBuilder::with_gemini_base_url`
+points the harness's model calls at `tests/common/fake_gemini.rs`, a
+`FakeGemini` built on the HTTP stub that answers request *n* with turn *n*
+of a script (the last one repeats):
+
+```rust,ignore
+let fake = FakeGemini::start(vec![
+    ModelTurn::call("view_file", json!({"AbsolutePath": path,
+        "toolSummary": "File read", "toolAction": "Reading file"})),
+    ModelTurn::text("read it"),
+])
+.await;
+let mut agent = AntigravityAgent::builder()
+    .with_api_key("scripted-placeholder-key")
+    .with_model(genai_rs::DEFAULT_MODEL)
+    .with_gemini_base_url(fake.base_url())
+    .add_workspace(dir)
+    .spawn()
+    .await?;
+agent.chat("read the file").await?;
+// What the harness told the model the call returned:
+let told = fake.function_responses(1);
+```
+
+The script decides what the "model" does, so the assertions are exact: the
+harness's own builtins, hooks, policies, workspace containment, triggers,
+cancellation and error handling run for real, and the test checks what
+reached the model (`function_responses`, `request_json`) and what the bridge
+reported. `ModelTurn::error(400, ..)` fails the backend call, and
+`.delayed(..)` holds a reply back (for cancellation and deadline tests).
+
+The suite needs no API key and takes a few seconds, so CI runs it on every
+PR, forks included, as a step of the required `Test Suite (antigravity)`
+job, with `GEMINI_API_KEY` blanked. Locally, with the pinned wheel
+installed (its venv first on `PATH`, or `ANTIGRAVITY_HARNESS_PATH` set):
+
+```bash
+cargo nextest run --features antigravity --run-ignored all -E 'binary(antigravity_scripted)'
+```
+
+Write a scripted test, not a live one, for anything about the bridge or the
+harness rather than about a model's choices. Function-call arguments use
+the harness's tool-schema names (`AbsolutePath`, `CommandLine`), which a
+`LOUD_WIRE` trace or `fake.request_json(0)["tools"]` shows. Two harness
+behaviors to know: it allows the system temp directory besides the
+workspaces, so a file meant to be outside them goes under
+`CARGO_TARGET_TMPDIR`; and a turn with a backgrounded `run_command` does not
+finish until the command does. A test of the turn deadline over a
+synchronous tool that blocks needs
+`#[tokio::test(flavor = "multi_thread", worker_threads = 2)]`: only workers
+drive the timer, and on `#[tokio::test]`'s current-thread runtime, or a
+multi-thread one that gets a single worker on a one-CPU runner, the blocked
+body holds the only one. A deadline test also records when the tool or hook
+it blocks on starts, and retries on a fresh agent with a larger budget when
+the deadline fired first (`DEADLINE_BUDGETS`): a slow runner may not reach
+that work within a short budget, and this suite is a required check, so it
+must not flake.
 
 ## Live tests
 
@@ -208,4 +290,126 @@ Serialization is tested twice, on purpose:
 | Property | `src/proptest_tests.rs` | Random values round-trip, and Unknown variants keep their data. The strategies are in-crate so there is only one set to maintain. `src/proptest_unknown_fields.rs` injects an unknown key into every object of every known `Step`, `StepDelta`, `Content` and `Annotation` variant and checks it survives (#491) |
 | Example | `src/*_tests.rs`, `tests/wire_format_verification_tests.rs`, `tests/unknown_variant_tests.rs` | Documents specific wire shapes and catches regressions quickly |
 
-Keep both: the examples are documentation, and they run fast.
+Keep both: the examples are documentation, and they run fast. Both take
+their expected shapes from the crate's own serde attributes, so neither can
+catch a wrong wire key; the coverage oracle below can.
+
+## Coverage oracle
+
+"Full Interactions API coverage" is checked offline against a committed
+snapshot of the API surface in `tests/fixtures/api_surface/`:
+
+| File | What it is | Written by |
+|------|------------|------------|
+| `bindings.json` | google-genai's generated classes, every type reference resolved, plus the Files, File Search Store and Document classes from its `types.py` (camelCase on the wire), and its endpoints. The version is the one in `.github/last-swept-sdk-version` | `dump_bindings_schema.py --json` |
+| `openapi-v1beta.json`, `openapi-v1.json` | The OpenAPI specs' schemas and endpoints without their prose, fetched 2026-11-01 (the published URL now 404s) | `snapshot_openapi.py` |
+
+`tests/api_surface/` loads either source into one type model. The
+checks on it:
+
+- **Request keys** (`src/coverage_oracle/request/`,
+  `request_wire_keys_exist_in_bindings`). Each request type
+  (the interaction body in its model and agent forms, `GenerationConfig`,
+  every `Tool`, `SafetySetting`, every `AgentConfig`, `SpeechConfig`, the
+  response formats, the environment, and every resource's create and update
+  body) is built fully populated as struct literals with no
+  `..Default::default()`, so a new field does not compile until it is
+  populated (the agent configs, whose fields are private, through every
+  builder), plus proptest samples for the union arms and enum values. An
+  `extra` map (`InteractionRequest::extra` included) stays empty: its keys
+  are the caller's, not the crate's, and would count as sent in the reverse
+  test (`a_populated_extra_is_sent_flat_and_not_vouched_for`). Every
+  key it serializes to, at every depth, must exist on the binding class it
+  is sent as, and every required key must be sent. A value carrying a
+  union arm's tag is held to that arm, so a free-form arm (`ResponseFormat`'s
+  `Dict[str, Any]`) cannot hide a wrong key. The reverse test
+  (`request_classes_have_no_unsent_fields`) lists every field of a reached
+  request class that nothing sends.
+- **Request bodies on the wire** (`tests/request_wire_oracle.rs`). Each
+  verb with a body runs against the local stub, and the captured body is
+  checked the same way, wrapping included. `every_verb_with_a_body_is_called_above`
+  finds the verbs that send a body (their implementation reaches a POST,
+  PATCH or PUT request; the parsing is in `tests/live_verbs/`) and fails
+  when one is not called there or listed in `NO_JSON_BODY`.
+- **Response fields** (`src/coverage_oracle/response.rs`,
+  `binding_fields_deserialize_without_extra` and
+  `spec_fields_deserialize_without_extra`). For each
+  response type, bodies are generated from the snapshot that together carry
+  every field, union arm and enum value its class reaches (the generator
+  fails if they do not). Each must
+  deserialize with no key in an `extra` map, no `Unknown` variant, and no
+  key dropped when the value is serialized again, including keys on an
+  object that sits directly in a list (an annotation, a search result),
+  which serde drops silently when the type keeps no `extra`. Each finding is
+  traced to its `Class.field` by removing keys until it goes away. It runs
+  against the bindings and the v1beta spec (whose `writeOnly` fields are
+  left out of responses), and not under `strict-unknown`.
+- **Completeness** (`src/coverage_oracle/mod.rs`,
+  `every_binding_class_is_mapped`). The checks above only see the classes
+  their tables reach, so every class in `bindings.json` must be reached by a
+  request case or response target, or listed in `UNMAPPED` with its reason.
+  `tests/ci_coverage.rs` (`every_api_endpoint_maps_to_a_handle_verb`) maps
+  every endpoint in the bindings and the specs to the handle verbs that call
+  it. A baseline bump that adds a resource, a body or an endpoint fails one
+  of them.
+- **Live coverage per handle** (`tests/ci_coverage.rs`,
+  `every_resource_verb_is_called_live_per_handle`; the parsing is in
+  `tests/live_verbs/`). Every public verb on every resource handle must be
+  called, on a receiver of that handle's type, by a live test or a helper
+  one reaches. Handles are found by their `#[must_use = "a resource handle
+  does nothing until you call one of its methods"]` marker, and
+  `resource_handles_carry_the_marker` fails when a `Client` accessor, or a
+  handle method that is not a list builder, returns a struct without it.
+
+### Reading a failure
+
+A finding names a site: `Class.field` (`interactions.Interaction.status`
+for the bindings, `Interaction.status` for the spec), with `=value` for an
+enum value or a union tag. Either fix the crate, or add an entry with the
+reason to the list that fits:
+
+| List | For |
+|------|-----|
+| `ALLOWED` (request, response, wire) | Deliberate: a key the crate sends that the bindings lack but the API needs (`signature` on `function_call`), a deprecated or Vertex-only field (D-005), a value never served |
+| `NOT_SENT` (request) | A request field nothing sends: deprecated, rejected live, or not modeled yet |
+| `GAPS` (response) | Served or specified but not modeled yet, the work list for the next modeling pass |
+| `UNMAPPED` (`mod.rs`) | A binding class no table reaches: SDK plumbing, an empty body, a body checked at the wire, or a request not modeled yet |
+| `ENDPOINTS_WITHOUT_A_VERB`, `EXEMPT` (`tests/ci_coverage.rs`) | An endpoint no handle verb calls; a verb no live test can call |
+| `NO_JSON_BODY` (`tests/request_wire_oracle.rs`) | A verb whose POST, PATCH or PUT carries no JSON body (an upload's bytes) |
+
+Date every live fact in a reason (D-010). An entry that matches nothing
+fails the test, so the lists only shrink when the crate catches up. A
+`values()` override in `response.rs` replaces a synthesized value where the
+snapshot's type is looser than what the API sends (a function's
+`parameters`, a protobuf int64 sent as a string).
+
+### Refreshing the snapshot
+
+`api-surface-sweep` opens an issue when google-genai moves past the
+baseline, and attaches the snapshot regenerated for the new release. To take
+it:
+
+```bash
+.github/scripts/refresh_api_snapshot.sh --version X.Y.Z   # bumps the baseline and bindings.json together
+cargo nextest run -E 'test(/coverage_oracle/) | binary(request_wire_oracle) | binary(ci_coverage)'
+                                                          # every new field, class or endpoint fails until handled
+```
+
+Then update the `docs/INTERACTIONS_API_GAP.md` header (CI checks it matches
+the baseline). With a newer copy of the OpenAPI spec, add
+`--spec-v1beta FILE --spec-v1 FILE --spec-fetched YYYY-MM-DD` (and
+`--spec-source URL` once the spec has a public URL again; it defaults to
+`manual`). The baseline is written last, so a failed download or dump
+leaves it and the snapshot unchanged.
+
+The committed `bindings.json` must match a fresh dump of the baseline
+release, so a dump-script change needs a refresh too (run the script
+without `--version`), and the file is never edited by hand.
+`refresh_api_snapshot.sh --check` checks it without writing. Its offline
+half fails when the snapshot's `sdk_version` is not exactly the baseline
+(a bump made without the script) or the snapshot has no classes or
+endpoints; `--check --offline` stops there, and `make test-scripts` runs it
+on every push. The full check then compares the file with a fresh dump,
+which catches a hand edit; it runs as the sweep's last step every day, and
+in the `shell-scripts` job on a PR that touches the dump script, the
+refresh script, the baseline or `bindings.json`.

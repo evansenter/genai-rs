@@ -374,6 +374,40 @@ impl<'a> InteractionBuilder<'a> {
         self
     }
 
+    /// Adds a request field this crate does not model yet, sent flat
+    /// alongside the modeled ones (it lands in
+    /// [`InteractionRequest::extra`](crate::InteractionRequest::extra)).
+    /// Fields added earlier are kept, and a repeated key replaces its
+    /// previous value, as with [`Self::add_label`].
+    ///
+    /// The server validates it like any other field: an unknown name is a
+    /// `400 Unknown parameter`. A key that names a modeled field overrides
+    /// it on the wire, since the API keeps the last of a repeated key.
+    ///
+    /// ```
+    /// # use genai_rs::Client;
+    /// # let client = Client::new("api-key".to_string());
+    /// let request = client
+    ///     .interaction()
+    ///     .with_model(genai_rs::DEFAULT_MODEL)
+    ///     .with_text("Hello")
+    ///     .add_extra("brand_new_field", serde_json::json!({"enabled": true}))
+    ///     .build()?;
+    ///
+    /// let body = serde_json::to_value(&request).unwrap();
+    /// assert_eq!(body["brand_new_field"], serde_json::json!({"enabled": true}));
+    /// # Ok::<(), genai_rs::GenaiError>(())
+    /// ```
+    #[must_use]
+    pub fn add_extra(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<serde_json::Value>,
+    ) -> Self {
+        self.extra.insert(key.into(), value.into());
+        self
+    }
+
     /// Sets a timeout for the request.
     ///
     /// If the request takes longer than the specified duration, it will be

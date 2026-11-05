@@ -2,6 +2,8 @@
 members = [
     "genai-rs-macros",
 ]
+# The cargo-fuzz crate builds on nightly with its own lockfile.
+exclude = ["fuzz"]
 
 [workspace.lints.rust]
 # A new `unsafe` is a reviewed decision: each existing site carries an
@@ -9,7 +11,8 @@ members = [
 unsafe_code = "deny"
 # No source currently branches on cfg(docsrs); this allowance keeps the
 # docs.rs rustdoc-arg below lint-clean if a #[cfg(docsrs)] is ever added.
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)"] }
+# `cargo fuzz` sets cfg(fuzzing), which compiles `__fuzz` (src/fuzzing.rs).
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)", "cfg(fuzzing)"] }
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -142,6 +145,10 @@ antigravity = [
 # Feature-gated integration tests
 [[test]]
 name = "antigravity_harness"
+required-features = ["antigravity"]
+
+[[test]]
+name = "antigravity_scripted"
 required-features = ["antigravity"]
 
 # Antigravity harness examples (examples/antigravity/). Grouped in their own

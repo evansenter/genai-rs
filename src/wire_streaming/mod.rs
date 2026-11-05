@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::response::{InteractionResponse, InteractionStatus, UsageMetadata};
 use crate::steps::{Step, StepDelta};
 
+mod serde_impls;
+
 /// A chunk from the streaming API.
 ///
 /// Under API revision 2026-05-20 the server emits this lifecycle:
@@ -187,311 +189,6 @@ impl StreamChunk {
             _ => None,
         }
     }
-
-    /// Writes the chunk's fields to a serialization map.
-    ///
-    /// This is used internally by both `StreamChunk::Serialize` and `StreamEvent::Serialize`
-    /// to avoid duplicating the match logic.
-    fn write_to_map<M>(&self, map: &mut M) -> Result<(), M::Error>
-    where
-        M: serde::ser::SerializeMap,
-    {
-        match self {
-            Self::Created { interaction } => {
-                map.serialize_entry("chunk_type", "created")?;
-                map.serialize_entry("data", interaction)?;
-            }
-            Self::StatusUpdate {
-                interaction_id,
-                status,
-                usage,
-                continuation_token,
-            } => {
-                map.serialize_entry("chunk_type", "status_update")?;
-                let mut data = serde_json::Map::new();
-                if let Some(id) = interaction_id {
-                    data.insert("interaction_id".into(), id.clone().into());
-                }
-                data.insert(
-                    "status".into(),
-                    serde_json::to_value(status).map_err(serde::ser::Error::custom)?,
-                );
-                if let Some(usage) = usage {
-                    data.insert(
-                        "usage".into(),
-                        serde_json::to_value(usage).map_err(serde::ser::Error::custom)?,
-                    );
-                }
-                if let Some(token) = continuation_token {
-                    data.insert("continuation_token".into(), token.clone().into());
-                }
-                map.serialize_entry("data", &data)?;
-            }
-            Self::StepStart { index, step } => {
-                map.serialize_entry("chunk_type", "step_start")?;
-                map.serialize_entry(
-                    "data",
-                    &serde_json::json!({
-                        "index": index,
-                        "step": step,
-                    }),
-                )?;
-            }
-            Self::StepDelta { index, delta } => {
-                map.serialize_entry("chunk_type", "step_delta")?;
-                map.serialize_entry(
-                    "data",
-                    &serde_json::json!({
-                        "index": index,
-                        "delta": delta,
-                    }),
-                )?;
-            }
-            Self::StepStop {
-                index,
-                usage,
-                step_usage,
-            } => {
-                map.serialize_entry("chunk_type", "step_stop")?;
-                let mut data = serde_json::json!({ "index": index });
-                if let Some(u) = usage {
-                    data["usage"] = serde_json::to_value(u).map_err(serde::ser::Error::custom)?;
-                }
-                if let Some(su) = step_usage {
-                    data["step_usage"] =
-                        serde_json::to_value(su).map_err(serde::ser::Error::custom)?;
-                }
-                map.serialize_entry("data", &data)?;
-            }
-            Self::Completed(response) => {
-                map.serialize_entry("chunk_type", "completed")?;
-                map.serialize_entry("data", response)?;
-            }
-            Self::Error { message, code } => {
-                map.serialize_entry("chunk_type", "error")?;
-                map.serialize_entry(
-                    "data",
-                    &serde_json::json!({
-                        "message": message,
-                        "code": code,
-                    }),
-                )?;
-            }
-            Self::Unknown { chunk_type, data } => {
-                map.serialize_entry("chunk_type", chunk_type)?;
-                if !data.is_null() {
-                    map.serialize_entry("data", data)?;
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-impl Serialize for StreamChunk {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeMap;
-
-        let mut map = serializer.serialize_map(None)?;
-        self.write_to_map(&mut map)?;
-        map.end()
-    }
-}
-
-impl<'de> Deserialize<'de> for StreamChunk {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-
-        let chunk_type = match value.get("chunk_type") {
-            Some(serde_json::Value::String(s)) => s.as_str(),
-            Some(other) => {
-                tracing::warn!(
-                    "StreamChunk received non-string chunk_type: {}. \
-                     This may indicate a malformed payload.",
-                    other
-                );
-                "<non-string chunk_type>"
-            }
-            None => {
-                tracing::warn!(
-                    "StreamChunk is missing required chunk_type field. \
-                     This may indicate a malformed payload."
-                );
-                "<missing chunk_type>"
-            }
-        };
-
-        fn data_of(value: &serde_json::Value) -> serde_json::Value {
-            value
-                .get("data")
-                .cloned()
-                .unwrap_or(serde_json::Value::Null)
-        }
-
-        fn index_of(data: &serde_json::Value) -> usize {
-            data.get("index")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as usize)
-                .unwrap_or_else(|| {
-                    tracing::warn!(
-                        "StreamChunk step event missing index. Defaulting to 0. \
-                         This may indicate a malformed payload."
-                    );
-                    0
-                })
-        }
-
-        match chunk_type {
-            "created" => {
-                let interaction: InteractionResponse = serde_json::from_value(data_of(&value))
-                    .map_err(|e| {
-                        serde::de::Error::custom(format!(
-                            "Failed to deserialize StreamChunk::Created data: {}",
-                            e
-                        ))
-                    })?;
-                Ok(Self::Created { interaction })
-            }
-            "status_update" => {
-                let data = data_of(&value);
-                let interaction_id = data
-                    .get("interaction_id")
-                    .and_then(|v| v.as_str())
-                    .map(String::from);
-                let usage = data
-                    .get("usage")
-                    .cloned()
-                    .map(serde_json::from_value)
-                    .transpose()
-                    .map_err(|e| {
-                        serde::de::Error::custom(format!(
-                            "Failed to deserialize StreamChunk::StatusUpdate usage: {e}"
-                        ))
-                    })?;
-                let continuation_token = data
-                    .get("continuation_token")
-                    .and_then(|v| v.as_str())
-                    .map(String::from);
-                let status: InteractionStatus = data
-                    .get("status")
-                    .cloned()
-                    .map(serde_json::from_value)
-                    .transpose()
-                    .map_err(|e| {
-                        serde::de::Error::custom(format!(
-                            "Failed to deserialize StreamChunk::StatusUpdate status: {}",
-                            e
-                        ))
-                    })?
-                    .unwrap_or_else(|| {
-                        tracing::warn!("StreamChunk::StatusUpdate is missing status.");
-                        InteractionStatus::InProgress
-                    });
-                Ok(Self::StatusUpdate {
-                    interaction_id,
-                    status,
-                    usage,
-                    continuation_token,
-                })
-            }
-            "step_start" => {
-                let data = data_of(&value);
-                let index = index_of(&data);
-                let step: Step = serde_json::from_value(
-                    data.get("step").cloned().unwrap_or(serde_json::Value::Null),
-                )
-                .map_err(|e| {
-                    serde::de::Error::custom(format!(
-                        "Failed to deserialize StreamChunk::StepStart step: {}",
-                        e
-                    ))
-                })?;
-                Ok(Self::StepStart { index, step })
-            }
-            "step_delta" => {
-                let data = data_of(&value);
-                let index = index_of(&data);
-                let delta: StepDelta = serde_json::from_value(
-                    data.get("delta")
-                        .cloned()
-                        .unwrap_or(serde_json::Value::Null),
-                )
-                .map_err(|e| {
-                    serde::de::Error::custom(format!(
-                        "Failed to deserialize StreamChunk::StepDelta delta: {}",
-                        e
-                    ))
-                })?;
-                Ok(Self::StepDelta { index, delta })
-            }
-            "step_stop" => {
-                let data = data_of(&value);
-                let index = index_of(&data);
-                let usage = data
-                    .get("usage")
-                    .cloned()
-                    .map(serde_json::from_value)
-                    .transpose()
-                    .map_err(serde::de::Error::custom)?;
-                let step_usage = data
-                    .get("step_usage")
-                    .cloned()
-                    .map(serde_json::from_value)
-                    .transpose()
-                    .map_err(serde::de::Error::custom)?;
-                Ok(Self::StepStop {
-                    index,
-                    usage,
-                    step_usage,
-                })
-            }
-            "completed" => {
-                let response: InteractionResponse = serde_json::from_value(data_of(&value))
-                    .map_err(|e| {
-                        serde::de::Error::custom(format!(
-                            "Failed to deserialize StreamChunk::Completed data: {}",
-                            e
-                        ))
-                    })?;
-                Ok(Self::Completed(response))
-            }
-            "error" => {
-                let data = data_of(&value);
-                let message = data
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .map(String::from)
-                    .unwrap_or_else(|| {
-                        tracing::warn!("StreamChunk::Error is missing message.");
-                        "Unknown error".to_string()
-                    });
-                let code = data.get("code").and_then(|v| v.as_str()).map(String::from);
-                Ok(Self::Error { message, code })
-            }
-            other => {
-                tracing::warn!(
-                    "Encountered unknown StreamChunk type '{}'. \
-                     This may indicate a new API feature. \
-                     The chunk will be preserved in the Unknown variant.",
-                    other
-                );
-                let data = value
-                    .get("data")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-                Ok(Self::Unknown {
-                    chunk_type: other.to_string(),
-                    data,
-                })
-            }
-        }
-    }
 }
 
 /// A streaming event with position metadata for resume support.
@@ -602,44 +299,6 @@ impl StreamEvent {
     #[must_use]
     pub fn unknown_data(&self) -> Option<&serde_json::Value> {
         self.chunk.unknown_data()
-    }
-}
-
-impl Serialize for StreamEvent {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeMap;
-
-        let mut map = serializer.serialize_map(None)?;
-        self.chunk.write_to_map(&mut map)?;
-
-        if let Some(event_id) = &self.event_id {
-            map.serialize_entry("event_id", event_id)?;
-        }
-
-        map.end()
-    }
-}
-
-impl<'de> Deserialize<'de> for StreamEvent {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-
-        // Extract event_id first
-        let event_id = value
-            .get("event_id")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-
-        // Deserialize the chunk from the same value
-        let chunk: StreamChunk = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
-
-        Ok(Self { chunk, event_id })
     }
 }
 
@@ -871,6 +530,118 @@ mod tests {
         let reserialized = serde_json::to_string(&deserialized).expect("Should serialize");
         assert!(reserialized.contains("future_chunk_type"));
         assert!(reserialized.contains("value"));
+        assert!(!reserialized.contains("\"unknown\""), "{reserialized}");
+    }
+
+    #[test]
+    fn test_unknown_chunk_named_like_a_known_one_stays_unknown() {
+        // Found by fuzzing (fuzz/, `stream_event`).
+        for name in serde_impls::KNOWN_CHUNK_TYPES {
+            let chunk = StreamChunk::Unknown {
+                chunk_type: name.to_string(),
+                data: serde_json::json!({"event_type": name}),
+            };
+            let value = serde_json::to_value(&chunk).unwrap();
+            assert_eq!(value["unknown"], true, "{value}");
+            let back: StreamChunk = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(back.unknown_chunk_type(), Some(name), "{back:?}");
+            assert_eq!(serde_json::to_value(&back).unwrap(), value);
+        }
+        // Without the marker, the known name means the known chunk.
+        let known: StreamChunk = serde_json::from_value(
+            serde_json::json!({"chunk_type": "error", "data": {"message": "m"}}),
+        )
+        .unwrap();
+        assert!(matches!(known, StreamChunk::Error { .. }), "{known:?}");
+    }
+
+    /// The `chunk_type` each known variant actually writes.
+    fn written_chunk_types() -> std::collections::BTreeSet<String> {
+        let samples = [
+            StreamChunk::Created {
+                interaction: InteractionResponse::default(),
+            },
+            StreamChunk::StatusUpdate {
+                interaction_id: None,
+                status: InteractionStatus::InProgress,
+                usage: None,
+                continuation_token: None,
+            },
+            StreamChunk::StepStart {
+                index: 0,
+                step: Step::model_output(vec![]),
+            },
+            StreamChunk::StepDelta {
+                index: 0,
+                delta: StepDelta::Text {
+                    text: String::new(),
+                },
+            },
+            StreamChunk::StepStop {
+                index: 0,
+                usage: None,
+                step_usage: None,
+            },
+            StreamChunk::Completed(InteractionResponse::default()),
+            StreamChunk::Error {
+                message: String::new(),
+                code: None,
+            },
+        ];
+        for sample in &samples {
+            // No wildcard: a new variant stops this compiling until it has a
+            // sample above.
+            match sample {
+                StreamChunk::Created { .. }
+                | StreamChunk::StatusUpdate { .. }
+                | StreamChunk::StepStart { .. }
+                | StreamChunk::StepDelta { .. }
+                | StreamChunk::StepStop { .. }
+                | StreamChunk::Completed(_)
+                | StreamChunk::Error { .. } => {}
+                StreamChunk::Unknown { .. } => unreachable!("samples are known chunks"),
+            }
+        }
+        let written: std::collections::BTreeSet<String> = samples
+            .iter()
+            .map(|sample| {
+                serde_json::to_value(sample).unwrap()["chunk_type"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(written.len(), samples.len(), "two variants share a name");
+        written
+    }
+
+    #[test]
+    fn test_known_chunk_types_are_the_serializers_names() {
+        // The collision marker is only as good as this hand-kept list.
+        let known: std::collections::BTreeSet<String> = serde_impls::KNOWN_CHUNK_TYPES
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(known, written_chunk_types());
+    }
+
+    #[test]
+    fn test_enum_wire_formats_doc_lists_the_serializers_names() {
+        // The StreamChunk table in docs/ENUM_WIRE_FORMATS.md is hand-kept.
+        let doc = include_str!("../../docs/ENUM_WIRE_FORMATS.md");
+        let section = doc
+            .split("\n### StreamChunk\n")
+            .nth(1)
+            .expect("a `### StreamChunk` section");
+        let section = section.split("\n#").next().unwrap();
+        let documented: std::collections::BTreeSet<String> = section
+            .lines()
+            .filter_map(|line| line.strip_prefix("| `"))
+            .filter_map(|rest| rest.split_once('`'))
+            .map(|(name, _)| name.to_string())
+            .filter(|name| name != "chunk_type")
+            .collect();
+        assert_eq!(documented, written_chunk_types());
     }
 
     #[test]

@@ -13,13 +13,14 @@ wildcard arm.
 | Variant | Meaning | `is_retryable()` |
 |---------|---------|------------------|
 | `Api { status_code, message, request_id, retry_after }` | The API returned a non-2xx status | 429 and 5xx only |
-| `Http(reqwest::Error)` | Network, connect, TLS, or client-level timeout | Yes, except a request that can't be built (bad base URL, rejected header) or a redirect loop |
+| `Http(reqwest::Error)` | Network, connect (including the default 30 s connect timeout), TLS, or a client-level timeout before the response headers | Yes, except a request that can't be built (bad base URL, rejected header) or a redirect loop |
 | `Timeout(Duration)` | The request-level timeout (`InteractionBuilder::with_timeout`) elapsed | Yes |
+| `StreamInterrupted { message, source }` | A stream's body ended before its terminal event: the server closed early, or the transport failed mid-body (`source` holds that `reqwest::Error`) | Yes; see [Cut-off streams](RELIABILITY.md#cut-off-streams) |
 | `Json(serde_json::Error)` | JSON (de)serialization failed outside response parsing, e.g. inside a stream event | No |
-| `Parse(String)` | An SSE stream could not be parsed | No |
+| `Parse(String)` | A complete SSE event could not be parsed, or one event grew past 64 MiB without ending | No |
 | `Utf8(Utf8Error)` | A response was not valid UTF-8 | No |
 | `InvalidInput(String)` | The builder rejected the request before sending (for example: no input, neither or both of model and agent, or `with_store_disabled()` combined with chaining or background) | No |
-| `MalformedResponse(String)` | A 2xx response did not parse or did not have the expected shape | No |
+| `MalformedResponse(String)` | A 2xx response did not parse or did not have the expected shape, including a streaming response that is not `text/event-stream` | No |
 | `Stream { message, code }` | The server sent an in-stream `error` event (auto-function streaming loop only; plain streams yield `StreamChunk::Error`) | No |
 | `Internal(String)` | A client-side invariant failed | No |
 | `ClientBuild(String)` | The HTTP client could not be built (TLS backend init) | No |
@@ -153,10 +154,15 @@ A stream from `create_stream()` ends in one of three ways:
   sends inside the SSE stream, such as a recitation block (`code:
   "recitation"`). No events follow it.
 - An `Err(GenaiError)` item, for transport, parse, or timeout errors. A
-  body that ends before either terminal event, such as a dropped
-  connection, ends with `GenaiError::MalformedResponse`. Only background
-  interactions can be resumed; see
-  [Stream Resume](STREAMING_API.md#stream-resume).
+  body that ends before either terminal event ends with
+  `GenaiError::StreamInterrupted`, whether the server closed the connection
+  or the transport failed mid-body (a reset or a read timeout, kept as
+  `source`). It is retryable; only background interactions can be resumed
+  rather than re-sent. See [Cut-off streams](RELIABILITY.md#cut-off-streams)
+  and [Stream Resume](STREAMING_API.md#stream-resume).
+
+Nothing is read after a terminal event, so no error can follow
+`Completed` or `Error`.
 
 ## Related
 

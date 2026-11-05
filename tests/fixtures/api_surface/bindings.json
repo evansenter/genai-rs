@@ -1,0 +1,1271 @@
+{
+  "sdk_version": "2.34.0",
+  "endpoints": ["DELETE /{}/agents/{}", "DELETE /{}/credentials/{}", "DELETE /{}/environments/{}", "DELETE /{}/interactions/{}", "DELETE /{}/triggers/{}", "DELETE /{}/voices/{}", "DELETE /{}/webhooks/{}", "GET /{}/agents", "GET /{}/agents/{}", "GET /{}/credentials", "GET /{}/credentials/{}", "GET /{}/environments", "GET /{}/environments/{}", "GET /{}/environments/{}/files/{}", "GET /{}/interactions/{}", "GET /{}/triggers", "GET /{}/triggers/{}", "GET /{}/triggers/{}/executions", "GET /{}/voices", "GET /{}/voices/{}", "GET /{}/webhooks", "GET /{}/webhooks/{}", "PATCH /{}/credentials/{}", "PATCH /{}/triggers/{}", "PATCH /{}/webhooks/{}", "POST /{}/agents", "POST /{}/credentials", "POST /{}/environments", "POST /{}/interactions", "POST /{}/interactions/{}/cancel", "POST /{}/triggers", "POST /{}/triggers/{}/executions", "POST /{}/voices", "POST /{}/webhooks", "POST /{}/webhooks/{}:ping", "POST /{}/webhooks/{}:rotateSigningSecret", "PUT /upload/{}/environments/{}/files/{}"],
+  "aliases": {
+    "agents.AgentTool": {"arms": [{"kind": "ref", "name": "interactions.CodeExecution"}, {"kind": "ref", "name": "interactions.Function"}, {"kind": "ref", "name": "interactions.GoogleSearch"}, {"kind": "ref", "name": "interactions.MCPServer"}, {"kind": "ref", "name": "interactions.URLContext"}], "kind": "union"},
+    "agents.BaseEnvironment": {"arms": [{"kind": "ref", "name": "interactions.Environment"}, {"kind": "str"}], "kind": "union"},
+    "credentials.CredentialCreateParams": {"arms": [{"kind": "ref", "name": "credentials.EnvironmentVariableConfig"}, {"kind": "ref", "name": "credentials.HTTPBearerConfig"}, {"kind": "ref", "name": "credentials.OAuth2Config"}], "kind": "union"},
+    "credentials.CredentialUpdate": {"arms": [{"kind": "ref", "name": "credentials.EnvironmentVariableUpdateConfig"}, {"kind": "ref", "name": "credentials.HTTPBearerUpdateConfig"}, {"kind": "ref", "name": "credentials.OAuth2UpdateConfig"}], "kind": "union"},
+    "credentials.EnvironmentVariableConfigInjectionLocation": {"arms": [{"item": {"kind": "ref", "name": "credentials.InjectionLocationEnum"}, "kind": "list"}, {"kind": "ref", "name": "credentials.InjectionLocationEnum"}], "kind": "union"},
+    "credentials.EnvironmentVariableUpdateConfigInjectionLocation": {"arms": [{"item": {"kind": "ref", "name": "credentials.InjectionLocationEnum"}, "kind": "list"}, {"kind": "ref", "name": "credentials.InjectionLocationEnum"}], "kind": "union"},
+    "credentials.InjectionLocationEnum": {"kind": "literal", "open": false, "values": ["body", "header", "query"]},
+    "credentials.Status": {"kind": "literal", "open": true, "values": ["active", "revoked"]},
+    "credentials.Type": {"kind": "literal", "open": true, "values": ["bearer_token", "environment_variable", "oauth2"]},
+    "environments.CreateEnvironmentRequestNetworkEnum": {"kind": "literal", "open": false, "values": ["disabled"]},
+    "environments.CreateEnvironmentRequestNetworkUnion": {"arms": [{"kind": "ref", "name": "environments.CreateEnvironmentRequestNetworkEnum"}, {"kind": "ref", "name": "interactions.EnvironmentNetworkEgressAllowlist"}], "kind": "union"},
+    "environments.EnvironmentNetworkEnum": {"kind": "literal", "open": true, "values": ["disabled"]},
+    "environments.EnvironmentNetworkUnion": {"arms": [{"kind": "ref", "name": "environments.EnvironmentNetworkEnum"}, {"kind": "ref", "name": "interactions.EnvironmentNetworkEgressAllowlist"}], "kind": "union"},
+    "environments.Status": {"kind": "literal", "open": true, "values": ["active", "expired"]},
+    "environments.Type": {"kind": "literal", "open": true, "values": ["directory", "file"]},
+    "interactions.AgentOption": {"kind": "literal", "open": true, "values": ["antigravity-preview-05-2026", "deep-research-max-preview-04-2026", "deep-research-preview-04-2026", "deep-research-pro-preview-12-2025"]},
+    "interactions.Allowlist": {"arms": [{"item": {"kind": "ref", "name": "interactions.AllowlistEntry"}, "kind": "list"}, {"kind": "ref", "name": "interactions.Disabled"}], "kind": "union"},
+    "interactions.Annotation": {"arms": [{"kind": "ref", "name": "interactions.FileCitation"}, {"kind": "ref", "name": "interactions.PlaceCitation"}, {"kind": "ref", "name": "interactions.SpeechAnnotation"}, {"kind": "ref", "name": "interactions.URLCitation"}, {"kind": "ref", "name": "interactions.WordInfo"}], "kind": "union"},
+    "interactions.AudioContentMimeType": {"kind": "literal", "open": true, "values": ["audio/aac", "audio/aiff", "audio/alaw", "audio/flac", "audio/l16", "audio/m4a", "audio/mp3", "audio/mpeg", "audio/mulaw", "audio/ogg", "audio/opus", "audio/wav", "audio/webm"]},
+    "interactions.AudioDeltaMimeType": {"kind": "literal", "open": true, "values": ["audio/aac", "audio/aiff", "audio/alaw", "audio/flac", "audio/l16", "audio/m4a", "audio/mp3", "audio/mpeg", "audio/mulaw", "audio/ogg", "audio/opus", "audio/wav", "audio/webm"]},
+    "interactions.AudioResponseFormatDelivery": {"kind": "literal", "open": true, "values": ["inline", "uri"]},
+    "interactions.AudioResponseFormatMimeType": {"kind": "literal", "open": true, "values": ["audio/alaw", "audio/l16", "audio/mp3", "audio/mulaw", "audio/ogg_opus", "audio/wav"]},
+    "interactions.Content": {"arms": [{"kind": "ref", "name": "interactions.AudioContent"}, {"kind": "ref", "name": "interactions.DocumentContent"}, {"kind": "ref", "name": "interactions.ImageContent"}, {"kind": "ref", "name": "interactions.TextContent"}, {"kind": "ref", "name": "interactions.VideoContent"}], "kind": "union"},
+    "interactions.CreateAgentInteractionAgentConfig": {"arms": [{"kind": "ref", "name": "interactions.AntigravityAgentConfig"}, {"kind": "ref", "name": "interactions.CodeMenderAgentConfig"}, {"kind": "ref", "name": "interactions.DeepResearchAgentConfig"}, {"kind": "ref", "name": "interactions.DynamicAgentConfig"}], "kind": "union"},
+    "interactions.CreateAgentInteractionEnvironment": {"arms": [{"kind": "ref", "name": "interactions.Environment"}, {"kind": "str"}], "kind": "union"},
+    "interactions.CreateAgentInteractionResponseFormat": {"arms": [{"item": {"kind": "ref", "name": "interactions.ResponseFormat"}, "kind": "list"}, {"kind": "ref", "name": "interactions.ResponseFormat"}], "kind": "union"},
+    "interactions.CreateModelInteractionEnvironment": {"arms": [{"kind": "ref", "name": "interactions.Environment"}, {"kind": "str"}], "kind": "union"},
+    "interactions.CreateModelInteractionResponseFormat": {"arms": [{"item": {"kind": "ref", "name": "interactions.ResponseFormat"}, "kind": "list"}, {"kind": "ref", "name": "interactions.ResponseFormat"}], "kind": "union"},
+    "interactions.Disabled": {"kind": "literal", "open": true, "values": ["disabled"]},
+    "interactions.DisabledSafetyPolicy": {"kind": "literal", "open": true, "values": ["account_creation", "communication_tool", "data_modification", "financial_transactions", "legal_terms_and_agreements", "sensitive_data_modification", "user_consent_management"]},
+    "interactions.DocumentContentMimeType": {"kind": "literal", "open": true, "values": ["application/pdf", "text/csv"]},
+    "interactions.DocumentDeltaMimeType": {"kind": "literal", "open": true, "values": ["application/pdf", "text/csv"]},
+    "interactions.Env": {"arms": [{"kind": "ref", "name": "interactions.EnvVar"}, {"kind": "str"}], "kind": "union"},
+    "interactions.EnvironmentEnum": {"kind": "literal", "open": true, "values": ["browser", "desktop", "mobile"]},
+    "interactions.FunctionResultDeltaResultUnion": {"arms": [{"item": {"kind": "ref", "name": "interactions.FunctionResultSubcontent"}, "kind": "list"}, {"kind": "ref", "name": "interactions.FunctionResultDeltaResult"}, {"kind": "str"}], "kind": "union"},
+    "interactions.FunctionResultStepResultUnion": {"arms": [{"item": {"kind": "ref", "name": "interactions.FunctionResultSubcontent"}, "kind": "list"}, {"kind": "ref", "name": "interactions.FunctionResultStepResult"}, {"kind": "str"}], "kind": "union"},
+    "interactions.FunctionResultSubcontent": {"arms": [{"kind": "ref", "name": "interactions.AudioContent"}, {"kind": "ref", "name": "interactions.DocumentContent"}, {"kind": "ref", "name": "interactions.ImageContent"}, {"kind": "ref", "name": "interactions.TextContent"}, {"kind": "ref", "name": "interactions.VideoContent"}], "kind": "union"},
+    "interactions.GoogleSearchCallStepSearchType": {"kind": "literal", "open": true, "values": ["enterprise_web_search", "image_search", "web_search"]},
+    "interactions.GoogleSearchSearchType": {"kind": "literal", "open": true, "values": ["enterprise_web_search", "image_search", "web_search"]},
+    "interactions.GroundingToolCountType": {"kind": "literal", "open": true, "values": ["google_maps", "google_search", "retrieval"]},
+    "interactions.HarmCategory": {"kind": "literal", "open": true, "values": ["civic_integrity", "dangerous_content", "harassment", "hate_speech", "image_dangerous_content", "image_harassment", "image_hate", "image_sexually_explicit", "jailbreak", "sexually_explicit"]},
+    "interactions.ImageConfigAspectRatio": {"kind": "literal", "open": true, "values": ["16:9", "1:1", "1:4", "1:8", "21:9", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16"]},
+    "interactions.ImageConfigImageSize": {"kind": "literal", "open": true, "values": ["1K", "2K", "4K", "512"]},
+    "interactions.ImageContentMimeType": {"kind": "literal", "open": true, "values": ["image/bmp", "image/gif", "image/heic", "image/heif", "image/jpeg", "image/png", "image/tiff", "image/webp"]},
+    "interactions.ImageDeltaMimeType": {"kind": "literal", "open": true, "values": ["image/bmp", "image/gif", "image/heic", "image/heif", "image/jpeg", "image/png", "image/tiff", "image/webp"]},
+    "interactions.ImageResponseFormatAspectRatio": {"kind": "literal", "open": true, "values": ["16:9", "1:1", "1:4", "1:8", "21:9", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16"]},
+    "interactions.ImageResponseFormatDelivery": {"kind": "literal", "open": true, "values": ["inline", "uri"]},
+    "interactions.ImageResponseFormatImageSize": {"kind": "literal", "open": true, "values": ["1K", "2K", "4K", "512"]},
+    "interactions.ImageResponseFormatMimeType": {"kind": "literal", "open": true, "values": ["image/jpeg"]},
+    "interactions.InteractionAgentConfig": {"arms": [{"kind": "ref", "name": "interactions.AntigravityAgentConfig"}, {"kind": "ref", "name": "interactions.CodeMenderAgentConfig"}, {"kind": "ref", "name": "interactions.DeepResearchAgentConfig"}, {"kind": "ref", "name": "interactions.DynamicAgentConfig"}], "kind": "union"},
+    "interactions.InteractionEnvironment": {"arms": [{"kind": "ref", "name": "interactions.Environment"}, {"kind": "str"}], "kind": "union"},
+    "interactions.InteractionResponseFormat": {"arms": [{"item": {"kind": "ref", "name": "interactions.ResponseFormat"}, "kind": "list"}, {"kind": "ref", "name": "interactions.ResponseFormat"}], "kind": "union"},
+    "interactions.InteractionSSEEvent": {"arms": [{"kind": "ref", "name": "interactions.ErrorEvent"}, {"kind": "ref", "name": "interactions.InteractionCompletedEvent"}, {"kind": "ref", "name": "interactions.InteractionCreatedEvent"}, {"kind": "ref", "name": "interactions.InteractionStatusUpdate"}, {"kind": "ref", "name": "interactions.StepDelta"}, {"kind": "ref", "name": "interactions.StepStart"}, {"kind": "ref", "name": "interactions.StepStop"}], "kind": "union"},
+    "interactions.InteractionSseEventInteractionStatus": {"kind": "literal", "open": true, "values": ["budget_exceeded", "cancelled", "completed", "failed", "in_progress", "incomplete", "queued", "requires_action", "requires_continuation"]},
+    "interactions.InteractionStatus": {"kind": "literal", "open": true, "values": ["budget_exceeded", "cancelled", "completed", "failed", "in_progress", "incomplete", "queued", "requires_action", "requires_continuation"]},
+    "interactions.InteractionStatusUpdateStatus": {"kind": "literal", "open": true, "values": ["budget_exceeded", "cancelled", "completed", "failed", "in_progress", "incomplete", "queued", "requires_action", "requires_continuation"]},
+    "interactions.InteractionsInput": {"arms": [{"item": {"kind": "ref", "name": "interactions.Content"}, "kind": "list"}, {"item": {"kind": "ref", "name": "interactions.Step"}, "kind": "list"}, {"kind": "ref", "name": "interactions.Content"}, {"kind": "str"}], "kind": "union"},
+    "interactions.Language": {"kind": "literal", "open": true, "values": ["bash", "python"]},
+    "interactions.MCPServerToolResultDeltaResultUnion": {"arms": [{"item": {"kind": "ref", "name": "interactions.FunctionResultSubcontent"}, "kind": "list"}, {"kind": "ref", "name": "interactions.MCPServerToolResultDeltaResult"}, {"kind": "str"}], "kind": "union"},
+    "interactions.MCPServerToolResultStepResultUnion": {"arms": [{"item": {"kind": "ref", "name": "interactions.FunctionResultSubcontent"}, "kind": "list"}, {"kind": "ref", "name": "interactions.MCPServerToolResultStepResult"}, {"kind": "str"}], "kind": "union"},
+    "interactions.MediaResolution": {"kind": "literal", "open": true, "values": ["high", "low", "medium", "ultra_high"]},
+    "interactions.Method": {"kind": "literal", "open": true, "values": ["probability", "severity"]},
+    "interactions.Mode": {"kind": "literal", "open": true, "values": ["scan", "verify"]},
+    "interactions.Model": {"kind": "literal", "open": true, "values": ["gemini-2.5-flash", "gemini-2.5-flash-image", "gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-3-flash-preview", "gemini-3-pro-image", "gemini-3.1-flash-image", "gemini-3.1-flash-lite", "gemini-3.1-flash-lite-image", "gemini-3.1-flash-tts-preview", "gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash", "gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts", "gemini-4-argon", "gemini-flash-latest", "gemini-flash-lite-latest", "gemini-nano-banana-2.1", "gemini-omni-1.1-flash", "gemini-omni-flash-preview", "gemini-pro-latest", "gemini-robotics-er-1.6-preview", "gemini-robotics-er-2-preview", "gemma-4-26b-a4b-it", "gemma-4-31b-it", "lyria-3-clip-preview", "lyria-3-pro-preview", "lyria-3.5", "nano-banana-pro-preview"]},
+    "interactions.Network": {"arms": [{"kind": "ref", "name": "interactions.EnvironmentNetworkEgressAllowlist"}, {"kind": "ref", "name": "interactions.NetworkEnum"}], "kind": "union"},
+    "interactions.NetworkEnum": {"kind": "literal", "open": true, "values": ["disabled"]},
+    "interactions.Processing": {"arms": [{"kind": "ref", "name": "interactions.ProcessingEnum"}, {"kind": "ref", "name": "interactions.StaticMediaProcessing"}], "kind": "union"},
+    "interactions.ProcessingEnum": {"kind": "literal", "open": true, "values": ["agentic", "static"]},
+    "interactions.Resolution": {"kind": "literal", "open": true, "values": ["1080p", "360p", "4k", "720p"]},
+    "interactions.ResponseFormat": {"arms": [{"kind": "map", "value": {"kind": "any"}}, {"kind": "ref", "name": "interactions.AudioResponseFormat"}, {"kind": "ref", "name": "interactions.ImageResponseFormat"}, {"kind": "ref", "name": "interactions.TextResponseFormat"}, {"kind": "ref", "name": "interactions.VideoResponseFormat"}], "kind": "union"},
+    "interactions.ResponseModality": {"kind": "literal", "open": true, "values": ["audio", "document", "image", "text", "video"]},
+    "interactions.RetrievalCallDeltaRetrievalType": {"kind": "literal", "open": true, "values": ["exa_ai_search", "parallel_ai_search", "rag_store", "vertex_ai_search"]},
+    "interactions.RetrievalCallStepRetrievalType": {"kind": "literal", "open": true, "values": ["exa_ai_search", "parallel_ai_search", "rag_store", "vertex_ai_search"]},
+    "interactions.RetrievalRetrievalType": {"kind": "literal", "open": true, "values": ["exa_ai_search", "parallel_ai_search", "rag_store", "vertex_ai_search"]},
+    "interactions.ServiceTier": {"kind": "literal", "open": true, "values": ["deferred", "flex", "priority", "standard"]},
+    "interactions.SourceType": {"kind": "literal", "open": true, "values": ["gcs", "inline", "repository", "skill_registry"]},
+    "interactions.SpeechConfigUnion": {"arms": [{"item": {"kind": "ref", "name": "interactions.SpeechConfig"}, "kind": "list"}, {"kind": "ref", "name": "interactions.SpeakerConfig"}], "kind": "union"},
+    "interactions.Step": {"arms": [{"kind": "ref", "name": "interactions.CodeExecutionCallStep"}, {"kind": "ref", "name": "interactions.CodeExecutionResultStep"}, {"kind": "ref", "name": "interactions.FileSearchCallStep"}, {"kind": "ref", "name": "interactions.FileSearchResultStep"}, {"kind": "ref", "name": "interactions.FunctionCallStep"}, {"kind": "ref", "name": "interactions.FunctionResultStep"}, {"kind": "ref", "name": "interactions.GoogleMapsCallStep"}, {"kind": "ref", "name": "interactions.GoogleMapsResultStep"}, {"kind": "ref", "name": "interactions.GoogleSearchCallStep"}, {"kind": "ref", "name": "interactions.GoogleSearchResultStep"}, {"kind": "ref", "name": "interactions.MCPServerToolCallStep"}, {"kind": "ref", "name": "interactions.MCPServerToolResultStep"}, {"kind": "ref", "name": "interactions.ModelOutputStep"}, {"kind": "ref", "name": "interactions.ProcessingCallStep"}, {"kind": "ref", "name": "interactions.ProcessingResultStep"}, {"kind": "ref", "name": "interactions.RetrievalCallStep"}, {"kind": "ref", "name": "interactions.RetrievalResultStep"}, {"kind": "ref", "name": "interactions.ThoughtStep"}, {"kind": "ref", "name": "interactions.URLContextCallStep"}, {"kind": "ref", "name": "interactions.URLContextResultStep"}, {"kind": "ref", "name": "interactions.UserInputStep"}], "kind": "union"},
+    "interactions.StepDeltaData": {"arms": [{"kind": "ref", "name": "interactions.ArgumentsDelta"}, {"kind": "ref", "name": "interactions.AudioDelta"}, {"kind": "ref", "name": "interactions.CodeExecutionCallDelta"}, {"kind": "ref", "name": "interactions.CodeExecutionResultDelta"}, {"kind": "ref", "name": "interactions.DocumentDelta"}, {"kind": "ref", "name": "interactions.FileSearchCallDelta"}, {"kind": "ref", "name": "interactions.FileSearchResultDelta"}, {"kind": "ref", "name": "interactions.FunctionResultDelta"}, {"kind": "ref", "name": "interactions.GoogleMapsCallDelta"}, {"kind": "ref", "name": "interactions.GoogleMapsResultDelta"}, {"kind": "ref", "name": "interactions.GoogleSearchCallDelta"}, {"kind": "ref", "name": "interactions.GoogleSearchResultDelta"}, {"kind": "ref", "name": "interactions.ImageDelta"}, {"kind": "ref", "name": "interactions.MCPServerToolCallDelta"}, {"kind": "ref", "name": "interactions.MCPServerToolResultDelta"}, {"kind": "ref", "name": "interactions.ProcessingCallDelta"}, {"kind": "ref", "name": "interactions.ProcessingResultDelta"}, {"kind": "ref", "name": "interactions.RetrievalCallDelta"}, {"kind": "ref", "name": "interactions.RetrievalResultDelta"}, {"kind": "ref", "name": "interactions.TextAnnotationDelta"}, {"kind": "ref", "name": "interactions.TextDelta"}, {"kind": "ref", "name": "interactions.ThoughtSignatureDelta"}, {"kind": "ref", "name": "interactions.ThoughtSummaryDelta"}, {"kind": "ref", "name": "interactions.URLContextCallDelta"}, {"kind": "ref", "name": "interactions.URLContextResultDelta"}, {"kind": "ref", "name": "interactions.VideoDelta"}], "kind": "union"},
+    "interactions.Task": {"kind": "literal", "open": true, "values": ["edit", "extend", "image_to_video", "reference_to_video", "text_to_video", "upscale"]},
+    "interactions.TextResponseFormatMimeType": {"kind": "literal", "open": true, "values": ["application/json", "text/plain"]},
+    "interactions.ThinkingLevel": {"kind": "literal", "open": true, "values": ["high", "low", "medium", "minimal"]},
+    "interactions.ThinkingSummaries": {"kind": "literal", "open": true, "values": ["auto", "none"]},
+    "interactions.ThoughtSummaryContent": {"arms": [{"kind": "ref", "name": "interactions.ImageContent"}, {"kind": "ref", "name": "interactions.TextContent"}], "kind": "union"},
+    "interactions.Threshold": {"kind": "literal", "open": true, "values": ["block_low_and_above", "block_medium_and_above", "block_none", "block_only_high", "off"]},
+    "interactions.Tool": {"arms": [{"kind": "ref", "name": "interactions.CodeExecution"}, {"kind": "ref", "name": "interactions.ComputerUse"}, {"kind": "ref", "name": "interactions.FileSearch"}, {"kind": "ref", "name": "interactions.Function"}, {"kind": "ref", "name": "interactions.GoogleMaps"}, {"kind": "ref", "name": "interactions.GoogleSearch"}, {"kind": "ref", "name": "interactions.MCPServer"}, {"kind": "ref", "name": "interactions.Retrieval"}, {"kind": "ref", "name": "interactions.URLContext"}], "kind": "union"},
+    "interactions.ToolChoice": {"arms": [{"kind": "ref", "name": "interactions.ToolChoiceConfig"}, {"kind": "ref", "name": "interactions.ToolChoiceType"}], "kind": "union"},
+    "interactions.ToolChoiceType": {"kind": "literal", "open": true, "values": ["any", "auto", "none", "validated"]},
+    "interactions.TranscriptionConfigMode": {"arms": [{"kind": "ref", "name": "interactions.TranscriptionConfigModeEnum"}, {"kind": "ref", "name": "interactions.TranscriptionMode"}], "kind": "union"},
+    "interactions.TranscriptionConfigModeEnum": {"kind": "literal", "open": true, "values": ["smart", "verbatim"]},
+    "interactions.TranscriptionMode": {"arms": [{"kind": "ref", "name": "interactions.SmartTranscriptionMode"}, {"kind": "ref", "name": "interactions.VerbatimTranscriptionMode"}], "kind": "union"},
+    "interactions.Transform": {"arms": [{"item": {"kind": "map", "value": {"kind": "str"}}, "kind": "list"}, {"kind": "map", "value": {"kind": "str"}}], "kind": "union"},
+    "interactions.URLContextResultStatus": {"kind": "literal", "open": true, "values": ["error", "paywall", "success", "unsafe"]},
+    "interactions.VideoContentMimeType": {"kind": "literal", "open": true, "values": ["video/3gpp", "video/avi", "video/mov", "video/mp4", "video/mpeg", "video/mpg", "video/webm", "video/wmv", "video/x-flv"]},
+    "interactions.VideoDeltaMimeType": {"kind": "literal", "open": true, "values": ["video/3gpp", "video/avi", "video/jpeg2000", "video/mov", "video/mp4", "video/mpeg", "video/mpg", "video/webm", "video/wmv", "video/x-flv"]},
+    "interactions.VideoResponseFormatAspectRatio": {"kind": "literal", "open": true, "values": ["16:9", "9:16"]},
+    "interactions.VideoResponseFormatDelivery": {"kind": "literal", "open": true, "values": ["inline", "uri"]},
+    "interactions.Visualization": {"kind": "literal", "open": true, "values": ["auto", "off"]},
+    "triggers.TriggerExecutionStatus": {"kind": "literal", "open": true, "values": ["completed", "failed", "in_progress", "skipped", "timed_out"]},
+    "triggers.TriggerStatus": {"kind": "literal", "open": true, "values": ["active", "error", "paused"]},
+    "triggers.TriggerUpdateStatus": {"kind": "literal", "open": false, "values": ["active", "error", "paused"]},
+    "types.Base64FileInput": {"kind": "bytes"},
+    "voices.Pitch": {"kind": "literal", "open": true, "values": ["high", "low", "medium"]},
+    "voices.VoiceType": {"kind": "literal", "open": true, "values": ["prebuilt", "prompted", "replicated"]},
+    "webhooks.RevocationBehavior": {"kind": "literal", "open": false, "values": ["revoke_previous_secrets_after_h24", "revoke_previous_secrets_immediately"]},
+    "webhooks.WebhookState": {"kind": "literal", "open": true, "values": ["disabled", "disabled_due_to_failed_deliveries", "enabled"]},
+    "webhooks.WebhookSubscribedEvent": {"kind": "literal", "open": true, "values": ["batch.expired", "batch.failed", "batch.succeeded", "interaction.completed", "interaction.failed", "interaction.requires_action", "video.generated"]},
+    "webhooks.WebhookUpdateState": {"kind": "literal", "open": false, "values": ["disabled", "disabled_due_to_failed_deliveries", "enabled"]},
+    "webhooks.WebhookUpdateSubscribedEvent": {"kind": "literal", "open": true, "values": ["batch.expired", "batch.failed", "batch.succeeded", "interaction.completed", "interaction.failed", "interaction.requires_action", "video.generated"]}
+  },
+  "classes": {
+    "agents.Agent": {"file": "_gaos/types/agents/agent.py", "open": false, "fields": {
+      "agent_config": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.AntigravityAgentConfig"}},
+      "base_agent": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "base_environment": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "agents.BaseEnvironment"}},
+      "description": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "system_instruction": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "tools": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "agents.AgentTool"}, "kind": "list"}}
+    }},
+    "agents.AgentListResponse": {"file": "_gaos/types/agents/agentlistresponse.py", "open": false, "fields": {
+      "agents": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "agents.Agent"}, "kind": "list"}},
+      "next_page_token": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "credentials.Credential": {"file": "_gaos/types/credentials/credential.py", "open": false, "fields": {
+      "create_time": {"deprecated": false, "required": false, "type": {"kind": "datetime"}},
+      "id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "status": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "credentials.Status"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "credentials.Type"}},
+      "update_time": {"deprecated": false, "required": false, "type": {"kind": "datetime"}}
+    }},
+    "credentials.CredentialListResponse": {"file": "_gaos/types/credentials/credentiallistresponse.py", "open": false, "fields": {
+      "credentials": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "credentials.Credential"}, "kind": "list"}},
+      "next_page_token": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "credentials.EnvironmentVariableConfig": {"file": "_gaos/types/credentials/environmentvariableconfig.py", "open": false, "fields": {
+      "id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "injection_location": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "credentials.EnvironmentVariableConfigInjectionLocation"}},
+      "trusted_domains": {"deprecated": false, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["environment_variable"]}},
+      "value": {"deprecated": false, "required": true, "type": {"kind": "str"}}
+    }},
+    "credentials.EnvironmentVariableUpdateConfig": {"file": "_gaos/types/credentials/environmentvariableupdateconfig.py", "open": false, "fields": {
+      "injection_location": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "credentials.EnvironmentVariableUpdateConfigInjectionLocation"}},
+      "trusted_domains": {"deprecated": false, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["environment_variable"]}},
+      "value": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "credentials.HTTPBearerConfig": {"file": "_gaos/types/credentials/httpbearerconfig.py", "open": false, "fields": {
+      "header_name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "prefix": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "token": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["bearer_token"]}}
+    }},
+    "credentials.HTTPBearerUpdateConfig": {"file": "_gaos/types/credentials/httpbearerupdateconfig.py", "open": false, "fields": {
+      "header_name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "prefix": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "token": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["bearer_token"]}}
+    }},
+    "credentials.OAuth2Config": {"file": "_gaos/types/credentials/oauth2config.py", "open": false, "fields": {
+      "client_id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "client_secret": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "refresh_token": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "scopes": {"deprecated": false, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}},
+      "token_url": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["oauth2"]}}
+    }},
+    "credentials.OAuth2UpdateConfig": {"file": "_gaos/types/credentials/oauth2updateconfig.py", "open": false, "fields": {
+      "client_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "client_secret": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "refresh_token": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "scopes": {"deprecated": false, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}},
+      "token_url": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["oauth2"]}}
+    }},
+    "environments.CreateEnvironmentRequest": {"file": "_gaos/types/environments/createenvironmentrequest.py", "open": false, "fields": {
+      "from_environment": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "network": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "environments.CreateEnvironmentRequestNetworkUnion"}},
+      "sources": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.Source"}, "kind": "list"}}
+    }},
+    "environments.Environment": {"file": "_gaos/types/environments/environment.py", "open": false, "fields": {
+      "created": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "file_count": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "last_accessed": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "network": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "environments.EnvironmentNetworkUnion"}},
+      "size_bytes": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "sources": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.Source"}, "kind": "list"}},
+      "status": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "environments.Status"}},
+      "updated": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "environments.EnvironmentFile": {"file": "_gaos/types/environments/environmentfile.py", "open": false, "fields": {
+      "created": {"deprecated": false, "required": false, "type": {"kind": "datetime"}},
+      "mime_type": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "modified": {"deprecated": false, "required": false, "type": {"kind": "datetime"}},
+      "name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "path": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "size_bytes": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "environments.Type"}}
+    }},
+    "environments.GetEnvironmentFilesResponse": {"file": "_gaos/types/environments/getenvironmentfilesresponse.py", "open": false, "fields": {
+      "files": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "environments.EnvironmentFile"}, "kind": "list"}},
+      "next_page_token": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "environments.ListEnvironmentsResponse": {"file": "_gaos/types/environments/listenvironmentsresponse.py", "open": false, "fields": {
+      "environments": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "environments.Environment"}, "kind": "list"}},
+      "next_page_token": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.AllowedTools": {"file": "_gaos/types/interactions/allowedtools.py", "open": false, "fields": {
+      "mode": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.ToolChoiceType"}},
+      "tools": {"deprecated": false, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}}
+    }},
+    "interactions.AllowlistEntry": {"file": "_gaos/types/interactions/allowlistentry.py", "open": false, "fields": {
+      "credential": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "domain": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "transform": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Transform"}}
+    }},
+    "interactions.AntigravityAgentConfig": {"file": "_gaos/types/interactions/antigravityagentconfig.py", "open": false, "fields": {
+      "max_total_tokens": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "model": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["antigravity"]}}
+    }},
+    "interactions.ArgumentsDelta": {"file": "_gaos/types/interactions/argumentsdelta.py", "open": false, "fields": {
+      "arguments": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["arguments_delta"]}}
+    }},
+    "interactions.AudioContent": {"file": "_gaos/types/interactions/audiocontent.py", "open": false, "fields": {
+      "channels": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "data": {"deprecated": false, "required": false, "type": {"kind": "bytes"}},
+      "mime_type": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.AudioContentMimeType"}},
+      "sample_rate": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["audio"]}},
+      "uri": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.AudioDelta": {"file": "_gaos/types/interactions/audiodelta.py", "open": false, "fields": {
+      "channels": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "data": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "mime_type": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.AudioDeltaMimeType"}},
+      "rate": {"deprecated": true, "required": false, "type": {"kind": "int"}},
+      "sample_rate": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["audio"]}},
+      "uri": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.AudioResponseFormat": {"file": "_gaos/types/interactions/audioresponseformat.py", "open": false, "fields": {
+      "bit_rate": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "delivery": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.AudioResponseFormatDelivery"}},
+      "mime_type": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.AudioResponseFormatMimeType"}},
+      "sample_rate": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["audio"]}}
+    }},
+    "interactions.CodeExecution": {"file": "_gaos/types/interactions/codeexecution.py", "open": false, "fields": {
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["code_execution"]}}
+    }},
+    "interactions.CodeExecutionCallArguments": {"file": "_gaos/types/interactions/codeexecutioncallarguments.py", "open": false, "fields": {
+      "code": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "language": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Language"}}
+    }},
+    "interactions.CodeExecutionCallDelta": {"file": "_gaos/types/interactions/codeexecutioncalldelta.py", "open": false, "fields": {
+      "arguments": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.CodeExecutionCallArguments"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["code_execution_call"]}}
+    }},
+    "interactions.CodeExecutionCallStep": {"file": "_gaos/types/interactions/codeexecutioncallstep.py", "open": false, "fields": {
+      "arguments": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.CodeExecutionCallArguments"}},
+      "id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "bytes"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["code_execution_call"]}}
+    }},
+    "interactions.CodeExecutionResultDelta": {"file": "_gaos/types/interactions/codeexecutionresultdelta.py", "open": false, "fields": {
+      "is_error": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "result": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["code_execution_result"]}}
+    }},
+    "interactions.CodeExecutionResultStep": {"file": "_gaos/types/interactions/codeexecutionresultstep.py", "open": false, "fields": {
+      "call_id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "is_error": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "result": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "bytes"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["code_execution_result"]}}
+    }},
+    "interactions.CodeMenderAgentConfig": {"file": "_gaos/types/interactions/codemenderagentconfig.py", "open": false, "fields": {
+      "find_request": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.FindRequest"}},
+      "fix_request": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.FixRequest"}},
+      "model": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "session_config": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.SessionConfig"}},
+      "session_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["code-mender"]}}
+    }},
+    "interactions.ComputerUse": {"file": "_gaos/types/interactions/computeruse.py", "open": false, "fields": {
+      "disabled_safety_policies": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.DisabledSafetyPolicy"}, "kind": "list"}},
+      "enable_prompt_injection_detection": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "environment": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.EnvironmentEnum"}},
+      "excluded_predefined_functions": {"deprecated": false, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["computer_use"]}}
+    }},
+    "interactions.CreateAgentInteraction": {"file": "_gaos/types/interactions/createagentinteraction.py", "open": false, "fields": {
+      "agent": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.AgentOption"}},
+      "agent_config": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.CreateAgentInteractionAgentConfig"}},
+      "background": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "continuation_token": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "environment": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.CreateAgentInteractionEnvironment"}},
+      "input": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.InteractionsInput"}},
+      "labels": {"deprecated": false, "required": false, "type": {"kind": "map", "value": {"kind": "str"}}},
+      "previous_interaction_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "response_format": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.CreateAgentInteractionResponseFormat"}},
+      "response_mime_type": {"deprecated": true, "required": false, "type": {"kind": "str"}},
+      "response_modalities": {"deprecated": true, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.ResponseModality"}, "kind": "list"}},
+      "safety_settings": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.SafetySetting"}, "kind": "list"}},
+      "service_tier": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.ServiceTier"}},
+      "store": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "stream": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "system_instruction": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "tools": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.Tool"}, "kind": "list"}},
+      "webhook_config": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.WebhookConfig"}}
+    }},
+    "interactions.CreateModelInteraction": {"file": "_gaos/types/interactions/createmodelinteraction.py", "open": false, "fields": {
+      "background": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "cached_content": {"deprecated": true, "required": false, "type": {"kind": "str"}},
+      "continuation_token": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "environment": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.CreateModelInteractionEnvironment"}},
+      "generation_config": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.GenerationConfig"}},
+      "input": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.InteractionsInput"}},
+      "labels": {"deprecated": false, "required": false, "type": {"kind": "map", "value": {"kind": "str"}}},
+      "model": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.Model"}},
+      "previous_interaction_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "response_format": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.CreateModelInteractionResponseFormat"}},
+      "response_mime_type": {"deprecated": true, "required": false, "type": {"kind": "str"}},
+      "response_modalities": {"deprecated": true, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.ResponseModality"}, "kind": "list"}},
+      "safety_settings": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.SafetySetting"}, "kind": "list"}},
+      "service_tier": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.ServiceTier"}},
+      "store": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "stream": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "system_instruction": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "tools": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.Tool"}, "kind": "list"}},
+      "webhook_config": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.WebhookConfig"}}
+    }},
+    "interactions.DeepResearchAgentConfig": {"file": "_gaos/types/interactions/deepresearchagentconfig.py", "open": false, "fields": {
+      "collaborative_planning": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "enable_bigquery_tool": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "thinking_summaries": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.ThinkingSummaries"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["deep-research"]}},
+      "visualization": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Visualization"}}
+    }},
+    "interactions.DocumentContent": {"file": "_gaos/types/interactions/documentcontent.py", "open": false, "fields": {
+      "data": {"deprecated": false, "required": false, "type": {"kind": "bytes"}},
+      "mime_type": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.DocumentContentMimeType"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["document"]}},
+      "uri": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.DocumentDelta": {"file": "_gaos/types/interactions/documentdelta.py", "open": false, "fields": {
+      "data": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "mime_type": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.DocumentDeltaMimeType"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["document"]}},
+      "uri": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.DynamicAgentConfig": {"file": "_gaos/types/interactions/dynamicagentconfig.py", "open": true, "fields": {
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["dynamic"]}}
+    }},
+    "interactions.Empty": {"file": "_gaos/types/interactions/empty.py", "open": false, "fields": {
+    }},
+    "interactions.EnvVar": {"file": "_gaos/types/interactions/envvar.py", "open": false, "fields": {
+      "credential": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "value": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.Environment": {"file": "_gaos/types/interactions/environment.py", "open": false, "fields": {
+      "env": {"deprecated": false, "required": false, "type": {"kind": "map", "value": {"kind": "ref", "name": "interactions.Env"}}},
+      "environment_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "network": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Network"}},
+      "sources": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.Source"}, "kind": "list"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["remote"]}}
+    }},
+    "interactions.EnvironmentNetworkEgressAllowlist": {"file": "_gaos/types/interactions/environmentnetworkegressallowlist.py", "open": false, "fields": {
+      "allowlist": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Allowlist"}}
+    }},
+    "interactions.Error": {"file": "_gaos/types/interactions/error.py", "open": false, "fields": {
+      "code": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "message": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.ErrorEvent": {"file": "_gaos/types/interactions/errorevent.py", "open": false, "fields": {
+      "error": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Error"}},
+      "event_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "event_type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["error"]}}
+    }},
+    "interactions.ExaAISearchConfig": {"file": "_gaos/types/interactions/exaaisearchconfig.py", "open": false, "fields": {
+      "api_key": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "custom_config": {"deprecated": false, "required": false, "type": {"kind": "map", "value": {"kind": "any"}}}
+    }},
+    "interactions.FileCitation": {"file": "_gaos/types/interactions/filecitation.py", "open": false, "fields": {
+      "custom_metadata": {"deprecated": false, "required": false, "type": {"kind": "map", "value": {"kind": "any"}}},
+      "document_uri": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "end_index": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "file_name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "media_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "page_number": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "source": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "start_index": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["file_citation"]}}
+    }},
+    "interactions.FileContent": {"file": "_gaos/types/interactions/filecontent.py", "open": false, "fields": {
+      "content": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "path": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.FileSearch": {"file": "_gaos/types/interactions/filesearch.py", "open": false, "fields": {
+      "file_search_store_names": {"deprecated": false, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}},
+      "metadata_filter": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "top_k": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["file_search"]}}
+    }},
+    "interactions.FileSearchCallDelta": {"file": "_gaos/types/interactions/filesearchcalldelta.py", "open": false, "fields": {
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["file_search_call"]}}
+    }},
+    "interactions.FileSearchCallStep": {"file": "_gaos/types/interactions/filesearchcallstep.py", "open": false, "fields": {
+      "id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "bytes"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["file_search_call"]}}
+    }},
+    "interactions.FileSearchResult": {"file": "_gaos/types/interactions/filesearchresult.py", "open": false, "fields": {
+    }},
+    "interactions.FileSearchResultDelta": {"file": "_gaos/types/interactions/filesearchresultdelta.py", "open": false, "fields": {
+      "result": {"deprecated": false, "required": true, "type": {"item": {"kind": "ref", "name": "interactions.FileSearchResult"}, "kind": "list"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["file_search_result"]}}
+    }},
+    "interactions.FileSearchResultStep": {"file": "_gaos/types/interactions/filesearchresultstep.py", "open": false, "fields": {
+      "call_id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "bytes"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["file_search_result"]}}
+    }},
+    "interactions.Filter": {"file": "_gaos/types/interactions/filter_.py", "open": false, "fields": {
+      "metadata_filter": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "vector_distance_threshold": {"deprecated": false, "required": false, "type": {"kind": "float"}},
+      "vector_similarity_threshold": {"deprecated": false, "required": false, "type": {"kind": "float"}}
+    }},
+    "interactions.FindRequest": {"file": "_gaos/types/interactions/findrequest.py", "open": false, "fields": {
+      "description": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "finding_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "mode": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Mode"}},
+      "source_files": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.FileContent"}, "kind": "list"}}
+    }},
+    "interactions.FixRequest": {"file": "_gaos/types/interactions/fixrequest.py", "open": false, "fields": {
+      "description": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "finding_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "source_files": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.FileContent"}, "kind": "list"}}
+    }},
+    "interactions.Function": {"file": "_gaos/types/interactions/function.py", "open": false, "fields": {
+      "description": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "parameters": {"deprecated": false, "required": false, "type": {"kind": "any"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["function"]}}
+    }},
+    "interactions.FunctionCallStep": {"file": "_gaos/types/interactions/functioncallstep.py", "open": false, "fields": {
+      "arguments": {"deprecated": false, "required": true, "type": {"kind": "map", "value": {"kind": "any"}}},
+      "id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "name": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["function_call"]}}
+    }},
+    "interactions.FunctionResultDelta": {"file": "_gaos/types/interactions/functionresultdelta.py", "open": false, "fields": {
+      "is_error": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "result": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.FunctionResultDeltaResultUnion"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["function_result"]}}
+    }},
+    "interactions.FunctionResultDeltaResult": {"file": "_gaos/types/interactions/functionresultdelta.py", "open": false, "fields": {
+    }},
+    "interactions.FunctionResultStep": {"file": "_gaos/types/interactions/functionresultstep.py", "open": false, "fields": {
+      "call_id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "is_error": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "result": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.FunctionResultStepResultUnion"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["function_result"]}}
+    }},
+    "interactions.FunctionResultStepResult": {"file": "_gaos/types/interactions/functionresultstep.py", "open": false, "fields": {
+    }},
+    "interactions.GenerationConfig": {"file": "_gaos/types/interactions/generationconfig.py", "open": false, "fields": {
+      "image_config": {"deprecated": true, "required": false, "type": {"kind": "ref", "name": "interactions.ImageConfig"}},
+      "max_output_tokens": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "seed": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "speech_config": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.SpeechConfigUnion"}},
+      "stop_sequences": {"deprecated": false, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}},
+      "temperature": {"deprecated": true, "required": false, "type": {"kind": "float"}},
+      "thinking_level": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.ThinkingLevel"}},
+      "thinking_summaries": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.ThinkingSummaries"}},
+      "tool_choice": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.ToolChoice"}},
+      "top_p": {"deprecated": true, "required": false, "type": {"kind": "float"}},
+      "transcription_config": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.TranscriptionConfig"}},
+      "video_config": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.VideoConfig"}}
+    }},
+    "interactions.GoogleMaps": {"file": "_gaos/types/interactions/googlemaps.py", "open": false, "fields": {
+      "enable_widget": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "latitude": {"deprecated": false, "required": false, "type": {"kind": "float"}},
+      "longitude": {"deprecated": false, "required": false, "type": {"kind": "float"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["google_maps"]}}
+    }},
+    "interactions.GoogleMapsCallArguments": {"file": "_gaos/types/interactions/googlemapscallarguments.py", "open": false, "fields": {
+      "queries": {"deprecated": false, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}}
+    }},
+    "interactions.GoogleMapsCallDelta": {"file": "_gaos/types/interactions/googlemapscalldelta.py", "open": false, "fields": {
+      "arguments": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.GoogleMapsCallArguments"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["google_maps_call"]}}
+    }},
+    "interactions.GoogleMapsCallStep": {"file": "_gaos/types/interactions/googlemapscallstep.py", "open": false, "fields": {
+      "arguments": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.GoogleMapsCallArguments"}},
+      "id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "bytes"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["google_maps_call"]}}
+    }},
+    "interactions.GoogleMapsResult": {"file": "_gaos/types/interactions/googlemapsresult.py", "open": false, "fields": {
+      "places": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.GoogleMapsResultPlaces"}, "kind": "list"}},
+      "widget_context_token": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.GoogleMapsResultDelta": {"file": "_gaos/types/interactions/googlemapsresultdelta.py", "open": false, "fields": {
+      "result": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.GoogleMapsResult"}, "kind": "list"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["google_maps_result"]}}
+    }},
+    "interactions.GoogleMapsResultPlaces": {"file": "_gaos/types/interactions/googlemapsresultplaces.py", "open": false, "fields": {
+      "name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "place_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "review_snippets": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.ReviewSnippet"}, "kind": "list"}},
+      "url": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.GoogleMapsResultStep": {"file": "_gaos/types/interactions/googlemapsresultstep.py", "open": false, "fields": {
+      "call_id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "result": {"deprecated": false, "required": true, "type": {"item": {"kind": "ref", "name": "interactions.GoogleMapsResult"}, "kind": "list"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "bytes"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["google_maps_result"]}}
+    }},
+    "interactions.GoogleSearch": {"file": "_gaos/types/interactions/googlesearch.py", "open": false, "fields": {
+      "search_types": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.GoogleSearchSearchType"}, "kind": "list"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["google_search"]}}
+    }},
+    "interactions.GoogleSearchCallArguments": {"file": "_gaos/types/interactions/googlesearchcallarguments.py", "open": false, "fields": {
+      "queries": {"deprecated": false, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}}
+    }},
+    "interactions.GoogleSearchCallDelta": {"file": "_gaos/types/interactions/googlesearchcalldelta.py", "open": false, "fields": {
+      "arguments": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.GoogleSearchCallArguments"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["google_search_call"]}}
+    }},
+    "interactions.GoogleSearchCallStep": {"file": "_gaos/types/interactions/googlesearchcallstep.py", "open": false, "fields": {
+      "arguments": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.GoogleSearchCallArguments"}},
+      "id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "search_type": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.GoogleSearchCallStepSearchType"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "bytes"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["google_search_call"]}}
+    }},
+    "interactions.GoogleSearchResult": {"file": "_gaos/types/interactions/googlesearchresult.py", "open": false, "fields": {
+      "search_suggestions": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.GoogleSearchResultDelta": {"file": "_gaos/types/interactions/googlesearchresultdelta.py", "open": false, "fields": {
+      "is_error": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "result": {"deprecated": false, "required": true, "type": {"item": {"kind": "ref", "name": "interactions.GoogleSearchResult"}, "kind": "list"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["google_search_result"]}}
+    }},
+    "interactions.GoogleSearchResultStep": {"file": "_gaos/types/interactions/googlesearchresultstep.py", "open": false, "fields": {
+      "call_id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "is_error": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "result": {"deprecated": false, "required": true, "type": {"item": {"kind": "ref", "name": "interactions.GoogleSearchResult"}, "kind": "list"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "bytes"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["google_search_result"]}}
+    }},
+    "interactions.GroundingToolCount": {"file": "_gaos/types/interactions/groundingtoolcount.py", "open": false, "fields": {
+      "count": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.GroundingToolCountType"}}
+    }},
+    "interactions.HybridSearch": {"file": "_gaos/types/interactions/hybridsearch.py", "open": false, "fields": {
+      "alpha": {"deprecated": false, "required": false, "type": {"kind": "float"}}
+    }},
+    "interactions.ImageConfig": {"file": "_gaos/types/interactions/imageconfig.py", "open": false, "fields": {
+      "aspect_ratio": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.ImageConfigAspectRatio"}},
+      "image_size": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.ImageConfigImageSize"}}
+    }},
+    "interactions.ImageContent": {"file": "_gaos/types/interactions/imagecontent.py", "open": false, "fields": {
+      "data": {"deprecated": false, "required": false, "type": {"kind": "bytes"}},
+      "mime_type": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.ImageContentMimeType"}},
+      "resolution": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.MediaResolution"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["image"]}},
+      "uri": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.ImageDelta": {"file": "_gaos/types/interactions/imagedelta.py", "open": false, "fields": {
+      "data": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "mime_type": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.ImageDeltaMimeType"}},
+      "resolution": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.MediaResolution"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["image"]}},
+      "uri": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.ImageResponseFormat": {"file": "_gaos/types/interactions/imageresponseformat.py", "open": false, "fields": {
+      "aspect_ratio": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.ImageResponseFormatAspectRatio"}},
+      "delivery": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.ImageResponseFormatDelivery"}},
+      "image_size": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.ImageResponseFormatImageSize"}},
+      "mime_type": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.ImageResponseFormatMimeType"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["image"]}}
+    }},
+    "interactions.Interaction": {"file": "_gaos/types/interactions/interaction.py", "open": false, "fields": {
+      "agent": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.AgentOption"}},
+      "agent_config": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.InteractionAgentConfig"}},
+      "cached_content": {"deprecated": true, "required": false, "type": {"kind": "str"}},
+      "continuation_ids": {"deprecated": false, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}},
+      "continuation_token": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "created": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "environment": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.InteractionEnvironment"}},
+      "environment_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "errors": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.Error"}, "kind": "list"}},
+      "generation_config": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.GenerationConfig"}},
+      "id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "input": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.InteractionsInput"}},
+      "labels": {"deprecated": false, "required": false, "type": {"kind": "map", "value": {"kind": "str"}}},
+      "model": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Model"}},
+      "output_audio": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.AudioContent"}},
+      "output_image": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.ImageContent"}},
+      "output_text": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "output_video": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.VideoContent"}},
+      "previous_interaction_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "response_format": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.InteractionResponseFormat"}},
+      "response_mime_type": {"deprecated": true, "required": false, "type": {"kind": "str"}},
+      "response_modalities": {"deprecated": true, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.ResponseModality"}, "kind": "list"}},
+      "safety_settings": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.SafetySetting"}, "kind": "list"}},
+      "service_tier": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.ServiceTier"}},
+      "status": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.InteractionStatus"}},
+      "steps": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.Step"}, "kind": "list"}},
+      "system_instruction": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "tools": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.Tool"}, "kind": "list"}},
+      "updated": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "usage": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Usage"}},
+      "webhook_config": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.WebhookConfig"}}
+    }},
+    "interactions.InteractionCompletedEvent": {"file": "_gaos/types/interactions/interactioncompletedevent.py", "open": false, "fields": {
+      "event_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "event_type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["interaction.completed"]}},
+      "interaction": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.InteractionSseEventInteraction"}}
+    }},
+    "interactions.InteractionCreatedEvent": {"file": "_gaos/types/interactions/interactioncreatedevent.py", "open": false, "fields": {
+      "event_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "event_type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["interaction.created"]}},
+      "interaction": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.InteractionSseEventInteraction"}}
+    }},
+    "interactions.InteractionSSEStreamEvent": {"file": "_gaos/types/interactions/interactionssestreamevent.py", "open": false, "fields": {
+      "data": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.InteractionSSEEvent"}}
+    }},
+    "interactions.InteractionSseEventInteraction": {"file": "_gaos/types/interactions/interactionsseeventinteraction.py", "open": false, "fields": {
+      "agent": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "continuation_token": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "created": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "model": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "object": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "service_tier": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.ServiceTier"}},
+      "status": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.InteractionSseEventInteractionStatus"}},
+      "steps": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.Step"}, "kind": "list"}},
+      "updated": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "usage": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Usage"}}
+    }},
+    "interactions.InteractionStatusUpdate": {"file": "_gaos/types/interactions/interactionstatusupdate.py", "open": false, "fields": {
+      "continuation_token": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "event_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "event_type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["interaction.status_update"]}},
+      "interaction_id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "status": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.InteractionStatusUpdateStatus"}},
+      "usage": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Usage"}}
+    }},
+    "interactions.MCPServer": {"file": "_gaos/types/interactions/mcpserver.py", "open": false, "fields": {
+      "allowed_tools": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.AllowedTools"}, "kind": "list"}},
+      "headers": {"deprecated": false, "required": false, "type": {"kind": "map", "value": {"kind": "str"}}},
+      "name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["mcp_server"]}},
+      "url": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.MCPServerToolCallDelta": {"file": "_gaos/types/interactions/mcpservertoolcalldelta.py", "open": false, "fields": {
+      "arguments": {"deprecated": false, "required": true, "type": {"kind": "map", "value": {"kind": "any"}}},
+      "name": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "server_name": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["mcp_server_tool_call"]}}
+    }},
+    "interactions.MCPServerToolCallStep": {"file": "_gaos/types/interactions/mcpservertoolcallstep.py", "open": false, "fields": {
+      "arguments": {"deprecated": false, "required": true, "type": {"kind": "map", "value": {"kind": "any"}}},
+      "id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "name": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "server_name": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["mcp_server_tool_call"]}}
+    }},
+    "interactions.MCPServerToolResultDelta": {"file": "_gaos/types/interactions/mcpservertoolresultdelta.py", "open": false, "fields": {
+      "name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "result": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.MCPServerToolResultDeltaResultUnion"}},
+      "server_name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["mcp_server_tool_result"]}}
+    }},
+    "interactions.MCPServerToolResultDeltaResult": {"file": "_gaos/types/interactions/mcpservertoolresultdelta.py", "open": false, "fields": {
+    }},
+    "interactions.MCPServerToolResultStep": {"file": "_gaos/types/interactions/mcpservertoolresultstep.py", "open": false, "fields": {
+      "call_id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "result": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.MCPServerToolResultStepResultUnion"}},
+      "server_name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["mcp_server_tool_result"]}}
+    }},
+    "interactions.MCPServerToolResultStepResult": {"file": "_gaos/types/interactions/mcpservertoolresultstep.py", "open": false, "fields": {
+    }},
+    "interactions.ModalityTokens": {"file": "_gaos/types/interactions/modalitytokens.py", "open": false, "fields": {
+      "modality": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.ResponseModality"}},
+      "tokens": {"deprecated": false, "required": false, "type": {"kind": "int"}}
+    }},
+    "interactions.ModelOutputStep": {"file": "_gaos/types/interactions/modeloutputstep.py", "open": false, "fields": {
+      "content": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.Content"}, "kind": "list"}},
+      "error": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Status"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["model_output"]}}
+    }},
+    "interactions.ParallelAISearchConfig": {"file": "_gaos/types/interactions/parallelaisearchconfig.py", "open": false, "fields": {
+      "api_key": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "custom_config": {"deprecated": false, "required": false, "type": {"kind": "map", "value": {"kind": "any"}}}
+    }},
+    "interactions.PlaceCitation": {"file": "_gaos/types/interactions/placecitation.py", "open": false, "fields": {
+      "end_index": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "place_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "review_snippets": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.ReviewSnippet"}, "kind": "list"}},
+      "start_index": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["place_citation"]}},
+      "url": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.ProcessingCallDelta": {"file": "_gaos/types/interactions/processingcalldelta.py", "open": false, "fields": {
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["processing_call"]}}
+    }},
+    "interactions.ProcessingCallStep": {"file": "_gaos/types/interactions/processingcallstep.py", "open": false, "fields": {
+      "id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "bytes"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["processing_call"]}}
+    }},
+    "interactions.ProcessingResultDelta": {"file": "_gaos/types/interactions/processingresultdelta.py", "open": false, "fields": {
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["processing_result"]}}
+    }},
+    "interactions.ProcessingResultStep": {"file": "_gaos/types/interactions/processingresultstep.py", "open": false, "fields": {
+      "call_id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "bytes"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["processing_result"]}}
+    }},
+    "interactions.RagResource": {"file": "_gaos/types/interactions/ragresource.py", "open": false, "fields": {
+      "rag_corpus": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "rag_file_ids": {"deprecated": false, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}}
+    }},
+    "interactions.RagRetrievalConfig": {"file": "_gaos/types/interactions/ragretrievalconfig.py", "open": false, "fields": {
+      "filter": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Filter"}},
+      "hybrid_search": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.HybridSearch"}},
+      "ranking": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Ranking"}},
+      "top_k": {"deprecated": false, "required": false, "type": {"kind": "int"}}
+    }},
+    "interactions.RagStoreConfig": {"file": "_gaos/types/interactions/ragstoreconfig.py", "open": false, "fields": {
+      "rag_resources": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.RagResource"}, "kind": "list"}},
+      "rag_retrieval_config": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.RagRetrievalConfig"}},
+      "similarity_top_k": {"deprecated": true, "required": false, "type": {"kind": "int"}},
+      "vector_distance_threshold": {"deprecated": true, "required": false, "type": {"kind": "float"}}
+    }},
+    "interactions.RankService": {"file": "_gaos/types/interactions/rankservice.py", "open": false, "fields": {
+      "model_name": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.Ranking": {"file": "_gaos/types/interactions/ranking.py", "open": false, "fields": {
+      "model_name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "rank_service": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.RankService"}},
+      "ranking_config": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["rank_service"]}}
+    }},
+    "interactions.Retrieval": {"file": "_gaos/types/interactions/retrieval.py", "open": false, "fields": {
+      "exa_ai_search_config": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.ExaAISearchConfig"}},
+      "parallel_ai_search_config": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.ParallelAISearchConfig"}},
+      "rag_store_config": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.RagStoreConfig"}},
+      "retrieval_types": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.RetrievalRetrievalType"}, "kind": "list"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["retrieval"]}},
+      "vertex_ai_search_config": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.VertexAISearchConfig"}}
+    }},
+    "interactions.RetrievalCallArguments": {"file": "_gaos/types/interactions/retrievalcallarguments.py", "open": false, "fields": {
+      "queries": {"deprecated": false, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}}
+    }},
+    "interactions.RetrievalCallDelta": {"file": "_gaos/types/interactions/retrievalcalldelta.py", "open": false, "fields": {
+      "arguments": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.RetrievalCallArguments"}},
+      "retrieval_type": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.RetrievalCallDeltaRetrievalType"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["retrieval_call"]}}
+    }},
+    "interactions.RetrievalCallStep": {"file": "_gaos/types/interactions/retrievalcallstep.py", "open": false, "fields": {
+      "arguments": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.RetrievalCallArguments"}},
+      "id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "retrieval_type": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.RetrievalCallStepRetrievalType"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "bytes"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["retrieval_call"]}}
+    }},
+    "interactions.RetrievalResultDelta": {"file": "_gaos/types/interactions/retrievalresultdelta.py", "open": false, "fields": {
+      "is_error": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["retrieval_result"]}}
+    }},
+    "interactions.RetrievalResultStep": {"file": "_gaos/types/interactions/retrievalresultstep.py", "open": false, "fields": {
+      "call_id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "is_error": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "bytes"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["retrieval_result"]}}
+    }},
+    "interactions.ReviewSnippet": {"file": "_gaos/types/interactions/reviewsnippet.py", "open": false, "fields": {
+      "review_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "title": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "url": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.SafetySetting": {"file": "_gaos/types/interactions/safetysetting.py", "open": false, "fields": {
+      "method": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Method"}},
+      "threshold": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.Threshold"}},
+      "type": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.HarmCategory"}}
+    }},
+    "interactions.SessionConfig": {"file": "_gaos/types/interactions/sessionconfig.py", "open": false, "fields": {
+      "max_rounds": {"deprecated": false, "required": false, "type": {"kind": "int"}}
+    }},
+    "interactions.SmartTranscriptionMode": {"file": "_gaos/types/interactions/smarttranscriptionmode.py", "open": false, "fields": {
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["smart"]}}
+    }},
+    "interactions.Source": {"file": "_gaos/types/interactions/source.py", "open": false, "fields": {
+      "content": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "encoding": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "source": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "target": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.SourceType"}}
+    }},
+    "interactions.SpeakerConfig": {"file": "_gaos/types/interactions/speakerconfig.py", "open": false, "fields": {
+      "speakers": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.SpeechConfig"}, "kind": "list"}}
+    }},
+    "interactions.SpeechAnnotation": {"file": "_gaos/types/interactions/speechannotation.py", "open": false, "fields": {
+      "end_index": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "speaker": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "start_index": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "style": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["speech_metadata"]}}
+    }},
+    "interactions.SpeechConfig": {"file": "_gaos/types/interactions/speechconfig.py", "open": false, "fields": {
+      "language": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "speaker": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "voice": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.StaticMediaProcessing": {"file": "_gaos/types/interactions/staticmediaprocessing.py", "open": false, "fields": {
+      "end_offset": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "fps": {"deprecated": false, "required": false, "type": {"kind": "float"}},
+      "start_offset": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["static"]}}
+    }},
+    "interactions.Status": {"file": "_gaos/types/interactions/status.py", "open": false, "fields": {
+      "code": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "details": {"deprecated": false, "required": false, "type": {"item": {"kind": "map", "value": {"kind": "any"}}, "kind": "list"}},
+      "message": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.StepDelta": {"file": "_gaos/types/interactions/stepdelta.py", "open": false, "fields": {
+      "delta": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.StepDeltaData"}},
+      "event_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "event_type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["step.delta"]}},
+      "index": {"deprecated": false, "required": true, "type": {"kind": "int"}},
+      "metadata": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.StepDeltaMetadata"}}
+    }},
+    "interactions.StepDeltaMetadata": {"file": "_gaos/types/interactions/stepdeltametadata.py", "open": false, "fields": {
+      "total_usage": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Usage"}}
+    }},
+    "interactions.StepStart": {"file": "_gaos/types/interactions/stepstart.py", "open": false, "fields": {
+      "event_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "event_type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["step.start"]}},
+      "index": {"deprecated": false, "required": true, "type": {"kind": "int"}},
+      "step": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.Step"}}
+    }},
+    "interactions.StepStop": {"file": "_gaos/types/interactions/stepstop.py", "open": false, "fields": {
+      "event_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "event_type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["step.stop"]}},
+      "index": {"deprecated": false, "required": true, "type": {"kind": "int"}},
+      "step_usage": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Usage"}},
+      "usage": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Usage"}}
+    }},
+    "interactions.TextAnnotationDelta": {"file": "_gaos/types/interactions/textannotationdelta.py", "open": false, "fields": {
+      "annotations": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.Annotation"}, "kind": "list"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["text_annotation_delta"]}}
+    }},
+    "interactions.TextContent": {"file": "_gaos/types/interactions/textcontent.py", "open": false, "fields": {
+      "annotations": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.Annotation"}, "kind": "list"}},
+      "text": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["text"]}}
+    }},
+    "interactions.TextDelta": {"file": "_gaos/types/interactions/textdelta.py", "open": false, "fields": {
+      "text": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["text"]}}
+    }},
+    "interactions.TextResponseFormat": {"file": "_gaos/types/interactions/textresponseformat.py", "open": false, "fields": {
+      "mime_type": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.TextResponseFormatMimeType"}},
+      "schema": {"deprecated": false, "required": false, "type": {"kind": "map", "value": {"kind": "any"}}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["text"]}}
+    }},
+    "interactions.ThoughtSignatureDelta": {"file": "_gaos/types/interactions/thoughtsignaturedelta.py", "open": false, "fields": {
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["thought_signature"]}}
+    }},
+    "interactions.ThoughtStep": {"file": "_gaos/types/interactions/thoughtstep.py", "open": false, "fields": {
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "bytes"}},
+      "summary": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.ThoughtSummaryContent"}, "kind": "list"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["thought"]}}
+    }},
+    "interactions.ThoughtSummaryDelta": {"file": "_gaos/types/interactions/thoughtsummarydelta.py", "open": false, "fields": {
+      "content": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Content"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["thought_summary"]}}
+    }},
+    "interactions.ToolChoiceConfig": {"file": "_gaos/types/interactions/toolchoiceconfig.py", "open": false, "fields": {
+      "allowed_tools": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.AllowedTools"}}
+    }},
+    "interactions.TranscriptionConfig": {"file": "_gaos/types/interactions/transcriptionconfig.py", "open": false, "fields": {
+      "adaptation_phrases": {"deprecated": true, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}},
+      "custom_vocabulary": {"deprecated": false, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}},
+      "diarization_mode": {"deprecated": true, "required": false, "type": {"kind": "str"}},
+      "language_codes": {"deprecated": false, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}},
+      "language_hints": {"deprecated": true, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}},
+      "mode": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.TranscriptionConfigMode"}},
+      "timestamp_granularities": {"deprecated": true, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}}
+    }},
+    "interactions.URLCitation": {"file": "_gaos/types/interactions/urlcitation.py", "open": false, "fields": {
+      "end_index": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "start_index": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "title": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["url_citation"]}},
+      "url": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.URLContext": {"file": "_gaos/types/interactions/urlcontext.py", "open": false, "fields": {
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["url_context"]}}
+    }},
+    "interactions.URLContextCallArguments": {"file": "_gaos/types/interactions/urlcontextcallarguments.py", "open": false, "fields": {
+      "urls": {"deprecated": false, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}}
+    }},
+    "interactions.URLContextCallDelta": {"file": "_gaos/types/interactions/urlcontextcalldelta.py", "open": false, "fields": {
+      "arguments": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.URLContextCallArguments"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["url_context_call"]}}
+    }},
+    "interactions.URLContextCallStep": {"file": "_gaos/types/interactions/urlcontextcallstep.py", "open": false, "fields": {
+      "arguments": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.URLContextCallArguments"}},
+      "id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "bytes"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["url_context_call"]}}
+    }},
+    "interactions.URLContextResult": {"file": "_gaos/types/interactions/urlcontextresult.py", "open": false, "fields": {
+      "status": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.URLContextResultStatus"}},
+      "url": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.URLContextResultDelta": {"file": "_gaos/types/interactions/urlcontextresultdelta.py", "open": false, "fields": {
+      "is_error": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "result": {"deprecated": false, "required": true, "type": {"item": {"kind": "ref", "name": "interactions.URLContextResult"}, "kind": "list"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["url_context_result"]}}
+    }},
+    "interactions.URLContextResultStep": {"file": "_gaos/types/interactions/urlcontextresultstep.py", "open": false, "fields": {
+      "call_id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "is_error": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "result": {"deprecated": false, "required": true, "type": {"item": {"kind": "ref", "name": "interactions.URLContextResult"}, "kind": "list"}},
+      "signature": {"deprecated": false, "required": false, "type": {"kind": "bytes"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["url_context_result"]}}
+    }},
+    "interactions.Usage": {"file": "_gaos/types/interactions/usage.py", "open": false, "fields": {
+      "cached_tokens_by_modality": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.ModalityTokens"}, "kind": "list"}},
+      "grounding_tool_count": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.GroundingToolCount"}, "kind": "list"}},
+      "initial_input_tokens": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "input_tokens_by_modality": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.ModalityTokens"}, "kind": "list"}},
+      "output_tokens_by_modality": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.ModalityTokens"}, "kind": "list"}},
+      "tool_use_tokens_by_modality": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.ModalityTokens"}, "kind": "list"}},
+      "total_cached_tokens": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "total_input_tokens": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "total_output_tokens": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "total_thought_tokens": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "total_tokens": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "total_tool_use_tokens": {"deprecated": false, "required": false, "type": {"kind": "int"}}
+    }},
+    "interactions.UserInputStep": {"file": "_gaos/types/interactions/userinputstep.py", "open": false, "fields": {
+      "content": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "interactions.Content"}, "kind": "list"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["user_input"]}}
+    }},
+    "interactions.VerbatimTranscriptionMode": {"file": "_gaos/types/interactions/verbatimtranscriptionmode.py", "open": false, "fields": {
+      "diarization_mode": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "timestamp_granularities": {"deprecated": false, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["verbatim"]}}
+    }},
+    "interactions.VertexAISearchConfig": {"file": "_gaos/types/interactions/vertexaisearchconfig.py", "open": false, "fields": {
+      "datastores": {"deprecated": false, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}},
+      "engine": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.VideoConfig": {"file": "_gaos/types/interactions/videoconfig.py", "open": false, "fields": {
+      "task": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Task"}}
+    }},
+    "interactions.VideoContent": {"file": "_gaos/types/interactions/videocontent.py", "open": false, "fields": {
+      "data": {"deprecated": false, "required": false, "type": {"kind": "bytes"}},
+      "mime_type": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.VideoContentMimeType"}},
+      "name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "processing": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Processing"}},
+      "resolution": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.MediaResolution"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["video"]}},
+      "uri": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.VideoDelta": {"file": "_gaos/types/interactions/videodelta.py", "open": false, "fields": {
+      "data": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "mime_type": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.VideoDeltaMimeType"}},
+      "resolution": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.MediaResolution"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["video"]}},
+      "uri": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "interactions.VideoResponseFormat": {"file": "_gaos/types/interactions/videoresponseformat.py", "open": false, "fields": {
+      "aspect_ratio": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.VideoResponseFormatAspectRatio"}},
+      "delivery": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.VideoResponseFormatDelivery"}},
+      "duration": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "gcs_uri": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "resolution": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Resolution"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["video"]}}
+    }},
+    "interactions.WebhookConfig": {"file": "_gaos/types/interactions/webhookconfig.py", "open": false, "fields": {
+      "uris": {"deprecated": false, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}},
+      "user_metadata": {"deprecated": false, "required": false, "type": {"kind": "map", "value": {"kind": "any"}}}
+    }},
+    "interactions.WordInfo": {"file": "_gaos/types/interactions/wordinfo.py", "open": false, "fields": {
+      "end_index": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "end_offset": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "speaker": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "start_index": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "start_offset": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "text": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "type": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": false, "values": ["word_info"]}}
+    }},
+    "legacy.ChunkingConfig": {"file": "types.py", "open": false, "fields": {
+      "whiteSpaceConfig": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "legacy.WhiteSpaceConfig"}}
+    }},
+    "legacy.CreateFileSearchStoreConfig": {"file": "types.py", "open": false, "fields": {
+      "displayName": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "embeddingModel": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "legacy.CustomMetadata": {"file": "types.py", "open": false, "fields": {
+      "key": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "numericValue": {"deprecated": false, "required": false, "type": {"kind": "float"}},
+      "stringListValue": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "legacy.StringList"}},
+      "stringValue": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "legacy.Document": {"file": "types.py", "open": false, "fields": {
+      "createTime": {"deprecated": false, "required": false, "type": {"kind": "datetime"}},
+      "customMetadata": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "legacy.CustomMetadata"}, "kind": "list"}},
+      "displayName": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "mimeType": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "sizeBytes": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "state": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": true, "values": ["STATE_ACTIVE", "STATE_FAILED", "STATE_PENDING", "STATE_UNSPECIFIED"]}},
+      "updateTime": {"deprecated": false, "required": false, "type": {"kind": "datetime"}}
+    }},
+    "legacy.File": {"file": "types.py", "open": false, "fields": {
+      "createTime": {"deprecated": false, "required": false, "type": {"kind": "datetime"}},
+      "displayName": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "downloadUri": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "error": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "legacy.FileStatus"}},
+      "expirationTime": {"deprecated": false, "required": false, "type": {"kind": "datetime"}},
+      "mimeType": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "sha256Hash": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "sizeBytes": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "source": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": true, "values": ["GENERATED", "REGISTERED", "SOURCE_UNSPECIFIED", "UPLOADED"]}},
+      "state": {"deprecated": false, "required": false, "type": {"kind": "literal", "open": true, "values": ["ACTIVE", "FAILED", "PROCESSING", "STATE_UNSPECIFIED"]}},
+      "updateTime": {"deprecated": false, "required": false, "type": {"kind": "datetime"}},
+      "uri": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "videoMetadata": {"deprecated": false, "required": false, "type": {"kind": "map", "value": {"kind": "any"}}}
+    }},
+    "legacy.FileSearchStore": {"file": "types.py", "open": false, "fields": {
+      "activeDocumentsCount": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "createTime": {"deprecated": false, "required": false, "type": {"kind": "datetime"}},
+      "displayName": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "embeddingModel": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "failedDocumentsCount": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "pendingDocumentsCount": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "sizeBytes": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "updateTime": {"deprecated": false, "required": false, "type": {"kind": "datetime"}}
+    }},
+    "legacy.FileStatus": {"file": "types.py", "open": false, "fields": {
+      "code": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "details": {"deprecated": false, "required": false, "type": {"item": {"kind": "map", "value": {"kind": "any"}}, "kind": "list"}},
+      "message": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "legacy.ImportFileConfig": {"file": "types.py", "open": false, "fields": {
+      "chunkingConfig": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "legacy.ChunkingConfig"}},
+      "customMetadata": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "legacy.CustomMetadata"}, "kind": "list"}}
+    }},
+    "legacy.ListDocumentsResponse": {"file": "types.py", "open": false, "fields": {
+      "documents": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "legacy.Document"}, "kind": "list"}},
+      "nextPageToken": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "legacy.ListFileSearchStoresResponse": {"file": "types.py", "open": false, "fields": {
+      "fileSearchStores": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "legacy.FileSearchStore"}, "kind": "list"}},
+      "nextPageToken": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "legacy.ListFilesResponse": {"file": "types.py", "open": false, "fields": {
+      "files": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "legacy.File"}, "kind": "list"}},
+      "nextPageToken": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "legacy.StringList": {"file": "types.py", "open": false, "fields": {
+      "values": {"deprecated": false, "required": false, "type": {"item": {"kind": "str"}, "kind": "list"}}
+    }},
+    "legacy.UploadToFileSearchStoreConfig": {"file": "types.py", "open": false, "fields": {
+      "chunkingConfig": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "legacy.ChunkingConfig"}},
+      "customMetadata": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "legacy.CustomMetadata"}, "kind": "list"}},
+      "displayName": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "mimeType": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "legacy.WhiteSpaceConfig": {"file": "types.py", "open": false, "fields": {
+      "maxOverlapTokens": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "maxTokensPerChunk": {"deprecated": false, "required": false, "type": {"kind": "int"}}
+    }},
+    "triggers.ListTriggerExecutionsResponse": {"file": "_gaos/types/triggers/listtriggerexecutionsresponse.py", "open": false, "fields": {
+      "next_page_token": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "trigger_executions": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "triggers.TriggerExecution"}, "kind": "list"}}
+    }},
+    "triggers.ListTriggersResponse": {"file": "_gaos/types/triggers/listtriggersresponse.py", "open": false, "fields": {
+      "next_page_token": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "triggers": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "triggers.Trigger"}, "kind": "list"}}
+    }},
+    "triggers.Trigger": {"file": "_gaos/types/triggers/trigger.py", "open": false, "fields": {
+      "consecutive_failure_count": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "create_time": {"deprecated": false, "required": false, "type": {"kind": "datetime"}},
+      "display_name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "environment_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "execution_timeout_seconds": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "interaction": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.CreateAgentInteraction"}},
+      "last_pause_time": {"deprecated": false, "required": false, "type": {"kind": "datetime"}},
+      "last_resume_time": {"deprecated": false, "required": false, "type": {"kind": "datetime"}},
+      "last_run_time": {"deprecated": false, "required": false, "type": {"kind": "datetime"}},
+      "max_consecutive_failures": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "next_run_time": {"deprecated": false, "required": false, "type": {"kind": "datetime"}},
+      "previous_interaction_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "schedule": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "status": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "triggers.TriggerStatus"}},
+      "time_zone": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "update_time": {"deprecated": false, "required": false, "type": {"kind": "datetime"}}
+    }},
+    "triggers.TriggerCreateParams": {"file": "_gaos/types/triggers/triggercreateparams.py", "open": false, "fields": {
+      "display_name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "environment_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "execution_timeout_seconds": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "interaction": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "interactions.CreateAgentInteraction"}},
+      "max_consecutive_failures": {"deprecated": false, "required": false, "type": {"kind": "int"}},
+      "schedule": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "time_zone": {"deprecated": false, "required": true, "type": {"kind": "str"}}
+    }},
+    "triggers.TriggerExecution": {"file": "_gaos/types/triggers/triggerexecution.py", "open": false, "fields": {
+      "end_time": {"deprecated": false, "required": false, "type": {"kind": "datetime"}},
+      "environment_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "error": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "id": {"deprecated": false, "required": true, "type": {"kind": "str"}},
+      "interaction_id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "scheduled_time": {"deprecated": false, "required": false, "type": {"kind": "datetime"}},
+      "start_time": {"deprecated": false, "required": false, "type": {"kind": "datetime"}},
+      "status": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "triggers.TriggerExecutionStatus"}},
+      "trigger_id": {"deprecated": false, "required": true, "type": {"kind": "str"}}
+    }},
+    "triggers.TriggerUpdate": {"file": "_gaos/types/triggers/triggerupdate.py", "open": false, "fields": {
+      "display_name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "status": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "triggers.TriggerUpdateStatus"}}
+    }},
+    "types.Security": {"file": "_gaos/types/security.py", "open": false, "fields": {
+      "accessToken": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "apiKey": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "defaultHeaders": {"deprecated": false, "required": false, "type": {"kind": "map", "value": {"kind": "str"}}}
+    }},
+    "types.Unset": {"file": "_gaos/types/basemodel.py", "open": false, "fields": {
+    }},
+    "voices.AudioData": {"file": "_gaos/types/voices/audiodata.py", "open": false, "fields": {
+      "data": {"deprecated": false, "required": true, "type": {"kind": "bytes"}},
+      "mime_type": {"deprecated": false, "required": true, "type": {"kind": "str"}}
+    }},
+    "voices.CreateVoiceRequest": {"file": "_gaos/types/voices/createvoicerequest.py", "open": false, "fields": {
+      "store": {"deprecated": false, "required": false, "type": {"kind": "bool"}},
+      "voice": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "voices.VoiceInput"}}
+    }},
+    "voices.DeleteVoiceResponse": {"file": "_gaos/types/voices/deletevoiceresponse.py", "open": false, "fields": {
+    }},
+    "voices.ListVoicesResponse": {"file": "_gaos/types/voices/listvoicesresponse.py", "open": false, "fields": {
+      "next_page_token": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "voices": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "voices.VoiceOutput"}, "kind": "list"}}
+    }},
+    "voices.PromptedVoice": {"file": "_gaos/types/voices/promptedvoice.py", "open": false, "fields": {
+      "base_voice": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "input": {"deprecated": false, "required": true, "type": {"kind": "str"}}
+    }},
+    "voices.ReplicatedVoice": {"file": "_gaos/types/voices/replicatedvoice.py", "open": false, "fields": {
+      "consent_audio": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "voices.AudioData"}},
+      "source_audio": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "voices.AudioData"}}
+    }},
+    "voices.VoiceInput": {"file": "_gaos/types/voices/voice_input.py", "open": false, "fields": {
+      "accent": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "context": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "description": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "display_name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "gender": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "language_code": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "model": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "persona": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "pitch": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "voices.Pitch"}},
+      "prompted": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "voices.PromptedVoice"}},
+      "region_code": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "replicated": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "voices.ReplicatedVoice"}},
+      "sample_audio": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "voices.AudioData"}},
+      "type": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "voices.VoiceType"}}
+    }},
+    "voices.VoiceOutput": {"file": "_gaos/types/voices/voice_output.py", "open": false, "fields": {
+      "accent": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "context": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "description": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "display_name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "expire_time": {"deprecated": false, "required": false, "type": {"kind": "datetime"}},
+      "gender": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "key": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "language_code": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "model": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "persona": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "pitch": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "voices.Pitch"}},
+      "prompted": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "voices.PromptedVoice"}},
+      "region_code": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "sample_audio": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "voices.AudioData"}},
+      "type": {"deprecated": false, "required": true, "type": {"kind": "ref", "name": "voices.VoiceType"}},
+      "usage": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "interactions.Usage"}}
+    }},
+    "webhooks.PingWebhookRequest": {"file": "_gaos/types/webhooks/pingwebhookrequest.py", "open": false, "fields": {
+    }},
+    "webhooks.RotateSigningSecretRequest": {"file": "_gaos/types/webhooks/rotatesigningsecretrequest.py", "open": false, "fields": {
+      "revocation_behavior": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "webhooks.RevocationBehavior"}}
+    }},
+    "webhooks.SigningSecret": {"file": "_gaos/types/webhooks/signingsecret.py", "open": false, "fields": {
+      "expire_time": {"deprecated": false, "required": false, "type": {"kind": "datetime"}},
+      "truncated_secret": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "webhooks.Webhook": {"file": "_gaos/types/webhooks/webhook.py", "open": false, "fields": {
+      "create_time": {"deprecated": false, "required": false, "type": {"kind": "datetime"}},
+      "id": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "new_signing_secret": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "signing_secrets": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "webhooks.SigningSecret"}, "kind": "list"}},
+      "state": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "webhooks.WebhookState"}},
+      "subscribed_events": {"deprecated": false, "required": true, "type": {"item": {"kind": "ref", "name": "webhooks.WebhookSubscribedEvent"}, "kind": "list"}},
+      "update_time": {"deprecated": false, "required": false, "type": {"kind": "datetime"}},
+      "uri": {"deprecated": false, "required": true, "type": {"kind": "str"}}
+    }},
+    "webhooks.WebhookInput": {"file": "_gaos/types/webhooks/webhook.py", "open": false, "fields": {
+      "name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "subscribed_events": {"deprecated": false, "required": true, "type": {"item": {"kind": "ref", "name": "webhooks.WebhookSubscribedEvent"}, "kind": "list"}},
+      "uri": {"deprecated": false, "required": true, "type": {"kind": "str"}}
+    }},
+    "webhooks.WebhookListResponse": {"file": "_gaos/types/webhooks/webhooklistresponse.py", "open": false, "fields": {
+      "next_page_token": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "webhooks": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "webhooks.Webhook"}, "kind": "list"}}
+    }},
+    "webhooks.WebhookPingResponse": {"file": "_gaos/types/webhooks/webhookpingresponse.py", "open": false, "fields": {
+    }},
+    "webhooks.WebhookRotateSigningSecretResponse": {"file": "_gaos/types/webhooks/webhookrotatesigningsecretresponse.py", "open": false, "fields": {
+      "secret": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }},
+    "webhooks.WebhookUpdate": {"file": "_gaos/types/webhooks/webhookupdate.py", "open": false, "fields": {
+      "name": {"deprecated": false, "required": false, "type": {"kind": "str"}},
+      "state": {"deprecated": false, "required": false, "type": {"kind": "ref", "name": "webhooks.WebhookUpdateState"}},
+      "subscribed_events": {"deprecated": false, "required": false, "type": {"item": {"kind": "ref", "name": "webhooks.WebhookUpdateSubscribedEvent"}, "kind": "list"}},
+      "uri": {"deprecated": false, "required": false, "type": {"kind": "str"}}
+    }}
+  }
+}

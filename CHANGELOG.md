@@ -32,6 +32,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `FileSearchResultItem`, `ReviewSnippet` and `StepError` have a public
   `extra` map for unmodeled fields, like `Place`. As on the unions, an
   entry named after a modeled field is never serialized.
+- `AgentBuilder::with_gemini_base_url(url)` points the Antigravity harness's
+  model calls at another Gemini API host: a gateway, a recording proxy, or a
+  scripted local server in tests. It needs a non-empty `with_api_key`.
+  Without a configured key, or with an empty one, the harness sends its own
+  environment's `GEMINI_API_KEY` to the custom host (verified on harness
+  0.1.23, 2026-11-04), so `spawn()` fails with `AntigravityError::Config`
+  instead. While a base URL is set, the harness also starts without
+  `GEMINI_API_KEY` and `GOOGLE_API_KEY` in its environment, so it has no key
+  to fall back on; commands the agent runs (`run_command`) don't see them
+  either.
+- `AntigravityAgent::harness_version()` returns the `google-antigravity`
+  version of the running harness, read from the wheel install the binary
+  sits in (`None` outside one). `spawn()` logs a `warn!` when it differs
+  from `SUPPORTED_HARNESS_VERSION`. It warns rather than fails (D-019),
+  because a mismatch's failures are already loud and running a newer wheel
+  on purpose is how a bump is tested. An `InitFailed` message and a turn's
+  `Timeout` diagnosis name a known mismatch.
+- `InteractionRequest::extra` and `InteractionBuilder::add_extra(key, value)`
+  send a request field the crate doesn't model yet, flat beside the modeled
+  ones, as `TriggerCreateParams::extra` already allowed. A repeated key
+  replaces its value, as with `add_label`. The server validates the field
+  like any other: an unknown name is `400 Unknown parameter '<name>'`. A key
+  that names a modeled field overrides it, since the API keeps the last of a
+  repeated key (both verified live 2026-11-04). A stored
+  `Trigger::interaction` now keeps the interaction fields the crate doesn't
+  model, such as `object: "interaction"`, which the API accepts back on
+  create (verified live 2026-11-04).
+- `DEFAULT_CONNECT_TIMEOUT` (30 s), the connect timeout every client now
+  gets; see Changed. `with_connect_timeout(Duration::MAX)` turns it off,
+  with no timer at all, for tests on a paused tokio clock. A `Client`'s
+  `Debug` output shows its connect timeout, which reqwest's does not.
 
 ### Changed
 
@@ -64,6 +95,149 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `code_execution_call`, which strict mode used to read as Python.
   Well-formed API responses are unaffected. Migration: none, unless you
   relied on the lenient reading.
+- **Breaking: Antigravity hooks run on a dedicated thread, not on the
+  thread driving the turn.** A hook that blocks (`on_pre_tool`,
+  `on_post_tool`, `on_questions`) therefore no longer stalls the runtime,
+  and the turn deadline still fires. A hook abandoned at the deadline runs
+  on until it returns, but holds up neither runtime shutdown nor process
+  exit. A hook no longer sees the turn's thread-local state, a tokio
+  `task_local!` scoped around the turn, or the turn's current tracing span;
+  take such state in through the hook's captures, and enter a span inside
+  the hook if its events should nest under one.
+  `tokio::runtime::Handle::current()` still works inside one. A panicking
+  hook still panics the turn.
+- **Breaking: the Antigravity turn deadline covers this crate's own work in
+  the turn.** A custom tool or hook still running when `with_turn_timeout`'s
+  budget runs out now ends the turn with `AntigravityError::Timeout`, whose
+  `operation` names it (`agent turn (custom tool 'x' was still running at
+  the deadline)`). Before, only waiting for harness events was bounded. Each
+  custom tool call runs on a tokio task of its own that the deadline aborts,
+  so an async tool stops at its next `.await`. A synchronous tool body that
+  blocks its thread is abandoned on time on a multi-thread runtime with two
+  or more workers. On a current-thread runtime, or a multi-thread one with a
+  single worker (`#[tokio::main]` on a one-CPU host or a container limited
+  to one CPU), it holds the thread that drives the timer until it returns;
+  make such a tool `async`, or call `spawn_blocking` inside it. A tool that
+  read a tokio `task_local!` of the turn's task no longer sees it; pass the
+  value as an argument or through the tool service's state. Raise the
+  budget, or call `without_turn_timeout()`, for tools that legitimately run
+  long.
+- **Breaking: unparseable Antigravity pre-tool hook arguments fail
+  closed.** When the harness sends tool arguments that are not valid JSON
+  and a pre-tool hook is set, the call is denied before the hook runs, with
+  the reason in the denial. The hook used to be handed `{}`, which a path
+  gate allows. Without a hook, name-based policies decide as before. A
+  custom tool call whose arguments decode in neither of the harness's
+  encodings is answered with an error instead of running the tool on
+  `Null`. Well-formed calls are unaffected.
+- **Breaking: a blank Antigravity API key counts as no key.**
+  `with_api_key("")` (or whitespace) together with `with_model` or
+  `with_gemini_base_url` now fails at `spawn()` with
+  `AntigravityError::Config`. Without either, the blank key is no longer
+  sent to the harness. Before, an empty key went on the wire as an unset
+  field and the harness fell back to its environment's `GEMINI_API_KEY`.
+  Code like `.with_api_key(env::var("X").unwrap_or_default())` hits this.
+  Pass a real key, or leave out `with_api_key`.
+- **Breaking: a cut-off stream ends with the new
+  `GenaiError::StreamInterrupted`, which is retryable.** It covers every way
+  the connection can end a stream body before `interaction.completed` or an
+  error event. A close between events was `MalformedResponse` in 0.13.0. A
+  close in the middle of an event was a non-retryable `Parse` or `Utf8`. A
+  transport failure mid-body (a reset, the client's read or total timeout
+  between chunks, a decode error) was `Http`; that `reqwest::Error` is now
+  its `source`. One event used to be classified two ways depending on how
+  the peer closed; `is_retryable()` explains the choice. A failure before
+  the response headers is still `Http`, and a stream stopped by the
+  request-level `InteractionBuilder::with_timeout` is still `Timeout`.
+  Migration: match `GenaiError::StreamInterrupted { .. }` where you matched
+  `MalformedResponse` for a cut-off stream. Match
+  `StreamInterrupted { source: Some(e), .. } if e.is_timeout()` where you
+  matched `Http(e) if e.is_timeout()` for a stream stalled by
+  `ClientBuilder::with_read_timeout` or `ClientBuilder::with_timeout`. A
+  retry loop built on `is_retryable()` now also retries a clean early close.
+  Discard the partial output first, because a foreground retry is a new
+  generation.
+- **Breaking: `Client::new` and `ClientBuilder::build` set a 30 s connect
+  timeout.** `DEFAULT_CONNECT_TIMEOUT` covers DNS, TCP and TLS. Before,
+  there was none, so a black-holed route waited for the OS's timeout (about
+  75 s on macOS, 127 s on Linux). There is still no default read or total
+  timeout: a non-streaming response's headers arrive only after generation
+  finishes, so any such default would cut off long legitimate requests
+  (reasoning in `docs/RELIABILITY.md`). Migration: call
+  `with_connect_timeout(..)` for a different value. Tests on a paused tokio
+  clock (`#[tokio::test(start_paused = true)]`) that send a real request to
+  a local mock server now usually fail with this timeout "after 30 s",
+  because tokio auto-advances to it while the connect is in flight. Build
+  that test's client with `with_connect_timeout(Duration::MAX)`, which arms
+  no timer (see "Tests on a paused clock" in `docs/RELIABILITY.md`).
+- **Breaking: `InteractionRequest` has a new public field, `extra`.**
+  Migration: a struct literal needs `extra: Default::default()`, or
+  `..Default::default()`; `client.interaction()...build()` is unaffected.
+- **Breaking: a deserialized `InteractionRequest` keeps the keys it doesn't
+  model, in `extra`, and sends them.** 0.13.0 dropped them silently. This
+  covers a request loaded from JSON or a config file, and the nested
+  `interaction` of a deserialized `TriggerCreateParams`. A stale, misplaced
+  or misspelled key, such as a top-level `temperature` that belongs in
+  `generation_config`, now reaches the server, which rejects a name it
+  doesn't know with `400 Unknown parameter '<name>'`. Migration: remove the
+  key from the JSON, or call `request.extra.clear()` before sending to send
+  what 0.13.0 sent.
+- **Breaking: a `wait_until_active` timeout shorter than one status
+  request's round trip now always fails.** Each status request used to get
+  at least a second, so a zero timeout read the state once. Now the first
+  request is cut off at the deadline like any other, and the error says the
+  wait's deadline cut it off rather than that it failed. Migration: to read
+  the state once, call `files().get(name)` or
+  `file_search_stores().documents().get(name)` instead.
+- **Breaking: a successful streaming response whose `Content-Type` is not
+  `text/event-stream` fails at once with `MalformedResponse`** and a preview
+  of the body. In 0.13.0 a captive portal's page or a plain JSON interaction
+  was parsed as SSE and failed only at its end, as a cut-off stream. The API
+  answers `text/event-stream` (verified live 2026-11-04). The check ignores
+  letter case and parameters (`text/event-stream; charset=utf-8` passes),
+  and a response with no `Content-Type` is still read as a stream. A proxy
+  or gateway (`ClientBuilder::with_base_url`) that rewrites the type of a
+  working stream, for example to `text/plain` or `application/octet-stream`,
+  now fails where 0.13.0 streamed. Migration: have the proxy pass the API's
+  `Content-Type` through, or send none; behind a proxy you can't change,
+  call `create()` instead of `create_stream()`.
+- The Antigravity harness runs in its own process group on Unix. A
+  terminal's Ctrl-C now reaches only your process; when it exits, the
+  harness sees stdin close and shuts down gracefully. To stop the harness on
+  Ctrl-C yourself, call `shutdown()` from your signal handler.
+- `Interactions::get_with_input` docs no longer say the input is not
+  echoed. With `include_input=true` the API returns the input as a list
+  holding one `user_input` step, and on that read it repeats every entry of
+  the stored request's lists (`stop_sequences`, `response_modalities`,
+  `safety_settings`, speech speakers), which arrive unmodeled in `extra`
+  (verified live 2026-11-04).
+- `docs/ENUM_WIRE_FORMATS.md` no longer says reads echo no
+  `generation_config`. A stored interaction read back carries it, with
+  `speech_config` in the `{"speakers": [...]}` form whichever form was sent,
+  and `response_format`, `response_modalities` and `safety_settings` too;
+  `InteractionResponse` does not model them yet, so they arrive in `extra`
+  (verified live 2026-11-04).
+- `wait_until_active` (files and file-search documents):
+  - It honors the `Retry-After` of a 429 it polls through, and gives up at
+    once when that falls past the deadline.
+  - It never runs past its deadline: a status request is cut off at the
+    deadline, and a poll that would start past it is not made.
+  - It runs on tokio time instead of `std::time`. Against a real server on a
+    paused test clock, its deadline is a timer that auto-advance fires while
+    a status request is in flight, so hold the clock for each request (see
+    "Tests on a paused clock" in `docs/RELIABILITY.md`).
+  - The first status request is always made, so an invalid name is reported
+    even with a zero timeout.
+- A stream ends at its first terminal event (`Completed` or `Error`) and
+  reads nothing after it. A late error, such as a reset while the server
+  closes, no longer follows a finished interaction or fails a finished
+  auto-function round. The API sends only `event: done` / `data: [DONE]`
+  after `interaction.completed` (verified live 2026-11-04).
+- One SSE event may hold up to 64 MiB. Past that, the stream fails with
+  `GenaiError::Parse`; before, a body that never sent a newline was buffered
+  without bound. The largest real events, measured live 2026-11-04 on
+  `DEFAULT_IMAGE_MODEL` at `image_size: "4K"`, are a 16.0 MB `image` delta
+  and a 15.7 MB `thought_signature` delta; TTS audio deltas are under 8 KB.
 
 ### Fixed
 
@@ -95,6 +269,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   including every chunk of a merged thought summary.
 - `StepDelta::CodeExecutionCall` no longer serializes an absent `language`
   or `code` as `null`.
+- Dropping an Antigravity agent no longer leaves processes the harness
+  started running; neither does a failed `spawn()` or a shutdown that had to
+  escalate. The kill used to signal only the harness's pid, and harness
+  0.1.23 gives every `run_command` command a process group of its own, so
+  the command was orphaned and kept running (verified on macOS,
+  2026-11-04). The forced paths now signal the harness's process group and
+  the group of each of its children. A command that detaches itself
+  (`setsid`) is still out of reach.
+- `Webhooks::create` sent a `Webhook`'s output-only fields (`id`, `state`,
+  `signing_secrets`, `new_signing_secret`, `create_time`, `update_time`)
+  whenever they were set, as on a webhook read back from the API. The
+  create body is now what google-genai's `WebhookInput` defines: `uri`,
+  `subscribed_events` and `name`, plus anything in `extra`.
+- An unknown `StreamChunk` whose type was spelled like a known `chunk_type`
+  (`created`, `step_delta`, ...) read back as that known chunk after
+  serializing. It now carries `"unknown": true` and stays unknown; chunks
+  serialized by 0.13.0 read back as before (`docs/ENUM_WIRE_FORMATS.md`).
+  Found by the new fuzz targets.
+- The `TriggerCreateParams::extra` docs said a colliding key wins because
+  the request path uses `serde_json::to_value`. In fact the body carries
+  both keys, with the `extra` one last, and it wins because the API keeps
+  the last of a repeated key (verified live 2026-11-04).
 
 ## [0.13.0] - 2026-11-03
 

@@ -571,6 +571,9 @@ impl<'a> InteractionBuilder<'a> {
     ///   side via the interaction chain, but the stream yields an error rather than
     ///   a partial result. Use `previous_interaction_id` to continue.
     /// - The server sends an error event mid-stream ([`GenaiError::Stream`])
+    /// - A round's stream is cut off before its `Completed` event
+    ///   ([`GenaiError::StreamInterrupted`]). Nothing is read after a round's
+    ///   `Completed`, so a late error can't fail a finished round.
     /// - `max_function_call_loops` is set to 0 (invalid configuration)
     pub fn create_stream_with_auto_functions(
         self,

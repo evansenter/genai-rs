@@ -211,11 +211,7 @@ async fn stream_texts(chunks: &[&str]) -> Vec<String> {
         .await
         .into_iter()
         .filter_map(|event| match event {
-            Err(GenaiError::MalformedResponse(message))
-                if message.contains("stream ended before") =>
-            {
-                None
-            }
+            Err(GenaiError::StreamInterrupted { source: None, .. }) => None,
             Err(e) => panic!("stream error: {e:?}"),
             Ok(event) => Some(match event.chunk {
                 StreamChunk::StepDelta { delta, .. } => {
@@ -231,14 +227,15 @@ async fn stream_texts(chunks: &[&str]) -> Vec<String> {
 #[tokio::test]
 async fn stream_without_a_terminal_event_ends_in_an_error() {
     let events = stream_events(&[&format!("data: {}\n\n", delta_event("a"))]).await;
+    let [Ok(_), Err(err)] = events.as_slice() else {
+        panic!("expected a delta, then the cut-off error: {events:?}");
+    };
     assert!(
-        matches!(
-            events.as_slice(),
-            [Ok(_), Err(GenaiError::MalformedResponse(message))]
-                if message.contains("stream ended before")
-        ),
-        "{events:?}"
+        matches!(err, GenaiError::StreamInterrupted { message, source: None }
+            if message.contains("before interaction.completed")),
+        "{err:?}"
     );
+    assert!(err.is_retryable(), "a cut-off stream is transient");
 }
 
 /// A stream that ends on an event the crate doesn't recognize may have
@@ -989,11 +986,14 @@ async fn read_timeout_ends_a_stalled_stream() {
     let events: Vec<_> = client.execute_stream(request).collect().await;
 
     assert!(started.elapsed() < Duration::from_secs(10));
+    // A stall mid-body is a cut-off stream like any other, with the
+    // timed-out transport error as its source.
     assert!(
         matches!(
             events.as_slice(),
-            [Ok(_), Err(GenaiError::Http(e))] if e.is_timeout()
+            [Ok(_), Err(GenaiError::StreamInterrupted { source: Some(e), .. })] if e.is_timeout()
         ),
         "{events:?}"
     );
+    assert!(events[1].as_ref().unwrap_err().is_retryable());
 }

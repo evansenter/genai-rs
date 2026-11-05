@@ -14,16 +14,33 @@ Prose docs lag the API; absence from them is not evidence of absence. In
 order (D-004):
 
 1. **Generated bindings** — `google-genai`'s `_gaos/types/` (diff two
-   releases to find new surface). The published
-   [OpenAPI spec](https://ai.google.dev/static/api/interactions.openapi.json)
-   is the same surface in machine-readable form.
+   releases to find new surface). The OpenAPI spec is the same surface in
+   machine-readable form. Its URL (`ai.google.dev/static/api/interactions.openapi.json`)
+   moved: by 2026-11-03 it redirected to an aistudio.google.com path that
+   returns 404, and no new public URL was found (2026-11-04). The
+   2026-11-01 copy is the latest.
 2. **Live probe** against `generativelanguage.googleapis.com` — what the
    Gemini endpoint actually accepts, often narrower than the bindings.
    Probe with `LOUD_WIRE=1` or curl before modeling anything.
-3. **Prose** — [Interactions API reference](https://ai.google.dev/static/api/interactions.md.txt),
-   [guide](https://ai.google.dev/static/api/interactions-api.md.txt),
+3. **Prose** — [Interactions API reference](https://aistudio.google.com/api-reference/interactions-api.md),
+   [guide](https://aistudio.google.com/docs/interactions-overview.md)
+   (the old ai.google.dev URLs redirect there),
    and `docs/INTERACTIONS_API_GAP.md` (a dated snapshot; the
    `api-surface-sweep` workflow opens an issue when the SDK moves).
+
+`tests/fixtures/api_surface/` holds the bindings (for the version in
+`.github/last-swept-sdk-version`) and the spec as a snapshot, and the
+coverage oracle (`src/coverage_oracle/`, `tests/request_wire_oracle.rs`)
+checks the crate against it offline: request keys against the binding
+classes, every response field for an empty `extra`, and every class
+reached or listed with a reason. `tests/ci_coverage.rs` maps every endpoint
+to the handle verbs that call it and requires a live test of each verb on
+its handle. It is the one committed dump of the bindings, and that script
+is the only thing that writes it: bump the baseline with
+`.github/scripts/refresh_api_snapshot.sh --version X.Y.Z`, which
+regenerates the snapshot too. `refresh_api_snapshot.sh --check` fails on a
+stale, empty or hand-edited snapshot (`make test-scripts` runs its offline
+half); see `docs/TESTING.md`.
 
 A field that serializes correctly is not a working feature (D-010): verify
 against the live API.
@@ -59,14 +76,15 @@ installs a `tracing` subscriber.
 | `src/client.rs`, `src/request_builder/` | `Client`, `ClientBuilder`, `interaction()`, `execute`/`execute_stream`, `InteractionBuilder` (one file per concern: `input`, `tools`, `output`, `generation`; `ConversationBuilder` in `conversation.rs`), the auto-function loop (`auto_functions.rs`) |
 | `src/request/`, `src/content/`, `src/tools/` | Request types (`generation_config.rs`, `agent_config.rs`), `Content` (annotations, result items, video processing alongside), tool configs (`function`, `choice`, `retrieval`, `builtin`) |
 | `src/steps/`, `src/response/` | The steps response model (`Step`, `StepDelta`, the stream `accumulator`), `InteractionResponse` and its accessors (usage, view types and `StepSummary` alongside) |
-| `src/wire_streaming.rs`, `src/streaming.rs` | Stream chunk/event types; auto-function stream types |
+| `src/wire_streaming/`, `src/streaming.rs` | Stream chunk/event types (their wire format in `wire_streaming/serde_impls.rs`); auto-function stream types |
 | `src/webhooks.rs`, `triggers.rs`, `agents.rs`, `environments/`, `files.rs`, `file_search_stores.rs`, `credentials.rs`, `voices.rs` | Resource types (`/v1beta/...`) and each resource's accessor, handle and list builders (D-016; the old-to-new map is `docs/RESOURCES.md`) |
 | `src/interactions.rs` | The `Interactions` handle: get, stream, resume, cancel and delete a stored interaction by id (D-017) |
-| `src/paging.rs` | `pub(crate)` paging engine behind every list builder's `.pages()` / `.items()` |
+| `src/paging.rs`, `src/poll.rs` | `pub(crate)` paging engine behind every list builder's `.pages()` / `.items()`; `PollOptions` and the wait behind every `wait_until_active` |
 | `src/http/` | `pub(crate)` HTTP layer: one request path (`common.rs`), SSE parser, error mapping |
 | `src/wire/` | `WireInspector`, `LOUD_WIRE` printer and `WireFilter` (`printer.rs`), `TracingForwarder` |
 | `src/function_calling.rs`, `genai-rs-macros/` | Function registry, `#[tool]` macro (`inventory` registration) |
 | `src/antigravity/` | Harness client (feature-gated); see `docs/ANTIGRAVITY.md` |
+| `fuzz/`, `src/fuzzing.rs` | cargo-fuzz targets (own workspace and lockfile, nightly; `fuzz/README.md`) and their entry points, the `#[doc(hidden)] __fuzz` module, compiled only under `cfg(fuzzing)` and in tests (`fuzzing_tests.rs` replays past crashes) |
 
 Submodules are private; a directory's `mod.rs` re-exports its public items
 explicitly, so public paths do not depend on file layout. Keep implementation
@@ -160,8 +178,14 @@ reaches the wire must use a real id.
 - Unit tests for a new module go in a sibling file, declared at the bottom of
   the module as `#[cfg(test)] #[path = "<module>_tests.rs"] mod tests;`
   (existing inline test modules stay until their code moves). Offline HTTP
-  behavior is tested against a local stub in `tests/http_mock_tests.rs` via
-  `ClientBuilder::with_base_url`.
+  behavior is tested against a local stub (`tests/common/http_stub.rs`) via
+  `ClientBuilder::with_base_url`: client behavior in
+  `tests/http_mock_tests.rs`, resource endpoints in
+  `tests/http_mock_resources.rs`, and timeouts, cut-off streams and poll
+  retries in `tests/reliability_tests.rs` (paused clock; see
+  `docs/TESTING.md`).
+- A crash a fuzz target finds becomes a regression test in
+  `src/fuzzing_tests.rs` (`fuzz/README.md`).
 - Live tests are `#[ignore = "Requires API key"]` (exact string) and must
   **fail**, not skip, when the request fails. Every live test file belongs to
   a `test-integration` matrix group in `.github/workflows/rust.yml`.
@@ -235,7 +259,11 @@ upgrade table in `docs/ANTIGRAVITY_BRIDGE_DESIGN.md`, and run
   passing; renaming a job or group means updating branch protection too.
 - Other workflows: `audit.yml`, `api-surface-sweep.yml`, `consumer-crate.yml`,
   `ci-flakiness-report.yml`, `release.yml`, `release-drafter.yml`,
-  `claude.yml`, `claude-code-review.yml`.
+  `claude.yml`, `claude-code-review.yml`, `antigravity-release-watch.yml`
+  (daily; an `antigravity-release` issue when PyPI's `google-antigravity`
+  differs from `SUPPORTED_HARNESS_VERSION`), and `fuzz.yml` (the `fuzz/`
+  cargo-fuzz targets, a minute each on nightly: weekly, and on PRs touching
+  what the targets build; `fuzz/README.md`).
 - **Example size gate:** `build-metrics` fails when an example binary grows
   more than 15% against the last main build. For intended growth, add the
   `size-growth-ok` label **and push a commit** (a re-run replays the old event

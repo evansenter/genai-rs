@@ -1415,7 +1415,7 @@ fn arb_allowed_tools() -> impl Strategy<Value = AllowedTools> {
         .prop_map(|(mode, tools)| AllowedTools { mode, tools })
 }
 
-fn arb_tool_choice() -> impl Strategy<Value = ToolChoice> {
+pub(crate) fn arb_tool_choice() -> impl Strategy<Value = ToolChoice> {
     prop_oneof![
         arb_function_calling_mode().prop_map(ToolChoice::Mode),
         arb_allowed_tools().prop_map(ToolChoice::AllowedTools),
@@ -1434,7 +1434,7 @@ fn arb_tool_choice() -> impl Strategy<Value = ToolChoice> {
 // GenerationConfig Strategies
 // =============================================================================
 
-fn arb_speech_config() -> impl Strategy<Value = SpeechConfig> {
+pub(crate) fn arb_speech_config() -> impl Strategy<Value = SpeechConfig> {
     (
         proptest::option::of(arb_identifier()),
         proptest::option::of(arb_identifier()),
@@ -1447,7 +1447,7 @@ fn arb_speech_config() -> impl Strategy<Value = SpeechConfig> {
         })
 }
 
-fn arb_transcription_config() -> impl Strategy<Value = TranscriptionConfig> {
+pub(crate) fn arb_transcription_config() -> impl Strategy<Value = TranscriptionConfig> {
     (
         proptest::option::of(proptest::collection::vec(arb_identifier(), 0..3)),
         proptest::option::of(proptest::collection::vec(arb_identifier(), 0..3)),
@@ -1473,7 +1473,7 @@ fn arb_transcription_config() -> impl Strategy<Value = TranscriptionConfig> {
         )
 }
 
-fn arb_generation_config() -> impl Strategy<Value = GenerationConfig> {
+pub(crate) fn arb_generation_config() -> impl Strategy<Value = GenerationConfig> {
     // Split into two tuples to stay under proptest's 12-element limit
     let part1 = (
         proptest::option::of(arb_clean_float().prop_map(|v| v.as_f64().unwrap() as f32)),
@@ -1956,7 +1956,7 @@ fn arb_safety_method() -> impl Strategy<Value = SafetyMethod> {
     ]
 }
 
-fn arb_safety_setting() -> impl Strategy<Value = SafetySetting> {
+pub(crate) fn arb_safety_setting() -> impl Strategy<Value = SafetySetting> {
     (
         arb_harm_category(),
         arb_safety_threshold(),
@@ -2056,7 +2056,7 @@ fn arb_revocation_behavior() -> impl Strategy<Value = RevocationBehavior> {
     ]
 }
 
-fn arb_webhook_config() -> impl Strategy<Value = WebhookConfig> {
+pub(crate) fn arb_webhook_config() -> impl Strategy<Value = WebhookConfig> {
     (
         proptest::option::of(proptest::collection::vec(arb_text(), 0..3)),
         proptest::option::of(arb_unknown_object()),
@@ -2123,7 +2123,7 @@ fn arb_network_config() -> impl Strategy<Value = NetworkConfig> {
     ]
 }
 
-fn arb_environment_spec() -> impl Strategy<Value = EnvironmentSpec> {
+pub(crate) fn arb_environment_spec() -> impl Strategy<Value = EnvironmentSpec> {
     prop_oneof![
         arb_identifier().prop_map(EnvironmentSpec::Id),
         (
@@ -2153,7 +2153,7 @@ fn arb_response_delivery() -> impl Strategy<Value = ResponseDelivery> {
     ]
 }
 
-fn arb_response_format() -> impl Strategy<Value = ResponseFormat> {
+pub(crate) fn arb_response_format() -> impl Strategy<Value = ResponseFormat> {
     prop_oneof![
         (
             proptest::option::of(arb_identifier()),
@@ -2206,7 +2206,7 @@ fn arb_response_format() -> impl Strategy<Value = ResponseFormat> {
     ]
 }
 
-fn arb_response_format_spec() -> impl Strategy<Value = ResponseFormatSpec> {
+pub(crate) fn arb_response_format_spec() -> impl Strategy<Value = ResponseFormatSpec> {
     prop_oneof![
         arb_response_format().prop_map(ResponseFormatSpec::Single),
         proptest::collection::vec(arb_response_format(), 0..3).prop_map(ResponseFormatSpec::List),

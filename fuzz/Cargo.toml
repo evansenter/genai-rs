@@ -1,0 +1,56 @@
+[package]
+name = "genai-rs-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+description = "cargo-fuzz targets for genai-rs (nightly only; see fuzz/README.md)"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+genai-rs = { path = "..", default-features = false }
+# Correctly rounded float parsing, so a round-trip check fails on this
+# crate's types rather than on serde_json's best-effort default.
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
+
+# Its own workspace: the root workspace excludes this crate, which needs
+# nightly and libFuzzer.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "sse_parser"
+path = "fuzz_targets/sse_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stream_event"
+path = "fuzz_targets/stream_event.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "step"
+path = "fuzz_targets/step.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "step_delta"
+path = "fuzz_targets/step_delta.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "content"
+path = "fuzz_targets/content.rs"
+test = false
+doc = false
+bench = false

@@ -61,6 +61,38 @@ Under API revision 2026-05-20 the server emits this lifecycle:
 `Error`. `StreamEvent` has `is_delta()`, `is_complete()`, `interaction_id()`
 and `status()` for the common checks.
 
+### How a stream ends
+
+- **At its terminal event.** The stream yields `Completed` or `Error` and
+  ends there: nothing after it is read, and the connection is dropped. (The
+  API follows `interaction.completed` with only `event: done` /
+  `data: [DONE]`, verified live 2026-11-04.) So no late error, such as a
+  reset while the server closes, can follow a finished interaction.
+- **Cut off.** A body that ends before a terminal event yields
+  `Err(GenaiError::StreamInterrupted)` last, whether the server closed the
+  connection (between events or partway through one) or the transport
+  failed mid-body; a transport failure is kept as its `source`. It is
+  retryable; see [Cut-off streams](RELIABILITY.md#cut-off-streams).
+- **On an unknown event.** A body that ends right after an event this crate
+  doesn't recognize ends cleanly, with a `warn!`: it may be a new terminal
+  event (Evergreen).
+
+A successful response that is not `text/event-stream` (a captive portal's
+page) is `GenaiError::MalformedResponse`, not a cut-off: no stream started.
+Parameters such as `; charset=utf-8` and letter case don't matter, and a
+response with no `Content-Type` is read as a stream. A proxy in front of the
+API (`ClientBuilder::with_base_url`) must pass the type through or send
+none.
+
+### Event size limit
+
+One SSE event may grow to 64 MiB before it ends; past that the stream fails
+with `GenaiError::Parse`, so a server that never sends a newline can't grow
+the buffer without bound. The largest events measured live (2026-11-04,
+`DEFAULT_IMAGE_MODEL` at `image_size: "4K"`) are a 16.0 MB `image` delta of
+base64 JPEG and a 15.7 MB `thought_signature` delta in the same stream; TTS
+audio deltas are under 8 KB. The limit leaves four times the largest.
+
 **The `Completed` response is fully assembled.** The HTTP layer accumulates
 `step.start` / `step.delta` / `step.stop`. If the completed payload omits the
 steps, it fills them in, including parsing streamed `arguments_delta`
@@ -348,7 +380,11 @@ start, which is how to watch a long agent run live.
 - `ClientBuilder::with_read_timeout()` bounds the wait for the headers and
   for each next chunk, so it ends a stalled connection without capping a
   healthy long stream. It is the only client-level bound that reaches
-  `interactions().stream()` and `resume_stream()`.
+  `interactions().stream()` and `resume_stream()`. A stall mid-stream ends
+  in `GenaiError::StreamInterrupted` with the timed-out `reqwest::Error` as
+  its `source`.
+- None of these is set by default; only the 30 s connect timeout is. See
+  [Why only a connect timeout by default](RELIABILITY.md#why-only-a-connect-timeout-by-default).
 
 See [Reliability](RELIABILITY.md#timeouts).
 

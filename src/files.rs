@@ -55,6 +55,8 @@
 use crate::client::Client;
 use crate::errors::GenaiError;
 use crate::paging;
+pub use crate::poll::PollOptions;
+use crate::poll::PollStep;
 use crate::wire_enum::wire_enum;
 use chrono::{DateTime, Utc};
 use futures_util::stream::BoxStream;
@@ -388,136 +390,6 @@ impl fmt::Debug for FileUpload {
             .field("display_name", &self.display_name)
             .finish()
     }
-}
-
-/// How long a wait such as [`Files::wait_until_active`] lasts, and how
-/// often it polls. A value left unset takes that method's default.
-///
-/// ```
-/// use genai_rs::PollOptions;
-/// use std::time::Duration;
-///
-/// let poll = PollOptions::new()
-///     .with_timeout(Duration::from_secs(300))
-///     .with_poll_interval(Duration::from_secs(5));
-/// # let _ = poll;
-/// ```
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PollOptions {
-    timeout: Option<Duration>,
-    poll_interval: Option<Duration>,
-}
-
-impl PollOptions {
-    /// The waiting method's defaults for both values.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            timeout: None,
-            poll_interval: None,
-        }
-    }
-
-    /// Gives up once `timeout` has passed since the wait started. Each
-    /// status request is bounded by the time left (at least a second), so a
-    /// stalled connection can't hold the wait past its deadline.
-    #[must_use]
-    pub const fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = Some(timeout);
-        self
-    }
-
-    /// Sleeps `poll_interval` between status requests.
-    #[must_use]
-    pub const fn with_poll_interval(mut self, poll_interval: Duration) -> Self {
-        self.poll_interval = Some(poll_interval);
-        self
-    }
-
-    /// The timeout, or `default` when unset.
-    pub(crate) fn timeout_or(self, default: Duration) -> Duration {
-        self.timeout.unwrap_or(default)
-    }
-
-    /// The poll interval, or `default` when unset.
-    pub(crate) fn poll_interval_or(self, default: Duration) -> Duration {
-        self.poll_interval.unwrap_or(default)
-    }
-
-    /// Polls `get` until `check` reports the resource ready, `check` or the
-    /// API fails it, or the deadline passes. The waiting behind every
-    /// `wait_until_active`.
-    ///
-    /// Each status request is bounded by the time left, and at least a
-    /// second, so one hung request can't outlive the deadline (the default
-    /// client has no HTTP timeout). A retryable error (a 5xx, a 429, a
-    /// dropped connection) is logged and polled through rather than ending
-    /// a long wait; any other error returns at once.
-    ///
-    /// The deadline error is `Internal`, not `Timeout`, so that
-    /// `is_retryable()` stays false: the resource may still be processing,
-    /// and retrying the whole wait is the caller's call.
-    pub(crate) async fn wait<T, Fut>(
-        self,
-        what: &str,
-        defaults: (Duration, Duration),
-        mut get: impl FnMut() -> Fut,
-        mut check: impl FnMut(T) -> Result<PollStep<T>, GenaiError>,
-    ) -> Result<T, GenaiError>
-    where
-        Fut: std::future::Future<Output = Result<T, GenaiError>>,
-    {
-        let timeout = self.timeout_or(defaults.0);
-        let interval = self.poll_interval_or(defaults.1);
-        let start = std::time::Instant::now();
-        let mut last_state = "unknown".to_string();
-        loop {
-            let bound = timeout
-                .saturating_sub(start.elapsed())
-                .max(Duration::from_secs(1));
-            // This round's transient failure, if any, so a deadline caused
-            // by an outage says so.
-            let last_error = match tokio::time::timeout(bound, get()).await {
-                Ok(Ok(current)) => {
-                    match check(current)? {
-                        PollStep::Ready(done) => return Ok(done),
-                        PollStep::Pending(state) => last_state = state,
-                    }
-                    None
-                }
-                Ok(Err(e)) if e.is_retryable() => {
-                    tracing::warn!("Polling {what} failed ({e}); retrying until the deadline");
-                    Some(e.to_string())
-                }
-                Ok(Err(e)) => return Err(e),
-                Err(_) => {
-                    tracing::warn!("Polling {what}: no answer within {bound:?}");
-                    Some(format!("no answer within {bound:?}"))
-                }
-            };
-            let waited = start.elapsed();
-            if waited > timeout {
-                let cause = last_error
-                    .map(|e| format!("; the last status request failed: {e}"))
-                    .unwrap_or_default();
-                return Err(GenaiError::Internal(format!(
-                    "Timeout waiting for {what} to become active (waited {waited:?}, last \
-                     state: {last_state}{cause}). It may still be processing - try again \
-                     with a longer timeout."
-                )));
-            }
-            tracing::debug!("{what} not active yet, waiting {interval:?}...");
-            tokio::time::sleep(interval).await;
-        }
-    }
-}
-
-/// What one status read during [`PollOptions::wait`] found.
-pub(crate) enum PollStep<T> {
-    /// Done: the wait returns it.
-    Ready(T),
-    /// Not yet. The string names its state, for the timeout message.
-    Pending(String),
 }
 
 /// [`Files::wait_until_active`] gives up after this long by default.
